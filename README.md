@@ -1,2 +1,2 @@
-# Useful_LLM_prompts
+# Useful LLM prompts
 What it sounds like

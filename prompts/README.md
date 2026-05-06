@@ -1,6 +1,14 @@
 # Prompts
 
-Store finished or in-progress prompts in this directory.
+Store new finished or in-progress prompts in this directory.
+
+The repo also has root-level operator workflow prompts:
+
+- [`../caretaking_22_items.md`](../caretaking_22_items.md)
+- [`../git_hard_clean.md`](../git_hard_clean.md)
+
+Those root files are intentionally kept next to `README.md` because they are
+primary maintenance workflows for this repo, not generic prompt examples.
 
 Guidelines:
 

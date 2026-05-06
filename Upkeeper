@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.8
+## Version: v1.0.10
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -14,14 +14,16 @@ set -euo pipefail
 ## things worse, and preserve enough evidence that the next operator or agent
 ## can see what happened without replaying the incident.
 
-ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_NAME="$(basename "$0")"
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+ROOT_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
+SCRIPT_NAME="$(basename -- "$SCRIPT_SOURCE")"
+SELF_INVOKE_PATH="$ROOT_DIR/$SCRIPT_NAME"
 if command -v python3 >/dev/null 2>&1; then
-  SELF_PATH="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$0")"
+  SELF_PATH="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$SELF_INVOKE_PATH")"
 elif command -v realpath >/dev/null 2>&1; then
-  SELF_PATH="$(realpath "$0")"
+  SELF_PATH="$(realpath "$SELF_INVOKE_PATH")"
 else
-  SELF_PATH="$ROOT_DIR/$SCRIPT_NAME"
+  SELF_PATH="$SELF_INVOKE_PATH"
 fi
 LOG_FILE="${CODEX_LOG_FILE:-$ROOT_DIR/Upkeeper.log}"
 LOG_FILE_DIR="$(dirname -- "$LOG_FILE")"
@@ -32,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.8"
+UPKEEPER_VERSION="v1.0.10"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -166,6 +168,8 @@ Loop stop semantics:
   - by default, a fallback event also triggers a scripted post-mortem report pass
     plus one final hardening pass, then the wrapper exits non-zero so you can
     manually relaunch the loop after reviewing the incident summary
+  - post-mortem report completion logs postmortem.report.finish with the
+    report child exit, parsed marker, report path, and file existence state
   - auxiliary post-mortem and hardening Codex calls use their own exact-model
     quota preflight and are skipped, with a shell-written report, when no
     current bucket can make a decision or a current bucket is projected below
@@ -205,12 +209,21 @@ Important:
   - The safety stop targets the parent shell of the current cycle to break the loop.
   - Nested fallback runs inherit the original loop-parent shell target so the
     stronger cleanup pass can still stop the real outer loop intentionally.
+  - Nested fallback runs also re-enter through the same repo-local script path
+    used by the primary invocation, so symlinked installs keep operating on the
+    target repository rather than the central wrapper source checkout.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output.
+  - Exact-model Spark quota snapshots may still report the generic Codex
+    limiter identity; once snapshot selection proves the target model, that is
+    treated as usable quota metadata instead of a conflict.
   - Spark Codex is allowed to drain its current-model 5-hour bucket to
     ${CODEX_SPARK_5H_STOP_PERCENT}% left; weekly/main capacity still stops at
     ${CODEX_WEEK_STOP_PERCENT}% left plus any model-specific weekly safety
     buffer.
+  - For pre-run quota stops on an already-dirty worktree, the wrapper skips the
+    normal backend fallback child and records the incident instead of spending a
+    stronger model run on a predictable dirty-worktree block.
   - Quota logs always print both used and left explicitly as named fields
     (primary_used=... primary_left=... secondary_used=... secondary_left=...)
     so operator checks do not depend on positional interpretation.
@@ -223,6 +236,9 @@ Important:
 Prompt behavior:
   - By default, the script asks Codex to select the oldest eligible script/tool
     file by last-modified timestamp and review exactly one file per cycle.
+  - Tests are not script/tool targets merely because they use a script-language
+    extension; select tests only when explicit extra guidance asks for test
+    review or no eligible script/tool target exists.
   - The default prompt forbids skipping a selected eligible file just because it
     was recently reviewed; if every eligible file was touched within 24 hours,
     Codex still reviews the oldest file again.
@@ -671,6 +687,38 @@ sanitize_nonnegative_integer() {
   esac
 }
 
+sanitize_positive_integer() {
+  local raw_value="$1"
+  local fallback="$2"
+  local min_value="$3"
+
+  python3 - "$raw_value" "$fallback" "$min_value" <<'PY' 2>/dev/null || printf '%s' "$fallback"
+import sys
+
+raw, fallback, min_value = sys.argv[1:4]
+
+try:
+    fallback_value = int(fallback)
+    minimum = int(min_value)
+except ValueError:
+    print(fallback)
+    raise SystemExit(0)
+
+if fallback_value < minimum:
+    fallback_value = minimum
+try:
+    value = int(raw)
+except ValueError:
+    print(fallback_value)
+    raise SystemExit(0)
+
+if value < minimum:
+    value = minimum
+
+print(value)
+PY
+}
+
 sanitize_percent_threshold() {
   local raw_value="$1"
   local fallback="$2"
@@ -731,6 +779,8 @@ normalize_guardrail_thresholds() {
   CODEX_WEEK_STOP_BUFFER_PERCENT="$(sanitize_percent_threshold "${CODEX_WEEK_STOP_BUFFER_PERCENT}" 0)"
   CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT="$(sanitize_percent_threshold "${CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT}" 5)"
   CODEX_FALLBACK_SCREEN_POLL_SECONDS="$(sanitize_nonnegative_integer "${CODEX_FALLBACK_SCREEN_POLL_SECONDS}" 60)"
+  CODEX_SESSION_SCAN_LIMIT="$(sanitize_positive_integer "${CODEX_SESSION_SCAN_LIMIT}" 200 1)"
+  CODEX_LOOP_STOP_GRACE_SECONDS="$(sanitize_nonnegative_integer "${CODEX_LOOP_STOP_GRACE_SECONDS}" 5)"
   if [[ "$CODEX_FALLBACK_SCREEN_POLL_SECONDS" -lt 1 ]]; then
     CODEX_FALLBACK_SCREEN_POLL_SECONDS=1
   fi
@@ -1629,6 +1679,9 @@ If no fixes are found:
 To be clear:
 
 You are looking for the ===ONE=== oldest file that is a script or tool that you can update and improve.
+
+Do not select tests as the primary script/tool target merely because they use a script-language extension.
+Paths under test directories or named test_* should be considered test files, not script/tool files, unless explicit added guidance asks for a test review or there are no eligible script/tool candidates.
 
 Find the ===ONE=== oldest that has not been looked at, and look at it. Examine it.
 If every relevant file has been touched in the past 24 hours pick the oldest one and that is your target.
@@ -3077,6 +3130,12 @@ fallback_available() {
   [[ -z "$(fallback_unavailable_reason)" ]]
 }
 
+fallback_would_rediscover_dirty_block() {
+  local trigger="$1"
+
+  [[ "$trigger" == "primary_quota_before_run" && "$DIRTY_PATH_COUNT" -gt 0 && -z "$PROMPT_FILE" && -z "$INLINE_PROMPT" ]]
+}
+
 # Detached fallback supervision.
 #
 # Screen fallback exists so a stronger model can clean up after the primary path
@@ -3329,7 +3388,7 @@ launch_screen_fallback_loop() {
   mkdir -p "$screen_root"
 
   printf -v root_q '%q' "$ROOT_DIR"
-  printf -v self_q '%q' "$SELF_PATH"
+  printf -v self_q '%q' "$SELF_INVOKE_PATH"
   printf -v screen_root_q '%q' "$screen_root"
   printf -v transcript_q '%q' "$transcript_file"
   printf -v poll_q '%q' "$CODEX_FALLBACK_SCREEN_POLL_SECONDS"
@@ -3360,7 +3419,7 @@ set -euo pipefail
 # Generated screen runner. It may outlive the launching terminal, so it writes
 # small state files that the parent can poll and later include in postmortems.
 ROOT_DIR=$root_q
-SELF_PATH=$self_q
+SELF_INVOKE_PATH=$self_q
 SCREEN_ROOT=$screen_root_q
 TRANSCRIPT_FILE=$transcript_q
 
@@ -3478,7 +3537,7 @@ while true; do
   CODEX_DISABLE_PARENT_STOP=1 \
   CODEX_GUARDRAIL_STOP_EXIT_CODE=9 \
   CODEX_EXECUTION_ORIGIN=screen \
-  "\$SELF_PATH" $prompt_arg_snippet >>"\$TRANSCRIPT_FILE" 2>&1
+  "\$SELF_INVOKE_PATH" $prompt_arg_snippet >>"\$TRANSCRIPT_FILE" 2>&1
   rc=\$?
   stop_child_heartbeat
   set -e
@@ -4744,6 +4803,7 @@ EOF
   run_aux_codex_exec "postmortem.report" "$CODEX_POSTMORTEM_MODEL" "$CODEX_POSTMORTEM_REASONING_EFFORT" "$CODEX_POSTMORTEM_MODE" "$report_prompt_file" "$report_last_message"
   report_exit=$?
   report_marker="$(parse_postmortem_marker "$report_last_message")"
+  log_line "INFO" "postmortem.report.finish exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path report_exists=$([[ -e "$report_path" ]] && printf 1 || printf 0) report_nonempty=$([[ -s "$report_path" ]] && printf 1 || printf 0)"
 
   if [[ "$report_exit" -eq 86 ]]; then
     POSTMORTEM_SEQUENCE_STATUS="report_quota_skipped"
@@ -4856,6 +4916,9 @@ run_fallback_cycle() {
     bwrap_tmp_detail_q="$(shell_quote "$bwrap_tmp_detail")"
     log_line "WARN" "fallback.skip trigger=$trigger reason=codex_bwrap_tmp_unwritable registry_root=$(shell_quote "$CODEX_BWRAP_TMP_ROOT") detail=$bwrap_tmp_detail_q"
     child_exit=3
+  elif fallback_would_rediscover_dirty_block "$trigger"; then
+    log_line "WARN" "fallback.skip trigger=$trigger reason=dirty_worktree_predicted_block dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT mode=normal_backend_prompt"
+    child_exit=2
   elif [[ "$CODEX_FALLBACK_SCREEN_ENABLED" == "1" ]]; then
     if ! launch_screen_fallback_loop "$trigger" "$detail_text"; then
       log_line "ERROR" "fallback.screen.start failed trigger=$trigger"
@@ -4890,7 +4953,7 @@ run_fallback_cycle() {
       CODEX_DISABLE_PARENT_STOP=1 \
       CODEX_GUARDRAIL_STOP_EXIT_CODE=9 \
       CODEX_EXECUTION_ORIGIN=screen \
-      "$SELF_PATH" "${child_args[@]}"
+      "$SELF_INVOKE_PATH" "${child_args[@]}"
       child_exit=$?
       set -e
     fi
@@ -5094,7 +5157,7 @@ main() {
     loop_parent_override="0"
   fi
 
-  log_line "INFO" "cycle.start execution_origin=$CODEX_EXECUTION_ORIGIN script=$SELF_PATH cwd=$ROOT_DIR pid=$$ ppid=$direct_parent_pid parent_comm=$direct_parent_comm loop_parent_pid=$loop_parent_pid loop_parent_comm=$loop_parent_comm loop_parent_override=$loop_parent_override model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT mode=$CODEX_MODE_STRING model_override=${CODEX_MODEL_OVERRIDE_SPEC:-none} model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED attempt_role=$CODEX_ATTEMPT_ROLE fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=${CODEX_PRIMARY_MODEL_CONTEXT:-none} fallback_trigger=${CODEX_FALLBACK_TRIGGER:-none} screen_fallback_child_id=${CODEX_SCREEN_FALLBACK_CHILD_ID:-none} code_home=$CODEX_HOME_DIR dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
+  log_line "INFO" "cycle.start execution_origin=$CODEX_EXECUTION_ORIGIN script=$SELF_INVOKE_PATH implementation=$SELF_PATH cwd=$ROOT_DIR pid=$$ ppid=$direct_parent_pid parent_comm=$direct_parent_comm loop_parent_pid=$loop_parent_pid loop_parent_comm=$loop_parent_comm loop_parent_override=$loop_parent_override model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT mode=$CODEX_MODE_STRING model_override=${CODEX_MODEL_OVERRIDE_SPEC:-none} model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED attempt_role=$CODEX_ATTEMPT_ROLE fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=${CODEX_PRIMARY_MODEL_CONTEXT:-none} fallback_trigger=${CODEX_FALLBACK_TRIGGER:-none} screen_fallback_child_id=${CODEX_SCREEN_FALLBACK_CHILD_ID:-none} code_home=$CODEX_HOME_DIR dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
 
   enforce_primary_quota_block_marker
 

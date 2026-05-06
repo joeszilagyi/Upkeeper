@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.8
+Version: v1.0.10
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -58,6 +58,8 @@ Loop stop semantics:
   - by default, a fallback event also triggers a scripted post-mortem report pass
     plus one final hardening pass, then the wrapper exits non-zero so you can
     manually relaunch the loop after reviewing the incident summary
+  - post-mortem report completion logs `postmortem.report.finish` with the
+    report child exit, parsed marker, report path, and file existence state
   - auxiliary post-mortem and hardening Codex calls use their own exact-model
     quota preflight and are skipped, with a shell-written report, when no
     current bucket can make a decision or a current bucket is projected below
@@ -97,12 +99,21 @@ Important:
   - The safety stop targets the parent shell of the current cycle to break the loop.
   - Nested fallback runs inherit the original loop-parent shell target so the
     stronger cleanup pass can still stop the real outer loop intentionally.
+  - Nested fallback runs also re-enter through the same repo-local script path
+    used by the primary invocation, so symlinked installs keep operating on the
+    target repository rather than the central wrapper source checkout.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output.
+  - Exact-model Spark quota snapshots may still report the generic Codex
+    limiter identity; once snapshot selection proves the target model, that is
+    treated as usable quota metadata instead of a conflict.
   - Spark Codex is allowed to drain its current-model 5-hour bucket to
     0% left; weekly/main capacity still stops at
     15% left plus any model-specific weekly safety
     buffer.
+  - For pre-run quota stops on an already-dirty worktree, the wrapper skips the
+    normal backend fallback child and records the incident instead of spending a
+    stronger model run on a predictable dirty-worktree block.
   - Quota logs always print both used and left explicitly as named fields
     (primary_used=... primary_left=... secondary_used=... secondary_left=...)
     so operator checks do not depend on positional interpretation.
@@ -115,6 +126,9 @@ Important:
 Prompt behavior:
   - By default, the script asks Codex to select the oldest eligible script/tool
     file by last-modified timestamp and review exactly one file per cycle.
+  - Tests are not script/tool targets merely because they use a script-language
+    extension; select tests only when explicit extra guidance asks for test
+    review or no eligible script/tool target exists.
   - The default prompt forbids skipping a selected eligible file just because it
     was recently reviewed; if every eligible file was touched within 24 hours,
     Codex still reviews the oldest file again.

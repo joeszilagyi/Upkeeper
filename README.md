@@ -1,11 +1,11 @@
-# Useful LLM Prompts
+# Upkeeper
 
-A lightweight home for reusable prompts, prompt patterns, and prompt templates.
+Upkeeper is a small local toolkit for keeping repositories tidy, reviewable, and easy to resume.
 
 ## Purpose
 
-This repository is set up as a simple prompt library rather than an application.
-The goal is to keep good prompts easy to find, easy to reuse, and easy to evolve.
+This repository holds reusable maintenance prompts, prompt templates, and the `Upkeeper` operator script.
+The goal is to keep project-care workflows explicit, portable, and easy to evolve.
 
 ## License
 
@@ -15,6 +15,7 @@ This repository is released under the `0BSD` license.
 
 ```text
 .
+|-- Upkeeper
 |-- prompts/
 |   `-- README.md
 |-- templates/
@@ -27,9 +28,9 @@ This repository is released under the `0BSD` license.
 
 ## How To Use
 
-1. Start from [`templates/prompt-template.md`](templates/prompt-template.md).
-2. Create a new prompt file under `prompts/`.
-3. Keep each prompt focused on one job or workflow.
+1. Start from [`templates/prompt-template.md`](templates/prompt-template.md) for reusable prompts.
+2. Put focused prompt files under `prompts/`.
+3. Run `./Upkeeper --help` to inspect the local operator options.
 4. Update wording based on real usage instead of trying to make prompts perfect on the first pass.
 
 ## Suggested Prompt Format

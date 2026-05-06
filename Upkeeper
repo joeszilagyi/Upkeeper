@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.6
+## Version: v1.0.7
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -32,13 +32,13 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.6"
+UPKEEPER_VERSION="v1.0.7"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
 CODEX_MODEL="${CODEX_MODEL:-gpt-5.3-codex-spark}"
 CODEX_REASONING_EFFORT="${CODEX_REASONING_EFFORT:-xhigh}"
-CODEX_MODE_STRING="${CODEX_MODE:---full-auto}"
+CODEX_MODE_STRING="${CODEX_MODE:---sandbox workspace-write}"
 CODEX_FALLBACK_ENABLED="${CODEX_FALLBACK_ENABLED:-1}"
 CODEX_FALLBACK_MODEL="${CODEX_FALLBACK_MODEL:-gpt-5.5}"
 CODEX_FALLBACK_REASONING_EFFORT="${CODEX_FALLBACK_REASONING_EFFORT:-xhigh}"
@@ -228,7 +228,7 @@ Prompt behavior:
 Environment overrides:
   CODEX_MODEL                   Default: gpt-5.3-codex-spark
   CODEX_REASONING_EFFORT        Default: xhigh
-  CODEX_MODE                    Default: --full-auto
+  CODEX_MODE                    Default: --sandbox workspace-write
   CODEX_FALLBACK_ENABLED        Default: 1
   CODEX_FALLBACK_MODEL          Default: gpt-5.5
   CODEX_FALLBACK_REASONING_EFFORT Default: xhigh
@@ -1433,6 +1433,27 @@ If one of those physical/safety exceptions applies:
 - do not touch that invalid file
 - select the next oldest eligible file
 - complete the execution on that replacement file
+
+Scope rule -- generated and ignored artifacts:
+
+- The review target must be a repo source, documentation, configuration, prompt,
+  manifest, script, or tool file that is tracked by git or is an intentional
+  untracked-but-not-ignored source file.
+- Do NOT select or modify ignored files, generated files, runtime evidence,
+  caches, vendor content, or VCS internals.
+- Explicitly excluded paths include:
+  - .git/
+  - runtime/
+  - Upkeeper.log
+  - any path ignored by .gitignore
+- Prefer this candidate source command so ignored/runtime artifacts are not
+  accidentally selected:
+
+  git ls-files -co --exclude-standard -z
+
+- If another scan such as find(1) surfaces an excluded file first, that is the
+  generated/ignored-artifact exception. State that exception, do not touch that
+  file, and select the next oldest eligible non-excluded candidate.
 
 "No findings" is not a skip.
 "No fixes needed" is not a skip.
@@ -3123,9 +3144,8 @@ launch_screen_fallback_loop() {
   local screen_root session_name runner_script transcript_file exit_file done_file last_cycle_exit_file
   local child_id_file child_started_file child_status_file heartbeat_file completed_count_file stop_reason_file
   local prompt_arg_snippet=""
-  local self_q model_q effort_q mode_q root_q transcript_q exit_q done_q poll_q trigger_q
+  local self_q model_q effort_q mode_q root_q screen_root_q transcript_q poll_q trigger_q
   local loop_parent_pid_q loop_parent_comm_q loop_parent_args_q primary_model_q prompt_file_q inline_prompt_q
-  local last_cycle_exit_q child_id_q child_started_q child_status_q heartbeat_q completed_count_q stop_reason_q
   local continuous_q max_children_q max_seconds_q
 
   screen_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen"
@@ -3151,16 +3171,8 @@ launch_screen_fallback_loop() {
 
   printf -v root_q '%q' "$ROOT_DIR"
   printf -v self_q '%q' "$SELF_PATH"
+  printf -v screen_root_q '%q' "$screen_root"
   printf -v transcript_q '%q' "$transcript_file"
-  printf -v exit_q '%q' "$exit_file"
-  printf -v done_q '%q' "$done_file"
-  printf -v last_cycle_exit_q '%q' "$last_cycle_exit_file"
-  printf -v child_id_q '%q' "$child_id_file"
-  printf -v child_started_q '%q' "$child_started_file"
-  printf -v child_status_q '%q' "$child_status_file"
-  printf -v heartbeat_q '%q' "$heartbeat_file"
-  printf -v completed_count_q '%q' "$completed_count_file"
-  printf -v stop_reason_q '%q' "$stop_reason_file"
   printf -v poll_q '%q' "$CODEX_FALLBACK_SCREEN_POLL_SECONDS"
   printf -v continuous_q '%q' "$CODEX_FALLBACK_SCREEN_CONTINUOUS"
   printf -v max_children_q '%q' "$CODEX_FALLBACK_SCREEN_MAX_CHILDREN"
@@ -3188,7 +3200,27 @@ set -euo pipefail
 
 # Generated screen runner. It may outlive the launching terminal, so it writes
 # small state files that the parent can poll and later include in postmortems.
-cd $root_q
+ROOT_DIR=$root_q
+SELF_PATH=$self_q
+SCREEN_ROOT=$screen_root_q
+TRANSCRIPT_FILE=$transcript_q
+
+state_file() {
+  printf '%s/%s' "\$SCREEN_ROOT" "\$1"
+}
+
+write_state() {
+  local name="\$1"
+  local value="\$2"
+  printf '%s\n' "\$value" > "\$(state_file "\$name")"
+}
+
+write_state_datetime() {
+  local name="\$1"
+  date '+%Y-%m-%dT%H:%M:%S%z' > "\$(state_file "\$name")"
+}
+
+cd "\$ROOT_DIR"
 continuous=$continuous_q
 max_children=$max_children_q
 max_seconds=$max_seconds_q
@@ -3218,8 +3250,8 @@ fi
 if [[ "\$heartbeat_interval" -gt 30 ]]; then
   heartbeat_interval=30
 fi
-printf '0\n' > $completed_count_q
-date '+%Y-%m-%dT%H:%M:%S%z' > $heartbeat_q
+write_state 'completed-child-count.txt' 0
+write_state_datetime 'heartbeat.txt'
 
 stop_child_heartbeat() {
   if [[ -n "\${heartbeat_pid:-}" ]]; then
@@ -3229,11 +3261,16 @@ stop_child_heartbeat() {
   fi
 }
 
+cleanup() {
+  stop_child_heartbeat
+}
+trap cleanup EXIT
+
 start_child_heartbeat() {
   stop_child_heartbeat
   (
     while true; do
-      date '+%Y-%m-%dT%H:%M:%S%z' > $heartbeat_q
+      write_state_datetime 'heartbeat.txt'
       sleep "\$heartbeat_interval"
     done
   ) &
@@ -3243,12 +3280,12 @@ start_child_heartbeat() {
 mark_interrupted() {
   # Make operator interrupts visible as data, not just a missing screen session.
   stop_child_heartbeat
-  printf 'interrupted\n' > $child_status_q
-  date '+%Y-%m-%dT%H:%M:%S%z' > $heartbeat_q
-  printf 'interrupted\n' > $stop_reason_q
-  printf '130\n' > $last_cycle_exit_q
-  printf '130\n' > $exit_q
-  date '+%Y-%m-%dT%H:%M:%S%z' > $done_q
+  write_state 'current-child-status.txt' interrupted
+  write_state_datetime 'heartbeat.txt'
+  write_state 'stop-reason.txt' interrupted
+  write_state 'last-cycle-exit-code.txt' 130
+  write_state 'final-exit-code.txt' 130
+  write_state_datetime 'done.txt'
   exit 130
 }
 trap mark_interrupted INT TERM HUP
@@ -3256,10 +3293,10 @@ trap mark_interrupted INT TERM HUP
 while true; do
   child_count=\$((child_count + 1))
   child_cycle_id="\$(date '+%Y%m%dT%H%M%S%z')-screen-child-\$child_count"
-  printf '%s\n' "\$child_cycle_id" > $child_id_q
-  date '+%Y-%m-%dT%H:%M:%S%z' > $child_started_q
-  printf 'running\n' > $child_status_q
-  date '+%Y-%m-%dT%H:%M:%S%z' > $heartbeat_q
+  write_state 'current-child-cycle-id.txt' "\$child_cycle_id"
+  write_state_datetime 'current-child-started-at.txt'
+  write_state 'current-child-status.txt' running
+  write_state_datetime 'heartbeat.txt'
   start_child_heartbeat
   set +e
   CODEX_MODEL=$model_q \
@@ -3282,14 +3319,14 @@ while true; do
   CODEX_DISABLE_PARENT_STOP=1 \
   CODEX_GUARDRAIL_STOP_EXIT_CODE=9 \
   CODEX_EXECUTION_ORIGIN=screen \
-  $self_q $prompt_arg_snippet >>$transcript_q 2>&1
+  "\$SELF_PATH" $prompt_arg_snippet >>"\$TRANSCRIPT_FILE" 2>&1
   rc=\$?
   stop_child_heartbeat
   set -e
-  printf '%s\n' "\$rc" > $last_cycle_exit_q
-  printf '%s\n' "\$child_count" > $completed_count_q
-  printf 'finished\n' > $child_status_q
-  date '+%Y-%m-%dT%H:%M:%S%z' > $heartbeat_q
+  write_state 'last-cycle-exit-code.txt' "\$rc"
+  write_state 'completed-child-count.txt' "\$child_count"
+  write_state 'current-child-status.txt' finished
+  write_state_datetime 'heartbeat.txt'
   if [[ "\$rc" -ne 0 ]]; then
     stop_reason=child_exit_nonzero
     break
@@ -3307,10 +3344,10 @@ while true; do
   fi
   sleep $poll_q
 done
-printf '%s\n' "\$stop_reason" > $stop_reason_q
-printf '%s\n' "\$rc" > $exit_q
-date '+%Y-%m-%dT%H:%M:%S%z' > $done_q
-exit 0
+write_state 'stop-reason.txt' "\$stop_reason"
+write_state 'final-exit-code.txt' "\$rc"
+write_state_datetime 'done.txt'
+exit "\${rc:-0}"
 EOF
   chmod +x "$runner_script"
 
@@ -3785,7 +3822,7 @@ def normalized(line):
     return re.sub(r"\s+", " ", value).lower()
 
 
-def compact_items(items, max_items=6, max_len=700):
+def compact_items(items, max_items=8, max_len=900):
     cleaned = []
     for item in items:
         item = item.strip()
@@ -3826,6 +3863,10 @@ def capture_section(names):
         "prompts run",
         "prompts applied",
         "findings",
+        "fixes",
+        "fixes found",
+        "fixes implemented",
+        "fixes applied",
         "implemented fix",
         "implemented fixes",
         "applied change",
@@ -3836,6 +3877,7 @@ def capture_section(names):
         "test results",
         "required persistence verification",
         "verification",
+        "verification done",
         "outcome",
         "final status",
         "final status marker",
@@ -3856,6 +3898,10 @@ def capture_section(names):
         if not line:
             continue
         norm = normalized(line)
+        if re.match(r"p(?:[1-9]|1[0-9]|2[0-2])\b", norm):
+            break
+        if re.search(r"\b(REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", line):
+            break
         if any(norm.startswith(header) for header in known_headers):
             break
         if line.startswith("UPKEEPER_STATUS:"):
@@ -3879,11 +3925,15 @@ for index, line in enumerate(lines):
     if not norm.startswith(("selected file", "file selected", "target file")):
         continue
     source = line
-    if ":" not in source and index + 1 < len(lines):
-        source = lines[index + 1]
+    rest_after_colon = source.split(":", 1)[1].strip() if ":" in source else ""
+    if (":" not in source or not rest_after_colon) and index + 1 < len(lines):
+        for candidate in lines[index + 1 : index + 5]:
+            if candidate:
+                source = candidate
+                break
     markdown_link = re.search(r"\]\(([^)]+)\)", source)
     if markdown_link:
-        selected_file = markdown_link.group(1).split(":", 1)[0]
+        selected_file = markdown_link.group(1).strip("<>").split(":", 1)[0]
     elif ":" in source:
         selected_file = source.split(":", 1)[1].strip()
     else:
@@ -3894,6 +3944,10 @@ for index, line in enumerate(lines):
 findings = capture_section(("findings",))
 changes = capture_section(
     (
+        "fixes",
+        "fixes found",
+        "fixes implemented",
+        "fixes applied",
         "implemented fix",
         "implemented fixes",
         "applied change",
@@ -3915,7 +3969,12 @@ if outcome == "REVIEWED_AND_FIXED" and not changes:
     fallback = []
     for line in lines:
         lowered = line.lower()
+        norm = normalized(line)
         if line.startswith("UPKEEPER_STATUS:"):
+            continue
+        if re.match(r"p(?:[1-9]|1[0-9]|2[0-2])\b", norm):
+            continue
+        if no_change_summary(line):
             continue
         if "fix" in lowered or "change" in lowered:
             fallback.append(line)

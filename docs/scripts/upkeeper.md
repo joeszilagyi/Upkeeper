@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.6
+Version: v1.0.7
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -125,7 +125,7 @@ Prompt behavior:
 Environment overrides:
   CODEX_MODEL                   Default: gpt-5.3-codex-spark
   CODEX_REASONING_EFFORT        Default: xhigh
-  CODEX_MODE                    Default: --full-auto
+  CODEX_MODE                    Default: --sandbox workspace-write
   CODEX_FALLBACK_ENABLED        Default: 1
   CODEX_FALLBACK_MODEL          Default: gpt-5.5
   CODEX_FALLBACK_REASONING_EFFORT Default: xhigh
@@ -180,13 +180,16 @@ Exit codes:
 
 ## Operational Notes
 
-- `CODEX_MODE` currently defaults to `--full-auto` for compatibility with the
-  existing loop. Newer Codex builds may warn that this mode is deprecated; set
-  `CODEX_MODE="--sandbox workspace-write"` if you want to opt into the newer
-  sandbox flag explicitly.
+- `CODEX_MODE` defaults to `--sandbox workspace-write`. Set `CODEX_MODE` only
+  when testing a newer Codex sandbox flag or temporarily matching an older local
+  Codex install.
 - `Upkeeper.log` and `runtime/` are local evidence artifacts and are ignored by
   git. Promote only durable operating rules, postmortem conclusions, or wrapper
   behavior changes into tracked files.
+- The default review prompt explicitly excludes ignored files, generated files,
+  runtime evidence, caches, vendor content, and `.git/` internals from target
+  selection. If a scan finds one of those first, the agent should state the
+  generated/ignored-artifact exception and select the next eligible source file.
 - Review-cycle final responses are summarized in `review.summary` log lines.
   Responses that report `REVIEWED_AND_FIXED` also emit `review.fix_details`
   lines so later commits can recover the bug, fix, and verification details.

@@ -4,3 +4,7 @@ Thumbs.db
 *.swo
 .idea/
 .vscode/
+
+# Upkeeper local run artifacts.
+Upkeeper.log
+runtime/

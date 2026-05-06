@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.0
+## Version: v1.0.6
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -32,7 +32,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.0"
+UPKEEPER_VERSION="v1.0.6"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -47,8 +47,6 @@ CODEX_FALLBACK_ON_PRIMARY_QUOTA="${CODEX_FALLBACK_ON_PRIMARY_QUOTA:-1}"
 CODEX_FALLBACK_ON_FAILURE="${CODEX_FALLBACK_ON_FAILURE:-1}"
 CODEX_FALLBACK_ON_BLOCKED="${CODEX_FALLBACK_ON_BLOCKED:-1}"
 CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK="${CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK:-1}"
-CODEX_FALLBACK_ALLOW_BROADER_SWEEP="${CODEX_FALLBACK_ALLOW_BROADER_SWEEP:-1}"
-CODEX_FALLBACK_ALLOW_LOCAL_COMMIT="${CODEX_FALLBACK_ALLOW_LOCAL_COMMIT:-0}"
 CODEX_FALLBACK_SCREEN_ENABLED="${CODEX_FALLBACK_SCREEN_ENABLED:-1}"
 CODEX_FALLBACK_SCREEN_POLL_SECONDS="${CODEX_FALLBACK_SCREEN_POLL_SECONDS:-60}"
 CODEX_FALLBACK_SCREEN_CONTINUOUS="${CODEX_FALLBACK_SCREEN_CONTINUOUS:-0}"
@@ -84,6 +82,8 @@ CODEX_CONTINUE_ON_NO_BACKEND_TASK="${CODEX_CONTINUE_ON_NO_BACKEND_TASK:-0}"
 CODEX_DISABLE_PARENT_STOP="${CODEX_DISABLE_PARENT_STOP:-0}"
 CODEX_GUARDRAIL_STOP_EXIT_CODE="${CODEX_GUARDRAIL_STOP_EXIT_CODE:-0}"
 CODEX_EXECUTION_ORIGIN="${CODEX_EXECUTION_ORIGIN:-primary}"
+CODEX_BWRAP_TMP_ROOT="${CODEX_BWRAP_TMP_ROOT:-/tmp/codex-bwrap-synthetic-mount-targets}"
+CODEX_BWRAP_TMP_PREFLIGHT="${CODEX_BWRAP_TMP_PREFLIGHT:-1}"
 UPKEEPER_DRY_RUN="${UPKEEPER_DRY_RUN:-0}"
 
 declare -a CODEX_MODE_ARGS=()
@@ -107,6 +107,7 @@ FALLBACK_SCREEN_SESSION_NAME=""
 FALLBACK_SCREEN_TRANSCRIPT_PATH=""
 FALLBACK_SCREEN_EXIT_CODE=""
 FALLBACK_SCREEN_WATCH_ACTIVE="0"
+FALLBACK_SCREEN_TRIGGER=""
 RUN_COMPILED_PROMPT_FILE=""
 RUN_LAST_MESSAGE_FILE=""
 
@@ -114,9 +115,10 @@ RUN_LAST_MESSAGE_FILE=""
 # operator guide; once the guide exists, the Markdown becomes the living document.
 show_help() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh]
+Usage: $SCRIPT_NAME [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh]
 
 One-cycle Codex backend worker with quota guardrails.
+Version: $UPKEEPER_VERSION
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME_DIR/sessions.
@@ -129,7 +131,8 @@ Each invocation:
          plus any model-specific weekly safety buffer
      then it terminates the parent shell running the loop and exits without
      starting a new Codex run, unless fallback handoff is enabled.
-  5. Before launching Codex, verifies that $CODEX_HOME_DIR/sessions is writable.
+  5. Before launching Codex, verifies that $CODEX_HOME_DIR/sessions and Codex's
+     shared bubblewrap temp registry are writable.
   6. Otherwise it runs exactly one codex exec cycle and exits.
   7. If the primary model fails, blocks, or exhausts its bucket, it can hand off
      to one stronger fallback cycle in the
@@ -164,8 +167,12 @@ Loop stop semantics:
   - live primary and auxiliary Codex calls also preflight the local session store;
     a read-only $CODEX_HOME_DIR/sessions is classified as a local environment
     failure before starting recursive fallback or post-mortem Codex work
+  - live primary, fallback, and auxiliary Codex calls also preflight Codex's
+    shared bubblewrap temp registry; a stale root-owned registry is classified
+    as a local environment failure before launching another Codex process
   - if you press Ctrl-C while the primary wrapper is watching a detached recovery
-    screen session, the wrapper now tears that recovery session down before exiting
+    screen session, the wrapper first checks whether the child already finished,
+    then tears down any still-running recovery session before exiting
   - incident directories now include a shell-written bug record artifact alongside
     the post-mortem report so a human or later agent can file or review the bug
   - successful pre-run quota handoffs and no-agent post-run quota failures write
@@ -197,6 +204,9 @@ Important:
     so operator checks do not depend on positional interpretation.
   - Terminal cycle outcomes are written as cycle.summary and cycle.exit lines to:
       $LOG_FILE
+    Review cycles also write compact review.summary lines, and
+    review.fix_details lines when the final response reports fixes, so later
+    commits can recover what changed and why.
 
 Prompt behavior:
   - By default, the script asks Codex to select the oldest eligible script/tool
@@ -227,8 +237,6 @@ Environment overrides:
   CODEX_FALLBACK_ON_FAILURE     Default: 1
   CODEX_FALLBACK_ON_BLOCKED     Default: 1
   CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK Default: 1
-  CODEX_FALLBACK_ALLOW_BROADER_SWEEP Default: 1
-  CODEX_FALLBACK_ALLOW_LOCAL_COMMIT Default: 0
   CODEX_FALLBACK_SCREEN_ENABLED     Default: 1
   CODEX_FALLBACK_SCREEN_POLL_SECONDS Default: 60
   CODEX_FALLBACK_SCREEN_CONTINUOUS   Default: 0
@@ -254,6 +262,8 @@ Environment overrides:
   CODEX_DISABLE_PARENT_STOP      Default: 0
   CODEX_GUARDRAIL_STOP_EXIT_CODE Default: 0
   CODEX_EXECUTION_ORIGIN         Default: primary
+  CODEX_BWRAP_TMP_ROOT           Default: /tmp/codex-bwrap-synthetic-mount-targets
+  CODEX_BWRAP_TMP_PREFLIGHT      Default: 1
   CODEX_SESSION_SCAN_LIMIT      Default: 200
   CODEX_LOG_FILE                Default: $ROOT_DIR/Upkeeper.log
   UPKEEPER_DRY_RUN           Default: 0
@@ -302,7 +312,10 @@ ensure_log_parent() {
 }
 
 die() {
-  log_line "ERROR" "$*"
+  ensure_log_parent
+  if ! log_line "ERROR" "$*"; then
+    printf '%s [ERROR] cycle=%s %s\n' "$(timestamp_now)" "$CYCLE_ID" "$*" >&2
+  fi
   exit 3
 }
 
@@ -321,12 +334,14 @@ ensure_operator_guide() {
   fi
 
   guide_dir="${guide_path%/*}"
-  mkdir -p "$guide_dir"
+  if ! mkdir -p "$guide_dir"; then
+    die "failed to create operator guide directory $guide_dir"
+  fi
   if ! tmp_file="$(mktemp "$guide_dir/.upkeeper-guide.XXXXXX")"; then
     die "failed to create temporary operator guide under $guide_dir"
   fi
   {
-    printf '# Upkeeper.sh\n\n'
+    printf '# %s\n\n' "$SCRIPT_NAME"
     printf '> Bootstrap-generated by `%s` because `%s` was missing.\n\n' "$SCRIPT_NAME" "$guide_path"
     printf 'Keep this file as the repo-local living operator guide. The wrapper only creates it when missing; it does not overwrite future edits.\n\n'
     printf '## Script Help Snapshot\n\n'
@@ -366,6 +381,91 @@ cleanup_run_temp_files() {
   fi
 }
 
+completed_fallback_screen_result_available() {
+  local screen_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen"
+  local exit_file="$screen_root/final-exit-code.txt"
+  local done_file="$screen_root/done.txt"
+
+  [[ -n "${FALLBACK_SCREEN_SESSION_NAME:-}" ]] || return 1
+  [[ -f "$done_file" && -f "$exit_file" ]] || return 1
+}
+
+fallback_screen_runner_process_groups() {
+  local runner_script="$1"
+  local pid pgid args
+
+  [[ -n "$runner_script" ]] || return 0
+
+  ps -eo pid=,pgid=,args= | while read -r pid pgid args; do
+    [[ "$pid" =~ ^[0-9]+$ && "$pgid" =~ ^[0-9]+$ ]] || continue
+    [[ "${args:-}" == *"$runner_script"* ]] || continue
+    [[ "$pid" -eq "$$" ]] && continue
+    printf '%s\n' "$pgid"
+  done | sort -u
+}
+
+fallback_screen_process_group_exists() {
+  local pgid="$1"
+
+  [[ "$pgid" =~ ^[0-9]+$ ]] || return 1
+  ps -eo pgid= | awk -v target="$pgid" '$1 == target { found = 1; exit } END { exit !found }'
+}
+
+terminate_fallback_screen_process_groups() {
+  local reason="${1:-manual_teardown}"
+  local runner_script="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen/run-screen-fallback.sh"
+  local pgid
+  local -a pgids=()
+
+  mapfile -t pgids < <(fallback_screen_runner_process_groups "$runner_script")
+  [[ "${#pgids[@]}" -gt 0 ]] || return 0
+
+  for pgid in "${pgids[@]}"; do
+    [[ "$pgid" =~ ^[0-9]+$ ]] || continue
+    log_line "WARN" "fallback.screen.stop execution_origin=$CODEX_EXECUTION_ORIGIN reason=$reason action=process_group_term pgid=$pgid runner_script=$(shell_quote "$runner_script")"
+    kill -TERM -- "-$pgid" >/dev/null 2>&1 || true
+  done
+
+  sleep 1
+
+  for pgid in "${pgids[@]}"; do
+    [[ "$pgid" =~ ^[0-9]+$ ]] || continue
+    if fallback_screen_process_group_exists "$pgid"; then
+      log_line "WARN" "fallback.screen.stop execution_origin=$CODEX_EXECUTION_ORIGIN reason=$reason action=process_group_kill pgid=$pgid runner_script=$(shell_quote "$runner_script")"
+      kill -KILL -- "-$pgid" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
+adopt_completed_fallback_screen_result_on_signal() {
+  local signal_name="$1"
+  local screen_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen"
+  local exit_file="$screen_root/final-exit-code.txt"
+  local child_exit current_child_id current_child_status completed_count last_cycle_exit stop_reason
+
+  [[ "$CODEX_EXECUTION_ORIGIN" == "primary" ]] || return 1
+  [[ "$FALLBACK_SCREEN_WATCH_ACTIVE" == "1" ]] || return 1
+  completed_fallback_screen_result_available || return 1
+
+  child_exit="$(tr -d '[:space:]' <"$exit_file")"
+  case "$child_exit" in
+    ''|*[!0-9]*)
+      child_exit="8"
+      ;;
+  esac
+
+  FALLBACK_SCREEN_EXIT_CODE="$child_exit"
+  FALLBACK_SCREEN_WATCH_ACTIVE="0"
+  current_child_id="$(read_artifact_or_unknown "$screen_root/current-child-cycle-id.txt")"
+  current_child_status="$(read_artifact_or_unknown "$screen_root/current-child-status.txt")"
+  completed_count="$(read_artifact_or_unknown "$screen_root/completed-child-count.txt")"
+  last_cycle_exit="$(read_artifact_or_unknown "$screen_root/last-cycle-exit-code.txt")"
+  stop_reason="$(read_artifact_or_unknown "$screen_root/stop-reason.txt")"
+  log_line "WARN" "signal.completed_fallback_result signal=$signal_name execution_origin=$CODEX_EXECUTION_ORIGIN session_name=${FALLBACK_SCREEN_SESSION_NAME:-none} final_exit=$child_exit current_child_id=$current_child_id current_child_status=$current_child_status completed_children=$completed_count last_cycle_exit=$last_cycle_exit stop_reason=$stop_reason"
+  teardown_fallback_screen_session "completed_result_$signal_name"
+  finish_cycle "$child_exit" FALLBACK_CHILD_COMPLETED_BEFORE_SIGNAL WARN "signal=$signal_name fallback_screen_session=${FALLBACK_SCREEN_SESSION_NAME:-none} fallback_trigger=${FALLBACK_SCREEN_TRIGGER:-none} transcript=${FALLBACK_SCREEN_TRANSCRIPT_PATH:-none}"
+}
+
 # Signals usually mean the human is trying to stop the visible loop. If a
 # detached fallback screen is active, leaving it behind would create a ghost
 # worker that keeps spending quota, so the visible wrapper owns cleanup.
@@ -385,20 +485,24 @@ teardown_fallback_screen_session() {
   if screen_session_exists "$session_name"; then
     log_line "WARN" "fallback.screen.stop execution_origin=$CODEX_EXECUTION_ORIGIN session_name=$session_name reason=$reason action=screen_quit"
     screen -S "$session_name" -X quit >/dev/null 2>&1 || true
+    sleep 1
+    terminate_fallback_screen_process_groups "$reason"
     return 0
   fi
 
   log_line "WARN" "fallback.screen.stop execution_origin=$CODEX_EXECUTION_ORIGIN session_name=$session_name reason=$reason status=already_gone"
+  terminate_fallback_screen_process_groups "$reason"
   return 0
 }
 
 handle_wrapper_signal() {
   local signal_name="$1"
-  trap - INT TERM
+  trap - INT TERM HUP
 
   log_line "WARN" "signal.received signal=$signal_name execution_origin=$CODEX_EXECUTION_ORIGIN fallback_screen_session=${FALLBACK_SCREEN_SESSION_NAME:-none} fallback_screen_watch_active=$FALLBACK_SCREEN_WATCH_ACTIVE"
 
   if [[ "$CODEX_EXECUTION_ORIGIN" == "primary" && -n "${FALLBACK_SCREEN_SESSION_NAME:-}" ]]; then
+    adopt_completed_fallback_screen_result_on_signal "$signal_name" || true
     teardown_fallback_screen_session "signal_$signal_name"
   fi
 
@@ -456,6 +560,10 @@ parse_args() {
         show_help
         exit 0
         ;;
+      --version)
+        printf '%s %s\n' "$SCRIPT_NAME" "$UPKEEPER_VERSION"
+        exit 0
+        ;;
       --prompt-file)
         [[ $# -ge 2 ]] || die "--prompt-file requires a path"
         PROMPT_FILE="$2"
@@ -488,7 +596,7 @@ parse_args() {
 require_commands() {
   local missing=0
   local cmd
-  for cmd in awk cat date git grep jq mkdir mktemp mv ps python3 rm sed tail tee tr; do
+  for cmd in awk cat date git grep jq mkdir mktemp mv ps python3 rm sed sort tail tee tr; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       log_line "ERROR" "required command missing: $cmd"
       missing=1
@@ -605,6 +713,10 @@ normalize_guardrail_thresholds() {
   CODEX_WEEK_STOP_PERCENT="$(sanitize_percent_threshold "${CODEX_WEEK_STOP_PERCENT}" 15)"
   CODEX_WEEK_STOP_BUFFER_PERCENT="$(sanitize_percent_threshold "${CODEX_WEEK_STOP_BUFFER_PERCENT}" 0)"
   CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT="$(sanitize_percent_threshold "${CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT}" 5)"
+  CODEX_FALLBACK_SCREEN_POLL_SECONDS="$(sanitize_nonnegative_integer "${CODEX_FALLBACK_SCREEN_POLL_SECONDS}" 60)"
+  if [[ "$CODEX_FALLBACK_SCREEN_POLL_SECONDS" -lt 1 ]]; then
+    CODEX_FALLBACK_SCREEN_POLL_SECONDS=1
+  fi
 }
 
 is_spark_model() {
@@ -645,12 +757,7 @@ quota_week_stop_percent_for_model() {
 }
 
 quota_expected_identity_for_model() {
-  local target_model="$1"
-  if is_spark_model "$target_model"; then
-    printf 'model_specific'
-  else
-    printf 'exact_model_snapshot'
-  fi
+  printf 'exact_model_snapshot'
 }
 
 quota_identity_status_for_model() {
@@ -662,12 +769,12 @@ quota_identity_status_for_model() {
   [[ -n "$limit_name" && "$limit_name" != "null" ]] || limit_name="unknown"
 
   if is_spark_model "$target_model"; then
-    if [[ "$limit_id" == "codex" && "$limit_name" == "unknown" ]]; then
-      printf 'conflicting_generic'
-    elif [[ "$limit_id" == codex_* || "$limit_name" == *spark* || "$limit_name" == *Spark* || "$limit_name" == *SPARK* ]]; then
+    if [[ "$limit_id" == codex_* || "$limit_name" == *spark* || "$limit_name" == *Spark* || "$limit_name" == *SPARK* ]]; then
       printf 'model_specific'
     elif [[ "$limit_id" == "unknown" && "$limit_name" == "unknown" ]]; then
       printf 'unknown'
+    elif [[ "$limit_id" == "codex" && "$limit_name" == "unknown" ]]; then
+      printf 'generic_unknown'
     else
       printf 'generic_named'
     fi
@@ -811,6 +918,89 @@ ensure_codex_session_store_writable_or_exit() {
   session_store_q="$(shell_quote "$CODEX_HOME_DIR/sessions")"
   log_line "ERROR" "codex.session_store_unwritable phase=$phase code_home=$code_home_q session_store=$session_store_q detail=$detail_q"
   finish_cycle 3 CODEX_SESSION_STORE_UNWRITABLE ERROR "phase=$phase codex_exec_started=$codex_exec_started code_home=$code_home_q session_store=$session_store_q detail=$detail_q"
+}
+
+codex_bwrap_tmp_write_check() {
+  local registry_root="$CODEX_BWRAP_TMP_ROOT"
+  local lock_path="$registry_root/lock"
+  local probe_dir=""
+  local probe_file
+  local err_file
+
+  if [[ "$CODEX_BWRAP_TMP_PREFLIGHT" != "1" ]]; then
+    printf 'ok'
+    return 0
+  fi
+
+  if ! err_file="$(mktemp)"; then
+    printf 'mktemp_failed'
+    return 1
+  fi
+
+  if [[ -e "$registry_root" && ! -d "$registry_root" ]]; then
+    printf 'not_directory:%s' "$registry_root"
+    rm -f "$err_file"
+    return 1
+  fi
+
+  if ! mkdir -p "$registry_root" 2>"$err_file"; then
+    printf 'mkdir_failed:%s' "$(tr '\n' ' ' <"$err_file")"
+    rm -f "$err_file"
+    return 1
+  fi
+
+  if ! ( : >>"$lock_path" ) 2>"$err_file"; then
+    printf 'lock_write_failed:%s' "$(tr '\n' ' ' <"$err_file")"
+    rm -f "$err_file"
+    return 1
+  fi
+
+  if ! probe_dir="$(mktemp -d "$registry_root/.upkeeper-write-test.XXXXXX" 2>"$err_file")"; then
+    printf 'probe_dir_failed:%s' "$(tr '\n' ' ' <"$err_file")"
+    rm -f "$err_file"
+    return 1
+  fi
+
+  probe_file="$probe_dir/probe"
+  if ! ( : >"$probe_file" ) 2>"$err_file"; then
+    printf 'probe_write_failed:%s' "$(tr '\n' ' ' <"$err_file")"
+    rmdir "$probe_dir" >/dev/null 2>&1 || true
+    rm -f "$err_file"
+    return 1
+  fi
+
+  if ! rm -f "$probe_file" 2>"$err_file"; then
+    printf 'probe_file_cleanup_failed:%s' "$(tr '\n' ' ' <"$err_file")"
+    rmdir "$probe_dir" >/dev/null 2>&1 || true
+    rm -f "$err_file"
+    return 1
+  fi
+
+  if ! rmdir "$probe_dir" 2>"$err_file"; then
+    printf 'probe_dir_cleanup_failed:%s' "$(tr '\n' ' ' <"$err_file")"
+    rm -f "$err_file"
+    return 1
+  fi
+
+  rm -f "$err_file"
+  printf 'ok'
+  return 0
+}
+
+ensure_codex_bwrap_tmp_writable_or_exit() {
+  local phase="$1"
+  local codex_exec_started="$2"
+  local detail detail_q registry_root_q
+
+  detail="$(codex_bwrap_tmp_write_check | compact_process_args || true)"
+  if [[ "$detail" == "ok" ]]; then
+    return 0
+  fi
+
+  detail_q="$(shell_quote "$detail")"
+  registry_root_q="$(shell_quote "$CODEX_BWRAP_TMP_ROOT")"
+  log_line "ERROR" "codex.bwrap_tmp_unwritable phase=$phase registry_root=$registry_root_q detail=$detail_q"
+  finish_cycle 3 CODEX_BWRAP_TMP_UNWRITABLE ERROR "phase=$phase codex_exec_started=$codex_exec_started registry_root=$registry_root_q detail=$detail_q"
 }
 
 compact_process_args() {
@@ -2955,6 +3145,7 @@ launch_screen_fallback_loop() {
   FALLBACK_SCREEN_SESSION_NAME="$session_name"
   FALLBACK_SCREEN_TRANSCRIPT_PATH="$transcript_file"
   FALLBACK_SCREEN_EXIT_CODE=""
+  FALLBACK_SCREEN_TRIGGER="$trigger"
 
   mkdir -p "$screen_root"
 
@@ -3172,6 +3363,25 @@ EOF
   return 0
 }
 
+screen_fallback_interruptible_poll_sleep() {
+  local session_name="$1"
+  local done_file="$2"
+  local requested_seconds="$3"
+  local remaining
+
+  remaining="$(sanitize_nonnegative_integer "$requested_seconds" 60)"
+  if [[ "$remaining" -lt 1 ]]; then
+    remaining=1
+  fi
+
+  while (( remaining > 0 )); do
+    [[ -f "$done_file" ]] && return 0
+    screen_session_exists "$session_name" || return 0
+    sleep 1
+    remaining=$((remaining - 1))
+  done
+}
+
 wait_for_screen_fallback_loop() {
   local trigger="$1"
   local session_name="$2"
@@ -3195,7 +3405,7 @@ wait_for_screen_fallback_loop() {
       heartbeat="$(read_artifact_or_unknown "$screen_root/heartbeat.txt")"
       completed_count="$(read_artifact_or_unknown "$screen_root/completed-child-count.txt")"
       log_line "INFO" "fallback.screen.wait execution_origin=screen trigger=$trigger session_name=$session_name status=running current_child_id=$current_child_id current_child_status=$current_child_status completed_children=$completed_count heartbeat=$heartbeat next_poll_seconds=$CODEX_FALLBACK_SCREEN_POLL_SECONDS"
-      sleep "$CODEX_FALLBACK_SCREEN_POLL_SECONDS"
+      screen_fallback_interruptible_poll_sleep "$session_name" "$done_file" "$CODEX_FALLBACK_SCREEN_POLL_SECONDS"
       continue
     fi
     current_child_id="$(read_artifact_or_unknown "$screen_root/current-child-cycle-id.txt")"
@@ -3217,7 +3427,7 @@ wait_for_screen_fallback_loop() {
   done
   FALLBACK_SCREEN_WATCH_ACTIVE="0"
 
-  screen -S "$session_name" -X quit >/dev/null 2>&1 || true
+  teardown_fallback_screen_session "wait_complete_$trigger"
 
   if [[ -f "$exit_file" ]]; then
     child_exit="$(tr -d '[:space:]' <"$exit_file")"
@@ -3360,15 +3570,17 @@ write_aux_environment_blocked_marker() {
   local target_model="$2"
   local last_message_file="$3"
   local detail="$4"
+  local reason="${5:-Codex local runtime is not writable}"
 
   cat >"$last_message_file" <<EOF
 Auxiliary Codex execution skipped before launch.
 
 phase: $phase_label
 model: $target_model
-reason: Codex session store is not writable
+reason: $reason
 code_home: $CODEX_HOME_DIR
 session_store: $CODEX_HOME_DIR/sessions
+bwrap_tmp_root: $CODEX_BWRAP_TMP_ROOT
 detail: $detail
 
 CODEX_POSTMORTEM_STATUS: BLOCKED
@@ -3382,7 +3594,7 @@ run_aux_codex_exec() {
   local mode_string="$4"
   local prompt_file="$5"
   local last_message_file="$6"
-  local session_store_detail session_store_detail_q
+  local session_store_detail session_store_detail_q bwrap_tmp_detail bwrap_tmp_detail_q
 
   local -a aux_mode_args=()
   read -r -a aux_mode_args <<<"$mode_string"
@@ -3405,6 +3617,18 @@ run_aux_codex_exec() {
     session_store_detail_q="$(shell_quote "$session_store_detail")"
     write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "$session_store_detail"
     log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=codex_session_store_unwritable code_home=$(shell_quote "$CODEX_HOME_DIR") session_store=$(shell_quote "$CODEX_HOME_DIR/sessions") detail=$session_store_detail_q"
+    return 87
+  fi
+
+  if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
+    bwrap_tmp_detail="ok"
+  else
+    bwrap_tmp_detail="$(codex_bwrap_tmp_write_check | compact_process_args || true)"
+  fi
+  if [[ "$bwrap_tmp_detail" != "ok" ]]; then
+    bwrap_tmp_detail_q="$(shell_quote "$bwrap_tmp_detail")"
+    write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "$bwrap_tmp_detail" "Codex bubblewrap temp registry is not writable"
+    log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=codex_bwrap_tmp_unwritable registry_root=$(shell_quote "$CODEX_BWRAP_TMP_ROOT") detail=$bwrap_tmp_detail_q"
     return 87
   fi
 
@@ -3517,6 +3741,224 @@ parse_postmortem_marker() {
     printf '%s' "$accepted"
   elif [[ -n "$candidate" && "$reason" != "decorated_marker" ]]; then
     printf '%s' "$candidate"
+  fi
+}
+
+review_report_summary_json() {
+  local last_message_file="$1"
+
+  python3 - "$last_message_file" <<'PY'
+import json
+import re
+import sys
+
+path = sys.argv[1]
+empty = {
+    "outcome": "",
+    "selected_file": "",
+    "findings": "",
+    "changes": "",
+    "verification": "",
+}
+
+try:
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+except OSError:
+    print(json.dumps(empty, separators=(",", ":")))
+    raise SystemExit(0)
+
+lines = [line.strip() for line in text.splitlines()]
+
+
+def clean(value, max_len=700):
+    value = re.sub(r"\s+", " ", value.strip())
+    if len(value) > max_len:
+        value = value[: max_len - 15].rstrip() + "...<truncated>"
+    return value
+
+
+def normalized(line):
+    value = line.strip()
+    value = re.sub(r"^[#>*\-\d\.\s`]+", "", value)
+    value = value.strip("`*: ")
+    return re.sub(r"\s+", " ", value).lower()
+
+
+def compact_items(items, max_items=6, max_len=700):
+    cleaned = []
+    for item in items:
+        item = item.strip()
+        if not item:
+            continue
+        if item.startswith("UPKEEPER_STATUS:") or item.startswith("CODEX_POSTMORTEM_STATUS:"):
+            continue
+        item = re.sub(r"^[-*]\s+", "", item)
+        item = re.sub(r"^\d+[.)]\s+", "", item)
+        item = item.strip("` ")
+        if item:
+            cleaned.append(item)
+        if len(cleaned) >= max_items:
+            break
+    return clean("; ".join(cleaned), max_len=max_len)
+
+
+def no_change_summary(value):
+    value = re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+    if not value:
+        return False
+    return (
+        value in {"none", "n a", "not applicable"}
+        or value.startswith("no changes")
+        or value.startswith("no fixes")
+        or value.startswith("no code changes")
+        or value.startswith("nothing changed")
+    )
+
+
+def capture_section(names):
+    known_headers = (
+        "review run",
+        "file selection",
+        "selected file",
+        "file selected",
+        "target file",
+        "prompts run",
+        "prompts applied",
+        "findings",
+        "implemented fix",
+        "implemented fixes",
+        "applied change",
+        "applied changes",
+        "changes applied",
+        "changes proposed",
+        "changes",
+        "test results",
+        "required persistence verification",
+        "verification",
+        "outcome",
+        "final status",
+        "final status marker",
+    )
+    capturing = False
+    items = []
+    for line in lines:
+        norm = normalized(line)
+        if any(norm.startswith(name) for name in names):
+            capturing = True
+            if ":" in line:
+                rest = line.split(":", 1)[1].strip()
+                if rest:
+                    items.append(rest)
+            continue
+        if not capturing:
+            continue
+        if not line:
+            continue
+        norm = normalized(line)
+        if any(norm.startswith(header) for header in known_headers):
+            break
+        if line.startswith("UPKEEPER_STATUS:"):
+            break
+        items.append(line)
+        if len(items) >= 10:
+            break
+    return compact_items(items)
+
+
+outcome = ""
+for line in lines:
+    match = re.search(r"\b(REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", line)
+    if match:
+        outcome = match.group(1)
+        break
+
+selected_file = ""
+for index, line in enumerate(lines):
+    norm = normalized(line)
+    if not norm.startswith(("selected file", "file selected", "target file")):
+        continue
+    source = line
+    if ":" not in source and index + 1 < len(lines):
+        source = lines[index + 1]
+    markdown_link = re.search(r"\]\(([^)]+)\)", source)
+    if markdown_link:
+        selected_file = markdown_link.group(1).split(":", 1)[0]
+    elif ":" in source:
+        selected_file = source.split(":", 1)[1].strip()
+    else:
+        selected_file = source.strip("- ")
+    selected_file = clean(selected_file, 240)
+    break
+
+findings = capture_section(("findings",))
+changes = capture_section(
+    (
+        "implemented fix",
+        "implemented fixes",
+        "applied change",
+        "applied changes",
+        "changes applied",
+    )
+)
+verification = capture_section(
+    (
+        "required persistence verification",
+        "test results",
+        "verification",
+    )
+)
+if outcome != "REVIEWED_AND_FIXED" and no_change_summary(changes):
+    changes = ""
+
+if outcome == "REVIEWED_AND_FIXED" and not changes:
+    fallback = []
+    for line in lines:
+        lowered = line.lower()
+        if line.startswith("UPKEEPER_STATUS:"):
+            continue
+        if "fix" in lowered or "change" in lowered:
+            fallback.append(line)
+    changes = compact_items(fallback)
+
+print(
+    json.dumps(
+        {
+            "outcome": outcome,
+            "selected_file": selected_file,
+            "findings": findings,
+            "changes": changes,
+            "verification": verification,
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
+log_review_report_summary() {
+  local last_message_file="$1"
+  local status_marker_value="${2:-missing}"
+  local codex_exit_value="${3:-unknown}"
+  local summary_json outcome selected_file findings changes verification
+
+  summary_json="$(review_report_summary_json "$last_message_file")"
+  outcome="$(json_field "$summary_json" '.outcome // ""')"
+  selected_file="$(json_field "$summary_json" '.selected_file // ""')"
+  findings="$(json_field "$summary_json" '.findings // ""')"
+  changes="$(json_field "$summary_json" '.changes // ""')"
+  verification="$(json_field "$summary_json" '.verification // ""')"
+
+  if [[ -z "$outcome" && -z "$selected_file" && -z "$findings" && -z "$changes" && -z "$verification" ]]; then
+    return 0
+  fi
+
+  [[ -n "$outcome" ]] || outcome="unknown"
+  [[ -n "$selected_file" ]] || selected_file="unknown"
+  log_line "INFO" "review.summary status_marker=${status_marker_value:-missing} review_outcome=$outcome selected_file=$(shell_quote "$selected_file") findings=$(shell_quote "$findings") changes=$(shell_quote "$changes") verification=$(shell_quote "$verification") codex_exit=$codex_exit_value"
+
+  if [[ "$outcome" == "REVIEWED_AND_FIXED" || ( "$outcome" == "unknown" && -n "$changes" ) ]]; then
+    log_line "INFO" "review.fix_details review_outcome=$outcome selected_file=$(shell_quote "$selected_file") findings=$(shell_quote "$findings") changes=$(shell_quote "$changes")"
   fi
 }
 
@@ -3879,7 +4321,7 @@ The fallback child exit recorded by the wrapper was \`$child_exit\`. The scripte
 ## Relaunch Checklist
 - [ ] Confirm \`Upkeeper.log\` has a current exact-model quota snapshot for \`$target_model\`.
 - [ ] Confirm projected 5-hour and weekly remaining capacity are above \`$five_hour_threshold%\` and \`$week_threshold%\`.
-- [ ] Relaunch \`while ./Upkeeper.sh; do sleep 60; done\` from a clean terminal.
+- [ ] Relaunch \`while ./$SCRIPT_NAME; do sleep 60; done\` from a clean terminal.
 ## Hardening Outcome
 - No auxiliary hardening Codex pass was launched because the quota guardrail blocked \`$skipped_phase\`.
 - This shell-generated report exists so the incident remains documentable without spending the constrained model bucket.
@@ -3904,7 +4346,7 @@ write_environment_skipped_postmortem_report() {
 ## Incident Summary
 Cycle \`$CYCLE_ID\` entered fallback handling for \`$trigger\` after: $detail_text.
 
-The fallback child exit recorded by the wrapper was \`$child_exit\`. The scripted \`$skipped_phase\` Codex pass was intentionally skipped before launch because the local Codex session store for \`$target_model\` was not writable. This is a local filesystem/environment failure, not a backend-lane or model-response failure.
+The fallback child exit recorded by the wrapper was \`$child_exit\`. The scripted \`$skipped_phase\` Codex pass was intentionally skipped before launch because the local Codex runtime for \`$target_model\` was not writable. This is a local filesystem/environment failure, not a backend-lane or model-response failure.
 ## Observed Signals
 - Trigger: \`$trigger\`.
 - Detail: \`$detail_text\`.
@@ -3913,25 +4355,27 @@ The fallback child exit recorded by the wrapper was \`$child_exit\`. The scripte
 - Skipped auxiliary model: \`$target_model\`.
 - CODEX_HOME: \`$CODEX_HOME_DIR\`.
 - Session store: \`$CODEX_HOME_DIR/sessions\`.
+- Bubblewrap temp registry: \`$CODEX_BWRAP_TMP_ROOT\`.
 - Write-check detail: \`$environment_detail\`.
 - Incident context: \`$POSTMORTEM_CONTEXT_PATH\`.
 - Incident log: \`$POSTMORTEM_INCIDENT_LOG_PATH\`.
 ## Root Cause Hypotheses
-- The wrapper was launched from an environment where \`$CODEX_HOME_DIR/sessions\` could not be created, written, or cleaned up.
+- The wrapper was launched from an environment where either \`$CODEX_HOME_DIR/sessions\` or \`$CODEX_BWRAP_TMP_ROOT\` could not be created, written, or cleaned up.
 - Because Codex creates a session before model work starts, primary, fallback, report, and hardening Codex calls would all fail the same way until the local filesystem or \`CODEX_HOME\` is fixed.
 ## Action Plan
 - [ ] Confirm the current terminal or container can write to \`$CODEX_HOME_DIR/sessions\`.
+- [ ] Confirm the current terminal or container can write to \`$CODEX_BWRAP_TMP_ROOT\` and its \`lock\` file.
 - [ ] If the home directory is intentionally read-only, relaunch with \`CODEX_HOME\` pointed at a writable local directory.
-- [ ] Keep fallback and postmortem Codex execs blocked until the session-store write check passes.
+- [ ] Keep fallback and postmortem Codex execs blocked until local Codex runtime write checks pass.
 ## Hardening Targets
-- Wrapper/logging/prompt/guardrail fixes: keep live Codex execs behind a session-store write preflight and classify failures as local environment problems before attempting fallback.
-- Repo-lane fixes: do not treat this incident as evidence of a backend task failure; resume the active repo lane only after the local Codex session store is writable.
+- Wrapper/logging/prompt/guardrail fixes: keep live Codex execs behind local runtime write preflights and classify failures as local environment problems before attempting fallback.
+- Repo-lane fixes: do not treat this incident as evidence of a backend task failure; resume the active repo lane only after the local Codex runtime is writable.
 ## Relaunch Checklist
-- [ ] Run the wrapper from a terminal with writable \`CODEX_HOME\` and \`$CODEX_HOME_DIR/sessions\`.
+- [ ] Run the wrapper from a terminal with writable \`CODEX_HOME\`, \`$CODEX_HOME_DIR/sessions\`, and \`$CODEX_BWRAP_TMP_ROOT\`.
 - [ ] Confirm projected 5-hour capacity is above \`$five_hour_threshold%\` for \`$target_model\`, and weekly/main capacity is above \`$week_threshold%\`.
-- [ ] Relaunch \`while ./Upkeeper.sh; do sleep 60; done\` from the repo root.
+- [ ] Relaunch \`while ./$SCRIPT_NAME; do sleep 60; done\` from the repo root.
 ## Hardening Outcome
-- No auxiliary hardening Codex pass was launched because the local Codex session store was not writable.
+- No auxiliary hardening Codex pass was launched because the local Codex runtime was not writable.
 - This shell-generated report exists so the incident remains documentable without recursively launching Codex in the same broken environment.
 EOF
 }
@@ -4077,14 +4521,18 @@ EOF
   fi
 
   if [[ "$report_exit" -eq 87 ]]; then
-    local report_environment_detail
+    local report_environment_detail report_environment_reason
     report_environment_detail="$(awk '/^detail: / { sub(/^detail: /, ""); print; exit }' "$report_last_message" || true)"
     if [[ -z "$report_environment_detail" ]]; then
       report_environment_detail="unknown"
     fi
+    report_environment_reason="$(awk '/^reason: / { sub(/^reason: /, ""); print; exit }' "$report_last_message" || true)"
+    if [[ -z "$report_environment_reason" ]]; then
+      report_environment_reason="local Codex runtime is not writable"
+    fi
     POSTMORTEM_SEQUENCE_STATUS="report_environment_skipped"
     write_environment_skipped_postmortem_report "$report_path" "$trigger" "$detail_text" "$child_exit" "postmortem.report" "$CODEX_POSTMORTEM_MODEL" "$report_environment_detail"
-    log_line "WARN" "postmortem.report skipped reason=codex_session_store_unwritable exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path"
+    log_line "WARN" "postmortem.report skipped reason=local_codex_runtime_unwritable environment_reason=$(shell_quote "$report_environment_reason") exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
     rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
@@ -4125,10 +4573,10 @@ EOF
     cat >>"$report_path" <<EOF
 
 ## Hardening Outcome
-- The scripted hardening Codex pass was skipped before launch because \`$CODEX_HOME_DIR/sessions\` was not writable.
+- The scripted hardening Codex pass was skipped before launch because the local Codex runtime was not writable.
 - The report was preserved and the wrapper stopped for manual relaunch instead of recursively launching Codex in the same broken environment.
 EOF
-    log_line "WARN" "postmortem.hardening skipped reason=codex_session_store_unwritable exit_code=$hardening_exit marker=${hardening_marker:-missing} report_path=$report_path"
+    log_line "WARN" "postmortem.hardening skipped reason=local_codex_runtime_unwritable exit_code=$hardening_exit marker=${hardening_marker:-missing} report_path=$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
     rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
@@ -4162,8 +4610,18 @@ run_fallback_cycle() {
   local detail_text="${*:-none}"
   local child_exit=0
   local source_model="$CODEX_MODEL"
+  local bwrap_tmp_detail bwrap_tmp_detail_q
 
-  if [[ "$CODEX_FALLBACK_SCREEN_ENABLED" == "1" ]]; then
+  if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
+    bwrap_tmp_detail="ok"
+  else
+    bwrap_tmp_detail="$(codex_bwrap_tmp_write_check | compact_process_args || true)"
+  fi
+  if [[ "$bwrap_tmp_detail" != "ok" ]]; then
+    bwrap_tmp_detail_q="$(shell_quote "$bwrap_tmp_detail")"
+    log_line "WARN" "fallback.skip trigger=$trigger reason=codex_bwrap_tmp_unwritable registry_root=$(shell_quote "$CODEX_BWRAP_TMP_ROOT") detail=$bwrap_tmp_detail_q"
+    child_exit=3
+  elif [[ "$CODEX_FALLBACK_SCREEN_ENABLED" == "1" ]]; then
     if ! launch_screen_fallback_loop "$trigger" "$detail_text"; then
       log_line "ERROR" "fallback.screen.start failed trigger=$trigger"
       child_exit=8
@@ -4546,6 +5004,7 @@ main() {
   fi
 
   ensure_codex_session_store_writable_or_exit "before_run" "0"
+  ensure_codex_bwrap_tmp_writable_or_exit "before_run" "0"
   log_line "INFO" "run.start execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=${PROMPT_FILE:-inline/default} compiled_prompt=$compiled_prompt_file"
 
   set +e
@@ -4681,6 +5140,7 @@ main() {
   fi
   primary_failure_classification="none"
   log_line "INFO" "cycle.summary execution_origin=$CODEX_EXECUTION_ORIGIN model=$CODEX_MODEL observed_primary_delta=$observed_primary_delta observed_secondary_delta=$observed_secondary_delta observed_delta_status=$observed_delta_status status_marker=${status_marker:-missing} status_marker_source=$status_marker_source session_end_state=$session_end_state agent_messages=$primary_session_agent_message_count tool_calls=$primary_session_tool_call_count tool_results=$primary_session_tool_result_count task_complete_last_agent_message=$primary_session_task_complete_last_agent_message codex_exit=$codex_exit"
+  log_review_report_summary "$last_message_file" "${status_marker:-missing}" "$codex_exit"
 
   if [[ "$after_selection" == "exact_model" ]]; then
     if [[ "$after_primary_guardrail_decision" == "stop" ]]; then
@@ -4704,6 +5164,7 @@ main() {
   if [[ "$post_run_should_stop" -eq 1 ]]; then
     if [[ "$codex_exit" -ne 0 ]]; then
       ensure_codex_session_store_writable_or_exit "after_run" "1"
+      ensure_codex_bwrap_tmp_writable_or_exit "after_run" "1"
     fi
     if [[ "$codex_exit" -ne 0 && -z "$status_marker" && "$session_end_state" == "no_agent_message" ]]; then
       primary_failure_classification="PRIMARY_NO_AGENT_MESSAGE_AFTER_QUOTA_EXHAUSTION"
@@ -4766,6 +5227,7 @@ main() {
     *)
       if [[ "$codex_exit" -ne 0 ]]; then
         ensure_codex_session_store_writable_or_exit "after_run" "1"
+        ensure_codex_bwrap_tmp_writable_or_exit "after_run" "1"
       fi
       if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_FAILURE" == "1" ]] && fallback_available; then
         local fallback_exit
@@ -4792,5 +5254,6 @@ main() {
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   trap 'handle_wrapper_signal INT' INT
   trap 'handle_wrapper_signal TERM' TERM
+  trap 'handle_wrapper_signal HUP' HUP
   main "$@"
 fi

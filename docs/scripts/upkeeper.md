@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.7
+Version: v1.0.8
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -28,8 +28,9 @@ Each invocation:
          plus any model-specific weekly safety buffer
      then it terminates the parent shell running the loop and exits without
      starting a new Codex run, unless fallback handoff is enabled.
-  5. Before launching Codex, verifies that $CODEX_HOME/sessions and Codex's
-     shared bubblewrap temp registry are writable.
+  5. Before launching Codex, verifies that $CODEX_HOME/sessions is writable,
+     stale Codex arg0 temp shims can be cleaned or quarantined, and Codex's
+     shared bubblewrap temp registry is writable.
   6. Otherwise it runs exactly one codex exec cycle and exits.
   7. If the primary model fails, blocks, or exhausts its bucket, it can hand off
      to one stronger fallback cycle in the
@@ -67,6 +68,12 @@ Loop stop semantics:
   - live primary, fallback, and auxiliary Codex calls also preflight Codex's
     shared bubblewrap temp registry; a stale root-owned registry is classified
     as a local environment failure before launching another Codex process
+  - live primary and auxiliary Codex calls also preflight `$CODEX_HOME/tmp/arg0`;
+    stale flat `codex-arg0*` shim directories are removed when owned by the
+    operator and moved to `$CODEX_HOME/arg0-quarantine` when they are stale but
+    root-owned; if a stale root-owned child cannot be moved individually, the
+    wrapper rotates the whole arg0 root and recreates it empty, avoiding Codex's
+    vague stale-arg0 cleanup warning
   - if you press Ctrl-C while the primary wrapper is watching a detached recovery
     screen session, the wrapper first checks whether the child already finished,
     then tears down any still-running recovery session before exiting
@@ -161,6 +168,11 @@ Environment overrides:
   CODEX_EXECUTION_ORIGIN         Default: primary
   CODEX_BWRAP_TMP_ROOT           Default: /tmp/codex-bwrap-synthetic-mount-targets
   CODEX_BWRAP_TMP_PREFLIGHT      Default: 1
+  CODEX_ARG0_TMP_ROOT            Default: $CODEX_HOME/tmp/arg0
+  CODEX_ARG0_TMP_QUARANTINE_ROOT Default: $CODEX_HOME/arg0-quarantine
+  CODEX_ARG0_TMP_PREFLIGHT       Default: 1
+  CODEX_ARG0_TMP_STALE_MINUTES   Default: 60
+  CODEX_ARG0_TMP_ROTATE_ON_BLOCKED Default: 1
   CODEX_SESSION_SCAN_LIMIT      Default: 200
   CODEX_LOG_FILE                Default: Upkeeper.log
   UPKEEPER_DRY_RUN           Default: 0

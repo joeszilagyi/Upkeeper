@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.7
+## Version: v1.0.8
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -32,7 +32,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.7"
+UPKEEPER_VERSION="v1.0.8"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -84,6 +84,11 @@ CODEX_GUARDRAIL_STOP_EXIT_CODE="${CODEX_GUARDRAIL_STOP_EXIT_CODE:-0}"
 CODEX_EXECUTION_ORIGIN="${CODEX_EXECUTION_ORIGIN:-primary}"
 CODEX_BWRAP_TMP_ROOT="${CODEX_BWRAP_TMP_ROOT:-/tmp/codex-bwrap-synthetic-mount-targets}"
 CODEX_BWRAP_TMP_PREFLIGHT="${CODEX_BWRAP_TMP_PREFLIGHT:-1}"
+CODEX_ARG0_TMP_ROOT="${CODEX_ARG0_TMP_ROOT:-$CODEX_HOME_DIR/tmp/arg0}"
+CODEX_ARG0_TMP_QUARANTINE_ROOT="${CODEX_ARG0_TMP_QUARANTINE_ROOT:-$CODEX_HOME_DIR/arg0-quarantine}"
+CODEX_ARG0_TMP_PREFLIGHT="${CODEX_ARG0_TMP_PREFLIGHT:-1}"
+CODEX_ARG0_TMP_STALE_MINUTES="${CODEX_ARG0_TMP_STALE_MINUTES:-60}"
+CODEX_ARG0_TMP_ROTATE_ON_BLOCKED="${CODEX_ARG0_TMP_ROTATE_ON_BLOCKED:-1}"
 UPKEEPER_DRY_RUN="${UPKEEPER_DRY_RUN:-0}"
 
 declare -a CODEX_MODE_ARGS=()
@@ -131,8 +136,9 @@ Each invocation:
          plus any model-specific weekly safety buffer
      then it terminates the parent shell running the loop and exits without
      starting a new Codex run, unless fallback handoff is enabled.
-  5. Before launching Codex, verifies that $CODEX_HOME_DIR/sessions and Codex's
-     shared bubblewrap temp registry are writable.
+  5. Before launching Codex, verifies that $CODEX_HOME_DIR/sessions is writable,
+     stale Codex arg0 temp shims can be cleaned or quarantined, and Codex's
+     shared bubblewrap temp registry is writable.
   6. Otherwise it runs exactly one codex exec cycle and exits.
   7. If the primary model fails, blocks, or exhausts its bucket, it can hand off
      to one stronger fallback cycle in the
@@ -170,6 +176,12 @@ Loop stop semantics:
   - live primary, fallback, and auxiliary Codex calls also preflight Codex's
     shared bubblewrap temp registry; a stale root-owned registry is classified
     as a local environment failure before launching another Codex process
+  - live primary and auxiliary Codex calls also preflight $CODEX_ARG0_TMP_ROOT;
+    stale flat codex-arg0* shim directories are removed when owned by the
+    operator and moved to $CODEX_ARG0_TMP_QUARANTINE_ROOT when they are stale
+    but root-owned; if a stale root-owned child cannot be moved individually,
+    the wrapper rotates the whole arg0 root and recreates it empty, avoiding
+    Codex's vague stale-arg0 cleanup warning
   - if you press Ctrl-C while the primary wrapper is watching a detached recovery
     screen session, the wrapper first checks whether the child already finished,
     then tears down any still-running recovery session before exiting
@@ -264,6 +276,11 @@ Environment overrides:
   CODEX_EXECUTION_ORIGIN         Default: primary
   CODEX_BWRAP_TMP_ROOT           Default: /tmp/codex-bwrap-synthetic-mount-targets
   CODEX_BWRAP_TMP_PREFLIGHT      Default: 1
+  CODEX_ARG0_TMP_ROOT            Default: $CODEX_HOME_DIR/tmp/arg0
+  CODEX_ARG0_TMP_QUARANTINE_ROOT Default: $CODEX_HOME_DIR/arg0-quarantine
+  CODEX_ARG0_TMP_PREFLIGHT       Default: 1
+  CODEX_ARG0_TMP_STALE_MINUTES   Default: 60
+  CODEX_ARG0_TMP_ROTATE_ON_BLOCKED Default: 1
   CODEX_SESSION_SCAN_LIMIT      Default: 200
   CODEX_LOG_FILE                Default: $ROOT_DIR/Upkeeper.log
   UPKEEPER_DRY_RUN           Default: 0
@@ -1001,6 +1018,148 @@ ensure_codex_bwrap_tmp_writable_or_exit() {
   registry_root_q="$(shell_quote "$CODEX_BWRAP_TMP_ROOT")"
   log_line "ERROR" "codex.bwrap_tmp_unwritable phase=$phase registry_root=$registry_root_q detail=$detail_q"
   finish_cycle 3 CODEX_BWRAP_TMP_UNWRITABLE ERROR "phase=$phase codex_exec_started=$codex_exec_started registry_root=$registry_root_q detail=$detail_q"
+}
+
+remove_flat_codex_arg0_dir() {
+  local dir="$1"
+  local err_file="$2"
+
+  # Codex arg0 dirs are flat symlink shims plus a .lock file. Do not recurse:
+  # if a future Codex version writes nested state, quarantine the directory
+  # instead of deleting unknown content.
+  if ! find "$dir" -mindepth 1 -maxdepth 1 -exec rm -f -- {} + 2>"$err_file"; then
+    return 1
+  fi
+  if ! rmdir "$dir" 2>"$err_file"; then
+    return 1
+  fi
+}
+
+codex_arg0_tmp_cleanup_check() {
+  local arg0_root="$CODEX_ARG0_TMP_ROOT"
+  local quarantine_root="$CODEX_ARG0_TMP_QUARANTINE_ROOT"
+  local stale_minutes="$CODEX_ARG0_TMP_STALE_MINUTES"
+  local err_file
+  local candidate base quarantine detail
+  local rotated_root
+  local removed=0
+  local quarantined=0
+  local blocked=()
+  local quarantines=()
+  local candidates=()
+
+  if [[ "$CODEX_ARG0_TMP_PREFLIGHT" != "1" ]]; then
+    printf 'ok'
+    return 0
+  fi
+
+  case "$stale_minutes" in ''|*[!0-9]*) stale_minutes=60 ;; esac
+
+  if ! err_file="$(mktemp)"; then
+    printf 'mktemp_failed'
+    return 1
+  fi
+
+  if [[ -e "$arg0_root" && ! -d "$arg0_root" ]]; then
+    printf 'not_directory:%s' "$arg0_root"
+    rm -f "$err_file"
+    return 1
+  fi
+
+  if ! mkdir -p "$arg0_root" 2>"$err_file"; then
+    printf 'mkdir_failed:%s' "$(tr '\n' ' ' <"$err_file")"
+    rm -f "$err_file"
+    return 1
+  fi
+
+  if [[ ! -w "$arg0_root" || ! -x "$arg0_root" ]]; then
+    printf 'root_not_writable:%s' "$arg0_root"
+    rm -f "$err_file"
+    return 1
+  fi
+
+  mapfile -d '' candidates < <(find "$arg0_root" -mindepth 1 -maxdepth 1 -type d -mmin "+$stale_minutes" -print0 2>"$err_file")
+  if [[ -s "$err_file" ]]; then
+    printf 'find_failed:%s' "$(tr '\n' ' ' <"$err_file")"
+    rm -f "$err_file"
+    return 1
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    [[ -d "$candidate" && ! -L "$candidate" ]] || continue
+    : >"$err_file"
+    if remove_flat_codex_arg0_dir "$candidate" "$err_file"; then
+      removed=$((removed + 1))
+      continue
+    fi
+
+    if ! mkdir -p "$quarantine_root" 2>"$err_file"; then
+      detail="$(tr '\n' ' ' <"$err_file")"
+      blocked+=("$candidate:quarantine_mkdir_failed:${detail:-unknown_error}")
+      continue
+    fi
+
+    base="$(basename -- "$candidate")"
+    quarantine="$quarantine_root/${base}-$(date '+%Y%m%dT%H%M%S%z')-$$"
+    : >"$err_file"
+    if mv -- "$candidate" "$quarantine" 2>"$err_file"; then
+      quarantined=$((quarantined + 1))
+      quarantines+=("$candidate->$quarantine")
+      continue
+    fi
+
+    detail="$(tr '\n' ' ' <"$err_file")"
+    blocked+=("$candidate:${detail:-unknown_error}")
+  done
+
+  rm -f "$err_file"
+
+  if [[ "${#blocked[@]}" -gt 0 ]]; then
+    if [[ "$CODEX_ARG0_TMP_ROTATE_ON_BLOCKED" == "1" ]]; then
+      rotated_root="${CODEX_HOME_DIR}/tmp/arg0-rotated-$(date '+%Y%m%dT%H%M%S%z')-$$"
+      if mv -- "$arg0_root" "$rotated_root" >/dev/null 2>&1 && mkdir -p "$arg0_root" >/dev/null 2>&1 && chmod 700 "$arg0_root" >/dev/null 2>&1; then
+        printf 'ok removed=%s quarantined=%s rotated=1 rotated_root=%s blocked_entries=%s' \
+          "$removed" \
+          "$quarantined" \
+          "$rotated_root" \
+          "$(IFS=';'; printf '%s' "${blocked[*]}")"
+        return 0
+      fi
+    fi
+    printf 'blocked:%s' "$(IFS=';'; printf '%s' "${blocked[*]}")"
+    return 1
+  fi
+
+  if [[ "$removed" -gt 0 || "$quarantined" -gt 0 ]]; then
+    printf 'ok removed=%s quarantined=%s' "$removed" "$quarantined"
+    if [[ "${#quarantines[@]}" -gt 0 ]]; then
+      printf ' quarantine_paths=%s' "$(IFS=';'; printf '%s' "${quarantines[*]}")"
+    fi
+    return 0
+  fi
+
+  printf 'ok'
+}
+
+ensure_codex_arg0_tmp_clean_or_exit() {
+  local phase="$1"
+  local codex_exec_started="$2"
+  local detail detail_q arg0_root_q
+
+  detail="$(codex_arg0_tmp_cleanup_check | compact_process_args || true)"
+  if [[ "$detail" == "ok" ]]; then
+    return 0
+  fi
+
+  detail_q="$(shell_quote "$detail")"
+  arg0_root_q="$(shell_quote "$CODEX_ARG0_TMP_ROOT")"
+  if [[ "$detail" == ok\ * ]]; then
+    log_line "INFO" "codex.arg0_tmp_cleanup phase=$phase arg0_root=$arg0_root_q detail=$detail_q"
+    return 0
+  fi
+
+  log_line "ERROR" "codex.arg0_tmp_uncleanable phase=$phase arg0_root=$arg0_root_q detail=$detail_q"
+  finish_cycle 3 CODEX_ARG0_TMP_UNCLEANABLE ERROR "phase=$phase codex_exec_started=$codex_exec_started arg0_root=$arg0_root_q detail=$detail_q"
 }
 
 compact_process_args() {
@@ -3617,6 +3776,8 @@ model: $target_model
 reason: $reason
 code_home: $CODEX_HOME_DIR
 session_store: $CODEX_HOME_DIR/sessions
+arg0_tmp_root: $CODEX_ARG0_TMP_ROOT
+arg0_quarantine_root: $CODEX_ARG0_TMP_QUARANTINE_ROOT
 bwrap_tmp_root: $CODEX_BWRAP_TMP_ROOT
 detail: $detail
 
@@ -3631,7 +3792,7 @@ run_aux_codex_exec() {
   local mode_string="$4"
   local prompt_file="$5"
   local last_message_file="$6"
-  local session_store_detail session_store_detail_q bwrap_tmp_detail bwrap_tmp_detail_q
+  local session_store_detail session_store_detail_q arg0_tmp_detail arg0_tmp_detail_q bwrap_tmp_detail bwrap_tmp_detail_q
 
   local -a aux_mode_args=()
   read -r -a aux_mode_args <<<"$mode_string"
@@ -3655,6 +3816,18 @@ run_aux_codex_exec() {
     write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "$session_store_detail"
     log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=codex_session_store_unwritable code_home=$(shell_quote "$CODEX_HOME_DIR") session_store=$(shell_quote "$CODEX_HOME_DIR/sessions") detail=$session_store_detail_q"
     return 87
+  fi
+
+  arg0_tmp_detail="$(codex_arg0_tmp_cleanup_check | compact_process_args || true)"
+  if [[ "$arg0_tmp_detail" != "ok" && "$arg0_tmp_detail" != ok\ * ]]; then
+    arg0_tmp_detail_q="$(shell_quote "$arg0_tmp_detail")"
+    write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "$arg0_tmp_detail" "Codex arg0 temp directory contains uncleanable stale entries"
+    log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=codex_arg0_tmp_uncleanable arg0_root=$(shell_quote "$CODEX_ARG0_TMP_ROOT") detail=$arg0_tmp_detail_q"
+    return 87
+  fi
+  if [[ "$arg0_tmp_detail" == ok\ * ]]; then
+    arg0_tmp_detail_q="$(shell_quote "$arg0_tmp_detail")"
+    log_line "INFO" "$phase_label.arg0_tmp_cleanup model=$model arg0_root=$(shell_quote "$CODEX_ARG0_TMP_ROOT") detail=$arg0_tmp_detail_q"
   fi
 
   if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
@@ -4414,15 +4587,18 @@ The fallback child exit recorded by the wrapper was \`$child_exit\`. The scripte
 - Skipped auxiliary model: \`$target_model\`.
 - CODEX_HOME: \`$CODEX_HOME_DIR\`.
 - Session store: \`$CODEX_HOME_DIR/sessions\`.
+- Arg0 temp root: \`$CODEX_ARG0_TMP_ROOT\`.
+- Arg0 quarantine root: \`$CODEX_ARG0_TMP_QUARANTINE_ROOT\`.
 - Bubblewrap temp registry: \`$CODEX_BWRAP_TMP_ROOT\`.
 - Write-check detail: \`$environment_detail\`.
 - Incident context: \`$POSTMORTEM_CONTEXT_PATH\`.
 - Incident log: \`$POSTMORTEM_INCIDENT_LOG_PATH\`.
 ## Root Cause Hypotheses
-- The wrapper was launched from an environment where either \`$CODEX_HOME_DIR/sessions\` or \`$CODEX_BWRAP_TMP_ROOT\` could not be created, written, or cleaned up.
+- The wrapper was launched from an environment where \`$CODEX_HOME_DIR/sessions\`, \`$CODEX_ARG0_TMP_ROOT\`, or \`$CODEX_BWRAP_TMP_ROOT\` could not be created, written, or cleaned up.
 - Because Codex creates a session before model work starts, primary, fallback, report, and hardening Codex calls would all fail the same way until the local filesystem or \`CODEX_HOME\` is fixed.
 ## Action Plan
 - [ ] Confirm the current terminal or container can write to \`$CODEX_HOME_DIR/sessions\`.
+- [ ] Confirm stale \`$CODEX_ARG0_TMP_ROOT/codex-arg0*\` shim directories can be removed or moved to \`$CODEX_ARG0_TMP_QUARANTINE_ROOT\`.
 - [ ] Confirm the current terminal or container can write to \`$CODEX_BWRAP_TMP_ROOT\` and its \`lock\` file.
 - [ ] If the home directory is intentionally read-only, relaunch with \`CODEX_HOME\` pointed at a writable local directory.
 - [ ] Keep fallback and postmortem Codex execs blocked until local Codex runtime write checks pass.
@@ -4430,7 +4606,7 @@ The fallback child exit recorded by the wrapper was \`$child_exit\`. The scripte
 - Wrapper/logging/prompt/guardrail fixes: keep live Codex execs behind local runtime write preflights and classify failures as local environment problems before attempting fallback.
 - Repo-lane fixes: do not treat this incident as evidence of a backend task failure; resume the active repo lane only after the local Codex runtime is writable.
 ## Relaunch Checklist
-- [ ] Run the wrapper from a terminal with writable \`CODEX_HOME\`, \`$CODEX_HOME_DIR/sessions\`, and \`$CODEX_BWRAP_TMP_ROOT\`.
+- [ ] Run the wrapper from a terminal with writable \`CODEX_HOME\`, \`$CODEX_HOME_DIR/sessions\`, \`$CODEX_ARG0_TMP_ROOT\`, \`$CODEX_ARG0_TMP_QUARANTINE_ROOT\`, and \`$CODEX_BWRAP_TMP_ROOT\`.
 - [ ] Confirm projected 5-hour capacity is above \`$five_hour_threshold%\` for \`$target_model\`, and weekly/main capacity is above \`$week_threshold%\`.
 - [ ] Relaunch \`while ./$SCRIPT_NAME; do sleep 60; done\` from the repo root.
 ## Hardening Outcome
@@ -5063,6 +5239,7 @@ main() {
   fi
 
   ensure_codex_session_store_writable_or_exit "before_run" "0"
+  ensure_codex_arg0_tmp_clean_or_exit "before_run" "0"
   ensure_codex_bwrap_tmp_writable_or_exit "before_run" "0"
   log_line "INFO" "run.start execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=${PROMPT_FILE:-inline/default} compiled_prompt=$compiled_prompt_file"
 
@@ -5223,6 +5400,7 @@ main() {
   if [[ "$post_run_should_stop" -eq 1 ]]; then
     if [[ "$codex_exit" -ne 0 ]]; then
       ensure_codex_session_store_writable_or_exit "after_run" "1"
+      ensure_codex_arg0_tmp_clean_or_exit "after_run" "1"
       ensure_codex_bwrap_tmp_writable_or_exit "after_run" "1"
     fi
     if [[ "$codex_exit" -ne 0 && -z "$status_marker" && "$session_end_state" == "no_agent_message" ]]; then
@@ -5286,6 +5464,7 @@ main() {
     *)
       if [[ "$codex_exit" -ne 0 ]]; then
         ensure_codex_session_store_writable_or_exit "after_run" "1"
+        ensure_codex_arg0_tmp_clean_or_exit "after_run" "1"
         ensure_codex_bwrap_tmp_writable_or_exit "after_run" "1"
       fi
       if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_FAILURE" == "1" ]] && fallback_available; then

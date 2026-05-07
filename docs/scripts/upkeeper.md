@@ -12,10 +12,10 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh]
+Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.24
+Version: v1.0.25
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -187,7 +187,12 @@ Prompt behavior:
   - --prompt TEXT appends extra task guidance inline.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5
     with xhigh reasoning effort. It is a CLI-only operator override and does
-    not persist to later loop iterations.
+    not persist to later loop iterations. Use the equals form; spaced form is
+    rejected.
+  - --target-file=PATH pins this invoked cycle to one source-safe repo file and
+    bypasses timestamp selection. Use the equals form; spaced form is rejected.
+  - --prompt-pass=all forces the selected target through all P1-P23 repertoire
+    passes for this invoked cycle. Use the equals form; spaced form is rejected.
 
 Environment overrides:
   CODEX_MODEL                   Default: gpt-5.3-codex-spark

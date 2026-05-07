@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.30
+Version: v1.0.31
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -276,6 +276,9 @@ Exit codes:
 - `--prompt-pass=all` final reports must include parseable `P<N>:` lines for
   P1 through P23. Upkeeper logs `review.pass_coverage` so all-pass cycles are
   auditable from machine logs, not only from prose.
+- Startup-anomaly scans suppress older log-only `previous_run.anomaly` entries
+  after a later `startup_anomaly.gate_resolved` has acknowledged
+  `previous_run_anomaly`; unresolved gate state files still trigger the gate.
 - `Upkeeper.log` and `runtime/` are local evidence artifacts and are ignored by
   git. Promote only durable operating rules, postmortem conclusions, or wrapper
   behavior changes into tracked files.

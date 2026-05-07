@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.30
+## Version: v1.0.31
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.30"
+UPKEEPER_VERSION="v1.0.31"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -2608,6 +2608,7 @@ cycle_re = re.compile(r"\bcycle=([^ ]+)")
 run_hash_re = re.compile(r"\brun_hash=([^ ]+)")
 boot_id_re = re.compile(r"\bboot_id=([^ ]+)")
 cycles = {}
+latest_previous_run_ack_epoch = None
 
 def parsed_epoch(line):
     stamp = line.split(" ", 1)[0]
@@ -2626,6 +2627,13 @@ with handle:
         epoch = parsed_epoch(line)
         if epoch is not None and scan_minutes > 0 and epoch < cutoff:
             continue
+        if (
+            epoch is not None
+            and " startup_anomaly.gate_resolved " in line
+            and "reasons=previous_run_anomaly" in line
+        ):
+            if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
+                latest_previous_run_ack_epoch = epoch
         cycle_match = cycle_re.search(line)
         if not cycle_match:
             continue
@@ -2672,6 +2680,7 @@ with handle:
         info["last_line"] = line.strip()
 
 printed = 0
+acknowledged = 0
 for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"] or 0, reverse=True):
     reason = ""
     if info["start"] and not info["exit"]:
@@ -2691,6 +2700,13 @@ for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"]
         reason = "startup_anomaly_gate_unresolved"
     if not reason:
         continue
+    if (
+        latest_previous_run_ack_epoch is not None
+        and info["last_epoch"] is not None
+        and info["last_epoch"] <= latest_previous_run_ack_epoch
+    ):
+        acknowledged += 1
+        continue
     last_epoch = "unknown" if info["last_epoch"] is None else str(int(info["last_epoch"]))
     last_line = info["last_line"].replace("\\", "\\\\").replace("\t", " ")[:300]
     print(
@@ -2702,6 +2718,13 @@ for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"]
     printed += 1
     if printed >= 10:
         break
+if acknowledged:
+    print(
+        "__ACK__ "
+        f"suppressed={acknowledged} "
+        f"ack_epoch={int(latest_previous_run_ack_epoch)} "
+        "reason=previous_run_anomaly_gate_reviewed"
+    )
 PY
 }
 
@@ -2713,6 +2736,16 @@ scan_previous_run_anomalies() {
   mapfile -t anomalies < <(previous_run_anomaly_lines || true)
   mapfile -t state_anomalies < <(startup_anomaly_state_lines || true)
   anomalies+=("${state_anomalies[@]}")
+  local -a active_anomalies=()
+  for anomaly in "${anomalies[@]}"; do
+    [[ -n "$anomaly" ]] || continue
+    if [[ "$anomaly" == "__ACK__ "* ]]; then
+      log_line "INFO" "previous_run.acknowledged ${anomaly#__ACK__ } boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
+      continue
+    fi
+    active_anomalies+=("$anomaly")
+  done
+  anomalies=("${active_anomalies[@]}")
   if [[ "${#anomalies[@]}" -eq 0 ]]; then
     log_line "INFO" "previous_run.scan status=clean scan_minutes=$CODEX_PREVIOUS_RUN_SCAN_MINUTES boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
     return 0

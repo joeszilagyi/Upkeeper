@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.16
+## Version: v1.0.18
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.16"
+UPKEEPER_VERSION="v1.0.18"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -209,8 +209,9 @@ Important:
     Existing guides are never overwritten; if their embedded help snapshot
     version is missing or stale, startup logs an operator_guide warning so you
     can refresh the generated section without losing repo-local notes.
-    If the guide path is ignored by the target repo, it is treated as local
-    operator state and stale/missing-version snapshots are informational only.
+    If the guide path is ignored by the target repo, it is treated as optional
+    local operator state: missing ignored guides are not bootstrapped, and
+    stale/missing-version snapshots are informational only.
   - The safety stop targets the parent shell of the current cycle to break the loop.
   - Nested fallback runs inherit the original loop-parent shell target so the
     stronger cleanup pass can still stop the real outer loop intentionally.
@@ -554,7 +555,7 @@ operator_guide_is_ignored() {
 
   [[ "$guide_path" == "$ROOT_DIR/"* ]] || return 1
   rel_path="${guide_path#"$ROOT_DIR/"}"
-  git -C "$ROOT_DIR" check-ignore -q -- "$rel_path" 2>/dev/null
+  git -C "$ROOT_DIR" check-ignore -q --no-index -- "$rel_path" 2>/dev/null
 }
 
 check_existing_operator_guide() {
@@ -630,6 +631,11 @@ ensure_operator_guide() {
   guide_path="$(resolved_operator_guide_path)"
   if [[ -e "$guide_path" ]]; then
     check_existing_operator_guide "$guide_path"
+    return 0
+  fi
+
+  if operator_guide_is_ignored "$guide_path"; then
+    log_line "INFO" "operator_guide.local_missing path=$guide_path current_version=$UPKEEPER_VERSION action=ignored_no_bootstrap"
     return 0
   fi
 

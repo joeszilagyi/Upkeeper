@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.45
+## Version: v1.0.46
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.45"
+UPKEEPER_VERSION="v1.0.46"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -1881,17 +1881,35 @@ def field_value(value: str) -> str:
     return short(value).replace(' ', '\\ ')
 
 promptish = re.compile(r'^(WRAPPER_|ABSOLUTE RULE|Background Review Prompt Repertoire|Summary Table|P\d+ - |-{8,}$|workdir: |model: |provider: |approval: |sandbox: |reasoning effort: |session id: |user$|hook: )')
-high_signal = re.compile(r'(\[WARN\]|\[ERROR\]|\bERROR\b|\bWARN\b|\b[Ff]ailed\b|\bfailed\b|Rate limit|rate limit|quota|UPKEEPER_STATUS:|UPKEEPER_LOG_REVIEW:|REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER|WORK_DONE|BLOCKED|cycle\.exit|cycle\.summary|status_marker|rmcp::|HTTP request failed| exited [1-9][0-9]* in |signal\.received|KeyboardInterrupt|interrupted)')
+contractish = re.compile(
+    r'^(?:[-*] |\d+[.] |[|] ).*(UPKEEPER_STATUS|UPKEEPER_LOG_REVIEW|REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER|RUN_RESULT|rate limit|quota|failed)'
+    r'|^(REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER|failed)$'
+    r'|^RUN_RESULT=\{\{'
+)
 diff_count = sum(1 for line in lines if line.startswith('diff --git '))
 hook_count = sum(1 for line in lines if line.startswith('hook: '))
 prompt_count = sum(1 for line in lines if promptish.search(line))
-signals = []
-for line in lines:
-    if not high_signal.search(line):
-        continue
-    if promptish.search(line) and not line.startswith(('UPKEEPER_STATUS:', 'UPKEEPER_LOG_REVIEW:')):
-        continue
-    signals.append(short(line))
+
+def is_signal(line: str) -> bool:
+    if line.startswith(('UPKEEPER_STATUS:', 'UPKEEPER_LOG_REVIEW:')):
+        return True
+    if promptish.search(line) or contractish.search(line):
+        return False
+    if re.search(r'\[(WARN|ERROR)\]', line):
+        return True
+    if re.search(r'\b(cycle\.exit|cycle\.summary|status_marker|signal\.received)\b', line):
+        return True
+    if re.search(r'\b(Command blocked by PreToolUse hook|HTTP request failed|rmcp::|KeyboardInterrupt|interrupted)\b', line):
+        return True
+    if re.search(r'\bERROR\b', line) and not re.search(r'\b(add_error|JSON_PARSE_ERROR|INPUT_DECODE_ERROR|EXPORT_JSON_PARSE_ERROR)\b', line):
+        return True
+    if re.search(r'exited [1-9][0-9]* in ', line):
+        return True
+    if re.search(r'\bRate limit\b|\brate limit reached\b', line):
+        return True
+    return False
+
+signals = [short(line) for line in lines if is_signal(line)]
 summary = (
     f'codex.transcript.summary label={label} path={path} exit={exit_raw} lines={len(lines)} '
     f'diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count} signal_lines={len(signals)}'
@@ -7504,6 +7522,45 @@ recover_status_marker_from_review_outcome() {
   printf '%s\t%s\t%s\n' "$recovered_marker" "$recovery_outcome" "$recovery_selected_file"
 }
 
+recover_status_marker_from_blocker_request() {
+  local last_message_file="$1"
+  local codex_exit_value="$2"
+  local task_complete_last_agent_message="$3"
+
+  [[ "$codex_exit_value" == "0" ]] || return 1
+  [[ "$task_complete_last_agent_message" == "present" ]] || return 1
+  [[ -n "$last_message_file" && -f "$last_message_file" ]] || return 1
+
+  python3 - "$last_message_file" <<'PY'
+from pathlib import Path
+import sys
+
+try:
+    text = Path(sys.argv[1]).read_text(encoding='utf-8', errors='replace').lower()
+except OSError:
+    raise SystemExit(1)
+question = any(needle in text for needle in (
+    'i need your direction',
+    'should i proceed',
+    'do you want a different action',
+    'how would you like to proceed',
+))
+stopped = any(needle in text for needle in (
+    'stopped immediately',
+    'per your agent',
+    'per your agents',
+    'unexpected modifications',
+    'unexpected changes',
+    'i have stopped',
+    "i've stopped",
+))
+if question and stopped:
+    print('BLOCKED\toperator_direction_request\t')
+else:
+    raise SystemExit(1)
+PY
+}
+
 parse_status_marker() {
   local last_message_file="$1"
   local analysis
@@ -7931,6 +7988,7 @@ main() {
 
   local status_marker status_marker_analysis status_marker_source
   local status_marker_review_recovery status_marker_review_outcome status_marker_review_selected_file
+  local status_marker_blocker_recovery status_marker_blocker_reason
   local status_marker_candidate status_marker_candidate_marker status_marker_candidate_rejection_reason
   local marker_candidate_line marker_candidate_marker marker_candidate_rejection_reason marker_accepted_marker
   local session_end_state
@@ -7980,9 +8038,16 @@ main() {
   fi
   if [[ -z "$status_marker" ]]; then
     if status_marker_review_recovery="$(recover_status_marker_from_review_outcome "$last_message_file" "$codex_exit" "$primary_session_task_complete_last_agent_message")"; then
-      IFS=$'\t' read -r status_marker status_marker_review_outcome status_marker_review_selected_file <<<"$status_marker_review_recovery"
+      IFS=$'	' read -r status_marker status_marker_review_outcome status_marker_review_selected_file <<<"$status_marker_review_recovery"
       status_marker_source="review_outcome"
       log_line "WARN" "status_marker.recovered_from_review_outcome marker=$status_marker review_outcome=$status_marker_review_outcome selected_file=$(shell_quote "$status_marker_review_selected_file") codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
+    fi
+  fi
+  if [[ -z "$status_marker" ]]; then
+    if status_marker_blocker_recovery="$(recover_status_marker_from_blocker_request "$last_message_file" "$codex_exit" "$primary_session_task_complete_last_agent_message")"; then
+      IFS=$'	' read -r status_marker status_marker_blocker_reason _ <<<"$status_marker_blocker_recovery"
+      status_marker_source="blocker_request"
+      log_line "WARN" "status_marker.recovered_from_blocker_request marker=$status_marker reason=$status_marker_blocker_reason codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
     fi
   fi
   primary_failure_classification="none"

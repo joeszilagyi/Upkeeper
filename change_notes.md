@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.0.46 changes:
+	1. Tightened transcript high-signal extraction so prompt-contract text containing words like quota, failed, or UPKEEPER_STATUS is not replayed as live signal.
+	2. Recovered explicit operator-direction requests as `BLOCKED` when Codex exits successfully but asks what to do after stopping on unexpected worktree changes.
+	3. Preserved `MISSING_STATUS_MARKER` for genuinely unclassifiable final responses.
+
 2026-05-07: v1.0.45 changes:
 	1. Captured primary and auxiliary Codex stdout/stderr to pruned per-cycle transcript artifacts instead of streaming the full backend transcript to the live terminal by default.
 	2. Added summary-first terminal output: routine INFO lines stay in `Upkeeper.log`, while WARN/ERROR lines and bounded high-signal transcript summaries remain visible.

@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.0.42 changes:
+	1. Recovered wrapper status from parseable terminal review outcomes when a successful Codex final response omits the literal `UPKEEPER_STATUS` line.
+	2. Prevented completed `REVIEWED_AND_FIXED` and `REVIEWED_CLEAN` cycles from stopping loops solely because the final machine marker was missing.
+	3. Logged recovered cases with `status_marker.recovered_from_review_outcome` while preserving exact `UPKEEPER_STATUS` markers as the preferred contract.
+
 2026-05-07: v1.0.41 changes:
 	1. Allowed startup-anomaly self-review gates to use ignored local `Upkeeper.sh` symlinks as valid local wrapper targets.
 	2. Preserved normal timestamp rotation behavior that excludes ignored local wrapper artifacts from ordinary source reviews.

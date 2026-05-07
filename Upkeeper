@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.40
+## Version: v1.0.41
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.40"
+UPKEEPER_VERSION="v1.0.41"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -444,6 +444,7 @@ self_rel = root_relative(self_path)
 if self_rel:
     eligible_names.add(self_rel)
 eligible_names.add("Upkeeper")
+eligible_names.add("Upkeeper.sh")
 
 try:
     raw_paths = subprocess.check_output(["git", "ls-files", "-co", "--exclude-standard", "-z"])
@@ -453,7 +454,11 @@ except subprocess.CalledProcessError:
 repo_paths = set(raw_paths.decode("utf-8", "surrogateescape").split("\0"))
 matches = []
 for path in sorted(eligible_names):
-    if path not in repo_paths:
+    # Client checkouts commonly use ignored local Upkeeper.sh symlinks to the
+    # central wrapper. Startup-anomaly gates should accept that local execution
+    # handle even though normal timestamp rotation must not treat ignored
+    # wrapper artifacts as source files.
+    if path not in repo_paths and path != "Upkeeper.sh":
         continue
     try:
         stat_result = os.stat(path)
@@ -617,6 +622,8 @@ if self_rel:
     repo_local_self_candidates.add(self_rel)
 if os.path.isfile("Upkeeper"):
     repo_local_self_candidates.add("Upkeeper")
+if os.path.isfile("Upkeeper.sh"):
+    repo_local_self_candidates.add("Upkeeper.sh")
 
 for path in paths:
     if not path:
@@ -637,6 +644,17 @@ for path in paths:
         is_candidate = executable_text_candidate(path)
     if is_candidate:
         candidates.append((stat_result.st_mtime, path))
+
+if startup_anomaly_gate == "1" and startup_force_upkeeper == "1":
+    for path in sorted(repo_local_self_candidates):
+        if any(candidate_path == path for _, candidate_path in candidates):
+            continue
+        try:
+            stat_result = os.stat(path)
+        except OSError:
+            continue
+        if statmod.S_ISREG(stat_result.st_mode):
+            candidates.append((stat_result.st_mtime, path))
 
 if not candidates:
     sys.exit(0)

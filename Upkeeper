@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.20
+## Version: v1.0.23
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.20"
+UPKEEPER_VERSION="v1.0.23"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -91,6 +91,11 @@ CODEX_ARG0_TMP_QUARANTINE_ROOT="${CODEX_ARG0_TMP_QUARANTINE_ROOT:-$CODEX_HOME_DI
 CODEX_ARG0_TMP_PREFLIGHT="${CODEX_ARG0_TMP_PREFLIGHT:-1}"
 CODEX_ARG0_TMP_STALE_MINUTES="${CODEX_ARG0_TMP_STALE_MINUTES:-60}"
 CODEX_ARG0_TMP_ROTATE_ON_BLOCKED="${CODEX_ARG0_TMP_ROTATE_ON_BLOCKED:-1}"
+CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS="${CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS:-7}"
+CODEX_MARK_INTERVAL_SECONDS="${CODEX_MARK_INTERVAL_SECONDS:-60}"
+CODEX_PREVIOUS_RUN_SCAN_MINUTES="${CODEX_PREVIOUS_RUN_SCAN_MINUTES:-240}"
+CODEX_DISK_MIN_FREE_PERCENT="${CODEX_DISK_MIN_FREE_PERCENT:-10}"
+CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER="${CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER:-1}"
 UPKEEPER_DRY_RUN="${UPKEEPER_DRY_RUN:-0}"
 
 declare -a CODEX_MODE_ARGS=()
@@ -100,11 +105,20 @@ read -r -a CODEX_MODE_ARGS <<<"$CODEX_MODE_STRING"
 # handlers, fallback supervision, and postmortem writers all need the same
 # incident identity and evidence paths.
 CYCLE_ID="$(date '+%Y%m%dT%H%M%S%z')-$$"
+CYCLE_RUN_HASH="$( (printf '%s' "$ROOT_DIR|$CYCLE_ID|$$|$RANDOM|$(date '+%s%N' 2>/dev/null || date '+%s')" | git hash-object --stdin 2>/dev/null | cut -c1-16) || true)"
+if [[ -z "$CYCLE_RUN_HASH" ]]; then
+  CYCLE_RUN_HASH="${CYCLE_ID//[^[:alnum:]]/}"
+  CYCLE_RUN_HASH="${CYCLE_RUN_HASH:0:16}"
+fi
 PROMPT_FILE=""
 INLINE_PROMPT=""
 DIRTY_PATH_COUNT=0
 TRACKED_MODIFIED_PATH_COUNT=0
 UNTRACKED_PATH_COUNT=0
+PREVIOUS_RUN_ANOMALIES=""
+DISK_SPACE_PROMPT_NOTE=""
+STARTUP_ANOMALY_GATE="0"
+STARTUP_ANOMALY_REASONS=""
 POSTMORTEM_REPORT_PATH=""
 POSTMORTEM_CONTEXT_PATH=""
 POSTMORTEM_INCIDENT_LOG_PATH=""
@@ -117,6 +131,10 @@ FALLBACK_SCREEN_WATCH_ACTIVE="0"
 FALLBACK_SCREEN_TRIGGER=""
 RUN_COMPILED_PROMPT_FILE=""
 RUN_LAST_MESSAGE_FILE=""
+RUN_TMP_DIR=""
+RUN_MARK_HEARTBEAT_PID=""
+RUN_MARK_HEARTBEAT_STARTED="0"
+RUN_MARK_HEARTBEAT_STOPPED="0"
 
 # Human-facing inline help. This is also the seed text for a missing tracked
 # operator guide; once the guide exists, the Markdown becomes the living document.
@@ -238,10 +256,32 @@ Important:
     Review cycles also write compact review.summary lines, and
     review.fix_details lines when the final response reports fixes, so later
     commits can recover what changed and why.
+  - The default prompt makes the primary agent inspect this cycle's own
+    $LOG_FILE entries before its final marker. If the log review exposes a
+    concrete wrapper or prompt defect and the current repo owns the central
+    Upkeeper file, the agent may repair it in the same pass and report that
+    self-repair explicitly.
+  - Every log line includes a per-cycle run_hash. The wrapper emits --MARK--
+    heartbeat lines with fractional epoch, boot id, and uptime so missing
+    continuity can be detected even when both the primary process and a future
+    watchdog fail.
+  - Startup scans the recent live log for prior cycles that started but never
+    wrote cycle.exit/run.finish, logs previous_run.anomaly lines, and injects
+    those findings into the prompt for the next healthy run.
+  - Startup also logs a disk.preflight line and injects a prompt note when free
+    space under the repo root is below ${CODEX_DISK_MIN_FREE_PERCENT}%.
+  - Startup anomalies are a gate by default: while prior-run, watchdog-style, or
+    low-disk anomaly evidence is active, preselection is forced to the repo-local
+    Upkeeper implementation and normal timestamp rotation is blocked until the
+    Upkeeper suite is checked or remediated.
 
 Prompt behavior:
   - By default, the script asks Codex to select the oldest eligible script/tool
     file by last-modified timestamp and review exactly one file per cycle.
+  - Exception: when the repo-local Upkeeper implementation itself is eligible
+    and has not been touched for at least
+    ${CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS} days, it is selected first. If it is
+    newer than that threshold, normal oldest-file selection applies.
   - Before launching Codex, the wrapper preselects that script/tool target from
     git ls-files -co --exclude-standard and prepends the selected path to the
     prompt. That avoids spending model/tool cycles on broad tree discovery and
@@ -320,6 +360,11 @@ Environment overrides:
   CODEX_ARG0_TMP_PREFLIGHT       Default: 1
   CODEX_ARG0_TMP_STALE_MINUTES   Default: 60
   CODEX_ARG0_TMP_ROTATE_ON_BLOCKED Default: 1
+  CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS Default: 7
+  CODEX_MARK_INTERVAL_SECONDS Default: 60
+  CODEX_PREVIOUS_RUN_SCAN_MINUTES Default: 240
+  CODEX_DISK_MIN_FREE_PERCENT Default: 10
+  CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER Default: 1
   CODEX_SESSION_SCAN_LIMIT      Default: 200
   CODEX_LOG_FILE                Default: $ROOT_DIR/Upkeeper.log
   UPKEEPER_DRY_RUN           Default: 0
@@ -347,7 +392,7 @@ resolved_operator_guide_path() {
 }
 
 preselect_review_target() {
-  python3 - "$ROOT_DIR" <<'PY'
+  python3 - "$ROOT_DIR" "$SELF_PATH" "$CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS" "$STARTUP_ANOMALY_GATE" "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" <<'PY'
 import datetime
 import os
 import stat as statmod
@@ -355,8 +400,13 @@ import subprocess
 import sys
 import time
 
-root = sys.argv[1]
+root, self_path, self_review_after_days, startup_anomaly_gate, startup_force_upkeeper = sys.argv[1:6]
 os.chdir(root)
+try:
+    self_review_threshold_seconds = max(0, int(self_review_after_days)) * 86400
+except ValueError:
+    self_review_after_days = "7"
+    self_review_threshold_seconds = 7 * 86400
 
 script_exts = {
     ".awk",
@@ -420,6 +470,16 @@ def git_output(args: list[str]) -> str:
         return ""
 
 
+def root_relative(path: str) -> str:
+    try:
+        rel_path = os.path.relpath(path, root)
+    except ValueError:
+        return ""
+    if rel_path == "." or rel_path.startswith("../") or os.path.isabs(rel_path):
+        return ""
+    return rel_path.replace(os.sep, "/")
+
+
 def selected_git_metadata(path: str) -> dict[str, str]:
     status_output = git_output(["git", "status", "--porcelain=v1", "--", path])
     status_code = status_output[:2] if status_output else "clean"
@@ -444,6 +504,12 @@ raw_paths = subprocess.check_output(["git", "ls-files", "-co", "--exclude-standa
 paths = raw_paths.decode("utf-8", "surrogateescape").split("\0")
 now = time.time()
 candidates = []
+repo_local_self_candidates = set()
+self_rel = root_relative(self_path)
+if self_rel:
+    repo_local_self_candidates.add(self_rel)
+if os.path.isfile("Upkeeper"):
+    repo_local_self_candidates.add("Upkeeper")
 
 for path in paths:
     if not path:
@@ -468,7 +534,27 @@ for path in paths:
 if not candidates:
     sys.exit(0)
 
-mtime, path = sorted(candidates, key=lambda item: (item[0], item[1]))[0]
+all_self_candidates = [item for item in candidates if item[1] in repo_local_self_candidates]
+stale_self_candidates = [
+    item
+    for item in all_self_candidates
+    if now - item[0] >= self_review_threshold_seconds
+]
+if startup_anomaly_gate == "1" and startup_force_upkeeper == "1" and all_self_candidates:
+    mtime, path = sorted(all_self_candidates, key=lambda item: (item[0], item[1]))[0]
+    selection_basis = (
+        "startup anomaly gate forced repo-local Upkeeper first; "
+        "normal oldest eligible selection blocked until Upkeeper suite is checked/remediated"
+    )
+elif stale_self_candidates:
+    mtime, path = sorted(stale_self_candidates, key=lambda item: (item[0], item[1]))[0]
+    selection_basis = (
+        "stale repo-local Upkeeper script first "
+        f"(age >= {self_review_after_days}d threshold); normal oldest eligible selection bypassed"
+    )
+else:
+    mtime, path = sorted(candidates, key=lambda item: (item[0], item[1]))[0]
+    selection_basis = "oldest eligible non-test script/tool from git ls-files -co --exclude-standard"
 age_seconds = max(0, int(now - mtime))
 mtime_text = datetime.datetime.fromtimestamp(mtime).astimezone().strftime(
     "%Y-%m-%d %H:%M:%S %z"
@@ -484,15 +570,16 @@ print(f"content_state={metadata['content_state']}")
 print(f"head_blob={metadata['head_blob']}")
 print(f"worktree_hash={metadata['worktree_hash']}")
 print(f"eligible_count={len(candidates)}")
-print("selection_basis=oldest eligible non-test script/tool from git ls-files -co --exclude-standard")
+print(f"self_review_threshold_days={self_review_after_days}")
+print(f"selection_basis={selection_basis}")
 PY
 }
 
 append_preselected_review_target() {
   local compiled_file="$1"
-  local selection err_file detail selected_path selected_epoch selected_age eligible_count selected_git_status selected_content_state selected_worktree_hash
+  local selection err_file detail selected_path selected_epoch selected_age eligible_count selected_git_status selected_content_state selected_worktree_hash selected_basis
 
-  if ! err_file="$(mktemp)"; then
+  if ! err_file="$(run_mktemp preselect-error)"; then
     log_line "WARN" "review.preselect.skip reason=tempfile_failed"
     return 0
   fi
@@ -516,6 +603,7 @@ append_preselected_review_target() {
   selected_git_status="$(sed -n 's/^git_status=//p' <<<"$selection")"
   selected_content_state="$(sed -n 's/^content_state=//p' <<<"$selection")"
   selected_worktree_hash="$(sed -n 's/^worktree_hash=//p' <<<"$selection")"
+  selected_basis="$(sed -n 's/^selection_basis=//p' <<<"$selection")"
   eligible_count="$(sed -n 's/^eligible_count=//p' <<<"$selection")"
 
   {
@@ -533,7 +621,7 @@ append_preselected_review_target() {
     printf -- '- If this target is physically impossible or unsafe to review, state the exception and then use the same source-safe selection boundary for the replacement.\n'
   } >>"$compiled_file"
 
-  log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} worktree_hash=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown}"
+  log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} worktree_hash=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} basis=$(shell_quote "${selected_basis:-unknown}")"
 }
 
 operator_guide_snapshot_version() {
@@ -600,12 +688,51 @@ timestamp_now() {
   date '+%Y-%m-%dT%H:%M:%S%z'
 }
 
+epoch_now_fraction() {
+  python3 - <<'PY' 2>/dev/null || date '+%s'
+import time
+print(f"{time.time():.5f}")
+PY
+}
+
+system_boot_id() {
+  if [[ -r /proc/sys/kernel/random/boot_id ]]; then
+    tr -d '[:space:]' </proc/sys/kernel/random/boot_id
+  else
+    printf 'unknown'
+  fi
+}
+
+system_uptime_seconds() {
+  if [[ -r /proc/uptime ]]; then
+    awk '{ printf "%.2f", $1 }' /proc/uptime
+  else
+    printf 'unknown'
+  fi
+}
+
+process_start_fingerprint() {
+  local pid="$1"
+  python3 - "$pid" <<'PY' 2>/dev/null || printf 'proc_start_ticks=unknown'
+import pathlib
+import sys
+
+pid = sys.argv[1]
+try:
+    stat_text = pathlib.Path("/proc", pid, "stat").read_text(encoding="utf-8", errors="replace")
+    after_comm = stat_text.rsplit(") ", 1)[1].split()
+    print(f"proc_start_ticks={after_comm[19]}")
+except Exception:
+    print("proc_start_ticks=unknown")
+PY
+}
+
 log_line() {
   local level="$1"
   shift
   local ts
   ts="$(timestamp_now)"
-  printf '%s [%s] cycle=%s %s\n' "$ts" "$level" "$CYCLE_ID" "$*" | tee -a "$LOG_FILE"
+  printf '%s [%s] cycle=%s run_hash=%s %s\n' "$ts" "$level" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$*" | tee -a "$LOG_FILE"
 }
 
 ensure_log_parent() {
@@ -617,12 +744,95 @@ ensure_log_parent() {
   fi
 }
 
+ensure_run_tmp_dir() {
+  if [[ -n "$RUN_TMP_DIR" ]]; then
+    return 0
+  fi
+
+  local tmp_base="${TMPDIR:-/tmp}"
+  RUN_TMP_DIR="$tmp_base/upkeeper-$CYCLE_RUN_HASH"
+  if ! mkdir -p -- "$RUN_TMP_DIR"; then
+    die "failed to create run temp directory $RUN_TMP_DIR"
+  fi
+  chmod 700 "$RUN_TMP_DIR" 2>/dev/null || true
+  log_line "INFO" "run.tmp_dir path=$(shell_quote "$RUN_TMP_DIR")" >/dev/null
+}
+
+run_mktemp() {
+  local label="${1:-tmp}"
+  ensure_run_tmp_dir
+  mktemp "$RUN_TMP_DIR/${label}.XXXXXX"
+}
+
+file_blob_hash() {
+  local path="$1"
+  git hash-object -- "$path" 2>/dev/null || printf 'unknown'
+}
+
+file_size_bytes() {
+  local path="$1"
+  python3 - "$path" <<'PY' 2>/dev/null || printf 'unknown'
+import os
+import sys
+try:
+    print(os.stat(sys.argv[1]).st_size)
+except OSError:
+    print("unknown")
+PY
+}
+
 die() {
   ensure_log_parent
   if ! log_line "ERROR" "$*"; then
     printf '%s [ERROR] cycle=%s %s\n' "$(timestamp_now)" "$CYCLE_ID" "$*" >&2
   fi
+  stop_run_mark_heartbeat "die"
   exit 3
+}
+
+emit_run_mark() {
+  local phase="${1:-heartbeat}"
+  log_line "INFO" "--MARK-- phase=$phase epoch=$(epoch_now_fraction) boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
+}
+
+start_run_mark_heartbeat() {
+  local interval="$CODEX_MARK_INTERVAL_SECONDS"
+  if [[ "$interval" -le 0 ]]; then
+    return 0
+  fi
+  emit_run_mark "start"
+  RUN_MARK_HEARTBEAT_STARTED="1"
+  (
+    mark_sleep_pid=""
+    trap '[[ -n "$mark_sleep_pid" ]] && kill "$mark_sleep_pid" >/dev/null 2>&1 || true; exit 0' INT TERM HUP
+    while true; do
+      sleep "$interval" &
+      mark_sleep_pid="$!"
+      wait "$mark_sleep_pid" || exit 0
+      mark_sleep_pid=""
+      emit_run_mark "heartbeat" >/dev/null
+    done
+  ) >/dev/null 2>&1 &
+  RUN_MARK_HEARTBEAT_PID="$!"
+  log_line "INFO" "mark_heartbeat.start pid=$RUN_MARK_HEARTBEAT_PID interval_seconds=$interval"
+}
+
+stop_run_mark_heartbeat() {
+  local reason="${1:-stop}"
+  if [[ "${RUN_MARK_HEARTBEAT_STARTED:-0}" != "1" ]]; then
+    return 0
+  fi
+  if [[ "${RUN_MARK_HEARTBEAT_STOPPED:-0}" == "1" ]]; then
+    return 0
+  fi
+  RUN_MARK_HEARTBEAT_STOPPED="1"
+  if [[ -n "${RUN_MARK_HEARTBEAT_PID:-}" ]]; then
+    kill "$RUN_MARK_HEARTBEAT_PID" >/dev/null 2>&1 || true
+    wait "$RUN_MARK_HEARTBEAT_PID" 2>/dev/null || true
+    RUN_MARK_HEARTBEAT_PID=""
+    log_line "INFO" "mark_heartbeat.stop reason=$reason"
+  fi
+  emit_run_mark "finish"
 }
 
 # Create the tracked operator guide only when it is missing.
@@ -676,6 +886,7 @@ finish_cycle() {
   local level="$3"
   shift 3
 
+  stop_run_mark_heartbeat "$reason"
   local message="cycle.exit exit_code=$exit_code reason=$reason"
   if [[ $# -gt 0 ]]; then
     message="$message $*"
@@ -685,11 +896,15 @@ finish_cycle() {
 }
 
 cleanup_run_temp_files() {
+  stop_run_mark_heartbeat "cleanup"
   if [[ -n "${RUN_COMPILED_PROMPT_FILE:-}" ]]; then
     rm -f "$RUN_COMPILED_PROMPT_FILE"
   fi
   if [[ -n "${RUN_LAST_MESSAGE_FILE:-}" ]]; then
     rm -f "$RUN_LAST_MESSAGE_FILE"
+  fi
+  if [[ -n "${RUN_TMP_DIR:-}" && "$RUN_TMP_DIR" == "${TMPDIR:-/tmp}"/upkeeper-* ]]; then
+    rm -rf "$RUN_TMP_DIR"
   fi
 }
 
@@ -908,7 +1123,7 @@ parse_args() {
 require_commands() {
   local missing=0
   local cmd
-  for cmd in awk cat date git grep jq mkdir mktemp mv ps python3 rm sed sort tail tee tr; do
+  for cmd in awk cat cut date df git grep jq mkdir mktemp mv ps python3 rm sed sort tail tee tr; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       log_line "ERROR" "required command missing: $cmd"
       missing=1
@@ -1058,6 +1273,11 @@ normalize_guardrail_thresholds() {
   CODEX_WEEK_STOP_BUFFER_PERCENT="$(sanitize_percent_threshold "${CODEX_WEEK_STOP_BUFFER_PERCENT}" 0)"
   CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT="$(sanitize_percent_threshold "${CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT}" 5)"
   CODEX_FALLBACK_SCREEN_POLL_SECONDS="$(sanitize_nonnegative_integer "${CODEX_FALLBACK_SCREEN_POLL_SECONDS}" 60)"
+  CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS="$(sanitize_nonnegative_integer "${CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS}" 7)"
+  CODEX_MARK_INTERVAL_SECONDS="$(sanitize_nonnegative_integer "${CODEX_MARK_INTERVAL_SECONDS}" 60)"
+  CODEX_PREVIOUS_RUN_SCAN_MINUTES="$(sanitize_nonnegative_integer "${CODEX_PREVIOUS_RUN_SCAN_MINUTES}" 240)"
+  CODEX_DISK_MIN_FREE_PERCENT="$(sanitize_percent_threshold "${CODEX_DISK_MIN_FREE_PERCENT}" 10)"
+  CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER="$(sanitize_nonnegative_integer "${CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER}" 1)"
   CODEX_SESSION_SCAN_LIMIT="$(sanitize_positive_integer "${CODEX_SESSION_SCAN_LIMIT}" 200 1)"
   CODEX_LOOP_STOP_GRACE_SECONDS="$(sanitize_nonnegative_integer "${CODEX_LOOP_STOP_GRACE_SECONDS}" 5)"
   if [[ "$CODEX_FALLBACK_SCREEN_POLL_SECONDS" -lt 1 ]]; then
@@ -1602,15 +1822,173 @@ rotate_wrapper_log_if_needed() {
   archive_path="$LOG_FILE.$archive_timestamp.zip"
   if zip -qjm "$archive_path" "$LOG_FILE" >/dev/null 2>&1; then
     : >"$LOG_FILE"
-    printf '%s [INFO] cycle=%s log.rotate live=%s archive=%s rotate_after_hours=%s keep_hours=%s oldest_entry_epoch=%s\n' \
-      "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE" "$archive_path" "$rotate_after_hours" "$keep_hours" "$oldest_epoch" | tee -a "$LOG_FILE"
+    printf '%s [INFO] cycle=%s run_hash=%s log.rotate live=%s archive=%s rotate_after_hours=%s keep_hours=%s oldest_entry_epoch=%s\n' \
+      "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$LOG_FILE" "$archive_path" "$rotate_after_hours" "$keep_hours" "$oldest_epoch" | tee -a "$LOG_FILE"
   else
     rm -f "$archive_path"
-    printf '%s [WARN] cycle=%s log.rotate_failed live=%s attempted_archive=%s reason=zip_failed\n' \
-      "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE" "$archive_path" | tee -a "$LOG_FILE"
+    printf '%s [WARN] cycle=%s run_hash=%s log.rotate_failed live=%s attempted_archive=%s reason=zip_failed\n' \
+      "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$LOG_FILE" "$archive_path" | tee -a "$LOG_FILE"
   fi
 
   prune_wrapper_log_archives
+}
+
+disk_space_fields() {
+  df -Pk "$ROOT_DIR" 2>/dev/null | awk 'NR == 2 {
+    used = $5
+    gsub("%", "", used)
+    free = 100 - used
+    printf "size_kb=%s used_kb=%s avail_kb=%s used_percent=%s free_percent=%s mount=%s", $2, $3, $4, used, free, $6
+  }'
+}
+
+check_disk_space_preflight() {
+  local fields free_percent threshold decision
+  fields="$(disk_space_fields || true)"
+  if [[ -z "$fields" ]]; then
+    DISK_SPACE_PROMPT_NOTE="- disk.preflight unavailable for $ROOT_DIR"
+    STARTUP_ANOMALY_GATE="1"
+    STARTUP_ANOMALY_REASONS="${STARTUP_ANOMALY_REASONS}${STARTUP_ANOMALY_REASONS:+,}disk_preflight_unavailable"
+    log_line "WARN" "disk.preflight status=unavailable path=$(shell_quote "$ROOT_DIR")"
+    return 0
+  fi
+
+  threshold="$CODEX_DISK_MIN_FREE_PERCENT"
+  free_percent="$(sed -n 's/.*free_percent=\([0-9.]*\).*/\1/p' <<<"$fields")"
+  decision="$(awk -v free="$free_percent" -v threshold="$threshold" 'BEGIN { if (free < threshold) print "warn"; else print "allow" }')"
+  if [[ "$decision" == "warn" ]]; then
+    log_line "WARN" "disk.preflight status=$decision min_free_percent=$threshold $fields path=$(shell_quote "$ROOT_DIR")"
+    DISK_SPACE_PROMPT_NOTE="- disk.preflight low_space min_free_percent=$threshold $fields path=$ROOT_DIR"
+    STARTUP_ANOMALY_GATE="1"
+    STARTUP_ANOMALY_REASONS="${STARTUP_ANOMALY_REASONS}${STARTUP_ANOMALY_REASONS:+,}disk_preflight_low_space"
+  else
+    log_line "INFO" "disk.preflight status=$decision min_free_percent=$threshold $fields path=$(shell_quote "$ROOT_DIR")"
+    DISK_SPACE_PROMPT_NOTE=""
+  fi
+}
+
+previous_run_anomaly_lines() {
+  if [[ ! -s "$LOG_FILE" ]]; then
+    return 0
+  fi
+
+  python3 - "$LOG_FILE" "$CYCLE_ID" "$CODEX_PREVIOUS_RUN_SCAN_MINUTES" <<'PY'
+import datetime as dt
+import re
+import sys
+import time
+
+log_path, current_cycle, minutes_raw = sys.argv[1:4]
+try:
+    scan_minutes = max(0, int(minutes_raw))
+except ValueError:
+    scan_minutes = 240
+cutoff = time.time() - (scan_minutes * 60)
+cycle_re = re.compile(r"\bcycle=([^ ]+)")
+run_hash_re = re.compile(r"\brun_hash=([^ ]+)")
+cycles = {}
+
+def parsed_epoch(line):
+    stamp = line.split(" ", 1)[0]
+    try:
+        return dt.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S%z").timestamp()
+    except ValueError:
+        return None
+
+try:
+    handle = open(log_path, "r", encoding="utf-8", errors="replace")
+except OSError:
+    raise SystemExit(0)
+
+with handle:
+    for line in handle:
+        epoch = parsed_epoch(line)
+        if epoch is not None and scan_minutes > 0 and epoch < cutoff:
+            continue
+        cycle_match = cycle_re.search(line)
+        if not cycle_match:
+            continue
+        cycle = cycle_match.group(1)
+        if cycle == current_cycle:
+            continue
+        info = cycles.setdefault(
+            cycle,
+            {
+                "run_hash": "unknown",
+                "start": False,
+                "exit": False,
+                "run_start": False,
+                "run_finish": False,
+                "gate_unresolved": False,
+                "gate_resolved": False,
+                "watchdog_anomaly": False,
+                "last_epoch": epoch,
+                "last_line": line.strip(),
+            },
+        )
+        hash_match = run_hash_re.search(line)
+        if hash_match:
+            info["run_hash"] = hash_match.group(1)
+        if " cycle.start " in line:
+            info["start"] = True
+        if " cycle.exit " in line:
+            info["exit"] = True
+        if " run.start " in line:
+            info["run_start"] = True
+        if " run.finish " in line:
+            info["run_finish"] = True
+        if " startup_anomaly.gate_unresolved " in line:
+            info["gate_unresolved"] = True
+        if " startup_anomaly.gate_resolved " in line:
+            info["gate_resolved"] = True
+        if " watchdog.anomaly " in line:
+            info["watchdog_anomaly"] = True
+        info["last_epoch"] = epoch
+        info["last_line"] = line.strip()
+
+printed = 0
+for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"] or 0, reverse=True):
+    reason = ""
+    if info["start"] and not info["exit"]:
+        reason = "missing_cycle_exit"
+    elif info["run_start"] and not info["run_finish"] and not info["exit"]:
+        reason = "missing_run_finish"
+    elif info["watchdog_anomaly"]:
+        reason = "watchdog_anomaly"
+    elif info["gate_unresolved"] and not info["gate_resolved"]:
+        reason = "startup_anomaly_gate_unresolved"
+    if not reason:
+        continue
+    last_epoch = "unknown" if info["last_epoch"] is None else str(int(info["last_epoch"]))
+    last_line = info["last_line"].replace("\\", "\\\\").replace("\t", " ")[:300]
+    print(
+        f"previous_cycle={cycle} previous_run_hash={info['run_hash']} "
+        f"reason={reason} scan_minutes={scan_minutes} last_epoch={last_epoch} "
+        f"last_line={last_line!r}"
+    )
+    printed += 1
+    if printed >= 10:
+        break
+PY
+}
+
+scan_previous_run_anomalies() {
+  local -a anomalies=()
+  local anomaly
+  PREVIOUS_RUN_ANOMALIES=""
+  mapfile -t anomalies < <(previous_run_anomaly_lines || true)
+  if [[ "${#anomalies[@]}" -eq 0 ]]; then
+    log_line "INFO" "previous_run.scan status=clean scan_minutes=$CODEX_PREVIOUS_RUN_SCAN_MINUTES boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
+    return 0
+  fi
+
+  for anomaly in "${anomalies[@]}"; do
+    [[ -n "$anomaly" ]] || continue
+    log_line "WARN" "previous_run.anomaly $anomaly boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
+    PREVIOUS_RUN_ANOMALIES+="- $anomaly"$'\n'
+  done
+  STARTUP_ANOMALY_GATE="1"
+  STARTUP_ANOMALY_REASONS="${STARTUP_ANOMALY_REASONS}${STARTUP_ANOMALY_REASONS:+,}previous_run_anomaly"
 }
 
 refresh_worktree_counts() {
@@ -1883,8 +2261,28 @@ PY
 compile_prompt() {
   local compiled_file="$1"
 
+  ensure_run_tmp_dir
   : >"$compiled_file"
   append_preselected_review_target "$compiled_file"
+  if [[ -n "$PREVIOUS_RUN_ANOMALIES" || -n "$DISK_SPACE_PROMPT_NOTE" ]]; then
+    {
+      printf '\nWRAPPER_STARTUP_ANOMALIES\n'
+      if [[ -n "$PREVIOUS_RUN_ANOMALIES" ]]; then
+        printf 'Previous-run continuity anomalies detected before this Codex launch:\n'
+        printf '%s' "$PREVIOUS_RUN_ANOMALIES"
+      fi
+      if [[ -n "$DISK_SPACE_PROMPT_NOTE" ]]; then
+        printf 'Disk-space preflight note:\n'
+        printf '%s\n' "$DISK_SPACE_PROMPT_NOTE"
+      fi
+      printf '\nRules for these startup anomalies:\n'
+      printf -- '- These anomalies are a startup gate. The repo-local Upkeeper suite must be checked/remediated before normal timestamp rotation may touch another file.\n'
+      printf -- '- Upkeeper suite means `Upkeeper` plus directly paired central docs, prompts, and launcher examples needed to validate or repair wrapper behavior.\n'
+      printf -- '- Inspect these signals during the final current-cycle log review.\n'
+      printf -- '- If they point to a concrete Upkeeper wrapper, prompt, logging, or launcher defect in this central repo, apply the smallest safe self-repair and verify it.\n'
+      printf -- '- If they point to environment state only, report the evidence and avoid speculative code changes.\n'
+    } >>"$compiled_file"
+  fi
 
   cat >>"$compiled_file" <<'EOF'
 
@@ -3511,16 +3909,6 @@ P23     Data contract and negative fixtures     Per file*       Random pool
 *P8: drop from random pool if the project has no test suite. P23 applies only to selected files that touch data or operator-input boundaries. P2 and P16: run on their own slower schedule, not in the per-file rotation.
 EOF
 
-  {
-    printf '\nWrapper control marker compatibility:\n'
-    printf -- '- If write_to_file is unavailable in the current Codex environment, use the available file-writing mechanism and still perform the same persistence and mtime verification steps.\n'
-    printf -- '- Report the review outcome in the body using one of: REVIEWED_AND_FIXED, REVIEWED_CLEAN, or STOPPED_ON_BLOCKER.\n'
-    printf -- '- The literal final line must still be a wrapper status marker with no Markdown or trailing punctuation.\n'
-    printf -- '- If the review outcome is REVIEWED_AND_FIXED or REVIEWED_CLEAN, the final line must be exactly: UPKEEPER_STATUS: WORK_DONE\n'
-    printf -- '- If the review outcome is STOPPED_ON_BLOCKER, the final line must be exactly: UPKEEPER_STATUS: BLOCKED\n'
-    printf -- '- Do not emit UPKEEPER_STATUS: NO_BACKEND_TASK for this prompt family.\n'
-  } >>"$compiled_file"
-
   if [[ -n "$PROMPT_FILE" ]]; then
     {
       printf '\nAdditional task guidance from %s:\n' "$PROMPT_FILE"
@@ -3532,6 +3920,29 @@ EOF
       printf '%s\n' "$INLINE_PROMPT"
     } >>"$compiled_file"
   fi
+
+  {
+    printf '\nCurrent-cycle log self-review -- required final task before your final response:\n'
+    printf -- '- After all selected-file review work, edits, touches, and verification are complete, inspect this cycle'\''s own Upkeeper log lines before writing the final response.\n'
+    printf -- '- Log file: `%s`\n' "$LOG_FILE"
+    printf -- '- Current cycle id: `%s`\n' "$CYCLE_ID"
+    printf -- '- Preferred command: `rg "cycle=%s " "%s"`; if `rg` is unavailable, use `grep "cycle=%s " "%s"`.\n' "$CYCLE_ID" "$LOG_FILE" "$CYCLE_ID" "$LOG_FILE"
+    printf -- '- Review only the current cycle lines. Do not inventory rotated archives or unrelated cycles.\n'
+    printf -- '- Check for wrapper/prompt/logging defects, unexpected ERROR/WARN lines, parser misses, environment preflight surprises, previous_run.anomaly lines, disk.preflight warnings, missing or irregular --MARK-- continuity, and any command failure from your own tool output that still needs explanation or correction.\n'
+    printf -- '- If `startup_anomaly.gate` or `WRAPPER_STARTUP_ANOMALIES` is active, do not touch unrelated non-Upkeeper-suite files; the gate must be checked or remediated first.\n'
+    printf -- '- If the log review exposes a concrete Upkeeper wrapper, prompt, or logging defect and this current repo owns a tracked `Upkeeper` file, apply the smallest safe self-repair now, run focused validation, and report it as a log self-repair. This is the only reason to patch `Upkeeper` when it was not the selected target.\n'
+    printf -- '- If this is a symlinked client repo and the defect belongs to central Upkeeper behavior, do not patch a copied client wrapper; report the central fix needed unless the central Upkeeper checkout is the current repo.\n'
+    printf -- '- If a suspicious line was expected negative-test output, say so briefly. If a one-off shell command failed, rerun the corrected check or state why it is irrelevant before final status.\n'
+    printf -- '- Include a short `Current-cycle log review` result in the final response before the final UPKEEPER_STATUS marker.\n'
+
+    printf '\nWrapper control marker compatibility:\n'
+    printf -- '- If write_to_file is unavailable in the current Codex environment, use the available file-writing mechanism and still perform the same persistence and mtime verification steps.\n'
+    printf -- '- Report the review outcome in the body using one of: REVIEWED_AND_FIXED, REVIEWED_CLEAN, or STOPPED_ON_BLOCKER.\n'
+    printf -- '- The literal final line must still be a wrapper status marker with no Markdown or trailing punctuation.\n'
+    printf -- '- If the review outcome is REVIEWED_AND_FIXED or REVIEWED_CLEAN, the final line must be exactly: UPKEEPER_STATUS: WORK_DONE\n'
+    printf -- '- If the review outcome is STOPPED_ON_BLOCKER, the final line must be exactly: UPKEEPER_STATUS: BLOCKED\n'
+    printf -- '- Do not emit UPKEEPER_STATUS: NO_BACKEND_TASK for this prompt family.\n'
+  } >>"$compiled_file"
 }
 
 # Parent-loop control.
@@ -4669,7 +5080,7 @@ def capture_section(names):
         if not line:
             continue
         norm = normalized(line)
-        if re.match(r"p(?:[1-9]|1[0-9]|2[0-2])\b", norm):
+        if re.match(r"p(?:[1-9]|1[0-9]|2[0-3])\b", norm):
             break
         if re.search(r"\b(REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", line):
             break
@@ -4693,8 +5104,17 @@ for line in lines:
 selected_file = ""
 for index, line in enumerate(lines):
     norm = normalized(line)
-    selected_label = norm.startswith(("selected file", "file selected", "target file")) or re.match(
-        r"selected\b.*\bfile\b",
+    selected_label = norm.startswith(
+        (
+            "selected file",
+            "file selected",
+            "target file",
+            "selected target",
+            "target selected",
+            "review target",
+        )
+    ) or re.match(
+        r"selected\b.*\b(file|target)\b",
         norm,
     )
     if not selected_label:
@@ -4749,7 +5169,7 @@ if outcome == "REVIEWED_AND_FIXED" and not changes:
             continue
         if re.search(r"\b(REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", line):
             continue
-        if re.match(r"p(?:[1-9]|1[0-9]|2[0-2])\b", norm):
+        if re.match(r"p(?:[1-9]|1[0-9]|2[0-3])\b", norm):
             continue
         if norm.startswith(("findings", "target selection", "verification", "prompt set outcomes")):
             continue
@@ -4797,6 +5217,41 @@ log_review_report_summary() {
 
   if [[ "$outcome" == "REVIEWED_AND_FIXED" || ( "$outcome" == "unknown" && -n "$changes" ) ]]; then
     log_line "INFO" "review.fix_details review_outcome=$outcome selected_file=$(shell_quote "$selected_file") findings=$(shell_quote "$findings") changes=$(shell_quote "$changes")"
+  fi
+}
+
+current_cycle_log_review_present() {
+  local last_message_file="$1"
+  [[ -f "$last_message_file" ]] || return 1
+  python3 - "$last_message_file" <<'PY'
+import re
+import sys
+
+try:
+    text = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read()
+except OSError:
+    raise SystemExit(1)
+
+normalized = re.sub(r"[^a-z0-9]+", " ", text.lower())
+patterns = (
+    "current cycle log review",
+    "current cycle log self review",
+    "upkeeper log review",
+)
+raise SystemExit(0 if any(pattern in normalized for pattern in patterns) else 1)
+PY
+}
+
+record_startup_anomaly_gate_review() {
+  local last_message_file="$1"
+  local status_marker_value="${2:-missing}"
+  local codex_exit_value="${3:-unknown}"
+  [[ "$STARTUP_ANOMALY_GATE" == "1" ]] || return 0
+
+  if current_cycle_log_review_present "$last_message_file"; then
+    log_line "INFO" "startup_anomaly.gate_resolved status=checked reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value"
+  else
+    log_line "WARN" "startup_anomaly.gate_unresolved reason=missing_current_cycle_log_review reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
   fi
 }
 
@@ -5341,10 +5796,11 @@ EOF
     return 7
   fi
 
-  report_prompt_file="$(mktemp)"
-  report_last_message="$(mktemp)"
-  hardening_prompt_file="$(mktemp)"
-  hardening_last_message="$(mktemp)"
+  ensure_run_tmp_dir
+  report_prompt_file="$(run_mktemp postmortem-report-prompt)"
+  report_last_message="$(run_mktemp postmortem-report-last-message)"
+  hardening_prompt_file="$(run_mktemp postmortem-hardening-prompt)"
+  hardening_last_message="$(run_mktemp postmortem-hardening-last-message)"
 
   compile_postmortem_report_prompt "$report_prompt_file" "$context_path" "$report_path"
   run_aux_codex_exec "postmortem.report" "$CODEX_POSTMORTEM_MODEL" "$CODEX_POSTMORTEM_REASONING_EFFORT" "$CODEX_POSTMORTEM_MODE" "$report_prompt_file" "$report_last_message"
@@ -5693,6 +6149,9 @@ main() {
     direct_parent_comm="unknown"
     direct_parent_args="unknown"
   fi
+  local wrapper_start_fingerprint direct_parent_start_fingerprint
+  wrapper_start_fingerprint="$(process_start_fingerprint "$$")"
+  direct_parent_start_fingerprint="$(process_start_fingerprint "$direct_parent_pid")"
 
   local loop_parent_pid loop_parent_comm loop_parent_args loop_parent_override
   if details="$(parent_shell_details)"; then
@@ -5703,8 +6162,16 @@ main() {
     loop_parent_args="unknown"
     loop_parent_override="0"
   fi
+  local loop_parent_start_fingerprint
+  loop_parent_start_fingerprint="$(process_start_fingerprint "$loop_parent_pid")"
 
-  log_line "INFO" "cycle.start execution_origin=$CODEX_EXECUTION_ORIGIN script=$SELF_INVOKE_PATH implementation=$SELF_PATH cwd=$ROOT_DIR pid=$$ ppid=$direct_parent_pid parent_comm=$direct_parent_comm loop_parent_pid=$loop_parent_pid loop_parent_comm=$loop_parent_comm loop_parent_override=$loop_parent_override model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT mode=$CODEX_MODE_STRING model_override=${CODEX_MODEL_OVERRIDE_SPEC:-none} model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED attempt_role=$CODEX_ATTEMPT_ROLE fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=${CODEX_PRIMARY_MODEL_CONTEXT:-none} fallback_trigger=${CODEX_FALLBACK_TRIGGER:-none} screen_fallback_child_id=${CODEX_SCREEN_FALLBACK_CHILD_ID:-none} code_home=$CODEX_HOME_DIR dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
+  log_line "INFO" "cycle.start execution_origin=$CODEX_EXECUTION_ORIGIN script=$SELF_INVOKE_PATH implementation=$SELF_PATH cwd=$ROOT_DIR pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$direct_parent_comm parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$loop_parent_comm loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT mode=$CODEX_MODE_STRING model_override=${CODEX_MODEL_OVERRIDE_SPEC:-none} model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED attempt_role=$CODEX_ATTEMPT_ROLE fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=${CODEX_PRIMARY_MODEL_CONTEXT:-none} fallback_trigger=${CODEX_FALLBACK_TRIGGER:-none} screen_fallback_child_id=${CODEX_SCREEN_FALLBACK_CHILD_ID:-none} code_home=$CODEX_HOME_DIR dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
+  start_run_mark_heartbeat
+  scan_previous_run_anomalies
+  check_disk_space_preflight
+  if [[ "$STARTUP_ANOMALY_GATE" == "1" ]]; then
+    log_line "WARN" "startup_anomaly.gate status=active reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") force_upkeeper=$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER action=block_normal_selection_until_upkeeper_suite_checked"
+  fi
 
   enforce_primary_quota_block_marker
 
@@ -5835,13 +6302,16 @@ main() {
 
   local compiled_prompt_file
   local last_message_file
-  compiled_prompt_file="$(mktemp)"
-  last_message_file="$(mktemp)"
+  ensure_run_tmp_dir
+  compiled_prompt_file="$(run_mktemp compiled-prompt)"
+  last_message_file="$(run_mktemp last-message)"
   RUN_COMPILED_PROMPT_FILE="$compiled_prompt_file"
   RUN_LAST_MESSAGE_FILE="$last_message_file"
   trap cleanup_run_temp_files EXIT
 
   compile_prompt "$compiled_prompt_file"
+  log_line "INFO" "run.compiled_prompt.ready path=$(shell_quote "$compiled_prompt_file") blob_hash=$(file_blob_hash "$compiled_prompt_file") size_bytes=$(file_size_bytes "$compiled_prompt_file")"
+  log_line "INFO" "run.log_self_review_required log_file=$(shell_quote "$LOG_FILE") target_cycle=$CYCLE_ID"
 
   if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
     log_line "INFO" "dry-run active; skipping codex exec"
@@ -5987,6 +6457,7 @@ main() {
   primary_failure_classification="none"
   log_line "INFO" "cycle.summary execution_origin=$CODEX_EXECUTION_ORIGIN model=$CODEX_MODEL observed_primary_delta=$observed_primary_delta observed_secondary_delta=$observed_secondary_delta observed_delta_status=$observed_delta_status status_marker=${status_marker:-missing} status_marker_source=$status_marker_source session_end_state=$session_end_state agent_messages=$primary_session_agent_message_count tool_calls=$primary_session_tool_call_count tool_results=$primary_session_tool_result_count task_complete_last_agent_message=$primary_session_task_complete_last_agent_message codex_exit=$codex_exit"
   log_review_report_summary "$last_message_file" "${status_marker:-missing}" "$codex_exit"
+  record_startup_anomaly_gate_review "$last_message_file" "${status_marker:-missing}" "$codex_exit"
 
   if [[ "$after_selection" == "exact_model" ]]; then
     if [[ "$after_primary_guardrail_decision" == "stop" ]]; then

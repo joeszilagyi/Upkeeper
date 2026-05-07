@@ -1,0 +1,47 @@
+# Agent Contract
+
+This repository is the central source of truth for Upkeeper wrapper behavior.
+
+## Central-First Rule
+
+- Make Upkeeper behavior changes in this repository, primarily in `Upkeeper`.
+- Do not patch client repositories just to propagate wrapper behavior, help text,
+  prompt text, or operator-guide snapshots.
+- Client repositories should run Upkeeper through a local symlink such as:
+
+  ```sh
+  ln -s /home/joe/projects/Upkeeper/main/Upkeeper ./Upkeeper.sh
+  ```
+
+- Once the central `Upkeeper` file changes, symlinked clients pick up the new
+  behavior on their next loop without tracked client-repo changes.
+
+## Client Repo Boundary
+
+- Keep `Upkeeper.sh`, `Upkeeper.log`, and bootstrapped
+  `docs/scripts/upkeeper.md` local to each client checkout.
+- Client repos should ignore those local Upkeeper artifacts.
+- Do not create, refresh, or version-bump tracked client `docs/scripts/upkeeper.md`
+  files merely to match the central wrapper version.
+- Only change a client repo when stress testing finds a real project bug,
+  project documentation issue, or project-local configuration issue that should
+  be tracked independently of Upkeeper.
+
+## Stress Testing Intent
+
+Upkeeper is expected to stress test both itself and client repositories.
+
+- If the failure is in Upkeeper selection, quota handling, prompt contracts,
+  fallback behavior, logging, or local wrapper ergonomics, patch this repository.
+- If the failure is in the client project's source, tests, validators, or domain
+  docs, patch the client project through its normal branch and PR rules.
+- If the failure is only stale local wrapper state in a client checkout, fix the
+  local symlink or ignored local artifact; do not add tracked client churn.
+
+## Cleanup Discipline
+
+- Treat client `Upkeeper.log`, `runtime/`, and local copied wrappers as evidence
+  or machine-local state, not source.
+- Before touching a client repo, check whether the requested change belongs in
+  central Upkeeper instead.
+- When unsure, prefer a central Upkeeper patch plus a local symlink verification.

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.46
+## Version: v1.0.47
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.46"
+UPKEEPER_VERSION="v1.0.47"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -102,6 +102,7 @@ CODEX_ARG0_TMP_STALE_MINUTES="${CODEX_ARG0_TMP_STALE_MINUTES:-60}"
 CODEX_ARG0_TMP_ROTATE_ON_BLOCKED="${CODEX_ARG0_TMP_ROTATE_ON_BLOCKED:-1}"
 CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS="${CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS:-7}"
 CODEX_MARK_INTERVAL_SECONDS="${CODEX_MARK_INTERVAL_SECONDS:-60}"
+CODEX_TERMINAL_PROGRESS_INTERVAL_SECONDS="${CODEX_TERMINAL_PROGRESS_INTERVAL_SECONDS:-$CODEX_MARK_INTERVAL_SECONDS}"
 CODEX_PREVIOUS_RUN_SCAN_MINUTES="${CODEX_PREVIOUS_RUN_SCAN_MINUTES:-240}"
 CODEX_DISK_MIN_FREE_PERCENT="${CODEX_DISK_MIN_FREE_PERCENT:-10}"
 CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER="${CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER:-1}"
@@ -157,6 +158,10 @@ RUN_TMP_DIR=""
 RUN_MARK_HEARTBEAT_PID=""
 RUN_MARK_HEARTBEAT_STARTED="0"
 RUN_MARK_HEARTBEAT_STOPPED="0"
+RUN_TERMINAL_PROGRESS_PID=""
+RUN_CODEX_STARTED_EPOCH=""
+RUN_SELECTED_REVIEW_PATH=""
+RUN_SELECTED_REVIEW_BASIS=""
 ACTIVE_LOCK_ACQUIRED="0"
 WRAPPER_HEALTH_STATE_FILE=""
 WRAPPER_HEALTH_STATE_FINALIZED="0"
@@ -249,7 +254,8 @@ Loop stop semantics:
     hours are pruned on startup
   - by default, live terminal output is summary-first: routine INFO logs and
     full backend transcripts stay in log/transcript artifacts, while WARN,
-    ERROR, status, and bounded high-signal transcript summaries remain visible;
+    ERROR, live tool/Codex error lines, timestamped progress heartbeats, status,
+    and bounded high-signal transcript summaries remain visible;
     transcript artifacts live under ${CODEX_TRANSCRIPT_DIR} and are pruned after
     ${CODEX_TRANSCRIPT_KEEP_HOURS} hours or ${CODEX_TRANSCRIPT_KEEP_MAX_MB} MB;
     set CODEX_TERMINAL_VERBOSITY=full to stream the full backend transcript
@@ -784,6 +790,8 @@ append_preselected_review_target() {
   selected_worktree_hash="$(sed -n 's/^worktree_hash=//p' <<<"$selection")"
   selected_basis="$(sed -n 's/^selection_basis=//p' <<<"$selection")"
   eligible_count="$(sed -n 's/^eligible_count=//p' <<<"$selection")"
+  RUN_SELECTED_REVIEW_PATH="$selected_path"
+  RUN_SELECTED_REVIEW_BASIS="$selected_basis"
 
   {
     printf 'WRAPPER_PRESELECTED_REVIEW_TARGET\n'
@@ -804,6 +812,7 @@ append_preselected_review_target() {
   } >>"$compiled_file"
 
   log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} worktree_hash=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} basis=$(shell_quote "${selected_basis:-unknown}")"
+  terminal_emit_progress "file selected is ${selected_path:-unknown}; reason: ${selected_basis:-unknown}; age=${selected_age:-unknown}"
 }
 
 operator_guide_snapshot_version() {
@@ -931,6 +940,14 @@ terminal_wants_quiet_output() {
       return 1
       ;;
   esac
+}
+
+terminal_emit_progress() {
+  local message="$*"
+
+  terminal_wants_full_output && return 0
+  terminal_wants_quiet_output && return 0
+  printf '%s Upkeeper: %s\n' "$(timestamp_now)" "$message" >&2
 }
 
 terminal_emit_log_line() {
@@ -1427,6 +1444,70 @@ emit_run_mark() {
   fi
 }
 
+stop_terminal_progress_heartbeat() {
+  local reason="${1:-stop}"
+
+  if [[ -n "${RUN_TERMINAL_PROGRESS_PID:-}" ]]; then
+    kill "$RUN_TERMINAL_PROGRESS_PID" >/dev/null 2>&1 || true
+    wait "$RUN_TERMINAL_PROGRESS_PID" 2>/dev/null || true
+    RUN_TERMINAL_PROGRESS_PID=""
+    log_line "INFO" "terminal_progress.stop reason=$reason"
+  fi
+}
+
+start_terminal_progress_heartbeat() {
+  local label="$1"
+  local transcript_file="$2"
+  local started_epoch="$3"
+  local target="$4"
+  local interval
+
+  terminal_wants_full_output && return 0
+  terminal_wants_quiet_output && return 0
+  interval="$(sanitize_nonnegative_integer "${CODEX_TERMINAL_PROGRESS_INTERVAL_SECONDS:-$CODEX_MARK_INTERVAL_SECONDS}" "$CODEX_MARK_INTERVAL_SECONDS")"
+  if [[ "$interval" -le 0 ]]; then
+    return 0
+  fi
+
+  stop_terminal_progress_heartbeat "restart"
+  (
+    progress_sleep_pid=""
+    trap '[[ -n "$progress_sleep_pid" ]] && kill "$progress_sleep_pid" >/dev/null 2>&1 || true; exit 0' INT TERM HUP
+    while true; do
+      sleep "$interval" &
+      progress_sleep_pid="$!"
+      wait "$progress_sleep_pid" || exit 0
+      progress_sleep_pid=""
+
+      now_epoch="$(date '+%s')"
+      if [[ "$started_epoch" =~ ^[0-9]+$ && "$now_epoch" =~ ^[0-9]+$ ]]; then
+        elapsed_seconds=$((now_epoch - started_epoch))
+      else
+        elapsed_seconds="unknown"
+      fi
+      if [[ -f "$transcript_file" ]]; then
+        transcript_lines="$(wc -l <"$transcript_file" 2>/dev/null || printf 'unknown')"
+        transcript_bytes="$(file_size_bytes "$transcript_file")"
+        transcript_updated="$(date -r "$transcript_file" '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || printf 'unknown')"
+      else
+        transcript_lines="missing"
+        transcript_bytes="missing"
+        transcript_updated="missing"
+      fi
+      printf '%s Upkeeper: %s still running target=%s elapsed=%ss transcript_lines=%s transcript_bytes=%s last_update=%s\n' \
+        "$(timestamp_now)" \
+        "$label" \
+        "${target:-unknown}" \
+        "$elapsed_seconds" \
+        "$transcript_lines" \
+        "$transcript_bytes" \
+        "$transcript_updated" >&2
+    done
+  ) &
+  RUN_TERMINAL_PROGRESS_PID="$!"
+  log_line "INFO" "terminal_progress.start pid=$RUN_TERMINAL_PROGRESS_PID label=$label interval_seconds=$interval target=$(shell_quote "${target:-unknown}") transcript=$(shell_quote "$transcript_file")"
+}
+
 start_run_mark_heartbeat() {
   local interval="$CODEX_MARK_INTERVAL_SECONDS"
   if [[ "$interval" -le 0 ]]; then
@@ -1650,6 +1731,7 @@ finish_cycle() {
   local level="$3"
   shift 3
 
+  stop_terminal_progress_heartbeat "$reason"
   stop_run_mark_heartbeat "$reason"
   local message="cycle.exit exit_code=$exit_code reason=$reason"
   if [[ $# -gt 0 ]]; then
@@ -1662,6 +1744,7 @@ finish_cycle() {
 }
 
 cleanup_run_temp_files() {
+  stop_terminal_progress_heartbeat "cleanup"
   stop_run_mark_heartbeat "cleanup"
   finalize_wrapper_health_state "aborted"
   release_active_lock
@@ -1886,14 +1969,29 @@ contractish = re.compile(
     r'|^(REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER|failed)$'
     r'|^RUN_RESULT=\{\{'
 )
+boilerplateish = re.compile(
+    r'^(Check for wrapper/prompt/logging defects|If no anomalies were found|If anomalies were found|Report the review outcome|'
+    r'If the review outcome|The literal final line|Do not emit UPKEEPER_STATUS|Wrapper control marker compatibility|'
+    r'Current-cycle log self-review|Current-cycle Upkeeper log review found no anomalies|'
+    r'The current-cycle log lines show .*no ERROR/WARN)'
+)
 diff_count = sum(1 for line in lines if line.startswith('diff --git '))
 hook_count = sum(1 for line in lines if line.startswith('hook: '))
 prompt_count = sum(1 for line in lines if promptish.search(line))
 
+def is_prompt_or_contract(line: str) -> bool:
+    stripped = line.strip()
+    normalized = re.sub(r'^\s*(?:[-*]|\d+[.])\s+', '', stripped)
+    if promptish.search(stripped) or contractish.search(stripped) or boilerplateish.search(normalized):
+        return True
+    if re.search(r'\bno ERROR/WARN\b|\bno ERROR\b|\bno WARN\b', normalized, re.I):
+        return True
+    return False
+
 def is_signal(line: str) -> bool:
     if line.startswith(('UPKEEPER_STATUS:', 'UPKEEPER_LOG_REVIEW:')):
         return True
-    if promptish.search(line) or contractish.search(line):
+    if is_prompt_or_contract(line):
         return False
     if re.search(r'\[(WARN|ERROR)\]', line):
         return True
@@ -1935,6 +2033,154 @@ if exit_raw not in {'0', ''} and tail_limit:
 PY
 }
 
+codex_live_output_filter() {
+  local label="$1"
+
+  python3 - "$label" <<'PY'
+from datetime import datetime, timezone
+import os
+import re
+import sys
+
+label = sys.argv[1]
+verbosity = os.environ.get("CODEX_TERMINAL_VERBOSITY", "summary").lower()
+quiet = verbosity in {"quiet", "none", "silent", "0", "no", "false"}
+
+promptish = re.compile(
+    r"^(WRAPPER_|ABSOLUTE RULE|Background Review Prompt Repertoire|Summary Table|P\d+ - |-{8,}$|"
+    r"workdir: |model: |provider: |approval: |sandbox: |reasoning effort: |session id: |user$|hook: )"
+)
+boilerplateish = re.compile(
+    r"^(Check for wrapper/prompt/logging defects|If no anomalies were found|If anomalies were found|Report the review outcome|"
+    r"If the review outcome|The literal final line|Do not emit UPKEEPER_STATUS|Wrapper control marker compatibility|"
+    r"Current-cycle log self-review|Current-cycle Upkeeper log review found no anomalies|"
+    r"The current-cycle log lines show .*no ERROR/WARN)"
+)
+contractish = re.compile(
+    r"^(?:[-*] |\d+[.] |[|] ).*(UPKEEPER_STATUS|UPKEEPER_LOG_REVIEW|REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER|RUN_RESULT|rate limit|quota|failed)"
+    r"|^RUN_RESULT=\{\{"
+)
+
+
+def ts() -> str:
+    return datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def short(value: str, limit: int = 260) -> str:
+    value = re.sub(r"\s+", " ", value.strip())
+    if len(value) > limit:
+        return value[: limit - 15].rstrip() + "...<truncated>"
+    return value
+
+
+def is_prompt_or_contract(line: str) -> bool:
+    stripped = line.strip()
+    normalized = re.sub(r"^\s*(?:[-*]|\d+[.])\s+", "", stripped)
+    if promptish.search(stripped) or contractish.search(stripped) or boilerplateish.search(normalized):
+        return True
+    if re.search(r"\bno ERROR/WARN\b|\bno ERROR\b|\bno WARN\b", normalized, re.I):
+        return True
+    return False
+
+
+def is_error_line(line: str) -> bool:
+    if not line or is_prompt_or_contract(line):
+        return False
+    patterns = (
+        r"\[(?:WARN|ERROR)\]",
+        r"\bERROR\b",
+        r"\bWARN(?:ING)?\b",
+        r"\bError:",
+        r"\berror:",
+        r"\berror=",
+        r"\bfailed\b",
+        r"\bTraceback\b",
+        r"\bException\b",
+        r"\bpanic\b",
+        r"HTTP request failed",
+        r"Command blocked by PreToolUse hook",
+        r"rmcp::",
+        r"exited [1-9][0-9]* in ",
+        r"KeyboardInterrupt",
+        r"interrupted",
+    )
+    if any(re.search(pattern, line) for pattern in patterns):
+        if re.search(r"\b(add_error|JSON_PARSE_ERROR|INPUT_DECODE_ERROR|EXPORT_JSON_PARSE_ERROR)\b", line):
+            return False
+        return True
+    return False
+
+
+def command_kind(line: str) -> str:
+    lowered = line.lower()
+    if "pytest" in lowered or " test" in lowered or "/test" in lowered:
+        return "tests"
+    if "bash -n" in lowered or "--check" in lowered or "diff --check" in lowered:
+        return "check"
+    return "command"
+
+
+def is_interesting_command(line: str) -> bool:
+    lowered = line.lower()
+    return any(
+        token in lowered
+        for token in (
+            "pytest",
+            " test",
+            "/test",
+            "bash -n",
+            "--check",
+            "diff --check",
+            "python",
+            "node",
+            "npm",
+            "make",
+            "cargo",
+            "go test",
+            "ruff",
+            "mypy",
+            "shellcheck",
+        )
+    )
+
+
+expecting_command = False
+last_kind = "command"
+
+for raw in sys.stdin:
+    line = raw.rstrip("\r\n")
+    stripped = line.strip()
+
+    if stripped == "exec":
+        expecting_command = True
+        continue
+
+    if expecting_command and stripped:
+        expecting_command = False
+        last_kind = command_kind(stripped)
+        if not quiet and is_interesting_command(stripped):
+            print(f"{ts()} Upkeeper: {label} running {last_kind}: {short(stripped)}", file=sys.stderr, flush=True)
+        continue
+
+    if re.match(r"succeeded in [0-9]+", stripped):
+        if not quiet:
+            print(f"{ts()} Upkeeper: {label} {last_kind} completed: {short(stripped)}", file=sys.stderr, flush=True)
+        continue
+
+    if re.match(r"exited [1-9][0-9]* in ", stripped):
+        print(f"{ts()} Upkeeper: {label} ERROR {last_kind} failed: {short(stripped)}", file=sys.stderr, flush=True)
+        continue
+
+    if stripped.startswith(("UPKEEPER_STATUS:", "UPKEEPER_LOG_REVIEW:")):
+        if not quiet:
+            print(f"{ts()} Upkeeper: {label} status: {short(stripped)}", file=sys.stderr, flush=True)
+        continue
+
+    if is_error_line(stripped):
+        print(f"{ts()} Upkeeper: {label} ERROR: {short(stripped)}", file=sys.stderr, flush=True)
+PY
+}
+
 run_codex_exec_capture() {
   local label="$1"
   local transcript_file="$2"
@@ -1946,8 +2192,8 @@ run_codex_exec_capture() {
     "$@" <"$stdin_file" 2>&1 | tee "$transcript_file"
     codex_rc="${PIPESTATUS[0]}"
   else
-    "$@" <"$stdin_file" >"$transcript_file" 2>&1
-    codex_rc="$?"
+    "$@" <"$stdin_file" 2>&1 | tee "$transcript_file" | codex_live_output_filter "$label"
+    codex_rc="${PIPESTATUS[0]}"
     emit_codex_transcript_summary "$label" "$transcript_file" "$codex_rc"
   fi
   return "$codex_rc"
@@ -6688,9 +6934,15 @@ log_review_report_summary() {
   [[ -n "$outcome" ]] || outcome="unknown"
   [[ -n "$selected_file" ]] || selected_file="unknown"
   log_line "INFO" "review.summary status_marker=${status_marker_value:-missing} review_outcome=$outcome selected_file=$(shell_quote "$selected_file") findings=$(shell_quote "$findings") changes=$(shell_quote "$changes") verification=$(shell_quote "$verification") codex_exit=$codex_exit_value"
+  terminal_emit_progress "review completed outcome=$outcome status_marker=${status_marker_value:-missing} selected_file=$selected_file"
 
   if [[ "$outcome" == "REVIEWED_AND_FIXED" || ( "$outcome" == "unknown" && -n "$changes" ) ]]; then
+    local terminal_findings="$findings"
+    local terminal_changes="$changes"
+    [[ "${#terminal_findings}" -le 260 ]] || terminal_findings="${terminal_findings:0:260}..."
+    [[ "${#terminal_changes}" -le 260 ]] || terminal_changes="${terminal_changes:0:260}..."
     log_line "INFO" "review.fix_details review_outcome=$outcome selected_file=$(shell_quote "$selected_file") findings=$(shell_quote "$findings") changes=$(shell_quote "$changes")"
+    terminal_emit_progress "bugs/fixes found: ${terminal_findings:-none}; changes: ${terminal_changes:-none}"
   fi
 
   if [[ "${CODEX_PROMPT_PASS:-}" == "all" ]]; then
@@ -7906,6 +8158,9 @@ main() {
   ensure_codex_bwrap_tmp_writable_or_exit "before_run" "0"
   RUN_TRANSCRIPT_FILE="$(new_transcript_file primary)"
   log_line "INFO" "run.start execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=${PROMPT_FILE:-inline/default} compiled_prompt=$compiled_prompt_file transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE")"
+  RUN_CODEX_STARTED_EPOCH="$(date '+%s')"
+  terminal_emit_progress "codex started target=${RUN_SELECTED_REVIEW_PATH:-unknown} model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT prompt_pass=${CODEX_PROMPT_PASS:-default} transcript=$RUN_TRANSCRIPT_FILE"
+  start_terminal_progress_heartbeat "primary" "$RUN_TRANSCRIPT_FILE" "$RUN_CODEX_STARTED_EPOCH" "${RUN_SELECTED_REVIEW_PATH:-unknown}"
 
   set +e
   run_codex_exec_capture "primary" "$RUN_TRANSCRIPT_FILE" "$compiled_prompt_file" \
@@ -7917,8 +8172,10 @@ main() {
     -o "$last_message_file"
   local codex_exit=$?
   set -e
+  stop_terminal_progress_heartbeat "codex_exit_$codex_exit"
 
   log_line "INFO" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE")"
+  terminal_emit_progress "codex finished target=${RUN_SELECTED_REVIEW_PATH:-unknown} exit=$codex_exit transcript=$RUN_TRANSCRIPT_FILE"
   local after_quota_json=""
   local after_error=""
   local after_ts="" after_source="" after_selection="" after_model_hint="" after_snapshot_is_current=""

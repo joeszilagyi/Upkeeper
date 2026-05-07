@@ -17,7 +17,7 @@ On each cycle it:
 - reads recent Codex quota snapshots from `$CODEX_HOME/sessions`
 - logs current and projected quota use before spending another run
 - preselects one eligible script/tool target with `git ls-files -co --exclude-standard`
-- embeds that target in the default maintenance prompt so Codex does not scan
+- prepends that target to the default maintenance prompt so Codex does not scan
   `.git/`, ignored files, generated outputs, runtime evidence, or test trees by accident
 - runs Codex once with the configured model and reasoning effort
 - records terminal outcomes in `Upkeeper.log`
@@ -84,10 +84,36 @@ wrapper instead of a symlink, it will drift: missing flags, stale prompt rules,
 and old guardrail behavior are all signs that the client wrapper should be
 refreshed or replaced with a link.
 
-Upkeeper bootstraps a repo-local guide at `docs/scripts/upkeeper.md` when it is
-missing. Existing guides are not overwritten. If the guide snapshot version is
-old, startup logs an `operator_guide.stale` warning so local notes can be
-preserved while the generated section is refreshed.
+In client repositories, keep Upkeeper's local artifacts ignored:
+
+```gitignore
+Upkeeper.sh
+Upkeeper.log
+docs/scripts/upkeeper.md
+```
+
+Upkeeper can bootstrap a repo-local guide at `docs/scripts/upkeeper.md` when it
+is missing and tracked by the client. Existing guides are not overwritten. If
+the client ignores that guide path, it is treated as optional local operator
+state: missing ignored guides are not created, and stale or missing guide
+versions are logged as informational local-note events.
+
+Sanitized multi-repo pattern:
+
+```sh
+# Patch wrapper behavior once in the central checkout.
+cd /work/tools/Upkeeper
+git pull --ff-only
+
+# Client A picks up that central behavior through its symlink.
+cd /work/repos/example-index
+./Upkeeper.sh --version
+UPKEEPER_DRY_RUN=1 ./Upkeeper.sh
+
+# Client B does the same, with its own local log and target repo cwd.
+cd /work/repos/example-protocol
+CODEX_MODEL=gpt-5.3-codex-spark CODEX_REASONING_EFFORT=xhigh ./Upkeeper.sh
+```
 
 ## Operator Examples
 
@@ -143,7 +169,7 @@ operator can resume from evidence instead of guessing.
 The default prompt is a rotating single-file maintenance review. It asks Codex
 to review the oldest eligible non-test script/tool file by modification time.
 
-The wrapper now does that selection before Codex starts and appends a
+The wrapper now does that selection before Codex starts and prepends a
 `WRAPPER_PRESELECTED_REVIEW_TARGET` block to the prompt. That block is meant to
 prevent expensive or unsafe rediscovery patterns such as:
 

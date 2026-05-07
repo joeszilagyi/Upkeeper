@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.25
+Version: v1.0.27
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -292,7 +292,7 @@ Exit codes:
   `previous_run.anomaly`, `disk.preflight`, and `--MARK--` lines are primary
   evidence for follow-up self-repair.
 - If a startup anomaly gate is active and the final response omits the required
-  `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=none|listed`
+  raw-line `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=none|listed`
   acknowledgment, the wrapper logs `startup_anomaly.gate_unresolved`; the next
   startup scan treats that marker and the runtime gate state file as another
   anomaly and forces the next cycle back onto the Upkeeper suite.

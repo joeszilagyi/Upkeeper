@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.43
+## Version: v1.0.44
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.43"
+UPKEEPER_VERSION="v1.0.44"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -1867,11 +1867,13 @@ parse_args() {
       --prompt-file)
         [[ $# -ge 2 ]] || die "--prompt-file requires a path"
         PROMPT_FILE="$2"
+        [[ -n "$PROMPT_FILE" ]] || die "--prompt-file requires a non-empty path"
         shift 2
         ;;
       --prompt)
         [[ $# -ge 2 ]] || die "--prompt requires text"
         INLINE_PROMPT="$2"
+        [[ -n "$INLINE_PROMPT" ]] || die "--prompt requires non-empty text"
         shift 2
         ;;
       --model-override=*)
@@ -7223,7 +7225,7 @@ run_fallback_cycle() {
       CODEX_POSTMORTEM_ENABLED=0 \
       CODEX_DISABLE_PARENT_STOP=1 \
       CODEX_GUARDRAIL_STOP_EXIT_CODE=9 \
-      CODEX_EXECUTION_ORIGIN=screen \
+      CODEX_EXECUTION_ORIGIN=direct_fallback \
       "$SELF_INVOKE_PATH" "${child_args[@]}"
       child_exit=$?
       set -e
@@ -7238,7 +7240,7 @@ run_fallback_cycle() {
     set -e
   fi
 
-  log_line "INFO" "fallback.finish trigger=$trigger child_exit=$child_exit final_exit=$final_exit child_model=$CODEX_FALLBACK_MODEL child_effort=$CODEX_FALLBACK_REASONING_EFFORT parent_cycle_id=$CYCLE_ID execution_origin=$([[ "$CODEX_FALLBACK_SCREEN_ENABLED" == "1" ]] && printf screen || printf primary) postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none} screen_session=${FALLBACK_SCREEN_SESSION_NAME:-none}"
+  log_line "INFO" "fallback.finish trigger=$trigger child_exit=$child_exit final_exit=$final_exit child_model=$CODEX_FALLBACK_MODEL child_effort=$CODEX_FALLBACK_REASONING_EFFORT parent_cycle_id=$CYCLE_ID execution_origin=$([[ "$CODEX_FALLBACK_SCREEN_ENABLED" == "1" ]] && printf screen || printf direct_fallback) postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none} screen_session=${FALLBACK_SCREEN_SESSION_NAME:-none}"
   refresh_postmortem_incident_log "${POSTMORTEM_INCIDENT_LOG_PATH:-}"
   return "$final_exit"
 }

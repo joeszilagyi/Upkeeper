@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.43
+Version: v1.0.44
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -191,8 +191,10 @@ Prompt behavior:
   - The review body should report REVIEWED_AND_FIXED, REVIEWED_CLEAN, or
     STOPPED_ON_BLOCKER, but the literal final line still maps to the wrapper's
     UPKEEPER_STATUS marker contract.
-  - --prompt-file FILE appends extra task guidance from FILE.
-  - --prompt TEXT appends extra task guidance inline.
+  - --prompt-file FILE appends extra task guidance from FILE; an empty value is
+    rejected so the wrapper does not silently fall back to the default prompt.
+  - --prompt TEXT appends extra task guidance inline; an empty value is rejected
+    for the same reason.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5
     with xhigh reasoning effort. It is a CLI-only operator override and does
     not persist to later loop iterations. Use the equals form; spaced form is

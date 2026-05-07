@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.32
+Version: v1.0.33
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -109,7 +109,9 @@ Important:
     used by the primary invocation, so symlinked installs keep operating on the
     target repository rather than the central wrapper source checkout.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
-    scraping the interactive /status TUI output.
+    scraping the interactive /status TUI output. The snapshot reader uses a
+    tail-first scan of recent session JSONL files, with full-file fallback only
+    when the tail does not contain enough quota/model metadata.
   - Exact-model Spark quota snapshots may still report the generic Codex
     limiter identity; once snapshot selection proves the target model, that is
     treated as usable quota metadata instead of a conflict.

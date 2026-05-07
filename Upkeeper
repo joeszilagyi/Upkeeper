@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.33
+## Version: v1.0.36
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.33"
+UPKEEPER_VERSION="v1.0.36"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -3252,8 +3252,45 @@ PY
 # The default cycle prompt now drives a timestamp-based fresh-eyes review pass
 # over one eligible script/tool file at a time. Emit it from a single-quoted
 # heredoc so prompt text that includes shell metacharacters stays literal.
+prune_default_prompt_sections() {
+  local compiled_file="$1"
+  [[ -f "$compiled_file" ]] || return 1
+  python3 - "$compiled_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    text = path.read_text(encoding="utf-8", errors="replace")
+except OSError:
+    raise SystemExit(1)
+
+before = len(text.encode("utf-8"))
+removed = []
+for pass_id in ("P2", "P8", "P16"):
+    pattern = re.compile(
+        rf"\n________________________________________\n\n{pass_id} - .*?"
+        r"(?=\n________________________________________\n\nP(?:[1-9]|1[0-9]|2[0-3]) - )",
+        re.S,
+    )
+    text, count = pattern.subn("", text, count=1)
+    if count:
+        removed.append(pass_id)
+
+try:
+    path.write_text(text, encoding="utf-8")
+except OSError:
+    raise SystemExit(1)
+
+after = len(text.encode("utf-8"))
+print(f"removed={','.join(removed) if removed else 'none'} bytes_before={before} bytes_after={after} bytes_saved={before - after}")
+PY
+}
+
 compile_prompt() {
   local compiled_file="$1"
+  local prune_stats
 
   ensure_run_tmp_dir
   : >"$compiled_file"
@@ -3440,67 +3477,12 @@ Detail all fixes found/implemented and why for each.
 
 Background Review Prompt Repertoire
 
-Spare-Cycle Automation -- 23 Prompts
-
-Designed for: while [agent] --prompt=$(rand from this set)
-
-Each prompt is self-contained, model-agnostic, and safe to run on rotation. Selection rule is timestamp-based throughout: oldest last-modified file wins. Ties broken alphabetically. Every prompt ends with a touch to record the review.
-
-########
-
-NOTE:
-
-Time began: 2026-04-30 06:32 UTC
-
-File selected: tools/api/core/repositories/search_repository.py (next oldest file, timestamp: 11:01 April 28, 2026)
-
-{EXAMPLE} of a prior run. This is the preferred way to show the age of the selected file.
-
-##########
-
-===WHAT TOOL TO WRITE TO DISK WITH===
-
-0. Always save file prior/live contents in memory first.
-
-1. Always direct file ---> your "edit" tool is substandard and fails often.
-
-Example:
-
-"I'll try using write_to_file instead of edit to persist the changes, which may work better:"
-
-2. write_to_file always first
-
-2a. Try alternatives -- this is Linux, there's always a way.
-
-Issues like this are unacceptable
-
-"The changes I made during the review cycle were not persisted to disk. Let me re-apply all the fixes and commit them:"
-
-You MUST MUST confirm and double check all fixes are applied WHEN DONE and saved to disk.
-
-Fail to update files and confirm after file saved and time stamp updated via the TOUCH... is blocker condition that must be addressed.
-
-For example, this was a Windsurf explanation once:
-
-"The edit tool reported successful changes and displayed updated file views, but the modifications were not actually written to the filesystem. When I read the files back after editing, they contained the original code without the logging and error handling fixes. This indicates the edit tool is not persisting changes to disk despite reporting success. This is a system issue with the edit tool - it appears to apply changes in memory but fails to write them to the actual files."
-
-Once you have done the test-- or your tool claims that
-
----> verify time changed
----> verify the fixes are in
----> if not try to fix
-
----> verify time changed
----> verify the fixes are in
----> if not try to fix again
-
----> verify time changed
----> verify the fixes are in
----> if not try to fix again
-
----> verify time changed
----> verify the fixes are in
----> if not explain critical failure
+Each prompt is self-contained, model-agnostic, and safe to run on rotation.
+Upkeeper already preselects the source-safe target when possible; use that
+selection instead of rediscovering candidates. If edits are made, verify the
+intended content persisted and report the changed file list. For clean no-edit
+reviews, touch the selected file and verify mtime changed while the content hash
+remained equal to the pre-touch hash.
 
 ________________________________________
 
@@ -4949,13 +4931,21 @@ EOF
     printf -- '- You may also include a short human-readable current-cycle log review summary on separate lines.\n'
 
     printf '\nWrapper control marker compatibility:\n'
-    printf -- '- If write_to_file is unavailable in the current Codex environment, use the available file-writing mechanism and still perform the same persistence and mtime verification steps.\n'
+    printf -- '- If edits are made, report changed files and the focused verification performed.\n'
     printf -- '- Report the review outcome in the body using one of: REVIEWED_AND_FIXED, REVIEWED_CLEAN, or STOPPED_ON_BLOCKER.\n'
     printf -- '- The literal final line must still be a wrapper status marker with no Markdown or trailing punctuation.\n'
     printf -- '- If the review outcome is REVIEWED_AND_FIXED or REVIEWED_CLEAN, the final line must be exactly: UPKEEPER_STATUS: WORK_DONE\n'
     printf -- '- If the review outcome is STOPPED_ON_BLOCKER, the final line must be exactly: UPKEEPER_STATUS: BLOCKED\n'
     printf -- '- Do not emit UPKEEPER_STATUS: NO_BACKEND_TASK for this prompt family.\n'
   } >>"$compiled_file"
+
+  if [[ "${CODEX_PROMPT_PASS:-}" != "all" ]]; then
+    if prune_stats="$(prune_default_prompt_sections "$compiled_file")"; then
+      log_line "INFO" "review.prompt_pruned prompt_pass=default $prune_stats"
+    else
+      log_line "WARN" "review.prompt_pruned prompt_pass=default status=failed"
+    fi
+  fi
 }
 
 # Parent-loop control.

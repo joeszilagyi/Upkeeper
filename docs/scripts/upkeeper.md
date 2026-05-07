@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.23
+Version: v1.0.24
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -140,8 +140,9 @@ Important:
   - Startup scans the recent live log for prior cycles that started but never
     wrote cycle.exit/run.finish, logs previous_run.anomaly lines, and injects
     those findings into the prompt for the next healthy run.
-  - Startup also logs a disk.preflight line and injects a prompt note when free
-    space under the repo root is below 10%.
+  - Startup also logs disk.preflight lines for repo, log, Codex home/session,
+    temp, bwrap, arg0, and runtime paths, and injects a prompt note when any
+    write-critical root is below 10% free.
   - Startup anomalies are a gate by default: while prior-run, watchdog-style, or
     low-disk anomaly evidence is active, preselection is forced to the repo-local
     Upkeeper implementation and normal timestamp rotation is blocked until the
@@ -237,6 +238,9 @@ Environment overrides:
   CODEX_PREVIOUS_RUN_SCAN_MINUTES Default: 240
   CODEX_DISK_MIN_FREE_PERCENT Default: 10
   CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER Default: 1
+  CODEX_STARTUP_ANOMALY_GATE_STATE_DIR Default: runtime/startup-anomaly-gates
+  CODEX_ACTIVE_LOCK_DIR Default: runtime/upkeeper-active.lock
+  CODEX_WRAPPER_HEALTH_STATE_DIR Default: $CODEX_HOME/upkeeper/active-wrapper-runs
   CODEX_SESSION_SCAN_LIMIT      Default: 200
   CODEX_LOG_FILE                Default: Upkeeper.log
   UPKEEPER_DRY_RUN           Default: 0
@@ -262,6 +266,13 @@ Exit codes:
 - `Upkeeper.log` and `runtime/` are local evidence artifacts and are ignored by
   git. Promote only durable operating rules, postmortem conclusions, or wrapper
   behavior changes into tracked files.
+- A repo-level active lock at `runtime/upkeeper-active.lock` prevents two
+  Upkeeper loops from running the same checkout concurrently; stale locks are
+  reclaimed only when the recorded PID/start fingerprint no longer matches.
+- A shared central-wrapper health state under `$CODEX_HOME/upkeeper/` is keyed
+  by resolved wrapper path and wrapper blob hash. If a prior same-code run is
+  stale, wedged, or ambiguous, later client starts fail closed before normal
+  target selection.
 - The default review prompt explicitly excludes ignored files, generated files,
   runtime evidence, caches, vendor content, and `.git/` internals from target
   selection. If a scan finds one of those first, the agent should state the
@@ -276,9 +287,10 @@ Exit codes:
   `previous_run.anomaly`, `disk.preflight`, and `--MARK--` lines are primary
   evidence for follow-up self-repair.
 - If a startup anomaly gate is active and the final response omits the required
-  current-cycle log review, the wrapper logs `startup_anomaly.gate_unresolved`;
-  the next startup scan treats that marker as another anomaly and forces the
-  next cycle back onto the Upkeeper suite.
+  `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=none|listed`
+  acknowledgment, the wrapper logs `startup_anomaly.gate_unresolved`; the next
+  startup scan treats that marker and the runtime gate state file as another
+  anomaly and forces the next cycle back onto the Upkeeper suite.
 
 ## Repo-Local Living Notes
 

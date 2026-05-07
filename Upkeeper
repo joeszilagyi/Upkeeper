@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.23
+## Version: v1.0.24
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.23"
+UPKEEPER_VERSION="v1.0.24"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -96,6 +96,9 @@ CODEX_MARK_INTERVAL_SECONDS="${CODEX_MARK_INTERVAL_SECONDS:-60}"
 CODEX_PREVIOUS_RUN_SCAN_MINUTES="${CODEX_PREVIOUS_RUN_SCAN_MINUTES:-240}"
 CODEX_DISK_MIN_FREE_PERCENT="${CODEX_DISK_MIN_FREE_PERCENT:-10}"
 CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER="${CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER:-1}"
+CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="${CODEX_STARTUP_ANOMALY_GATE_STATE_DIR:-$ROOT_DIR/runtime/startup-anomaly-gates}"
+CODEX_ACTIVE_LOCK_DIR="${CODEX_ACTIVE_LOCK_DIR:-$ROOT_DIR/runtime/upkeeper-active.lock}"
+CODEX_WRAPPER_HEALTH_STATE_DIR="${CODEX_WRAPPER_HEALTH_STATE_DIR:-$CODEX_HOME_DIR/upkeeper/active-wrapper-runs}"
 UPKEEPER_DRY_RUN="${UPKEEPER_DRY_RUN:-0}"
 
 declare -a CODEX_MODE_ARGS=()
@@ -119,6 +122,10 @@ PREVIOUS_RUN_ANOMALIES=""
 DISK_SPACE_PROMPT_NOTE=""
 STARTUP_ANOMALY_GATE="0"
 STARTUP_ANOMALY_REASONS=""
+STARTUP_ANOMALY_GATE_STATE_FILE=""
+STARTUP_ANOMALY_GATE_BASELINE_FILE=""
+STARTUP_ANOMALY_GATE_RESOLVED="0"
+STARTUP_ANOMALY_GATE_CHANGED_PATH_VIOLATION="0"
 POSTMORTEM_REPORT_PATH=""
 POSTMORTEM_CONTEXT_PATH=""
 POSTMORTEM_INCIDENT_LOG_PATH=""
@@ -135,6 +142,9 @@ RUN_TMP_DIR=""
 RUN_MARK_HEARTBEAT_PID=""
 RUN_MARK_HEARTBEAT_STARTED="0"
 RUN_MARK_HEARTBEAT_STOPPED="0"
+ACTIVE_LOCK_ACQUIRED="0"
+WRAPPER_HEALTH_STATE_FILE=""
+WRAPPER_HEALTH_STATE_FINALIZED="0"
 
 # Human-facing inline help. This is also the seed text for a missing tracked
 # operator guide; once the guide exists, the Markdown becomes the living document.
@@ -268,8 +278,9 @@ Important:
   - Startup scans the recent live log for prior cycles that started but never
     wrote cycle.exit/run.finish, logs previous_run.anomaly lines, and injects
     those findings into the prompt for the next healthy run.
-  - Startup also logs a disk.preflight line and injects a prompt note when free
-    space under the repo root is below ${CODEX_DISK_MIN_FREE_PERCENT}%.
+  - Startup also logs disk.preflight lines for repo, log, Codex home/session,
+    temp, bwrap, arg0, and runtime paths, and injects a prompt note when any
+    write-critical root is below ${CODEX_DISK_MIN_FREE_PERCENT}% free.
   - Startup anomalies are a gate by default: while prior-run, watchdog-style, or
     low-disk anomaly evidence is active, preselection is forced to the repo-local
     Upkeeper implementation and normal timestamp rotation is blocked until the
@@ -365,6 +376,9 @@ Environment overrides:
   CODEX_PREVIOUS_RUN_SCAN_MINUTES Default: 240
   CODEX_DISK_MIN_FREE_PERCENT Default: 10
   CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER Default: 1
+  CODEX_STARTUP_ANOMALY_GATE_STATE_DIR Default: $ROOT_DIR/runtime/startup-anomaly-gates
+  CODEX_ACTIVE_LOCK_DIR Default: $ROOT_DIR/runtime/upkeeper-active.lock
+  CODEX_WRAPPER_HEALTH_STATE_DIR Default: $CODEX_HOME_DIR/upkeeper/active-wrapper-runs
   CODEX_SESSION_SCAN_LIMIT      Default: 200
   CODEX_LOG_FILE                Default: $ROOT_DIR/Upkeeper.log
   UPKEEPER_DRY_RUN           Default: 0
@@ -389,6 +403,73 @@ resolved_operator_guide_path() {
   else
     printf '%s/%s' "$ROOT_DIR" "$CODEX_OPERATOR_GUIDE_PATH"
   fi
+}
+
+repo_local_upkeeper_gate_target() {
+  python3 - "$ROOT_DIR" "$SELF_PATH" <<'PY'
+import os
+import stat as statmod
+import subprocess
+import sys
+
+root, self_path = sys.argv[1:3]
+os.chdir(root)
+
+
+def root_relative(path: str) -> str:
+    try:
+        rel_path = os.path.relpath(path, root)
+    except ValueError:
+        return ""
+    if rel_path == "." or rel_path.startswith("../") or os.path.isabs(rel_path):
+        return ""
+    return rel_path.replace(os.sep, "/")
+
+
+eligible_names = set()
+self_rel = root_relative(self_path)
+if self_rel:
+    eligible_names.add(self_rel)
+eligible_names.add("Upkeeper")
+
+try:
+    raw_paths = subprocess.check_output(["git", "ls-files", "-co", "--exclude-standard", "-z"])
+except subprocess.CalledProcessError:
+    raise SystemExit(1)
+
+repo_paths = set(raw_paths.decode("utf-8", "surrogateescape").split("\0"))
+matches = []
+for path in sorted(eligible_names):
+    if path not in repo_paths:
+        continue
+    try:
+        stat_result = os.stat(path)
+    except OSError:
+        continue
+    if statmod.S_ISREG(stat_result.st_mode):
+        matches.append(path)
+
+if not matches:
+    raise SystemExit(1)
+print(matches[0])
+PY
+}
+
+enforce_startup_anomaly_gate_target_or_exit() {
+  local target
+  [[ "$STARTUP_ANOMALY_GATE" == "1" ]] || return 0
+  [[ "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" == "1" ]] || return 0
+
+  if target="$(repo_local_upkeeper_gate_target)"; then
+    log_line "INFO" "startup_anomaly.gate_target status=eligible path=$(shell_quote "$target")"
+    return 0
+  fi
+
+  log_line "ERROR" "startup_anomaly.gate_target status=missing action=fail_closed reason=no_repo_local_upkeeper_candidate implementation=$(shell_quote "$SELF_PATH") root=$(shell_quote "$ROOT_DIR")"
+  if ! write_startup_anomaly_gate_state "unresolved" "no_repo_local_upkeeper_candidate"; then
+    finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=0 implementation=$(shell_quote "$SELF_PATH") root=$(shell_quote "$ROOT_DIR")"
+  fi
+  finish_cycle 7 STARTUP_ANOMALY_REQUIRES_CENTRAL_UPKEEPER WARN "codex_exec_started=0 implementation=$(shell_quote "$SELF_PATH") root=$(shell_quote "$ROOT_DIR")"
 }
 
 preselect_review_target() {
@@ -540,6 +621,13 @@ stale_self_candidates = [
     for item in all_self_candidates
     if now - item[0] >= self_review_threshold_seconds
 ]
+if startup_anomaly_gate == "1" and startup_force_upkeeper == "1" and not all_self_candidates:
+    print(
+        "startup anomaly gate requires a repo-local Upkeeper candidate; "
+        "normal oldest eligible selection is blocked",
+        file=sys.stderr,
+    )
+    sys.exit(7)
 if startup_anomaly_gate == "1" and startup_force_upkeeper == "1" and all_self_candidates:
     mtime, path = sorted(all_self_candidates, key=lambda item: (item[0], item[1]))[0]
     selection_basis = (
@@ -577,16 +665,27 @@ PY
 
 append_preselected_review_target() {
   local compiled_file="$1"
-  local selection err_file detail selected_path selected_epoch selected_age eligible_count selected_git_status selected_content_state selected_worktree_hash selected_basis
+  local selection selector_rc err_file detail selected_path selected_epoch selected_age eligible_count selected_git_status selected_content_state selected_worktree_hash selected_basis
 
   if ! err_file="$(run_mktemp preselect-error)"; then
     log_line "WARN" "review.preselect.skip reason=tempfile_failed"
     return 0
   fi
 
-  if ! selection="$(preselect_review_target 2>"$err_file")"; then
+  set +e
+  selection="$(preselect_review_target 2>"$err_file")"
+  selector_rc=$?
+  set -e
+  if [[ "$selector_rc" -ne 0 ]]; then
     detail="$(tr '\n' ' ' <"$err_file" | sed 's/[[:space:]]\+/ /g' | cut -c1-400)"
     rm -f "$err_file"
+    if [[ "$selector_rc" -eq 7 ]]; then
+      log_line "ERROR" "review.preselect.blocked reason=startup_anomaly_requires_repo_local_upkeeper detail=$(shell_quote "${detail:-unknown_error}") implementation=$(shell_quote "$SELF_PATH") root=$(shell_quote "$ROOT_DIR")"
+      if ! write_startup_anomaly_gate_state "unresolved" "preselect_no_repo_local_upkeeper_candidate"; then
+        finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=0 implementation=$(shell_quote "$SELF_PATH") root=$(shell_quote "$ROOT_DIR")"
+      fi
+      finish_cycle 7 STARTUP_ANOMALY_REQUIRES_CENTRAL_UPKEEPER WARN "codex_exec_started=0 implementation=$(shell_quote "$SELF_PATH") root=$(shell_quote "$ROOT_DIR")"
+    fi
     log_line "WARN" "review.preselect.skip reason=selector_failed detail=$(shell_quote "${detail:-unknown_error}")"
     return 0
   fi
@@ -769,6 +868,16 @@ file_blob_hash() {
   git hash-object -- "$path" 2>/dev/null || printf 'unknown'
 }
 
+hash_text() {
+  local value="$1"
+  python3 - "$value" <<'PY' 2>/dev/null || printf 'unknown'
+import hashlib
+import sys
+
+print(hashlib.sha256(sys.argv[1].encode("utf-8", "surrogateescape")).hexdigest()[:24])
+PY
+}
+
 file_size_bytes() {
   local path="$1"
   python3 - "$path" <<'PY' 2>/dev/null || printf 'unknown'
@@ -781,18 +890,326 @@ except OSError:
 PY
 }
 
+append_startup_anomaly_reason() {
+  local reason="$1"
+  [[ -n "$reason" ]] || return 0
+  if [[ ",$STARTUP_ANOMALY_REASONS," == *",$reason,"* ]]; then
+    return 0
+  fi
+  STARTUP_ANOMALY_REASONS="${STARTUP_ANOMALY_REASONS}${STARTUP_ANOMALY_REASONS:+,}$reason"
+}
+
+active_lock_field() {
+  local key="$1"
+  local file="$CODEX_ACTIVE_LOCK_DIR/state"
+  [[ -f "$file" ]] || return 1
+  sed -n "s/^${key}=//p" "$file" | sed -n '1p'
+}
+
+process_fingerprint_alive() {
+  local pid="$1"
+  local expected_start="$2"
+  local expected_boot="$3"
+  local current_start current_boot
+
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" >/dev/null 2>&1 || return 1
+  current_boot="$(system_boot_id)"
+  if [[ -n "$expected_boot" && "$expected_boot" != "unknown" && "$current_boot" != "$expected_boot" ]]; then
+    return 1
+  fi
+  current_start="$(process_start_fingerprint "$pid")"
+  [[ "$current_start" == "$expected_start" ]]
+}
+
+release_active_lock() {
+  [[ "${ACTIVE_LOCK_ACQUIRED:-0}" == "1" ]] || return 0
+  [[ -n "$CODEX_ACTIVE_LOCK_DIR" ]] || return 0
+  rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state" 2>/dev/null || true
+  rmdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null || true
+  ACTIVE_LOCK_ACQUIRED="0"
+}
+
+acquire_active_lock_or_exit() {
+  local lock_parent owner_pid owner_start owner_boot owner_cycle owner_run_hash state_file
+  if [[ -z "$CODEX_ACTIVE_LOCK_DIR" || "$CODEX_ACTIVE_LOCK_DIR" == "/" ]]; then
+    log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=unsafe_lock_path"
+    finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=unsafe_lock_path"
+  fi
+  lock_parent="$(dirname -- "$CODEX_ACTIVE_LOCK_DIR")"
+  if ! mkdir -p -- "$lock_parent"; then
+    log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=parent_mkdir_failed"
+    finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=parent_mkdir_failed"
+  fi
+
+  if mkdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
+    ACTIVE_LOCK_ACQUIRED="1"
+  else
+    owner_pid="$(active_lock_field pid || true)"
+    owner_start="$(active_lock_field wrapper_start || true)"
+    owner_boot="$(active_lock_field boot_id || true)"
+    owner_cycle="$(active_lock_field cycle_id || true)"
+    owner_run_hash="$(active_lock_field run_hash || true)"
+    if process_fingerprint_alive "$owner_pid" "$owner_start" "$owner_boot"; then
+      log_line "WARN" "active_lock.held path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=exit"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown}"
+    fi
+    log_line "WARN" "active_lock.stale path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=reclaim"
+    rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state" 2>/dev/null || true
+    if ! rmdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
+      log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=stale_lock_not_empty"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=stale_lock_not_empty"
+    fi
+    if ! mkdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
+      log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=reclaim_mkdir_failed"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=reclaim_mkdir_failed"
+    fi
+    ACTIVE_LOCK_ACQUIRED="1"
+  fi
+
+  state_file="$CODEX_ACTIVE_LOCK_DIR/state"
+  if ! {
+    printf 'cycle_id=%s\n' "$CYCLE_ID"
+    printf 'run_hash=%s\n' "$CYCLE_RUN_HASH"
+    printf 'pid=%s\n' "$$"
+    printf 'wrapper_start=%s\n' "$(process_start_fingerprint "$$")"
+    printf 'boot_id=%s\n' "$(system_boot_id)"
+    printf 'root_dir=%s\n' "$ROOT_DIR"
+    printf 'self_path=%s\n' "$SELF_PATH"
+    printf 'created_epoch=%s\n' "$(date '+%s')"
+  } >"$state_file"; then
+    release_active_lock
+    log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=state_write_failed"
+    finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=state_write_failed"
+  fi
+
+  log_line "INFO" "active_lock.acquired path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR")"
+}
+
+wrapper_health_stale_seconds() {
+  local interval="$CODEX_MARK_INTERVAL_SECONDS"
+  if [[ "$interval" -lt 1 ]]; then
+    interval=60
+  fi
+  local stale=$((interval * 3))
+  if [[ "$stale" -lt 180 ]]; then
+    stale=180
+  fi
+  printf '%s' "$stale"
+}
+
+wrapper_health_key_fields() {
+  local self_path_hash wrapper_blob_hash
+  self_path_hash="$(hash_text "$SELF_PATH")"
+  wrapper_blob_hash="$(file_blob_hash "$SELF_PATH")"
+  printf '%s\t%s\n' "$self_path_hash" "$wrapper_blob_hash"
+}
+
+write_wrapper_health_state() {
+  local phase="$1"
+  local state_dir="$CODEX_WRAPPER_HEALTH_STATE_DIR"
+  local self_path_hash wrapper_blob_hash state_file tmp_file now_epoch
+
+  [[ -n "$state_dir" ]] || return 1
+  if ! mkdir -p -- "$state_dir"; then
+    log_line "ERROR" "central_wrapper.health_state_unwritable dir=$(shell_quote "$state_dir") reason=mkdir_failed"
+    return 1
+  fi
+
+  IFS=$'\t' read -r self_path_hash wrapper_blob_hash < <(wrapper_health_key_fields)
+  if [[ -z "${WRAPPER_HEALTH_STATE_FILE:-}" ]]; then
+    WRAPPER_HEALTH_STATE_FILE="$state_dir/$self_path_hash.$wrapper_blob_hash.$CYCLE_RUN_HASH.state"
+  fi
+  state_file="$WRAPPER_HEALTH_STATE_FILE"
+  tmp_file="$state_file.tmp.$$"
+  now_epoch="$(date '+%s')"
+
+  if ! {
+    printf 'status=%s\n' "$phase"
+    printf 'cycle_id=%s\n' "$CYCLE_ID"
+    printf 'run_hash=%s\n' "$CYCLE_RUN_HASH"
+    printf 'self_path=%s\n' "$SELF_PATH"
+    printf 'self_path_hash=%s\n' "$self_path_hash"
+    printf 'wrapper_blob_hash=%s\n' "$wrapper_blob_hash"
+    printf 'root_dir=%s\n' "$ROOT_DIR"
+    printf 'pid=%s\n' "$$"
+    printf 'wrapper_start=%s\n' "$(process_start_fingerprint "$$")"
+    printf 'boot_id=%s\n' "$(system_boot_id)"
+    printf 'last_mark_epoch=%s\n' "$now_epoch"
+    printf 'updated_epoch=%s\n' "$now_epoch"
+  } >"$tmp_file"; then
+    rm -f "$tmp_file"
+    log_line "ERROR" "central_wrapper.health_state_unwritable path=$(shell_quote "$state_file") reason=write_failed"
+    return 1
+  fi
+  if ! mv -f -- "$tmp_file" "$state_file"; then
+    rm -f "$tmp_file"
+    log_line "ERROR" "central_wrapper.health_state_unwritable path=$(shell_quote "$state_file") reason=rename_failed"
+    return 1
+  fi
+  return 0
+}
+
+finalize_wrapper_health_state() {
+  local phase="${1:-exited}"
+  [[ -n "${WRAPPER_HEALTH_STATE_FILE:-}" ]] || return 0
+  [[ "${WRAPPER_HEALTH_STATE_FINALIZED:-0}" == "0" ]] || return 0
+  write_wrapper_health_state "$phase" || true
+  WRAPPER_HEALTH_STATE_FINALIZED="1"
+}
+
+scan_wrapper_health_state() {
+  local state_dir="$CODEX_WRAPPER_HEALTH_STATE_DIR"
+  local self_path_hash wrapper_blob_hash stale_seconds
+  [[ -d "$state_dir" ]] || return 0
+  IFS=$'\t' read -r self_path_hash wrapper_blob_hash < <(wrapper_health_key_fields)
+  stale_seconds="$(wrapper_health_stale_seconds)"
+
+  python3 - "$state_dir" "$self_path_hash" "$wrapper_blob_hash" "$CYCLE_RUN_HASH" "$stale_seconds" "$(system_boot_id)" <<'PY'
+from pathlib import Path
+import os
+import sys
+import time
+
+state_dir = Path(sys.argv[1])
+self_path_hash = sys.argv[2]
+wrapper_blob_hash = sys.argv[3]
+current_run_hash = sys.argv[4]
+stale_seconds = int(sys.argv[5])
+current_boot_id = sys.argv[6]
+now = int(time.time())
+prefix = f"{self_path_hash}.{wrapper_blob_hash}."
+
+
+def read_fields(path):
+    fields = {}
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return fields
+    for line in lines:
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        fields[key.strip()] = value.strip()
+    return fields
+
+
+def proc_start_ticks(pid):
+    try:
+        stat_text = Path("/proc", pid, "stat").read_text(encoding="utf-8", errors="replace")
+        return f"proc_start_ticks={stat_text.rsplit(') ', 1)[1].split()[19]}"
+    except Exception:
+        return "proc_start_ticks=unknown"
+
+
+for path in sorted(state_dir.glob(f"{prefix}*.state")):
+    if not path.name.startswith(prefix):
+        continue
+    fields = read_fields(path)
+    if fields.get("run_hash") == current_run_hash:
+        continue
+    status = fields.get("status", "unknown")
+    if status in {"exited", "die", "resolved"}:
+        continue
+    pid = fields.get("pid", "")
+    expected_start = fields.get("wrapper_start", "")
+    boot_id = fields.get("boot_id", "unknown")
+    cycle_id = fields.get("cycle_id", "unknown")
+    run_hash = fields.get("run_hash", "unknown")
+    last_mark_raw = fields.get("last_mark_epoch", "0")
+    try:
+        last_mark = int(float(last_mark_raw))
+    except ValueError:
+        last_mark = 0
+    alive = pid.isdigit() and Path("/proc", pid).exists()
+    fingerprint_matches = alive and proc_start_ticks(pid) == expected_start
+    boot_matches = boot_id in {"", "unknown"} or current_boot_id in {"", "unknown"} or boot_id == current_boot_id
+    fresh = last_mark > 0 and now - last_mark <= stale_seconds
+    if alive and fingerprint_matches and boot_matches and fresh:
+        print(
+            f"status=healthy action=allow peer_cycle={cycle_id} peer_run_hash={run_hash} "
+            f"peer_pid={pid} last_mark_age_seconds={now - last_mark} state_file={path}"
+        )
+        continue
+    reason = "unknown"
+    if not alive:
+        reason = "pid_not_alive"
+    elif not fingerprint_matches:
+        reason = "pid_start_fingerprint_mismatch"
+    elif not boot_matches:
+        reason = "boot_id_changed"
+    elif not fresh:
+        reason = "heartbeat_stale"
+    print(
+        f"status=quarantine action=fail_closed reason={reason} peer_cycle={cycle_id} "
+        f"peer_run_hash={run_hash} peer_pid={pid or 'unknown'} last_mark_age_seconds={now - last_mark if last_mark else 'unknown'} "
+        f"stale_seconds={stale_seconds} state_file={path}"
+    )
+PY
+}
+
+check_central_wrapper_health_or_exit() {
+  local line saw_quarantine=0 saw_healthy=0
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if [[ "$line" == status=quarantine* ]]; then
+      saw_quarantine=1
+      log_line "WARN" "central_wrapper.health $line"
+    else
+      saw_healthy=1
+      log_line "INFO" "central_wrapper.health $line"
+    fi
+  done < <(scan_wrapper_health_state || true)
+
+  if [[ "$saw_quarantine" == "1" ]]; then
+    if ! write_wrapper_health_state "quarantined"; then
+      finish_cycle 7 CENTRAL_WRAPPER_HEALTH_STATE_UNWRITABLE ERROR "codex_exec_started=0 implementation=$(shell_quote "$SELF_PATH")"
+    fi
+    finish_cycle 7 CENTRAL_WRAPPER_HEALTH_QUARANTINE WARN "codex_exec_started=0 implementation=$(shell_quote "$SELF_PATH")"
+  fi
+
+  if ! write_wrapper_health_state "starting"; then
+    finish_cycle 7 CENTRAL_WRAPPER_HEALTH_STATE_UNWRITABLE ERROR "codex_exec_started=0 implementation=$(shell_quote "$SELF_PATH")"
+  fi
+  log_line "INFO" "central_wrapper.health_state status=starting state_file=$(shell_quote "$WRAPPER_HEALTH_STATE_FILE") healthy_peers=$saw_healthy"
+}
+
+ensure_log_writable_or_exit() {
+  local phase="${1:-startup}"
+  local marker line last_line
+
+  ensure_log_parent
+  marker="upkeeper-log-probe-$CYCLE_ID-$CYCLE_RUN_HASH-$$"
+  line="$(timestamp_now) [INFO] cycle=$CYCLE_ID run_hash=$CYCLE_RUN_HASH log.write_preflight phase=$phase marker=$marker"
+  if ! printf '%s\n' "$line" >>"$LOG_FILE" 2>/dev/null; then
+    printf '%s [ERROR] cycle=%s run_hash=%s log.write_preflight_failed phase=%s path=%s reason=append_failed\n' "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$phase" "$LOG_FILE" >&2
+    exit 3
+  fi
+  last_line="$(tail -n 1 "$LOG_FILE" 2>/dev/null || true)"
+  if [[ "$last_line" != "$line" ]]; then
+    printf '%s [ERROR] cycle=%s run_hash=%s log.write_preflight_failed phase=%s path=%s reason=verify_failed\n' "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$phase" "$LOG_FILE" >&2
+    exit 3
+  fi
+}
+
 die() {
   ensure_log_parent
   if ! log_line "ERROR" "$*"; then
     printf '%s [ERROR] cycle=%s %s\n' "$(timestamp_now)" "$CYCLE_ID" "$*" >&2
   fi
   stop_run_mark_heartbeat "die"
+  finalize_wrapper_health_state "die"
+  release_active_lock
   exit 3
 }
 
 emit_run_mark() {
   local phase="${1:-heartbeat}"
   log_line "INFO" "--MARK-- phase=$phase epoch=$(epoch_now_fraction) boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
+  if [[ -n "${WRAPPER_HEALTH_STATE_FILE:-}" && "${WRAPPER_HEALTH_STATE_FINALIZED:-0}" == "0" ]]; then
+    write_wrapper_health_state "$phase" || log_line "WARN" "central_wrapper.health_state_update_failed phase=$phase state_file=$(shell_quote "$WRAPPER_HEALTH_STATE_FILE")"
+  fi
 }
 
 start_run_mark_heartbeat() {
@@ -833,6 +1250,138 @@ stop_run_mark_heartbeat() {
     log_line "INFO" "mark_heartbeat.stop reason=$reason"
   fi
   emit_run_mark "finish"
+}
+
+write_startup_anomaly_gate_state() {
+  local status="$1"
+  local detail="${2:-}"
+  local state_dir="$CODEX_STARTUP_ANOMALY_GATE_STATE_DIR"
+  local state_path tmp_path now_epoch
+
+  [[ -n "$state_dir" ]] || return 1
+  if ! mkdir -p -- "$state_dir"; then
+    log_line "ERROR" "startup_anomaly.gate_state_unwritable dir=$(shell_quote "$state_dir") reason=mkdir_failed"
+    return 1
+  fi
+
+  if [[ -z "${STARTUP_ANOMALY_GATE_STATE_FILE:-}" ]]; then
+    STARTUP_ANOMALY_GATE_STATE_FILE="$state_dir/$CYCLE_RUN_HASH.state"
+  fi
+  state_path="$STARTUP_ANOMALY_GATE_STATE_FILE"
+  tmp_path="$state_path.tmp.$$"
+  now_epoch="$(date '+%s')"
+
+  if ! {
+    printf 'cycle_id=%s\n' "$CYCLE_ID"
+    printf 'run_hash=%s\n' "$CYCLE_RUN_HASH"
+    printf 'self_path=%s\n' "$SELF_PATH"
+    printf 'root_dir=%s\n' "$ROOT_DIR"
+    printf 'reason=%s\n' "${STARTUP_ANOMALY_REASONS:-unknown}"
+    printf 'status=%s\n' "$status"
+    printf 'detail=%s\n' "${detail:-none}"
+    printf 'created_epoch=%s\n' "$now_epoch"
+    printf 'updated_epoch=%s\n' "$now_epoch"
+  } >"$tmp_path"; then
+    rm -f "$tmp_path"
+    log_line "ERROR" "startup_anomaly.gate_state_unwritable path=$(shell_quote "$state_path") reason=write_failed"
+    return 1
+  fi
+  if ! mv -f -- "$tmp_path" "$state_path"; then
+    rm -f "$tmp_path"
+    log_line "ERROR" "startup_anomaly.gate_state_unwritable path=$(shell_quote "$state_path") reason=rename_failed"
+    return 1
+  fi
+
+  log_line "INFO" "startup_anomaly.gate_state status=$status path=$(shell_quote "$state_path") reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") detail=$(shell_quote "${detail:-none}")"
+  return 0
+}
+
+mark_startup_anomaly_gate_states_resolved() {
+  local state_dir="$CODEX_STARTUP_ANOMALY_GATE_STATE_DIR"
+  [[ -d "$state_dir" ]] || return 0
+
+  python3 - "$state_dir" "$CYCLE_ID" "$CYCLE_RUN_HASH" <<'PY' || true
+from pathlib import Path
+import sys
+import time
+
+root = Path(sys.argv[1])
+cycle_id = sys.argv[2]
+run_hash = sys.argv[3]
+now = str(int(time.time()))
+
+for path in root.glob("*.state"):
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        continue
+    fields = {}
+    order = []
+    for line in lines:
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key not in fields:
+            order.append(key)
+        fields[key] = value
+    if fields.get("status") != "unresolved":
+        continue
+    fields["status"] = "resolved"
+    fields["resolved_by_cycle_id"] = cycle_id
+    fields["resolved_by_run_hash"] = run_hash
+    fields["updated_epoch"] = now
+    for key in ("status", "resolved_by_cycle_id", "resolved_by_run_hash", "updated_epoch"):
+        if key not in order:
+            order.append(key)
+    tmp = path.with_name(path.name + f".tmp.{run_hash}")
+    try:
+        tmp.write_text("".join(f"{key}={fields.get(key, '')}\n" for key in order), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+PY
+}
+
+startup_anomaly_state_lines() {
+  local state_dir="$CODEX_STARTUP_ANOMALY_GATE_STATE_DIR"
+  [[ -d "$state_dir" ]] || return 0
+
+  python3 - "$state_dir" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+items = []
+for path in root.glob("*.state"):
+    fields = {}
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        stat = path.stat()
+    except OSError:
+        continue
+    for line in lines:
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        fields[key.strip()] = value.strip()
+    if fields.get("status") != "unresolved":
+        continue
+    created = fields.get("created_epoch") or str(int(stat.st_mtime))
+    cycle = fields.get("cycle_id") or "unknown"
+    run_hash = fields.get("run_hash") or "unknown"
+    reason = (fields.get("reason") or "unknown").replace("\t", " ")[:200]
+    items.append((created, path, cycle, run_hash, reason))
+
+for created, path, cycle, run_hash, reason in sorted(items, reverse=True)[:10]:
+    print(
+        f"previous_cycle={cycle} previous_run_hash={run_hash} "
+        f"reason=startup_anomaly_gate_unresolved_state created_epoch={created} "
+        f"state_file={path} state_reason={reason!r}"
+    )
+PY
 }
 
 # Create the tracked operator guide only when it is missing.
@@ -892,11 +1441,15 @@ finish_cycle() {
     message="$message $*"
   fi
   log_line "$level" "$message"
+  finalize_wrapper_health_state "exited"
+  release_active_lock
   exit "$exit_code"
 }
 
 cleanup_run_temp_files() {
   stop_run_mark_heartbeat "cleanup"
+  finalize_wrapper_health_state "aborted"
+  release_active_lock
   if [[ -n "${RUN_COMPILED_PROMPT_FILE:-}" ]]; then
     rm -f "$RUN_COMPILED_PROMPT_FILE"
   fi
@@ -904,7 +1457,8 @@ cleanup_run_temp_files() {
     rm -f "$RUN_LAST_MESSAGE_FILE"
   fi
   if [[ -n "${RUN_TMP_DIR:-}" && "$RUN_TMP_DIR" == "${TMPDIR:-/tmp}"/upkeeper-* ]]; then
-    rm -rf "$RUN_TMP_DIR"
+    find "$RUN_TMP_DIR" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
+    rmdir "$RUN_TMP_DIR" 2>/dev/null || true
   fi
 }
 
@@ -1123,7 +1677,7 @@ parse_args() {
 require_commands() {
   local missing=0
   local cmd
-  for cmd in awk cat cut date df git grep jq mkdir mktemp mv ps python3 rm sed sort tail tee tr; do
+  for cmd in awk cat cut date df find git grep jq mkdir mktemp mv ps python3 rm rmdir sed sort tail tee tr; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       log_line "ERROR" "required command missing: $cmd"
       missing=1
@@ -1833,38 +2387,89 @@ rotate_wrapper_log_if_needed() {
   prune_wrapper_log_archives
 }
 
+disk_preflight_path_specs() {
+  printf 'root\t%s\n' "$ROOT_DIR"
+  printf 'log_dir\t%s\n' "$LOG_FILE_DIR"
+  printf 'codex_home\t%s\n' "$CODEX_HOME_DIR"
+  printf 'codex_sessions\t%s\n' "$CODEX_HOME_DIR/sessions"
+  printf 'tmp\t%s\n' "${TMPDIR:-/tmp}"
+  printf 'bwrap_tmp\t%s\n' "$CODEX_BWRAP_TMP_ROOT"
+  printf 'arg0_tmp\t%s\n' "$CODEX_ARG0_TMP_ROOT"
+  printf 'runtime\t%s\n' "$ROOT_DIR/runtime"
+}
+
+existing_df_probe_path() {
+  local path="$1"
+  python3 - "$path" <<'PY' 2>/dev/null
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1]).expanduser()
+if not path.is_absolute():
+    path = (Path.cwd() / path)
+while not path.exists() and path != path.parent:
+    path = path.parent
+if path.exists():
+    print(path)
+PY
+}
+
 disk_space_fields() {
-  df -Pk "$ROOT_DIR" 2>/dev/null | awk 'NR == 2 {
+  local label="$1"
+  local path="$2"
+  local probe_path
+
+  probe_path="$(existing_df_probe_path "$path")"
+  [[ -n "$probe_path" ]] || return 1
+  df -Pk "$probe_path" 2>/dev/null | awk -v label="$label" -v path="$path" -v probe="$probe_path" 'NR == 2 {
     used = $5
     gsub("%", "", used)
     free = 100 - used
-    printf "size_kb=%s used_kb=%s avail_kb=%s used_percent=%s free_percent=%s mount=%s", $2, $3, $4, used, free, $6
+    printf "label=%s size_kb=%s used_kb=%s avail_kb=%s used_percent=%s free_percent=%s mount=%s path=%s probe_path=%s", label, $2, $3, $4, used, free, $6, path, probe
   }'
 }
 
 check_disk_space_preflight() {
-  local fields free_percent threshold decision
-  fields="$(disk_space_fields || true)"
-  if [[ -z "$fields" ]]; then
-    DISK_SPACE_PROMPT_NOTE="- disk.preflight unavailable for $ROOT_DIR"
-    STARTUP_ANOMALY_GATE="1"
-    STARTUP_ANOMALY_REASONS="${STARTUP_ANOMALY_REASONS}${STARTUP_ANOMALY_REASONS:+,}disk_preflight_unavailable"
-    log_line "WARN" "disk.preflight status=unavailable path=$(shell_quote "$ROOT_DIR")"
-    return 0
-  fi
+  local label path fields free_percent threshold decision
+  local unavailable_count=0 warn_count=0 checked_count=0
+  local notes=""
 
   threshold="$CODEX_DISK_MIN_FREE_PERCENT"
-  free_percent="$(sed -n 's/.*free_percent=\([0-9.]*\).*/\1/p' <<<"$fields")"
-  decision="$(awk -v free="$free_percent" -v threshold="$threshold" 'BEGIN { if (free < threshold) print "warn"; else print "allow" }')"
-  if [[ "$decision" == "warn" ]]; then
-    log_line "WARN" "disk.preflight status=$decision min_free_percent=$threshold $fields path=$(shell_quote "$ROOT_DIR")"
-    DISK_SPACE_PROMPT_NOTE="- disk.preflight low_space min_free_percent=$threshold $fields path=$ROOT_DIR"
+  while IFS=$'\t' read -r label path; do
+    [[ -n "$label" && -n "$path" ]] || continue
+    checked_count=$((checked_count + 1))
+    fields="$(disk_space_fields "$label" "$path" || true)"
+    if [[ -z "$fields" ]]; then
+      unavailable_count=$((unavailable_count + 1))
+      log_line "WARN" "disk.preflight status=unavailable label=$label path=$(shell_quote "$path")"
+      notes+="- disk.preflight unavailable label=$label path=$path"$'\n'
+      continue
+    fi
+
+    free_percent="$(sed -n 's/.*free_percent=\([0-9.]*\).*/\1/p' <<<"$fields")"
+    decision="$(awk -v free="$free_percent" -v threshold="$threshold" 'BEGIN { if (free < threshold) print "warn"; else print "allow" }')"
+    if [[ "$decision" == "warn" ]]; then
+      warn_count=$((warn_count + 1))
+      log_line "WARN" "disk.preflight status=$decision min_free_percent=$threshold $fields"
+      notes+="- disk.preflight low_space min_free_percent=$threshold $fields"$'\n'
+    else
+      log_line "INFO" "disk.preflight status=$decision min_free_percent=$threshold $fields"
+    fi
+  done < <(disk_preflight_path_specs)
+
+  if [[ "$unavailable_count" -gt 0 ]]; then
+    append_startup_anomaly_reason "disk_preflight_unavailable"
+  fi
+  if [[ "$warn_count" -gt 0 ]]; then
+    append_startup_anomaly_reason "disk_preflight_low_space"
+  fi
+  if [[ "$unavailable_count" -gt 0 || "$warn_count" -gt 0 ]]; then
     STARTUP_ANOMALY_GATE="1"
-    STARTUP_ANOMALY_REASONS="${STARTUP_ANOMALY_REASONS}${STARTUP_ANOMALY_REASONS:+,}disk_preflight_low_space"
+    DISK_SPACE_PROMPT_NOTE="${notes%$'\n'}"
   else
-    log_line "INFO" "disk.preflight status=$decision min_free_percent=$threshold $fields path=$(shell_quote "$ROOT_DIR")"
     DISK_SPACE_PROMPT_NOTE=""
   fi
+  log_line "INFO" "disk.preflight.summary checked=$checked_count unavailable=$unavailable_count low_space=$warn_count min_free_percent=$threshold"
 }
 
 previous_run_anomaly_lines() {
@@ -1872,13 +2477,13 @@ previous_run_anomaly_lines() {
     return 0
   fi
 
-  python3 - "$LOG_FILE" "$CYCLE_ID" "$CODEX_PREVIOUS_RUN_SCAN_MINUTES" <<'PY'
+  python3 - "$LOG_FILE" "$CYCLE_ID" "$CODEX_PREVIOUS_RUN_SCAN_MINUTES" "$(system_boot_id)" <<'PY'
 import datetime as dt
 import re
 import sys
 import time
 
-log_path, current_cycle, minutes_raw = sys.argv[1:4]
+log_path, current_cycle, minutes_raw, current_boot_id = sys.argv[1:5]
 try:
     scan_minutes = max(0, int(minutes_raw))
 except ValueError:
@@ -1886,6 +2491,7 @@ except ValueError:
 cutoff = time.time() - (scan_minutes * 60)
 cycle_re = re.compile(r"\bcycle=([^ ]+)")
 run_hash_re = re.compile(r"\brun_hash=([^ ]+)")
+boot_id_re = re.compile(r"\bboot_id=([^ ]+)")
 cycles = {}
 
 def parsed_epoch(line):
@@ -1922,6 +2528,7 @@ with handle:
                 "gate_unresolved": False,
                 "gate_resolved": False,
                 "watchdog_anomaly": False,
+                "last_boot_id": "unknown",
                 "last_epoch": epoch,
                 "last_line": line.strip(),
             },
@@ -1929,6 +2536,9 @@ with handle:
         hash_match = run_hash_re.search(line)
         if hash_match:
             info["run_hash"] = hash_match.group(1)
+        boot_id_match = boot_id_re.search(line)
+        if boot_id_match:
+            info["last_boot_id"] = boot_id_match.group(1)
         if " cycle.start " in line:
             info["start"] = True
         if " cycle.exit " in line:
@@ -1950,7 +2560,14 @@ printed = 0
 for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"] or 0, reverse=True):
     reason = ""
     if info["start"] and not info["exit"]:
-        reason = "missing_cycle_exit"
+        if (
+            info.get("last_boot_id", "unknown") not in {"", "unknown"}
+            and current_boot_id not in {"", "unknown"}
+            and info["last_boot_id"] != current_boot_id
+        ):
+            reason = "probable_reboot_or_power_loss"
+        else:
+            reason = "missing_cycle_exit"
     elif info["run_start"] and not info["run_finish"] and not info["exit"]:
         reason = "missing_run_finish"
     elif info["watchdog_anomaly"]:
@@ -1964,6 +2581,7 @@ for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"]
     print(
         f"previous_cycle={cycle} previous_run_hash={info['run_hash']} "
         f"reason={reason} scan_minutes={scan_minutes} last_epoch={last_epoch} "
+        f"previous_boot_id={info.get('last_boot_id', 'unknown')} current_boot_id={current_boot_id} "
         f"last_line={last_line!r}"
     )
     printed += 1
@@ -1974,9 +2592,12 @@ PY
 
 scan_previous_run_anomalies() {
   local -a anomalies=()
+  local -a state_anomalies=()
   local anomaly
   PREVIOUS_RUN_ANOMALIES=""
   mapfile -t anomalies < <(previous_run_anomaly_lines || true)
+  mapfile -t state_anomalies < <(startup_anomaly_state_lines || true)
+  anomalies+=("${state_anomalies[@]}")
   if [[ "${#anomalies[@]}" -eq 0 ]]; then
     log_line "INFO" "previous_run.scan status=clean scan_minutes=$CODEX_PREVIOUS_RUN_SCAN_MINUTES boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
     return 0
@@ -1988,7 +2609,7 @@ scan_previous_run_anomalies() {
     PREVIOUS_RUN_ANOMALIES+="- $anomaly"$'\n'
   done
   STARTUP_ANOMALY_GATE="1"
-  STARTUP_ANOMALY_REASONS="${STARTUP_ANOMALY_REASONS}${STARTUP_ANOMALY_REASONS:+,}previous_run_anomaly"
+  append_startup_anomaly_reason "previous_run_anomaly"
 }
 
 refresh_worktree_counts() {
@@ -2006,6 +2627,149 @@ refresh_worktree_counts() {
       TRACKED_MODIFIED_PATH_COUNT=$((TRACKED_MODIFIED_PATH_COUNT + 1))
     fi
   done < <(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=all)
+}
+
+write_git_status_snapshot_json() {
+  local output_file="$1"
+  python3 - "$ROOT_DIR" "$output_file" <<'PY'
+import json
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+output = Path(sys.argv[2])
+
+
+def git(args):
+    return subprocess.check_output(["git", "-C", str(root), *args], stderr=subprocess.DEVNULL)
+
+
+def worktree_hash(rel_path):
+    path = root / rel_path
+    try:
+        mode = path.stat().st_mode
+    except OSError:
+        return "missing"
+    if not stat.S_ISREG(mode):
+        return "not_regular"
+    try:
+        return git(["hash-object", "--", rel_path]).decode("utf-8", "replace").strip() or "unknown"
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+raw = git(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+parts = raw.decode("utf-8", "surrogateescape").split("\0")
+items = {}
+i = 0
+while i < len(parts):
+    entry = parts[i]
+    i += 1
+    if not entry or len(entry) < 4:
+        continue
+    status_code = entry[:2]
+    rel_path = entry[3:]
+    if not rel_path:
+        continue
+    items[rel_path] = {
+        "status": status_code,
+        "hash": worktree_hash(rel_path),
+    }
+    if status_code[0] in {"R", "C"} or status_code[1] in {"R", "C"}:
+        if i < len(parts):
+            old_path = parts[i]
+            i += 1
+            if old_path:
+                items.setdefault(
+                    old_path,
+                    {
+                        "status": "old",
+                        "hash": worktree_hash(old_path),
+                    },
+                )
+
+output.write_text(json.dumps(items, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+PY
+}
+
+capture_startup_anomaly_gate_baseline() {
+  [[ "$STARTUP_ANOMALY_GATE" == "1" ]] || return 0
+  STARTUP_ANOMALY_GATE_BASELINE_FILE="$(run_mktemp startup-gate-baseline)"
+  write_git_status_snapshot_json "$STARTUP_ANOMALY_GATE_BASELINE_FILE"
+  log_line "INFO" "startup_anomaly.gate_baseline path=$(shell_quote "$STARTUP_ANOMALY_GATE_BASELINE_FILE")"
+}
+
+startup_anomaly_gate_changed_path_violations() {
+  local before_file="$1"
+  local after_file="$2"
+  python3 - "$before_file" "$after_file" <<'PY'
+import json
+import sys
+
+before_path, after_path = sys.argv[1:3]
+
+try:
+    before = json.load(open(before_path, "r", encoding="utf-8"))
+    after = json.load(open(after_path, "r", encoding="utf-8"))
+except OSError:
+    raise SystemExit(0)
+
+allowed_exact = {
+    "Upkeeper",
+    "README.md",
+    "docs/scripts/upkeeper.md",
+}
+allowed_prefixes = (
+    "prompts/",
+    "templates/",
+    "launcher_examples/",
+)
+
+
+def allowed(path):
+    return path in allowed_exact or any(path.startswith(prefix) for prefix in allowed_prefixes)
+
+
+for path in sorted(set(before) | set(after)):
+    if allowed(path):
+        continue
+    if before.get(path) == after.get(path):
+        continue
+    before_state = before.get(path, {"status": "clean", "hash": "clean"})
+    after_state = after.get(path, {"status": "clean", "hash": "clean"})
+    print(
+        f"changed_path={path!r} before_status={before_state.get('status', 'unknown')} "
+        f"before_hash={before_state.get('hash', 'unknown')} "
+        f"after_status={after_state.get('status', 'unknown')} "
+        f"after_hash={after_state.get('hash', 'unknown')}"
+    )
+PY
+}
+
+enforce_startup_anomaly_changed_paths() {
+  local after_file violation_count=0 violation
+  [[ "$STARTUP_ANOMALY_GATE" == "1" ]] || return 0
+  [[ -n "${STARTUP_ANOMALY_GATE_BASELINE_FILE:-}" && -f "$STARTUP_ANOMALY_GATE_BASELINE_FILE" ]] || return 0
+
+  after_file="$(run_mktemp startup-gate-after)"
+  write_git_status_snapshot_json "$after_file"
+  while IFS= read -r violation; do
+    [[ -n "$violation" ]] || continue
+    violation_count=$((violation_count + 1))
+    log_line "WARN" "startup_anomaly.gate_violation $violation"
+  done < <(startup_anomaly_gate_changed_path_violations "$STARTUP_ANOMALY_GATE_BASELINE_FILE" "$after_file")
+
+  if [[ "$violation_count" -gt 0 ]]; then
+    STARTUP_ANOMALY_GATE_CHANGED_PATH_VIOLATION="1"
+    append_startup_anomaly_reason "gate_changed_path_violation"
+    if ! write_startup_anomaly_gate_state "unresolved" "changed_path_violation"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
+  else
+    log_line "INFO" "startup_anomaly.gate_violation status=none"
+  fi
 }
 
 # Quota snapshot reader and projector.
@@ -3933,7 +4697,8 @@ EOF
     printf -- '- If the log review exposes a concrete Upkeeper wrapper, prompt, or logging defect and this current repo owns a tracked `Upkeeper` file, apply the smallest safe self-repair now, run focused validation, and report it as a log self-repair. This is the only reason to patch `Upkeeper` when it was not the selected target.\n'
     printf -- '- If this is a symlinked client repo and the defect belongs to central Upkeeper behavior, do not patch a copied client wrapper; report the central fix needed unless the central Upkeeper checkout is the current repo.\n'
     printf -- '- If a suspicious line was expected negative-test output, say so briefly. If a one-off shell command failed, rerun the corrected check or state why it is irrelevant before final status.\n'
-    printf -- '- Include a short `Current-cycle log review` result in the final response before the final UPKEEPER_STATUS marker.\n'
+    printf -- '- Include this exact machine-readable acknowledgment line before the final UPKEEPER_STATUS marker, filling anomalies with `none` or `listed`: `UPKEEPER_LOG_REVIEW: CHECKED cycle=%s anomalies=none|listed`\n' "$CYCLE_ID"
+    printf -- '- You may also include a short human-readable current-cycle log review summary, but the machine-readable acknowledgment line is what the wrapper parses.\n'
 
     printf '\nWrapper control marker compatibility:\n'
     printf -- '- If write_to_file is unavailable in the current Codex environment, use the available file-writing mechanism and still perform the same persistence and mtime verification steps.\n'
@@ -5223,7 +5988,7 @@ log_review_report_summary() {
 current_cycle_log_review_present() {
   local last_message_file="$1"
   [[ -f "$last_message_file" ]] || return 1
-  python3 - "$last_message_file" <<'PY'
+  python3 - "$last_message_file" "$CYCLE_ID" <<'PY'
 import re
 import sys
 
@@ -5231,14 +5996,18 @@ try:
     text = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read()
 except OSError:
     raise SystemExit(1)
+current_cycle = sys.argv[2]
 
-normalized = re.sub(r"[^a-z0-9]+", " ", text.lower())
-patterns = (
-    "current cycle log review",
-    "current cycle log self review",
-    "upkeeper log review",
-)
-raise SystemExit(0 if any(pattern in normalized for pattern in patterns) else 1)
+for raw_line in text.splitlines():
+    line = raw_line.strip()
+    if not line.startswith("UPKEEPER_LOG_REVIEW: CHECKED"):
+        continue
+    cycle_match = re.search(r"(?:^|\s)cycle=([^ \t`]+)", line)
+    anomalies_match = re.search(r"(?:^|\s)anomalies=(none|listed)(?:\s|$)", line)
+    if cycle_match and cycle_match.group(1) == current_cycle and anomalies_match:
+        raise SystemExit(0)
+
+raise SystemExit(1)
 PY
 }
 
@@ -5248,10 +6017,23 @@ record_startup_anomaly_gate_review() {
   local codex_exit_value="${3:-unknown}"
   [[ "$STARTUP_ANOMALY_GATE" == "1" ]] || return 0
 
-  if current_cycle_log_review_present "$last_message_file"; then
+  if [[ "$STARTUP_ANOMALY_GATE_CHANGED_PATH_VIOLATION" == "1" ]]; then
+    log_line "WARN" "startup_anomaly.gate_unresolved reason=changed_path_violation reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    if ! write_startup_anomaly_gate_state "unresolved" "changed_path_violation"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
+  elif current_cycle_log_review_present "$last_message_file"; then
+    STARTUP_ANOMALY_GATE_RESOLVED="1"
+    if ! write_startup_anomaly_gate_state "resolved" "log_review_ack_checked"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
+    mark_startup_anomaly_gate_states_resolved
     log_line "INFO" "startup_anomaly.gate_resolved status=checked reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value"
   else
-    log_line "WARN" "startup_anomaly.gate_unresolved reason=missing_current_cycle_log_review reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    log_line "WARN" "startup_anomaly.gate_unresolved reason=missing_current_cycle_log_review_ack reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    if ! write_startup_anomaly_gate_state "unresolved" "missing_current_cycle_log_review_ack"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
   fi
 }
 
@@ -6134,10 +6916,15 @@ PY
 main() {
   parse_args "$@"
   ensure_log_parent
+  ensure_log_writable_or_exit "startup"
   require_commands
   normalize_guardrail_thresholds
+  check_central_wrapper_health_or_exit
+  acquire_active_lock_or_exit
+  trap cleanup_run_temp_files EXIT
   ensure_operator_guide
   resolve_prompt_file
+  scan_previous_run_anomalies
   rotate_wrapper_log_if_needed
   refresh_worktree_counts
 
@@ -6167,10 +6954,13 @@ main() {
 
   log_line "INFO" "cycle.start execution_origin=$CODEX_EXECUTION_ORIGIN script=$SELF_INVOKE_PATH implementation=$SELF_PATH cwd=$ROOT_DIR pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$direct_parent_comm parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$loop_parent_comm loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT mode=$CODEX_MODE_STRING model_override=${CODEX_MODEL_OVERRIDE_SPEC:-none} model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED attempt_role=$CODEX_ATTEMPT_ROLE fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=${CODEX_PRIMARY_MODEL_CONTEXT:-none} fallback_trigger=${CODEX_FALLBACK_TRIGGER:-none} screen_fallback_child_id=${CODEX_SCREEN_FALLBACK_CHILD_ID:-none} code_home=$CODEX_HOME_DIR dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
   start_run_mark_heartbeat
-  scan_previous_run_anomalies
   check_disk_space_preflight
   if [[ "$STARTUP_ANOMALY_GATE" == "1" ]]; then
     log_line "WARN" "startup_anomaly.gate status=active reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") force_upkeeper=$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER action=block_normal_selection_until_upkeeper_suite_checked"
+    if ! write_startup_anomaly_gate_state "unresolved" "active_at_startup"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=0"
+    fi
+    enforce_startup_anomaly_gate_target_or_exit
   fi
 
   enforce_primary_quota_block_marker
@@ -6312,6 +7102,7 @@ main() {
   compile_prompt "$compiled_prompt_file"
   log_line "INFO" "run.compiled_prompt.ready path=$(shell_quote "$compiled_prompt_file") blob_hash=$(file_blob_hash "$compiled_prompt_file") size_bytes=$(file_size_bytes "$compiled_prompt_file")"
   log_line "INFO" "run.log_self_review_required log_file=$(shell_quote "$LOG_FILE") target_cycle=$CYCLE_ID"
+  capture_startup_anomaly_gate_baseline
 
   if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
     log_line "INFO" "dry-run active; skipping codex exec"
@@ -6457,6 +7248,7 @@ main() {
   primary_failure_classification="none"
   log_line "INFO" "cycle.summary execution_origin=$CODEX_EXECUTION_ORIGIN model=$CODEX_MODEL observed_primary_delta=$observed_primary_delta observed_secondary_delta=$observed_secondary_delta observed_delta_status=$observed_delta_status status_marker=${status_marker:-missing} status_marker_source=$status_marker_source session_end_state=$session_end_state agent_messages=$primary_session_agent_message_count tool_calls=$primary_session_tool_call_count tool_results=$primary_session_tool_result_count task_complete_last_agent_message=$primary_session_task_complete_last_agent_message codex_exit=$codex_exit"
   log_review_report_summary "$last_message_file" "${status_marker:-missing}" "$codex_exit"
+  enforce_startup_anomaly_changed_paths
   record_startup_anomaly_gate_review "$last_message_file" "${status_marker:-missing}" "$codex_exit"
 
   if [[ "$after_selection" == "exact_model" ]]; then

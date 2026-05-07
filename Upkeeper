@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.13
+## Version: v1.0.14
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.13"
+UPKEEPER_VERSION="v1.0.14"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -244,6 +244,9 @@ Prompt behavior:
     prompt. That avoids spending model/tool cycles on broad tree discovery and
     keeps .git/, ignored paths, runtime evidence, generated outputs, and tests
     out of the selection scan.
+  - A WRAPPER_PRESELECTED_REVIEW_TARGET section overrides every later repertoire
+    selection rule for that cycle; all applicable review prompts run against
+    that same target unless the file is physically impossible or unsafe to read.
   - Tests are not script/tool targets merely because they use a script-language
     extension; select tests only when explicit extra guidance asks for test
     review or no eligible script/tool target exists.
@@ -474,6 +477,7 @@ append_preselected_review_target() {
     printf '\nRules for this preselected target:\n'
     printf -- '- This target is the timestamp-selected file for this cycle.\n'
     printf -- '- Verify only this file exists, is readable, and is eligible before reviewing it.\n'
+    printf -- '- This preselected target overrides all later P1-P22 selection rules; run applicable prompts against this same file.\n'
     printf -- '- Do not run broad repository discovery commands to second-guess this selection.\n'
     printf -- '- If this target is physically impossible or unsafe to review, state the exception and then use the same source-safe selection boundary for the replacement.\n'
   } >>"$compiled_file"
@@ -1864,9 +1868,11 @@ Scope rule -- generated and ignored artifacts:
 
 - If this prompt contains a WRAPPER_PRESELECTED_REVIEW_TARGET section, Upkeeper
   has already run source-safe selection before Codex started. Treat that
-  preselected target as the timestamp-selected file. Do not spend tool calls
-  rediscovering the whole repository unless that exact file no longer exists,
-  is unreadable, is binary, or is explicitly excluded by this prompt.
+  preselected target as the timestamp-selected file. This overrides every later
+  P1-P22 SELECTION RULE for this cycle; run all applicable prompts against the
+  same selected file. Do not spend tool calls rediscovering the whole repository
+  unless that exact file no longer exists, is unreadable, is binary, or is
+  explicitly excluded by this prompt.
 - Do not run broad tree inventory commands such as `find .`, `find . -maxdepth`,
   `ls -R`, or similar scans for selection. Those commands surface `.git/objects`
   and other VCS/runtime internals, waste tokens, and are outside the review

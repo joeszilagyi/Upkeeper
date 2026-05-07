@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.19
+## Version: v1.0.20
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.19"
+UPKEEPER_VERSION="v1.0.20"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -262,6 +262,11 @@ Prompt behavior:
     Codex still reviews the oldest file again.
   - The default prompt requires timestamp reporting, the applicable review
     repertoire passes, and a touch of the selected file even when the review is clean.
+  - P23 is included for validators, parsers, importers, exporters, registry
+    loaders, schema/profile helpers, config/manifest readers, data readers,
+    path-resolving shell helpers, and CLIs that consume external/operator input
+    or emit machine-readable output. It focuses on strict data contracts,
+    actionable malformed-input diagnostics, and negative fixtures.
   - The review body should report REVIEWED_AND_FIXED, REVIEWED_CLEAN, or
     STOPPED_ON_BLOCKER, but the literal final line still maps to the wrapper's
     UPKEEPER_STATUS marker contract.
@@ -520,7 +525,7 @@ append_preselected_review_target() {
     printf -- '- This block is authoritative. Start by verifying and reading this selected file; do not run candidate-discovery scans first.\n'
     printf -- '- This target is the timestamp-selected file for this cycle.\n'
     printf -- '- Verify only this file exists, is readable, and is eligible before reviewing it.\n'
-    printf -- '- This preselected target overrides all later P1-P22 selection rules; run applicable prompts against this same file.\n'
+    printf -- '- This preselected target overrides all later P1-P23 selection rules; run applicable prompts against this same file.\n'
     printf -- '- Use git_status/content_state/head_blob/worktree_hash above as the pre-run baseline for this file.\n'
     printf -- '- If content_state differs_from_head or git_status is not clean, that dirty content existed before this review; do not reset it or block solely because git diff versus HEAD is non-empty.\n'
     printf -- '- For a clean no-edit pass, record the selected file hash before touch, touch it, then verify the mtime changed and the content hash is unchanged from the pre-touch hash.\n'
@@ -1942,7 +1947,7 @@ Scope rule -- generated and ignored artifacts:
 - If this prompt contains a WRAPPER_PRESELECTED_REVIEW_TARGET section, Upkeeper
   has already run source-safe selection before Codex started. Treat that
   preselected target as the timestamp-selected file. This overrides every later
-  P1-P22 SELECTION RULE for this cycle; run all applicable prompts against the
+  P1-P23 SELECTION RULE for this cycle; run all applicable prompts against the
   same selected file. Do not spend tool calls rediscovering the whole repository
   unless that exact file no longer exists, is unreadable, is binary, or is
   explicitly excluded by this prompt.
@@ -2009,6 +2014,7 @@ Once the file is selected, run ALL prompts from the repertoire below that are ap
 - For test files: run P1, P8 (if test suite exists)
 - For manifests/dependency files: run P1, P16
 - For repo-level operations: run P2
+- For data/input-boundary files: also run P23 when the selected file is a validator, parser, importer, exporter, registry loader, schema/profile helper, config/manifest reader, JSON/JSONL/YAML/CSV/SQLite reader, path-resolving shell helper, or CLI that consumes external/operator input or emits machine-readable output
 
 Skip prompts that don't apply to the selected file type.
 
@@ -2028,7 +2034,7 @@ Detail all fixes found/implemented and why for each.
 
 Background Review Prompt Repertoire
 
-Spare-Cycle Automation -- 21 Prompts
+Spare-Cycle Automation -- 23 Prompts
 
 Designed for: while [agent] --prompt=$(rand from this set)
 
@@ -3248,6 +3254,232 @@ RULES:
 
 ________________________________________
 
+P23 - Data Contract and Negative Fixture Audit
+
+This pass applies only when the selected file touches a data or operator-input
+boundary. Apply it when the selected file is a validator, parser, importer,
+exporter, registry loader, schema/profile helper, config/manifest reader,
+JSON/JSONL/YAML/CSV/SQLite reader, path-resolving shell helper, or CLI tool that
+reads user/operator-supplied files or emits machine-readable output.
+
+If the selected file does not touch a data/input boundary, state:
+
+P23: not applicable
+
+Goal:
+
+Find places where malformed, ambiguous, unsafe, or non-contract data is accepted,
+coerced, silently ignored, partially applied, or reported without actionable
+diagnostics.
+
+Core principle:
+
+A tool is not contract-safe merely because valid fixtures pass. It must reject
+malformed inputs early, explicitly, and with diagnostics that make the bad
+field, row, path, or logical target clear without leaking secrets.
+
+REVIEW CATEGORIES:
+
+1. Boundary inventory
+
+   Identify every external or semi-external input boundary in the selected file.
+   Check for argv/CLI flags, environment variables, stdin, filesystem paths,
+   JSON files, JSONL rows, YAML or JSON-compatible YAML registries, CSV or
+   delimiter-based records, SQLite rows, schema/profile/manifest documents, URL
+   fields, subprocess stdout/stderr, generated artifacts from earlier pipeline
+   stages, caller-provided dictionaries/lists, and shell function parameters.
+
+   For each meaningful boundary, ask: where is the first trusted point, and is
+   validation performed before the data influences behavior?
+
+2. Contract strictness
+
+   For every boundary, check whether malformed or non-contract data is rejected
+   rather than accepted, coerced, skipped, or silently defaulted.
+
+   Look specifically for failure to reject:
+
+   - unexpected fields where the contract is meant to be closed
+   - missing required fields
+   - wrong top-level container types
+   - wrong nested container types
+   - non-object rows inside object arrays
+   - duplicate normalized IDs, keys, predicates, claim types, aliases, schemes,
+     or policy IDs
+   - blank strings where nonblank strings are required
+   - strings accepted where booleans are required
+   - strings accepted where numbers are required
+   - booleans accepted where integers or numbers are required
+   - NaN, Infinity, -Infinity, or any non-standard JSON numeric constants
+   - non-finite floats
+   - out-of-range scores, thresholds, counts, limits, or confidence values
+   - negative counts where only nonnegative counts are meaningful
+   - invalid timestamp format or timestamps without explicit timezone when
+     timezone matters
+   - invalid URL schemes
+   - credential-bearing URLs such as https://user:pass@example.org
+   - local paths that are actually URLs
+   - path traversal or resolved paths escaping the allowed root
+   - paths accepted because they merely contain a directory name rather than
+     matching the exact required layout
+   - conflicting duplicate fields between top-level and nested representations
+   - ambiguous records that should be rejected or require human review
+   - unknown enum values
+   - deprecated enum aliases that should warn or normalize explicitly
+   - unsupported schema/profile versions
+
+3. No silent coercion
+
+   Search for coercion or fallback patterns that can convert bad input into
+   plausible output. Flag uses of:
+
+   - str(value) on contract fields where non-string types should be rejected
+   - bool(value) on JSON/config values, especially where "false" becomes truthy
+   - int(value) or float(value) without finite/range checks
+   - default {} or [] that hides malformed caller data
+   - row.get(...) followed by quiet skip when the field is required
+   - list comprehensions that silently drop non-object rows
+   - broad except Exception that treats malformed input as absence
+   - json.loads(...) without rejecting non-standard constants when strict JSON is
+     expected
+   - duplicate-key or duplicate-normalized-value overwrites
+   - "first match wins" behavior where duplicates should be errors
+   - fallback-to-empty behavior that causes validators/exporters to pass with
+     partial data
+
+   Do not mechanically remove every coercion. Only flag it when it can hide a
+   real contract violation or produce misleading output.
+
+4. Diagnostics and failure contract
+
+   For each validation failure path, check whether the error is useful and safe.
+   Good diagnostics should include, where practical, the field name, nested path,
+   row index, JSONL line number, registry row index, offending enum/key name,
+   expected type/range/pattern, target path or logical target ID, and clear exit
+   code behavior for CLI tools.
+
+   Diagnostics must not leak embedded credentials, tokens, full sensitive URLs
+   if credentials are present, large raw payloads, or private/local-only content
+   beyond what is needed to debug safely.
+
+   Flag failures that only say invalid input, KeyError, AttributeError,
+   ValueError, failed, or emit a Python traceback for normal malformed operator
+   input.
+
+5. Negative fixture requirement
+
+   If you implement a P23 boundary fix, add or update a focused negative test or
+   fixture unless there is a clear reason not to. A valid negative test should
+   prove the previous permissive behavior is now rejected. Prefer small tests
+   that exercise one defect at a time.
+
+   Strong negative fixture examples:
+
+   - JSONL line with NaN
+   - JSON boolean in an integer field
+   - duplicate normalized registry keys
+   - non-object row inside an array
+   - unexpected key in closed contract
+   - credential-bearing remote URL
+   - path with correct-looking words but wrong root layout
+   - top-level and nested retention/status fields disagree
+   - unknown enum value
+   - invalid timestamp without timezone
+   - missing required field inside one array row
+   - malformed profile condition
+   - missing --work-id target that previously returned success
+
+   Normal-path tests alone are not enough for P23 fixes.
+
+6. Schema-code-doc alignment
+
+   When the selected file has paired schemas, docs, fixtures, or callers, inspect
+   only enough adjacent context to verify alignment. Compare schema vs
+   validator, validator vs parser/importer, parser/importer vs exporter, registry
+   file vs registry loader, CLI help vs behavior, docs vs code, existing
+   tests/fixtures vs expected contract, and output report shape vs documented
+   output contract.
+
+   Flag drift in any direction. A schema that is stricter than the validator is
+   a bug. A validator that is stricter than the docs may be a docs bug or a
+   behavior bug; decide based on surrounding contract evidence.
+
+7. Output/export integrity
+
+   For exporters and report writers, check that malformed or ambiguous internal
+   records do not create plausible but wrong downstream output.
+
+   Look for inverse relationships projected as forward relationships, lossy
+   fields emitted without warning when the format cannot represent them,
+   identifiers dropped when multiple standard values exist, unsafe escaping in
+   text formats, invalid XML/JSON/CSV/BibTeX/RIS escaping, whitespace/newline
+   behavior that changes record meaning, local/private data leaking into public
+   formats, missing loss report entries for known omissions, and non-atomic
+   output writes where partial output would be misleading.
+
+8. Read-only, dry-run, and mutation claims
+
+   If the tool claims to be read-only, dry-run, validation-only, metadata-only,
+   or temp-copy-only, verify that claim against the actual code.
+
+   Flag read-only tools opening SQLite through normal write-capable connections,
+   dry-run modes that still mutate durable state, validation-only modes that
+   write artifacts outside explicit report paths, temp-copy import flows that can
+   write the source DB, report writers that can leave partial files on
+   interruption, copy flows that race on predictable filenames, and cleanup paths
+   that leave stale temp files after failure.
+
+PROCESS:
+
+1. Run normal P1-P22 as instructed by the base Upkeeper prompt.
+2. If P23 applies, inspect the selected file plus only directly paired
+   schemas/docs/tests/callers needed to judge contracts.
+3. Propose P23 findings before applying changes.
+4. Apply only high-confidence, localized fixes.
+5. For every applied P23 fix, add or update a focused negative test unless not
+   practical; if not practical, explain why.
+6. Run at least these verification paths when changes are made:
+   - syntax/compile check for edited source
+   - normal valid path
+   - malformed/negative path
+   - relevant focused test file or fixture suite
+   - git diff --check
+7. Verify persisted file contents and mtime as required by the base prompt.
+8. Keep the final response concise but explicit about which P23 categories found
+   issues.
+
+OUTPUT:
+
+Include a P23 section in the final report with:
+
+- P23 applicability: applicable or not applicable, with reason
+- Input boundaries inspected: concise list
+- Contract defects found: concise findings, or none
+- Fixes applied: concise list, or none
+- Negative tests added/updated: list, or reason omitted
+- Schema/code/doc alignment: aligned, updated, or deferred
+- Residual risks: concise, especially if adjacent context was too broad to
+  inspect
+
+RULES:
+
+- No busy work.
+- No cosmetic-only changes.
+- Do not broaden the task beyond the selected file and directly paired contract
+  context.
+- Do not turn P23 into a general refactor.
+- Do not silently tighten public behavior without tests and a clear rationale.
+- Do not add fake dry-run/check behavior that still mutates state.
+- Do not add negative tests that only assert implementation details.
+- If the contract is ambiguous, document the ambiguity and stop short of
+  guessing unless surrounding evidence is strong.
+- If malformed input can create plausible but wrong output, treat that as high
+  value.
+- If a valid input path is already well covered but malformed inputs are not,
+  that is a real P23 test gap.
+
+________________________________________
+
 Summary Table
 
 ID      Name    Scope   Cadence
@@ -3274,8 +3506,9 @@ P19     Exit code and output contract   Per file        Random pool
 P20     Resource exhaustion and bounds  Per file        Random pool
 P21     Documentation drift     Per file        Random pool
 P22     Service and docs        Per file        Random pool
+P23     Data contract and negative fixtures     Per file*       Random pool
 
-*P8: drop from random pool if the project has no test suite. P2 and P16: run on their own slower schedule, not in the per-file rotation.
+*P8: drop from random pool if the project has no test suite. P23 applies only to selected files that touch data or operator-input boundaries. P2 and P16: run on their own slower schedule, not in the per-file rotation.
 EOF
 
   {

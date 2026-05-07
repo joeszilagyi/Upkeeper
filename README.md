@@ -19,6 +19,8 @@ On each cycle it:
 - preselects one eligible script/tool target with `git ls-files -co --exclude-standard`
 - prepends that target to the default maintenance prompt so Codex does not scan
   `.git/`, ignored files, generated outputs, runtime evidence, or test trees by accident
+- applies the P23 data-contract pass to validators, importers, exporters,
+  registry loaders, config readers, data readers, and input-boundary CLIs
 - runs Codex once with the configured model and reasoning effort
 - records terminal outcomes in `Upkeeper.log`
 - optionally hands off to a bounded fallback model and postmortem path when the
@@ -185,6 +187,19 @@ If the preselected file cannot be reviewed because it is gone, unreadable,
 binary, generated, or explicitly excluded, Codex must state that exception and
 choose a replacement from the same source-safe boundary.
 
+P23 is now part of the live default prompt. It applies only to selected files
+that touch data or operator-input boundaries, and it asks Codex to inventory
+boundaries, reject malformed/non-contract input, improve diagnostics safely, and
+add focused negative fixtures for any data-contract fix. The same pass is also
+available as a standalone prompt file:
+
+```sh
+./Upkeeper --prompt-file prompts/p23-data-contract-negative-fixture-audit.md
+
+# From a symlinked client repo, use the central prompt file's absolute path.
+./Upkeeper.sh --prompt-file /work/tools/Upkeeper/prompts/p23-data-contract-negative-fixture-audit.md
+```
+
 ## Evidence And Cleanup
 
 Local runtime evidence is deliberately ignored by git:
@@ -206,12 +221,13 @@ specific policy for publishing them.
 |   `-- scripts/
 |       `-- upkeeper.md
 |-- prompts/
-|   `-- README.md
+|   |-- README.md
+|   `-- p23-data-contract-negative-fixture-audit.md
 |-- templates/
 |   |-- README.md
 |   `-- prompt-template.md
 |-- Upkeeper
-|-- caretaking_22_items.md
+|-- caretaking_23_items.md
 |-- git_hard_clean.md
 |-- LICENSE
 |-- .editorconfig
@@ -223,8 +239,10 @@ specific policy for publishing them.
 
 - [docs/scripts/upkeeper.md](docs/scripts/upkeeper.md): detailed operator guide
   and environment knobs
-- [caretaking_22_items.md](caretaking_22_items.md): the rotating maintenance
+- [caretaking_23_items.md](caretaking_23_items.md): the rotating maintenance
   review repertoire used by the default prompt family
+- [prompts/p23-data-contract-negative-fixture-audit.md](prompts/p23-data-contract-negative-fixture-audit.md):
+  standalone P23 add-on prompt for explicit data-contract audit runs
 - [git_hard_clean.md](git_hard_clean.md): explicit branch and backup cleanup
   workflow notes
 - [templates/prompt-template.md](templates/prompt-template.md): starter format

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.29
+## Version: v1.0.30
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.29"
+UPKEEPER_VERSION="v1.0.30"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -3151,6 +3151,7 @@ compile_prompt() {
       printf -- '- This invoked cycle was started with `--prompt-pass=all`.\n'
       printf -- '- Run every repertoire pass P1 through P23 against the selected target, even if the default schedule or applicability filter would normally skip it.\n'
       printf -- '- For a pass whose domain does not fit the selected target, still include that pass in the final report and mark it `not applicable` with a short reason.\n'
+      printf -- '- For machine-readable coverage, include one final-report line for each pass, and start each such line with `P<N>:` where N is 1 through 23.\n'
       printf -- '- Do not use non-applicability as permission to switch targets or skip the selected file.\n'
       printf -- '- This override is one-cycle CLI guidance only; it does not persist to later loop iterations.\n'
     } >>"$compiled_file"
@@ -6098,11 +6099,49 @@ print(
 PY
 }
 
+review_pass_coverage_json() {
+  local last_message_file="$1"
+  [[ -f "$last_message_file" ]] || return 1
+  python3 - "$last_message_file" <<'PY'
+import json
+import re
+import sys
+
+try:
+    text = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read()
+except OSError:
+    raise SystemExit(1)
+
+present = set()
+for raw_line in text.splitlines():
+    line = raw_line.strip()
+    match = re.match(r"^(?:[-*]\s*)?P([1-9]|1[0-9]|2[0-3])\s*[:.-]\s+", line, re.IGNORECASE)
+    if match:
+        present.add(int(match.group(1)))
+
+expected = set(range(1, 24))
+missing = sorted(expected - present)
+status = "complete" if not missing else "incomplete"
+print(
+    json.dumps(
+        {
+            "status": status,
+            "expected": len(expected),
+            "present": len(present),
+            "missing": ",".join(f"P{value}" for value in missing) if missing else "none",
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
 log_review_report_summary() {
   local last_message_file="$1"
   local status_marker_value="${2:-missing}"
   local codex_exit_value="${3:-unknown}"
   local summary_json outcome selected_file findings changes verification
+  local pass_coverage_json pass_coverage_status pass_coverage_expected pass_coverage_present pass_coverage_missing
 
   summary_json="$(review_report_summary_json "$last_message_file")"
   outcome="$(json_field "$summary_json" '.outcome // ""')"
@@ -6121,6 +6160,22 @@ log_review_report_summary() {
 
   if [[ "$outcome" == "REVIEWED_AND_FIXED" || ( "$outcome" == "unknown" && -n "$changes" ) ]]; then
     log_line "INFO" "review.fix_details review_outcome=$outcome selected_file=$(shell_quote "$selected_file") findings=$(shell_quote "$findings") changes=$(shell_quote "$changes")"
+  fi
+
+  if [[ "${CODEX_PROMPT_PASS:-}" == "all" ]]; then
+    if pass_coverage_json="$(review_pass_coverage_json "$last_message_file")"; then
+      pass_coverage_status="$(json_field "$pass_coverage_json" '.status // "unknown"')"
+      pass_coverage_expected="$(json_field "$pass_coverage_json" '.expected // 23')"
+      pass_coverage_present="$(json_field "$pass_coverage_json" '.present // 0')"
+      pass_coverage_missing="$(json_field "$pass_coverage_json" '.missing // "unknown"')"
+      if [[ "$pass_coverage_status" == "complete" ]]; then
+        log_line "INFO" "review.pass_coverage prompt_pass=all status=$pass_coverage_status expected=$pass_coverage_expected present=$pass_coverage_present missing=$(shell_quote "$pass_coverage_missing")"
+      else
+        log_line "WARN" "review.pass_coverage prompt_pass=all status=$pass_coverage_status expected=$pass_coverage_expected present=$pass_coverage_present missing=$(shell_quote "$pass_coverage_missing")"
+      fi
+    else
+      log_line "WARN" "review.pass_coverage prompt_pass=all status=unavailable expected=23 present=unknown missing=unknown"
+    fi
   fi
 }
 

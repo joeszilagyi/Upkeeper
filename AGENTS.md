@@ -45,3 +45,14 @@ Upkeeper is expected to stress test both itself and client repositories.
 - Before touching a client repo, check whether the requested change belongs in
   central Upkeeper instead.
 - When unsure, prefer a central Upkeeper patch plus a local symlink verification.
+
+## Release Notes Discipline
+
+- Keep root `change_notes.md` current for notable Upkeeper behavior,
+  documentation, default, prompt-contract, quota, fallback, logging, selection,
+  or operator-ergonomics changes.
+- Any committed `UPKEEPER_VERSION` bump should have a matching dated entry in
+  `change_notes.md` unless the version number never existed as a committed
+  wrapper state.
+- Release-note entries should describe operator-facing impact, not just commit
+  mechanics.

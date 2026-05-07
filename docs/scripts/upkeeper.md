@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.12
+Version: v1.0.13
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -129,6 +129,11 @@ Important:
 Prompt behavior:
   - By default, the script asks Codex to select the oldest eligible script/tool
     file by last-modified timestamp and review exactly one file per cycle.
+  - Before launching Codex, the wrapper preselects that script/tool target from
+    `git ls-files -co --exclude-standard` and embeds the selected path in the
+    prompt. That avoids spending model/tool cycles on broad tree discovery and
+    keeps `.git/`, ignored paths, runtime evidence, generated outputs, and tests
+    out of the selection scan.
   - Tests are not script/tool targets merely because they use a script-language
     extension; select tests only when explicit extra guidance asks for test
     review or no eligible script/tool target exists.

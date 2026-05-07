@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.12
+## Version: v1.0.13
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.12"
+UPKEEPER_VERSION="v1.0.13"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -239,6 +239,11 @@ Important:
 Prompt behavior:
   - By default, the script asks Codex to select the oldest eligible script/tool
     file by last-modified timestamp and review exactly one file per cycle.
+  - Before launching Codex, the wrapper preselects that script/tool target from
+    git ls-files -co --exclude-standard and embeds the selected path in the
+    prompt. That avoids spending model/tool cycles on broad tree discovery and
+    keeps .git/, ignored paths, runtime evidence, generated outputs, and tests
+    out of the selection scan.
   - Tests are not script/tool targets merely because they use a script-language
     extension; select tests only when explicit extra guidance asks for test
     review or no eligible script/tool target exists.
@@ -324,6 +329,156 @@ resolved_operator_guide_path() {
   else
     printf '%s/%s' "$ROOT_DIR" "$CODEX_OPERATOR_GUIDE_PATH"
   fi
+}
+
+preselect_review_target() {
+  python3 - "$ROOT_DIR" <<'PY'
+import datetime
+import os
+import stat as statmod
+import subprocess
+import sys
+import time
+
+root = sys.argv[1]
+os.chdir(root)
+
+script_exts = {
+    ".awk",
+    ".bash",
+    ".cjs",
+    ".fish",
+    ".go",
+    ".js",
+    ".jsx",
+    ".ksh",
+    ".lua",
+    ".mjs",
+    ".pl",
+    ".ps1",
+    ".psm1",
+    ".py",
+    ".rb",
+    ".rs",
+    ".sh",
+    ".ts",
+    ".tsx",
+    ".zsh",
+}
+build_names = {
+    "Dockerfile",
+    "Justfile",
+    "Makefile",
+    "Rakefile",
+    "dockerfile",
+    "justfile",
+    "makefile",
+}
+excluded_prefixes = (".git/", "runtime/")
+excluded_exact = {"Upkeeper.log"}
+test_dirs = {"__tests__", "test", "tests"}
+
+
+def is_test_path(path: str) -> bool:
+    parts = path.split("/")
+    name = parts[-1]
+    return (
+        any(part in test_dirs for part in parts)
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+    )
+
+
+def executable_text_candidate(path: str) -> bool:
+    try:
+        with open(path, "rb") as handle:
+            sample = handle.read(4096)
+    except OSError:
+        return False
+    return b"\0" not in sample
+
+
+raw_paths = subprocess.check_output(["git", "ls-files", "-co", "--exclude-standard", "-z"])
+paths = raw_paths.decode("utf-8", "surrogateescape").split("\0")
+now = time.time()
+candidates = []
+
+for path in paths:
+    if not path:
+        continue
+    if path in excluded_exact or path.startswith(excluded_prefixes) or is_test_path(path):
+        continue
+    try:
+        stat_result = os.stat(path)
+    except OSError:
+        continue
+    if not statmod.S_ISREG(stat_result.st_mode):
+        continue
+
+    name = os.path.basename(path)
+    ext = os.path.splitext(name)[1].lower()
+    is_candidate = name in build_names or ext in script_exts
+    if not is_candidate and stat_result.st_mode & 0o111:
+        is_candidate = executable_text_candidate(path)
+    if is_candidate:
+        candidates.append((stat_result.st_mtime, path))
+
+if not candidates:
+    sys.exit(0)
+
+mtime, path = sorted(candidates, key=lambda item: (item[0], item[1]))[0]
+age_seconds = max(0, int(now - mtime))
+mtime_text = datetime.datetime.fromtimestamp(mtime).astimezone().strftime(
+    "%Y-%m-%d %H:%M:%S %z"
+)
+
+print(f"path={path}")
+print(f"epoch={int(mtime)}")
+print(f"mtime={mtime_text}")
+print(f"age={age_seconds // 3600}h {(age_seconds % 3600) // 60}m")
+print(f"eligible_count={len(candidates)}")
+print("selection_basis=oldest eligible non-test script/tool from git ls-files -co --exclude-standard")
+PY
+}
+
+append_preselected_review_target() {
+  local compiled_file="$1"
+  local selection err_file detail selected_path selected_epoch selected_age eligible_count
+
+  if ! err_file="$(mktemp)"; then
+    log_line "WARN" "review.preselect.skip reason=tempfile_failed"
+    return 0
+  fi
+
+  if ! selection="$(preselect_review_target 2>"$err_file")"; then
+    detail="$(tr '\n' ' ' <"$err_file" | sed 's/[[:space:]]\+/ /g' | cut -c1-400)"
+    rm -f "$err_file"
+    log_line "WARN" "review.preselect.skip reason=selector_failed detail=$(shell_quote "${detail:-unknown_error}")"
+    return 0
+  fi
+  rm -f "$err_file"
+
+  if [[ -z "$selection" ]]; then
+    log_line "WARN" "review.preselect.none reason=no_eligible_script_tool"
+    return 0
+  fi
+
+  selected_path="$(sed -n 's/^path=//p' <<<"$selection")"
+  selected_epoch="$(sed -n 's/^epoch=//p' <<<"$selection")"
+  selected_age="$(sed -n 's/^age=//p' <<<"$selection")"
+  eligible_count="$(sed -n 's/^eligible_count=//p' <<<"$selection")"
+
+  {
+    printf '\nWRAPPER_PRESELECTED_REVIEW_TARGET\n'
+    printf '%s\n' "$selection"
+    printf '\nRules for this preselected target:\n'
+    printf -- '- This target is the timestamp-selected file for this cycle.\n'
+    printf -- '- Verify only this file exists, is readable, and is eligible before reviewing it.\n'
+    printf -- '- Do not run broad repository discovery commands to second-guess this selection.\n'
+    printf -- '- If this target is physically impossible or unsafe to review, state the exception and then use the same source-safe selection boundary for the replacement.\n'
+  } >>"$compiled_file"
+
+  log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") eligible_count=${eligible_count:-unknown}"
 }
 
 operator_guide_snapshot_version() {
@@ -1707,6 +1862,22 @@ Scope rule -- generated and ignored artifacts:
 
   git ls-files -co --exclude-standard -z
 
+- If this prompt contains a WRAPPER_PRESELECTED_REVIEW_TARGET section, Upkeeper
+  has already run source-safe selection before Codex started. Treat that
+  preselected target as the timestamp-selected file. Do not spend tool calls
+  rediscovering the whole repository unless that exact file no longer exists,
+  is unreadable, is binary, or is explicitly excluded by this prompt.
+- Do not run broad tree inventory commands such as `find .`, `find . -maxdepth`,
+  `ls -R`, or similar scans for selection. Those commands surface `.git/objects`
+  and other VCS/runtime internals, waste tokens, and are outside the review
+  target boundary.
+- Do not use `sort | head` for candidate output; upstream commands can emit
+  broken-pipe noise when `head` exits early. If a fallback preview is needed,
+  use a bounded source-safe command that limits after sorting without triggering
+  broken pipes, or use Python to sort and print only the needed rows.
+- Do not build nested `xargs ... sh -c ... awk ...` candidate selectors. They
+  are fragile under shell quoting and can produce thousands of repeated errors.
+
 - If another scan such as find(1) surfaces an excluded file first, that is the
   generated/ignored-artifact exception. State that exception, do not touch that
   file, and select the next oldest eligible non-excluded candidate.
@@ -3018,6 +3189,8 @@ P22     Service and docs        Per file        Random pool
 
 *P8: drop from random pool if the project has no test suite. P2 and P16: run on their own slower schedule, not in the per-file rotation.
 EOF
+
+  append_preselected_review_target "$compiled_file"
 
   {
     printf '\nWrapper control marker compatibility:\n'

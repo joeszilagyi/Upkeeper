@@ -5,6 +5,12 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.0.45 changes:
+	1. Captured primary and auxiliary Codex stdout/stderr to pruned per-cycle transcript artifacts instead of streaming the full backend transcript to the live terminal by default.
+	2. Added summary-first terminal output: routine INFO lines stay in `Upkeeper.log`, while WARN/ERROR lines and bounded high-signal transcript summaries remain visible.
+	3. Logged high-signal transcript summaries into `Upkeeper.log` so raw prompt/code artifacts can cycle out safely.
+	4. Added transcript retention controls with defaults of 24 hours and 200 MB under `runtime/upkeeper-transcripts`, plus `CODEX_TERMINAL_VERBOSITY=full` for explicit full live transcript streaming.
+
 2026-05-07: v1.0.44 changes:
 	1. Rejected empty spaced `--prompt-file ""` and `--prompt ""` arguments instead of falling back to the default review prompt.
 	2. Made malformed one-cycle prompt overrides fail at argument parsing with actionable diagnostics.

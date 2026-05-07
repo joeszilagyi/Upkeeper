@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.44
+Version: v1.0.45
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -95,6 +95,15 @@ Loop stop semantics:
     entry is older than 72 hours; archives stay as
     sibling zip files and archives older than 144
     hours are pruned on startup
+
+Transcript and live terminal behavior:
+  - Default live terminal mode is summary-first. Routine INFO logs stay in
+    `Upkeeper.log`; full Codex stdout/stderr stays in transcript artifacts.
+  - WARN/ERROR lines, final status, and bounded high-signal transcript summaries
+    remain visible live.
+  - Transcript artifacts live under `runtime/upkeeper-transcripts` by default and
+    are pruned after 24 hours or once the directory exceeds 200 MB.
+  - Set `CODEX_TERMINAL_VERBOSITY=full` to stream the full backend transcript live.
 
 Important:
   - Run the loop in a dedicated shell or terminal tab.
@@ -236,6 +245,12 @@ Environment overrides:
   CODEX_LOG_ROTATE_AFTER_HOURS  Default: 72
   CODEX_LOG_ROTATE_KEEP_HOURS   Default: 144
   CODEX_PROCESS_ARGS_MAX_CHARS  Default: 600
+  CODEX_TERMINAL_VERBOSITY     Default: summary
+  CODEX_TRANSCRIPT_DIR         Default: runtime/upkeeper-transcripts
+  CODEX_TRANSCRIPT_KEEP_HOURS  Default: 24
+  CODEX_TRANSCRIPT_KEEP_MAX_MB Default: 200
+  CODEX_TRANSCRIPT_SIGNAL_LINES Default: 80
+  CODEX_TRANSCRIPT_ERROR_TAIL_LINES Default: 120
   CODEX_LOOP_STOP_GRACE_SECONDS Default: 5
   CODEX_CONTINUE_ON_NO_BACKEND_TASK Default: 0
   CODEX_DISABLE_PARENT_STOP      Default: 0

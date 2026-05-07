@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.44
+## Version: v1.0.45
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.44"
+UPKEEPER_VERSION="v1.0.45"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -82,6 +82,12 @@ CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT="${CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT:-5}
 CODEX_LOG_ROTATE_AFTER_HOURS="${CODEX_LOG_ROTATE_AFTER_HOURS:-72}"
 CODEX_LOG_ROTATE_KEEP_HOURS="${CODEX_LOG_ROTATE_KEEP_HOURS:-144}"
 CODEX_PROCESS_ARGS_MAX_CHARS="${CODEX_PROCESS_ARGS_MAX_CHARS:-600}"
+CODEX_TERMINAL_VERBOSITY="${CODEX_TERMINAL_VERBOSITY:-summary}"
+CODEX_TRANSCRIPT_DIR="${CODEX_TRANSCRIPT_DIR:-$ROOT_DIR/runtime/upkeeper-transcripts}"
+CODEX_TRANSCRIPT_KEEP_HOURS="${CODEX_TRANSCRIPT_KEEP_HOURS:-24}"
+CODEX_TRANSCRIPT_KEEP_MAX_MB="${CODEX_TRANSCRIPT_KEEP_MAX_MB:-200}"
+CODEX_TRANSCRIPT_SIGNAL_LINES="${CODEX_TRANSCRIPT_SIGNAL_LINES:-80}"
+CODEX_TRANSCRIPT_ERROR_TAIL_LINES="${CODEX_TRANSCRIPT_ERROR_TAIL_LINES:-120}"
 CODEX_LOOP_STOP_GRACE_SECONDS="${CODEX_LOOP_STOP_GRACE_SECONDS:-5}"
 CODEX_CONTINUE_ON_NO_BACKEND_TASK="${CODEX_CONTINUE_ON_NO_BACKEND_TASK:-0}"
 CODEX_DISABLE_PARENT_STOP="${CODEX_DISABLE_PARENT_STOP:-0}"
@@ -146,6 +152,7 @@ FALLBACK_SCREEN_WATCH_ACTIVE="0"
 FALLBACK_SCREEN_TRIGGER=""
 RUN_COMPILED_PROMPT_FILE=""
 RUN_LAST_MESSAGE_FILE=""
+RUN_TRANSCRIPT_FILE=""
 RUN_TMP_DIR=""
 RUN_MARK_HEARTBEAT_PID=""
 RUN_MARK_HEARTBEAT_STARTED="0"
@@ -240,6 +247,12 @@ Loop stop semantics:
     entry is older than ${CODEX_LOG_ROTATE_AFTER_HOURS} hours; archives stay as
     sibling zip files and archives older than ${CODEX_LOG_ROTATE_KEEP_HOURS}
     hours are pruned on startup
+  - by default, live terminal output is summary-first: routine INFO logs and
+    full backend transcripts stay in log/transcript artifacts, while WARN,
+    ERROR, status, and bounded high-signal transcript summaries remain visible;
+    transcript artifacts live under ${CODEX_TRANSCRIPT_DIR} and are pruned after
+    ${CODEX_TRANSCRIPT_KEEP_HOURS} hours or ${CODEX_TRANSCRIPT_KEEP_MAX_MB} MB;
+    set CODEX_TERMINAL_VERBOSITY=full to stream the full backend transcript
 
 Important:
   - Run the loop in a dedicated shell or terminal tab.
@@ -898,12 +911,55 @@ process_start_fingerprint() {
   printf 'proc_start_ticks=unknown'
 }
 
+terminal_wants_full_output() {
+  case "${CODEX_TERMINAL_VERBOSITY:-summary}" in
+    full|verbose|debug|trace|1|yes|true)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+terminal_wants_quiet_output() {
+  case "${CODEX_TERMINAL_VERBOSITY:-summary}" in
+    quiet|none|silent|0|no|false)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+terminal_emit_log_line() {
+  local level="$1"
+  local line="$2"
+
+  if terminal_wants_full_output; then
+    printf '%s\n' "$line"
+    return 0
+  fi
+  if terminal_wants_quiet_output; then
+    [[ "$level" == "ERROR" ]] && printf '%s\n' "$line" >&2
+    return 0
+  fi
+  case "$level" in
+    WARN|ERROR)
+      printf '%s\n' "$line" >&2
+      ;;
+  esac
+}
+
 log_line() {
   local level="$1"
   shift
-  local ts
+  local ts line
   ts="$(timestamp_now)"
-  printf '%s [%s] cycle=%s run_hash=%s %s\n' "$ts" "$level" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$*" | tee -a "$LOG_FILE"
+  line="$(printf '%s [%s] cycle=%s run_hash=%s %s' "$ts" "$level" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$*")"
+  printf '%s\n' "$line" >>"$LOG_FILE"
+  terminal_emit_log_line "$level" "$line"
 }
 
 ensure_log_parent() {
@@ -933,6 +989,70 @@ run_mktemp() {
   local label="${1:-tmp}"
   ensure_run_tmp_dir
   mktemp "$RUN_TMP_DIR/${label}.XXXXXX"
+}
+
+prune_transcript_artifacts() {
+  local transcript_dir="$CODEX_TRANSCRIPT_DIR"
+  local keep_hours max_mb
+
+  [[ -n "$transcript_dir" ]] || return 0
+  keep_hours="$(sanitize_nonnegative_integer "$CODEX_TRANSCRIPT_KEEP_HOURS" "24")"
+  max_mb="$(sanitize_nonnegative_integer "$CODEX_TRANSCRIPT_KEEP_MAX_MB" "200")"
+
+  python3 - "$transcript_dir" "$keep_hours" "$max_mb" <<'PY' || true
+from pathlib import Path
+import sys
+import time
+
+root = Path(sys.argv[1])
+keep_hours = int(sys.argv[2])
+max_mb = int(sys.argv[3])
+try:
+    root.mkdir(parents=True, exist_ok=True)
+except OSError:
+    raise SystemExit(0)
+if keep_hours > 0:
+    cutoff = time.time() - keep_hours * 3600
+    for path in root.glob('*.log'):
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            pass
+if max_mb <= 0:
+    raise SystemExit(0)
+max_bytes = max_mb * 1024 * 1024
+entries = []
+for path in root.glob('*.log'):
+    try:
+        st = path.stat()
+    except OSError:
+        continue
+    if path.is_file():
+        entries.append((st.st_mtime, st.st_size, path))
+total = sum(size for _, size, _ in entries)
+for _, size, path in sorted(entries):
+    if total <= max_bytes:
+        break
+    try:
+        path.unlink()
+        total -= size
+    except OSError:
+        pass
+PY
+}
+
+new_transcript_file() {
+  local label="${1:-codex}"
+  local transcript_dir="$CODEX_TRANSCRIPT_DIR"
+  label="${label//[^A-Za-z0-9_.-]/_}"
+  [[ -n "$transcript_dir" ]] || transcript_dir="$ROOT_DIR/runtime/upkeeper-transcripts"
+  if ! mkdir -p -- "$transcript_dir"; then
+    die "failed to create transcript directory $transcript_dir"
+  fi
+  chmod 700 "$transcript_dir" 2>/dev/null || true
+  prune_transcript_artifacts
+  mktemp "$transcript_dir/$CYCLE_ID.$CYCLE_RUN_HASH.$label.XXXXXX.log"
 }
 
 file_blob_hash() {
@@ -1712,6 +1832,107 @@ json_field() {
   local path="$2"
 
   jq -r "$path // empty" <<<"$json" 2>/dev/null
+}
+
+emit_codex_transcript_summary() {
+  local label="$1"
+  local transcript_file="$2"
+  local codex_exit="$3"
+  local signal_lines="${CODEX_TRANSCRIPT_SIGNAL_LINES:-80}"
+  local error_tail_lines="${CODEX_TRANSCRIPT_ERROR_TAIL_LINES:-120}"
+
+  terminal_wants_full_output && return 0
+  [[ -n "$transcript_file" && -f "$transcript_file" ]] || return 0
+
+  python3 - "$label" "$transcript_file" "$codex_exit" "$signal_lines" "$error_tail_lines" "$LOG_FILE" "$CYCLE_ID" "$CYCLE_RUN_HASH" <<'PY'
+from datetime import datetime, timezone
+from pathlib import Path
+import re
+import sys
+
+label, path_raw, exit_raw, signal_raw, tail_raw, log_raw, cycle_id, run_hash = sys.argv[1:9]
+path = Path(path_raw)
+log_path = Path(log_raw)
+try:
+    signal_limit = max(0, int(signal_raw))
+except ValueError:
+    signal_limit = 80
+try:
+    tail_limit = max(0, int(tail_raw))
+except ValueError:
+    tail_limit = 120
+try:
+    text = path.read_text(encoding='utf-8', errors='replace')
+except OSError:
+    print(f'Upkeeper: {label} transcript unavailable path={path}', file=sys.stderr)
+    raise SystemExit(0)
+lines = text.splitlines()
+
+def ts():
+    return datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%dT%H:%M:%S%z')
+
+def short(value: str, limit: int = 300) -> str:
+    value = re.sub(r'\s+', ' ', value.strip())
+    if len(value) > limit:
+        return value[: limit - 15].rstrip() + '...<truncated>'
+    return value
+
+def field_value(value: str) -> str:
+    return short(value).replace(' ', '\\ ')
+
+promptish = re.compile(r'^(WRAPPER_|ABSOLUTE RULE|Background Review Prompt Repertoire|Summary Table|P\d+ - |-{8,}$|workdir: |model: |provider: |approval: |sandbox: |reasoning effort: |session id: |user$|hook: )')
+high_signal = re.compile(r'(\[WARN\]|\[ERROR\]|\bERROR\b|\bWARN\b|\b[Ff]ailed\b|\bfailed\b|Rate limit|rate limit|quota|UPKEEPER_STATUS:|UPKEEPER_LOG_REVIEW:|REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER|WORK_DONE|BLOCKED|cycle\.exit|cycle\.summary|status_marker|rmcp::|HTTP request failed| exited [1-9][0-9]* in |signal\.received|KeyboardInterrupt|interrupted)')
+diff_count = sum(1 for line in lines if line.startswith('diff --git '))
+hook_count = sum(1 for line in lines if line.startswith('hook: '))
+prompt_count = sum(1 for line in lines if promptish.search(line))
+signals = []
+for line in lines:
+    if not high_signal.search(line):
+        continue
+    if promptish.search(line) and not line.startswith(('UPKEEPER_STATUS:', 'UPKEEPER_LOG_REVIEW:')):
+        continue
+    signals.append(short(line))
+summary = (
+    f'codex.transcript.summary label={label} path={path} exit={exit_raw} lines={len(lines)} '
+    f'diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count} signal_lines={len(signals)}'
+)
+log_lines = [f'{ts()} [INFO] cycle={cycle_id} run_hash={run_hash} {summary}']
+for item in signals[-signal_limit:]:
+    log_lines.append(f'{ts()} [INFO] cycle={cycle_id} run_hash={run_hash} codex.transcript.signal label={label} text={field_value(item)}')
+try:
+    with log_path.open('a', encoding='utf-8') as handle:
+        for item in log_lines:
+            handle.write(item + '\n')
+except OSError:
+    pass
+print(f'Upkeeper: {label} transcript captured path={path} exit={exit_raw} lines={len(lines)} diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count}', file=sys.stderr)
+if signals and signal_limit:
+    print(f'Upkeeper: {label} high-signal transcript tail (last {min(signal_limit, len(signals))}):', file=sys.stderr)
+    for line in signals[-signal_limit:]:
+        print(f'  {line}', file=sys.stderr)
+if exit_raw not in {'0', ''} and tail_limit:
+    print(f'Upkeeper: {label} failure transcript tail (last {min(tail_limit, len(lines))} lines):', file=sys.stderr)
+    for line in lines[-tail_limit:]:
+        print(f'  {short(line)}', file=sys.stderr)
+PY
+}
+
+run_codex_exec_capture() {
+  local label="$1"
+  local transcript_file="$2"
+  local stdin_file="$3"
+  local codex_rc
+  shift 3
+
+  if terminal_wants_full_output; then
+    "$@" <"$stdin_file" 2>&1 | tee "$transcript_file"
+    codex_rc="${PIPESTATUS[0]}"
+  else
+    "$@" <"$stdin_file" >"$transcript_file" 2>&1
+    codex_rc="$?"
+    emit_codex_transcript_summary "$label" "$transcript_file" "$codex_rc"
+  fi
+  return "$codex_rc"
 }
 
 quota_json_assignments() {
@@ -6037,19 +6258,24 @@ run_aux_codex_exec() {
     return 87
   fi
 
+  local aux_transcript_file
+  aux_transcript_file="$(new_transcript_file "$phase_label")"
+  log_line "INFO" "$phase_label.transcript path=$(shell_quote "$aux_transcript_file")"
+
   set +e
-  codex exec \
+  run_codex_exec_capture "$phase_label" "$aux_transcript_file" "$prompt_file" \
+    codex exec \
     "${aux_mode_args[@]}" \
     -C "$ROOT_DIR" \
     -m "$model" \
-    -c "model_reasoning_effort=\"$effort\"" \
-    -o "$last_message_file" \
-    - <"$prompt_file"
+    -c "model_reasoning_effort="$effort"" \
+    -o "$last_message_file"
   local aux_exit=$?
   set -e
 
-  log_line "INFO" "$phase_label.finish exit_code=$aux_exit model=$model"
+  log_line "INFO" "$phase_label.finish exit_code=$aux_exit model=$model transcript=$(shell_quote "$aux_transcript_file")"
   return "$aux_exit"
+
 }
 
 marker_analysis_json() {
@@ -7621,21 +7847,21 @@ main() {
   ensure_codex_session_store_writable_or_exit "before_run" "0"
   ensure_codex_arg0_tmp_clean_or_exit "before_run" "0"
   ensure_codex_bwrap_tmp_writable_or_exit "before_run" "0"
-  log_line "INFO" "run.start execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=${PROMPT_FILE:-inline/default} compiled_prompt=$compiled_prompt_file"
+  RUN_TRANSCRIPT_FILE="$(new_transcript_file primary)"
+  log_line "INFO" "run.start execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=${PROMPT_FILE:-inline/default} compiled_prompt=$compiled_prompt_file transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE")"
 
   set +e
-  codex exec \
+  run_codex_exec_capture "primary" "$RUN_TRANSCRIPT_FILE" "$compiled_prompt_file" \
+    codex exec \
     "${CODEX_MODE_ARGS[@]}" \
     -C "$ROOT_DIR" \
     -m "$CODEX_MODEL" \
-    -c "model_reasoning_effort=\"$CODEX_REASONING_EFFORT\"" \
-    -o "$last_message_file" \
-    - <"$compiled_prompt_file"
+    -c "model_reasoning_effort="$CODEX_REASONING_EFFORT"" \
+    -o "$last_message_file"
   local codex_exit=$?
   set -e
 
-  log_line "INFO" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit"
-
+  log_line "INFO" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE")"
   local after_quota_json=""
   local after_error=""
   local after_ts="" after_source="" after_selection="" after_model_hint="" after_snapshot_is_current=""

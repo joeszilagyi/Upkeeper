@@ -273,13 +273,13 @@ specific policy for publishing them.
 |   `-- spark_5.3_burn_out_xhigh.sh
 |-- prompts/
 |   |-- README.md
+|   |-- caretaking_23_items.md
+|   |-- git_hard_clean.md
 |   `-- p23-data-contract-negative-fixture-audit.md
 |-- templates/
 |   |-- README.md
 |   `-- prompt-template.md
 |-- Upkeeper
-|-- caretaking_23_items.md
-|-- git_hard_clean.md
 |-- LICENSE
 |-- .editorconfig
 |-- .gitignore
@@ -292,11 +292,11 @@ specific policy for publishing them.
   and environment knobs
 - [launcher_examples/README.md](launcher_examples/README.md): tracked shell
   launcher examples for common Upkeeper loops
-- [caretaking_23_items.md](caretaking_23_items.md): the rotating maintenance
+- [prompts/caretaking_23_items.md](prompts/caretaking_23_items.md): the rotating maintenance
   review repertoire used by the default prompt family
 - [prompts/p23-data-contract-negative-fixture-audit.md](prompts/p23-data-contract-negative-fixture-audit.md):
   standalone P23 add-on prompt for explicit data-contract audit runs
-- [git_hard_clean.md](git_hard_clean.md): explicit branch and backup cleanup
+- [prompts/git_hard_clean.md](prompts/git_hard_clean.md): explicit branch and backup cleanup
   workflow notes
 - [templates/prompt-template.md](templates/prompt-template.md): starter format
   for reusable prompt files

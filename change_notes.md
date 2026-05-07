@@ -155,3 +155,30 @@ Version numbering note:
 	2. Established one-cycle `codex exec` orchestration with quota guardrails.
 	3. Added parent-loop stop behavior, fallback hooks, prompt compilation, status marker handling, and local evidence logging.
 	4. Established the central wrapper as the source of truth for Upkeeper behavior.
+
+Reconstructed pre-1.0 history:
+	1. The v0.x entries below are reconstructed from Git history before formal Upkeeper versioning.
+	2. These are milestone labels, not historical release tags.
+	3. v1.0.0 remains the first committed official Upkeeper wrapper version marker.
+
+2026-05-03: v0.4.0 reconstructed changes:
+	1. Added maintenance workflow prompt documents for repeated repository care and cleanup work.
+	2. Added `caretaking_22_items.md` as a broad maintenance/review workflow prompt.
+	3. Added `git_hard_clean.md` as a focused Git cleanup and reset-safety workflow prompt.
+	4. Established the repo as a place for reusable operational prompt workflows before the Upkeeper wrapper existed.
+
+2026-05-03: v0.3.0 reconstructed changes:
+	1. Scaffolded the prompt-library structure with `prompts/`, `templates/`, and `templates/prompt-template.md`.
+	2. Added `.editorconfig` and `.gitignore` for basic repository hygiene.
+	3. Switched the repository license to `0BSD` for simple reuse.
+	4. Documented a lightweight prompt format with title, goal, use case, inputs, prompt body, and notes.
+
+2026-05-03: v0.2.0 reconstructed changes:
+	1. Expanded the README into a clearer reusable LLM prompt-library concept.
+	2. Framed the repository around prompts that are easy to find, reuse, and evolve.
+	3. Set the expectation that prompt wording should improve from real usage rather than premature over-design.
+
+2026-05-03: v0.1.0 reconstructed changes:
+	1. Created the initial repository.
+	2. Added the initial `README.md` and `LICENSE` files.
+	3. Established the pre-Upkeeper foundation that later became the central wrapper and prompt-operations repository.

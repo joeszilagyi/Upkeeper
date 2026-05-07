@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.41
+## Version: v1.0.42
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.41"
+UPKEEPER_VERSION="v1.0.42"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -193,6 +193,11 @@ Loop stop semantics:
     UPKEEPER_STATUS: NO_BACKEND_TASK
   - while the worktree is dirty, a NO_BACKEND_TASK result is treated as a soft miss
     and the outer loop keeps running so Codex can try again on the next cycle
+  - if Codex exits cleanly with a final agent message and a parseable terminal
+    review outcome (REVIEWED_AND_FIXED, REVIEWED_CLEAN, or STOPPED_ON_BLOCKER)
+    but omits the literal UPKEEPER_STATUS line, the wrapper recovers the
+    equivalent machine status and logs status_marker.recovered_from_review_outcome;
+    exact status markers remain the preferred contract
   - set CODEX_CONTINUE_ON_NO_BACKEND_TASK=1 to keep polling even after
     an empty cycle even when the worktree is clean
   - when the primary model stalls, fails, or exhausts its bucket, the wrapper can
@@ -7235,6 +7240,35 @@ run_fallback_cycle() {
 # Session-end parsing is only a fallback diagnostic for cases where the marker is
 # missing and the operator needs to know whether the turn aborted or completed
 # without an agent message.
+recover_status_marker_from_review_outcome() {
+  local last_message_file="$1"
+  local codex_exit_value="$2"
+  local task_complete_last_agent_message="$3"
+  local summary_json
+  local recovery_outcome recovery_selected_file recovery_findings recovery_changes recovery_verification
+  local recovered_marker
+
+  [[ "$codex_exit_value" == "0" ]] || return 1
+  [[ "$task_complete_last_agent_message" == "present" ]] || return 1
+  [[ -n "$last_message_file" && -f "$last_message_file" ]] || return 1
+
+  summary_json="$(review_report_summary_json "$last_message_file")" || return 1
+  eval "$(review_summary_assignments "$summary_json" recovery)"
+  case "$recovery_outcome" in
+    REVIEWED_AND_FIXED|REVIEWED_CLEAN)
+      recovered_marker="WORK_DONE"
+      ;;
+    STOPPED_ON_BLOCKER)
+      recovered_marker="BLOCKED"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  printf '%s\t%s\t%s\n' "$recovered_marker" "$recovery_outcome" "$recovery_selected_file"
+}
+
 parse_status_marker() {
   local last_message_file="$1"
   local analysis
@@ -7661,6 +7695,7 @@ main() {
   fi
 
   local status_marker status_marker_analysis status_marker_source
+  local status_marker_review_recovery status_marker_review_outcome status_marker_review_selected_file
   local status_marker_candidate status_marker_candidate_marker status_marker_candidate_rejection_reason
   local marker_candidate_line marker_candidate_marker marker_candidate_rejection_reason marker_accepted_marker
   local session_end_state
@@ -7707,6 +7742,13 @@ main() {
     log_line "WARN" "status_marker.candidate_rejected candidate_marker=$status_marker_candidate_marker reason=$status_marker_candidate_rejection_reason candidate=$(shell_quote "$status_marker_candidate") codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
   else
     status_marker_source="missing"
+  fi
+  if [[ -z "$status_marker" ]]; then
+    if status_marker_review_recovery="$(recover_status_marker_from_review_outcome "$last_message_file" "$codex_exit" "$primary_session_task_complete_last_agent_message")"; then
+      IFS=$'\t' read -r status_marker status_marker_review_outcome status_marker_review_selected_file <<<"$status_marker_review_recovery"
+      status_marker_source="review_outcome"
+      log_line "WARN" "status_marker.recovered_from_review_outcome marker=$status_marker review_outcome=$status_marker_review_outcome selected_file=$(shell_quote "$status_marker_review_selected_file") codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
+    fi
   fi
   primary_failure_classification="none"
   log_line "INFO" "cycle.summary execution_origin=$CODEX_EXECUTION_ORIGIN model=$CODEX_MODEL observed_primary_delta=$observed_primary_delta observed_secondary_delta=$observed_secondary_delta observed_delta_status=$observed_delta_status status_marker=${status_marker:-missing} status_marker_source=$status_marker_source session_end_state=$session_end_state agent_messages=$primary_session_agent_message_count tool_calls=$primary_session_tool_call_count tool_results=$primary_session_tool_result_count task_complete_last_agent_message=$primary_session_task_complete_last_agent_message codex_exit=$codex_exit"

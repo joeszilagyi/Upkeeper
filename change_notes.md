@@ -5,6 +5,12 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.0.44 changes:
+	1. Rejected empty spaced `--prompt-file ""` and `--prompt ""` arguments instead of falling back to the default review prompt.
+	2. Made malformed one-cycle prompt overrides fail at argument parsing with actionable diagnostics.
+	3. Corrected direct fallback execution-origin logging so non-screen fallback children no longer appear as screen-launched.
+	4. Preserved existing non-empty prompt-file and inline-prompt behavior.
+
 2026-05-07: v1.0.43 changes:
 	1. Restored the local `json_field` helper used by marker, postmortem, and fallback parsers.
 	2. Prevented raw `json_field: command not found` stderr during post-run status classification.

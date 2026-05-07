@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.11
+Version: v1.0.12
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -96,6 +96,9 @@ Important:
       docs/scripts/upkeeper.md
     If that guide is missing, normal startup bootstraps it once from this help
     text and then leaves it alone for repo-specific edits.
+    Existing guides are never overwritten; if their embedded help snapshot
+    version is missing or stale, startup logs an `operator_guide` warning so you
+    can refresh the generated section without losing repo-local notes.
   - The safety stop targets the parent shell of the current cycle to break the loop.
   - Nested fallback runs inherit the original loop-parent shell target so the
     stronger cleanup pass can still stop the real outer loop intentionally.

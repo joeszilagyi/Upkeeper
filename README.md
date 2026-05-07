@@ -23,6 +23,10 @@ On each cycle it:
   registry loaders, config readers, data readers, and input-boundary CLIs
 - runs Codex once with the configured model and reasoning effort
 - records terminal outcomes in `Upkeeper.log`
+- tags log lines with a per-cycle `run_hash` and emits `--MARK--` heartbeat
+  evidence for continuity checks
+- scans recent prior log entries for incomplete cycles before launching Codex
+- logs a disk-space preflight before spending a backend run
 - optionally hands off to a bounded fallback model and postmortem path when the
   primary run blocks, fails, or hits a quota guardrail
 
@@ -135,6 +139,13 @@ while CODEX_MODEL=gpt-5.3-codex-spark \
 done
 ```
 
+The tracked launcher examples package common loop shapes as explicit scripts:
+
+```sh
+UPKEEPER_LOOP_DRY_RUN=1 launcher_examples/spark_5.3_burn_out_xhigh.sh
+launcher_examples/spark_5.3_burn_out_xhigh.sh
+```
+
 Run the same style of loop with a stronger model and an explicit 5-hour stop:
 
 ```sh
@@ -175,6 +186,10 @@ operator can resume from evidence instead of guessing.
 The default prompt is a rotating single-file maintenance review. It asks Codex
 to review the oldest eligible non-test script/tool file by modification time.
 
+When the repo-local `Upkeeper` implementation itself is eligible and has not
+been touched for at least seven days, the wrapper selects it first. Otherwise it
+falls back to the normal oldest eligible script/tool rotation.
+
 The wrapper now does that selection before Codex starts and prepends a
 `WRAPPER_PRESELECTED_REVIEW_TARGET` block to the prompt. That block is meant to
 prevent expensive or unsafe rediscovery patterns such as:
@@ -200,6 +215,22 @@ available as a standalone prompt file:
 ./Upkeeper.sh --prompt-file /work/tools/Upkeeper/prompts/p23-data-contract-negative-fixture-audit.md
 ```
 
+Before the primary Codex response emits its final marker, the prompt now requires
+a current-cycle `Upkeeper.log` review. If that review exposes a concrete central
+wrapper or prompt defect while running in this repo, Codex may apply the smallest
+safe self-repair immediately and report it as a log self-repair.
+
+At script startup, Upkeeper also scans the recent live log for prior cycles that
+started without a terminal `cycle.exit` or `run.finish`, writes
+`previous_run.anomaly` evidence, and injects that evidence into the prompt for
+the next healthy run. Disk preflight warnings and `--MARK--` heartbeat continuity
+are included in the same final log-review obligation.
+
+Startup anomalies are a gate. While prior-run, watchdog-style, unresolved
+log-review, or low-disk evidence is active, Upkeeper forces the next cycle back
+onto the central `Upkeeper` suite and blocks normal timestamp rotation until that
+suite has been checked or remediated.
+
 ## Evidence And Cleanup
 
 Local runtime evidence is deliberately ignored by git:
@@ -220,6 +251,9 @@ specific policy for publishing them.
 |-- docs/
 |   `-- scripts/
 |       `-- upkeeper.md
+|-- launcher_examples/
+|   |-- README.md
+|   `-- spark_5.3_burn_out_xhigh.sh
 |-- prompts/
 |   |-- README.md
 |   `-- p23-data-contract-negative-fixture-audit.md
@@ -239,6 +273,8 @@ specific policy for publishing them.
 
 - [docs/scripts/upkeeper.md](docs/scripts/upkeeper.md): detailed operator guide
   and environment knobs
+- [launcher_examples/README.md](launcher_examples/README.md): tracked shell
+  launcher examples for common Upkeeper loops
 - [caretaking_23_items.md](caretaking_23_items.md): the rotating maintenance
   review repertoire used by the default prompt family
 - [prompts/p23-data-contract-negative-fixture-audit.md](prompts/p23-data-contract-negative-fixture-audit.md):

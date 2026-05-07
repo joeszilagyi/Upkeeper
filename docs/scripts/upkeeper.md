@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.27
+Version: v1.0.28
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -267,7 +267,8 @@ Exit codes:
 
 - `CODEX_MODE` defaults to `--sandbox workspace-write`. Set `CODEX_MODE` only
   when testing a newer Codex sandbox flag or temporarily matching an older local
-  Codex install.
+  Codex install. Startup rejects malformed triple-hyphen mode tokens such as
+  `---sandbox`.
 - `Upkeeper.log` and `runtime/` are local evidence artifacts and are ignored by
   git. Promote only durable operating rules, postmortem conclusions, or wrapper
   behavior changes into tracked files.

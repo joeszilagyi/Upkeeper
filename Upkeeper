@@ -4797,7 +4797,8 @@ EOF
     printf -- '- If this is a symlinked client repo and the defect belongs to central Upkeeper behavior, do not patch a copied client wrapper; report the central fix needed unless the central Upkeeper checkout is the current repo.\n'
     printf -- '- If a suspicious line was expected negative-test output, say so briefly. If a one-off shell command failed, rerun the corrected check or state why it is irrelevant before final status.\n'
     printf -- '- Include this exact machine-readable acknowledgment line before the final UPKEEPER_STATUS marker, filling anomalies with `none` or `listed`: `UPKEEPER_LOG_REVIEW: CHECKED cycle=%s anomalies=none|listed`\n' "$CYCLE_ID"
-    printf -- '- You may also include a short human-readable current-cycle log review summary, but the machine-readable acknowledgment line is what the wrapper parses.\n'
+    printf -- '- Put the machine-readable acknowledgment on its own raw line with no Markdown, punctuation, or trailing text. The wrapper parses that line directly.\n'
+    printf -- '- You may also include a short human-readable current-cycle log review summary on separate lines.\n'
 
     printf '\nWrapper control marker compatibility:\n'
     printf -- '- If write_to_file is unavailable in the current Codex environment, use the available file-writing mechanism and still perform the same persistence and mtime verification steps.\n'
@@ -6112,7 +6113,7 @@ for raw_line in text.splitlines():
     if not line.startswith("UPKEEPER_LOG_REVIEW: CHECKED"):
         continue
     cycle_match = re.search(r"(?:^|\s)cycle=([^ \t`]+)", line)
-    anomalies_match = re.search(r"(?:^|\s)anomalies=(none|listed)(?:\s|$)", line)
+    anomalies_match = re.search(r"(?:^|\s)anomalies=(none|listed)[.;,]?(?:\s|$)", line)
     if cycle_match and cycle_match.group(1) == current_cycle and anomalies_match:
         raise SystemExit(0)
 

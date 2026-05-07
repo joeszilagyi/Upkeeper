@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.13
+Version: v1.0.14
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -134,6 +134,10 @@ Prompt behavior:
     prompt. That avoids spending model/tool cycles on broad tree discovery and
     keeps `.git/`, ignored paths, runtime evidence, generated outputs, and tests
     out of the selection scan.
+  - A `WRAPPER_PRESELECTED_REVIEW_TARGET` section overrides every later
+    repertoire selection rule for that cycle; all applicable review prompts run
+    against that same target unless the file is physically impossible or unsafe
+    to read.
   - Tests are not script/tool targets merely because they use a script-language
     extension; select tests only when explicit extra guidance asks for test
     review or no eligible script/tool target exists.

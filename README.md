@@ -202,6 +202,13 @@ If the preselected file cannot be reviewed because it is gone, unreadable,
 binary, generated, or explicitly excluded, Codex must state that exception and
 choose a replacement from the same source-safe boundary.
 
+For an explicit one-cycle Upkeeper self-review with all built-in P1-P23 passes,
+use equals-form operator flags:
+
+```sh
+./Upkeeper --model-override=5.5_xhigh --target-file=Upkeeper --prompt-pass=all
+```
+
 P23 is now part of the live default prompt. It applies only to selected files
 that touch data or operator-input boundaries, and it asks Codex to inventory
 boundaries, reject malformed/non-contract input, improve diagnostics safely, and

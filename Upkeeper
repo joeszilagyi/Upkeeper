@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.24
+## Version: v1.0.25
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.24"
+UPKEEPER_VERSION="v1.0.25"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -70,6 +70,8 @@ CODEX_LOOP_PARENT_COMM="${CODEX_LOOP_PARENT_COMM:-}"
 CODEX_LOOP_PARENT_ARGS="${CODEX_LOOP_PARENT_ARGS:-}"
 CODEX_MODEL_OVERRIDE_SPEC=""
 CODEX_MODEL_OVERRIDE_APPLIED="0"
+CODEX_TARGET_FILE=""
+CODEX_PROMPT_PASS=""
 CODEX_SESSION_SCAN_LIMIT="${CODEX_SESSION_SCAN_LIMIT:-200}"
 CODEX_5H_STOP_PERCENT="${CODEX_5H_STOP_PERCENT:-5}"
 CODEX_SPARK_5H_STOP_PERCENT="${CODEX_SPARK_5H_STOP_PERCENT:-0}"
@@ -150,7 +152,7 @@ WRAPPER_HEALTH_STATE_FINALIZED="0"
 # operator guide; once the guide exists, the Markdown becomes the living document.
 show_help() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh]
+Usage: $SCRIPT_NAME [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: $UPKEEPER_VERSION
@@ -325,7 +327,12 @@ Prompt behavior:
   - --prompt TEXT appends extra task guidance inline.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5
     with xhigh reasoning effort. It is a CLI-only operator override and does
-    not persist to later loop iterations.
+    not persist to later loop iterations. Use the equals form; spaced form is
+    rejected.
+  - --target-file=PATH pins this invoked cycle to one source-safe repo file and
+    bypasses timestamp selection. Use the equals form; spaced form is rejected.
+  - --prompt-pass=all forces the selected target through all P1-P23 repertoire
+    passes for this invoked cycle. Use the equals form; spaced form is rejected.
 
 Environment overrides:
   CODEX_MODEL                   Default: gpt-5.3-codex-spark
@@ -473,7 +480,7 @@ enforce_startup_anomaly_gate_target_or_exit() {
 }
 
 preselect_review_target() {
-  python3 - "$ROOT_DIR" "$SELF_PATH" "$CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS" "$STARTUP_ANOMALY_GATE" "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" <<'PY'
+  python3 - "$ROOT_DIR" "$SELF_PATH" "$CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS" "$STARTUP_ANOMALY_GATE" "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" "$CODEX_TARGET_FILE" <<'PY'
 import datetime
 import os
 import stat as statmod
@@ -481,7 +488,7 @@ import subprocess
 import sys
 import time
 
-root, self_path, self_review_after_days, startup_anomaly_gate, startup_force_upkeeper = sys.argv[1:6]
+root, self_path, self_review_after_days, startup_anomaly_gate, startup_force_upkeeper, forced_target = sys.argv[1:7]
 os.chdir(root)
 try:
     self_review_threshold_seconds = max(0, int(self_review_after_days)) * 86400
@@ -561,6 +568,19 @@ def root_relative(path: str) -> str:
     return rel_path.replace(os.sep, "/")
 
 
+def normalized_repo_target(path: str) -> str:
+    if not path:
+        return ""
+    expanded = os.path.expanduser(path)
+    if os.path.isabs(expanded):
+        rel_path = root_relative(expanded)
+    else:
+        rel_path = os.path.normpath(expanded).replace(os.sep, "/")
+        if rel_path == "." or rel_path.startswith("../") or os.path.isabs(rel_path):
+            rel_path = ""
+    return rel_path
+
+
 def selected_git_metadata(path: str) -> dict[str, str]:
     status_output = git_output(["git", "status", "--porcelain=v1", "--", path])
     status_code = status_output[:2] if status_output else "clean"
@@ -621,14 +641,28 @@ stale_self_candidates = [
     for item in all_self_candidates
     if now - item[0] >= self_review_threshold_seconds
 ]
-if startup_anomaly_gate == "1" and startup_force_upkeeper == "1" and not all_self_candidates:
+forced_target = normalized_repo_target(forced_target)
+if forced_target:
+    forced_candidates = [item for item in candidates if item[1] == forced_target]
+    if not forced_candidates:
+        print(
+            f"--target-file={forced_target} is not an eligible source-safe script/tool target",
+            file=sys.stderr,
+        )
+        sys.exit(8)
+    mtime, path = forced_candidates[0]
+    selection_basis = (
+        f"operator --target-file={forced_target} override; "
+        "normal oldest eligible selection bypassed for this invoked cycle"
+    )
+elif startup_anomaly_gate == "1" and startup_force_upkeeper == "1" and not all_self_candidates:
     print(
         "startup anomaly gate requires a repo-local Upkeeper candidate; "
         "normal oldest eligible selection is blocked",
         file=sys.stderr,
     )
     sys.exit(7)
-if startup_anomaly_gate == "1" and startup_force_upkeeper == "1" and all_self_candidates:
+elif startup_anomaly_gate == "1" and startup_force_upkeeper == "1" and all_self_candidates:
     mtime, path = sorted(all_self_candidates, key=lambda item: (item[0], item[1]))[0]
     selection_basis = (
         "startup anomaly gate forced repo-local Upkeeper first; "
@@ -686,6 +720,10 @@ append_preselected_review_target() {
       fi
       finish_cycle 7 STARTUP_ANOMALY_REQUIRES_CENTRAL_UPKEEPER WARN "codex_exec_started=0 implementation=$(shell_quote "$SELF_PATH") root=$(shell_quote "$ROOT_DIR")"
     fi
+    if [[ "$selector_rc" -eq 8 ]]; then
+      log_line "ERROR" "review.preselect.blocked reason=target_file_not_eligible target_file=$(shell_quote "$CODEX_TARGET_FILE") detail=$(shell_quote "${detail:-unknown_error}")"
+      finish_cycle 3 TARGET_FILE_NOT_ELIGIBLE ERROR "codex_exec_started=0 target_file=$(shell_quote "$CODEX_TARGET_FILE") detail=$(shell_quote "${detail:-unknown_error}")"
+    fi
     log_line "WARN" "review.preselect.skip reason=selector_failed detail=$(shell_quote "${detail:-unknown_error}")"
     return 0
   fi
@@ -718,6 +756,9 @@ append_preselected_review_target() {
     printf -- '- For a clean no-edit pass, record the selected file hash before touch, touch it, then verify the mtime changed and the content hash is unchanged from the pre-touch hash.\n'
     printf -- '- Do not run broad repository discovery commands to second-guess this selection.\n'
     printf -- '- If this target is physically impossible or unsafe to review, state the exception and then use the same source-safe selection boundary for the replacement.\n'
+    if [[ -n "$CODEX_TARGET_FILE" ]]; then
+      printf -- '- This target was pinned by operator flag `--target-file=%s`; do not replace it unless the physical/safety exception above applies.\n' "$CODEX_TARGET_FILE"
+    fi
   } >>"$compiled_file"
 
   log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} worktree_hash=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} basis=$(shell_quote "${selected_basis:-unknown}")"
@@ -1662,10 +1703,30 @@ parse_args() {
         shift
         ;;
       --model-override)
-        [[ $# -ge 2 ]] || die "--model-override requires a value"
-        CODEX_MODEL_OVERRIDE_SPEC="$2"
-        apply_model_override "$CODEX_MODEL_OVERRIDE_SPEC"
-        shift 2
+        die "use --model-override=5.5_xhigh (spaced form is intentionally unsupported)"
+        ;;
+      --target-file=*)
+        CODEX_TARGET_FILE="${1#--target-file=}"
+        [[ -n "$CODEX_TARGET_FILE" ]] || die "--target-file requires a value"
+        shift
+        ;;
+      --target-file)
+        die "use --target-file=PATH (spaced form is intentionally unsupported)"
+        ;;
+      --prompt-pass=*)
+        CODEX_PROMPT_PASS="${1#--prompt-pass=}"
+        [[ -n "$CODEX_PROMPT_PASS" ]] || die "--prompt-pass requires a value"
+        case "$CODEX_PROMPT_PASS" in
+          all)
+            ;;
+          *)
+            die "unknown prompt pass: $CODEX_PROMPT_PASS (supported: all)"
+            ;;
+        esac
+        shift
+        ;;
+      --prompt-pass)
+        die "use --prompt-pass=all (spaced form is intentionally unsupported)"
         ;;
       *)
         die "unknown argument: $1"
@@ -3028,6 +3089,19 @@ compile_prompt() {
   ensure_run_tmp_dir
   : >"$compiled_file"
   append_preselected_review_target "$compiled_file"
+  if [[ "$CODEX_PROMPT_PASS" == "all" ]]; then
+    {
+      printf '\nWRAPPER_PROMPT_PASS_OVERRIDE\n'
+      printf 'prompt_pass=all\n'
+      printf '\nRules for this prompt-pass override:\n'
+      printf -- '- This invoked cycle was started with `--prompt-pass=all`.\n'
+      printf -- '- Run every repertoire pass P1 through P23 against the selected target, even if the default schedule or applicability filter would normally skip it.\n'
+      printf -- '- For a pass whose domain does not fit the selected target, still include that pass in the final report and mark it `not applicable` with a short reason.\n'
+      printf -- '- Do not use non-applicability as permission to switch targets or skip the selected file.\n'
+      printf -- '- This override is one-cycle CLI guidance only; it does not persist to later loop iterations.\n'
+    } >>"$compiled_file"
+    log_line "INFO" "review.prompt_pass_override prompt_pass=all target_file=$(shell_quote "${CODEX_TARGET_FILE:-preselected}")"
+  fi
   if [[ -n "$PREVIOUS_RUN_ANOMALIES" || -n "$DISK_SPACE_PROMPT_NOTE" ]]; then
     {
       printf '\nWRAPPER_STARTUP_ANOMALIES\n'
@@ -5126,6 +5200,16 @@ launch_screen_fallback_loop() {
     printf -v inline_prompt_q '%q' "$INLINE_PROMPT"
     prompt_arg_snippet="--prompt $inline_prompt_q"
   fi
+  if [[ -n "$CODEX_TARGET_FILE" ]]; then
+    local target_file_q
+    printf -v target_file_q '%q' "$CODEX_TARGET_FILE"
+    prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--target-file=$target_file_q"
+  fi
+  if [[ -n "$CODEX_PROMPT_PASS" ]]; then
+    local prompt_pass_q
+    printf -v prompt_pass_q '%q' "$CODEX_PROMPT_PASS"
+    prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--prompt-pass=$prompt_pass_q"
+  fi
 
   cat >"$runner_script" <<EOF
 #!/usr/bin/env bash
@@ -6724,6 +6808,12 @@ run_fallback_cycle() {
       elif [[ -n "$INLINE_PROMPT" ]]; then
         child_args+=(--prompt "$INLINE_PROMPT")
       fi
+      if [[ -n "$CODEX_TARGET_FILE" ]]; then
+        child_args+=("--target-file=$CODEX_TARGET_FILE")
+      fi
+      if [[ -n "$CODEX_PROMPT_PASS" ]]; then
+        child_args+=("--prompt-pass=$CODEX_PROMPT_PASS")
+      fi
       set +e
       CODEX_MODEL="$CODEX_FALLBACK_MODEL" \
       CODEX_REASONING_EFFORT="$CODEX_FALLBACK_REASONING_EFFORT" \
@@ -6952,7 +7042,7 @@ main() {
   local loop_parent_start_fingerprint
   loop_parent_start_fingerprint="$(process_start_fingerprint "$loop_parent_pid")"
 
-  log_line "INFO" "cycle.start execution_origin=$CODEX_EXECUTION_ORIGIN script=$SELF_INVOKE_PATH implementation=$SELF_PATH cwd=$ROOT_DIR pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$direct_parent_comm parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$loop_parent_comm loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT mode=$CODEX_MODE_STRING model_override=${CODEX_MODEL_OVERRIDE_SPEC:-none} model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED attempt_role=$CODEX_ATTEMPT_ROLE fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=${CODEX_PRIMARY_MODEL_CONTEXT:-none} fallback_trigger=${CODEX_FALLBACK_TRIGGER:-none} screen_fallback_child_id=${CODEX_SCREEN_FALLBACK_CHILD_ID:-none} code_home=$CODEX_HOME_DIR dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
+  log_line "INFO" "cycle.start execution_origin=$CODEX_EXECUTION_ORIGIN script=$SELF_INVOKE_PATH implementation=$SELF_PATH cwd=$ROOT_DIR pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$direct_parent_comm parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$loop_parent_comm loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT mode=$CODEX_MODE_STRING model_override=${CODEX_MODEL_OVERRIDE_SPEC:-none} model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") prompt_pass=${CODEX_PROMPT_PASS:-default} attempt_role=$CODEX_ATTEMPT_ROLE fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=${CODEX_PRIMARY_MODEL_CONTEXT:-none} fallback_trigger=${CODEX_FALLBACK_TRIGGER:-none} screen_fallback_child_id=${CODEX_SCREEN_FALLBACK_CHILD_ID:-none} code_home=$CODEX_HOME_DIR dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
   start_run_mark_heartbeat
   check_disk_space_preflight
   if [[ "$STARTUP_ANOMALY_GATE" == "1" ]]; then

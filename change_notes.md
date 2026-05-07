@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.0.41 changes:
+	1. Allowed startup-anomaly self-review gates to use ignored local `Upkeeper.sh` symlinks as valid local wrapper targets.
+	2. Preserved normal timestamp rotation behavior that excludes ignored local wrapper artifacts from ordinary source reviews.
+	3. Fixed client-checkout gate failures where central Upkeeper was invoked through the documented symlink pattern.
+
 2026-05-07: v1.0.40 changes:
 	1. Added root `change_notes.md` as the standard release-notes file for Upkeeper.
 	2. Added release-notes upkeep to the central agent contract in `AGENTS.md`.

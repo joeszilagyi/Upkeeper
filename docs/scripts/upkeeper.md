@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.19
+Version: v1.0.20
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -153,6 +153,11 @@ Prompt behavior:
     Codex still reviews the oldest file again.
   - The default prompt requires timestamp reporting, the applicable review
     repertoire passes, and a touch of the selected file even when the review is clean.
+  - P23 is included for validators, parsers, importers, exporters, registry
+    loaders, schema/profile helpers, config/manifest readers, data readers,
+    path-resolving shell helpers, and CLIs that consume external/operator input
+    or emit machine-readable output. It focuses on strict data contracts,
+    actionable malformed-input diagnostics, and negative fixtures.
   - The review body should report REVIEWED_AND_FIXED, REVIEWED_CLEAN, or
     STOPPED_ON_BLOCKER, but the literal final line still maps to the wrapper's
     UPKEEPER_STATUS marker contract.

@@ -4,8 +4,12 @@ Store new finished or in-progress prompts in this directory.
 
 The repo also has root-level operator workflow prompts:
 
-- [`../caretaking_22_items.md`](../caretaking_22_items.md)
+- [`../caretaking_23_items.md`](../caretaking_23_items.md)
 - [`../git_hard_clean.md`](../git_hard_clean.md)
+
+Focused prompt add-ons:
+
+- [`p23-data-contract-negative-fixture-audit.md`](p23-data-contract-negative-fixture-audit.md)
 
 Those root files are intentionally kept next to `README.md` because they are
 primary maintenance workflows for this repo, not generic prompt examples.

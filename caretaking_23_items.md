@@ -168,6 +168,8 @@ Once the file is selected, run ALL prompts from the repertoire below that are ap
 
 - For repo-level operations: run P2
 
+- For data/input-boundary files: also run P23 when the selected file is a validator, parser, importer, exporter, registry loader, schema/profile helper, config/manifest reader, JSON/JSONL/YAML/CSV/SQLite reader, path-resolving shell helper, or CLI that consumes external/operator input or emits machine-readable output
+
  
 
 Skip prompts that don't apply to the selected file type.
@@ -214,7 +216,7 @@ Background Review Prompt Repertoire
 
  
 
-Spare-Cycle Automation — 21 Prompts
+Spare-Cycle Automation — 23 Prompts
 
  
 
@@ -2418,12 +2420,101 @@ RULES:
 
 ________________________________________
 
- 
+P23 — Data Contract and Negative Fixture Audit
 
- 
+Run this pass only when the selected file touches a data or operator-input
+boundary: validator, parser, importer, exporter, registry loader,
+schema/profile helper, config/manifest reader, JSON/JSONL/YAML/CSV/SQLite
+reader, path-resolving shell helper, or CLI that consumes external/operator
+input or emits machine-readable output.
 
- 
+If the selected file does not touch a data/input boundary, state:
+`P23: not applicable`.
 
+Goal: find places where malformed, ambiguous, unsafe, or non-contract data is
+accepted, coerced, silently ignored, partially applied, or reported without
+actionable diagnostics.
+
+Review categories:
+
+1. Boundary inventory — identify argv, environment variables, stdin, filesystem
+   paths, JSON, JSONL, YAML, CSV, SQLite rows, schema/profile/manifest documents,
+   URL fields, subprocess output, generated artifacts, caller-provided
+   dictionaries/lists, and shell function parameters. For each boundary, find
+   the first trusted point and verify validation happens before behavior depends
+   on the data.
+
+2. Contract strictness — reject unexpected fields in closed contracts, missing
+   required fields, wrong containers, non-object rows, duplicate normalized IDs
+   or keys, blank required strings, string/boolean/number type confusion,
+   booleans accepted as integers, NaN/Infinity/non-finite numbers, out-of-range
+   scores or counts, invalid timestamps, invalid URL schemes, credential-bearing
+   URLs, path traversal, wrong-root paths, top-level/nested disagreement, unknown
+   enums, deprecated aliases, and unsupported versions.
+
+3. No silent coercion — flag `str(value)`, `bool(value)`, unchecked `int(value)`
+   or `float(value)`, default `{}` or `[]`, quiet `row.get(...)` skips,
+   list comprehensions that drop malformed rows, broad `except Exception`,
+   permissive `json.loads(...)`, duplicate overwrites, first-match-wins
+   duplicate handling, and fallback-to-empty behavior when they can hide real
+   contract violations or produce misleading output.
+
+4. Diagnostics and failure contract — malformed operator input should identify
+   useful field/path/row/line/key/type/range/target context and exit clearly for
+   CLI tools. It must not leak credentials, tokens, sensitive URLs, large raw
+   payloads, or private/local-only content beyond what is needed for debugging.
+
+5. Negative fixture requirement — every applied P23 boundary fix needs a focused
+   negative test or fixture unless impractical. Good cases include NaN JSONL
+   lines, JSON booleans in integer fields, duplicate normalized registry keys,
+   non-object rows, unexpected keys, credential-bearing URLs, wrong-root paths,
+   conflicting top-level/nested fields, unknown enums, timezone-less timestamps,
+   missing required row fields, malformed profile conditions, or a missing
+   target that previously returned success.
+
+6. Schema-code-doc alignment — inspect only directly paired schemas, docs,
+   fixtures, and callers needed to compare schema vs validator, validator vs
+   parser/importer, parser/importer vs exporter, registry file vs loader, CLI
+   help vs behavior, docs vs code, tests/fixtures vs contract, and report shape
+   vs documented output.
+
+7. Output/export integrity — exporters and report writers must not turn
+   malformed or ambiguous internal records into plausible wrong output. Check
+   inverse relationship projection, lossy fields, dropped identifiers, escaping,
+   private-data leakage, loss reports, and atomic output behavior.
+
+8. Read-only, dry-run, and mutation claims — verify read-only, dry-run,
+   validation-only, metadata-only, and temp-copy-only claims against actual code.
+   Flag write-capable SQLite opens, dry-run mutation, validation modes that write
+   artifacts unexpectedly, source DB mutation via temp-copy flows, partial report
+   writes, predictable filename races, and stale temp files after failure.
+
+Process:
+
+1. Run normal P1-P22 first.
+2. Inspect only the selected file plus directly paired contract context.
+3. Propose P23 findings before applying changes.
+4. Apply only high-confidence localized fixes.
+5. Add/update focused negative tests for every boundary fix unless impractical.
+6. Verify syntax/compile, normal valid path, malformed/negative path, focused
+   test or fixture suite, and `git diff --check` when changes are made.
+
+Output:
+
+- P23 applicability
+- Input boundaries inspected
+- Contract defects found
+- Fixes applied
+- Negative tests added/updated
+- Schema/code/doc alignment
+- Residual risks
+
+Rules: no busy work, no cosmetic-only changes, no general refactor, no silent
+public behavior tightening without tests and rationale, no fake dry-run/check
+behavior, no implementation-detail-only negative tests, and no guessing when
+the contract is ambiguous.
+
+________________________________________
 ________________________________________
 
  
@@ -2476,8 +2567,10 @@ P21     Documentation drift     Per file        Random pool
 
 P22       Service and docs         Per file Random pool
 
+P23       Data contract and negative fixtures     Per file*        Random pool
+
  
 
-*P8: drop from random pool if the project has no test suite. P2 and P16: run on their own slower schedule, not in the per-file rotation.
+*P8: drop from random pool if the project has no test suite. P23 applies only to selected files that touch data or operator-input boundaries. P2 and P16: run on their own slower schedule, not in the per-file rotation.
 
  

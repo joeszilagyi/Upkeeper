@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.36
+## Version: v1.0.37
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -18,10 +18,10 @@ SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 ROOT_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 SCRIPT_NAME="$(basename -- "$SCRIPT_SOURCE")"
 SELF_INVOKE_PATH="$ROOT_DIR/$SCRIPT_NAME"
-if command -v python3 >/dev/null 2>&1; then
+if command -v realpath >/dev/null 2>&1 && SELF_PATH="$(realpath "$SELF_INVOKE_PATH" 2>/dev/null)"; then
+  :
+elif command -v python3 >/dev/null 2>&1; then
   SELF_PATH="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$SELF_INVOKE_PATH")"
-elif command -v realpath >/dev/null 2>&1; then
-  SELF_PATH="$(realpath "$SELF_INVOKE_PATH")"
 else
   SELF_PATH="$SELF_INVOKE_PATH"
 fi
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.36"
+UPKEEPER_VERSION="v1.0.37"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -834,10 +834,13 @@ timestamp_now() {
 }
 
 epoch_now_fraction() {
-  python3 - <<'PY' 2>/dev/null || date '+%s'
-import time
-print(f"{time.time():.5f}")
-PY
+  local now
+  now="$(date '+%s.%N' 2>/dev/null || true)"
+  if [[ "$now" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    printf '%.5f\n' "$now"
+  else
+    date '+%s'
+  fi
 }
 
 system_boot_id() {
@@ -858,18 +861,17 @@ system_uptime_seconds() {
 
 process_start_fingerprint() {
   local pid="$1"
-  python3 - "$pid" <<'PY' 2>/dev/null || printf 'proc_start_ticks=unknown'
-import pathlib
-import sys
-
-pid = sys.argv[1]
-try:
-    stat_text = pathlib.Path("/proc", pid, "stat").read_text(encoding="utf-8", errors="replace")
-    after_comm = stat_text.rsplit(") ", 1)[1].split()
-    print(f"proc_start_ticks={after_comm[19]}")
-except Exception:
-    print("proc_start_ticks=unknown")
-PY
+  local stat_text after_comm
+  if [[ -r "/proc/$pid/stat" ]]; then
+    IFS= read -r stat_text <"/proc/$pid/stat" || true
+    after_comm="${stat_text##*) }"
+    set -- $after_comm
+    if [[ $# -ge 20 && -n "${20:-}" ]]; then
+      printf 'proc_start_ticks=%s' "${20}"
+      return 0
+    fi
+  fi
+  printf 'proc_start_ticks=unknown'
 }
 
 log_line() {
@@ -926,6 +928,9 @@ PY
 
 file_size_bytes() {
   local path="$1"
+  if command -v stat >/dev/null 2>&1; then
+    stat -c '%s' -- "$path" 2>/dev/null && return 0
+  fi
   python3 - "$path" <<'PY' 2>/dev/null || printf 'unknown'
 import os
 import sys
@@ -1662,6 +1667,9 @@ format_epoch_local() {
     printf 'unknown'
     return 0
   fi
+  if [[ "$epoch" =~ ^[0-9]+([.][0-9]+)?$ ]] && date -d "@$epoch" '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null; then
+    return 0
+  fi
   python3 - "$epoch" <<'PY' 2>/dev/null || printf '%s' "$epoch"
 from datetime import datetime
 import sys
@@ -1826,88 +1834,93 @@ sanitize_positive_integer() {
   local fallback="$2"
   local min_value="$3"
 
-  python3 - "$raw_value" "$fallback" "$min_value" <<'PY' 2>/dev/null || printf '%s' "$fallback"
-import sys
-
-raw, fallback, min_value = sys.argv[1:4]
-
-try:
-    fallback_value = int(fallback)
-    minimum = int(min_value)
-except ValueError:
-    print(fallback)
-    raise SystemExit(0)
-
-if fallback_value < minimum:
-    fallback_value = minimum
-try:
-    value = int(raw)
-except ValueError:
-    print(fallback_value)
-    raise SystemExit(0)
-
-if value < minimum:
-    value = minimum
-
-print(value)
-PY
+  awk -v raw="$raw_value" -v fallback="$fallback" -v min_value="$min_value" '
+    function is_uint(value) {
+      return value ~ /^[0-9]+$/
+    }
+    BEGIN {
+      minimum = is_uint(min_value) ? min_value + 0 : 1
+      fallback_value = is_uint(fallback) ? fallback + 0 : minimum
+      if (fallback_value < minimum) {
+        fallback_value = minimum
+      }
+      if (!is_uint(raw)) {
+        print fallback_value
+      } else if (raw + 0 < minimum) {
+        print minimum
+      } else {
+        print raw + 0
+      }
+    }
+  ' 2>/dev/null || printf '%s' "$fallback"
 }
 
 sanitize_percent_threshold() {
   local raw_value="$1"
   local fallback="$2"
 
-  python3 - "$raw_value" "$fallback" <<'PY' 2>/dev/null || printf '%s' "$fallback"
-import math
-import sys
-
-raw = sys.argv[1]
-fallback = sys.argv[2]
-
-try:
-  value = float(raw)
-except (TypeError, ValueError):
-  print(fallback)
-  raise SystemExit(0)
-if not math.isfinite(value):
-  print(fallback)
-  raise SystemExit(0)
-
-if value < 0:
-    value = 0.0
-elif value > 100:
-    value = 100.0
-
-if value.is_integer():
-    print(int(value))
-else:
-    print(value)
-PY
+  awk -v raw="$raw_value" -v fallback="$fallback" '
+    function is_number(value) {
+      return value ~ /^[-+]?([0-9]+([.][0-9]*)?|[.][0-9]+)$/
+    }
+    function emit(value, out) {
+      if (value < 0) {
+        value = 0
+      } else if (value > 100) {
+        value = 100
+      }
+      if (value == int(value)) {
+        printf "%d", value
+      } else {
+        out = sprintf("%.10f", value)
+        sub(/0+$/, "", out)
+        sub(/[.]$/, "", out)
+        printf "%s", out
+      }
+    }
+    BEGIN {
+      if (is_number(raw)) {
+        emit(raw + 0)
+      } else if (is_number(fallback)) {
+        emit(fallback + 0)
+      } else {
+        emit(0)
+      }
+    }
+  ' 2>/dev/null || printf '%s' "$fallback"
 }
 
 sum_percent_thresholds() {
   local first="$1"
   local second="$2"
 
-  python3 - "$first" "$second" <<'PY' 2>/dev/null || printf '%s' "$first"
-import sys
-
-try:
-    value = float(sys.argv[1]) + float(sys.argv[2])
-except (TypeError, ValueError):
-    sys.stdout.write(sys.argv[1])
-    raise SystemExit(0)
-
-if value < 0:
-    value = 0.0
-elif value > 100:
-    value = 100.0
-
-if value.is_integer():
-    sys.stdout.write(str(int(value)))
-else:
-    sys.stdout.write(str(value))
-PY
+  awk -v first="$first" -v second="$second" '
+    function is_number(value) {
+      return value ~ /^[-+]?([0-9]+([.][0-9]*)?|[.][0-9]+)$/
+    }
+    function emit(value, out) {
+      if (value < 0) {
+        value = 0
+      } else if (value > 100) {
+        value = 100
+      }
+      if (value == int(value)) {
+        printf "%d", value
+      } else {
+        out = sprintf("%.10f", value)
+        sub(/0+$/, "", out)
+        sub(/[.]$/, "", out)
+        printf "%s", out
+      }
+    }
+    BEGIN {
+      if (!is_number(first) || !is_number(second)) {
+        printf "%s", first
+      } else {
+        emit(first + second)
+      }
+    }
+  ' 2>/dev/null || printf '%s' "$first"
 }
 
 normalize_guardrail_thresholds() {
@@ -2515,18 +2528,30 @@ disk_preflight_path_specs() {
 
 existing_df_probe_path() {
   local path="$1"
-  python3 - "$path" <<'PY' 2>/dev/null
-from pathlib import Path
-import sys
 
-path = Path(sys.argv[1]).expanduser()
-if not path.is_absolute():
-    path = (Path.cwd() / path)
-while not path.exists() and path != path.parent:
-    path = path.parent
-if path.exists():
-    print(path)
-PY
+  case "$path" in
+    "~")
+      path="$HOME"
+      ;;
+    "~/"*)
+      path="$HOME/${path#~/}"
+      ;;
+  esac
+
+  if [[ "$path" != /* ]]; then
+    path="$PWD/$path"
+  fi
+  path="${path%/}"
+  [[ -n "$path" ]] || path="/"
+
+  while [[ ! -e "$path" && "$path" != "/" ]]; do
+    path="${path%/*}"
+    [[ -n "$path" ]] || path="/"
+  done
+
+  if [[ -e "$path" ]]; then
+    printf '%s' "$path"
+  fi
 }
 
 disk_space_fields() {

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.18
+## Version: v1.0.19
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.18"
+UPKEEPER_VERSION="v1.0.19"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -243,7 +243,7 @@ Prompt behavior:
   - By default, the script asks Codex to select the oldest eligible script/tool
     file by last-modified timestamp and review exactly one file per cycle.
   - Before launching Codex, the wrapper preselects that script/tool target from
-    git ls-files -co --exclude-standard and embeds the selected path in the
+    git ls-files -co --exclude-standard and prepends the selected path to the
     prompt. That avoids spending model/tool cycles on broad tree discovery and
     keeps .git/, ignored paths, runtime evidence, generated outputs, and tests
     out of the selection scan.
@@ -514,9 +514,10 @@ append_preselected_review_target() {
   eligible_count="$(sed -n 's/^eligible_count=//p' <<<"$selection")"
 
   {
-    printf '\nWRAPPER_PRESELECTED_REVIEW_TARGET\n'
+    printf 'WRAPPER_PRESELECTED_REVIEW_TARGET\n'
     printf '%s\n' "$selection"
     printf '\nRules for this preselected target:\n'
+    printf -- '- This block is authoritative. Start by verifying and reading this selected file; do not run candidate-discovery scans first.\n'
     printf -- '- This target is the timestamp-selected file for this cycle.\n'
     printf -- '- Verify only this file exists, is readable, and is eligible before reviewing it.\n'
     printf -- '- This preselected target overrides all later P1-P22 selection rules; run applicable prompts against this same file.\n'
@@ -1876,7 +1877,12 @@ PY
 # heredoc so prompt text that includes shell metacharacters stays literal.
 compile_prompt() {
   local compiled_file="$1"
-  cat >"$compiled_file" <<'EOF'
+
+  : >"$compiled_file"
+  append_preselected_review_target "$compiled_file"
+
+  cat >>"$compiled_file" <<'EOF'
+
 Read this FULL prompt before starting in
 
 ABSOLUTE RULE -- NO SKIPPING SELECTED FILES
@@ -3271,8 +3277,6 @@ P22     Service and docs        Per file        Random pool
 
 *P8: drop from random pool if the project has no test suite. P2 and P16: run on their own slower schedule, not in the per-file rotation.
 EOF
-
-  append_preselected_review_target "$compiled_file"
 
   {
     printf '\nWrapper control marker compatibility:\n'

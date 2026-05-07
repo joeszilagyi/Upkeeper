@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.28
+## Version: v1.0.29
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.28"
+UPKEEPER_VERSION="v1.0.29"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -2002,6 +2002,31 @@ quota_identity_allows_pre_run() {
   local limit_id="${2:-unknown}"
   local limit_name="${3:-unknown}"
   [[ "$(quota_identity_status_for_model "$target_model" "$limit_id" "$limit_name")" != "conflicting_generic" ]]
+}
+
+quota_reset_epoch_delta_seconds() {
+  local before="$1"
+  local after="$2"
+  [[ "$before" =~ ^[0-9]+$ && "$after" =~ ^[0-9]+$ ]] || {
+    printf 'unknown'
+    return 1
+  }
+
+  local delta=$(( after - before ))
+  if (( delta < 0 )); then
+    delta=$(( -delta ))
+  fi
+  printf '%s' "$delta"
+}
+
+quota_reset_same_window() {
+  local before="$1"
+  local after="$2"
+  local tolerance_seconds="${3:-2}"
+  local delta
+
+  delta="$(quota_reset_epoch_delta_seconds "$before" "$after")" || return 1
+  (( delta <= tolerance_seconds ))
 }
 
 quota_bucket_decision() {
@@ -7309,10 +7334,15 @@ main() {
   local observed_primary_delta observed_secondary_delta observed_delta_status
   local quota_snapshot_identity_changed
   quota_snapshot_identity_changed="$(quota_identity_changed_flag "${limit_id:-unknown}" "${limit_name:-unknown}" "${after_limit_id:-unknown}" "${after_limit_name:-unknown}")"
-  if [[ -n "$after_primary" && -n "$after_secondary" && "$primary_reset" == "$after_primary_reset" && "$secondary_reset" == "$after_secondary_reset" ]]; then
+  if [[ -n "$after_primary" && -n "$after_secondary" ]] &&
+    quota_reset_same_window "$primary_reset" "$after_primary_reset" &&
+    quota_reset_same_window "$secondary_reset" "$after_secondary_reset"; then
     observed_primary_delta="$(awk -v before="$primary_used" -v after="$after_primary" 'BEGIN { printf "%.1f", after - before }')"
     observed_secondary_delta="$(awk -v before="$secondary_used" -v after="$after_secondary" 'BEGIN { printf "%.1f", after - before }')"
     observed_delta_status="same_window"
+    if [[ "$primary_reset" != "$after_primary_reset" || "$secondary_reset" != "$after_secondary_reset" ]]; then
+      log_line "INFO" "quota.reset_jitter status=tolerated primary_delta_seconds=$(quota_reset_epoch_delta_seconds "$primary_reset" "$after_primary_reset") secondary_delta_seconds=$(quota_reset_epoch_delta_seconds "$secondary_reset" "$after_secondary_reset") before_primary_reset=$(format_epoch_local "$primary_reset") after_primary_reset=$(format_epoch_local "$after_primary_reset") before_secondary_reset=$(format_epoch_local "$secondary_reset") after_secondary_reset=$(format_epoch_local "$after_secondary_reset")"
+    fi
   elif [[ -n "$after_primary" && -n "$after_secondary" ]]; then
     observed_primary_delta="unavailable"
     observed_secondary_delta="unavailable"

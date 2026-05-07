@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.28
+Version: v1.0.29
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -269,6 +269,10 @@ Exit codes:
   when testing a newer Codex sandbox flag or temporarily matching an older local
   Codex install. Startup rejects malformed triple-hyphen mode tokens such as
   `---sandbox`.
+- Before/after quota reset epochs may jitter by a second between otherwise
+  current exact-model snapshots. Upkeeper treats small reset-epoch jitter as the
+  same quota window and logs `quota.reset_jitter` at INFO instead of emitting a
+  non-authoritative `quota.jump` warning.
 - `Upkeeper.log` and `runtime/` are local evidence artifacts and are ignored by
   git. Promote only durable operating rules, postmortem conclusions, or wrapper
   behavior changes into tracked files.

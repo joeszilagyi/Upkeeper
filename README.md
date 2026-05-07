@@ -216,9 +216,11 @@ available as a standalone prompt file:
 ```
 
 Before the primary Codex response emits its final marker, the prompt now requires
-a current-cycle `Upkeeper.log` review. If that review exposes a concrete central
-wrapper or prompt defect while running in this repo, Codex may apply the smallest
-safe self-repair immediately and report it as a log self-repair.
+a current-cycle `Upkeeper.log` review and a machine-readable acknowledgment:
+`UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=none|listed`. If that
+review exposes a concrete central wrapper or prompt defect while running in this
+repo, Codex may apply the smallest safe self-repair immediately and report it as
+a log self-repair.
 
 At script startup, Upkeeper also scans the recent live log for prior cycles that
 started without a terminal `cycle.exit` or `run.finish`, writes
@@ -229,7 +231,21 @@ are included in the same final log-review obligation.
 Startup anomalies are a gate. While prior-run, watchdog-style, unresolved
 log-review, or low-disk evidence is active, Upkeeper forces the next cycle back
 onto the central `Upkeeper` suite and blocks normal timestamp rotation until that
-suite has been checked or remediated.
+suite has been checked or remediated. The gate also writes ignored runtime state
+under `runtime/startup-anomaly-gates/` so a truncated or rotated live log is not
+the only durable signal.
+
+Each invocation also acquires a repo-level active lock at
+`runtime/upkeeper-active.lock` before local guide bootstrap, anomaly scanning, or
+Codex launch. If a matching live PID/start fingerprint still owns that lock, the
+new invocation exits instead of running a second maintenance lane in the same
+checkout.
+
+Symlinked clients also share a wrapper-code health state under
+`$CODEX_HOME/upkeeper/active-wrapper-runs/`, keyed by the resolved central
+`Upkeeper` path and its blob hash. If a prior same-code run is stale, wedged, or
+ambiguous, later client starts fail closed before normal target selection instead
+of propagating potentially bad wrapper behavior into unrelated repos.
 
 ## Evidence And Cleanup
 
@@ -237,6 +253,7 @@ Local runtime evidence is deliberately ignored by git:
 
 - `Upkeeper.log`
 - `runtime/`
+- `runtime/startup-anomaly-gates/`
 - repo-local copied or linked wrappers such as `Upkeeper.sh`, when the client
   repo chooses to ignore them
 

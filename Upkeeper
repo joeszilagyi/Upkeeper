@@ -3,11 +3,12 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.26
+## Version: v1.0.40
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
 ##   this file must update UPKEEPER_VERSION and this header in the same change.
+## - Notable operator-facing changes must also update root change_notes.md.
 ##
 ## This is local control-plane glue, not a domain build script. Its job is to
 ## run one backend Codex task at a time, stop before quota exhaustion makes
@@ -18,10 +19,10 @@ SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 ROOT_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 SCRIPT_NAME="$(basename -- "$SCRIPT_SOURCE")"
 SELF_INVOKE_PATH="$ROOT_DIR/$SCRIPT_NAME"
-if command -v python3 >/dev/null 2>&1; then
+if command -v realpath >/dev/null 2>&1 && SELF_PATH="$(realpath "$SELF_INVOKE_PATH" 2>/dev/null)"; then
+  :
+elif command -v python3 >/dev/null 2>&1; then
   SELF_PATH="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$SELF_INVOKE_PATH")"
-elif command -v realpath >/dev/null 2>&1; then
-  SELF_PATH="$(realpath "$SELF_INVOKE_PATH")"
 else
   SELF_PATH="$SELF_INVOKE_PATH"
 fi
@@ -34,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.26"
+UPKEEPER_VERSION="v1.0.40"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -106,6 +107,10 @@ UPKEEPER_DRY_RUN="${UPKEEPER_DRY_RUN:-0}"
 
 declare -a CODEX_MODE_ARGS=()
 read -r -a CODEX_MODE_ARGS <<<"$CODEX_MODE_STRING"
+if [[ "${CODEX_MODE_ARGS[0]:-}" == ---* ]]; then
+  printf 'Upkeeper: invalid CODEX_MODE first token %q; expected a Codex option beginning with --\n' "${CODEX_MODE_ARGS[0]}" >&2
+  exit 2
+fi
 
 # Per-cycle runtime state. These are intentionally global because signal
 # handlers, fallback supervision, and postmortem writers all need the same
@@ -830,10 +835,13 @@ timestamp_now() {
 }
 
 epoch_now_fraction() {
-  python3 - <<'PY' 2>/dev/null || date '+%s'
-import time
-print(f"{time.time():.5f}")
-PY
+  local now
+  now="$(date '+%s.%N' 2>/dev/null || true)"
+  if [[ "$now" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    printf '%.5f\n' "$now"
+  else
+    date '+%s'
+  fi
 }
 
 system_boot_id() {
@@ -854,18 +862,17 @@ system_uptime_seconds() {
 
 process_start_fingerprint() {
   local pid="$1"
-  python3 - "$pid" <<'PY' 2>/dev/null || printf 'proc_start_ticks=unknown'
-import pathlib
-import sys
-
-pid = sys.argv[1]
-try:
-    stat_text = pathlib.Path("/proc", pid, "stat").read_text(encoding="utf-8", errors="replace")
-    after_comm = stat_text.rsplit(") ", 1)[1].split()
-    print(f"proc_start_ticks={after_comm[19]}")
-except Exception:
-    print("proc_start_ticks=unknown")
-PY
+  local stat_text after_comm
+  if [[ -r "/proc/$pid/stat" ]]; then
+    IFS= read -r stat_text <"/proc/$pid/stat" || true
+    after_comm="${stat_text##*) }"
+    set -- $after_comm
+    if [[ $# -ge 20 && -n "${20:-}" ]]; then
+      printf 'proc_start_ticks=%s' "${20}"
+      return 0
+    fi
+  fi
+  printf 'proc_start_ticks=unknown'
 }
 
 log_line() {
@@ -922,6 +929,9 @@ PY
 
 file_size_bytes() {
   local path="$1"
+  if command -v stat >/dev/null 2>&1; then
+    stat -c '%s' -- "$path" 2>/dev/null && return 0
+  fi
   python3 - "$path" <<'PY' 2>/dev/null || printf 'unknown'
 import os
 import sys
@@ -1658,6 +1668,9 @@ format_epoch_local() {
     printf 'unknown'
     return 0
   fi
+  if [[ "$epoch" =~ ^[0-9]+([.][0-9]+)?$ ]] && date -d "@$epoch" '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null; then
+    return 0
+  fi
   python3 - "$epoch" <<'PY' 2>/dev/null || printf '%s' "$epoch"
 from datetime import datetime
 import sys
@@ -1671,10 +1684,124 @@ print(datetime.fromtimestamp(epoch).astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
 PY
 }
 
-json_field() {
+quota_json_assignments() {
   local json="$1"
-  local path="$2"
-  jq -r "$path" <<<"$json"
+  local prefix="$2"
+
+  jq -r --arg prefix "$prefix" '
+    def value($path; $fallback):
+      (getpath($path) // $fallback | tostring);
+    def assignment($name; $path; $fallback):
+      "\($prefix)_\($name)=\((value($path; $fallback)) | @sh)";
+    [
+      assignment("error"; ["error"]; ""),
+      assignment("ts"; ["snapshot", "event_timestamp"]; "unknown"),
+      assignment("source"; ["snapshot", "source_path"]; "unknown"),
+      assignment("model_hint"; ["snapshot", "model_hint"]; "unknown"),
+      assignment("selection"; ["snapshot_selection"]; "unknown"),
+      assignment("snapshot_is_current"; ["snapshot_is_current"]; "false"),
+      assignment("matching_snapshot_count"; ["matching_snapshot_count"]; "0"),
+      assignment("snapshot_age_seconds"; ["snapshot", "snapshot_age_seconds"]; "unknown"),
+      assignment("primary_reset_age_seconds"; ["snapshot", "primary_reset_age_seconds"]; "unknown"),
+      assignment("secondary_reset_age_seconds"; ["snapshot", "secondary_reset_age_seconds"]; "unknown"),
+      assignment("snapshot_stale_after_reset"; ["snapshot", "snapshot_stale_after_reset"]; "false"),
+      assignment("primary_reset_expired"; ["snapshot", "primary_reset_expired"]; "false"),
+      assignment("secondary_reset_expired"; ["snapshot", "secondary_reset_expired"]; "false"),
+      assignment("primary_bucket_current"; ["snapshot", "primary_bucket_current"]; "false"),
+      assignment("secondary_bucket_current"; ["snapshot", "secondary_bucket_current"]; "false"),
+      assignment("primary_used"; ["snapshot", "primary_used_percent"]; ""),
+      assignment("primary_window"; ["snapshot", "primary_window_minutes"]; ""),
+      assignment("primary_reset"; ["snapshot", "primary_resets_at"]; ""),
+      assignment("secondary_used"; ["snapshot", "secondary_used_percent"]; ""),
+      assignment("secondary_window"; ["snapshot", "secondary_window_minutes"]; ""),
+      assignment("secondary_reset"; ["snapshot", "secondary_resets_at"]; ""),
+      assignment("plan_type"; ["snapshot", "plan_type"]; "unknown"),
+      assignment("limit_id"; ["snapshot", "limit_id"]; "unknown"),
+      assignment("limit_name"; ["snapshot", "limit_name"]; "unknown"),
+      assignment("projected_primary_delta"; ["projection", "primary_delta"]; ""),
+      assignment("projected_secondary_delta"; ["projection", "secondary_delta"]; ""),
+      assignment("projected_basis"; ["projection", "basis"]; "unknown")
+    ] | .[]
+  ' <<<"$json"
+}
+
+status_marker_analysis_assignments() {
+  local json="$1"
+  local prefix="$2"
+
+  jq -r --arg prefix "$prefix" '
+    def value($path; $fallback):
+      (getpath($path) // $fallback | tostring);
+    def assignment($name; $path; $fallback):
+      "\($prefix)_\($name)=\((value($path; $fallback)) | @sh)";
+    [
+      assignment("candidate_line"; ["candidate_line"]; ""),
+      assignment("candidate_marker"; ["candidate_marker"]; ""),
+      assignment("candidate_rejection_reason"; ["candidate_rejection_reason"]; ""),
+      assignment("accepted_marker"; ["accepted_marker"]; "")
+    ] | .[]
+  ' <<<"$json"
+}
+
+session_diagnostics_assignments() {
+  local json="$1"
+  local prefix="$2"
+
+  jq -r --arg prefix "$prefix" '
+    def value($path; $fallback):
+      (getpath($path) // $fallback | tostring);
+    def assignment($name; $path; $fallback):
+      "\($prefix)_\($name)=\((value($path; $fallback)) | @sh)";
+    [
+      assignment("agent_message_count"; ["agent_message_count"]; "0"),
+      assignment("tool_call_count"; ["tool_call_count"]; "0"),
+      assignment("tool_result_count"; ["tool_result_count"]; "0"),
+      assignment("task_complete_last_agent_message"; ["task_complete_last_agent_message"]; "missing"),
+      assignment("last_rate_limit_reached_type"; ["last_rate_limit_reached_type"]; "unknown"),
+      assignment("last_rate_limit_limit_id"; ["last_rate_limit_limit_id"]; "unknown"),
+      assignment("last_rate_limit_limit_name"; ["last_rate_limit_limit_name"]; "unknown"),
+      assignment("last_rate_limit_plan_type"; ["last_rate_limit_plan_type"]; "unknown"),
+      assignment("last_rate_limit_primary_used_percent"; ["last_rate_limit_primary_used_percent"]; "unknown"),
+      assignment("last_rate_limit_secondary_used_percent"; ["last_rate_limit_secondary_used_percent"]; "unknown")
+    ] | .[]
+  ' <<<"$json"
+}
+
+review_summary_assignments() {
+  local json="$1"
+  local prefix="$2"
+
+  jq -r --arg prefix "$prefix" '
+    def value($path; $fallback):
+      (getpath($path) // $fallback | tostring);
+    def assignment($name; $path; $fallback):
+      "\($prefix)_\($name)=\((value($path; $fallback)) | @sh)";
+    [
+      assignment("outcome"; ["outcome"]; ""),
+      assignment("selected_file"; ["selected_file"]; ""),
+      assignment("findings"; ["findings"]; ""),
+      assignment("changes"; ["changes"]; ""),
+      assignment("verification"; ["verification"]; "")
+    ] | .[]
+  ' <<<"$json"
+}
+
+review_pass_coverage_assignments() {
+  local json="$1"
+  local prefix="$2"
+
+  jq -r --arg prefix "$prefix" '
+    def value($path; $fallback):
+      (getpath($path) // $fallback | tostring);
+    def assignment($name; $path; $fallback):
+      "\($prefix)_\($name)=\((value($path; $fallback)) | @sh)";
+    [
+      assignment("status"; ["status"]; "unknown"),
+      assignment("expected"; ["expected"]; "23"),
+      assignment("present"; ["present"]; "0"),
+      assignment("missing"; ["missing"]; "unknown")
+    ] | .[]
+  ' <<<"$json"
 }
 
 resolve_path() {
@@ -1822,88 +1949,93 @@ sanitize_positive_integer() {
   local fallback="$2"
   local min_value="$3"
 
-  python3 - "$raw_value" "$fallback" "$min_value" <<'PY' 2>/dev/null || printf '%s' "$fallback"
-import sys
-
-raw, fallback, min_value = sys.argv[1:4]
-
-try:
-    fallback_value = int(fallback)
-    minimum = int(min_value)
-except ValueError:
-    print(fallback)
-    raise SystemExit(0)
-
-if fallback_value < minimum:
-    fallback_value = minimum
-try:
-    value = int(raw)
-except ValueError:
-    print(fallback_value)
-    raise SystemExit(0)
-
-if value < minimum:
-    value = minimum
-
-print(value)
-PY
+  awk -v raw="$raw_value" -v fallback="$fallback" -v min_value="$min_value" '
+    function is_uint(value) {
+      return value ~ /^[0-9]+$/
+    }
+    BEGIN {
+      minimum = is_uint(min_value) ? min_value + 0 : 1
+      fallback_value = is_uint(fallback) ? fallback + 0 : minimum
+      if (fallback_value < minimum) {
+        fallback_value = minimum
+      }
+      if (!is_uint(raw)) {
+        print fallback_value
+      } else if (raw + 0 < minimum) {
+        print minimum
+      } else {
+        print raw + 0
+      }
+    }
+  ' 2>/dev/null || printf '%s' "$fallback"
 }
 
 sanitize_percent_threshold() {
   local raw_value="$1"
   local fallback="$2"
 
-  python3 - "$raw_value" "$fallback" <<'PY' 2>/dev/null || printf '%s' "$fallback"
-import math
-import sys
-
-raw = sys.argv[1]
-fallback = sys.argv[2]
-
-try:
-  value = float(raw)
-except (TypeError, ValueError):
-  print(fallback)
-  raise SystemExit(0)
-if not math.isfinite(value):
-  print(fallback)
-  raise SystemExit(0)
-
-if value < 0:
-    value = 0.0
-elif value > 100:
-    value = 100.0
-
-if value.is_integer():
-    print(int(value))
-else:
-    print(value)
-PY
+  awk -v raw="$raw_value" -v fallback="$fallback" '
+    function is_number(value) {
+      return value ~ /^[-+]?([0-9]+([.][0-9]*)?|[.][0-9]+)$/
+    }
+    function emit(value, out) {
+      if (value < 0) {
+        value = 0
+      } else if (value > 100) {
+        value = 100
+      }
+      if (value == int(value)) {
+        printf "%d", value
+      } else {
+        out = sprintf("%.10f", value)
+        sub(/0+$/, "", out)
+        sub(/[.]$/, "", out)
+        printf "%s", out
+      }
+    }
+    BEGIN {
+      if (is_number(raw)) {
+        emit(raw + 0)
+      } else if (is_number(fallback)) {
+        emit(fallback + 0)
+      } else {
+        emit(0)
+      }
+    }
+  ' 2>/dev/null || printf '%s' "$fallback"
 }
 
 sum_percent_thresholds() {
   local first="$1"
   local second="$2"
 
-  python3 - "$first" "$second" <<'PY' 2>/dev/null || printf '%s' "$first"
-import sys
-
-try:
-    value = float(sys.argv[1]) + float(sys.argv[2])
-except (TypeError, ValueError):
-    sys.stdout.write(sys.argv[1])
-    raise SystemExit(0)
-
-if value < 0:
-    value = 0.0
-elif value > 100:
-    value = 100.0
-
-if value.is_integer():
-    sys.stdout.write(str(int(value)))
-else:
-    sys.stdout.write(str(value))
-PY
+  awk -v first="$first" -v second="$second" '
+    function is_number(value) {
+      return value ~ /^[-+]?([0-9]+([.][0-9]*)?|[.][0-9]+)$/
+    }
+    function emit(value, out) {
+      if (value < 0) {
+        value = 0
+      } else if (value > 100) {
+        value = 100
+      }
+      if (value == int(value)) {
+        printf "%d", value
+      } else {
+        out = sprintf("%.10f", value)
+        sub(/0+$/, "", out)
+        sub(/[.]$/, "", out)
+        printf "%s", out
+      }
+    }
+    BEGIN {
+      if (!is_number(first) || !is_number(second)) {
+        printf "%s", first
+      } else {
+        emit(first + second)
+      }
+    }
+  ' 2>/dev/null || printf '%s' "$first"
 }
 
 normalize_guardrail_thresholds() {
@@ -1998,6 +2130,31 @@ quota_identity_allows_pre_run() {
   local limit_id="${2:-unknown}"
   local limit_name="${3:-unknown}"
   [[ "$(quota_identity_status_for_model "$target_model" "$limit_id" "$limit_name")" != "conflicting_generic" ]]
+}
+
+quota_reset_epoch_delta_seconds() {
+  local before="$1"
+  local after="$2"
+  [[ "$before" =~ ^[0-9]+$ && "$after" =~ ^[0-9]+$ ]] || {
+    printf 'unknown'
+    return 1
+  }
+
+  local delta=$(( after - before ))
+  if (( delta < 0 )); then
+    delta=$(( -delta ))
+  fi
+  printf '%s' "$delta"
+}
+
+quota_reset_same_window() {
+  local before="$1"
+  local after="$2"
+  local tolerance_seconds="${3:-2}"
+  local delta
+
+  delta="$(quota_reset_epoch_delta_seconds "$before" "$after")" || return 1
+  (( delta <= tolerance_seconds ))
 }
 
 quota_bucket_decision() {
@@ -2486,18 +2643,30 @@ disk_preflight_path_specs() {
 
 existing_df_probe_path() {
   local path="$1"
-  python3 - "$path" <<'PY' 2>/dev/null
-from pathlib import Path
-import sys
 
-path = Path(sys.argv[1]).expanduser()
-if not path.is_absolute():
-    path = (Path.cwd() / path)
-while not path.exists() and path != path.parent:
-    path = path.parent
-if path.exists():
-    print(path)
-PY
+  case "$path" in
+    "~")
+      path="$HOME"
+      ;;
+    "~/"*)
+      path="$HOME/${path#~/}"
+      ;;
+  esac
+
+  if [[ "$path" != /* ]]; then
+    path="$PWD/$path"
+  fi
+  path="${path%/}"
+  [[ -n "$path" ]] || path="/"
+
+  while [[ ! -e "$path" && "$path" != "/" ]]; do
+    path="${path%/*}"
+    [[ -n "$path" ]] || path="/"
+  done
+
+  if [[ -e "$path" ]]; then
+    printf '%s' "$path"
+  fi
 }
 
 disk_space_fields() {
@@ -2579,6 +2748,7 @@ cycle_re = re.compile(r"\bcycle=([^ ]+)")
 run_hash_re = re.compile(r"\brun_hash=([^ ]+)")
 boot_id_re = re.compile(r"\bboot_id=([^ ]+)")
 cycles = {}
+latest_previous_run_ack_epoch = None
 
 def parsed_epoch(line):
     stamp = line.split(" ", 1)[0]
@@ -2597,6 +2767,13 @@ with handle:
         epoch = parsed_epoch(line)
         if epoch is not None and scan_minutes > 0 and epoch < cutoff:
             continue
+        if (
+            epoch is not None
+            and " startup_anomaly.gate_resolved " in line
+            and "reasons=previous_run_anomaly" in line
+        ):
+            if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
+                latest_previous_run_ack_epoch = epoch
         cycle_match = cycle_re.search(line)
         if not cycle_match:
             continue
@@ -2643,6 +2820,7 @@ with handle:
         info["last_line"] = line.strip()
 
 printed = 0
+acknowledged = 0
 for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"] or 0, reverse=True):
     reason = ""
     if info["start"] and not info["exit"]:
@@ -2662,6 +2840,13 @@ for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"]
         reason = "startup_anomaly_gate_unresolved"
     if not reason:
         continue
+    if (
+        latest_previous_run_ack_epoch is not None
+        and info["last_epoch"] is not None
+        and info["last_epoch"] <= latest_previous_run_ack_epoch
+    ):
+        acknowledged += 1
+        continue
     last_epoch = "unknown" if info["last_epoch"] is None else str(int(info["last_epoch"]))
     last_line = info["last_line"].replace("\\", "\\\\").replace("\t", " ")[:300]
     print(
@@ -2673,6 +2858,13 @@ for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"]
     printed += 1
     if printed >= 10:
         break
+if acknowledged:
+    print(
+        "__ACK__ "
+        f"suppressed={acknowledged} "
+        f"ack_epoch={int(latest_previous_run_ack_epoch)} "
+        "reason=previous_run_anomaly_gate_reviewed"
+    )
 PY
 }
 
@@ -2684,6 +2876,16 @@ scan_previous_run_anomalies() {
   mapfile -t anomalies < <(previous_run_anomaly_lines || true)
   mapfile -t state_anomalies < <(startup_anomaly_state_lines || true)
   anomalies+=("${state_anomalies[@]}")
+  local -a active_anomalies=()
+  for anomaly in "${anomalies[@]}"; do
+    [[ -n "$anomaly" ]] || continue
+    if [[ "$anomaly" == "__ACK__ "* ]]; then
+      log_line "INFO" "previous_run.acknowledged ${anomaly#__ACK__ } boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
+      continue
+    fi
+    active_anomalies+=("$anomaly")
+  done
+  anomalies=("${active_anomalies[@]}")
   if [[ "${#anomalies[@]}" -eq 0 ]]; then
     log_line "INFO" "previous_run.scan status=clean scan_minutes=$CODEX_PREVIOUS_RUN_SCAN_MINUTES boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
     return 0
@@ -2886,6 +3088,130 @@ summary_re = re.compile(
     r"cycle\.summary .*observed_primary_delta=([0-9]+(?:\.[0-9]+)?) observed_secondary_delta=([0-9]+(?:\.[0-9]+)?) .*status_marker=([^ ]+) .*codex_exit=([0-9]+)"
 )
 
+TAIL_SCAN_BYTES = 512 * 1024
+HEAD_SCAN_BYTES = 128 * 1024
+
+
+def snapshot_from_token_count(item, path: Path, source_mtime: float, model_hint):
+    payload = item.get("payload") or {}
+    rate_limits = payload.get("rate_limits") or {}
+    primary = rate_limits.get("primary") or {}
+    secondary = rate_limits.get("secondary") or {}
+    if not primary or not secondary:
+        return None
+    return {
+        "event_timestamp": item.get("timestamp"),
+        "limit_id": rate_limits.get("limit_id"),
+        "limit_name": rate_limits.get("limit_name"),
+        "plan_type": rate_limits.get("plan_type"),
+        "rate_limit_reached_type": rate_limits.get("rate_limit_reached_type"),
+        "primary_used_percent": float(primary.get("used_percent") or 0.0),
+        "primary_window_minutes": int(primary.get("window_minutes") or 0),
+        "primary_resets_at": int(primary.get("resets_at") or 0),
+        "secondary_used_percent": float(secondary.get("used_percent") or 0.0),
+        "secondary_window_minutes": int(secondary.get("window_minutes") or 0),
+        "secondary_resets_at": int(secondary.get("resets_at") or 0),
+        "source_path": str(path),
+        "source_mtime": source_mtime,
+        "model_hint": model_hint,
+    }
+
+
+def model_hint_from_head(path: Path):
+    try:
+        with path.open("rb") as handle:
+            data = handle.read(HEAD_SCAN_BYTES)
+    except OSError:
+        return None
+
+    text = data.decode("utf-8", errors="ignore")
+    for raw_line in text.splitlines():
+        try:
+            item = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if item.get("type") != "turn_context":
+            continue
+        payload = item.get("payload") or {}
+        context_model = payload.get("model")
+        if isinstance(context_model, str) and context_model.strip():
+            return context_model.strip()
+    return None
+
+
+def last_token_snapshot_from_tail(path: Path, source_mtime: float, model_hint):
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - TAIL_SCAN_BYTES))
+            data = handle.read()
+    except OSError:
+        return None
+
+    text = data.decode("utf-8", errors="ignore")
+    lines = text.splitlines()
+    if data and not data.startswith((b"{", b"\n", b"\r")) and lines:
+        lines = lines[1:]
+    for raw_line in reversed(lines):
+        if '"token_count"' not in raw_line:
+            continue
+        try:
+            item = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if item.get("type") != "event_msg":
+            continue
+        payload = item.get("payload") or {}
+        if payload.get("type") != "token_count":
+            continue
+        snapshot = snapshot_from_token_count(item, path, source_mtime, model_hint)
+        if snapshot:
+            return snapshot
+    return None
+
+
+def full_session_snapshot(path: Path, source_mtime: float):
+    last_snapshot = None
+    model_hint = None
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for raw_line in handle:
+                try:
+                    item = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
+                if item.get("type") == "turn_context":
+                    payload = item.get("payload") or {}
+                    context_model = payload.get("model")
+                    if isinstance(context_model, str) and context_model.strip():
+                        model_hint = context_model.strip()
+                    continue
+                if item.get("type") != "event_msg":
+                    continue
+                payload = item.get("payload") or {}
+                if payload.get("type") != "token_count":
+                    continue
+                snapshot = snapshot_from_token_count(item, path, source_mtime, model_hint)
+                if snapshot:
+                    last_snapshot = snapshot
+    except OSError:
+        return None
+    return last_snapshot
+
+
+def session_snapshot(path: Path):
+    try:
+        source_mtime = path.stat().st_mtime
+    except OSError:
+        return None
+
+    model_hint = model_hint_from_head(path)
+    snapshot = last_token_snapshot_from_tail(path, source_mtime, model_hint)
+    if snapshot and snapshot.get("model_hint"):
+        return snapshot
+    return full_session_snapshot(path, source_mtime)
+
 
 def parse_session_snapshots(root: Path, limit: int):
     sessions_root = root / "sessions"
@@ -2900,51 +3226,9 @@ def parse_session_snapshots(root: Path, limit: int):
 
     snapshots = []
     for path in candidates:
-        last_snapshot = None
-        model_hint = None
-        try:
-            with path.open("r", encoding="utf-8", errors="ignore") as handle:
-                for raw_line in handle:
-                    try:
-                        item = json.loads(raw_line)
-                    except json.JSONDecodeError:
-                        continue
-                    if item.get("type") == "turn_context":
-                        payload = item.get("payload") or {}
-                        context_model = payload.get("model")
-                        if isinstance(context_model, str) and context_model.strip():
-                            model_hint = context_model.strip()
-                        continue
-                    if item.get("type") != "event_msg":
-                        continue
-                    payload = item.get("payload") or {}
-                    if payload.get("type") != "token_count":
-                        continue
-                    rate_limits = payload.get("rate_limits") or {}
-                    primary = rate_limits.get("primary") or {}
-                    secondary = rate_limits.get("secondary") or {}
-                    if not primary or not secondary:
-                        continue
-                    last_snapshot = {
-                        "event_timestamp": item.get("timestamp"),
-                        "limit_id": rate_limits.get("limit_id"),
-                        "limit_name": rate_limits.get("limit_name"),
-                        "plan_type": rate_limits.get("plan_type"),
-                        "rate_limit_reached_type": rate_limits.get("rate_limit_reached_type"),
-                        "primary_used_percent": float(primary.get("used_percent") or 0.0),
-                        "primary_window_minutes": int(primary.get("window_minutes") or 0),
-                        "primary_resets_at": int(primary.get("resets_at") or 0),
-                        "secondary_used_percent": float(secondary.get("used_percent") or 0.0),
-                        "secondary_window_minutes": int(secondary.get("window_minutes") or 0),
-                        "secondary_resets_at": int(secondary.get("resets_at") or 0),
-                        "source_path": str(path),
-                        "source_mtime": path.stat().st_mtime,
-                        "model_hint": model_hint,
-                    }
-        except OSError:
-            continue
-        if last_snapshot:
-            snapshots.append(last_snapshot)
+        snapshot = session_snapshot(path)
+        if snapshot:
+            snapshots.append(snapshot)
 
     snapshots.sort(key=lambda item: ((item.get("event_timestamp") or ""), item.get("source_mtime") or 0.0))
     return snapshots
@@ -3108,8 +3392,45 @@ PY
 # The default cycle prompt now drives a timestamp-based fresh-eyes review pass
 # over one eligible script/tool file at a time. Emit it from a single-quoted
 # heredoc so prompt text that includes shell metacharacters stays literal.
+prune_default_prompt_sections() {
+  local compiled_file="$1"
+  [[ -f "$compiled_file" ]] || return 1
+  python3 - "$compiled_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    text = path.read_text(encoding="utf-8", errors="replace")
+except OSError:
+    raise SystemExit(1)
+
+before = len(text.encode("utf-8"))
+removed = []
+for pass_id in ("P2", "P8", "P16"):
+    pattern = re.compile(
+        rf"\n________________________________________\n\n{pass_id} - .*?"
+        r"(?=\n________________________________________\n\nP(?:[1-9]|1[0-9]|2[0-3]) - )",
+        re.S,
+    )
+    text, count = pattern.subn("", text, count=1)
+    if count:
+        removed.append(pass_id)
+
+try:
+    path.write_text(text, encoding="utf-8")
+except OSError:
+    raise SystemExit(1)
+
+after = len(text.encode("utf-8"))
+print(f"removed={','.join(removed) if removed else 'none'} bytes_before={before} bytes_after={after} bytes_saved={before - after}")
+PY
+}
+
 compile_prompt() {
   local compiled_file="$1"
+  local prune_stats
 
   ensure_run_tmp_dir
   : >"$compiled_file"
@@ -3122,6 +3443,7 @@ compile_prompt() {
       printf -- '- This invoked cycle was started with `--prompt-pass=all`.\n'
       printf -- '- Run every repertoire pass P1 through P23 against the selected target, even if the default schedule or applicability filter would normally skip it.\n'
       printf -- '- For a pass whose domain does not fit the selected target, still include that pass in the final report and mark it `not applicable` with a short reason.\n'
+      printf -- '- For machine-readable coverage, include one final-report line for each pass, and start each such line with `P<N>:` where N is 1 through 23.\n'
       printf -- '- Do not use non-applicability as permission to switch targets or skip the selected file.\n'
       printf -- '- This override is one-cycle CLI guidance only; it does not persist to later loop iterations.\n'
     } >>"$compiled_file"
@@ -3295,67 +3617,12 @@ Detail all fixes found/implemented and why for each.
 
 Background Review Prompt Repertoire
 
-Spare-Cycle Automation -- 23 Prompts
-
-Designed for: while [agent] --prompt=$(rand from this set)
-
-Each prompt is self-contained, model-agnostic, and safe to run on rotation. Selection rule is timestamp-based throughout: oldest last-modified file wins. Ties broken alphabetically. Every prompt ends with a touch to record the review.
-
-########
-
-NOTE:
-
-Time began: 2026-04-30 06:32 UTC
-
-File selected: tools/api/core/repositories/search_repository.py (next oldest file, timestamp: 11:01 April 28, 2026)
-
-{EXAMPLE} of a prior run. This is the preferred way to show the age of the selected file.
-
-##########
-
-===WHAT TOOL TO WRITE TO DISK WITH===
-
-0. Always save file prior/live contents in memory first.
-
-1. Always direct file ---> your "edit" tool is substandard and fails often.
-
-Example:
-
-"I'll try using write_to_file instead of edit to persist the changes, which may work better:"
-
-2. write_to_file always first
-
-2a. Try alternatives -- this is Linux, there's always a way.
-
-Issues like this are unacceptable
-
-"The changes I made during the review cycle were not persisted to disk. Let me re-apply all the fixes and commit them:"
-
-You MUST MUST confirm and double check all fixes are applied WHEN DONE and saved to disk.
-
-Fail to update files and confirm after file saved and time stamp updated via the TOUCH... is blocker condition that must be addressed.
-
-For example, this was a Windsurf explanation once:
-
-"The edit tool reported successful changes and displayed updated file views, but the modifications were not actually written to the filesystem. When I read the files back after editing, they contained the original code without the logging and error handling fixes. This indicates the edit tool is not persisting changes to disk despite reporting success. This is a system issue with the edit tool - it appears to apply changes in memory but fails to write them to the actual files."
-
-Once you have done the test-- or your tool claims that
-
----> verify time changed
----> verify the fixes are in
----> if not try to fix
-
----> verify time changed
----> verify the fixes are in
----> if not try to fix again
-
----> verify time changed
----> verify the fixes are in
----> if not try to fix again
-
----> verify time changed
----> verify the fixes are in
----> if not explain critical failure
+Each prompt is self-contained, model-agnostic, and safe to run on rotation.
+Upkeeper already preselects the source-safe target when possible; use that
+selection instead of rediscovering candidates. If edits are made, verify the
+intended content persisted and report the changed file list. For clean no-edit
+reviews, touch the selected file and verify mtime changed while the content hash
+remained equal to the pre-touch hash.
 
 ________________________________________
 
@@ -4796,17 +5063,29 @@ EOF
     printf -- '- If the log review exposes a concrete Upkeeper wrapper, prompt, or logging defect and this current repo owns a tracked `Upkeeper` file, apply the smallest safe self-repair now, run focused validation, and report it as a log self-repair. This is the only reason to patch `Upkeeper` when it was not the selected target.\n'
     printf -- '- If this is a symlinked client repo and the defect belongs to central Upkeeper behavior, do not patch a copied client wrapper; report the central fix needed unless the central Upkeeper checkout is the current repo.\n'
     printf -- '- If a suspicious line was expected negative-test output, say so briefly. If a one-off shell command failed, rerun the corrected check or state why it is irrelevant before final status.\n'
-    printf -- '- Include this exact machine-readable acknowledgment line before the final UPKEEPER_STATUS marker, filling anomalies with `none` or `listed`: `UPKEEPER_LOG_REVIEW: CHECKED cycle=%s anomalies=none|listed`\n' "$CYCLE_ID"
-    printf -- '- You may also include a short human-readable current-cycle log review summary, but the machine-readable acknowledgment line is what the wrapper parses.\n'
+    printf -- '- Include exactly one machine-readable acknowledgment line before the final UPKEEPER_STATUS marker.\n'
+    printf -- '- If no anomalies were found, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle=%s anomalies=none`\n' "$CYCLE_ID"
+    printf -- '- If anomalies were found or expected anomaly signals were present, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle=%s anomalies=listed`\n' "$CYCLE_ID"
+    printf -- '- Do not write the placeholder text `anomalies=none|listed`; choose one concrete value.\n'
+    printf -- '- Put the machine-readable acknowledgment on its own raw line with no Markdown, punctuation, or trailing text. The wrapper parses that line directly.\n'
+    printf -- '- You may also include a short human-readable current-cycle log review summary on separate lines.\n'
 
     printf '\nWrapper control marker compatibility:\n'
-    printf -- '- If write_to_file is unavailable in the current Codex environment, use the available file-writing mechanism and still perform the same persistence and mtime verification steps.\n'
+    printf -- '- If edits are made, report changed files and the focused verification performed.\n'
     printf -- '- Report the review outcome in the body using one of: REVIEWED_AND_FIXED, REVIEWED_CLEAN, or STOPPED_ON_BLOCKER.\n'
     printf -- '- The literal final line must still be a wrapper status marker with no Markdown or trailing punctuation.\n'
     printf -- '- If the review outcome is REVIEWED_AND_FIXED or REVIEWED_CLEAN, the final line must be exactly: UPKEEPER_STATUS: WORK_DONE\n'
     printf -- '- If the review outcome is STOPPED_ON_BLOCKER, the final line must be exactly: UPKEEPER_STATUS: BLOCKED\n'
     printf -- '- Do not emit UPKEEPER_STATUS: NO_BACKEND_TASK for this prompt family.\n'
   } >>"$compiled_file"
+
+  if [[ "${CODEX_PROMPT_PASS:-}" != "all" ]]; then
+    if prune_stats="$(prune_default_prompt_sections "$compiled_file")"; then
+      log_line "INFO" "review.prompt_pruned prompt_pass=default $prune_stats"
+    else
+      log_line "WARN" "review.prompt_pruned prompt_pass=default status=failed"
+    fi
+  fi
 }
 
 # Parent-loop control.
@@ -5549,32 +5828,33 @@ aux_quota_allows_run() {
   week_buffer="$(quota_week_stop_buffer_percent_for_model "$target_model")"
 
   quota_json="$(quota_state_json "$target_model")"
-  quota_error="$(json_field "$quota_json" '.error // empty')"
+  eval "$(quota_json_assignments "$quota_json" quota)"
+  quota_error="$quota_error"
   if [[ -n "$quota_error" ]]; then
     log_line "WARN" "$phase_label.skip reason=quota_snapshot_unavailable target_model=$target_model error=$quota_error"
     return 1
   fi
 
-  selection="$(json_field "$quota_json" '.snapshot_selection // "unknown"')"
-  snapshot_current="$(json_field "$quota_json" '.snapshot_is_current // false')"
-  stale_after_reset="$(json_field "$quota_json" '.snapshot.snapshot_stale_after_reset // false')"
-  primary_reset_expired="$(json_field "$quota_json" '.snapshot.primary_reset_expired // false')"
-  secondary_reset_expired="$(json_field "$quota_json" '.snapshot.secondary_reset_expired // false')"
-  primary_bucket_current="$(json_field "$quota_json" '.snapshot.primary_bucket_current // false')"
-  secondary_bucket_current="$(json_field "$quota_json" '.snapshot.secondary_bucket_current // false')"
-  matching_count="$(json_field "$quota_json" '.matching_snapshot_count // 0')"
-  source="$(json_field "$quota_json" '.snapshot.source_path // "unknown"')"
-  model_hint="$(json_field "$quota_json" '.snapshot.model_hint // "unknown"')"
-  ts="$(json_field "$quota_json" '.snapshot.event_timestamp // "unknown"')"
-  limit_id="$(json_field "$quota_json" '.snapshot.limit_id // "unknown"')"
-  limit_name="$(json_field "$quota_json" '.snapshot.limit_name // "unknown"')"
+  selection="$quota_selection"
+  snapshot_current="$quota_snapshot_is_current"
+  stale_after_reset="$quota_snapshot_stale_after_reset"
+  primary_reset_expired="$quota_primary_reset_expired"
+  secondary_reset_expired="$quota_secondary_reset_expired"
+  primary_bucket_current="$quota_primary_bucket_current"
+  secondary_bucket_current="$quota_secondary_bucket_current"
+  matching_count="$quota_matching_snapshot_count"
+  source="$quota_source"
+  model_hint="$quota_model_hint"
+  ts="$quota_ts"
+  limit_id="$quota_limit_id"
+  limit_name="$quota_limit_name"
   expected_quota_identity="$(quota_expected_identity_for_model "$target_model")"
   quota_identity_status="$(quota_identity_status_for_model "$target_model" "$limit_id" "$limit_name")"
-  primary_used="$(json_field "$quota_json" '.snapshot.primary_used_percent // empty')"
-  secondary_used="$(json_field "$quota_json" '.snapshot.secondary_used_percent // empty')"
-  projected_primary_delta="$(json_field "$quota_json" '.projection.primary_delta // empty')"
-  projected_secondary_delta="$(json_field "$quota_json" '.projection.secondary_delta // empty')"
-  projected_basis="$(json_field "$quota_json" '.projection.basis // "unknown"')"
+  primary_used="$quota_primary_used"
+  secondary_used="$quota_secondary_used"
+  projected_primary_delta="$quota_projected_primary_delta"
+  projected_secondary_delta="$quota_projected_secondary_delta"
+  projected_basis="$quota_projected_basis"
 
   if [[ -z "$primary_used" || -z "$secondary_used" || -z "$projected_primary_delta" || -z "$projected_secondary_delta" ]]; then
     log_line "WARN" "$phase_label.skip reason=quota_snapshot_incomplete target_model=$target_model snapshot_selection=$selection snapshot_current=$snapshot_current source=$source"
@@ -6068,18 +6348,62 @@ print(
 PY
 }
 
+review_pass_coverage_json() {
+  local last_message_file="$1"
+  [[ -f "$last_message_file" ]] || return 1
+  python3 - "$last_message_file" <<'PY'
+import json
+import re
+import sys
+
+try:
+    text = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read()
+except OSError:
+    raise SystemExit(1)
+
+present = set()
+for raw_line in text.splitlines():
+    line = raw_line.strip()
+    line = re.sub(r"^(?:[-*+]\s*|\d+[.)]\s*)+", "", line)
+    line = line.strip()
+    line = re.sub(r"^[>`*_~\s]+", "", line)
+    match = re.match(r"^P([1-9]|1[0-9]|2[0-3])\b(?:[`*_~\s])*[:.-](?:[`*_~\s])+", line, re.IGNORECASE)
+    if match:
+        present.add(int(match.group(1)))
+
+expected = set(range(1, 24))
+missing = sorted(expected - present)
+status = "complete" if not missing else "incomplete"
+print(
+    json.dumps(
+        {
+            "status": status,
+            "expected": len(expected),
+            "present": len(present),
+            "missing": ",".join(f"P{value}" for value in missing) if missing else "none",
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
 log_review_report_summary() {
   local last_message_file="$1"
   local status_marker_value="${2:-missing}"
   local codex_exit_value="${3:-unknown}"
   local summary_json outcome selected_file findings changes verification
+  local summary_outcome summary_selected_file summary_findings summary_changes summary_verification
+  local pass_coverage_json pass_coverage_status pass_coverage_expected pass_coverage_present pass_coverage_missing
+  local coverage_status coverage_expected coverage_present coverage_missing
 
   summary_json="$(review_report_summary_json "$last_message_file")"
-  outcome="$(json_field "$summary_json" '.outcome // ""')"
-  selected_file="$(json_field "$summary_json" '.selected_file // ""')"
-  findings="$(json_field "$summary_json" '.findings // ""')"
-  changes="$(json_field "$summary_json" '.changes // ""')"
-  verification="$(json_field "$summary_json" '.verification // ""')"
+  eval "$(review_summary_assignments "$summary_json" summary)"
+  outcome="$summary_outcome"
+  selected_file="$summary_selected_file"
+  findings="$summary_findings"
+  changes="$summary_changes"
+  verification="$summary_verification"
 
   if [[ -z "$outcome" && -z "$selected_file" && -z "$findings" && -z "$changes" && -z "$verification" ]]; then
     return 0
@@ -6091,6 +6415,23 @@ log_review_report_summary() {
 
   if [[ "$outcome" == "REVIEWED_AND_FIXED" || ( "$outcome" == "unknown" && -n "$changes" ) ]]; then
     log_line "INFO" "review.fix_details review_outcome=$outcome selected_file=$(shell_quote "$selected_file") findings=$(shell_quote "$findings") changes=$(shell_quote "$changes")"
+  fi
+
+  if [[ "${CODEX_PROMPT_PASS:-}" == "all" ]]; then
+    if pass_coverage_json="$(review_pass_coverage_json "$last_message_file")"; then
+      eval "$(review_pass_coverage_assignments "$pass_coverage_json" coverage)"
+      pass_coverage_status="$coverage_status"
+      pass_coverage_expected="$coverage_expected"
+      pass_coverage_present="$coverage_present"
+      pass_coverage_missing="$coverage_missing"
+      if [[ "$pass_coverage_status" == "complete" ]]; then
+        log_line "INFO" "review.pass_coverage prompt_pass=all status=$pass_coverage_status expected=$pass_coverage_expected present=$pass_coverage_present missing=$(shell_quote "$pass_coverage_missing")"
+      else
+        log_line "WARN" "review.pass_coverage prompt_pass=all status=$pass_coverage_status expected=$pass_coverage_expected present=$pass_coverage_present missing=$(shell_quote "$pass_coverage_missing")"
+      fi
+    else
+      log_line "WARN" "review.pass_coverage prompt_pass=all status=unavailable expected=23 present=unknown missing=unknown"
+    fi
   fi
 }
 
@@ -6112,7 +6453,7 @@ for raw_line in text.splitlines():
     if not line.startswith("UPKEEPER_LOG_REVIEW: CHECKED"):
         continue
     cycle_match = re.search(r"(?:^|\s)cycle=([^ \t`]+)", line)
-    anomalies_match = re.search(r"(?:^|\s)anomalies=(none|listed)(?:\s|$)", line)
+    anomalies_match = re.search(r"(?:^|\s)anomalies=(none|listed)[.;,]?(?:\s|$)", line)
     if cycle_match and cycle_match.group(1) == current_cycle and anomalies_match:
         raise SystemExit(0)
 
@@ -7082,17 +7423,14 @@ main() {
 
   local quota_json
   quota_json="$(quota_state_json)"
-  if [[ "$(json_field "$quota_json" '.error // empty')" == "no_rate_limit_snapshot_found" ]]; then
-    die "no Codex rate-limit snapshot found under $CODEX_HOME_DIR/sessions; run a normal Codex session first or check CODEX_HOME"
-  fi
-  if [[ "$(json_field "$quota_json" '.error // empty')" == "interrupted" ]]; then
-    log_line "WARN" "quota snapshot scan interrupted by operator before cycle start completed"
-    finish_cycle 130 QUOTA_SCAN_INTERRUPTED WARN "phase=before_start"
-  fi
 
-  local before_ts before_source before_model_hint before_selection before_matching_snapshot_count before_snapshot_is_current
+  local before_error before_ts before_source before_model_hint before_selection before_matching_snapshot_count before_snapshot_is_current
   local before_snapshot_age_seconds before_primary_reset_age_seconds before_secondary_reset_age_seconds before_snapshot_stale_after_reset
   local before_primary_reset_expired before_secondary_reset_expired before_primary_bucket_current before_secondary_bucket_current
+  local before_primary_used before_primary_window before_primary_reset
+  local before_secondary_used before_secondary_window before_secondary_reset
+  local before_plan_type before_limit_id before_limit_name
+  local before_projected_primary_delta before_projected_secondary_delta before_projected_basis
   local primary_used primary_window primary_reset
   local secondary_used secondary_window secondary_reset
   local plan_type limit_id limit_name
@@ -7104,34 +7442,29 @@ main() {
   local primary_projected_left secondary_projected_left
   local primary_guardrail_decision="defer" secondary_guardrail_decision="defer"
 
-  before_ts="$(json_field "$quota_json" '.snapshot.event_timestamp // "unknown"')"
-  before_source="$(json_field "$quota_json" '.snapshot.source_path // "unknown"')"
-  before_model_hint="$(json_field "$quota_json" '.snapshot.model_hint // "unknown"')"
-  before_selection="$(json_field "$quota_json" '.snapshot_selection // "unknown"')"
-  before_snapshot_is_current="$(json_field "$quota_json" '.snapshot_is_current // false')"
-  before_matching_snapshot_count="$(json_field "$quota_json" '.matching_snapshot_count // 0')"
-  before_snapshot_age_seconds="$(json_field "$quota_json" '.snapshot.snapshot_age_seconds // "unknown"')"
-  before_primary_reset_age_seconds="$(json_field "$quota_json" '.snapshot.primary_reset_age_seconds // "unknown"')"
-  before_secondary_reset_age_seconds="$(json_field "$quota_json" '.snapshot.secondary_reset_age_seconds // "unknown"')"
-  before_snapshot_stale_after_reset="$(json_field "$quota_json" '.snapshot.snapshot_stale_after_reset // false')"
-  before_primary_reset_expired="$(json_field "$quota_json" '.snapshot.primary_reset_expired // false')"
-  before_secondary_reset_expired="$(json_field "$quota_json" '.snapshot.secondary_reset_expired // false')"
-  before_primary_bucket_current="$(json_field "$quota_json" '.snapshot.primary_bucket_current // false')"
-  before_secondary_bucket_current="$(json_field "$quota_json" '.snapshot.secondary_bucket_current // false')"
-  primary_used="$(json_field "$quota_json" '.snapshot.primary_used_percent')"
-  primary_window="$(json_field "$quota_json" '.snapshot.primary_window_minutes')"
-  primary_reset="$(json_field "$quota_json" '.snapshot.primary_resets_at')"
-  secondary_used="$(json_field "$quota_json" '.snapshot.secondary_used_percent')"
-  secondary_window="$(json_field "$quota_json" '.snapshot.secondary_window_minutes')"
-  secondary_reset="$(json_field "$quota_json" '.snapshot.secondary_resets_at')"
-  plan_type="$(json_field "$quota_json" '.snapshot.plan_type // "unknown"')"
-  limit_id="$(json_field "$quota_json" '.snapshot.limit_id // "unknown"')"
-  limit_name="$(json_field "$quota_json" '.snapshot.limit_name // "unknown"')"
+  eval "$(quota_json_assignments "$quota_json" before)"
+  if [[ "$before_error" == "no_rate_limit_snapshot_found" ]]; then
+    die "no Codex rate-limit snapshot found under $CODEX_HOME_DIR/sessions; run a normal Codex session first or check CODEX_HOME"
+  fi
+  if [[ "$before_error" == "interrupted" ]]; then
+    log_line "WARN" "quota snapshot scan interrupted by operator before cycle start completed"
+    finish_cycle 130 QUOTA_SCAN_INTERRUPTED WARN "phase=before_start"
+  fi
+
+  primary_used="$before_primary_used"
+  primary_window="$before_primary_window"
+  primary_reset="$before_primary_reset"
+  secondary_used="$before_secondary_used"
+  secondary_window="$before_secondary_window"
+  secondary_reset="$before_secondary_reset"
+  plan_type="$before_plan_type"
+  limit_id="$before_limit_id"
+  limit_name="$before_limit_name"
   expected_quota_identity="$(quota_expected_identity_for_model "$CODEX_MODEL")"
   quota_identity_status="$(quota_identity_status_for_model "$CODEX_MODEL" "$limit_id" "$limit_name")"
-  projected_primary_delta="$(json_field "$quota_json" '.projection.primary_delta')"
-  projected_secondary_delta="$(json_field "$quota_json" '.projection.secondary_delta')"
-  projected_basis="$(json_field "$quota_json" '.projection.basis')"
+  projected_primary_delta="$before_projected_primary_delta"
+  projected_secondary_delta="$before_projected_secondary_delta"
+  projected_basis="$before_projected_basis"
   five_hour_threshold="$(quota_5h_stop_percent_for_model "$CODEX_MODEL")"
   week_threshold="$(quota_week_stop_percent_for_model "$CODEX_MODEL")"
   week_buffer="$(quota_week_stop_buffer_percent_for_model "$CODEX_MODEL")"
@@ -7243,39 +7576,24 @@ main() {
   log_line "INFO" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit"
 
   local after_quota_json=""
+  local after_error=""
   local after_ts="" after_source="" after_selection="" after_model_hint="" after_snapshot_is_current=""
   local after_snapshot_age_seconds="" after_primary_reset_age_seconds="" after_secondary_reset_age_seconds="" after_snapshot_stale_after_reset=""
   local after_primary_reset_expired="" after_secondary_reset_expired="" after_primary_bucket_current="" after_secondary_bucket_current=""
   local after_limit_id="" after_limit_name="" after_plan_type=""
+  local after_primary_used="" after_secondary_used=""
   local after_primary="" after_secondary="" after_primary_reset="" after_secondary_reset=""
   local after_primary_left="" after_secondary_left=""
   local after_primary_guardrail_decision="defer" after_secondary_guardrail_decision="defer"
   after_quota_json="$(quota_state_json)"
-  if [[ "$(json_field "$after_quota_json" '.error // empty')" == "interrupted" ]]; then
+  eval "$(quota_json_assignments "$after_quota_json" after)"
+  if [[ "$after_error" == "interrupted" ]]; then
     log_line "WARN" "quota snapshot scan interrupted by operator after codex exec"
     finish_cycle 130 QUOTA_SCAN_INTERRUPTED WARN "phase=after_run codex_exit=$codex_exit"
   fi
-  if [[ "$(json_field "$after_quota_json" '.error // empty')" != "no_rate_limit_snapshot_found" ]]; then
-    after_ts="$(json_field "$after_quota_json" '.snapshot.event_timestamp // "unknown"')"
-    after_source="$(json_field "$after_quota_json" '.snapshot.source_path // "unknown"')"
-    after_selection="$(json_field "$after_quota_json" '.snapshot_selection // "unknown"')"
-    after_snapshot_is_current="$(json_field "$after_quota_json" '.snapshot_is_current // false')"
-    after_snapshot_age_seconds="$(json_field "$after_quota_json" '.snapshot.snapshot_age_seconds // "unknown"')"
-    after_limit_id="$(json_field "$after_quota_json" '.snapshot.limit_id // "unknown"')"
-    after_limit_name="$(json_field "$after_quota_json" '.snapshot.limit_name // "unknown"')"
-    after_plan_type="$(json_field "$after_quota_json" '.snapshot.plan_type // "unknown"')"
-    after_primary_reset_age_seconds="$(json_field "$after_quota_json" '.snapshot.primary_reset_age_seconds // "unknown"')"
-    after_secondary_reset_age_seconds="$(json_field "$after_quota_json" '.snapshot.secondary_reset_age_seconds // "unknown"')"
-    after_snapshot_stale_after_reset="$(json_field "$after_quota_json" '.snapshot.snapshot_stale_after_reset // false')"
-    after_primary_reset_expired="$(json_field "$after_quota_json" '.snapshot.primary_reset_expired // false')"
-    after_secondary_reset_expired="$(json_field "$after_quota_json" '.snapshot.secondary_reset_expired // false')"
-    after_primary_bucket_current="$(json_field "$after_quota_json" '.snapshot.primary_bucket_current // false')"
-    after_secondary_bucket_current="$(json_field "$after_quota_json" '.snapshot.secondary_bucket_current // false')"
-    after_model_hint="$(json_field "$after_quota_json" '.snapshot.model_hint // "unknown"')"
-    after_primary="$(json_field "$after_quota_json" '.snapshot.primary_used_percent')"
-    after_secondary="$(json_field "$after_quota_json" '.snapshot.secondary_used_percent')"
-    after_primary_reset="$(json_field "$after_quota_json" '.snapshot.primary_resets_at')"
-    after_secondary_reset="$(json_field "$after_quota_json" '.snapshot.secondary_resets_at')"
+  if [[ "$after_error" != "no_rate_limit_snapshot_found" ]]; then
+    after_primary="$after_primary_used"
+    after_secondary="$after_secondary_used"
     after_primary_left="$(awk -v used="$after_primary" 'BEGIN { printf "%.1f", 100 - used }')"
     after_secondary_left="$(awk -v used="$after_secondary" 'BEGIN { printf "%.1f", 100 - used }')"
     if [[ "$after_selection" == "exact_model" ]]; then
@@ -7304,10 +7622,15 @@ main() {
   local observed_primary_delta observed_secondary_delta observed_delta_status
   local quota_snapshot_identity_changed
   quota_snapshot_identity_changed="$(quota_identity_changed_flag "${limit_id:-unknown}" "${limit_name:-unknown}" "${after_limit_id:-unknown}" "${after_limit_name:-unknown}")"
-  if [[ -n "$after_primary" && -n "$after_secondary" && "$primary_reset" == "$after_primary_reset" && "$secondary_reset" == "$after_secondary_reset" ]]; then
+  if [[ -n "$after_primary" && -n "$after_secondary" ]] &&
+    quota_reset_same_window "$primary_reset" "$after_primary_reset" &&
+    quota_reset_same_window "$secondary_reset" "$after_secondary_reset"; then
     observed_primary_delta="$(awk -v before="$primary_used" -v after="$after_primary" 'BEGIN { printf "%.1f", after - before }')"
     observed_secondary_delta="$(awk -v before="$secondary_used" -v after="$after_secondary" 'BEGIN { printf "%.1f", after - before }')"
     observed_delta_status="same_window"
+    if [[ "$primary_reset" != "$after_primary_reset" || "$secondary_reset" != "$after_secondary_reset" ]]; then
+      log_line "INFO" "quota.reset_jitter status=tolerated primary_delta_seconds=$(quota_reset_epoch_delta_seconds "$primary_reset" "$after_primary_reset") secondary_delta_seconds=$(quota_reset_epoch_delta_seconds "$secondary_reset" "$after_secondary_reset") before_primary_reset=$(format_epoch_local "$primary_reset") after_primary_reset=$(format_epoch_local "$after_primary_reset") before_secondary_reset=$(format_epoch_local "$secondary_reset") after_secondary_reset=$(format_epoch_local "$after_secondary_reset")"
+    fi
   elif [[ -n "$after_primary" && -n "$after_secondary" ]]; then
     observed_primary_delta="unavailable"
     observed_secondary_delta="unavailable"
@@ -7321,35 +7644,42 @@ main() {
 
   local status_marker status_marker_analysis status_marker_source
   local status_marker_candidate status_marker_candidate_marker status_marker_candidate_rejection_reason
+  local marker_candidate_line marker_candidate_marker marker_candidate_rejection_reason marker_accepted_marker
   local session_end_state
   local primary_session_diagnostics
   local primary_session_agent_message_count primary_session_tool_call_count primary_session_tool_result_count
   local primary_session_task_complete_last_agent_message
   local primary_session_last_rate_limit_reached_type primary_session_last_rate_limit_limit_id primary_session_last_rate_limit_limit_name primary_session_last_rate_limit_plan_type
   local primary_session_last_rate_limit_primary_used_percent primary_session_last_rate_limit_secondary_used_percent
+  local session_agent_message_count session_tool_call_count session_tool_result_count
+  local session_task_complete_last_agent_message
+  local session_last_rate_limit_reached_type session_last_rate_limit_limit_id session_last_rate_limit_limit_name session_last_rate_limit_plan_type
+  local session_last_rate_limit_primary_used_percent session_last_rate_limit_secondary_used_percent
   local quota_session_identity_changed
   local primary_failure_classification
   local post_run_should_stop=0
   local post_run_stop_reason=""
   status_marker_analysis="$(while_marker_analysis_json "$last_message_file")"
-  status_marker_candidate="$(json_field "$status_marker_analysis" '.candidate_line')"
-  status_marker_candidate_marker="$(json_field "$status_marker_analysis" '.candidate_marker')"
-  status_marker_candidate_rejection_reason="$(json_field "$status_marker_analysis" '.candidate_rejection_reason')"
+  eval "$(status_marker_analysis_assignments "$status_marker_analysis" marker)"
+  status_marker_candidate="$marker_candidate_line"
+  status_marker_candidate_marker="$marker_candidate_marker"
+  status_marker_candidate_rejection_reason="$marker_candidate_rejection_reason"
   session_end_state="$(parse_session_end_state "${after_source:-}")"
   primary_session_diagnostics="$(session_diagnostics_json "${after_source:-}")"
-  primary_session_agent_message_count="$(json_field "$primary_session_diagnostics" '.agent_message_count')"
-  primary_session_tool_call_count="$(json_field "$primary_session_diagnostics" '.tool_call_count')"
-  primary_session_tool_result_count="$(json_field "$primary_session_diagnostics" '.tool_result_count')"
-  primary_session_task_complete_last_agent_message="$(json_field "$primary_session_diagnostics" '.task_complete_last_agent_message')"
-  primary_session_last_rate_limit_reached_type="$(json_field "$primary_session_diagnostics" '.last_rate_limit_reached_type')"
-  primary_session_last_rate_limit_limit_id="$(json_field "$primary_session_diagnostics" '.last_rate_limit_limit_id')"
-  primary_session_last_rate_limit_limit_name="$(json_field "$primary_session_diagnostics" '.last_rate_limit_limit_name')"
-  primary_session_last_rate_limit_plan_type="$(json_field "$primary_session_diagnostics" '.last_rate_limit_plan_type')"
-  primary_session_last_rate_limit_primary_used_percent="$(json_field "$primary_session_diagnostics" '.last_rate_limit_primary_used_percent')"
-  primary_session_last_rate_limit_secondary_used_percent="$(json_field "$primary_session_diagnostics" '.last_rate_limit_secondary_used_percent')"
+  eval "$(session_diagnostics_assignments "$primary_session_diagnostics" session)"
+  primary_session_agent_message_count="$session_agent_message_count"
+  primary_session_tool_call_count="$session_tool_call_count"
+  primary_session_tool_result_count="$session_tool_result_count"
+  primary_session_task_complete_last_agent_message="$session_task_complete_last_agent_message"
+  primary_session_last_rate_limit_reached_type="$session_last_rate_limit_reached_type"
+  primary_session_last_rate_limit_limit_id="$session_last_rate_limit_limit_id"
+  primary_session_last_rate_limit_limit_name="$session_last_rate_limit_limit_name"
+  primary_session_last_rate_limit_plan_type="$session_last_rate_limit_plan_type"
+  primary_session_last_rate_limit_primary_used_percent="$session_last_rate_limit_primary_used_percent"
+  primary_session_last_rate_limit_secondary_used_percent="$session_last_rate_limit_secondary_used_percent"
   quota_session_identity_changed="$(quota_identity_changed_flag "${limit_id:-unknown}" "${limit_name:-unknown}" "$primary_session_last_rate_limit_limit_id" "$primary_session_last_rate_limit_limit_name")"
   status_marker="$(resolved_status_marker_from_analysis "$status_marker_analysis" "$codex_exit" "$primary_session_task_complete_last_agent_message")"
-  if [[ -n "$(json_field "$status_marker_analysis" '.accepted_marker')" ]]; then
+  if [[ -n "$marker_accepted_marker" ]]; then
     status_marker_source="exact"
   elif [[ -n "$status_marker" ]]; then
     status_marker_source="recovered_malformed_candidate"

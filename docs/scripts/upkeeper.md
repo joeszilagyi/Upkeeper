@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.25
+Version: v1.0.40
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -109,7 +109,9 @@ Important:
     used by the primary invocation, so symlinked installs keep operating on the
     target repository rather than the central wrapper source checkout.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
-    scraping the interactive /status TUI output.
+    scraping the interactive /status TUI output. The snapshot reader uses a
+    tail-first scan of recent session JSONL files, with full-file fallback only
+    when the tail does not contain enough quota/model metadata.
   - Exact-model Spark quota snapshots may still report the generic Codex
     limiter identity; once snapshot selection proves the target model, that is
     treated as usable quota metadata instead of a conflict.
@@ -267,7 +269,33 @@ Exit codes:
 
 - `CODEX_MODE` defaults to `--sandbox workspace-write`. Set `CODEX_MODE` only
   when testing a newer Codex sandbox flag or temporarily matching an older local
-  Codex install.
+  Codex install. Startup rejects malformed triple-hyphen mode tokens such as
+  `---sandbox`.
+- Before/after quota reset epochs may jitter by a second between otherwise
+  current exact-model snapshots. Upkeeper treats small reset-epoch jitter as the
+  same quota window and logs `quota.reset_jitter` at INFO instead of emitting a
+  non-authoritative `quota.jump` warning.
+- `--prompt-pass=all` final reports must include parseable `P<N>:` lines for
+  P1 through P23. Upkeeper logs `review.pass_coverage` so all-pass cycles are
+  auditable from machine logs, not only from prose. The parser accepts common
+  Markdown line prefixes such as bullets and bold/code emphasis around `P<N>`.
+- Review prompts avoid legacy editor-specific persistence instructions and keep
+  only the Codex-relevant mtime/content verification contract, reducing prompt
+  tokens without weakening the review workflow.
+- Default review prompts prune P2, P8, and P16 section bodies because normal
+  Upkeeper selection targets non-test script/tool files; `--prompt-pass=all`
+  keeps the full P1-P23 repertoire.
+- Hot-path wrapper helpers avoid Python subprocesses for simple path, timestamp,
+  size, and threshold operations; Python remains reserved for structured
+  parsing and heavier filesystem/session analysis.
+- Quota snapshot and post-run diagnostic handling extract all needed fields in
+  one quoted `jq` pass per JSON object instead of spawning `jq` repeatedly for
+  each field.
+- Notable operator-facing wrapper changes are recorded in root
+  `change_notes.md`; version bumps should keep that file current.
+- Startup-anomaly scans suppress older log-only `previous_run.anomaly` entries
+  after a later `startup_anomaly.gate_resolved` has acknowledged
+  `previous_run_anomaly`; unresolved gate state files still trigger the gate.
 - `Upkeeper.log` and `runtime/` are local evidence artifacts and are ignored by
   git. Promote only durable operating rules, postmortem conclusions, or wrapper
   behavior changes into tracked files.
@@ -292,10 +320,13 @@ Exit codes:
   `previous_run.anomaly`, `disk.preflight`, and `--MARK--` lines are primary
   evidence for follow-up self-repair.
 - If a startup anomaly gate is active and the final response omits the required
-  `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=none|listed`
+  raw-line `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=none` or
+  `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=listed`
   acknowledgment, the wrapper logs `startup_anomaly.gate_unresolved`; the next
   startup scan treats that marker and the runtime gate state file as another
-  anomaly and forces the next cycle back onto the Upkeeper suite.
+  anomaly and forces the next cycle back onto the Upkeeper suite. Agents must
+  choose one concrete value and must not emit the placeholder
+  `anomalies=none|listed`.
 
 ## Repo-Local Living Notes
 

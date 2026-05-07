@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.38
+Version: v1.0.39
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -277,7 +277,8 @@ Exit codes:
   non-authoritative `quota.jump` warning.
 - `--prompt-pass=all` final reports must include parseable `P<N>:` lines for
   P1 through P23. Upkeeper logs `review.pass_coverage` so all-pass cycles are
-  auditable from machine logs, not only from prose.
+  auditable from machine logs, not only from prose. The parser accepts common
+  Markdown line prefixes such as bullets and bold/code emphasis around `P<N>`.
 - Review prompts avoid legacy editor-specific persistence instructions and keep
   only the Codex-relevant mtime/content verification contract, reducing prompt
   tokens without weakening the review workflow.

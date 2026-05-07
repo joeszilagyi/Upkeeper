@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.38
+## Version: v1.0.39
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.38"
+UPKEEPER_VERSION="v1.0.39"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -1762,6 +1762,43 @@ session_diagnostics_assignments() {
       assignment("last_rate_limit_plan_type"; ["last_rate_limit_plan_type"]; "unknown"),
       assignment("last_rate_limit_primary_used_percent"; ["last_rate_limit_primary_used_percent"]; "unknown"),
       assignment("last_rate_limit_secondary_used_percent"; ["last_rate_limit_secondary_used_percent"]; "unknown")
+    ] | .[]
+  ' <<<"$json"
+}
+
+review_summary_assignments() {
+  local json="$1"
+  local prefix="$2"
+
+  jq -r --arg prefix "$prefix" '
+    def value($path; $fallback):
+      (getpath($path) // $fallback | tostring);
+    def assignment($name; $path; $fallback):
+      "\($prefix)_\($name)=\((value($path; $fallback)) | @sh)";
+    [
+      assignment("outcome"; ["outcome"]; ""),
+      assignment("selected_file"; ["selected_file"]; ""),
+      assignment("findings"; ["findings"]; ""),
+      assignment("changes"; ["changes"]; ""),
+      assignment("verification"; ["verification"]; "")
+    ] | .[]
+  ' <<<"$json"
+}
+
+review_pass_coverage_assignments() {
+  local json="$1"
+  local prefix="$2"
+
+  jq -r --arg prefix "$prefix" '
+    def value($path; $fallback):
+      (getpath($path) // $fallback | tostring);
+    def assignment($name; $path; $fallback):
+      "\($prefix)_\($name)=\((value($path; $fallback)) | @sh)";
+    [
+      assignment("status"; ["status"]; "unknown"),
+      assignment("expected"; ["expected"]; "23"),
+      assignment("present"; ["present"]; "0"),
+      assignment("missing"; ["missing"]; "unknown")
     ] | .[]
   ' <<<"$json"
 }
@@ -6326,7 +6363,10 @@ except OSError:
 present = set()
 for raw_line in text.splitlines():
     line = raw_line.strip()
-    match = re.match(r"^(?:[-*]\s*)?P([1-9]|1[0-9]|2[0-3])\s*[:.-]\s+", line, re.IGNORECASE)
+    line = re.sub(r"^(?:[-*+]\s*|\d+[.)]\s*)+", "", line)
+    line = line.strip()
+    line = re.sub(r"^[>`*_~\s]+", "", line)
+    match = re.match(r"^P([1-9]|1[0-9]|2[0-3])\b(?:[`*_~\s])*[:.-](?:[`*_~\s])+", line, re.IGNORECASE)
     if match:
         present.add(int(match.group(1)))
 
@@ -6352,14 +6392,17 @@ log_review_report_summary() {
   local status_marker_value="${2:-missing}"
   local codex_exit_value="${3:-unknown}"
   local summary_json outcome selected_file findings changes verification
+  local summary_outcome summary_selected_file summary_findings summary_changes summary_verification
   local pass_coverage_json pass_coverage_status pass_coverage_expected pass_coverage_present pass_coverage_missing
+  local coverage_status coverage_expected coverage_present coverage_missing
 
   summary_json="$(review_report_summary_json "$last_message_file")"
-  outcome="$(json_field "$summary_json" '.outcome // ""')"
-  selected_file="$(json_field "$summary_json" '.selected_file // ""')"
-  findings="$(json_field "$summary_json" '.findings // ""')"
-  changes="$(json_field "$summary_json" '.changes // ""')"
-  verification="$(json_field "$summary_json" '.verification // ""')"
+  eval "$(review_summary_assignments "$summary_json" summary)"
+  outcome="$summary_outcome"
+  selected_file="$summary_selected_file"
+  findings="$summary_findings"
+  changes="$summary_changes"
+  verification="$summary_verification"
 
   if [[ -z "$outcome" && -z "$selected_file" && -z "$findings" && -z "$changes" && -z "$verification" ]]; then
     return 0
@@ -6375,10 +6418,11 @@ log_review_report_summary() {
 
   if [[ "${CODEX_PROMPT_PASS:-}" == "all" ]]; then
     if pass_coverage_json="$(review_pass_coverage_json "$last_message_file")"; then
-      pass_coverage_status="$(json_field "$pass_coverage_json" '.status // "unknown"')"
-      pass_coverage_expected="$(json_field "$pass_coverage_json" '.expected // 23')"
-      pass_coverage_present="$(json_field "$pass_coverage_json" '.present // 0')"
-      pass_coverage_missing="$(json_field "$pass_coverage_json" '.missing // "unknown"')"
+      eval "$(review_pass_coverage_assignments "$pass_coverage_json" coverage)"
+      pass_coverage_status="$coverage_status"
+      pass_coverage_expected="$coverage_expected"
+      pass_coverage_present="$coverage_present"
+      pass_coverage_missing="$coverage_missing"
       if [[ "$pass_coverage_status" == "complete" ]]; then
         log_line "INFO" "review.pass_coverage prompt_pass=all status=$pass_coverage_status expected=$pass_coverage_expected present=$pass_coverage_present missing=$(shell_quote "$pass_coverage_missing")"
       else

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.14
+## Version: v1.0.15
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -34,7 +34,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.14"
+UPKEEPER_VERSION="v1.0.15"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -247,6 +247,10 @@ Prompt behavior:
   - A WRAPPER_PRESELECTED_REVIEW_TARGET section overrides every later repertoire
     selection rule for that cycle; all applicable review prompts run against
     that same target unless the file is physically impossible or unsafe to read.
+  - Preselection records the selected target's git status and content hash before
+    Codex starts. If the selected file is already dirty, that is baseline state,
+    not a blocker by itself; touch verification must compare against the
+    pre-touch content hash rather than assuming the diff against HEAD is empty.
   - Tests are not script/tool targets merely because they use a script-language
     extension; select tests only when explicit extra guidance asks for test
     review or no eligible script/tool target exists.
@@ -401,6 +405,33 @@ def executable_text_candidate(path: str) -> bool:
     return b"\0" not in sample
 
 
+def git_output(args: list[str]) -> str:
+    try:
+        return subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL).strip()
+    except subprocess.CalledProcessError:
+        return ""
+
+
+def selected_git_metadata(path: str) -> dict[str, str]:
+    status_output = git_output(["git", "status", "--porcelain=v1", "--", path])
+    status_code = status_output[:2] if status_output else "clean"
+    worktree_hash = git_output(["git", "hash-object", "--", path]) or "unknown"
+    head_blob = git_output(["git", "rev-parse", f"HEAD:{path}"]) or "none"
+    if head_blob == "none":
+        content_state = "untracked"
+    elif worktree_hash == head_blob:
+        content_state = "matches_head"
+    else:
+        content_state = "differs_from_head"
+
+    return {
+        "git_status": status_code.replace(" ", "_"),
+        "content_state": content_state,
+        "head_blob": head_blob,
+        "worktree_hash": worktree_hash,
+    }
+
+
 raw_paths = subprocess.check_output(["git", "ls-files", "-co", "--exclude-standard", "-z"])
 paths = raw_paths.decode("utf-8", "surrogateescape").split("\0")
 now = time.time()
@@ -434,11 +465,16 @@ age_seconds = max(0, int(now - mtime))
 mtime_text = datetime.datetime.fromtimestamp(mtime).astimezone().strftime(
     "%Y-%m-%d %H:%M:%S %z"
 )
+metadata = selected_git_metadata(path)
 
 print(f"path={path}")
 print(f"epoch={int(mtime)}")
 print(f"mtime={mtime_text}")
 print(f"age={age_seconds // 3600}h {(age_seconds % 3600) // 60}m")
+print(f"git_status={metadata['git_status']}")
+print(f"content_state={metadata['content_state']}")
+print(f"head_blob={metadata['head_blob']}")
+print(f"worktree_hash={metadata['worktree_hash']}")
 print(f"eligible_count={len(candidates)}")
 print("selection_basis=oldest eligible non-test script/tool from git ls-files -co --exclude-standard")
 PY
@@ -446,7 +482,7 @@ PY
 
 append_preselected_review_target() {
   local compiled_file="$1"
-  local selection err_file detail selected_path selected_epoch selected_age eligible_count
+  local selection err_file detail selected_path selected_epoch selected_age eligible_count selected_git_status selected_content_state selected_worktree_hash
 
   if ! err_file="$(mktemp)"; then
     log_line "WARN" "review.preselect.skip reason=tempfile_failed"
@@ -469,6 +505,9 @@ append_preselected_review_target() {
   selected_path="$(sed -n 's/^path=//p' <<<"$selection")"
   selected_epoch="$(sed -n 's/^epoch=//p' <<<"$selection")"
   selected_age="$(sed -n 's/^age=//p' <<<"$selection")"
+  selected_git_status="$(sed -n 's/^git_status=//p' <<<"$selection")"
+  selected_content_state="$(sed -n 's/^content_state=//p' <<<"$selection")"
+  selected_worktree_hash="$(sed -n 's/^worktree_hash=//p' <<<"$selection")"
   eligible_count="$(sed -n 's/^eligible_count=//p' <<<"$selection")"
 
   {
@@ -478,11 +517,14 @@ append_preselected_review_target() {
     printf -- '- This target is the timestamp-selected file for this cycle.\n'
     printf -- '- Verify only this file exists, is readable, and is eligible before reviewing it.\n'
     printf -- '- This preselected target overrides all later P1-P22 selection rules; run applicable prompts against this same file.\n'
+    printf -- '- Use git_status/content_state/head_blob/worktree_hash above as the pre-run baseline for this file.\n'
+    printf -- '- If content_state differs_from_head or git_status is not clean, that dirty content existed before this review; do not reset it or block solely because git diff versus HEAD is non-empty.\n'
+    printf -- '- For a clean no-edit pass, record the selected file hash before touch, touch it, then verify the mtime changed and the content hash is unchanged from the pre-touch hash.\n'
     printf -- '- Do not run broad repository discovery commands to second-guess this selection.\n'
     printf -- '- If this target is physically impossible or unsafe to review, state the exception and then use the same source-safe selection boundary for the replacement.\n'
   } >>"$compiled_file"
 
-  log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") eligible_count=${eligible_count:-unknown}"
+  log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} worktree_hash=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown}"
 }
 
 operator_guide_snapshot_version() {
@@ -1873,6 +1915,13 @@ Scope rule -- generated and ignored artifacts:
   same selected file. Do not spend tool calls rediscovering the whole repository
   unless that exact file no longer exists, is unreadable, is binary, or is
   explicitly excluded by this prompt.
+- The preselected section includes git_status, content_state, head_blob, and
+  worktree_hash captured before Codex started. If content_state is
+  differs_from_head or git_status is not clean, the selected file already had
+  dirty content at selection time. Preserve that baseline and do not block
+  solely because `git diff` against HEAD is non-empty after touch. Verify clean
+  no-edit reviews by comparing the selected file's pre-touch content hash to its
+  post-touch content hash.
 - Do not run broad tree inventory commands such as `find .`, `find . -maxdepth`,
   `ls -R`, or similar scans for selection. Those commands surface `.git/objects`
   and other VCS/runtime internals, waste tokens, and are outside the review
@@ -1897,7 +1946,9 @@ If no fixes are found:
 - report REVIEWED_CLEAN
 - touch the selected file
 - verify the mtime changed
-- verify no unintended diff was introduced
+- verify no unintended content change was introduced compared with the
+  pre-touch baseline, allowing for any pre-existing dirty diff reported in the
+  WRAPPER_PRESELECTED_REVIEW_TARGET metadata
 - count the execution as completed
 
 To be clear:

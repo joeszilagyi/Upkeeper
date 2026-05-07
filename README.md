@@ -117,14 +117,18 @@ CODEX_MODEL=gpt-5.3-codex-spark CODEX_REASONING_EFFORT=xhigh ./Upkeeper.sh
 
 ## Operator Examples
 
+Environment overrides go before the command they configure, or they are exported
+once before a loop. CLI flags such as `--prompt` and `--prompt-file` still go
+after `./Upkeeper.sh`.
+
 Run a Spark Codex maintenance burn-down and allow the current 5-hour Spark
 bucket to drain to zero before stopping:
 
 ```sh
-CODEX_MODEL=gpt-5.3-codex-spark \
-CODEX_REASONING_EFFORT=xhigh \
-CODEX_SPARK_5H_STOP_PERCENT=0 \
-while ./Upkeeper.sh; do
+while CODEX_MODEL=gpt-5.3-codex-spark \
+  CODEX_REASONING_EFFORT=xhigh \
+  CODEX_SPARK_5H_STOP_PERCENT=0 \
+  ./Upkeeper.sh; do
   sleep 60
 done
 ```
@@ -132,10 +136,10 @@ done
 Run the same style of loop with a stronger model and an explicit 5-hour stop:
 
 ```sh
-CODEX_MODEL=gpt-5.5 \
-CODEX_REASONING_EFFORT=xhigh \
-CODEX_5H_STOP_PERCENT=5 \
-while ./Upkeeper.sh; do
+while CODEX_MODEL=gpt-5.5 \
+  CODEX_REASONING_EFFORT=xhigh \
+  CODEX_5H_STOP_PERCENT=5 \
+  ./Upkeeper.sh; do
   sleep 60
 done
 ```

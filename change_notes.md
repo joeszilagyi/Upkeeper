@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.0.43 changes:
+	1. Restored the local `json_field` helper used by marker, postmortem, and fallback parsers.
+	2. Prevented raw `json_field: command not found` stderr during post-run status classification.
+	3. Kept v1.0.42 review-outcome recovery as a fallback rather than the only successful marker path.
+
 2026-05-07: v1.0.42 changes:
 	1. Recovered wrapper status from parseable terminal review outcomes when a successful Codex final response omits the literal `UPKEEPER_STATUS` line.
 	2. Prevented completed `REVIEWED_AND_FIXED` and `REVIEWED_CLEAN` cycles from stopping loops solely because the final machine marker was missing.

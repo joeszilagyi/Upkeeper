@@ -114,14 +114,14 @@ def command_kind(line: str) -> str:
     lowered = line.lower()
     if re.search(r'\bcommand -v\s+', lowered):
         return 'command'
-    if re.search(r'\b(pytest|bats)\b|\bpython[0-9.]*\s+-m\s+pytest\b|\bgo\s+test\b|\bcargo\s+test\b|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b|\bmake\s+(?:[^;&|]*\s+)?test\b', lowered):
-        return 'tests'
-    if re.search(r'\btools/validate_[a-z0-9_.-]+(?:\.sh)?\b|validate_upkeeper\.sh', lowered):
-        return 'validation'
     if re.search(r'\bbash\s+-n\b|\bdiff\s+--check\b|git\s+diff\s+--check|\bshellcheck\b|\bruff\b|\bmypy\b', lowered):
         return 'check'
-    if re.search(r'\b(rg|grep|find)\b|git\s+grep|\bnl\s+-ba\b|\bsed\s+-n\b', lowered):
+    if re.search(r'\b(rg|grep|find|cat)\b|\bgit\s+(?:grep|ls-files|diff|show|status|log)\b|\bnl\s+-ba\b|\bsed\s+-n\b', lowered):
         return 'search'
+    if re.search(r'\btools/validate_[a-z0-9_.-]+(?:\.sh)?\b|validate_upkeeper\.sh', lowered):
+        return 'validation'
+    if re.search(r'\b(pytest|bats)\b|\bpython[0-9.]*\s+-m\s+pytest\b|\bgo\s+test\b|\bcargo\s+test\b|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b|\bmake\s+(?:[^;&|]*\s+)?test\b', lowered):
+        return 'tests'
     if re.search(r'\b(npm|pnpm|yarn|node|make|cargo|go)\b', lowered):
         return 'build'
     if re.search(r'\bgit\b', lowered):
@@ -320,14 +320,14 @@ def command_kind(line: str) -> str:
     lowered = line.lower()
     if re.search(r"\bcommand -v\s+", lowered):
         return "command"
-    if re.search(r"\b(pytest|bats)\b|\bpython[0-9.]*\s+-m\s+pytest\b|\bgo\s+test\b|\bcargo\s+test\b|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b|\bmake\s+(?:[^;&|]*\s+)?test\b", lowered):
-        return "tests"
-    if re.search(r"\btools/validate_[a-z0-9_.-]+(?:\.sh)?\b|validate_upkeeper\.sh", lowered):
-        return "validation"
     if re.search(r"\bbash\s+-n\b|\bdiff\s+--check\b|git\s+diff\s+--check|\bshellcheck\b|\bruff\b|\bmypy\b", lowered):
         return "check"
-    if re.search(r"\b(rg|grep|find)\b|git\s+grep|\bnl\s+-ba\b|\bsed\s+-n\b", lowered):
+    if re.search(r"\b(rg|grep|find|cat)\b|\bgit\s+(?:grep|ls-files|diff|show|status|log)\b|\bnl\s+-ba\b|\bsed\s+-n\b", lowered):
         return "search"
+    if re.search(r"\btools/validate_[a-z0-9_.-]+(?:\.sh)?\b|validate_upkeeper\.sh", lowered):
+        return "validation"
+    if re.search(r"\b(pytest|bats)\b|\bpython[0-9.]*\s+-m\s+pytest\b|\bgo\s+test\b|\bcargo\s+test\b|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b|\bmake\s+(?:[^;&|]*\s+)?test\b", lowered):
+        return "tests"
     if re.search(r"\b(npm|pnpm|yarn|node|make|cargo|go)\b", lowered):
         return "build"
     if re.search(r"\bgit\b", lowered):

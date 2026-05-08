@@ -4,7 +4,8 @@ This repository is the central source of truth for Upkeeper wrapper behavior.
 
 ## Central-First Rule
 
-- Make Upkeeper behavior changes in this repository, primarily in `Upkeeper`.
+- Make Upkeeper behavior changes in this repository, primarily in the root
+  `Upkeeper` entrypoint and paired `lib/upkeeper` modules.
 - Do not patch client repositories just to propagate wrapper behavior, help text,
   prompt text, or operator-guide snapshots.
 - Client repositories should run Upkeeper through a local symlink such as:
@@ -13,8 +14,9 @@ This repository is the central source of truth for Upkeeper wrapper behavior.
   ln -s /home/joe/projects/Upkeeper/main/Upkeeper ./Upkeeper.sh
   ```
 
-- Once the central `Upkeeper` file changes, symlinked clients pick up the new
-  behavior on their next loop without tracked client-repo changes.
+- Once the central `Upkeeper` entrypoint or paired modules change, symlinked
+  clients pick up the new behavior on their next loop without tracked
+  client-repo changes.
 
 ## Client Repo Boundary
 

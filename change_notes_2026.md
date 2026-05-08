@@ -11,6 +11,7 @@ Version numbering note:
 	2. The CI workflow starts on `ubuntu-latest`, installs required tools including `jq`, and runs shell syntax checks, `tests/*.bash`, `tools/check_public_docs.sh --quick`, and `tools/validate_upkeeper.sh --quick`.
 	3. Documented the CI validation path in README, the operator guide, and dependency docs, including that CI does not launch real Codex backend work or upload runtime artifacts by default.
 	4. Extended public documentation checks to require the tracked CI workflow and its core no-quota validation steps.
+	5. Uses the current `actions/checkout` major release so the new workflow does not start with the Node 20 deprecation warning emitted by older action majors.
 
 2026-05-08: v1.1.16 changes:
 	1. Added `tools/stress_upkeeper_corpus.sh --local`, a no-quota local stress corpus harness that generates temporary sample repositories and exercises Upkeeper through repo-local `./Upkeeper.sh` symlinks.

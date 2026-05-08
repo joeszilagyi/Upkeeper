@@ -5,6 +5,12 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.1.6 changes:
+	1. Rejected malformed root `CODEX_MODE` values whose first token does not begin with `--`, so operator mode typos fail before launching `codex exec` instead of being passed through as positional arguments.
+	2. Added quick validation coverage for both missing-dash and triple-hyphen `CODEX_MODE` typos.
+	3. Expanded startup-anomaly changed-path enforcement to allow the modular wrapper implementation, required release notes, directly paired central docs, and the validation harness during Upkeeper-suite self-repair.
+	4. Aligned postmortem bug-record classification with incident-context classification when fallback child status markers are recoverable malformed candidates.
+
 2026-05-07: v1.1.5 changes:
 	1. Added separated live `LLM:` task-status blocks in `basic`, `verbose`, and `debug1` terminal modes by reusing already-streamed assistant prose before backend tool phases, without launching any extra model work.
 	2. Added a concise terminal finale after each parsed review summary so `basic`, `quiet`, `verbose`, and `debug1` runs show what was wrong, what changed, and what verification ran without opening the transcript.

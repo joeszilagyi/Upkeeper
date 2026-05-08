@@ -221,6 +221,26 @@ check_help_and_diff() {
   git diff --cached --check
 }
 
+check_codex_mode_validation() {
+  local output rc
+
+  log "checking CODEX_MODE validation"
+
+  set +e
+  output="$(CODEX_MODE='sandbox workspace-write' ./Upkeeper --version 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 2 ]] || fail "missing-dash CODEX_MODE exited $rc, expected 2"
+  grep -Fq "invalid CODEX_MODE first token sandbox" <<<"$output" || fail "missing-dash CODEX_MODE error was not clear"
+
+  set +e
+  output="$(CODEX_MODE='---sandbox workspace-write' ./Upkeeper --version 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 2 ]] || fail "triple-hyphen CODEX_MODE exited $rc, expected 2"
+  grep -Fq "invalid CODEX_MODE first token ---sandbox" <<<"$output" || fail "triple-hyphen CODEX_MODE error was not clear"
+}
+
 check_fallback_artifact_helpers() {
   local temp_dir artifact_file marker_file got
 
@@ -255,6 +275,69 @@ check_fallback_artifact_helpers() {
   [[ -z "$got" ]] || fail "missing marker returned $got instead of empty"
   got="$(marker_field "$temp_dir" "blocked_until")"
   [[ -z "$got" ]] || fail "directory marker returned $got instead of empty"
+
+  rm -r "$temp_dir"
+}
+
+check_postmortem_context_marker_classification() {
+  local temp_dir transcript_path context_path bug_record_path incident_log_path report_path primary_last_message_copy
+
+  log "checking postmortem context marker classification"
+  temp_dir="$(mktemp -d /tmp/upkeeper-postmortem-context.XXXXXX)"
+  transcript_path="$temp_dir/fallback-last-message.txt"
+  context_path="$temp_dir/incident-context.txt"
+  bug_record_path="$temp_dir/bug-record.md"
+  incident_log_path="$temp_dir/incident-log.txt"
+  report_path="$temp_dir/postmortem.md"
+  primary_last_message_copy="$temp_dir/primary-last-message.txt"
+
+  printf 'fallback completed with a recoverable marker typo\nUPKEEPER_STATUS: WORK_DONE.\n' >"$transcript_path"
+  : >"$incident_log_path"
+  : >"$report_path"
+  : >"$primary_last_message_copy"
+
+  (
+    source lib/upkeeper/runtime_format_json.bash
+    source lib/upkeeper/report_analysis.bash
+    source lib/upkeeper/fallback_artifacts.bash
+    source lib/upkeeper/status_session.bash
+    source lib/upkeeper/quota_guardrails.bash
+    source lib/upkeeper/postmortem_context.bash
+
+    CYCLE_ID=validation
+    CODEX_POSTMORTEM_DIR="$temp_dir/postmortems"
+    mkdir -p "$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen"
+
+    CODEX_ATTEMPT_ROLE=primary
+    CODEX_MODEL=gpt-primary
+    CODEX_REASONING_EFFORT=low
+    CODEX_FALLBACK_MODEL=gpt-fallback
+    CODEX_FALLBACK_REASONING_EFFORT=low
+    CODEX_POSTMORTEM_MODEL=gpt-postmortem
+    CODEX_POSTMORTEM_REASONING_EFFORT=low
+    CODEX_EXECUTION_ORIGIN=validation
+    FALLBACK_SCREEN_SESSION_NAME=validation-screen
+    FALLBACK_SCREEN_TRANSCRIPT_PATH="$transcript_path"
+    FALLBACK_SCREEN_EXIT_CODE=0
+    DIRTY_PATH_COUNT=0
+    TRACKED_MODIFIED_PATH_COUNT=0
+    UNTRACKED_PATH_COUNT=0
+    ROOT_DIR="$temp_dir/repo"
+    LOG_FILE="$temp_dir/Upkeeper.log"
+    status_marker=missing
+    codex_exit=0
+    session_end_state=none
+
+    write_postmortem_context "$context_path" "primary_quota_before_run" "quota guardrail" "0" "$incident_log_path" "$primary_last_message_copy"
+    write_postmortem_bug_record "$bug_record_path" "primary_quota_before_run" "quota guardrail" "0" "not_run" "$report_path" "$context_path" "$incident_log_path"
+  )
+
+  grep -Fq "incident_classification: CONTROLLED_QUOTA_HANDOFF" "$context_path" || fail "context did not classify recovered fallback marker as controlled handoff"
+  grep -Fq "fallback_child_status_marker: WORK_DONE" "$context_path" || fail "context did not record recovered fallback marker"
+  grep -Fq "fallback_child_status_marker_source: recovered_malformed_candidate" "$context_path" || fail "context did not record recovered marker source"
+  grep -Fq -- "- incident_classification: CONTROLLED_QUOTA_HANDOFF" "$bug_record_path" || fail "bug record did not classify recovered fallback marker as controlled handoff"
+  grep -Fq -- "- fallback_child_status_marker: WORK_DONE" "$bug_record_path" || fail "bug record did not record recovered fallback marker"
+  grep -Fq -- "- fallback_child_status_marker_source: recovered_malformed_candidate" "$bug_record_path" || fail "bug record did not record recovered marker source"
 
   rm -r "$temp_dir"
 }
@@ -502,6 +585,44 @@ check_process_control_guards() {
   rm -r "$temp_dir"
 }
 
+check_startup_anomaly_gate_allowlist() {
+  local temp_dir before_file after_file output
+
+  log "checking startup anomaly gate changed-path allowlist"
+  temp_dir="$(mktemp -d /tmp/upkeeper-gate-allowlist.XXXXXX)"
+  before_file="$temp_dir/before.json"
+  after_file="$temp_dir/after.json"
+
+  cat >"$before_file" <<'JSON'
+{
+  "Upkeeper": {"status": "clean", "hash": "old"},
+  "change_notes.md": {"status": "clean", "hash": "old"},
+  "docs/scripts/upkeeper.md": {"status": "clean", "hash": "old"},
+  "lib/upkeeper/worktree_state.bash": {"status": "clean", "hash": "old"},
+  "tools/validate_upkeeper.sh": {"status": "clean", "hash": "old"},
+  "unrelated.txt": {"status": "clean", "hash": "old"}
+}
+JSON
+  cat >"$after_file" <<'JSON'
+{
+  "Upkeeper": {"status": "modified", "hash": "new"},
+  "change_notes.md": {"status": "modified", "hash": "new"},
+  "docs/scripts/upkeeper.md": {"status": "modified", "hash": "new"},
+  "lib/upkeeper/worktree_state.bash": {"status": "modified", "hash": "new"},
+  "tools/validate_upkeeper.sh": {"status": "modified", "hash": "new"},
+  "unrelated.txt": {"status": "modified", "hash": "new"}
+}
+JSON
+
+  output="$(bash -lc 'cd "$1"; source lib/upkeeper/worktree_state.bash; startup_anomaly_gate_changed_path_violations "$2" "$3"' bash "$ROOT_DIR" "$before_file" "$after_file")"
+  grep -Fq "changed_path='unrelated.txt'" <<<"$output" || fail "gate allowlist did not report unrelated changed path"
+  if grep -Eq "Upkeeper|change_notes|docs/scripts|lib/upkeeper|tools/validate" <<<"$output"; then
+    fail "gate allowlist reported an allowed Upkeeper-suite path: $output"
+  fi
+
+  rm -r "$temp_dir"
+}
+
 check_central_dry_runs() {
   log "checking central dry-run startup"
   CODEX_TERMINAL_VERBOSITY=quiet UPKEEPER_DRY_RUN=1 ./Upkeeper >/dev/null
@@ -681,10 +802,13 @@ check_version_consistency
 check_module_map
 check_prompt_template
 check_help_and_diff
+check_codex_mode_validation
 check_fallback_artifact_helpers
+check_postmortem_context_marker_classification
 check_live_output_filter_pipe
 check_review_summary_parser
 check_process_control_guards
+check_startup_anomaly_gate_allowlist
 
 if [[ "$MODE" == "full" ]]; then
   check_central_dry_runs

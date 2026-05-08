@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.5
+Version: v1.1.6
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -306,8 +306,8 @@ Exit codes:
 
 - `CODEX_MODE` defaults to `--sandbox workspace-write`. Set `CODEX_MODE` only
   when testing a newer Codex sandbox flag or temporarily matching an older local
-  Codex install. Startup rejects malformed triple-hyphen mode tokens such as
-  `---sandbox`.
+  Codex install. Startup rejects malformed mode strings whose first token is
+  missing, lacks `--`, or uses a triple-hyphen token such as `---sandbox`.
 - Before/after quota reset epochs may jitter by a second between otherwise
   current exact-model snapshots. Upkeeper treats small reset-epoch jitter as the
   same quota window and logs `quota.reset_jitter` at INFO instead of emitting a
@@ -393,6 +393,9 @@ Exit codes:
   anomaly and forces the next cycle back onto the Upkeeper suite. Agents must
   choose one concrete value and must not emit the placeholder
   `anomalies=none|listed`.
+- The gated self-repair surface is intentionally narrow: the root `Upkeeper`
+  entrypoint, `lib/upkeeper` modules, central operator docs and release notes,
+  prompts/templates, launcher examples, and the validation harness.
 
 ## Repo-Local Living Notes
 

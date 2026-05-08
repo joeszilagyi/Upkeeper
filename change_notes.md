@@ -5,6 +5,16 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.0.52 changes:
+	1. Split the fallback/postmortem module into explicit process-control, fallback, quota-marker, screen-supervision, auxiliary-Codex, report-analysis, postmortem, and status/session modules.
+	2. Kept the root `Upkeeper` entrypoint and module loader explicit so dependency order stays reviewable while reducing the largest single implementation file.
+	3. Preserved symlinked-client behavior and missing-module fail-fast semantics from the v1.0.51 modular layout.
+
+2026-05-07: v1.0.51 changes:
+	1. Split the central Upkeeper implementation into sourced `lib/upkeeper/*.bash` modules while keeping root `Upkeeper` as the only operator entrypoint.
+	2. Loaded modules from the resolved central implementation directory so symlinked client `Upkeeper.sh` launchers continue to run against client checkout state while sharing central wrapper behavior.
+	3. Added a terminal-visible missing-module startup failure before lock acquisition, Codex launch, fallback supervision, or parent-loop stop handling can begin.
+
 2026-05-07: v1.0.50 changes:
 	1. Stopped quota guardrails from sending SIGTERM/SIGKILL to a bare interactive parent shell such as `bash`, preventing direct one-shot runs from closing the operator's terminal.
 	2. Added `CODEX_PARENT_STOP_SKIPPED_EXIT_CODE` with default `75` so skipped parent-stop guardrails still return a loop-breaking status.

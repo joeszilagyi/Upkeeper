@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.46
+Version: v1.0.52
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -123,6 +123,10 @@ Important:
   - Nested fallback runs also re-enter through the same repo-local script path
     used by the primary invocation, so symlinked installs keep operating on the
     target repository rather than the central wrapper source checkout.
+  - The root entrypoint loads its implementation modules from `lib/upkeeper`
+    beside the resolved central Upkeeper file. Symlinked clients should point at
+    the central entrypoint; copying only the launcher without the paired modules
+    is unsupported.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output. The snapshot reader uses a
     tail-first scan of recent session JSONL files, with full-file fallback only
@@ -255,6 +259,7 @@ Environment overrides:
   CODEX_CONTINUE_ON_NO_BACKEND_TASK Default: 0
   CODEX_DISABLE_PARENT_STOP      Default: 0
   CODEX_GUARDRAIL_STOP_EXIT_CODE Default: 0
+  CODEX_PARENT_STOP_SKIPPED_EXIT_CODE Default: 75
   CODEX_EXECUTION_ORIGIN         Default: primary
   CODEX_BWRAP_TMP_ROOT           Default: /tmp/codex-bwrap-synthetic-mount-targets
   CODEX_BWRAP_TMP_PREFLIGHT      Default: 1
@@ -322,6 +327,10 @@ Exit codes:
 - Startup-anomaly self-review gates accept ignored local `Upkeeper.sh` symlinks
   to the central wrapper as valid local gate targets; normal timestamp rotation
   still excludes ignored wrapper artifacts.
+- Root `Upkeeper` remains the only operator entrypoint. The implementation now
+  lives in sourced `lib/upkeeper/*.bash` modules loaded from the resolved central
+  wrapper directory, preserving symlinked client behavior while reducing review
+  scope inside the wrapper source.
 - `Upkeeper.log` and `runtime/` are local evidence artifacts and are ignored by
   git. Promote only durable operating rules, postmortem conclusions, or wrapper
   behavior changes into tracked files.

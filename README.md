@@ -74,6 +74,9 @@ a Codex backend task.
 
 The most useful pattern is to keep this repository as the central source and
 symlink the wrapper into each repo that should receive the same behavior.
+The symlink should point at the root `Upkeeper` entrypoint; that launcher loads
+its paired implementation modules from `lib/upkeeper` in the resolved central
+checkout.
 
 Sanitized example:
 
@@ -87,8 +90,9 @@ UPKEEPER_DRY_RUN=1 ./Upkeeper.sh
 With a symlink, fixes made in the central Upkeeper repo are picked up by every
 client the next time its local `./Upkeeper.sh` runs. If a repo has an old copied
 wrapper instead of a symlink, it will drift: missing flags, stale prompt rules,
-and old guardrail behavior are all signs that the client wrapper should be
-refreshed or replaced with a link.
+old guardrail behavior, or missing `lib/upkeeper` modules are all signs that
+the client wrapper should be refreshed or replaced with a link. Copying only the
+root launcher without the paired module tree is unsupported.
 
 In client repositories, keep Upkeeper's local artifacts ignored:
 

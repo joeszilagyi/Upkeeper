@@ -11,6 +11,7 @@ Version numbering note:
 	3. Extended quick validation to assert the standalone P24 prompt exists and preserves its applicability, no-loss, and cost-ceiling contract.
 	4. Quoted string and path fields in root `cycle.start` log records so defaults such as `CODEX_MODE=--sandbox workspace-write` and space-bearing `CODEX_HOME` paths remain parseable as single key/value fields.
 	5. Captured quota-fallback return codes under `set +e` so intentional non-zero fallback exits still write a terminal `cycle.exit` record instead of surfacing as a false previous-run anomaly.
+	6. Made full validation dry-runs use self-contained quota and runtime fixtures so local stale model snapshots cannot make the harness fail before the intended dry-run checks.
 
 2026-05-07: v1.1.6 changes:
 	1. Rejected malformed root `CODEX_MODE` values whose first token does not begin with `--`, so operator mode typos fail before launching `codex exec` instead of being passed through as positional arguments.

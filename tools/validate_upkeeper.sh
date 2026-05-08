@@ -746,9 +746,45 @@ JSON
 }
 
 check_central_dry_runs() {
+  local temp_dir
+
   log "checking central dry-run startup"
-  CODEX_TERMINAL_VERBOSITY=quiet UPKEEPER_DRY_RUN=1 ./Upkeeper >/dev/null
-  CODEX_TERMINAL_VERBOSITY=quiet UPKEEPER_DRY_RUN=1 ./Upkeeper --prompt-pass=all >/dev/null
+  temp_dir="$(mktemp -d /tmp/upkeeper-central-dry-run.XXXXXX)"
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
+
+  CODEX_HOME="$temp_dir/codex-home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    UPKEEPER_DRY_RUN=1 \
+    ./Upkeeper >/dev/null
+
+  CODEX_HOME="$temp_dir/codex-home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    UPKEEPER_DRY_RUN=1 \
+    ./Upkeeper --prompt-pass=all >/dev/null
+
+  rm -r "$temp_dir"
 }
 
 check_symlinked_client() {
@@ -761,11 +797,21 @@ check_symlinked_client() {
   touch "$temp_dir/tool.sh"
   chmod +x "$temp_dir/tool.sh"
   ln -s "$ROOT_DIR/Upkeeper" "$temp_dir/Upkeeper.sh"
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
 
   (
     cd "$temp_dir"
     ./Upkeeper.sh --version >/dev/null
-    CODEX_TERMINAL_VERBOSITY=quiet UPKEEPER_DRY_RUN=1 ./Upkeeper.sh >/dev/null
+    CODEX_HOME="$temp_dir/codex-home" \
+      CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+      CODEX_TERMINAL_VERBOSITY=quiet \
+      CODEX_MODEL=gpt-5.5 \
+      CODEX_REASONING_EFFORT=xhigh \
+      CODEX_FALLBACK_ENABLED=0 \
+      CODEX_FALLBACK_SCREEN_ENABLED=0 \
+      CODEX_POSTMORTEM_ENABLED=0 \
+      UPKEEPER_DRY_RUN=1 \
+      ./Upkeeper.sh >/dev/null
     grep -Fq "implementation=$ROOT_DIR/Upkeeper" Upkeeper.log
     grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" Upkeeper.log
   )
@@ -805,11 +851,21 @@ check_missing_prompt_failure() {
   git -C "$temp_dir" init -q
   touch "$temp_dir/tool.sh"
   chmod +x "$temp_dir/tool.sh"
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
 
   (
     cd "$temp_dir"
     set +e
-    CODEX_TERMINAL_VERBOSITY=quiet UPKEEPER_DRY_RUN=1 ./Upkeeper >out.txt 2>err.txt
+    CODEX_HOME="$temp_dir/codex-home" \
+      CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+      CODEX_TERMINAL_VERBOSITY=quiet \
+      CODEX_MODEL=gpt-5.5 \
+      CODEX_REASONING_EFFORT=xhigh \
+      CODEX_FALLBACK_ENABLED=0 \
+      CODEX_FALLBACK_SCREEN_ENABLED=0 \
+      CODEX_POSTMORTEM_ENABLED=0 \
+      UPKEEPER_DRY_RUN=1 \
+      ./Upkeeper >out.txt 2>err.txt
     rc=$?
     set -e
 

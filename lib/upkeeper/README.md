@@ -19,6 +19,22 @@ Missing modules must fail before lock acquisition, Codex launch, fallback, or
 parent-shell stop logic. The root launcher exits 70 with a terminal-visible
 error when a listed module is unreadable.
 
+## Module Design Discipline
+
+Keep modules boring and reusable.
+
+- Prefer a small function with a clear input/output contract when behavior is
+  shared, validated, logged, or likely to be touched again.
+- Keep orchestration in root `Upkeeper`; keep parsing, formatting, preflight,
+  process handling, prompt assembly, and artifact handling in the module that
+  owns that concern.
+- Avoid adding a new module for one short one-off block unless it clarifies load
+  order, isolates a risky contract, or gives validation a clean target.
+- Prefer existing shell helpers and focused Python snippets over new runtime
+  dependencies.
+- Add validation when a reusable helper handles malformed input, missing files,
+  process state, quota state, or operator-facing log/exit contracts.
+
 ## Module Groups
 
 Runtime evidence:

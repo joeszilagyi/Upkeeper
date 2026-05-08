@@ -3,6 +3,46 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## P29 Reuse System Hardening
+
+Status: completed
+
+Goal:
+Harden P29 from a reuse prompt into a stronger reuse-system contract without
+starting the larger registry and helper-extraction refactors in the same patch.
+
+Completed in this patch:
+- Add explicit boundaries between P12 local duplication review and P29
+  project-wide reusable asset review.
+- Add wrong-abstraction rollback rules, shell reuse safety gates, command reuse
+  policy, registry preference, command recipe harvesting, reusable data-table
+  coverage, ShellCheck policy, and reuse-debt output requirements.
+- Add a reusable asset ownership map to `lib/upkeeper/README.md`.
+- Extend local validation and public-doc checks so the P29 hardening contract
+  cannot silently disappear.
+
+Future P29 priority queue:
+- P29-1: add or simulate a narrow review-module registry for ids, aliases,
+  prompt paths, titles, and help summaries.
+- P29-2: refactor `tools/validate_upkeeper.sh` review-module checks into
+  metadata arrays and loops.
+- P29-3: add a validation helper for fake Upkeeper environment setup while
+  preserving captured exit codes and redirections.
+- P29-4: add dependency-list drift validation between docs, validation, and
+  runtime preflight checks.
+- P29-5: add tests before extracting `codex_io.bash` jq assignment scaffolding.
+- P29-6: add shared fixtures or fixture writers for quota/session JSONL cases.
+- P29-7: add prompt-module structure validation so future modules do not repeat
+  wiring pain.
+- P29-8: inspect embedded Python data tables and regexes as reusable assets,
+  especially startup anomaly allowlists and command-kind classifiers.
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash`
+- `tools/check_public_docs.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## P29 Reuse Harvesting Review Module
 
 Status: completed

@@ -35,6 +35,38 @@ Keep modules boring and reusable.
 - Add validation when a reusable helper handles malformed input, missing files,
   process state, quota state, or operator-facing log/exit contracts.
 
+## Reusable Asset Ownership
+
+Put reusable behavior in the narrowest owner that already owns the contract.
+Do not create a generic `utils.bash`, `common.bash`, or `helpers.bash` module
+unless there is no clearer owner and the new file has one named responsibility.
+
+- Runtime, logging, terminal, temp, and evidence helpers:
+  `runtime_foundation.bash`
+- JSON field and time formatting helpers: `runtime_format_json.bash`
+- Fallback marker, quote, and artifact field helpers:
+  `fallback_artifacts.bash`
+- Transcript path, hash, size, and line-count helpers:
+  `transcript_artifacts.bash`
+- Environment and config validation helpers: `config_validation.bash`
+- Quota, model, and session guardrail helpers: `quota_guardrails.bash`
+- Review-module CLI aliases and Codex invocation boundaries: `codex_io.bash`
+- Review-module prompt path assembly and prompt loading: `prompt_compile.bash`
+- Process argument formatting and process-state helpers: `process_args.bash`
+  and `process_control.bash`
+- Selection manifests, worktree state, and startup anomaly path rules:
+  `file_manifest.bash` and `worktree_state.bash`
+- Validation harness helpers: `tools/validate_upkeeper.sh`
+- Public documentation drift checks: `tools/check_public_docs.sh`
+- Prompt-module index and reusable review-language ownership:
+  `prompts/README.md` and `prompts/*.md`
+
+If review-module ids, aliases, prompt paths, titles, and help summaries keep
+growing, prefer a narrow `review_modules.bash` registry over another scattered
+case-block update. Do not add that registry until the callers and validation can
+prove it preserves the existing CLI, logs, prompt loading, and symlinked-client
+behavior.
+
 ## Module Groups
 
 Runtime evidence:

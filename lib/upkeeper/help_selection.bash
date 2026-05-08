@@ -83,8 +83,8 @@ Loop stop semantics:
     and prunes sibling zip archives older than ${CODEX_LOG_ROTATE_KEEP_HOURS} hours on startup.
   - by default, live terminal output is summary-first: routine INFO logs and
     full backend transcripts stay in log/transcript artifacts, while WARN,
-    ERROR, live tool/Codex error lines, timestamped progress heartbeats, status,
-    and bounded high-signal transcript summaries remain visible;
+    ERROR, numbered command-category progress, timestamped progress heartbeats,
+    status, and bounded high-signal transcript summaries remain visible;
     transcript artifacts live under:
       ${CODEX_TRANSCRIPT_DIR}
     and are pruned after ${CODEX_TRANSCRIPT_KEEP_HOURS} hours or when the

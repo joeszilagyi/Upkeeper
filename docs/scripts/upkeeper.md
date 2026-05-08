@@ -96,8 +96,8 @@ Loop stop semantics:
 Transcript and live terminal behavior:
   - Default live terminal mode is summary-first. Routine INFO logs stay in
     `Upkeeper.log`; full Codex stdout/stderr stays in transcript artifacts.
-  - WARN/ERROR lines, final status, and bounded high-signal transcript summaries
-    remain visible live.
+  - Numbered command-category progress, WARN/ERROR lines, final status, and
+    bounded high-signal transcript summaries remain visible live.
   - Transcript artifacts live under `runtime/upkeeper-transcripts` by default and
     are pruned after 24 hours or once the directory exceeds 200 MB.
   - Set `CODEX_TERMINAL_VERBOSITY=full` to stream the full backend transcript live.

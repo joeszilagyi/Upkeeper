@@ -110,30 +110,26 @@ def is_signal(line: str) -> bool:
         return True
     return False
 
-def is_interesting_command(line: str) -> bool:
+def command_kind(line: str) -> str:
     lowered = line.lower()
     if re.search(r'\bcommand -v\s+', lowered):
-        return False
-    return any(
-        token in lowered
-        for token in (
-            'pytest',
-            ' test',
-            '/test',
-            'bash -n',
-            '--check',
-            'diff --check',
-            'python',
-            'node',
-            'npm',
-            'make',
-            'cargo',
-            'go test',
-            'ruff',
-            'mypy',
-            'shellcheck',
-        )
-    )
+        return 'command'
+    if re.search(r'\b(pytest|bats)\b|\bpython[0-9.]*\s+-m\s+pytest\b|\bgo\s+test\b|\bcargo\s+test\b|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b|\bmake\s+(?:[^;&|]*\s+)?test\b', lowered):
+        return 'tests'
+    if re.search(r'\btools/validate_[a-z0-9_.-]+(?:\.sh)?\b|validate_upkeeper\.sh', lowered):
+        return 'validation'
+    if re.search(r'\bbash\s+-n\b|\bdiff\s+--check\b|git\s+diff\s+--check|\bshellcheck\b|\bruff\b|\bmypy\b', lowered):
+        return 'check'
+    if re.search(r'\b(rg|grep|find)\b|git\s+grep|\bnl\s+-ba\b|\bsed\s+-n\b', lowered):
+        return 'search'
+    if re.search(r'\b(npm|pnpm|yarn|node|make|cargo|go)\b', lowered):
+        return 'build'
+    if re.search(r'\bgit\b', lowered):
+        return 'git'
+    return 'command'
+
+def is_interesting_command(line: str) -> bool:
+    return command_kind(line) in {'tests', 'validation', 'check', 'build'}
 
 def collect_signals(raw_lines: list[str]) -> list[str]:
     collected = []
@@ -322,42 +318,41 @@ def is_error_line(line: str) -> bool:
 
 def command_kind(line: str) -> str:
     lowered = line.lower()
-    if "pytest" in lowered or " test" in lowered or "/test" in lowered:
+    if re.search(r"\bcommand -v\s+", lowered):
+        return "command"
+    if re.search(r"\b(pytest|bats)\b|\bpython[0-9.]*\s+-m\s+pytest\b|\bgo\s+test\b|\bcargo\s+test\b|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b|\bmake\s+(?:[^;&|]*\s+)?test\b", lowered):
         return "tests"
-    if "bash -n" in lowered or "--check" in lowered or "diff --check" in lowered:
+    if re.search(r"\btools/validate_[a-z0-9_.-]+(?:\.sh)?\b|validate_upkeeper\.sh", lowered):
+        return "validation"
+    if re.search(r"\bbash\s+-n\b|\bdiff\s+--check\b|git\s+diff\s+--check|\bshellcheck\b|\bruff\b|\bmypy\b", lowered):
         return "check"
+    if re.search(r"\b(rg|grep|find)\b|git\s+grep|\bnl\s+-ba\b|\bsed\s+-n\b", lowered):
+        return "search"
+    if re.search(r"\b(npm|pnpm|yarn|node|make|cargo|go)\b", lowered):
+        return "build"
+    if re.search(r"\bgit\b", lowered):
+        return "git"
     return "command"
 
 
-def is_interesting_command(line: str) -> bool:
-    lowered = line.lower()
-    if re.search(r"\bcommand -v\s+", lowered):
-        return False
-    return any(
-        token in lowered
-        for token in (
-            "pytest",
-            " test",
-            "/test",
-            "bash -n",
-            "--check",
-            "diff --check",
-            "python",
-            "node",
-            "npm",
-            "make",
-            "cargo",
-            "go test",
-            "ruff",
-            "mypy",
-            "shellcheck",
-        )
-    )
+def should_announce_start(kind: str) -> bool:
+    return kind in {"tests", "validation", "check", "build", "search"}
+
+
+def should_report_success(kind: str) -> bool:
+    return kind in {"tests", "validation", "check", "build"}
+
+
+def should_report_failure_as_error(kind: str) -> bool:
+    return kind in {"tests", "validation", "check", "build"}
 
 
 expecting_command = False
 last_kind = "command"
+last_command_id = 0
 current_command_interesting = False
+current_command_reports_success = False
+current_command_exit_reported = False
 in_command_output = False
 in_codex_message = False
 in_diff_block = False
@@ -384,6 +379,8 @@ try:
         if stripped == "codex" or stripped.startswith("tokens used"):
             expecting_command = False
             current_command_interesting = False
+            current_command_reports_success = False
+            current_command_exit_reported = False
             in_command_output = False
             in_codex_message = True
             in_diff_block = False
@@ -392,6 +389,8 @@ try:
         if stripped == "exec":
             expecting_command = True
             current_command_interesting = False
+            current_command_reports_success = False
+            current_command_exit_reported = False
             in_command_output = False
             in_codex_message = False
             in_diff_block = False
@@ -406,30 +405,37 @@ try:
 
         if expecting_command and stripped:
             expecting_command = False
+            last_command_id += 1
             last_kind = command_kind(stripped)
-            current_command_interesting = is_interesting_command(stripped)
+            current_command_interesting = should_announce_start(last_kind)
+            current_command_reports_success = should_report_success(last_kind)
+            current_command_exit_reported = False
             in_command_output = False
             in_codex_message = False
             if not silent and current_command_interesting:
-                print(f"{ts()} Upkeeper: {label} running {last_kind}: {short(stripped)}", file=sys.stderr, flush=True)
+                print(f"{ts()} Upkeeper: {label} cmd#{last_command_id} {last_kind} started: {short(stripped)}", file=sys.stderr, flush=True)
             continue
 
         if re.match(r"succeeded in [0-9]+", stripped):
             in_command_output = True
             in_codex_message = False
-            if not silent and current_command_interesting:
-                print(f"{ts()} Upkeeper: {label} {last_kind} completed: {short(stripped)}", file=sys.stderr, flush=True)
+            if not silent and current_command_reports_success:
+                print(f"{ts()} Upkeeper: {label} cmd#{last_command_id} {last_kind} passed: {short(stripped)}", file=sys.stderr, flush=True)
             continue
 
         if re.match(r"exited [1-9][0-9]* in ", stripped):
             in_command_output = True
             in_codex_message = False
-            if current_command_interesting:
-                print(f"{ts()} Upkeeper: {label} ERROR {last_kind} failed: {short(stripped)}", file=sys.stderr, flush=True)
+            if not current_command_exit_reported:
+                current_command_exit_reported = True
+                if should_report_failure_as_error(last_kind):
+                    print(f"{ts()} Upkeeper: {label} ERROR cmd#{last_command_id} {last_kind} failed: {short(stripped)}", file=sys.stderr, flush=True)
+                elif not silent and current_command_interesting:
+                    print(f"{ts()} Upkeeper: {label} cmd#{last_command_id} {last_kind} exited nonzero: {short(stripped)}", file=sys.stderr, flush=True)
             continue
 
         if in_command_output:
-            if current_command_interesting and is_error_line(stripped):
+            if current_command_reports_success and is_error_line(stripped):
                 print(f"{ts()} Upkeeper: {label} ERROR: {short(stripped)}", file=sys.stderr, flush=True)
             continue
 

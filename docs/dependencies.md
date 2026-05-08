@@ -57,6 +57,7 @@ These commands are required by normal Upkeeper startup/runtime paths:
 - `git`
 - `grep`
 - `jq`
+- `ln`
 - `mkdir`
 - `mktemp`
 - `mv`

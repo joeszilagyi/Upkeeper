@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28] [--review-modules=p24,p25,p26,p27,p28] [--p24] [--p25] [--p26] [--p27] [--p28] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28] [--ignore-failure-queue] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.13
+Version: v1.1.14
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -186,8 +186,9 @@ Important:
     wrote cycle.exit/run.finish, logs previous_run.anomaly lines, and injects
     those findings into the prompt for the next healthy run.
   - Startup also logs disk.preflight lines for repo, log, Codex home/session,
-    temp, bwrap, arg0, and runtime paths, and injects a prompt note when any
-    write-critical root is below 10% free.
+    temp, bwrap, arg0, and runtime paths. Path-like fields are shell-quoted for
+    parseable logs, and startup injects a prompt note when any write-critical
+    root is below 10% free.
   - Startup anomalies are a gate by default: while prior-run, watchdog-style, or
     low-disk anomaly evidence is active, preselection is forced to the repo-local
     Upkeeper implementation and normal timestamp rotation is blocked until the
@@ -380,6 +381,7 @@ Environment overrides:
   CODEX_TOOL_FAILURE_QUEUE_DIR Default: runtime/unaddressed-tool-failures
   CODEX_ACTIVE_LOCK_DIR Default: runtime/upkeeper-active.lock
   CODEX_WRAPPER_HEALTH_STATE_DIR Default: $CODEX_HOME/upkeeper/active-wrapper-runs
+  CODEX_WRAPPER_HEALTH_ARCHIVE_DIR Default: $CODEX_HOME/upkeeper/retired-wrapper-runs
   CODEX_SESSION_SCAN_LIMIT      Default: 200
   CODEX_LOG_FILE                Default: Upkeeper.log
   UPKEEPER_DRY_RUN           Default: 0
@@ -483,6 +485,10 @@ Exit codes:
 - Tracked launchers live under `launcher_examples/`. Validate them with
   `bash -n launcher_examples/*.sh` and their own dry-run knobs before changing
   loop behavior.
+- Tracked local test launchers live under `testruns/`. They provide ready-made
+  cycles for all-pass P-module runs, documentation-focused P26 loops, manifest
+  refresh dry-runs, and enumerate/random selector dry-runs. Validate them with
+  `bash -n testruns/*.sh` before changing loop behavior.
 - Log continuity is now script-visible before Codex starts: `previous_run.scan`,
   `previous_run.anomaly`, `disk.preflight`, and `--MARK--` lines are primary
   evidence for follow-up self-repair.

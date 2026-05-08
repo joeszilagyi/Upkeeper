@@ -17,6 +17,7 @@ WRAPPER_REQUIRED_COMMANDS=(
   git
   grep
   jq
+  ln
   mkdir
   mktemp
   mv
@@ -170,6 +171,7 @@ check_syntax() {
   for module in lib/upkeeper/*.bash; do
     bash -n "$module"
   done
+  bash -n testruns/*.sh
 }
 
 check_version_consistency() {
@@ -387,6 +389,262 @@ check_cycle_start_log_contract() {
   grep -Fq 'mode=--sandbox\ workspace-write' "$temp_dir/Upkeeper.log" || fail "cycle.start did not quote CODEX_MODE with spaces"
   grep -Fq "code_home=$code_home_q" "$temp_dir/Upkeeper.log" || fail "cycle.start did not quote CODEX_HOME with spaces"
   grep -Fq "reason=DRY_RUN" "$temp_dir/Upkeeper.log" || fail "cycle.start log contract dry-run did not finish cleanly"
+  rm -r "$temp_dir"
+}
+
+check_disk_preflight_log_contract() {
+  local temp_dir path_with_token path_q output extracted_free synthetic_free
+
+  log "checking disk preflight log quoting"
+  temp_dir="$(mktemp -d /tmp/upkeeper-disk-preflight.XXXXXX)"
+  path_with_token="$temp_dir/path with spaces/free_percent=999"
+  mkdir -p "$path_with_token"
+
+  if ! output="$(
+    bash -c '
+      set -euo pipefail
+      shell_quote() { printf "%q" "$1"; }
+      source "$1"
+      fields="$(disk_space_fields "arg0 tmp" "$2")"
+      free_percent="$(disk_preflight_free_percent_from_fields "$fields")"
+      synthetic_free="$(disk_preflight_free_percent_from_fields "label=root size_kb=1 used_kb=0 avail_kb=1 used_percent=0 free_percent=88 mount=/ path=/tmp/free_percent=999 probe_path=/tmp")"
+      printf "%s\n" "$fields"
+      printf "extracted_free=%s\n" "$free_percent"
+      printf "synthetic_free=%s\n" "$synthetic_free"
+    ' bash "$ROOT_DIR/lib/upkeeper/disk_preflight.bash" "$path_with_token"
+  )"; then
+    fail "disk preflight log contract check failed"
+  fi
+
+  printf -v path_q '%q' "$path_with_token"
+  grep -Fq "label=arg0\\ tmp" <<<"$output" || fail "disk preflight label was not shell-quoted"
+  grep -Fq "path=$path_q" <<<"$output" || fail "disk preflight path was not shell-quoted"
+  extracted_free="$(sed -n 's/^extracted_free=//p' <<<"$output")"
+  [[ -n "$extracted_free" ]] || fail "disk preflight free_percent extraction returned empty"
+  [[ "$extracted_free" != "999" ]] || fail "disk preflight free_percent extraction used the path token"
+  [[ "$extracted_free" =~ ^-?[0-9]+([.][0-9]+)?$ ]] || fail "disk preflight free_percent was not numeric: $extracted_free"
+  synthetic_free="$(sed -n 's/^synthetic_free=//p' <<<"$output")"
+  [[ "$synthetic_free" == "88" ]] || fail "disk preflight free_percent parser did not use the intended field"
+
+  rm -r "$temp_dir"
+}
+
+check_arg0_tmp_cleanup_contract() {
+  local temp_dir arg0_root quarantine_root output
+
+  log "checking Codex arg0 temp cleanup contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-arg0-cleanup.XXXXXX)"
+  arg0_root="$temp_dir/arg0"
+  quarantine_root="$temp_dir/quarantine"
+
+  mkdir -p "$arg0_root/codex-arg0-old" "$arg0_root/unmanaged-cache"
+  printf 'shim\n' >"$arg0_root/codex-arg0-old/shim"
+  printf 'keep\n' >"$arg0_root/unmanaged-cache/keep"
+  touch -t 202001010000 "$arg0_root/codex-arg0-old" "$arg0_root/unmanaged-cache"
+
+  if ! output="$(
+    CODEX_ARG0_TMP_ROOT="$arg0_root" \
+      CODEX_ARG0_TMP_QUARANTINE_ROOT="$quarantine_root" \
+      CODEX_ARG0_TMP_PREFLIGHT=1 \
+      CODEX_ARG0_TMP_STALE_MINUTES=60 \
+      CODEX_ARG0_TMP_ROTATE_ON_BLOCKED=1 \
+      CODEX_HOME_DIR="$temp_dir/codex-home" \
+      bash -c 'source "$1"; codex_arg0_tmp_cleanup_check' bash "$ROOT_DIR/lib/upkeeper/arg0_preflight.bash"
+  )"; then
+    fail "arg0 cleanup contract check failed"
+  fi
+
+  [[ "$output" == "ok removed=1 quarantined=0" ]] || fail "arg0 cleanup returned unexpected output: $output"
+  [[ ! -e "$arg0_root/codex-arg0-old" ]] || fail "stale codex-arg0 shim directory was not removed"
+  [[ -f "$arg0_root/unmanaged-cache/keep" ]] || fail "non-codex stale directory was modified"
+
+  rm -r "$temp_dir"
+}
+
+check_bwrap_tmp_preflight_contract() {
+  local temp_dir output rc
+
+  log "checking Codex bubblewrap temp preflight contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-bwrap-preflight.XXXXXX)"
+
+  if ! output="$(
+    cd "$temp_dir"
+    CODEX_BWRAP_TMP_ROOT="-bwrap-root" \
+      CODEX_BWRAP_TMP_PREFLIGHT=1 \
+      bash -c 'source "$1"; codex_bwrap_tmp_write_check' bash "$ROOT_DIR/lib/upkeeper/bwrap_preflight.bash"
+  )"; then
+    fail "bwrap temp preflight failed for a leading-dash relative root"
+  fi
+
+  [[ "$output" == "ok" ]] || fail "bwrap temp preflight returned unexpected output: $output"
+  [[ -f "$temp_dir/-bwrap-root/lock" ]] || fail "bwrap temp preflight did not create the lock file"
+  if compgen -G "$temp_dir/-bwrap-root/.upkeeper-write-test.*" >/dev/null; then
+    fail "bwrap temp preflight left a probe directory behind"
+  fi
+
+  printf 'not a directory\n' >"$temp_dir/not-dir"
+  set +e
+  output="$(
+    CODEX_BWRAP_TMP_ROOT="$temp_dir/not-dir" \
+      CODEX_BWRAP_TMP_PREFLIGHT=1 \
+      bash -c 'source "$1"; codex_bwrap_tmp_write_check' bash "$ROOT_DIR/lib/upkeeper/bwrap_preflight.bash"
+  )"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 1 ]] || fail "bwrap temp not-directory check exited $rc, expected 1"
+  [[ "$output" == "not_directory:$temp_dir/not-dir" ]] || fail "bwrap temp not-directory check returned unexpected output: $output"
+
+  rm -r -- "$temp_dir"
+}
+
+check_wrapper_health_log_quoting() {
+  local temp_dir health_dir archive_dir state_file rc
+
+  log "checking wrapper health log quoting"
+  temp_dir="$(mktemp -d "/tmp/upkeeper-health quote.XXXXXX")"
+  health_dir="$temp_dir/health state"
+  archive_dir="$temp_dir/retired health"
+  write_validation_quota_snapshot "$temp_dir/codex home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
+
+  CODEX_HOME="$temp_dir/codex home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$health_dir" \
+    CODEX_WRAPPER_HEALTH_ARCHIVE_DIR="$archive_dir" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    UPKEEPER_DRY_RUN=1 \
+    ./Upkeeper --target-file=Upkeeper >"$temp_dir/first.out" 2>"$temp_dir/first.err"
+
+  state_file="$(find "$health_dir" -maxdepth 1 -type f -name '*.state' | sort | sed -n '1p')"
+  [[ -n "$state_file" ]] || fail "wrapper health dry-run did not create a state file"
+
+  python3 - "$state_file" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines()
+replacements = {
+    "status": "running",
+    "pid": "999999999",
+    "last_mark_epoch": "1",
+    "updated_epoch": "1",
+}
+updated = []
+for line in lines:
+    key = line.split("=", 1)[0]
+    if key in replacements:
+        updated.append(f"{key}={replacements[key]}")
+    else:
+        updated.append(line)
+path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+PY
+
+  : >"$temp_dir/Upkeeper.log"
+  set +e
+  CODEX_HOME="$temp_dir/codex home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$health_dir" \
+    CODEX_WRAPPER_HEALTH_ARCHIVE_DIR="$archive_dir" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    UPKEEPER_DRY_RUN=1 \
+    ./Upkeeper --target-file=Upkeeper >"$temp_dir/second.out" 2>"$temp_dir/second.err"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 0 ]] || fail "wrapper health quote dry-run exited $rc"
+  grep -Fq "central_wrapper.health status=reclaimed action=archive" "$temp_dir/Upkeeper.log" || fail "wrapper health did not log stale-state archive"
+  grep -Eq "state_file='[^']*health state/[^']*[.]state'" "$temp_dir/Upkeeper.log" || fail "wrapper health state_file path with spaces was not quoted"
+  grep -Eq "archived_state_file='[^']*retired health/[^']*[.]state'" "$temp_dir/Upkeeper.log" || fail "wrapper health archived_state_file path with spaces was not quoted"
+  rm -r "$temp_dir"
+}
+
+check_operator_guide_bootstrap_race() {
+  local temp_dir guide_path
+
+  log "checking operator guide bootstrap no-overwrite race"
+  temp_dir="$(mktemp -d /tmp/upkeeper-operator-guide.XXXXXX)"
+  guide_path="$temp_dir/docs/scripts/upkeeper.md"
+
+  (
+    set -euo pipefail
+    CODEX_OPERATOR_GUIDE_PATH="$guide_path"
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=1
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log"
+    CODEX_TERMINAL_VERBOSITY=silent
+    CODEX_HOME="$temp_dir/codex-home"
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock"
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health"
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates"
+    source "$ROOT_DIR/Upkeeper"
+
+    mktemp() {
+      local created
+      created="$(command mktemp "$@")" || return 1
+      mkdir -p "$(dirname -- "$CODEX_OPERATOR_GUIDE_PATH")"
+      printf 'operator-created-guide\n' >"$CODEX_OPERATOR_GUIDE_PATH"
+      printf '%s\n' "$created"
+    }
+
+    ensure_operator_guide
+  )
+
+  grep -Fxq "operator-created-guide" "$guide_path" || fail "operator guide bootstrap overwrote a race-created guide"
+  if compgen -G "$temp_dir/docs/scripts/.upkeeper-guide.*" >/dev/null; then
+    fail "operator guide bootstrap left a temp guide after the race path"
+  fi
+  grep -Fq "operator_guide.version_missing" "$temp_dir/Upkeeper.log" || fail "operator guide race-created file was not checked"
+  rm -r "$temp_dir"
+}
+
+check_active_lock_incomplete_guard() {
+  local temp_dir rc
+
+  log "checking active lock incomplete-acquisition guard"
+  temp_dir="$(mktemp -d /tmp/upkeeper-active-lock.XXXXXX)"
+  mkdir "$temp_dir/active.lock"
+
+  set +e
+  CODEX_HOME="$temp_dir/codex-home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    UPKEEPER_DRY_RUN=1 \
+    ./Upkeeper --target-file=Upkeeper >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 7 ]] || fail "incomplete active lock exited $rc, expected 7"
+  grep -Fq "active_lock.incomplete" "$temp_dir/Upkeeper.log" || fail "incomplete active lock was not logged"
+  grep -Fq "reason=UPKEEPER_ACTIVE_LOCK_HELD" "$temp_dir/Upkeeper.log" || fail "incomplete active lock did not use held exit reason"
+  [[ -d "$temp_dir/active.lock" ]] || fail "incomplete active lock guard removed a fresh lock directory"
   rm -r "$temp_dir"
 }
 
@@ -833,6 +1091,65 @@ check_fallback_artifact_helpers() {
   [[ -z "$got" ]] || fail "missing marker returned $got instead of empty"
   got="$(marker_field "$temp_dir" "blocked_until")"
   [[ -z "$got" ]] || fail "directory marker returned $got instead of empty"
+
+  rm -r "$temp_dir"
+}
+
+check_runtime_format_json_helpers() {
+  local got err_file rc
+
+  log "checking runtime format/json helper contracts"
+  source lib/upkeeper/runtime_format_json.bash
+
+  got="$(format_epoch_local "")"
+  [[ "$got" == "unknown" ]] || fail "empty epoch formatted as $got instead of unknown"
+  got="$(format_epoch_local "not-an-epoch")"
+  [[ "$got" == "not-an-epoch" ]] || fail "unformattable epoch fallback returned $got"
+
+  got="$(json_field '{"accepted_marker":"WORK_DONE","candidate_marker":null}' '.accepted_marker')"
+  [[ "$got" == "WORK_DONE" ]] || fail "json_field returned $got for accepted_marker"
+  got="$(json_field '{"accepted_marker":"WORK_DONE","candidate_marker":null}' '.candidate_marker')"
+  [[ -z "$got" ]] || fail "json_field returned $got for null candidate_marker"
+  got="$(json_field '{"enabled":false}' '.enabled')"
+  [[ "$got" == "false" ]] || fail "json_field dropped boolean false as ${got:-<empty>}"
+
+  err_file="$(mktemp /tmp/upkeeper-json-field.XXXXXX)"
+  set +e
+  got="$(json_field '{' '.accepted_marker' 2>"$err_file")"
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 ]] || fail "json_field accepted malformed JSON"
+  [[ -z "$got" ]] || fail "json_field wrote stdout for malformed JSON: $got"
+  grep -Fq "json_field failed for jq path .accepted_marker" "$err_file" ||
+    fail "json_field malformed JSON diagnostic missing"
+  rm -f "$err_file"
+}
+
+check_startup_anomaly_state_parser_contract() {
+  local temp_dir state_dir output
+
+  log "checking startup anomaly state parser log contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-startup-state.XXXXXX)"
+  state_dir="$temp_dir/startup gates"
+  mkdir -p "$state_dir"
+  printf 'cycle_id=cycle with spaces\nrun_hash=hash with spaces\nstatus=unresolved\ncreated_epoch=123 extra=bad\nreason=manual reason\n' >"$state_dir/bad state.state"
+
+  output="$(
+    cd "$ROOT_DIR"
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$state_dir" bash -c 'source lib/upkeeper/startup_anomaly_state.bash; startup_anomaly_state_lines'
+  )"
+
+  grep -Fq 'previous_cycle=cycle\ with\ spaces' <<<"$output" || fail "startup anomaly cycle id was not log-escaped"
+  grep -Fq 'previous_run_hash=hash\ with\ spaces' <<<"$output" || fail "startup anomaly run hash was not log-escaped"
+  grep -Fq 'bad\ state.state' <<<"$output" || fail "startup anomaly state path was not log-escaped"
+  grep -Fq 'state_reason=manual\ reason' <<<"$output" || fail "startup anomaly reason was not log-escaped"
+  grep -Eq 'created_epoch=[0-9]+ ' <<<"$output" || fail "startup anomaly fallback epoch missing"
+  if grep -Fq 'extra=bad' <<<"$output"; then
+    fail "startup anomaly parser accepted malformed created_epoch as log fields"
+  fi
+  if grep -Fq 'startup gates' <<<"$output" || grep -Fq 'manual reason' <<<"$output"; then
+    fail "startup anomaly parser emitted raw whitespace in log field values"
+  fi
 
   rm -r "$temp_dir"
 }
@@ -1555,6 +1872,12 @@ check_prompt_template
 check_help_and_diff
 check_codex_mode_validation
 check_cycle_start_log_contract
+check_disk_preflight_log_contract
+check_arg0_tmp_cleanup_contract
+check_bwrap_tmp_preflight_contract
+check_wrapper_health_log_quoting
+check_operator_guide_bootstrap_race
+check_active_lock_incomplete_guard
 check_quota_fallback_exit_contract
 check_review_module_flags
 check_config_file_support
@@ -1562,6 +1885,8 @@ check_file_manifest_selection
 check_tool_failure_queue
 check_public_docs_policy
 check_fallback_artifact_helpers
+check_runtime_format_json_helpers
+check_startup_anomaly_state_parser_contract
 check_postmortem_context_marker_classification
 check_postmortem_sequence_marker_contract
 check_live_output_filter_pipe

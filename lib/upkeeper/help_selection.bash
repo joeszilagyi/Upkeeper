@@ -188,8 +188,9 @@ Important:
     wrote cycle.exit/run.finish, logs previous_run.anomaly lines, and injects
     those findings into the prompt for the next healthy run.
   - Startup also logs disk.preflight lines for repo, log, Codex home/session,
-    temp, bwrap, arg0, and runtime paths, and injects a prompt note when any
-    write-critical root is below ${CODEX_DISK_MIN_FREE_PERCENT}% free.
+    temp, bwrap, arg0, and runtime paths. Path-like fields are shell-quoted for
+    parseable logs, and startup injects a prompt note when any write-critical
+    root is below ${CODEX_DISK_MIN_FREE_PERCENT}% free.
   - Startup anomalies are a gate by default: while prior-run, watchdog-style, or
     low-disk anomaly evidence is active, preselection is forced to the repo-local
     Upkeeper implementation and normal timestamp rotation is blocked until the
@@ -360,6 +361,7 @@ Environment overrides:
   CODEX_TOOL_FAILURE_QUEUE_DIR Default: $ROOT_DIR/runtime/unaddressed-tool-failures
   CODEX_ACTIVE_LOCK_DIR Default: $ROOT_DIR/runtime/upkeeper-active.lock
   CODEX_WRAPPER_HEALTH_STATE_DIR Default: $CODEX_HOME_DIR/upkeeper/active-wrapper-runs
+  CODEX_WRAPPER_HEALTH_ARCHIVE_DIR Default: $CODEX_HOME_DIR/upkeeper/retired-wrapper-runs
   CODEX_SESSION_SCAN_LIMIT      Default: 200
   CODEX_LOG_FILE                Default: $ROOT_DIR/Upkeeper.log
   UPKEEPER_DRY_RUN           Default: 0

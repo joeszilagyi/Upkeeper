@@ -1,3 +1,6 @@
+# Owns the local active-run lock for one Upkeeper checkout. The lock directory
+# serializes wrapper cycles before Codex starts so quota, runtime evidence, and
+# fallback state are not mutated by two primary runs at once.
 append_startup_anomaly_reason() {
   local reason="$1"
   [[ -n "$reason" ]] || return 0
@@ -12,6 +15,21 @@ active_lock_field() {
   local file="$CODEX_ACTIVE_LOCK_DIR/state"
   [[ -f "$file" ]] || return 1
   sed -n "s/^${key}=//p" "$file" | sed -n '1p'
+}
+
+active_lock_age_seconds() {
+  local path="$1"
+  python3 - "$path" <<'PY'
+import os
+import sys
+import time
+
+try:
+    age = int(time.time() - os.stat(sys.argv[1]).st_mtime)
+except OSError:
+    sys.exit(1)
+print(max(age, 0))
+PY
 }
 
 process_fingerprint_alive() {
@@ -33,13 +51,15 @@ process_fingerprint_alive() {
 release_active_lock() {
   [[ "${ACTIVE_LOCK_ACQUIRED:-0}" == "1" ]] || return 0
   [[ -n "$CODEX_ACTIVE_LOCK_DIR" ]] || return 0
+  rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state.tmp.$$" 2>/dev/null || true
   rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state" 2>/dev/null || true
   rmdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null || true
   ACTIVE_LOCK_ACQUIRED="0"
 }
 
 acquire_active_lock_or_exit() {
-  local lock_parent owner_pid owner_start owner_boot owner_cycle owner_run_hash state_file
+  local lock_age_seconds lock_parent owner_pid owner_start owner_boot owner_cycle owner_run_hash state_file state_tmp
+  local incomplete_lock_grace_seconds="30"
   if [[ -z "$CODEX_ACTIVE_LOCK_DIR" || "$CODEX_ACTIVE_LOCK_DIR" == "/" ]]; then
     log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=unsafe_lock_path"
     finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=unsafe_lock_path"
@@ -67,8 +87,16 @@ acquire_active_lock_or_exit() {
       log_line "WARN" "active_lock.held path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=exit"
       finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown}"
     fi
+    lock_age_seconds="$(active_lock_age_seconds "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null || printf 'unknown')"
+    # A newly-created lock with no trusted state can be another wrapper between
+    # mkdir and atomic state publish. Fail closed briefly instead of reclaiming it.
+    if [[ "$lock_age_seconds" =~ ^[0-9]+$ && "$lock_age_seconds" -lt "$incomplete_lock_grace_seconds" ]]; then
+      log_line "WARN" "active_lock.incomplete path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} lock_age_seconds=$lock_age_seconds grace_seconds=$incomplete_lock_grace_seconds action=exit"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 reason=incomplete_recent_lock owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} lock_age_seconds=$lock_age_seconds grace_seconds=$incomplete_lock_grace_seconds"
+    fi
     log_line "WARN" "active_lock.stale path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=reclaim"
     rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state" 2>/dev/null || true
+    rm -f -- "$CODEX_ACTIVE_LOCK_DIR"/state.tmp.* 2>/dev/null || true
     if ! rmdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
       log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=stale_lock_not_empty"
       finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=stale_lock_not_empty"
@@ -81,6 +109,7 @@ acquire_active_lock_or_exit() {
   fi
 
   state_file="$CODEX_ACTIVE_LOCK_DIR/state"
+  state_tmp="$CODEX_ACTIVE_LOCK_DIR/state.tmp.$$"
   if ! {
     printf 'cycle_id=%s\n' "$CYCLE_ID"
     printf 'run_hash=%s\n' "$CYCLE_RUN_HASH"
@@ -90,10 +119,17 @@ acquire_active_lock_or_exit() {
     printf 'root_dir=%s\n' "$ROOT_DIR"
     printf 'self_path=%s\n' "$SELF_PATH"
     printf 'created_epoch=%s\n' "$(date '+%s')"
-  } >"$state_file"; then
+  } >"$state_tmp"; then
+    rm -f -- "$state_tmp" 2>/dev/null || true
     release_active_lock
     log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=state_write_failed"
     finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=state_write_failed"
+  fi
+  if ! mv -f -- "$state_tmp" "$state_file"; then
+    rm -f -- "$state_tmp" 2>/dev/null || true
+    release_active_lock
+    log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=state_rename_failed"
+    finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=state_rename_failed"
   fi
 
   log_line "INFO" "active_lock.acquired path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR")"

@@ -250,6 +250,16 @@ UPKEEPER_LOOP_DRY_RUN=1 launcher_examples/spark_5.3_burn_out_xhigh.sh
 launcher_examples/spark_5.3_burn_out_xhigh.sh
 ```
 
+Tracked testruns under `testruns/` are plain shell launchers for common local
+cycles:
+
+```sh
+testruns/all_p_modules_600s.sh
+testruns/all_p_modules_once.sh --target-root=lib/upkeeper
+testruns/manifest_refresh_dry_run.sh
+testruns/enumerate_random_dry_run.sh
+```
+
 Run the same style of loop with a stronger model and an explicit 5-hour stop:
 
 ```sh
@@ -486,6 +496,8 @@ specific policy for publishing them.
 |-- templates/
 |   |-- README.md
 |   `-- prompt-template.md
+|-- testruns/
+|   `-- *.sh
 |-- tools/
 |   |-- check_public_docs.sh
 |   `-- validate_upkeeper.sh
@@ -519,6 +531,7 @@ specific policy for publishing them.
   public documentation policy checks
 - [launcher_examples/README.md](launcher_examples/README.md): tracked shell
   launcher examples for common Upkeeper loops
+- `testruns/*.sh`: tracked local launchers for repeatable Upkeeper test cycles
 - [prompts/default-review.md](prompts/default-review.md): runtime default review
   prompt template loaded by Upkeeper
 - [prompts/caretaking_23_items.md](prompts/caretaking_23_items.md): full

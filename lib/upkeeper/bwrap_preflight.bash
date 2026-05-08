@@ -1,3 +1,10 @@
+## Codex bubblewrap temp registry preflight.
+##
+## Codex can fail before producing useful session evidence when its bubblewrap
+## synthetic-mount registry is not writable. Upkeeper probes the registry root,
+## lock file, and a disposable child path before launching backend work so the
+## failure becomes an explicit wrapper exit with parseable log detail.
+
 codex_bwrap_tmp_write_check() {
   local registry_root="$CODEX_BWRAP_TMP_ROOT"
   local lock_path="$registry_root/lock"
@@ -17,50 +24,50 @@ codex_bwrap_tmp_write_check() {
 
   if [[ -e "$registry_root" && ! -d "$registry_root" ]]; then
     printf 'not_directory:%s' "$registry_root"
-    rm -f "$err_file"
+    rm -f -- "$err_file"
     return 1
   fi
 
-  if ! mkdir -p "$registry_root" 2>"$err_file"; then
+  if ! mkdir -p -- "$registry_root" 2>"$err_file"; then
     printf 'mkdir_failed:%s' "$(tr '\n' ' ' <"$err_file")"
-    rm -f "$err_file"
+    rm -f -- "$err_file"
     return 1
   fi
 
   if ! ( : >>"$lock_path" ) 2>"$err_file"; then
     printf 'lock_write_failed:%s' "$(tr '\n' ' ' <"$err_file")"
-    rm -f "$err_file"
+    rm -f -- "$err_file"
     return 1
   fi
 
-  if ! probe_dir="$(mktemp -d "$registry_root/.upkeeper-write-test.XXXXXX" 2>"$err_file")"; then
+  if ! probe_dir="$(mktemp -d -- "$registry_root/.upkeeper-write-test.XXXXXX" 2>"$err_file")"; then
     printf 'probe_dir_failed:%s' "$(tr '\n' ' ' <"$err_file")"
-    rm -f "$err_file"
+    rm -f -- "$err_file"
     return 1
   fi
 
   probe_file="$probe_dir/probe"
   if ! ( : >"$probe_file" ) 2>"$err_file"; then
     printf 'probe_write_failed:%s' "$(tr '\n' ' ' <"$err_file")"
-    rmdir "$probe_dir" >/dev/null 2>&1 || true
-    rm -f "$err_file"
+    rmdir -- "$probe_dir" >/dev/null 2>&1 || true
+    rm -f -- "$err_file"
     return 1
   fi
 
-  if ! rm -f "$probe_file" 2>"$err_file"; then
+  if ! rm -f -- "$probe_file" 2>"$err_file"; then
     printf 'probe_file_cleanup_failed:%s' "$(tr '\n' ' ' <"$err_file")"
-    rmdir "$probe_dir" >/dev/null 2>&1 || true
-    rm -f "$err_file"
+    rmdir -- "$probe_dir" >/dev/null 2>&1 || true
+    rm -f -- "$err_file"
     return 1
   fi
 
-  if ! rmdir "$probe_dir" 2>"$err_file"; then
+  if ! rmdir -- "$probe_dir" 2>"$err_file"; then
     printf 'probe_dir_cleanup_failed:%s' "$(tr '\n' ' ' <"$err_file")"
-    rm -f "$err_file"
+    rm -f -- "$err_file"
     return 1
   fi
 
-  rm -f "$err_file"
+  rm -f -- "$err_file"
   printf 'ok'
   return 0
 }

@@ -1,3 +1,8 @@
+# Startup-anomaly gate state helpers.
+#
+# The wrapper writes these local state files when a prior cycle needs the next
+# run to inspect Upkeeper itself before normal target selection. The reader keeps
+# malformed or operator-edited state files from corrupting parseable log fields.
 write_startup_anomaly_gate_state() {
   local status="$1"
   local detail="${2:-}"
@@ -97,10 +102,32 @@ startup_anomaly_state_lines() {
 
   python3 - "$state_dir" <<'PY'
 from pathlib import Path
+import string
 import sys
 
 root = Path(sys.argv[1])
 items = []
+
+LOG_FIELD_SAFE = set(string.ascii_letters + string.digits + "/._-:@%+=,")
+
+
+def log_field(value, fallback="unknown", max_len=200):
+    text = "" if value is None else str(value)
+    text = " ".join(text.strip().split())
+    if not text:
+        text = fallback
+    text = text[:max_len]
+    return "".join(ch if ch in LOG_FIELD_SAFE else "\\" + ch for ch in text)
+
+
+def normalized_epoch(value, fallback):
+    text = "" if value is None else str(value).strip()
+    if text.isdecimal() and len(text) <= 16:
+        return int(text), text
+    fallback_epoch = int(fallback)
+    return fallback_epoch, str(fallback_epoch)
+
+
 for path in root.glob("*.state"):
     fields = {}
     try:
@@ -115,17 +142,18 @@ for path in root.glob("*.state"):
         fields[key.strip()] = value.strip()
     if fields.get("status") != "unresolved":
         continue
-    created = fields.get("created_epoch") or str(int(stat.st_mtime))
-    cycle = fields.get("cycle_id") or "unknown"
-    run_hash = fields.get("run_hash") or "unknown"
-    reason = (fields.get("reason") or "unknown").replace("\t", " ")[:200]
-    items.append((created, path, cycle, run_hash, reason))
+    created_sort, created = normalized_epoch(fields.get("created_epoch"), stat.st_mtime)
+    cycle = log_field(fields.get("cycle_id"), max_len=120)
+    run_hash = log_field(fields.get("run_hash"), max_len=120)
+    reason = log_field(fields.get("reason"), max_len=200)
+    state_file = log_field(path, max_len=500)
+    items.append((created_sort, created, state_file, cycle, run_hash, reason))
 
-for created, path, cycle, run_hash, reason in sorted(items, reverse=True)[:10]:
+for _, created, state_file, cycle, run_hash, reason in sorted(items, reverse=True)[:10]:
     print(
         f"previous_cycle={cycle} previous_run_hash={run_hash} "
         f"reason=startup_anomaly_gate_unresolved_state created_epoch={created} "
-        f"state_file={path} state_reason={reason!r}"
+        f"state_file={state_file} state_reason={reason}"
     )
 PY
 }

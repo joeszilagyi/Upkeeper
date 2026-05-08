@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-08: v1.1.17 changes:
+	1. Added `.github/workflows/ci.yml` for no-quota GitHub Actions validation on pushes and pull requests.
+	2. The CI workflow starts on `ubuntu-latest`, installs required tools including `jq`, and runs shell syntax checks, `tests/*.bash`, `tools/check_public_docs.sh --quick`, and `tools/validate_upkeeper.sh --quick`.
+	3. Documented the CI validation path in README, the operator guide, and dependency docs, including that CI does not launch real Codex backend work or upload runtime artifacts by default.
+	4. Extended public documentation checks to require the tracked CI workflow and its core no-quota validation steps.
+
 2026-05-08: v1.1.16 changes:
 	1. Added `tools/stress_upkeeper_corpus.sh --local`, a no-quota local stress corpus harness that generates temporary sample repositories and exercises Upkeeper through repo-local `./Upkeeper.sh` symlinks.
 	2. Covered Bash, Python, Node/TypeScript, docs-only, generated-heavy, symlinked-client, dirty-worktree, historical-log, active-lock, terminal-mode, review-summary, and transcript-filter local scenarios without launching real Codex backend work.

@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28] [--review-modules=p24,p25,p26,p27,p28] [--p24] [--p25] [--p26] [--p27] [--p28] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28] [--ignore-failure-queue] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.16
+Version: v1.1.17
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -438,6 +438,9 @@ Exit codes:
   release or after touching module order, prompt packaging, symlink behavior, or
   failure-path guardrails. Full validation uses dry-runs plus a local fake
   `codex` binary; it does not launch real backend work.
+  GitHub Actions runs the no-quota CI path in `.github/workflows/ci.yml` on
+  pushes and pull requests: shell syntax, `tests/*.bash`, public docs, and
+  `tools/validate_upkeeper.sh --quick`.
   Sample-repo stress coverage is available without backend quota with
   `tools/stress_upkeeper_corpus.sh --local`; full validation runs that local
   corpus after the central wrapper checks.

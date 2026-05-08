@@ -100,6 +100,13 @@ The full validation mode still avoids real backend Codex work. It runs Upkeeper
 with `UPKEEPER_DRY_RUN=1` for startup checks, then uses a local fake `codex`
 binary to exercise launch/capture failure classification without spending quota.
 
+GitHub Actions runs the no-quota CI path in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) on pushes and pull
+requests. The workflow installs required tools including `jq`, then runs shell
+syntax checks, `tests/*.bash`, `tools/check_public_docs.sh --quick`, and
+`tools/validate_upkeeper.sh --quick`. It does not launch real Codex backend
+work and does not upload runtime artifacts by default.
+
 Runtime/tool dependencies are tracked in [`docs/dependencies.md`](docs/dependencies.md).
 GitHub's dependency graph should stay enabled, but it is expected to show no
 package dependencies until the repo adds a real supported manifest, workflow, or
@@ -479,6 +486,9 @@ specific policy for publishing them.
 
 ```text
 .
+|-- .github/
+|   `-- workflows/
+|       `-- ci.yml
 |-- configurations/
 |   `-- default.conf
 |-- docs/
@@ -536,6 +546,8 @@ specific policy for publishing them.
   public-by-default documentation, comment, release-note, and help-text policy
 - [docs/stress-corpus.md](docs/stress-corpus.md): local sample-repo
   stress-corpus contract and current coverage
+- [.github/workflows/ci.yml](.github/workflows/ci.yml): GitHub Actions
+  no-quota PR/push validation path
 - [lib/upkeeper/README.md](lib/upkeeper/README.md): module contract, load-order
   ownership, and module groups
 - [tools/validate_upkeeper.sh](tools/validate_upkeeper.sh): local validation

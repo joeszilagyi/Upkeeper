@@ -12,10 +12,10 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27] [--review-modules=p24,p25,p26,p27] [--p24] [--p25] [--p26] [--p27] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
+Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27] [--review-modules=p24,p25,p26,p27] [--p24] [--p25] [--p26] [--p27] [--model-override=5.5_xhigh] [--target-file=PATH] [--ignore-failure-queue] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.9
+Version: v1.1.10
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -189,6 +189,12 @@ Prompt behavior:
     prompt. That avoids spending model/tool cycles on broad tree discovery and
     keeps `.git/`, ignored paths, runtime evidence, generated outputs, and tests
     out of the selection scan.
+  - When a prior run leaves an open local tool-failure marker, preselection
+    chooses the oldest still-eligible marked target after explicit operator
+    pins and startup anomaly gates, but before stale-self and normal timestamp
+    rotation. This is local queue behavior, not another model pass.
+    New command failures stay queued unless a later successful command of the
+    same broad kind shows the failure was rechecked.
   - A `WRAPPER_PRESELECTED_REVIEW_TARGET` section overrides every later
     repertoire selection rule for that cycle; all applicable review prompts run
     against that same target unless the file is physically impossible or unsafe
@@ -246,6 +252,8 @@ Prompt behavior:
     rejected.
   - --target-file=PATH pins this invoked cycle to one source-safe repo file and
     bypasses timestamp selection. Use the equals form; spaced form is rejected.
+  - --ignore-failure-queue bypasses local unaddressed tool-failure markers for
+    this invoked cycle only. --target-file also takes priority over the queue.
   - --prompt-pass=all forces the selected target through all P1-P23 repertoire
     passes for this invoked cycle. Use the equals form; spaced form is rejected.
 
@@ -306,6 +314,8 @@ Environment overrides:
   CODEX_DISK_MIN_FREE_PERCENT Default: 10
   CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER Default: 1
   CODEX_STARTUP_ANOMALY_GATE_STATE_DIR Default: runtime/startup-anomaly-gates
+  CODEX_TOOL_FAILURE_QUEUE_ENABLED Default: 1
+  CODEX_TOOL_FAILURE_QUEUE_DIR Default: runtime/unaddressed-tool-failures
   CODEX_ACTIVE_LOCK_DIR Default: runtime/upkeeper-active.lock
   CODEX_WRAPPER_HEALTH_STATE_DIR Default: $CODEX_HOME/upkeeper/active-wrapper-runs
   CODEX_SESSION_SCAN_LIMIT      Default: 200
@@ -388,6 +398,9 @@ Exit codes:
 - `Upkeeper.log` and `runtime/` are local evidence artifacts and are ignored by
   git. Promote only durable operating rules, postmortem conclusions, or wrapper
   behavior changes into tracked files.
+- Open tool-failure queue markers live under
+  `runtime/unaddressed-tool-failures/open/`; resolved markers move to
+  `runtime/unaddressed-tool-failures/resolved/`.
 - A repo-level active lock at `runtime/upkeeper-active.lock` prevents two
   Upkeeper loops from running the same checkout concurrently; stale locks are
   reclaimed only when the recorded PID/start fingerprint no longer matches.

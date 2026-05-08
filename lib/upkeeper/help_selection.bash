@@ -2,7 +2,7 @@
 # operator guide; once the guide exists, the Markdown becomes the living document.
 show_help() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27] [--review-modules=p24,p25,p26,p27] [--p24] [--p25] [--p26] [--p27] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
+Usage: $SCRIPT_NAME [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27] [--review-modules=p24,p25,p26,p27] [--p24] [--p25] [--p26] [--p27] [--model-override=5.5_xhigh] [--target-file=PATH] [--ignore-failure-queue] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: $UPKEEPER_VERSION
@@ -192,6 +192,12 @@ Prompt behavior:
     prompt. That avoids spending model/tool cycles on broad tree discovery and
     keeps .git/, ignored paths, runtime evidence, generated outputs, and tests
     out of the selection scan.
+  - When a prior run leaves an open local tool-failure marker, preselection
+    chooses the oldest still-eligible marked target after explicit operator
+    pins and startup anomaly gates, but before stale-self and normal timestamp
+    rotation. This is local queue behavior, not another model pass.
+    New command failures stay queued unless a later successful command of the
+    same broad kind shows the failure was rechecked.
   - A WRAPPER_PRESELECTED_REVIEW_TARGET section overrides every later repertoire
     selection rule for that cycle; all applicable review prompts run against
     that same target unless the file is physically impossible or unsafe to read.
@@ -236,6 +242,8 @@ Prompt behavior:
     rejected.
   - --target-file=PATH pins this invoked cycle to one source-safe repo file and
     bypasses timestamp selection. Use the equals form; spaced form is rejected.
+  - --ignore-failure-queue bypasses local unaddressed tool-failure markers for
+    this invoked cycle only. --target-file also takes priority over the queue.
   - --prompt-pass=all forces the selected target through all P1-P23 repertoire
     passes for this invoked cycle. Use the equals form; spaced form is rejected.
 
@@ -290,6 +298,8 @@ Environment overrides:
   CODEX_DISK_MIN_FREE_PERCENT Default: 10
   CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER Default: 1
   CODEX_STARTUP_ANOMALY_GATE_STATE_DIR Default: $ROOT_DIR/runtime/startup-anomaly-gates
+  CODEX_TOOL_FAILURE_QUEUE_ENABLED Default: 1
+  CODEX_TOOL_FAILURE_QUEUE_DIR Default: $ROOT_DIR/runtime/unaddressed-tool-failures
   CODEX_ACTIVE_LOCK_DIR Default: $ROOT_DIR/runtime/upkeeper-active.lock
   CODEX_WRAPPER_HEALTH_STATE_DIR Default: $CODEX_HOME_DIR/upkeeper/active-wrapper-runs
   CODEX_SESSION_SCAN_LIMIT      Default: 200
@@ -391,15 +401,17 @@ enforce_startup_anomaly_gate_target_or_exit() {
 }
 
 preselect_review_target() {
-  python3 - "$ROOT_DIR" "$SELF_PATH" "$CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS" "$STARTUP_ANOMALY_GATE" "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" "$CODEX_TARGET_FILE" <<'PY'
+  python3 - "$ROOT_DIR" "$SELF_PATH" "$CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS" "$STARTUP_ANOMALY_GATE" "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" "$CODEX_TARGET_FILE" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$CODEX_TOOL_FAILURE_QUEUE_ENABLED" "$CODEX_TOOL_FAILURE_QUEUE_BYPASS" <<'PY'
 import datetime
+import json
 import os
 import stat as statmod
 import subprocess
 import sys
 import time
+from pathlib import Path
 
-root, self_path, self_review_after_days, startup_anomaly_gate, startup_force_upkeeper, forced_target = sys.argv[1:7]
+root, self_path, self_review_after_days, startup_anomaly_gate, startup_force_upkeeper, forced_target, failure_queue_dir, failure_queue_enabled, failure_queue_bypass = sys.argv[1:10]
 os.chdir(root)
 try:
     self_review_threshold_seconds = max(0, int(self_review_after_days)) * 86400
@@ -512,6 +524,43 @@ def selected_git_metadata(path: str) -> dict[str, str]:
     }
 
 
+def open_failure_markers(candidate_paths: set[str]) -> list[dict[str, object]]:
+    if failure_queue_enabled != "1" or failure_queue_bypass == "1":
+        return []
+    open_dir = Path(failure_queue_dir) / "open"
+    if not open_dir.is_dir():
+        return []
+
+    markers = []
+    for marker_path in sorted(open_dir.glob("*.json")):
+        try:
+            with marker_path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict) or data.get("status") not in ("", None, "open"):
+            continue
+        target = str(data.get("target_path", ""))
+        if target not in candidate_paths:
+            continue
+        try:
+            first_seen = int(data.get("first_seen_epoch", data.get("last_seen_epoch", 0)) or 0)
+        except (TypeError, ValueError):
+            first_seen = 0
+        markers.append(
+            {
+                "target_path": target,
+                "first_seen_epoch": first_seen,
+                "marker_id": str(data.get("marker_id", marker_path.stem)),
+                "marker_path": str(marker_path),
+                "failure_count": str(data.get("failure_count", "unknown")),
+                "first_failure_kind": str(data.get("first_failure_kind", "unknown")),
+                "first_failure_exit_line": str(data.get("first_failure_exit_line", "unknown")),
+            }
+        )
+    return sorted(markers, key=lambda item: (item["first_seen_epoch"], item["target_path"], item["marker_id"]))
+
+
 raw_paths = subprocess.check_output(["git", "ls-files", "-co", "--exclude-standard", "-z"])
 paths = raw_paths.decode("utf-8", "surrogateescape").split("\0")
 now = time.time()
@@ -565,6 +614,9 @@ stale_self_candidates = [
     for item in all_self_candidates
     if now - item[0] >= self_review_threshold_seconds
 ]
+candidate_map = {path: mtime for mtime, path in candidates}
+failure_queue_markers = open_failure_markers(set(candidate_map))
+selected_failure_marker = {}
 forced_target = normalized_repo_target(forced_target)
 if forced_target:
     forced_candidates = [item for item in candidates if item[1] == forced_target]
@@ -592,6 +644,14 @@ elif startup_anomaly_gate == "1" and startup_force_upkeeper == "1" and all_self_
         "startup anomaly gate forced repo-local Upkeeper first; "
         "normal oldest eligible selection blocked until Upkeeper suite is checked/remediated"
     )
+elif failure_queue_markers:
+    selected_failure_marker = failure_queue_markers[0]
+    path = str(selected_failure_marker["target_path"])
+    mtime = candidate_map[path]
+    selection_basis = (
+        "oldest unaddressed local tool-failure marker forced this target; "
+        "normal oldest eligible selection bypassed until the failure is checked/remediated"
+    )
 elif stale_self_candidates:
     mtime, path = sorted(stale_self_candidates, key=lambda item: (item[0], item[1]))[0]
     selection_basis = (
@@ -617,6 +677,16 @@ print(f"head_blob={metadata['head_blob']}")
 print(f"worktree_hash={metadata['worktree_hash']}")
 print(f"eligible_count={len(candidates)}")
 print(f"self_review_threshold_days={self_review_after_days}")
+if selected_failure_marker:
+    print("failure_queue_selected=1")
+    print(f"failure_marker_id={selected_failure_marker['marker_id']}")
+    print(f"failure_marker_path={selected_failure_marker['marker_path']}")
+    print(f"failure_marker_first_seen_epoch={selected_failure_marker['first_seen_epoch']}")
+    print(f"failure_marker_failure_count={selected_failure_marker['failure_count']}")
+    print(f"failure_marker_first_failure_kind={selected_failure_marker['first_failure_kind']}")
+    print(f"failure_marker_first_failure_exit_line={selected_failure_marker['first_failure_exit_line']}")
+else:
+    print("failure_queue_selected=0")
 print(f"selection_basis={selection_basis}")
 PY
 }
@@ -624,6 +694,7 @@ PY
 append_preselected_review_target() {
   local compiled_file="$1"
   local selection selector_rc err_file detail selected_path selected_epoch selected_age eligible_count selected_git_status selected_content_state selected_worktree_hash selected_basis
+  local failure_queue_selected failure_marker_id failure_marker_path failure_marker_first_seen_epoch failure_marker_failure_count failure_marker_first_failure_kind failure_marker_first_failure_exit_line
 
   if ! err_file="$(run_mktemp preselect-error)"; then
     log_line "WARN" "review.preselect.skip reason=tempfile_failed"
@@ -666,8 +737,18 @@ append_preselected_review_target() {
   selected_worktree_hash="$(sed -n 's/^worktree_hash=//p' <<<"$selection")"
   selected_basis="$(sed -n 's/^selection_basis=//p' <<<"$selection")"
   eligible_count="$(sed -n 's/^eligible_count=//p' <<<"$selection")"
+  failure_queue_selected="$(sed -n 's/^failure_queue_selected=//p' <<<"$selection")"
+  failure_marker_id="$(sed -n 's/^failure_marker_id=//p' <<<"$selection")"
+  failure_marker_path="$(sed -n 's/^failure_marker_path=//p' <<<"$selection")"
+  failure_marker_first_seen_epoch="$(sed -n 's/^failure_marker_first_seen_epoch=//p' <<<"$selection")"
+  failure_marker_failure_count="$(sed -n 's/^failure_marker_failure_count=//p' <<<"$selection")"
+  failure_marker_first_failure_kind="$(sed -n 's/^failure_marker_first_failure_kind=//p' <<<"$selection")"
+  failure_marker_first_failure_exit_line="$(sed -n 's/^failure_marker_first_failure_exit_line=//p' <<<"$selection")"
   RUN_SELECTED_REVIEW_PATH="$selected_path"
   RUN_SELECTED_REVIEW_BASIS="$selected_basis"
+  RUN_SELECTED_FROM_FAILURE_QUEUE="${failure_queue_selected:-0}"
+  RUN_SELECTED_FAILURE_MARKER_ID="$failure_marker_id"
+  RUN_SELECTED_FAILURE_MARKER_PATH="$failure_marker_path"
 
   {
     printf 'WRAPPER_PRESELECTED_REVIEW_TARGET\n'
@@ -685,9 +766,14 @@ append_preselected_review_target() {
     if [[ -n "$CODEX_TARGET_FILE" ]]; then
       printf -- '- This target was pinned by operator flag `--target-file=%s`; do not replace it unless the physical/safety exception above applies.\n' "$CODEX_TARGET_FILE"
     fi
+    if [[ "${failure_queue_selected:-0}" == "1" ]]; then
+      printf -- '- This target was forced by the local unaddressed tool-failure queue. Treat the queued failure as the priority repair/upkeep task before normal timestamp care.\n'
+      printf -- '- Queue marker: id=%s first_seen_epoch=%s failure_count=%s first_failure_kind=%s first_failure_exit=%s\n' "$failure_marker_id" "${failure_marker_first_seen_epoch:-unknown}" "${failure_marker_failure_count:-unknown}" "${failure_marker_first_failure_kind:-unknown}" "${failure_marker_first_failure_exit_line:-unknown}"
+      printf -- '- If the failure is resolved or no longer reproducible, finish with WORK_DONE so the local marker can be moved out of the active queue.\n'
+    fi
   } >>"$compiled_file"
 
-  log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} worktree_hash=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} basis=$(shell_quote "${selected_basis:-unknown}")"
+  log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} worktree_hash=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} failure_queue_selected=${failure_queue_selected:-0} failure_marker_id=$(shell_quote "${failure_marker_id:-none}") basis=$(shell_quote "${selected_basis:-unknown}")"
   terminal_emit_progress "selected file ${selected_path:-unknown} (age=${selected_age:-unknown}; reason=${selected_basis:-unknown}; eligible=${eligible_count:-unknown})"
 }
 

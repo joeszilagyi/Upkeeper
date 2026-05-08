@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.1.9
+## Version: v1.1.10
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.1.9"
+UPKEEPER_VERSION="v1.1.10"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -108,6 +108,9 @@ CODEX_PREVIOUS_RUN_SCAN_MINUTES="${CODEX_PREVIOUS_RUN_SCAN_MINUTES:-240}"
 CODEX_DISK_MIN_FREE_PERCENT="${CODEX_DISK_MIN_FREE_PERCENT:-10}"
 CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER="${CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER:-1}"
 CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="${CODEX_STARTUP_ANOMALY_GATE_STATE_DIR:-$ROOT_DIR/runtime/startup-anomaly-gates}"
+CODEX_TOOL_FAILURE_QUEUE_ENABLED="${CODEX_TOOL_FAILURE_QUEUE_ENABLED:-1}"
+CODEX_TOOL_FAILURE_QUEUE_DIR="${CODEX_TOOL_FAILURE_QUEUE_DIR:-$ROOT_DIR/runtime/unaddressed-tool-failures}"
+CODEX_TOOL_FAILURE_QUEUE_BYPASS="0"
 CODEX_ACTIVE_LOCK_DIR="${CODEX_ACTIVE_LOCK_DIR:-$ROOT_DIR/runtime/upkeeper-active.lock}"
 CODEX_WRAPPER_HEALTH_STATE_DIR="${CODEX_WRAPPER_HEALTH_STATE_DIR:-$CODEX_HOME_DIR/upkeeper/active-wrapper-runs}"
 CODEX_WRAPPER_HEALTH_ARCHIVE_DIR="${CODEX_WRAPPER_HEALTH_ARCHIVE_DIR:-$CODEX_HOME_DIR/upkeeper/retired-wrapper-runs}"
@@ -164,6 +167,9 @@ RUN_TERMINAL_PROGRESS_PID=""
 RUN_CODEX_STARTED_EPOCH=""
 RUN_SELECTED_REVIEW_PATH=""
 RUN_SELECTED_REVIEW_BASIS=""
+RUN_SELECTED_FROM_FAILURE_QUEUE="0"
+RUN_SELECTED_FAILURE_MARKER_ID=""
+RUN_SELECTED_FAILURE_MARKER_PATH=""
 ACTIVE_LOCK_ACQUIRED="0"
 WRAPPER_HEALTH_STATE_FILE=""
 WRAPPER_HEALTH_STATE_FINALIZED="0"
@@ -201,6 +207,7 @@ UPKEEPER_MODULES=(
   "cycle_cleanup_signals.bash"
   "runtime_format_json.bash"
   "transcript_output.bash"
+  "tool_failure_queue.bash"
   "codex_io.bash"
 
   # Startup validation, quota, and target-selection inputs.
@@ -636,6 +643,7 @@ main() {
   log_review_report_summary "$last_message_file" "${status_marker:-missing}" "$codex_exit"
   enforce_startup_anomaly_changed_paths
   record_startup_anomaly_gate_review "$last_message_file" "${status_marker:-missing}" "$codex_exit"
+  tool_failure_queue_finalize_run "${RUN_SELECTED_REVIEW_PATH:-}" "${RUN_TRANSCRIPT_FILE:-}" "$codex_exit" "${status_marker:-missing}"
 
   if [[ "$after_selection" == "exact_model" ]]; then
     if [[ "$after_primary_guardrail_decision" == "stop" ]]; then

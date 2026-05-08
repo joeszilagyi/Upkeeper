@@ -50,6 +50,7 @@ Runtime evidence:
 - `cycle_cleanup_signals.bash`
 - `runtime_format_json.bash`
 - `transcript_output.bash`
+- `tool_failure_queue.bash`
 - `codex_io.bash`
 
 Startup validation, quota, and selection:

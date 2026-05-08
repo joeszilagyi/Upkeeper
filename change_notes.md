@@ -5,6 +5,13 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-08: v1.1.10 changes:
+	1. Added a local unaddressed tool-failure queue under `runtime/unaddressed-tool-failures/` that records interesting script/tool command failures from backend transcripts without launching another model pass.
+	2. Updated preselection so the oldest still-eligible open tool-failure marker becomes the next priority repair/upkeep target before normal timestamp rotation.
+	3. Added `--ignore-failure-queue` for one-cycle human override; `--target-file=PATH` continues to take priority over the queue.
+	4. Resolved queued markers automatically when the selected target completes with `WORK_DONE` and no new unaddressed local command failure remains, moving marker history from `open/` to `resolved/`.
+	5. Documented the queue behavior, local runtime paths, env knobs, and validation coverage.
+
 2026-05-08: v1.1.9 changes:
 	1. Added P26 as a first-class opt-in review module through `--review-module=p26`, `--review-modules=...`, and `--p26` for public documentation, comment, help-text, release-note, and prompt clarity review.
 	2. Added `docs/public-documentation-policy.md` and `tools/check_public_docs.sh` so Upkeeper treats every committed patch and release as public project material with deterministic checks for version/doc sync, required prompt wiring, broken local Markdown links, and obvious placeholder/legalese text.

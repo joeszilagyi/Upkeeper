@@ -39,7 +39,7 @@ Use these as governing references when relevant:
 - `docs/scripts/upkeeper.md`
 - `lib/upkeeper/README.md`
 - `README.md`
-- `change_notes.md`
+- current-year root `change_notes_YYYY.md`
 - `tools/validate_upkeeper.sh`
 - root `Upkeeper` help and version behavior
 - prompt files under `prompts/`
@@ -173,7 +173,8 @@ Verify operator-facing changes update release notes and docs.
 
 If the selected file changes behavior, defaults, prompt contracts, logging,
 selection, quota, fallback, validation, dependency expectations, or operator
-ergonomics, check whether `change_notes.md` and paired docs/help need updates.
+ergonomics, check whether the current year's root `change_notes_YYYY.md` and
+paired docs/help need updates.
 
 ### 9. Prompt And Marker Contracts
 

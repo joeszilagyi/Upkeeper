@@ -61,12 +61,15 @@ Upkeeper is expected to stress test both itself and client repositories.
 
 ## Release Notes Discipline
 
-- Keep root `change_notes.md` current for notable Upkeeper behavior,
-  documentation, default, prompt-contract, quota, fallback, logging, selection,
-  or operator-ergonomics changes.
+- Keep the current year's root `change_notes_YYYY.md` file current for notable
+  Upkeeper behavior, documentation, default, prompt-contract, quota, fallback,
+  logging, selection, or operator-ergonomics changes.
+- Release notes are annual root files. On the first notable change in a new
+  calendar year, start a new root file such as `change_notes_2027.md` instead
+  of appending to the previous year.
 - Any committed `UPKEEPER_VERSION` bump should have a matching dated entry in
-  `change_notes.md` unless the version number never existed as a committed
-  wrapper state.
+  the current year's `change_notes_YYYY.md` unless the version number never
+  existed as a committed wrapper state.
 - Release-note entries should describe operator-facing impact, not just commit
   mechanics.
 

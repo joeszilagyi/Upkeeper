@@ -231,6 +231,9 @@ normalize_review_module() {
     p27|education|educational|educational-mode|teaching|teach|debrief|learning)
       printf 'p27'
       ;;
+    p28|unit-test|unit-tests|unit-testing|test-harvest|test-harvesting|fixture-harvest|fixture-harvesting)
+      printf 'p28'
+      ;;
     *)
       return 1
       ;;
@@ -243,7 +246,7 @@ add_review_module() {
 
   [[ -n "$raw_module" ]] || die "--review-module requires a non-empty value"
   if ! module="$(normalize_review_module "$raw_module")"; then
-    die "unknown review module: $raw_module (supported: p24, p25, p26, p27)"
+    die "unknown review module: $raw_module (supported: p24, p25, p26, p27, p28)"
   fi
 
   for existing in "${CODEX_REVIEW_MODULES[@]}"; do
@@ -305,14 +308,14 @@ parse_args() {
         shift
         ;;
       --review-module)
-        die "use --review-module=p24, --review-module=p25, --review-module=p26, or --review-module=p27 (spaced form is intentionally unsupported)"
+        die "use --review-module=p24, --review-module=p25, --review-module=p26, --review-module=p27, or --review-module=p28 (spaced form is intentionally unsupported)"
         ;;
       --review-modules=*)
         add_review_modules_spec "${1#--review-modules=}"
         shift
         ;;
       --review-modules)
-        die "use --review-modules=p24,p25,p26,p27 (spaced form is intentionally unsupported)"
+        die "use --review-modules=p24,p25,p26,p27,p28 (spaced form is intentionally unsupported)"
         ;;
       --p24)
         add_review_module p24
@@ -328,6 +331,10 @@ parse_args() {
         ;;
       --p27)
         add_review_module p27
+        shift
+        ;;
+      --p28)
+        add_review_module p28
         shift
         ;;
       --model-override=*)

@@ -3,12 +3,13 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.1.10
+## Version: v1.1.11
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
 ##   this file must update UPKEEPER_VERSION and this header in the same change.
-## - Notable operator-facing changes must also update root change_notes.md.
+## - Notable operator-facing changes must also update the current year's root
+##   change_notes_YYYY.md file.
 ##
 ## This is local control-plane glue, not a domain build script. Its job is to
 ## run one backend Codex task at a time, stop before quota exhaustion makes
@@ -35,7 +36,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.1.10"
+UPKEEPER_VERSION="v1.1.11"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"

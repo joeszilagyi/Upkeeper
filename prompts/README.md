@@ -12,6 +12,7 @@ Tracked prompts:
 - [`p25-contract-intent-compliance-review.md`](p25-contract-intent-compliance-review.md) - P25 opt-in review module for contract and intent compliance.
 - [`p26-public-documentation-review.md`](p26-public-documentation-review.md) - P26 opt-in review module for public documentation and comment clarity.
 - [`p27-educational-debrief-review.md`](p27-educational-debrief-review.md) - P27 opt-in review module for a concise saved learning debrief.
+- [`p28-unit-test-harvesting-review.md`](p28-unit-test-harvesting-review.md) - P28 opt-in review module for turning useful discoveries into local tests or fixtures.
 
 Guidelines:
 

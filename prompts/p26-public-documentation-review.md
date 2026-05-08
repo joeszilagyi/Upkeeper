@@ -48,7 +48,7 @@ Use these as governing references when relevant:
 - `docs/stress-corpus.md`
 - `lib/upkeeper/README.md`
 - `prompts/README.md`
-- `change_notes.md`
+- current-year root `change_notes_YYYY.md`
 - root `Upkeeper` help and version behavior
 - `tools/check_public_docs.sh`
 - `tools/validate_upkeeper.sh`
@@ -134,7 +134,7 @@ For Upkeeper, the normal path is:
 - `docs/dependencies.md` for external tools
 - `lib/upkeeper/README.md` for module ownership
 - prompt files for review-module contracts
-- `change_notes.md` for release impact
+- current-year root `change_notes_YYYY.md` for release impact
 
 Flag drift when the implementation changes but the path above still describes
 the old behavior or omits the new public surface.

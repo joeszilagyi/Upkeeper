@@ -69,7 +69,7 @@ Tracked docs should form a readable path:
 - `docs/stress-corpus.md` defines sample-repo stress testing intent.
 - `lib/upkeeper/README.md` explains module ownership and load-order discipline.
 - `prompts/README.md` indexes prompt and review-module contracts.
-- `change_notes.md` records public release impact.
+- Root annual `change_notes_YYYY.md` files record public release impact.
 
 When behavior changes, update the smallest set of paired docs needed to keep
 that path true.
@@ -81,7 +81,7 @@ Every release or patch should be understandable as public history.
 For notable changes:
 
 - bump the wrapper version when committed wrapper behavior changes
-- add a dated `change_notes.md` entry
+- add a dated entry to the current year's root `change_notes_YYYY.md`
 - describe what an operator can observe
 - update `--help` and `docs/scripts/upkeeper.md` together when CLI behavior
   changes
@@ -117,3 +117,13 @@ P27 is the saved learning pass for useful fixes:
 Use it when a run should explain what went wrong, why it probably happened, why
 it mattered, how the fix addresses it, what was already good, and what still
 can improve. Keep that note concise unless the lesson belongs in tracked docs.
+
+P28 is the unit-test harvesting pass:
+
+```sh
+./Upkeeper --review-module=p28
+```
+
+Use it when a bug, reusable exploratory command, parser edge case, validation
+path, or deterministic model-discovered fact can become a cheap local test or
+fixture that runs without backend model quota.

@@ -5,6 +5,14 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-08: v1.1.9 changes:
+	1. Added P26 as a first-class opt-in review module through `--review-module=p26`, `--review-modules=...`, and `--p26` for public documentation, comment, help-text, release-note, and prompt clarity review.
+	2. Added `docs/public-documentation-policy.md` and `tools/check_public_docs.sh` so Upkeeper treats every committed patch and release as public project material with deterministic checks for version/doc sync, required prompt wiring, broken local Markdown links, and obvious placeholder/legalese text.
+	3. Updated README, the operator guide, compatibility docs, prompt index, help output, and validation so P26 is part of the documented review-module surface.
+	4. Added P27 as a first-class opt-in review module through `--review-module=p27`, `--review-modules=...`, and `--p27` for concise educational debriefs after useful fixes or reviews.
+	5. Added `prompts/p27-educational-debrief-review.md` with a saved debrief structure covering what went wrong, why it probably happened, why it mattered, how to avoid it, how it was fixed, what was already good, and what can still improve.
+	6. Reframed the README opening so Upkeeper presents the current checked-in state as the delivered public tool: adaptable by professionals, usable by hobbyists, and accountable from tracked source.
+
 2026-05-08: v1.1.8 changes:
 	1. Added P24 and P25 as first-class opt-in review modules through `--review-module=...`, `--review-modules=...`, and shorthand `--p24`/`--p25` flags while preserving existing `--prompt-file` behavior.
 	2. Added `prompts/p25-contract-intent-compliance-review.md` for explicit central-first, compatibility, simplicity, module ownership, dependency, validation, release-note, prompt-marker, and design-intent compliance review.

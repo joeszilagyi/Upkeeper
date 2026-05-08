@@ -12,10 +12,10 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25] [--review-modules=p24,p25] [--p24] [--p25] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
+Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27] [--review-modules=p24,p25,p26,p27] [--p24] [--p25] [--p26] [--p27] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.8
+Version: v1.1.9
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -220,16 +220,24 @@ Prompt behavior:
     data-contract review and `prompts/p24-de-llm-ing-viability-review.md` for
     applicability-gated local-code viability review of LLM/Codex boundaries,
     plus `prompts/p25-contract-intent-compliance-review.md` for explicit
-    contract and intent compliance review.
+    contract and intent compliance review and
+    `prompts/p26-public-documentation-review.md` for public documentation,
+    comments, help text, and release-note clarity, plus
+    `prompts/p27-educational-debrief-review.md` for a concise saved learning
+    debrief after the fix.
   - --prompt TEXT appends extra task guidance inline; an empty value is rejected
     for the same reason.
   - --review-module=p24 appends the central P24 de-LLM-ing viability review
     module for this invoked cycle.
   - --review-module=p25 appends the central P25 contract and intent compliance
     review module for this invoked cycle.
-  - --review-modules=p24,p25 appends both modules in a single flag; repeated
-    --review-module flags are also accepted and duplicate modules are ignored.
-  - --p24 and --p25 are shorthand aliases for the corresponding review modules.
+  - --review-module=p26 appends the central P26 public documentation review
+    module for this invoked cycle.
+  - --review-module=p27 appends the central P27 educational debrief review
+    module for this invoked cycle.
+  - --review-modules=p24,p25,p26,p27 appends multiple modules in a single flag;
+    repeated --review-module flags are also accepted and duplicate modules are ignored.
+  - --p24, --p25, --p26, and --p27 are shorthand aliases for the corresponding review modules.
     Review module flags are one-cycle guidance only and do not persist to later
     loop iterations. They are not enabled by --prompt-pass=all unless requested.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5

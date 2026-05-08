@@ -1,12 +1,21 @@
 # Upkeeper
 
-Upkeeper is a local control-plane wrapper for running Codex maintenance cycles
-against real repositories without turning every loop into an ad hoc shell script.
+Upkeeper is a public, local control plane for running bounded Codex maintenance
+cycles against real repositories.
 
-It is built for the kind of work where you want Codex to keep taking one
-bounded, reviewable maintenance pass at a time: clean up old scripts, patch
-small bugs, refresh docs, preserve incident evidence, and stop before quota or
-environment failures make the run noisy.
+It keeps repository care work moving without turning every loop into an
+ad-hoc shell ritual. Each invocation selects one reviewable target, launches one
+guarded backend task, preserves the evidence, and stops before quota or local
+environment failures turn maintenance into guesswork.
+
+Professionals can adapt it to steady project maintenance. Hobbyists can use it
+to spend spare cycles on backlog, hardening, and bugs they did not know were
+there yet.
+
+The current checked-in state is always treated as the product. Help text,
+release notes, prompts, comments, logs, and docs are expected to explain the
+tool from tracked source, not from private chat history. P26 exists to enforce
+that standard.
 
 ## What It Does
 
@@ -21,8 +30,9 @@ On each cycle it:
   `.git/`, ignored files, generated outputs, runtime evidence, or test trees by accident
 - applies the P23 data-contract pass to validators, importers, exporters,
   registry loaders, config readers, data readers, and input-boundary CLIs
-- can append opt-in P24/P25 review modules for de-LLM-ing viability and
-  contract/intent compliance checks
+- can append opt-in P24/P25/P26/P27 review modules for de-LLM-ing viability,
+  contract/intent compliance, public documentation clarity, and educational
+  debriefs
 - runs Codex once with the configured model and reasoning effort
 - records terminal outcomes in `Upkeeper.log`
 - tags log lines with a per-cycle `run_hash` and emits `--MARK--` heartbeat
@@ -264,7 +274,7 @@ available as a standalone prompt file:
 ./Upkeeper.sh --prompt-file /work/tools/Upkeeper/prompts/p23-data-contract-negative-fixture-audit.md
 ```
 
-P24 and P25 are opt-in review modules. They are loaded from the central
+P24 through P27 are opt-in review modules. They are loaded from the central
 Upkeeper checkout, so symlinked clients can use the same flags without knowing
 absolute prompt-file paths.
 
@@ -280,13 +290,26 @@ logs, markers, exit codes, symlink behavior, or central/client boundaries. It
 checks whether the file remains aligned with Upkeeper's documented contracts and
 design intent.
 
+P26 applies when the selected file touches documentation, comments, prompts,
+help output, release notes, validation messages, logs, errors, examples,
+operator guides, module docs, or public policy. It treats every patch and
+release as public material and checks whether a future reader can understand the
+important intent from the repository itself.
+
+P27 applies when a run should leave a concise learning note after the fix. It
+captures what went wrong, why it probably happened, why it mattered, how to
+avoid the pattern, how it was fixed, what was already good, and what can still
+improve.
+
 ```sh
 ./Upkeeper --review-module=p24
 ./Upkeeper --review-module=p25
-./Upkeeper --review-modules=p24,p25
+./Upkeeper --review-module=p26
+./Upkeeper --review-module=p27
+./Upkeeper --review-modules=p24,p25,p26,p27
 
 # Shorthand aliases are also available.
-./Upkeeper --p24 --p25
+./Upkeeper --p24 --p25 --p26 --p27
 ```
 
 Before the primary Codex response emits its final marker, the prompt now requires
@@ -346,6 +369,7 @@ specific policy for publishing them.
 |-- docs/
 |   |-- compatibility.md
 |   |-- dependencies.md
+|   |-- public-documentation-policy.md
 |   |-- stress-corpus.md
 |   `-- scripts/
 |       `-- upkeeper.md
@@ -363,11 +387,14 @@ specific policy for publishing them.
 |   |-- git_hard_clean.md
 |   |-- p23-data-contract-negative-fixture-audit.md
 |   |-- p24-de-llm-ing-viability-review.md
-|   `-- p25-contract-intent-compliance-review.md
+|   |-- p25-contract-intent-compliance-review.md
+|   |-- p26-public-documentation-review.md
+|   `-- p27-educational-debrief-review.md
 |-- templates/
 |   |-- README.md
 |   `-- prompt-template.md
 |-- tools/
+|   |-- check_public_docs.sh
 |   `-- validate_upkeeper.sh
 |-- Upkeeper
 |-- LICENSE
@@ -385,6 +412,8 @@ specific policy for publishing them.
   operator-visible feature surface
 - [docs/dependencies.md](docs/dependencies.md): runtime/tool dependency surface
   and GitHub dependency-graph expectations
+- [docs/public-documentation-policy.md](docs/public-documentation-policy.md):
+  public-by-default documentation, comment, release-note, and help-text policy
 - [docs/stress-corpus.md](docs/stress-corpus.md): future local sample-repo
   stress-corpus contract
 - [lib/upkeeper/README.md](lib/upkeeper/README.md): module contract, load-order
@@ -392,6 +421,8 @@ specific policy for publishing them.
 - [tools/validate_upkeeper.sh](tools/validate_upkeeper.sh): local validation
   harness for dependencies, syntax, module map, prompts, dry-runs, symlink
   behavior, launch/capture classification, and fail-fast guardrails
+- [tools/check_public_docs.sh](tools/check_public_docs.sh): deterministic
+  public documentation policy checks
 - [launcher_examples/README.md](launcher_examples/README.md): tracked shell
   launcher examples for common Upkeeper loops
 - [prompts/default-review.md](prompts/default-review.md): runtime default review
@@ -404,6 +435,10 @@ specific policy for publishing them.
   P24 review module for explicit LLM-boundary localization review
 - [prompts/p25-contract-intent-compliance-review.md](prompts/p25-contract-intent-compliance-review.md):
   P25 review module for explicit contract and intent compliance review
+- [prompts/p26-public-documentation-review.md](prompts/p26-public-documentation-review.md):
+  P26 review module for public documentation and code-comment clarity
+- [prompts/p27-educational-debrief-review.md](prompts/p27-educational-debrief-review.md):
+  P27 review module for concise saved educational debriefs
 - [prompts/git_hard_clean.md](prompts/git_hard_clean.md): explicit branch and backup cleanup
   workflow notes
 - [templates/prompt-template.md](templates/prompt-template.md): starter format

@@ -16,6 +16,12 @@ review_module_prompt_path() {
     p25)
       printf '%s/prompts/p25-contract-intent-compliance-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
       ;;
+    p26)
+      printf '%s/prompts/p26-public-documentation-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
+      ;;
+    p27)
+      printf '%s/prompts/p27-educational-debrief-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
+      ;;
     *)
       return 1
       ;;

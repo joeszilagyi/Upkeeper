@@ -59,6 +59,16 @@ Upkeeper is expected to stress test both itself and client repositories.
 - If a breaking change is unavoidable, document the reason, operator impact,
   migration path, and validation coverage in the same committed state.
 
+## Configuration Discipline
+
+- Keep the central default config in root `Upkeeper.conf`.
+- Keep reusable named profiles under `configurations/`, with
+  `configurations/default.conf` as the basic profile template.
+- Do not split the active default into chained config files unless the project
+  explicitly changes that contract; one selected config file should define a
+  run profile.
+- Treat CLI flags as one-cycle overrides over config-file defaults.
+
 ## Release Notes Discipline
 
 - Keep the current year's root `change_notes_YYYY.md` file current for notable

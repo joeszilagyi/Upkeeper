@@ -105,6 +105,7 @@ except OSError:
 
 allowed_exact = {
     "Upkeeper",
+    "Upkeeper.conf",
     "README.md",
     "change_notes_2026.md",
     "docs/compatibility.md",
@@ -114,6 +115,7 @@ allowed_exact = {
     "tools/validate_upkeeper.sh",
 }
 allowed_prefixes = (
+    "configurations/",
     "lib/upkeeper/",
     "prompts/",
     "templates/",

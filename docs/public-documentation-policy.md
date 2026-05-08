@@ -62,6 +62,8 @@ behavior, or use formal prose without clarifying the intent.
 Tracked docs should form a readable path:
 
 - `README.md` explains the project purpose, normal use, and repository layout.
+- `Upkeeper.conf` defines the central default runtime profile.
+- `configurations/default.conf` gives a basic named-profile template.
 - `docs/scripts/upkeeper.md` explains operator behavior, flags, environment
   knobs, logs, exits, and examples.
 - `docs/compatibility.md` defines stable public contracts.

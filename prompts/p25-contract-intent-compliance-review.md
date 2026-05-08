@@ -33,6 +33,8 @@ with the documented project direction.
 Use these as governing references when relevant:
 
 - `AGENTS.md`
+- `Upkeeper.conf`
+- `configurations/default.conf`
 - `docs/compatibility.md`
 - `docs/dependencies.md`
 - `docs/stress-corpus.md`
@@ -188,7 +190,8 @@ Check:
 - review outcome wording
 - pass coverage expectations
 - transcript filtering assumptions
-- prompt-file and review-module ordering
+- prompt-file, review-module, and config-file ordering
+- config defaults versus CLI override behavior
 
 ### 10. Vision Alignment
 

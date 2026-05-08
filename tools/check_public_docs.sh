@@ -38,6 +38,7 @@ mapfile -t public_text_files < <(
     Upkeeper.conf \
     'change_notes_[0-9][0-9][0-9][0-9].md' \
     'configurations/*.conf' \
+    '.github/workflows/*.yml' \
     'docs/*.md' \
     'docs/scripts/*.md' \
     'lib/upkeeper/README.md' \
@@ -79,6 +80,11 @@ grep -Fq "configurations/default.conf" README.md || fail "README does not mentio
 grep -Fq "p26-public-documentation-review.md" README.md || fail "README does not link P26"
 grep -Fq "p27-educational-debrief-review.md" README.md || fail "README does not link P27"
 grep -Fq "p28-unit-test-harvesting-review.md" README.md || fail "README does not link P28"
+[[ -s .github/workflows/ci.yml ]] || fail "CI workflow is missing"
+grep -Fq ".github/workflows/ci.yml" README.md || fail "README does not mention the CI workflow"
+grep -Fq "tools/validate_upkeeper.sh --quick" .github/workflows/ci.yml || fail "CI workflow does not run quick validation"
+grep -Fq "tools/check_public_docs.sh --quick" .github/workflows/ci.yml || fail "CI workflow does not run public docs check"
+grep -Fq "tests/*.bash" .github/workflows/ci.yml || fail "CI workflow does not run unit tests"
 grep -Fq "tools/stress_upkeeper_corpus.sh --local" README.md || fail "README does not document the local stress corpus command"
 grep -Fq "tools/stress_upkeeper_corpus.sh --local" docs/stress-corpus.md || fail "stress corpus docs do not document the implemented command"
 grep -Fq "p26-public-documentation-review.md" prompts/README.md || fail "prompt index does not list P26"
@@ -149,6 +155,6 @@ if errors:
     sys.exit(1)
 PY
 
-git diff --check -- README.md AGENTS.md Upkeeper.conf change_notes_*.md configurations docs lib/upkeeper/README.md prompts templates tools
+git diff --check -- .github README.md AGENTS.md Upkeeper.conf change_notes_*.md configurations docs lib/upkeeper/README.md prompts templates tools
 
 log "public documentation checks passed"

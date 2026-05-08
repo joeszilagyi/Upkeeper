@@ -60,6 +60,8 @@ Future changes should preserve this operator-visible surface as far as possible:
   `runtime/unaddressed-tool-failures`.
 - Validation entrypoints remain available:
   `tools/validate_upkeeper.sh --deps`, `--quick`, and `--full`.
+- The GitHub Actions no-quota CI workflow remains available at
+  `.github/workflows/ci.yml` for pushes and pull requests.
 - The local stress-corpus entrypoint remains available:
   `tools/stress_upkeeper_corpus.sh --local`.
 - Default validation and local stress-corpus checks do not spend backend Codex

@@ -1,11 +1,12 @@
 # Upkeeper Dependencies
 
 Upkeeper is a Bash wrapper around local system tools and the Codex CLI. GitHub's
-dependency graph should be enabled for the repository, but it is expected to
-show no package dependencies unless the repo later adds a supported manifest or
-lock file such as `package.json`, `requirements.txt`, `Gemfile`, `go.mod`, or
-GitHub Actions workflows, or submits dependencies through GitHub's dependency
-submission API.
+dependency graph should be enabled for the repository. The current GitHub
+Actions workflow may appear as a real dependency on `actions/checkout`; that is
+expected. Package ecosystems such as npm, Python, Ruby, Go, or .NET should still
+show no dependencies unless the repo later adds a supported manifest or lock
+file such as `package.json`, `requirements.txt`, `Gemfile`, or `go.mod`, or
+submits dependencies through GitHub's dependency submission API.
 
 Do not add fake package manifests just to populate the dependency graph. Track
 Upkeeper's real dependency surface here and validate it locally with:
@@ -21,6 +22,20 @@ launch/capture failure classification, including central startup,
 symlinked-client startup, missing-module failure, missing prompt-template
 failure, and empty-transcript failure.
 
+GitHub Actions runs the no-quota CI path from `.github/workflows/ci.yml` on
+pushes and pull requests. That workflow starts on `ubuntu-latest`, installs
+required tools including `jq`, and runs:
+
+```sh
+bash -n Upkeeper Upkeeper.conf configurations/default.conf lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh
+for test_script in tests/*.bash; do bash "$test_script"; done
+tools/check_public_docs.sh --quick
+tools/validate_upkeeper.sh --quick
+```
+
+The CI workflow does not run real Codex backend work and does not upload runtime
+artifacts by default.
+
 ## GitHub Settings
 
 Recommended repository settings:
@@ -28,11 +43,12 @@ Recommended repository settings:
 - Enable the dependency graph.
 - Enable Dependabot alerts.
 - Enable Dependabot security updates.
-- Do not add Dependabot version-update configuration until the repo has a real
-  supported manifest or GitHub Actions workflow to update.
+- Dependabot version updates for GitHub Actions can be added later if the repo
+  wants automated action bumps. Do not add package-ecosystem version-update
+  configuration until the repo has real package manifests to update.
 
-If GitHub still reports "No dependencies found", that is normal for the current
-repo shape. The dependency graph is future-proofing for later supported
+If GitHub reports only the workflow action dependency, that is normal for the
+current repo shape. The dependency graph is future-proofing for later supported
 ecosystems, not the source of truth for current runtime dependencies.
 
 The dependency submission API could be used later if Upkeeper needs generated

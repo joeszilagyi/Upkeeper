@@ -130,6 +130,9 @@ Important:
       tools/validate_upkeeper.sh --full
     Full validation uses dry-runs plus a local fake codex binary, not real
     backend work.
+    GitHub Actions runs the no-quota CI path in .github/workflows/ci.yml on
+    pushes and pull requests: shell syntax, tests/*.bash, public docs, and
+    tools/validate_upkeeper.sh --quick.
     Sample-repo stress coverage is available without backend quota with:
       tools/stress_upkeeper_corpus.sh --local
     Full validation runs that local stress corpus after the central wrapper

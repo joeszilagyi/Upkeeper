@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-08: v1.1.21 changes:
+	1. Hardened the P29 reuse harvesting prompt with explicit P12/P24/P25/P28 boundaries, wrong-abstraction rollback rules, shell reuse safety gates, command reuse policy, registry preference, command recipe harvesting, and reuse-debt output.
+	2. Added reusable data-table, fixture-writer, ShellCheck policy, and negative-example requirements so reuse work stays practical and verifiable in shell-heavy code.
+	3. Added a reusable asset ownership map to `lib/upkeeper/README.md` and recorded the follow-on P29 priority queue in `PLANS.md`.
+	4. Extended quick validation and public-documentation checks to require the hardened P29 prompt sections and reusable asset ownership map.
+
 2026-05-08: v1.1.20 changes:
 	1. Tightened the P29 reuse harvesting prompt to the full handoff contract text while preserving the existing `# P29 Reuse Harvesting Review` heading.
 	2. Added the explicit P29 aliases `library-reuse`, `function-reuse`, and `asset-reuse` for `--review-module`, `--review-modules`, config defaults, and selection review-module filters.

@@ -113,6 +113,145 @@ Any P29 code change must run focused validation. Prefer:
 If the repo has ShellCheck available, run it on touched shell files or state
 that it was unavailable.
 
+Relationship to P12, P24, P25, and P28:
+P12 handles local duplication and copy/paste cleanup inside the selected file or
+a small directly related file set.
+
+P29 handles project-wide reusable assets and contracts: helper ownership,
+discoverability, validation reuse, fixture reuse, prompt reuse, documentation
+source-of-truth reuse, command recipe reuse, dependency-list reuse, and reusable
+data tables.
+
+If the reusable candidate is currently LLM-dependent, apply P24 reasoning. If
+the reusable candidate changes or introduces a helper contract, apply P25
+reasoning. If the reusable candidate needs durable local tests or fixtures,
+apply P28 reasoning.
+
+Wrong Abstraction Check:
+P29 may reject, split, inline, or delete an existing abstraction when the helper
+has become worse than local code.
+
+Rollback or reject when:
+- the helper has unrelated responsibilities
+- the helper has caller-specific flags
+- the helper hides exit status behavior
+- the helper hides stderr/stdout behavior
+- the helper changes pipeline semantics
+- the helper has accumulated unrelated conditionals
+- the helper name no longer describes one stable contract
+- the callers are clearer and safer with local code
+
+Shell Reuse Safety Gates:
+Before moving shell code into a reusable helper, prove:
+
+- every caller loads the helper before use
+- current-shell versus subshell behavior is preserved
+- global variable reads and writes are intentional
+- local variables are used unless mutation is part of the contract
+- explicit return codes are preserved
+- stderr and stdout contracts are preserved
+- pipeline and pipefail behavior are preserved
+- trap behavior is preserved
+- set -e behavior is not accidentally changed
+- command arguments remain arrays or direct arguments, not command strings
+- eval is not introduced
+
+Command Reuse Rule:
+Do not store complex commands in strings. Use functions for reusable command
+behavior, arrays for reusable argument lists, and explicit environment
+assignment or exported variables in a narrow subshell. Avoid `eval`. Avoid
+`sh -c` unless the shell boundary is the point of the test.
+
+Reusable Asset Discovery:
+When P29 creates or changes a reusable project asset, update the narrowest
+discoverability point:
+
+- lib/upkeeper/README.md for runtime helper ownership
+- prompts/README.md for prompt modules
+- docs/scripts/upkeeper.md for operator CLI behavior
+- docs/compatibility.md for compatible CLI surface
+- docs/dependencies.md for dependency categories
+- tools/validate_upkeeper.sh for local behavioral validation
+- tools/check_public_docs.sh for public docs drift checks
+
+Registry Preference:
+When a repeated project-wide list controls behavior, prefer a small registry or
+a validation-backed metadata table over scattered hard-coded lists.
+
+Candidate registries include:
+- review module ids, aliases, prompt paths, titles, and help summaries
+- dependency categories
+- reusable prompt-module structural requirements
+- stable fixture names
+- public documentation anchors
+
+Do not create a registry when two local case blocks are clearer and safer.
+
+Command Recipe Harvesting:
+If a reusable asset is a command recipe, prefer making it executable or
+validation-backed.
+
+Good homes:
+- tools/validate_upkeeper.sh
+- tools/check_public_docs.sh
+- launcher_examples/
+- docs/scripts/upkeeper.md
+- README.md
+
+Do not leave important reusable commands only in comments, transcripts, or final
+review prose.
+
+Reusable Asset Acceptance Thresholds:
+A reuse candidate needs:
+- one current caller
+- one current second caller, or a named future caller tied to an existing
+  module, prompt, doc, validation script, or test
+- a stable owner
+- a local verification command
+- a failure mode that is easier to test after extraction
+
+Reject when the second use is only hypothetical. Reject when the helper name
+would be vague. Reject when extraction needs a generic utility file. Reject when
+extraction changes shell evaluation order. Reject when repeated local code is
+safer because it is visible at the callsite.
+
+Embedded Data Tables And Fixtures:
+Treat embedded data tables, allowlists, deny-lists, regexes, and path-prefix
+lists as reusable assets when they define project behavior.
+
+When repeated generated test data has stable meaning, either create a named
+fixture or a named fixture writer. Do not keep copying inline JSONL or shell
+setup when the fixture has a stable contract.
+
+Negative Examples:
+Do not create:
+- `utils.bash`
+- `common.bash`
+- `helpers.bash`
+- command strings hidden in variables
+- helper functions that only call one command with no contract
+- wrappers that suppress stderr
+- wrappers that erase exit codes
+- registry files that are harder to update than the duplicated case blocks
+- docs-only reuse claims with no validation when validation is available
+
+ShellCheck Integration Policy:
+If ShellCheck is installed, run it on touched shell files. If not installed,
+report unavailable. Do not add ShellCheck as a required runtime dependency
+unless docs/dependencies.md, compatibility docs, and validation policy are
+updated in the same change.
+
+Reuse Debt Output:
+When P29 rejects or defers a reuse candidate, include:
+- candidate
+- reason not applied
+- likely owner
+- proof needed
+- likely validation command
+
+This prevents future runs from rediscovering the same candidate without
+context.
+
 Output contract:
 When P29 applies, include:
 
@@ -125,6 +264,7 @@ P29 Reuse Harvesting:
 - Callers updated:
 - Behavior preserved:
 - Verification run:
+- Reuse debt:
 - Residual risk:
 
 If P29 does not apply, include:

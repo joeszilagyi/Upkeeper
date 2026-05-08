@@ -45,6 +45,7 @@ launch_screen_fallback_loop() {
   local self_q model_q effort_q mode_q root_q screen_root_q transcript_q poll_q trigger_q
   local loop_parent_pid_q loop_parent_comm_q loop_parent_args_q primary_model_q prompt_file_q inline_prompt_q
   local continuous_q max_children_q max_seconds_q
+  local review_module review_module_q
 
   screen_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen"
   session_name="upkeeper-${CYCLE_ID//[^A-Za-z0-9]/_}"
@@ -91,6 +92,10 @@ launch_screen_fallback_loop() {
     printf -v inline_prompt_q '%q' "$INLINE_PROMPT"
     prompt_arg_snippet="--prompt $inline_prompt_q"
   fi
+  for review_module in "${CODEX_REVIEW_MODULES[@]}"; do
+    printf -v review_module_q '%q' "$review_module"
+    prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--review-module=$review_module_q"
+  done
   if [[ -n "$CODEX_TARGET_FILE" ]]; then
     local target_file_q
     printf -v target_file_q '%q' "$CODEX_TARGET_FILE"

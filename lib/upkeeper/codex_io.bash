@@ -214,6 +214,63 @@ apply_model_override() {
   esac
 }
 
+normalize_review_module() {
+  local module="$1"
+
+  module="$(printf '%s' "$module" | tr '[:upper:]_' '[:lower:]-')"
+  case "$module" in
+    p24|de-llm|de-llm-ing|dellm|de-llming)
+      printf 'p24'
+      ;;
+    p25|contract|contract-intent|intent|design-intent|architecture|architecture-fitness)
+      printf 'p25'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+add_review_module() {
+  local raw_module="$1"
+  local module existing
+
+  [[ -n "$raw_module" ]] || die "--review-module requires a non-empty value"
+  if ! module="$(normalize_review_module "$raw_module")"; then
+    die "unknown review module: $raw_module (supported: p24, p25)"
+  fi
+
+  for existing in "${CODEX_REVIEW_MODULES[@]}"; do
+    [[ "$existing" == "$module" ]] && return 0
+  done
+  CODEX_REVIEW_MODULES+=("$module")
+}
+
+add_review_modules_spec() {
+  local spec="$1"
+  local item
+  local -a items=()
+
+  [[ -n "$spec" ]] || die "--review-modules requires a non-empty value"
+  IFS=, read -r -a items <<<"$spec"
+  for item in "${items[@]}"; do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    [[ -n "$item" ]] || die "--review-modules contains an empty value"
+    add_review_module "$item"
+  done
+}
+
+review_modules_csv() {
+  if [[ "${#CODEX_REVIEW_MODULES[@]}" -eq 0 ]]; then
+    printf 'none'
+    return 0
+  fi
+
+  local IFS=,
+  printf '%s' "${CODEX_REVIEW_MODULES[*]}"
+}
+
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -236,6 +293,28 @@ parse_args() {
         INLINE_PROMPT="$2"
         [[ -n "$INLINE_PROMPT" ]] || die "--prompt requires non-empty text"
         shift 2
+        ;;
+      --review-module=*)
+        add_review_module "${1#--review-module=}"
+        shift
+        ;;
+      --review-module)
+        die "use --review-module=p24 or --review-module=p25 (spaced form is intentionally unsupported)"
+        ;;
+      --review-modules=*)
+        add_review_modules_spec "${1#--review-modules=}"
+        shift
+        ;;
+      --review-modules)
+        die "use --review-modules=p24,p25 (spaced form is intentionally unsupported)"
+        ;;
+      --p24)
+        add_review_module p24
+        shift
+        ;;
+      --p25)
+        add_review_module p25
+        shift
         ;;
       --model-override=*)
         CODEX_MODEL_OVERRIDE_SPEC="${1#--model-override=}"

@@ -28,6 +28,7 @@ Future changes should preserve this operator-visible surface as far as possible:
   from the central checkout, not from each client repo.
 - Existing documented CLI flags keep working:
   `--help`, `-h`, `--version`, `--prompt-file`, `--prompt`,
+  `--review-module=...`, `--review-modules=...`, `--p24`, `--p25`,
   `--model-override=...`, `--target-file=...`, and `--prompt-pass=all`.
 - Existing documented environment knobs keep their meaning unless a change note
   states an unavoidable safety reason.
@@ -50,6 +51,7 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Default validation and future local stress-corpus checks do not spend backend
   Codex quota unless the operator explicitly opts in.
 - Central prompt files remain usable by absolute path from symlinked clients.
+- Central review modules remain usable by flag from symlinked clients.
 - The default review prompt keeps the single-selected-file review contract and
   the P1-P23 pass repertoire, including the P23 data-contract pass.
 - Client repos keep `Upkeeper.sh`, `Upkeeper.log`, `runtime/`, and local

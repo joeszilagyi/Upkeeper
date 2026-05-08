@@ -21,6 +21,8 @@ On each cycle it:
   `.git/`, ignored files, generated outputs, runtime evidence, or test trees by accident
 - applies the P23 data-contract pass to validators, importers, exporters,
   registry loaders, config readers, data readers, and input-boundary CLIs
+- can append opt-in P24/P25 review modules for de-LLM-ing viability and
+  contract/intent compliance checks
 - runs Codex once with the configured model and reasoning effort
 - records terminal outcomes in `Upkeeper.log`
 - tags log lines with a per-cycle `run_hash` and emits `--MARK--` heartbeat
@@ -107,8 +109,9 @@ checkout.
 The module contract and load-order map are documented in
 `lib/upkeeper/README.md`; the executable load order lives in root `Upkeeper`.
 It also loads the default review prompt from the central checkout's
-`prompts/default-review.md`; client-local prompt files are only needed when you
-pass an explicit `--prompt-file`.
+`prompts/default-review.md` and central review modules from `prompts/`;
+client-local prompt files are only needed when you pass an explicit
+`--prompt-file`.
 
 Sanitized example:
 
@@ -261,17 +264,29 @@ available as a standalone prompt file:
 ./Upkeeper.sh --prompt-file /work/tools/Upkeeper/prompts/p23-data-contract-negative-fixture-audit.md
 ```
 
-P24 is intentionally standalone first. It applies only when the selected file
-invokes, supervises, prompts, parses, classifies, summarizes, recovers from, or
-otherwise depends on LLM/Codex behavior. It asks whether any stable,
-fixture-testable model-adjacent behavior can move into deterministic local code
-with no operator-facing loss and without heavy new infrastructure:
+P24 and P25 are opt-in review modules. They are loaded from the central
+Upkeeper checkout, so symlinked clients can use the same flags without knowing
+absolute prompt-file paths.
+
+P24 applies only when the selected file invokes, supervises, prompts, parses,
+classifies, summarizes, recovers from, or otherwise depends on LLM/Codex
+behavior. It asks whether any stable, fixture-testable model-adjacent behavior
+can move into deterministic local code with no operator-facing loss and without
+heavy new infrastructure.
+
+P25 applies when the selected file touches operator-visible behavior, wrapper
+contracts, module ownership, dependency assumptions, validation, docs, prompts,
+logs, markers, exit codes, symlink behavior, or central/client boundaries. It
+checks whether the file remains aligned with Upkeeper's documented contracts and
+design intent.
 
 ```sh
-./Upkeeper --prompt-file prompts/p24-de-llm-ing-viability-review.md
+./Upkeeper --review-module=p24
+./Upkeeper --review-module=p25
+./Upkeeper --review-modules=p24,p25
 
-# From a symlinked client repo, use the central prompt file's absolute path.
-./Upkeeper.sh --prompt-file /work/tools/Upkeeper/prompts/p24-de-llm-ing-viability-review.md
+# Shorthand aliases are also available.
+./Upkeeper --p24 --p25
 ```
 
 Before the primary Codex response emits its final marker, the prompt now requires
@@ -347,7 +362,8 @@ specific policy for publishing them.
 |   |-- default-review.md
 |   |-- git_hard_clean.md
 |   |-- p23-data-contract-negative-fixture-audit.md
-|   `-- p24-de-llm-ing-viability-review.md
+|   |-- p24-de-llm-ing-viability-review.md
+|   `-- p25-contract-intent-compliance-review.md
 |-- templates/
 |   |-- README.md
 |   `-- prompt-template.md
@@ -385,7 +401,9 @@ specific policy for publishing them.
 - [prompts/p23-data-contract-negative-fixture-audit.md](prompts/p23-data-contract-negative-fixture-audit.md):
   standalone P23 add-on prompt for explicit data-contract audit runs
 - [prompts/p24-de-llm-ing-viability-review.md](prompts/p24-de-llm-ing-viability-review.md):
-  standalone P24 add-on prompt for explicit LLM-boundary localization review
+  P24 review module for explicit LLM-boundary localization review
+- [prompts/p25-contract-intent-compliance-review.md](prompts/p25-contract-intent-compliance-review.md):
+  P25 review module for explicit contract and intent compliance review
 - [prompts/git_hard_clean.md](prompts/git_hard_clean.md): explicit branch and backup cleanup
   workflow notes
 - [templates/prompt-template.md](templates/prompt-template.md): starter format

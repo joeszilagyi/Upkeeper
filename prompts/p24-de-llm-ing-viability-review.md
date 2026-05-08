@@ -1,7 +1,8 @@
 # P24 De-LLM-ing Viability Review
 
-Use this as an Upkeeper `--prompt-file` add-on when you want an explicit P24
-review of LLM/Codex boundaries on top of the built-in maintenance prompt.
+Use this as an Upkeeper `--review-module=p24` review module, or as an explicit
+`--prompt-file` add-on, when you want a P24 review of LLM/Codex boundaries on
+top of the built-in maintenance prompt.
 
 This add-on does not replace the existing Upkeeper review repertoire. Follow the
 normal selected-file rule and all normal applicable P1-P23 instructions. In

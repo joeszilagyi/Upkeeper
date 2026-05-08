@@ -43,6 +43,10 @@ run_fallback_cycle() {
       elif [[ -n "$INLINE_PROMPT" ]]; then
         child_args+=(--prompt "$INLINE_PROMPT")
       fi
+      local review_module
+      for review_module in "${CODEX_REVIEW_MODULES[@]}"; do
+        child_args+=("--review-module=$review_module")
+      done
       if [[ -n "$CODEX_TARGET_FILE" ]]; then
         child_args+=("--target-file=$CODEX_TARGET_FILE")
       fi

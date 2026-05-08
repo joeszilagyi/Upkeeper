@@ -23,8 +23,7 @@ Each invocation:
      shared bubblewrap temp registry is writable.
   6. Otherwise it runs exactly one codex exec cycle and exits.
   7. If the primary model fails, blocks, or exhausts its bucket, it can hand off
-     to one stronger fallback cycle in the
-     same outer-loop iteration.
+     to one stronger fallback cycle in the same outer-loop iteration.
 
 Designed for loops like:
   while ./$SCRIPT_NAME; do
@@ -80,16 +79,16 @@ Loop stop semantics:
     a primary-quota-blocked-until marker, and later primary invocations for the
     same model stop before launching another fallback/post-mortem chain until
     that reset time passes
-  - this wrapper also self-rotates its local root log when the oldest live log
-    entry is older than ${CODEX_LOG_ROTATE_AFTER_HOURS} hours; archives stay as
-    sibling zip files and archives older than ${CODEX_LOG_ROTATE_KEEP_HOURS}
-    hours are pruned on startup
+  - root log rotation archives live logs older than ${CODEX_LOG_ROTATE_AFTER_HOURS} hours
+    and prunes sibling zip archives older than ${CODEX_LOG_ROTATE_KEEP_HOURS} hours on startup.
   - by default, live terminal output is summary-first: routine INFO logs and
     full backend transcripts stay in log/transcript artifacts, while WARN,
     ERROR, live tool/Codex error lines, timestamped progress heartbeats, status,
     and bounded high-signal transcript summaries remain visible;
-    transcript artifacts live under ${CODEX_TRANSCRIPT_DIR} and are pruned after
-    ${CODEX_TRANSCRIPT_KEEP_HOURS} hours or ${CODEX_TRANSCRIPT_KEEP_MAX_MB} MB;
+    transcript artifacts live under:
+      ${CODEX_TRANSCRIPT_DIR}
+    and are pruned after ${CODEX_TRANSCRIPT_KEEP_HOURS} hours or when the
+    directory exceeds ${CODEX_TRANSCRIPT_KEEP_MAX_MB} MB;
     set CODEX_TERMINAL_VERBOSITY=full to stream the full backend transcript
 
 Important:
@@ -126,7 +125,8 @@ Important:
       tools/validate_upkeeper.sh --full
     Runtime/tool dependencies are documented in docs/dependencies.md. GitHub's
     dependency graph is useful future-proofing, but it will not list Bash system
-    tools unless the repo later adds a supported manifest or workflow.
+    tools unless the repo later adds a supported manifest, workflow, or
+    dependency submission.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output.
   - Exact-model Spark quota snapshots may still report the generic Codex
@@ -147,11 +147,11 @@ Important:
     Review cycles also write compact review.summary lines, and
     review.fix_details lines when the final response reports fixes, so later
     commits can recover what changed and why.
-  - The default prompt makes the primary agent inspect this cycle's own
-    $LOG_FILE entries before its final marker. If the log review exposes a
-    concrete wrapper or prompt defect and the current repo owns the central
-    Upkeeper file, the agent may repair it in the same pass and report that
-    self-repair explicitly.
+  - The default prompt makes the primary agent inspect this cycle's own log:
+      $LOG_FILE
+    before its final marker. If the log review exposes a concrete wrapper or
+    prompt defect and the current repo owns the central Upkeeper file, the agent
+    may repair it in the same pass and report that self-repair explicitly.
   - Every log line includes a per-cycle run_hash. The wrapper emits --MARK--
     heartbeat lines with fractional epoch, boot id, and uptime so missing
     continuity can be detected even when both the primary process and a future

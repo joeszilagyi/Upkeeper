@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.2
+Version: v1.1.3
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -33,8 +33,7 @@ Each invocation:
      shared bubblewrap temp registry is writable.
   6. Otherwise it runs exactly one codex exec cycle and exits.
   7. If the primary model fails, blocks, or exhausts its bucket, it can hand off
-     to one stronger fallback cycle in the
-     same outer-loop iteration.
+     to one stronger fallback cycle in the same outer-loop iteration.
 
 Designed for loops like:
   while ./Upkeeper; do
@@ -91,10 +90,8 @@ Loop stop semantics:
     a primary-quota-blocked-until marker, and later primary invocations for the
     same model stop before launching another fallback/post-mortem chain until
     that reset time passes
-  - this wrapper also self-rotates its local root log when the oldest live log
-    entry is older than 72 hours; archives stay as
-    sibling zip files and archives older than 144
-    hours are pruned on startup
+  - root log rotation archives live logs older than 72 hours and prunes sibling
+    zip archives older than 144 hours on startup.
 
 Transcript and live terminal behavior:
   - Default live terminal mode is summary-first. Routine INFO logs stay in
@@ -155,11 +152,11 @@ Important:
     Review cycles also write compact review.summary lines, and
     review.fix_details lines when the final response reports fixes, so later
     commits can recover what changed and why.
-  - The default prompt makes the primary agent inspect this cycle's own
-    Upkeeper.log entries before its final marker. If the log review exposes a
-    concrete wrapper or prompt defect and the current repo owns the central
-    Upkeeper file, the agent may repair it in the same pass and report that
-    self-repair explicitly.
+  - The default prompt makes the primary agent inspect this cycle's own log:
+      Upkeeper.log
+    before its final marker. If the log review exposes a concrete wrapper or
+    prompt defect and the current repo owns the central Upkeeper file, the agent
+    may repair it in the same pass and report that self-repair explicitly.
   - Every log line includes a per-cycle run_hash. The wrapper emits --MARK--
     heartbeat lines with fractional epoch, boot id, and uptime so missing
     continuity can be detected even when both the primary process and a future
@@ -334,7 +331,8 @@ Exit codes:
   failure-path guardrails.
 - Runtime/tool dependencies are tracked in `docs/dependencies.md`. GitHub's
   dependency graph should remain enabled, but it is expected to show no package
-  dependencies until this repo adds a real supported manifest or workflow.
+  dependencies until this repo adds a real supported manifest, workflow, or
+  dependency submission.
 - Startup-anomaly scans suppress older log-only `previous_run.anomaly` entries
   after a later `startup_anomaly.gate_resolved` has acknowledged
   `previous_run_anomaly`; unresolved gate state files still trigger the gate.

@@ -261,6 +261,19 @@ available as a standalone prompt file:
 ./Upkeeper.sh --prompt-file /work/tools/Upkeeper/prompts/p23-data-contract-negative-fixture-audit.md
 ```
 
+P24 is intentionally standalone first. It applies only when the selected file
+invokes, supervises, prompts, parses, classifies, summarizes, recovers from, or
+otherwise depends on LLM/Codex behavior. It asks whether any stable,
+fixture-testable model-adjacent behavior can move into deterministic local code
+with no operator-facing loss and without heavy new infrastructure:
+
+```sh
+./Upkeeper --prompt-file prompts/p24-de-llm-ing-viability-review.md
+
+# From a symlinked client repo, use the central prompt file's absolute path.
+./Upkeeper.sh --prompt-file /work/tools/Upkeeper/prompts/p24-de-llm-ing-viability-review.md
+```
+
 Before the primary Codex response emits its final marker, the prompt now requires
 a current-cycle `Upkeeper.log` review and a machine-readable acknowledgment:
 `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=none|listed`. If that
@@ -333,7 +346,8 @@ specific policy for publishing them.
 |   |-- caretaking_23_items.md
 |   |-- default-review.md
 |   |-- git_hard_clean.md
-|   `-- p23-data-contract-negative-fixture-audit.md
+|   |-- p23-data-contract-negative-fixture-audit.md
+|   `-- p24-de-llm-ing-viability-review.md
 |-- templates/
 |   |-- README.md
 |   `-- prompt-template.md
@@ -370,6 +384,8 @@ specific policy for publishing them.
   rotating maintenance review repertoire reference
 - [prompts/p23-data-contract-negative-fixture-audit.md](prompts/p23-data-contract-negative-fixture-audit.md):
   standalone P23 add-on prompt for explicit data-contract audit runs
+- [prompts/p24-de-llm-ing-viability-review.md](prompts/p24-de-llm-ing-viability-review.md):
+  standalone P24 add-on prompt for explicit LLM-boundary localization review
 - [prompts/git_hard_clean.md](prompts/git_hard_clean.md): explicit branch and backup cleanup
   workflow notes
 - [templates/prompt-template.md](templates/prompt-template.md): starter format

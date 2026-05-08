@@ -8,6 +8,7 @@ Tracked prompts:
 - [`caretaking_23_items.md`](caretaking_23_items.md) - full rotating review repertoire reference.
 - [`git_hard_clean.md`](git_hard_clean.md) - focused branch and backup cleanup prompt.
 - [`p23-data-contract-negative-fixture-audit.md`](p23-data-contract-negative-fixture-audit.md) - standalone P23 add-on prompt.
+- [`p24-de-llm-ing-viability-review.md`](p24-de-llm-ing-viability-review.md) - standalone P24 add-on prompt.
 
 Guidelines:
 

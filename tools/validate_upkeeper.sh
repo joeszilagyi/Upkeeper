@@ -235,18 +235,40 @@ check_live_output_filter_pipe() {
     'ValueError, failed, or emit a Python traceback for normal malformed operator' \
     'codex' \
     'exec' \
+    "/bin/bash -lc 'rg ERROR change_notes.md'" \
+    'succeeded in 0ms:' \
+    '14 6. change-note output ERROR failed Exception' \
+    'exec' \
+    "/bin/bash -lc 'launcher_examples/spark_5.3_burn_out_xhigh.sh --bogus'" \
+    'exited 64 in 0ms:' \
+    'diff --git a/change_notes.md b/change_notes.md' \
+    '--- a/change_notes.md' \
+    '+++ b/change_notes.md' \
+    '+8. diff-block output ERROR failed Exception' \
+    'exec' \
+    "/bin/bash -lc 'bash -n launcher_examples/*.sh'" \
+    'succeeded in 0ms:' \
+    'exec' \
     'python -m pytest' \
     'exited 1 in 0.1s' \
+    'tokens used' \
+    '123' \
+    'Final prose mentions ERROR and failed but is not runtime evidence.' \
+    'UPKEEPER_STATUS: WORK_DONE' \
+    'UPKEEPER_STATUS: WORK_DONE' \
     | CODEX_TERMINAL_VERBOSITY=summary bash -lc 'cd "$1"; source ./Upkeeper; codex_live_output_filter validation' bash "$ROOT_DIR" \
       >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
   rc=$?
   set -e
 
   [[ "$rc" -eq 0 ]] || fail "live output filter exited $rc"
+  grep -Fq "validation running check: /bin/bash -lc 'bash -n launcher_examples/*.sh'" "$temp_dir/err.txt" || fail "live output filter did not report interesting successful check"
+  grep -Fq "validation check completed: succeeded in 0ms:" "$temp_dir/err.txt" || fail "live output filter did not report successful interesting check completion"
   grep -Fq "validation running tests: python -m pytest" "$temp_dir/err.txt" || fail "live output filter did not report interesting command"
   grep -Fq "validation ERROR tests failed: exited 1 in 0.1s" "$temp_dir/err.txt" || fail "live output filter did not report failed command"
-  if grep -Eq "broad except|ValueError|Python traceback" "$temp_dir/err.txt"; then
-    fail "live output filter reported prompt-echo text as runtime signal"
+  [[ "$(grep -Fc "validation status: UPKEEPER_STATUS: WORK_DONE" "$temp_dir/err.txt")" -eq 1 ]] || fail "live output filter repeated duplicate status markers"
+  if grep -Eq "broad except|ValueError|Python traceback|change-note output|diff-block output|exited 64|Final prose mentions|validation command completed" "$temp_dir/err.txt"; then
+    fail "live output filter reported prompt, uninteresting command output, or Codex prose as runtime signal"
   fi
   [[ ! -s "$temp_dir/out.txt" ]] || fail "live output filter wrote unexpected stdout"
 
@@ -259,16 +281,37 @@ user
 ValueError, failed, or emit a Python traceback for normal malformed operator
 codex
 exec
+/bin/bash -lc 'rg ERROR change_notes.md'
+succeeded in 0ms:
+14 6. change-note output ERROR failed Exception
+exec
+/bin/bash -lc 'launcher_examples/spark_5.3_burn_out_xhigh.sh --bogus'
+exited 64 in 0ms:
+diff --git a/change_notes.md b/change_notes.md
+--- a/change_notes.md
++++ b/change_notes.md
++8. diff-block output ERROR failed Exception
+exec
+/bin/bash -lc 'bash -n launcher_examples/*.sh'
+succeeded in 0ms:
+exec
 python -m pytest
 exited 1 in 0.1s
+tokens used
+123
+Final prose mentions ERROR and failed but is not runtime evidence.
+UPKEEPER_STATUS: WORK_DONE
+UPKEEPER_STATUS: WORK_DONE
 EOF
   CODEX_LOG_FILE="$temp_dir/Upkeeper.log" CYCLE_ID=validation CYCLE_RUN_HASH=filter-test \
     CODEX_TERMINAL_VERBOSITY=summary \
     bash -lc 'cd "$1"; source ./Upkeeper; emit_codex_transcript_summary validation "$2" 1' bash "$ROOT_DIR" "$temp_dir/transcript.log" \
       >"$temp_dir/summary.out" 2>"$temp_dir/summary.err"
   grep -Fq "codex.transcript.signal label=validation text=exited\\ 1\\ in\\ 0.1s" "$temp_dir/Upkeeper.log" || fail "transcript summary did not report runtime failure"
-  if grep -Eq "broad except|ValueError|Python traceback" "$temp_dir/Upkeeper.log" "$temp_dir/summary.err"; then
-    fail "transcript summary reported prompt-echo text as runtime signal"
+  grep -Fq "codex.transcript.signal label=validation text=UPKEEPER_STATUS:\\ WORK_DONE" "$temp_dir/Upkeeper.log" || fail "transcript summary did not report structured status marker"
+  [[ "$(grep -Fc "codex.transcript.signal label=validation text=UPKEEPER_STATUS:\\ WORK_DONE" "$temp_dir/Upkeeper.log")" -eq 1 ]] || fail "transcript summary repeated duplicate status markers"
+  if grep -Eq "broad except|ValueError|Python traceback|change-note output|diff-block output|exited\\\\ 64|Final prose mentions" "$temp_dir/Upkeeper.log"; then
+    fail "transcript summary reported prompt, uninteresting command output, or Codex prose as runtime signal"
   fi
   rm -r "$temp_dir"
 }

@@ -13,6 +13,7 @@ Version numbering note:
 	5. Fixed the summary-mode live output filter so it consumes piped Codex output instead of replacing pipeline stdin with its Python here-doc.
 	6. Suppressed Codex's initial prompt echo as a block in live and post-run transcript signal extraction so prompt text containing words like `Exception`, `failed`, or `ERROR` is not reported as runtime evidence.
 	7. Added help, unexpected-argument rejection, and stop-percent validation to the Spark-5.3 xhigh launcher example so operators can inspect and validate it before starting a long-running loop.
+	8. Reduced transcript signal noise by treating Codex prose, command status lines, command output, and diff blocks as separate phases before surfacing runtime failures, while de-duplicating repeated status markers.
 
 2026-05-07: v1.1.3 changes:
 	1. Refreshed README examples, repository layout, and related-doc links after the module, prompt, validation, and dependency-documentation work.

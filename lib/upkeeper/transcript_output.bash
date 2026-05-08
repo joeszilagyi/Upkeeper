@@ -32,10 +32,11 @@ except OSError:
     raise SystemExit(0)
 lines = text.splitlines()
 
-def strip_initial_prompt_echo(raw_lines: list[str]) -> list[str]:
+def strip_initial_prompt_echo(raw_lines: list[str]) -> tuple[list[str], bool]:
     filtered = []
     in_user_echo = False
     saw_codex_marker = False
+    stripped_prompt_echo = False
     for item in raw_lines:
         stripped = item.strip()
         if not saw_codex_marker:
@@ -43,14 +44,15 @@ def strip_initial_prompt_echo(raw_lines: list[str]) -> list[str]:
                 if stripped == 'codex':
                     in_user_echo = False
                     saw_codex_marker = True
+                    stripped_prompt_echo = True
                 continue
             if stripped == 'user':
                 in_user_echo = True
                 continue
         filtered.append(item)
-    return filtered
+    return filtered, stripped_prompt_echo
 
-runtime_lines = strip_initial_prompt_echo(lines)
+runtime_lines, stripped_prompt_echo = strip_initial_prompt_echo(lines)
 
 def ts():
     return datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%dT%H:%M:%S%z')
@@ -108,7 +110,112 @@ def is_signal(line: str) -> bool:
         return True
     return False
 
-signals = [short(line) for line in runtime_lines if is_signal(line)]
+def is_interesting_command(line: str) -> bool:
+    lowered = line.lower()
+    if re.search(r'\bcommand -v\s+', lowered):
+        return False
+    return any(
+        token in lowered
+        for token in (
+            'pytest',
+            ' test',
+            '/test',
+            'bash -n',
+            '--check',
+            'diff --check',
+            'python',
+            'node',
+            'npm',
+            'make',
+            'cargo',
+            'go test',
+            'ruff',
+            'mypy',
+            'shellcheck',
+        )
+    )
+
+def collect_signals(raw_lines: list[str]) -> list[str]:
+    collected = []
+    expecting_command = False
+    current_command_interesting = False
+    in_command_output = False
+    in_codex_message = stripped_prompt_echo
+    in_diff_block = False
+
+    for line in raw_lines:
+        stripped = line.strip()
+
+        if stripped == 'codex' or stripped.startswith('tokens used'):
+            expecting_command = False
+            current_command_interesting = False
+            in_command_output = False
+            in_codex_message = True
+            in_diff_block = False
+            continue
+
+        if stripped == 'exec':
+            expecting_command = True
+            current_command_interesting = False
+            in_command_output = False
+            in_codex_message = False
+            in_diff_block = False
+            continue
+
+        if line.startswith('diff --git '):
+            in_diff_block = True
+            continue
+
+        if in_diff_block:
+            continue
+
+        if expecting_command and stripped:
+            expecting_command = False
+            current_command_interesting = is_interesting_command(stripped)
+            in_command_output = False
+            in_codex_message = False
+            continue
+
+        if re.match(r'succeeded in [0-9]+', stripped):
+            in_command_output = True
+            in_codex_message = False
+            continue
+
+        if re.match(r'exited [1-9][0-9]* in ', stripped):
+            if current_command_interesting:
+                collected.append(short(stripped))
+            in_command_output = True
+            in_codex_message = False
+            continue
+
+        if in_command_output:
+            if current_command_interesting and is_signal(line):
+                collected.append(short(line))
+            continue
+
+        if stripped.startswith(('UPKEEPER_STATUS:', 'UPKEEPER_LOG_REVIEW:')):
+            collected.append(short(stripped))
+            continue
+
+        if in_codex_message:
+            continue
+
+        if is_signal(line):
+            collected.append(short(line))
+
+    return collected
+
+def dedupe_signals(raw_signals: list[str]) -> list[str]:
+    seen = set()
+    deduped = []
+    for item in raw_signals:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
+
+signals = dedupe_signals(collect_signals(runtime_lines))
 summary = (
     f'codex.transcript.summary label={label} path={path} exit={exit_raw} lines={len(lines)} '
     f'diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count} signal_lines={len(signals)}'
@@ -224,6 +331,8 @@ def command_kind(line: str) -> str:
 
 def is_interesting_command(line: str) -> bool:
     lowered = line.lower()
+    if re.search(r"\bcommand -v\s+", lowered):
+        return False
     return any(
         token in lowered
         for token in (
@@ -248,8 +357,13 @@ def is_interesting_command(line: str) -> bool:
 
 expecting_command = False
 last_kind = "command"
+current_command_interesting = False
+in_command_output = False
+in_codex_message = False
+in_diff_block = False
 in_user_echo = False
 saw_codex_marker = False
+emitted_status_markers = set()
 
 try:
     for raw in sys.stdin:
@@ -261,34 +375,71 @@ try:
                 if stripped == "codex":
                     in_user_echo = False
                     saw_codex_marker = True
+                    in_codex_message = True
                 continue
             if stripped == "user":
                 in_user_echo = True
                 continue
 
+        if stripped == "codex" or stripped.startswith("tokens used"):
+            expecting_command = False
+            current_command_interesting = False
+            in_command_output = False
+            in_codex_message = True
+            in_diff_block = False
+            continue
+
         if stripped == "exec":
             expecting_command = True
+            current_command_interesting = False
+            in_command_output = False
+            in_codex_message = False
+            in_diff_block = False
+            continue
+
+        if line.startswith("diff --git "):
+            in_diff_block = True
+            continue
+
+        if in_diff_block:
             continue
 
         if expecting_command and stripped:
             expecting_command = False
             last_kind = command_kind(stripped)
-            if not silent and is_interesting_command(stripped):
+            current_command_interesting = is_interesting_command(stripped)
+            in_command_output = False
+            in_codex_message = False
+            if not silent and current_command_interesting:
                 print(f"{ts()} Upkeeper: {label} running {last_kind}: {short(stripped)}", file=sys.stderr, flush=True)
             continue
 
         if re.match(r"succeeded in [0-9]+", stripped):
-            if not silent:
+            in_command_output = True
+            in_codex_message = False
+            if not silent and current_command_interesting:
                 print(f"{ts()} Upkeeper: {label} {last_kind} completed: {short(stripped)}", file=sys.stderr, flush=True)
             continue
 
         if re.match(r"exited [1-9][0-9]* in ", stripped):
-            print(f"{ts()} Upkeeper: {label} ERROR {last_kind} failed: {short(stripped)}", file=sys.stderr, flush=True)
+            in_command_output = True
+            in_codex_message = False
+            if current_command_interesting:
+                print(f"{ts()} Upkeeper: {label} ERROR {last_kind} failed: {short(stripped)}", file=sys.stderr, flush=True)
+            continue
+
+        if in_command_output:
+            if current_command_interesting and is_error_line(stripped):
+                print(f"{ts()} Upkeeper: {label} ERROR: {short(stripped)}", file=sys.stderr, flush=True)
             continue
 
         if stripped.startswith(("UPKEEPER_STATUS:", "UPKEEPER_LOG_REVIEW:")):
-            if not silent:
+            if not silent and stripped not in emitted_status_markers:
+                emitted_status_markers.add(stripped)
                 print(f"{ts()} Upkeeper: {label} status: {short(stripped)}", file=sys.stderr, flush=True)
+            continue
+
+        if in_codex_message:
             continue
 
         if is_error_line(stripped):

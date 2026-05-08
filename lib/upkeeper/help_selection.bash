@@ -2,7 +2,7 @@
 # operator guide; once the guide exists, the Markdown becomes the living document.
 show_help() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28] [--review-modules=p24,p25,p26,p27,p28] [--p24] [--p25] [--p26] [--p27] [--p28] [--model-override=5.5_xhigh] [--target-file=PATH] [--ignore-failure-queue] [--prompt-pass=all]
+Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28] [--review-modules=p24,p25,p26,p27,p28] [--p24] [--p25] [--p26] [--p27] [--p28] [--model-override=5.5_xhigh] [--target-file=PATH] [--ignore-failure-queue] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: $UPKEEPER_VERSION
@@ -140,6 +140,17 @@ Important:
     Future local sample-repo stress testing is documented in
     docs/stress-corpus.md; those checks should default to no real backend Codex
     work and keep model-backed sample runs behind explicit opt-in commands.
+  - The default active config file is:
+      $UPKEEPER_CONFIG_DEFAULT_FILE
+    The central checkout tracks that file plus configurations/default.conf as a
+    basic profile template. Use --config-file=PATH to select one shell-compatible
+    config file for this invocation, or --no-config to skip the default config.
+    Relative config paths are resolved from the invocation repository root.
+    Config files may set CODEX_* runtime knobs and UPKEEPER_* flag defaults such
+    as UPKEEPER_TARGET_FILE, UPKEEPER_REVIEW_MODULES, UPKEEPER_PROMPT_FILE,
+    UPKEEPER_PROMPT, UPKEEPER_PROMPT_PASS, UPKEEPER_MODEL_OVERRIDE, and
+    UPKEEPER_IGNORE_FAILURE_QUEUE. CLI flags remain the final one-cycle
+    overrides.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output.
   - Exact-model Spark quota snapshots may still report the generic Codex
@@ -221,6 +232,9 @@ Prompt behavior:
   - The review body should report REVIEWED_AND_FIXED, REVIEWED_CLEAN, or
     STOPPED_ON_BLOCKER, but the literal final line still maps to the wrapper's
     UPKEEPER_STATUS marker contract.
+  - --config-file=PATH selects a shell-compatible config file for this invoked
+    cycle. Use the equals form; spaced form is rejected.
+  - --no-config disables the default config for this invoked cycle.
   - --prompt-file FILE appends extra task guidance from FILE.
   - --prompt TEXT appends extra task guidance inline.
   - --review-module=p24 appends the central P24 de-LLM-ing viability review
@@ -250,6 +264,15 @@ Prompt behavior:
     passes for this invoked cycle. Use the equals form; spaced form is rejected.
 
 Environment overrides:
+  UPKEEPER_CONFIG_FILE          Default: $UPKEEPER_CONFIG_DEFAULT_FILE
+  UPKEEPER_CONFIG_DISABLE       Default: 0
+  UPKEEPER_TARGET_FILE          Default: empty
+  UPKEEPER_REVIEW_MODULES       Default: empty
+  UPKEEPER_PROMPT_FILE          Default: empty
+  UPKEEPER_PROMPT               Default: empty
+  UPKEEPER_PROMPT_PASS          Default: empty
+  UPKEEPER_MODEL_OVERRIDE       Default: empty
+  UPKEEPER_IGNORE_FAILURE_QUEUE Default: 0
   CODEX_MODEL                   Default: gpt-5.3-codex-spark
   CODEX_REASONING_EFFORT        Default: xhigh
   CODEX_MODE                    Default: --sandbox workspace-write

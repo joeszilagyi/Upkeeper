@@ -12,10 +12,10 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28] [--review-modules=p24,p25,p26,p27,p28] [--p24] [--p25] [--p26] [--p27] [--p28] [--model-override=5.5_xhigh] [--target-file=PATH] [--ignore-failure-queue] [--prompt-pass=all]
+Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28] [--review-modules=p24,p25,p26,p27,p28] [--p24] [--p25] [--p26] [--p27] [--p28] [--model-override=5.5_xhigh] [--target-file=PATH] [--ignore-failure-queue] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.11
+Version: v1.1.12
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -136,6 +136,17 @@ Important:
     the resolved central Upkeeper file. Symlinked clients share that central
     prompt and central review modules; local prompt files are only needed for
     explicit `--prompt-file` overrides.
+  - The default active config file is `Upkeeper.conf` beside the resolved
+    central Upkeeper file. The central checkout also tracks
+    `configurations/default.conf` as a basic profile template. Use
+    `--config-file=PATH` to select one shell-compatible config file for this
+    invocation, or `--no-config` to skip the default config. Relative config
+    paths are resolved from the invocation repository root. Config files may set
+    `CODEX_*` runtime knobs and `UPKEEPER_*` flag defaults such as
+    `UPKEEPER_TARGET_FILE`, `UPKEEPER_REVIEW_MODULES`, `UPKEEPER_PROMPT_FILE`,
+    `UPKEEPER_PROMPT`, `UPKEEPER_PROMPT_PASS`, `UPKEEPER_MODEL_OVERRIDE`, and
+    `UPKEEPER_IGNORE_FAILURE_QUEUE`. CLI flags remain the final one-cycle
+    overrides.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output. The snapshot reader uses a
     tail-first scan of recent session JSONL files, with full-file fallback only
@@ -233,6 +244,9 @@ Prompt behavior:
     debrief after the fix, and
     `prompts/p28-unit-test-harvesting-review.md` for turning cheap deterministic
     discoveries into local tests or fixtures.
+  - --config-file=PATH selects a shell-compatible config file for this invoked
+    cycle. Use the equals form; spaced form is rejected.
+  - --no-config disables the default config for this invoked cycle.
   - --prompt TEXT appends extra task guidance inline; an empty value is rejected
     for the same reason.
   - --review-module=p24 appends the central P24 de-LLM-ing viability review
@@ -262,6 +276,15 @@ Prompt behavior:
     passes for this invoked cycle. Use the equals form; spaced form is rejected.
 
 Environment overrides:
+  UPKEEPER_CONFIG_FILE          Default: Upkeeper.conf
+  UPKEEPER_CONFIG_DISABLE       Default: 0
+  UPKEEPER_TARGET_FILE          Default: empty
+  UPKEEPER_REVIEW_MODULES       Default: empty
+  UPKEEPER_PROMPT_FILE          Default: empty
+  UPKEEPER_PROMPT               Default: empty
+  UPKEEPER_PROMPT_PASS          Default: empty
+  UPKEEPER_MODEL_OVERRIDE       Default: empty
+  UPKEEPER_IGNORE_FAILURE_QUEUE Default: 0
   CODEX_MODEL                   Default: gpt-5.3-codex-spark
   CODEX_REASONING_EFFORT        Default: xhigh
   CODEX_MODE                    Default: --sandbox workspace-write

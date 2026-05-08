@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.1.11
+## Version: v1.1.12
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -27,6 +27,77 @@ elif command -v python3 >/dev/null 2>&1; then
 else
   SELF_PATH="$SELF_INVOKE_PATH"
 fi
+UPKEEPER_IMPLEMENTATION_DIR="$(cd -- "$(dirname -- "$SELF_PATH")" && pwd)"
+UPKEEPER_MODULE_DIR="$UPKEEPER_IMPLEMENTATION_DIR/lib/upkeeper"
+
+UPKEEPER_CONFIG_DEFAULT_FILE="$UPKEEPER_IMPLEMENTATION_DIR/Upkeeper.conf"
+UPKEEPER_CONFIG_FILE="${UPKEEPER_CONFIG_FILE:-$UPKEEPER_CONFIG_DEFAULT_FILE}"
+UPKEEPER_CONFIG_FILE_EXPLICIT="0"
+UPKEEPER_CONFIG_DISABLE="${UPKEEPER_CONFIG_DISABLE:-0}"
+UPKEEPER_CONFIG_LOADED="0"
+UPKEEPER_CONFIG_SOURCE="none"
+
+upkeeper_config_fail() {
+  printf 'Upkeeper: %s\n' "$*" >&2
+  exit 3
+}
+
+resolve_upkeeper_config_path() {
+  local raw_path="$1"
+
+  case "$raw_path" in
+    /*)
+      printf '%s' "$raw_path"
+      ;;
+    *)
+      printf '%s/%s' "$ROOT_DIR" "$raw_path"
+      ;;
+  esac
+}
+
+preparse_upkeeper_config_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --config-file=*)
+        UPKEEPER_CONFIG_FILE="${1#*=}"
+        [[ -n "$UPKEEPER_CONFIG_FILE" ]] || upkeeper_config_fail "--config-file requires a value"
+        UPKEEPER_CONFIG_FILE_EXPLICIT="1"
+        ;;
+      --config-file)
+        upkeeper_config_fail "use --config-file=PATH (spaced form is intentionally unsupported)"
+        ;;
+      --no-config)
+        UPKEEPER_CONFIG_DISABLE="1"
+        ;;
+    esac
+    shift
+  done
+}
+
+load_upkeeper_config_file() {
+  local config_path
+
+  [[ "$UPKEEPER_CONFIG_DISABLE" == "1" ]] && return 0
+  [[ -n "$UPKEEPER_CONFIG_FILE" ]] || return 0
+
+  config_path="$(resolve_upkeeper_config_path "$UPKEEPER_CONFIG_FILE")"
+  if [[ ! -e "$config_path" ]]; then
+    [[ "$UPKEEPER_CONFIG_FILE_EXPLICIT" == "1" ]] && upkeeper_config_fail "config file not found: $config_path"
+    return 0
+  fi
+  [[ -f "$config_path" ]] || upkeeper_config_fail "config file is not a regular file: $config_path"
+  [[ -r "$config_path" ]] || upkeeper_config_fail "config file is not readable: $config_path"
+
+  UPKEEPER_CONFIG_FILE="$config_path"
+  UPKEEPER_CONFIG_LOADED="1"
+  UPKEEPER_CONFIG_SOURCE="$config_path"
+  # shellcheck source=/dev/null
+  source "$config_path"
+}
+
+preparse_upkeeper_config_args "$@"
+load_upkeeper_config_file
+
 LOG_FILE="${CODEX_LOG_FILE:-$ROOT_DIR/Upkeeper.log}"
 LOG_FILE_DIR="$(dirname -- "$LOG_FILE")"
 LOG_FILE_NAME="$(basename -- "$LOG_FILE")"
@@ -34,9 +105,16 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 
 # Configuration surface.
 #
-# Keep these as environment knobs instead of flags so the normal shell loop stays
-# boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.1.11"
+# Built-in defaults are resolved after the selected config file is sourced.
+# Operator CLI flags are parsed later and remain one-cycle overrides.
+UPKEEPER_VERSION="v1.1.12"
+UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
+UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
+UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
+UPKEEPER_PROMPT_FILE="${UPKEEPER_PROMPT_FILE:-}"
+UPKEEPER_PROMPT="${UPKEEPER_PROMPT:-}"
+UPKEEPER_REVIEW_MODULES="${UPKEEPER_REVIEW_MODULES:-}"
+UPKEEPER_IGNORE_FAILURE_QUEUE="${UPKEEPER_IGNORE_FAILURE_QUEUE:-0}"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -72,8 +150,8 @@ CODEX_LOOP_PARENT_COMM="${CODEX_LOOP_PARENT_COMM:-}"
 CODEX_LOOP_PARENT_ARGS="${CODEX_LOOP_PARENT_ARGS:-}"
 CODEX_MODEL_OVERRIDE_SPEC=""
 CODEX_MODEL_OVERRIDE_APPLIED="0"
-CODEX_TARGET_FILE=""
-CODEX_PROMPT_PASS=""
+CODEX_TARGET_FILE="${CODEX_TARGET_FILE:-$UPKEEPER_TARGET_FILE}"
+CODEX_PROMPT_PASS="${CODEX_PROMPT_PASS:-$UPKEEPER_PROMPT_PASS}"
 CODEX_SESSION_SCAN_LIMIT="${CODEX_SESSION_SCAN_LIMIT:-200}"
 CODEX_5H_STOP_PERCENT="${CODEX_5H_STOP_PERCENT:-5}"
 CODEX_SPARK_5H_STOP_PERCENT="${CODEX_SPARK_5H_STOP_PERCENT:-0}"
@@ -118,11 +196,6 @@ CODEX_WRAPPER_HEALTH_ARCHIVE_DIR="${CODEX_WRAPPER_HEALTH_ARCHIVE_DIR:-$CODEX_HOM
 UPKEEPER_DRY_RUN="${UPKEEPER_DRY_RUN:-0}"
 
 declare -a CODEX_MODE_ARGS=()
-read -r -a CODEX_MODE_ARGS <<<"$CODEX_MODE_STRING"
-if [[ "${CODEX_MODE_ARGS[0]:-}" != --* || "${CODEX_MODE_ARGS[0]:-}" == ---* ]]; then
-  printf 'Upkeeper: invalid CODEX_MODE first token %q; expected a Codex option beginning with --\n' "${CODEX_MODE_ARGS[0]:-}" >&2
-  exit 2
-fi
 
 # Per-cycle runtime state. These are intentionally global because signal
 # handlers, fallback supervision, and postmortem writers all need the same
@@ -133,9 +206,11 @@ if [[ -z "$CYCLE_RUN_HASH" ]]; then
   CYCLE_RUN_HASH="${CYCLE_ID//[^[:alnum:]]/}"
   CYCLE_RUN_HASH="${CYCLE_RUN_HASH:0:16}"
 fi
-PROMPT_FILE=""
-INLINE_PROMPT=""
+PROMPT_FILE="${PROMPT_FILE:-$UPKEEPER_PROMPT_FILE}"
+INLINE_PROMPT="${INLINE_PROMPT:-$UPKEEPER_PROMPT}"
 declare -a CODEX_REVIEW_MODULES=()
+CODEX_REVIEW_MODULES_FROM_CONFIG="0"
+CODEX_REVIEW_MODULES_CLI_OVERRIDE="0"
 DIRTY_PATH_COUNT=0
 TRACKED_MODIFIED_PATH_COUNT=0
 UNTRACKED_PATH_COUNT=0
@@ -174,10 +249,6 @@ RUN_SELECTED_FAILURE_MARKER_PATH=""
 ACTIVE_LOCK_ACQUIRED="0"
 WRAPPER_HEALTH_STATE_FILE=""
 WRAPPER_HEALTH_STATE_FINALIZED="0"
-
-
-UPKEEPER_IMPLEMENTATION_DIR="$(cd -- "$(dirname -- "$SELF_PATH")" && pwd)"
-UPKEEPER_MODULE_DIR="$UPKEEPER_IMPLEMENTATION_DIR/lib/upkeeper"
 
 source_upkeeper_module() {
   local module="$1"
@@ -256,6 +327,8 @@ unset upkeeper_module
 # 4. classify the model's final marker,
 # 5. hand off to bounded fallback/postmortem only when that reduces risk.
 main() {
+  apply_configured_cli_defaults
+  validate_codex_mode_args_or_exit
   parse_args "$@"
   ensure_log_parent
   ensure_log_writable_or_exit "startup"
@@ -294,7 +367,7 @@ main() {
   local loop_parent_start_fingerprint
   loop_parent_start_fingerprint="$(process_start_fingerprint "$loop_parent_pid")"
 
-  log_line "INFO" "cycle.start execution_origin=$(shell_quote "$CODEX_EXECUTION_ORIGIN") script=$(shell_quote "$SELF_INVOKE_PATH") implementation=$(shell_quote "$SELF_PATH") cwd=$(shell_quote "$ROOT_DIR") pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$(shell_quote "$direct_parent_comm") parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$(shell_quote "$loop_parent_comm") loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override model=$(shell_quote "$CODEX_MODEL") effort=$(shell_quote "$CODEX_REASONING_EFFORT") mode=$(shell_quote "$CODEX_MODE_STRING") model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}") model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") prompt_pass=$(shell_quote "${CODEX_PROMPT_PASS:-default}") review_modules=$(review_modules_csv) attempt_role=$(shell_quote "$CODEX_ATTEMPT_ROLE") fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=$(shell_quote "${CODEX_PRIMARY_MODEL_CONTEXT:-none}") fallback_trigger=$(shell_quote "${CODEX_FALLBACK_TRIGGER:-none}") screen_fallback_child_id=$(shell_quote "${CODEX_SCREEN_FALLBACK_CHILD_ID:-none}") code_home=$(shell_quote "$CODEX_HOME_DIR") dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
+  log_line "INFO" "cycle.start execution_origin=$(shell_quote "$CODEX_EXECUTION_ORIGIN") script=$(shell_quote "$SELF_INVOKE_PATH") implementation=$(shell_quote "$SELF_PATH") cwd=$(shell_quote "$ROOT_DIR") pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$(shell_quote "$direct_parent_comm") parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$(shell_quote "$loop_parent_comm") loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override config_loaded=$UPKEEPER_CONFIG_LOADED config_file=$(shell_quote "$UPKEEPER_CONFIG_SOURCE") model=$(shell_quote "$CODEX_MODEL") effort=$(shell_quote "$CODEX_REASONING_EFFORT") mode=$(shell_quote "$CODEX_MODE_STRING") model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}") model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") prompt_pass=$(shell_quote "${CODEX_PROMPT_PASS:-default}") review_modules=$(review_modules_csv) attempt_role=$(shell_quote "$CODEX_ATTEMPT_ROLE") fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=$(shell_quote "${CODEX_PRIMARY_MODEL_CONTEXT:-none}") fallback_trigger=$(shell_quote "${CODEX_FALLBACK_TRIGGER:-none}") screen_fallback_child_id=$(shell_quote "${CODEX_SCREEN_FALLBACK_CHILD_ID:-none}") code_home=$(shell_quote "$CODEX_HOME_DIR") dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
   start_run_mark_heartbeat
   check_disk_space_preflight
   if [[ "$STARTUP_ANOMALY_GATE" == "1" ]]; then

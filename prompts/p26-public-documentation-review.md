@@ -42,6 +42,8 @@ Use these as governing references when relevant:
 
 - `docs/public-documentation-policy.md`
 - `README.md`
+- `Upkeeper.conf`
+- `configurations/default.conf`
 - `docs/scripts/upkeeper.md`
 - `docs/compatibility.md`
 - `docs/dependencies.md`
@@ -134,6 +136,7 @@ For Upkeeper, the normal path is:
 - `docs/dependencies.md` for external tools
 - `lib/upkeeper/README.md` for module ownership
 - prompt files for review-module contracts
+- config files for scheduled-run defaults
 - current-year root `change_notes_YYYY.md` for release impact
 
 Flag drift when the implementation changes but the path above still describes

@@ -165,6 +165,8 @@ check_syntax() {
 
   log "checking Bash syntax"
   bash -n Upkeeper
+  bash -n Upkeeper.conf
+  bash -n configurations/default.conf
   for module in lib/upkeeper/*.bash; do
     bash -n "$module"
   done
@@ -221,6 +223,8 @@ check_prompt_template() {
   [[ -s prompts/p26-public-documentation-review.md ]] || fail "P26 review module prompt is missing or empty"
   [[ -s prompts/p27-educational-debrief-review.md ]] || fail "P27 review module prompt is missing or empty"
   [[ -s prompts/p28-unit-test-harvesting-review.md ]] || fail "P28 review module prompt is missing or empty"
+  [[ -s Upkeeper.conf ]] || fail "root Upkeeper.conf is missing or empty"
+  [[ -s configurations/default.conf ]] || fail "configurations/default.conf is missing or empty"
   grep -Fq "P24 - De-LLM-ing Viability Review" prompts/p24-de-llm-ing-viability-review.md || fail "P24 prompt title missing"
   grep -Fq "P24: not applicable" prompts/p24-de-llm-ing-viability-review.md || fail "P24 applicability gate missing"
   grep -Fq "no loss of operator-facing function" prompts/p24-de-llm-ing-viability-review.md || fail "P24 no-loss requirement missing"
@@ -243,6 +247,7 @@ check_prompt_template() {
   grep -Fq "code-comment clarity" README.md || fail "README missing P26 summary"
   grep -Fq "educational debrief" README.md || fail "README missing P27 summary"
   grep -Fq "unit-test harvesting" README.md || fail "README missing P28 summary"
+  grep -Fq "Upkeeper.conf" README.md || fail "README missing config file summary"
   grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 }
 
@@ -256,6 +261,8 @@ check_help_and_diff() {
   grep -Fq -- "--review-module=p26" <<<"$help" || fail "help missing --review-module=p26"
   grep -Fq -- "--review-module=p27" <<<"$help" || fail "help missing --review-module=p27"
   grep -Fq -- "--review-module=p28" <<<"$help" || fail "help missing --review-module=p28"
+  grep -Fq -- "--config-file=PATH" <<<"$help" || fail "help missing --config-file"
+  grep -Fq -- "--no-config" <<<"$help" || fail "help missing --no-config"
   grep -Fq -- "--p24" <<<"$help" || fail "help missing --p24"
   grep -Fq -- "--p25" <<<"$help" || fail "help missing --p25"
   grep -Fq -- "--p26" <<<"$help" || fail "help missing --p26"
@@ -442,6 +449,92 @@ check_review_module_flags() {
   set -e
   [[ "$rc" -eq 3 ]] || fail "invalid review module exited $rc, expected 3"
   grep -Fq "unknown review module: nope" <<<"$output" || fail "invalid review module error was not clear"
+
+  rm -r "$temp_dir"
+}
+
+check_config_file_support() {
+  local temp_dir profile output rc
+
+  log "checking config file support"
+  temp_dir="$(mktemp -d /tmp/upkeeper-config-file.XXXXXX)"
+  profile="$temp_dir/profile.conf"
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
+
+  cat >"$profile" <<'EOF'
+CODEX_MODEL="gpt-5.5"
+CODEX_REASONING_EFFORT="xhigh"
+CODEX_TERMINAL_VERBOSITY="quiet"
+CODEX_FALLBACK_ENABLED="0"
+CODEX_FALLBACK_SCREEN_ENABLED="0"
+CODEX_POSTMORTEM_ENABLED="0"
+UPKEEPER_TARGET_FILE="Upkeeper"
+UPKEEPER_REVIEW_MODULES="p28"
+UPKEEPER_PROMPT_PASS="all"
+UPKEEPER_IGNORE_FAILURE_QUEUE="1"
+EOF
+
+  CODEX_HOME="$temp_dir/codex-home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    UPKEEPER_DRY_RUN=1 \
+    ./Upkeeper --config-file="$profile" >"$temp_dir/config.out" 2>"$temp_dir/config.err"
+
+  grep -Fq "config_loaded=1" "$temp_dir/Upkeeper.log" || fail "config dry-run did not record loaded config"
+  grep -Fq "config_file=$profile" "$temp_dir/Upkeeper.log" || fail "config dry-run did not record config path"
+  grep -Fq "model=gpt-5.5" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply model"
+  grep -Fq "target_file=Upkeeper" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply target file"
+  grep -Fq "prompt_pass=all" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply prompt pass"
+  grep -Fq "review_modules=p28" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply review module"
+  grep -Fq "review.module_prompt enabled module=p28" "$temp_dir/Upkeeper.log" || fail "config dry-run did not append P28"
+
+  : >"$temp_dir/Upkeeper.log"
+  CODEX_HOME="$temp_dir/codex-home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    UPKEEPER_DRY_RUN=1 \
+    ./Upkeeper --config-file="$profile" --target-file=lib/upkeeper/codex_io.bash --p26 >"$temp_dir/override.out" 2>"$temp_dir/override.err"
+
+  grep -Fq "target_file=lib/upkeeper/codex_io.bash" "$temp_dir/Upkeeper.log" || fail "CLI target did not override config target"
+  grep -Fq "review_modules=p26" "$temp_dir/Upkeeper.log" || fail "CLI review module did not override config modules"
+  if grep -Fq "review_modules=p28" "$temp_dir/Upkeeper.log"; then
+    fail "config review module leaked after CLI override"
+  fi
+
+  : >"$temp_dir/Upkeeper.log"
+  UPKEEPER_CONFIG_FILE="$profile" \
+    CODEX_HOME="$temp_dir/codex-home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    UPKEEPER_DRY_RUN=1 \
+    ./Upkeeper --no-config --target-file=Upkeeper >"$temp_dir/no-config.out" 2>"$temp_dir/no-config.err"
+
+  grep -Fq "config_loaded=0" "$temp_dir/Upkeeper.log" || fail "--no-config did not disable config loading"
+
+  set +e
+  output="$(./Upkeeper --config-file="$temp_dir/missing.conf" --version 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 3 ]] || fail "missing explicit config exited $rc, expected 3"
+  grep -Fq "config file not found" <<<"$output" || fail "missing explicit config error was not clear"
 
   rm -r "$temp_dir"
 }
@@ -1224,6 +1317,7 @@ check_codex_mode_validation
 check_cycle_start_log_contract
 check_quota_fallback_exit_contract
 check_review_module_flags
+check_config_file_support
 check_tool_failure_queue
 check_public_docs_policy
 check_fallback_artifact_helpers

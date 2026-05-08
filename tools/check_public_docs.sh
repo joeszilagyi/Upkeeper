@@ -35,7 +35,9 @@ mapfile -t public_text_files < <(
   git ls-files --cached --others --exclude-standard \
     AGENTS.md \
     README.md \
+    Upkeeper.conf \
     'change_notes_[0-9][0-9][0-9][0-9].md' \
+    'configurations/*.conf' \
     'docs/*.md' \
     'docs/scripts/*.md' \
     'lib/upkeeper/README.md' \
@@ -72,6 +74,8 @@ grep -Fq "P28 - Unit Test Harvesting Review" prompts/p28-unit-test-harvesting-re
 grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 grep -Fq "tools/check_public_docs.sh" docs/public-documentation-policy.md || fail "public documentation policy missing tool reference"
 grep -Fq "docs/public-documentation-policy.md" README.md || fail "README does not link the public documentation policy"
+grep -Fq "Upkeeper.conf" README.md || fail "README does not mention the default config file"
+grep -Fq "configurations/default.conf" README.md || fail "README does not mention the default configuration profile"
 grep -Fq "p26-public-documentation-review.md" README.md || fail "README does not link P26"
 grep -Fq "p27-educational-debrief-review.md" README.md || fail "README does not link P27"
 grep -Fq "p28-unit-test-harvesting-review.md" README.md || fail "README does not link P28"
@@ -143,6 +147,6 @@ if errors:
     sys.exit(1)
 PY
 
-git diff --check -- README.md AGENTS.md change_notes_*.md docs lib/upkeeper/README.md prompts templates tools/check_public_docs.sh
+git diff --check -- README.md AGENTS.md Upkeeper.conf change_notes_*.md configurations docs lib/upkeeper/README.md prompts templates tools/check_public_docs.sh
 
 log "public documentation checks passed"

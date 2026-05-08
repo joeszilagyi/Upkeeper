@@ -111,6 +111,41 @@ Future multi-repo stress testing is tracked in
 locally generated sample repositories across common language/toolchain shapes
 and keeps real backend Codex runs behind explicit opt-in commands.
 
+## Configuration
+
+The default active config file is [Upkeeper.conf](Upkeeper.conf). Upkeeper
+sources it before applying built-in defaults and before parsing CLI flags. The
+file is intentionally one shell-compatible top-level config, not a directory of
+chained includes.
+
+The tracked [configurations/default.conf](configurations/default.conf) is a
+basic profile template for scheduled runs or future named profiles. For now,
+keep profiles self-contained and select one per invocation:
+
+```sh
+./Upkeeper --config-file=configurations/default.conf
+./Upkeeper --config-file=/work/upkeeper-profiles/documentation-saturday.conf
+./Upkeeper --no-config
+```
+
+Config files can set normal `CODEX_*` knobs and `UPKEEPER_*` defaults for
+flag-like behavior:
+
+```sh
+CODEX_MODEL="gpt-5.5"
+CODEX_REASONING_EFFORT="xhigh"
+UPKEEPER_TARGET_FILE="docs/scripts/upkeeper.md"
+UPKEEPER_REVIEW_MODULES="p26,p28"
+UPKEEPER_PROMPT_PASS="all"
+```
+
+CLI flags are the final one-cycle overrides. That means a cron profile can set
+the normal model, target, and review modules, while an operator can still run:
+
+```sh
+./Upkeeper --config-file=configurations/default.conf --target-file=Upkeeper --p25
+```
+
 ## Client Repo Setup
 
 The most useful pattern is to keep this repository as the central source and
@@ -386,6 +421,8 @@ specific policy for publishing them.
 
 ```text
 .
+|-- configurations/
+|   `-- default.conf
 |-- docs/
 |   |-- compatibility.md
 |   |-- dependencies.md
@@ -418,6 +455,7 @@ specific policy for publishing them.
 |   |-- check_public_docs.sh
 |   `-- validate_upkeeper.sh
 |-- Upkeeper
+|-- Upkeeper.conf
 |-- LICENSE
 |-- .editorconfig
 |-- .gitignore

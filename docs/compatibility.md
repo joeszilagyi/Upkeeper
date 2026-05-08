@@ -27,10 +27,13 @@ Future changes should preserve this operator-visible surface as far as possible:
 - The root entrypoint resolves paired modules, prompt files, and documentation
   from the central checkout, not from each client repo.
 - Existing documented CLI flags keep working:
-  `--help`, `-h`, `--version`, `--prompt-file`, `--prompt`,
+  `--help`, `-h`, `--version`, `--config-file=...`, `--no-config`,
+  `--prompt-file`, `--prompt`,
   `--review-module=...`, `--review-modules=...`, `--p24`, `--p25`, `--p26`,
   `--p27`, `--p28`, `--model-override=...`, `--target-file=...`, and
   `--ignore-failure-queue`, and `--prompt-pass=all`.
+- The central default config remains `Upkeeper.conf`, and named config profiles
+  can be selected per invocation with `--config-file=PATH`.
 - Existing documented environment knobs keep their meaning unless a change note
   states an unavoidable safety reason.
 - `CODEX_TERMINAL_VERBOSITY` keeps the documented modes and aliases for
@@ -57,6 +60,8 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Local unaddressed tool-failure markers can prioritize the next eligible target
   without changing tracked source; operator `--target-file` and
   `--ignore-failure-queue` still override that local queue for one cycle.
+- Config files can provide scheduled-run defaults, but CLI flags remain the
+  final one-cycle override surface.
 - Public documentation, help text, prompt docs, code comments, and release
   notes remain understandable enough for public review without private context.
 - The default review prompt keeps the single-selected-file review contract and

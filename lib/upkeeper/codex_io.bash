@@ -280,6 +280,69 @@ review_modules_csv() {
   printf '%s' "${CODEX_REVIEW_MODULES[*]}"
 }
 
+config_truthy() {
+  local raw="$1"
+  raw="${raw,,}"
+  case "$raw" in
+    1|true|yes|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+validate_codex_mode_args_or_exit() {
+  CODEX_MODE_ARGS=()
+  read -r -a CODEX_MODE_ARGS <<<"$CODEX_MODE_STRING"
+  if [[ "${CODEX_MODE_ARGS[0]:-}" != --* || "${CODEX_MODE_ARGS[0]:-}" == ---* ]]; then
+    printf 'Upkeeper: invalid CODEX_MODE first token %q; expected a Codex option beginning with --\n' "${CODEX_MODE_ARGS[0]:-}" >&2
+    exit 2
+  fi
+}
+
+set_prompt_pass_or_die() {
+  local prompt_pass="$1"
+
+  [[ -n "$prompt_pass" ]] || die "--prompt-pass requires a value"
+  case "$prompt_pass" in
+    all)
+      CODEX_PROMPT_PASS="$prompt_pass"
+      ;;
+    *)
+      die "unknown prompt pass: $prompt_pass (supported: all)"
+      ;;
+  esac
+}
+
+reset_config_review_modules_for_cli_override() {
+  if [[ "$CODEX_REVIEW_MODULES_FROM_CONFIG" == "1" && "$CODEX_REVIEW_MODULES_CLI_OVERRIDE" != "1" ]]; then
+    CODEX_REVIEW_MODULES=()
+    CODEX_REVIEW_MODULES_CLI_OVERRIDE="1"
+  fi
+}
+
+apply_configured_cli_defaults() {
+  if [[ -n "${UPKEEPER_MODEL_OVERRIDE:-}" ]]; then
+    CODEX_MODEL_OVERRIDE_SPEC="$UPKEEPER_MODEL_OVERRIDE"
+    apply_model_override "$CODEX_MODEL_OVERRIDE_SPEC"
+  fi
+
+  if [[ -n "${UPKEEPER_REVIEW_MODULES:-}" ]]; then
+    add_review_modules_spec "$UPKEEPER_REVIEW_MODULES"
+    CODEX_REVIEW_MODULES_FROM_CONFIG="1"
+  fi
+
+  if [[ -n "${CODEX_PROMPT_PASS:-}" ]]; then
+    set_prompt_pass_or_die "$CODEX_PROMPT_PASS"
+  fi
+
+  if config_truthy "${UPKEEPER_IGNORE_FAILURE_QUEUE:-0}"; then
+    CODEX_TOOL_FAILURE_QUEUE_BYPASS="1"
+  fi
+}
+
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -294,16 +357,28 @@ parse_args() {
       --prompt-file)
         [[ $# -ge 2 ]] || die "--prompt-file requires a path"
         PROMPT_FILE="$2"
+        INLINE_PROMPT=""
         [[ -n "$PROMPT_FILE" ]] || die "--prompt-file requires a non-empty path"
         shift 2
         ;;
       --prompt)
         [[ $# -ge 2 ]] || die "--prompt requires text"
         INLINE_PROMPT="$2"
+        PROMPT_FILE=""
         [[ -n "$INLINE_PROMPT" ]] || die "--prompt requires non-empty text"
         shift 2
         ;;
+      --config-file=*)
+        shift
+        ;;
+      --config-file)
+        die "use --config-file=PATH (spaced form is intentionally unsupported)"
+        ;;
+      --no-config)
+        shift
+        ;;
       --review-module=*)
+        reset_config_review_modules_for_cli_override
         add_review_module "${1#--review-module=}"
         shift
         ;;
@@ -311,6 +386,7 @@ parse_args() {
         die "use --review-module=p24, --review-module=p25, --review-module=p26, --review-module=p27, or --review-module=p28 (spaced form is intentionally unsupported)"
         ;;
       --review-modules=*)
+        reset_config_review_modules_for_cli_override
         add_review_modules_spec "${1#--review-modules=}"
         shift
         ;;
@@ -318,22 +394,27 @@ parse_args() {
         die "use --review-modules=p24,p25,p26,p27,p28 (spaced form is intentionally unsupported)"
         ;;
       --p24)
+        reset_config_review_modules_for_cli_override
         add_review_module p24
         shift
         ;;
       --p25)
+        reset_config_review_modules_for_cli_override
         add_review_module p25
         shift
         ;;
       --p26)
+        reset_config_review_modules_for_cli_override
         add_review_module p26
         shift
         ;;
       --p27)
+        reset_config_review_modules_for_cli_override
         add_review_module p27
         shift
         ;;
       --p28)
+        reset_config_review_modules_for_cli_override
         add_review_module p28
         shift
         ;;
@@ -359,15 +440,7 @@ parse_args() {
         shift
         ;;
       --prompt-pass=*)
-        CODEX_PROMPT_PASS="${1#--prompt-pass=}"
-        [[ -n "$CODEX_PROMPT_PASS" ]] || die "--prompt-pass requires a value"
-        case "$CODEX_PROMPT_PASS" in
-          all)
-            ;;
-          *)
-            die "unknown prompt pass: $CODEX_PROMPT_PASS (supported: all)"
-            ;;
-        esac
+        set_prompt_pass_or_die "${1#--prompt-pass=}"
         shift
         ;;
       --prompt-pass)

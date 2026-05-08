@@ -6,6 +6,13 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-08: v1.1.12 changes:
+	1. Added root `Upkeeper.conf` as the default active configuration file, sourced before built-in defaults and before CLI parsing.
+	2. Added `configurations/default.conf` as the basic self-contained profile template for scheduled or named runs.
+	3. Added `--config-file=PATH` to select one config file per invocation and `--no-config` to skip the default config.
+	4. Added `UPKEEPER_*` config defaults for flag-like behavior, including target file, review modules, prompt file/text, prompt pass, model override, and failure-queue bypass.
+	5. Kept CLI flags as final one-cycle overrides over config defaults, with validation coverage for config loading, CLI override behavior, missing explicit config files, and `--no-config`.
+
 2026-05-08: v1.1.11 changes:
 	1. Added P28 as a first-class opt-in review module through `--review-module=p28`, `--review-modules=...`, and `--p28` for unit-test harvesting.
 	2. Added `prompts/p28-unit-test-harvesting-review.md` so bugs, reusable exploratory commands, parser edge cases, and deterministic LLM-discovered facts can become cheap local tests or fixtures when practical.

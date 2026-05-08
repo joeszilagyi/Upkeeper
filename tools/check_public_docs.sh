@@ -66,6 +66,9 @@ grep -Fq "$wrapper_version changes" "$release_notes_file" || fail "$release_note
 
 [[ -s docs/public-documentation-policy.md ]] || fail "public documentation policy is missing or empty"
 [[ -s docs/security.md ]] || fail "security trust model is missing or empty"
+[[ -s LICENSE ]] || fail "LICENSE is missing or empty"
+grep -Fq "MIT License" LICENSE || fail "LICENSE is not MIT"
+grep -Fq 'released under the `MIT` license' README.md || fail "README license summary is not MIT"
 [[ -s prompts/p26-public-documentation-review.md ]] || fail "P26 review module prompt is missing or empty"
 [[ -s prompts/p27-educational-debrief-review.md ]] || fail "P27 review module prompt is missing or empty"
 [[ -s prompts/p28-unit-test-harvesting-review.md ]] || fail "P28 review module prompt is missing or empty"

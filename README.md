@@ -604,4 +604,4 @@ specific policy for publishing them.
 
 ## License
 
-This repository is released under the `0BSD` license.
+This repository is released under the `MIT` license.

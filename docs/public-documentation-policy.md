@@ -131,3 +131,14 @@ P28 is the unit-test harvesting pass:
 Use it when a bug, reusable exploratory command, parser edge case, validation
 path, or deterministic model-discovered fact can become a cheap local test or
 fixture that runs without backend model quota.
+
+P29 is the reuse harvesting pass:
+
+```sh
+./Upkeeper --review-module=p29
+```
+
+Use it when repeated or likely-to-repeat helpers, fixtures, prompt language,
+documentation blocks, command idioms, validation patterns, or local assets can
+become a bounded reusable project contract without making the code harder to
+read.

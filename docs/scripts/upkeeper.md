@@ -12,10 +12,10 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28] [--review-modules=p24,p25,p26,p27,p28] [--p24] [--p25] [--p26] [--p27] [--p28] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28] [--ignore-failure-queue] [--prompt-pass=all]
+Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.18
+Version: v1.1.19
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -253,7 +253,10 @@ Prompt behavior:
     `prompts/p27-educational-debrief-review.md` for a concise saved learning
     debrief after the fix, and
     `prompts/p28-unit-test-harvesting-review.md` for turning cheap deterministic
-    discoveries into local tests or fixtures.
+    discoveries into local tests or fixtures, and
+    `prompts/p29-reuse-harvesting-review.md` for bounded reuse harvesting of
+    helpers, fixtures, prompt language, documentation blocks, command idioms,
+    validation patterns, and local assets.
   - --config-file=PATH selects a shell-compatible config file for this invoked
     cycle. Use the equals form; spaced form is rejected.
   - --no-config disables the default config for this invoked cycle.
@@ -269,9 +272,11 @@ Prompt behavior:
     module for this invoked cycle.
   - --review-module=p28 appends the central P28 unit test harvesting review
     module for this invoked cycle.
-  - --review-modules=p24,p25,p26,p27,p28 appends multiple modules in a single flag;
+  - --review-module=p29 appends the central P29 reuse harvesting review module
+    for this invoked cycle.
+  - --review-modules=p24,p25,p26,p27,p28,p29 appends multiple modules in a single flag;
     repeated --review-module flags are also accepted and duplicate modules are ignored.
-  - --p24, --p25, --p26, --p27, and --p28 are shorthand aliases for the corresponding review modules.
+  - --p24, --p25, --p26, --p27, --p28, and --p29 are shorthand aliases for the corresponding review modules.
     Review module flags are one-cycle guidance only and do not persist to later
     loop iterations. They are not enabled by --prompt-pass=all unless requested.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5
@@ -297,7 +302,7 @@ Prompt behavior:
   - --manifest-file=PATH selects a different local manifest path for this cycle.
   - --include-glob=PATTERN and --exclude-glob=PATTERN add local path filters.
     --include-globs=a,b and --exclude-globs=a,b replace the configured lists.
-  - --selection-review-modules=p24,p25,p26,p27,p28 filters candidates using
+  - --selection-review-modules=p24,p25,p26,p27,p28,p29 filters candidates using
     deterministic local approximations for files likely relevant to those
     optional review modules. It is a selection filter, not a review-module
     prompt request; pair it with --review-module when you want both.

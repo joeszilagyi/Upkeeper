@@ -2,7 +2,7 @@
 # operator guide; once the guide exists, the Markdown becomes the living document.
 show_help() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28] [--review-modules=p24,p25,p26,p27,p28] [--p24] [--p25] [--p26] [--p27] [--p28] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28] [--ignore-failure-queue] [--prompt-pass=all]
+Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: $UPKEEPER_VERSION
@@ -267,9 +267,11 @@ Prompt behavior:
     module for this invoked cycle.
   - --review-module=p28 appends the central P28 unit test harvesting review
     module for this invoked cycle.
-  - --review-modules=p24,p25,p26,p27,p28 appends multiple modules in a single flag;
+  - --review-module=p29 appends the central P29 reuse harvesting review module
+    for this invoked cycle.
+  - --review-modules=p24,p25,p26,p27,p28,p29 appends multiple modules in a single flag;
     repeated --review-module flags are also accepted and duplicate modules are ignored.
-  - --p24, --p25, --p26, --p27, and --p28 are shorthand aliases for the corresponding review modules.
+  - --p24, --p25, --p26, --p27, --p28, and --p29 are shorthand aliases for the corresponding review modules.
     Review module flags are one-cycle guidance only and do not persist to later
     loop iterations. They are not enabled by --prompt-pass=all unless requested.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5
@@ -293,7 +295,7 @@ Prompt behavior:
   - --manifest-file=PATH selects a different local manifest path for this cycle.
   - --include-glob=PATTERN and --exclude-glob=PATTERN add local path filters;
     --include-globs=a,b and --exclude-globs=a,b replace the configured lists.
-  - --selection-review-modules=p24,p25,p26,p27,p28 filters candidates using
+  - --selection-review-modules=p24,p25,p26,p27,p28,p29 filters candidates using
     deterministic local approximations for files likely relevant to those
     optional review modules. It is a selection filter, not a review-module
     prompt request; pair it with --review-module when you want both.
@@ -703,12 +705,39 @@ def module_filter_match(path: str, modules: set[str]) -> bool:
             or name.startswith("test_")
         )
 
+    def p29() -> bool:
+        reuse_tokens = {
+            "artifact",
+            "command",
+            "config",
+            "fixture",
+            "format",
+            "helper",
+            "json",
+            "marker",
+            "parse",
+            "parser",
+            "prompt",
+            "reuse",
+            "status",
+            "template",
+            "transcript",
+            "validate",
+            "validation",
+        }
+        return (
+            lowered.startswith(("lib/upkeeper/", "tools/", "tests/", "prompts/", "docs/"))
+            or name in {"readme.md", "agents.md"}
+            or any(token in lowered for token in reuse_tokens)
+        )
+
     checks = {
         "p24": p24,
         "p25": p25,
         "p26": p26,
         "p27": p27,
         "p28": p28,
+        "p29": p29,
     }
     return any(checks[module]() for module in modules if module in checks)
 

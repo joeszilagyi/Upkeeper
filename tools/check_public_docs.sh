@@ -34,6 +34,7 @@ esac
 mapfile -t public_text_files < <(
   git ls-files --cached --others --exclude-standard \
     AGENTS.md \
+    PLANS.md \
     README.md \
     Upkeeper.conf \
     'change_notes_[0-9][0-9][0-9][0-9].md' \
@@ -68,11 +69,14 @@ grep -Fq "$wrapper_version changes" "$release_notes_file" || fail "$release_note
 [[ -s prompts/p26-public-documentation-review.md ]] || fail "P26 review module prompt is missing or empty"
 [[ -s prompts/p27-educational-debrief-review.md ]] || fail "P27 review module prompt is missing or empty"
 [[ -s prompts/p28-unit-test-harvesting-review.md ]] || fail "P28 review module prompt is missing or empty"
+[[ -s prompts/p29-reuse-harvesting-review.md ]] || fail "P29 review module prompt is missing or empty"
 grep -Fq "P26 - Public Documentation And Readability Review" prompts/p26-public-documentation-review.md || fail "P26 prompt title missing"
 grep -Fq "P26: not applicable" prompts/p26-public-documentation-review.md || fail "P26 applicability line missing"
 grep -Fq "P27 - Educational Debrief Review" prompts/p27-educational-debrief-review.md || fail "P27 prompt title missing"
 grep -Fq "P27 Educational Debrief:" prompts/p27-educational-debrief-review.md || fail "P27 saved debrief structure missing"
 grep -Fq "P28 - Unit Test Harvesting Review" prompts/p28-unit-test-harvesting-review.md || fail "P28 prompt title missing"
+grep -Fq "P29 - Reuse Harvesting Review" prompts/p29-reuse-harvesting-review.md || fail "P29 prompt title missing"
+grep -Fq "P29: not applicable" prompts/p29-reuse-harvesting-review.md || fail "P29 applicability line missing"
 grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 grep -Fq "tools/check_public_docs.sh" docs/public-documentation-policy.md || fail "public documentation policy missing tool reference"
 grep -Fq "docs/public-documentation-policy.md" README.md || fail "README does not link the public documentation policy"
@@ -89,6 +93,7 @@ grep -Fq "configurations/default.conf" README.md || fail "README does not mentio
 grep -Fq "p26-public-documentation-review.md" README.md || fail "README does not link P26"
 grep -Fq "p27-educational-debrief-review.md" README.md || fail "README does not link P27"
 grep -Fq "p28-unit-test-harvesting-review.md" README.md || fail "README does not link P28"
+grep -Fq "p29-reuse-harvesting-review.md" README.md || fail "README does not link P29"
 [[ -s .github/workflows/ci.yml ]] || fail "CI workflow is missing"
 grep -Fq ".github/workflows/ci.yml" README.md || fail "README does not mention the CI workflow"
 grep -Fq "tools/validate_upkeeper.sh --quick" .github/workflows/ci.yml || fail "CI workflow does not run quick validation"
@@ -99,14 +104,17 @@ grep -Fq "tools/stress_upkeeper_corpus.sh --local" docs/stress-corpus.md || fail
 grep -Fq "p26-public-documentation-review.md" prompts/README.md || fail "prompt index does not list P26"
 grep -Fq "p27-educational-debrief-review.md" prompts/README.md || fail "prompt index does not list P27"
 grep -Fq "p28-unit-test-harvesting-review.md" prompts/README.md || fail "prompt index does not list P28"
+grep -Fq "p29-reuse-harvesting-review.md" prompts/README.md || fail "prompt index does not list P29"
 
 help_text="$(./Upkeeper --help)"
 grep -Fq -- "--review-module=p26" <<<"$help_text" || fail "help missing --review-module=p26"
 grep -Fq -- "--review-module=p27" <<<"$help_text" || fail "help missing --review-module=p27"
 grep -Fq -- "--review-module=p28" <<<"$help_text" || fail "help missing --review-module=p28"
+grep -Fq -- "--review-module=p29" <<<"$help_text" || fail "help missing --review-module=p29"
 grep -Fq -- "--p26" <<<"$help_text" || fail "help missing --p26"
 grep -Fq -- "--p27" <<<"$help_text" || fail "help missing --p27"
 grep -Fq -- "--p28" <<<"$help_text" || fail "help missing --p28"
+grep -Fq -- "--p29" <<<"$help_text" || fail "help missing --p29"
 
 log "checking for obvious placeholder/legalese public text"
 placeholder_pattern='lorem ipsum|apache placeholder|placeholder framework|pending transitional|subsection c-x[0-9]+|rev 14 placeholder|private chat history required'
@@ -164,6 +172,6 @@ if errors:
     sys.exit(1)
 PY
 
-git diff --check -- .github README.md AGENTS.md Upkeeper.conf change_notes_*.md configurations docs lib/upkeeper/README.md prompts templates tools
+git diff --check -- .github README.md AGENTS.md PLANS.md Upkeeper.conf change_notes_*.md configurations docs lib/upkeeper/README.md prompts templates tools
 
 log "public documentation checks passed"

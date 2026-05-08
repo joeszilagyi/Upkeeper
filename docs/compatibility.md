@@ -30,7 +30,7 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--help`, `-h`, `--version`, `--config-file=...`, `--no-config`,
   `--prompt-file`, `--prompt`,
   `--review-module=...`, `--review-modules=...`, `--p24`, `--p25`, `--p26`,
-  `--p27`, `--p28`, `--model-override=...`, `--target-file=...`, and
+  `--p27`, `--p28`, `--p29`, `--model-override=...`, `--target-file=...`, and
   `--target-root=...`, `--target-depth=...`,
   `--selection-source=manifest|enumerate`,
   `--selection-order=oldest|newest|random`, `--refresh-manifest`,

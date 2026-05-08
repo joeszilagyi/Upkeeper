@@ -25,6 +25,9 @@ review_module_prompt_path() {
     p28)
       printf '%s/prompts/p28-unit-test-harvesting-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
       ;;
+    p29)
+      printf '%s/prompts/p29-reuse-harvesting-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
+      ;;
     *)
       return 1
       ;;

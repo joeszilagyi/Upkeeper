@@ -6,6 +6,13 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-08: v1.1.19 changes:
+	1. Added P29 as an opt-in reuse harvesting review module through `--review-module=p29`, `--review-modules=...`, `--p29`, config defaults, and selection-review filtering.
+	2. Added `prompts/p29-reuse-harvesting-review.md` so reusable helpers, fixtures, prompt language, docs, command idioms, validation patterns, and local assets can be extracted or consolidated when they have stable contracts and clear owners.
+	3. Updated README, operator guide, compatibility notes, public documentation policy, prompt index, AGENTS, and all-pass testrun launchers for the P29 public contract.
+	4. Extended validation and public-doc checks to require P29 prompt wiring, help text, shorthand flags, and dry-run prompt loading without backend Codex work.
+	5. Added root `PLANS.md` and recorded the P29 implementation plan so complex Upkeeper changes have a durable planning surface.
+
 2026-05-08: v1.1.18 changes:
 	1. Added `docs/security.md` as Upkeeper's local trust model for what the wrapper can read, write, execute, and record.
 	2. Documented shell-sourced config risks, Codex sandbox expectations, `$CODEX_HOME` session parsing, logs/transcripts, runtime artifacts, ignored files, symlinked central checkouts, client repo trust, fallback/postmortem behavior, secret handling, what not to commit, when not to run Upkeeper, and safe no-backend commands.

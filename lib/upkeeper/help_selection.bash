@@ -266,8 +266,13 @@ Prompt behavior:
     with xhigh reasoning effort. It is a CLI-only operator override and does
     not persist to later loop iterations. Use the equals form; spaced form is
     rejected.
-  - --target-file=PATH pins this invoked cycle to one source-safe repo file and
-    bypasses timestamp selection. Use the equals form; spaced form is rejected.
+  - --target-file=PATH pins this invoked cycle to one source-safe readable text
+    file and bypasses timestamp selection, selection filters, and the local
+    failure queue. Explicit pins may target tracked or non-ignored untracked
+    docs, prompts, configs, tests, or scripts inside the repo. They still reject
+    .git, ignored paths, runtime evidence, generated outputs, directories,
+    unreadable files, and binary-looking files. Use the equals form; spaced form
+    is rejected.
   - --target-root=PATH restricts timestamp selection to one file or directory
     tree; --target-depth=N limits descendant depth below that root.
   - --selection-order=oldest, newest, or random chooses the target ordering for
@@ -555,6 +560,39 @@ def executable_text_candidate(path: str) -> bool:
     return b"\0" not in sample
 
 
+def git_path_is_ignored(path: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", "--", path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def explicit_target_error(path: str) -> str:
+    if not path:
+        return "target path is outside the repository"
+    if path in excluded_exact or path.startswith(excluded_prefixes):
+        return "target path is excluded from Upkeeper review"
+    if git_path_is_ignored(path):
+        return "target path is ignored by git"
+    try:
+        stat_result = os.stat(path)
+    except OSError:
+        return "target path is missing or unreadable"
+    if not statmod.S_ISREG(stat_result.st_mode):
+        return "target path is not a regular file"
+    if not os.access(path, os.R_OK):
+        return "target path is not readable"
+    if not executable_text_candidate(path):
+        return "target path appears to be binary"
+    return ""
+
+
 def git_output(args: list[str]) -> str:
     try:
         return subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL).strip()
@@ -815,6 +853,7 @@ now = time.time()
 candidates = []
 repo_local_self_candidates = set()
 forced_target = normalized_repo_target(forced_target)
+forced_target_error = explicit_target_error(forced_target) if forced_target else ""
 self_rel = root_relative(self_path)
 if self_rel:
     repo_local_self_candidates.add(self_rel)
@@ -869,9 +908,6 @@ if startup_anomaly_gate == "1" and startup_force_upkeeper == "1":
         if statmod.S_ISREG(stat_result.st_mode):
             candidates.append((stat_result.st_mtime, path))
 
-if not candidates:
-    sys.exit(0)
-
 all_self_candidates = [item for item in candidates if item[1] in repo_local_self_candidates]
 stale_self_candidates = [
     item
@@ -882,18 +918,21 @@ candidate_map = {path: mtime for mtime, path in candidates}
 failure_queue_markers = open_failure_markers(set(candidate_map))
 selected_failure_marker = {}
 if forced_target:
-    forced_candidates = [item for item in candidates if item[1] == forced_target]
-    if not forced_candidates:
+    if forced_target_error:
         print(
-            f"--target-file={forced_target} is not an eligible source-safe script/tool target",
+            f"--target-file={forced_target} is not an eligible explicit target: {forced_target_error}",
             file=sys.stderr,
         )
         sys.exit(8)
-    mtime, path = forced_candidates[0]
+    mtime = os.stat(forced_target).st_mtime
+    path = forced_target
+    selection_mode = "explicit_target"
     selection_basis = (
         f"operator --target-file={forced_target} override; "
         "normal oldest eligible selection bypassed for this invoked cycle"
     )
+elif not candidates:
+    sys.exit(0)
 elif startup_anomaly_gate == "1" and startup_force_upkeeper == "1" and not all_self_candidates:
     print(
         "startup anomaly gate requires a repo-local Upkeeper candidate; "
@@ -902,6 +941,7 @@ elif startup_anomaly_gate == "1" and startup_force_upkeeper == "1" and not all_s
     )
     sys.exit(7)
 elif startup_anomaly_gate == "1" and startup_force_upkeeper == "1" and all_self_candidates:
+    selection_mode = "startup_anomaly_gate"
     mtime, path = sorted(all_self_candidates, key=lambda item: (item[0], item[1]))[0]
     selection_basis = (
         "startup anomaly gate forced repo-local Upkeeper first; "
@@ -911,17 +951,20 @@ elif failure_queue_markers:
     selected_failure_marker = failure_queue_markers[0]
     path = str(selected_failure_marker["target_path"])
     mtime = candidate_map[path]
+    selection_mode = "failure_queue"
     selection_basis = (
         "oldest unaddressed local tool-failure marker forced this target; "
         "normal oldest eligible selection bypassed until the failure is checked/remediated"
     )
 elif stale_self_candidates:
     mtime, path = sorted(stale_self_candidates, key=lambda item: (item[0], item[1]))[0]
+    selection_mode = "stale_self_review"
     selection_basis = (
         "stale repo-local Upkeeper script first "
         f"(age >= {self_review_after_days}d threshold); normal oldest eligible selection bypassed"
     )
 else:
+    selection_mode = "automatic_rotation"
     sorted_candidates = sorted(candidates, key=lambda item: (item[0], item[1]))
     if selection_order == "newest":
         mtime, path = sorted(candidates, key=lambda item: (-item[0], item[1]))[0]
@@ -963,6 +1006,7 @@ print(f"content_state={metadata['content_state']}")
 print(f"head_blob={metadata['head_blob']}")
 print(f"worktree_hash={metadata['worktree_hash']}")
 print(f"eligible_count={len(candidates)}")
+print(f"selection_mode={selection_mode}")
 print(f"selection_source={selection_source_used}")
 print(f"manifest_status={manifest_status}")
 print(f"selection_order={selection_order}")
@@ -989,7 +1033,7 @@ PY
 append_preselected_review_target() {
   local compiled_file="$1"
   local selection selector_rc err_file detail selected_path selected_epoch selected_age eligible_count selected_git_status selected_content_state selected_worktree_hash selected_basis
-  local selection_source manifest_status selection_order target_root target_max_depth include_globs exclude_globs selection_review_modules
+  local selection_mode selection_source manifest_status selection_order target_root target_max_depth include_globs exclude_globs selection_review_modules
   local failure_queue_selected failure_marker_id failure_marker_path failure_marker_first_seen_epoch failure_marker_failure_count failure_marker_first_failure_kind failure_marker_first_failure_exit_line
 
   if ! err_file="$(run_mktemp preselect-error)"; then
@@ -1033,6 +1077,7 @@ append_preselected_review_target() {
   selected_worktree_hash="$(sed -n 's/^worktree_hash=//p' <<<"$selection")"
   selected_basis="$(sed -n 's/^selection_basis=//p' <<<"$selection")"
   eligible_count="$(sed -n 's/^eligible_count=//p' <<<"$selection")"
+  selection_mode="$(sed -n 's/^selection_mode=//p' <<<"$selection")"
   selection_source="$(sed -n 's/^selection_source=//p' <<<"$selection")"
   manifest_status="$(sed -n 's/^manifest_status=//p' <<<"$selection")"
   selection_order="$(sed -n 's/^selection_order=//p' <<<"$selection")"
@@ -1059,7 +1104,11 @@ append_preselected_review_target() {
     printf '%s\n' "$selection"
     printf '\nRules for this preselected target:\n'
     printf -- '- This block is authoritative. Start by verifying and reading this selected file; do not run candidate-discovery scans first.\n'
-    printf -- '- This target is the timestamp-selected file for this cycle.\n'
+    if [[ "${selection_mode:-unknown}" == "explicit_target" ]]; then
+      printf -- '- This target was explicitly pinned by the operator for this cycle; normal timestamp rotation, failure queue, and selection filters were bypassed.\n'
+    else
+      printf -- '- This target came from Upkeeper preselection mode `%s` for this cycle.\n' "${selection_mode:-unknown}"
+    fi
     printf -- '- Verify only this file exists, is readable, and is eligible before reviewing it.\n'
     printf -- '- This preselected target overrides all later P1-P23 selection rules; run applicable prompts against this same file.\n'
     printf -- '- Use git_status/content_state/head_blob/worktree_hash above as the pre-run baseline for this file.\n'
@@ -1080,8 +1129,8 @@ append_preselected_review_target() {
     fi
   } >>"$compiled_file"
 
-  log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} worktree_hash=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} selection_source=${selection_source:-unknown} manifest_status=$(shell_quote "${manifest_status:-unknown}") selection_order=${selection_order:-unknown} target_root=$(shell_quote "${target_root:-none}") target_depth=$(shell_quote "${target_max_depth:-none}") include_globs=$(shell_quote "${include_globs:-none}") exclude_globs=$(shell_quote "${exclude_globs:-none}") selection_review_modules=$(shell_quote "${selection_review_modules:-none}") failure_queue_selected=${failure_queue_selected:-0} failure_marker_id=$(shell_quote "${failure_marker_id:-none}") basis=$(shell_quote "${selected_basis:-unknown}")"
-  terminal_emit_progress "selected file ${selected_path:-unknown} (age=${selected_age:-unknown}; source=${selection_source:-unknown}; order=${selection_order:-unknown}; reason=${selected_basis:-unknown}; eligible=${eligible_count:-unknown})"
+  log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} worktree_hash=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} selection_mode=${selection_mode:-unknown} selection_source=${selection_source:-unknown} manifest_status=$(shell_quote "${manifest_status:-unknown}") selection_order=${selection_order:-unknown} target_root=$(shell_quote "${target_root:-none}") target_depth=$(shell_quote "${target_max_depth:-none}") include_globs=$(shell_quote "${include_globs:-none}") exclude_globs=$(shell_quote "${exclude_globs:-none}") selection_review_modules=$(shell_quote "${selection_review_modules:-none}") failure_queue_selected=${failure_queue_selected:-0} failure_marker_id=$(shell_quote "${failure_marker_id:-none}") basis=$(shell_quote "${selected_basis:-unknown}")"
+  terminal_emit_progress "selected file ${selected_path:-unknown} (age=${selected_age:-unknown}; mode=${selection_mode:-unknown}; source=${selection_source:-unknown}; order=${selection_order:-unknown}; reason=${selected_basis:-unknown}; eligible=${eligible_count:-unknown})"
 }
 
 operator_guide_snapshot_version() {

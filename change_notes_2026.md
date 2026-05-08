@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-08: v1.1.15 changes:
+	1. Fixed the explicit `--target-file` contract so human-pinned targets may be any source-safe readable text file inside the repo, including docs, prompts, config, tests, and scripts.
+	2. Kept automatic rotation limited to script/tool candidates while preserving exclusions for `.git`, ignored paths, runtime evidence, generated outputs, directories, unreadable files, and binary-looking files.
+	3. Added dry-run validation for explicit docs targets, unsafe runtime and `.git` targets, and automatic docs-only selection remaining outside script/tool rotation.
+
 2026-05-08: v1.1.14 changes:
 	1. Hardened disk-space preflight logging so path-like fields are shell-quoted, keeping space-bearing operator paths parseable in `disk.preflight` records and prompt notes.
 	2. Parsed the trusted `free_percent` field directly instead of scanning the whole log payload, preventing path text that contains `free_percent=` from creating false low-disk decisions.

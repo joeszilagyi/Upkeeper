@@ -333,7 +333,12 @@ or `--random-target` chooses a random eligible target within the filtered set.
 These filters shape target selection only; review-module prompts still require
 `--review-module`, `--review-modules`, or the `--p24` through `--p28` shorthands.
 `--target-file=PATH` remains the strongest one-cycle pin and takes precedence
-over the failure queue and selection filters.
+over the failure queue and selection filters. Automatic rotation stays focused
+on script/tool candidates, but an explicit operator pin may target any
+source-safe readable text file inside the repo, including docs, prompts, config,
+tests, and scripts. Explicit pins still reject `.git`, ignored paths, runtime
+evidence, generated outputs, directories, unreadable files, and binary-looking
+files.
 
 If a prior run saw an interesting script/tool command fail, Upkeeper writes a
 local marker under `runtime/unaddressed-tool-failures/open/`. After explicit

@@ -889,6 +889,53 @@ check_file_manifest_selection() {
     --target-root=lib/upkeeper \
     --selection-source=manifest
   grep -Fq "review.preselect path=Upkeeper" "$temp_dir/forced.log" || fail "--target-file did not override target-root selection filter"
+  grep -Fq "selection_mode=explicit_target" "$temp_dir/forced.log" || fail "--target-file was not logged as explicit target mode"
+
+  run_manifest_dry_run "$temp_dir/docs-target.log" \
+    --target-file=docs/scripts/upkeeper.md \
+    --review-modules=p26,p28 \
+    --prompt-pass=all
+  grep -Fq "review.preselect path=docs/scripts/upkeeper.md" "$temp_dir/docs-target.log" || fail "explicit docs target was not accepted"
+  grep -Fq "selection_mode=explicit_target" "$temp_dir/docs-target.log" || fail "explicit docs target was not logged as explicit target mode"
+  grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/docs-target.log" || fail "explicit docs target dry-run did not finish cleanly"
+
+  (
+    export UPKEEPER_TARGET_FILE="docs/scripts/upkeeper.md"
+    export UPKEEPER_REVIEW_MODULES="p26,p28"
+    export UPKEEPER_PROMPT_PASS="all"
+    run_manifest_dry_run "$temp_dir/docs-config-target.log"
+  )
+  grep -Fq "review.preselect path=docs/scripts/upkeeper.md" "$temp_dir/docs-config-target.log" || fail "configured explicit docs target was not accepted"
+  grep -Fq "review_modules=p26,p28" "$temp_dir/docs-config-target.log" || fail "configured review modules were not applied"
+  grep -Fq "prompt_pass=all" "$temp_dir/docs-config-target.log" || fail "configured prompt pass was not applied"
+
+  run_manifest_dry_run "$temp_dir/docs-auto.log" \
+    --selection-source=enumerate \
+    --target-root=docs/scripts \
+    --include-glob='*.md'
+  grep -Fq "review.preselect.none reason=no_eligible_script_tool" "$temp_dir/docs-auto.log" || fail "automatic docs-only selection did not report no eligible script/tool"
+  if grep -Fq "review.preselect path=docs/scripts/upkeeper.md" "$temp_dir/docs-auto.log"; then
+    fail "automatic rotation selected a docs-only target"
+  fi
+
+  mkdir -p runtime
+  printf 'runtime explicit target fixture\n' >runtime/upkeeper-explicit-target-fixture.txt
+  set +e
+  run_manifest_dry_run "$temp_dir/runtime-target.log" \
+    --target-file=runtime/upkeeper-explicit-target-fixture.txt
+  rc=$?
+  set -e
+  rm -f runtime/upkeeper-explicit-target-fixture.txt
+  [[ "$rc" -eq 3 ]] || fail "explicit runtime target exited $rc, expected 3"
+  grep -Fq "reason=TARGET_FILE_NOT_ELIGIBLE" "$temp_dir/runtime-target.log" || fail "explicit runtime target did not fail as ineligible"
+
+  set +e
+  run_manifest_dry_run "$temp_dir/git-target.log" \
+    --target-file=.git/config
+  rc=$?
+  set -e
+  [[ "$rc" -eq 3 ]] || fail "explicit .git target exited $rc, expected 3"
+  grep -Fq "reason=TARGET_FILE_NOT_ELIGIBLE" "$temp_dir/git-target.log" || fail "explicit .git target did not fail as ineligible"
 
   set +e
   output="$(./Upkeeper --selection-review-modules=nope --version 2>&1)"

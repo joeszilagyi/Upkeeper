@@ -73,6 +73,9 @@ Future changes should preserve this operator-visible surface as far as possible:
   exists or can be built. Direct enumeration remains available through
   `--selection-source=enumerate`, and operator-pinned `--target-file` keeps
   priority over manifest, queue, and filter behavior.
+- Explicit `--target-file` pins may select any source-safe readable text file
+  inside the repo, including docs, prompts, config, tests, and scripts, while
+  automatic rotation remains limited to script/tool candidates.
 - Selection filters such as target root, depth, include/exclude globs, random
   order, and review-module approximations narrow which file Upkeeper chooses.
   They do not silently enable extra review modules or change the single-selected-

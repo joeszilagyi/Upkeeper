@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28] [--review-modules=p24,p25,p26,p27,p28] [--p24] [--p25] [--p26] [--p27] [--p28] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28] [--ignore-failure-queue] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.14
+Version: v1.1.15
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -278,8 +278,13 @@ Prompt behavior:
     with xhigh reasoning effort. It is a CLI-only operator override and does
     not persist to later loop iterations. Use the equals form; spaced form is
     rejected.
-  - --target-file=PATH pins this invoked cycle to one source-safe repo file and
-    bypasses timestamp selection. Use the equals form; spaced form is rejected.
+  - --target-file=PATH pins this invoked cycle to one source-safe readable text
+    file and bypasses timestamp selection, selection filters, and the local
+    failure queue. Explicit pins may target tracked or non-ignored untracked
+    docs, prompts, configs, tests, or scripts inside the repo. They still reject
+    `.git`, ignored paths, runtime evidence, generated outputs, directories,
+    unreadable files, and binary-looking files. Use the equals form; spaced
+    form is rejected.
   - --target-root=PATH restricts timestamp selection to one file or directory
     tree. --target-dir=PATH is an alias.
   - --target-depth=N limits descendant depth below the selected target root.

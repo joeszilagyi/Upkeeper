@@ -117,7 +117,7 @@ PY
 codex_live_output_filter() {
   local label="$1"
 
-  python3 - "$label" <<'PY'
+  python3 /dev/fd/3 "$label" 3<<'PY'
 from datetime import datetime, timezone
 import os
 import re
@@ -261,4 +261,3 @@ for raw in sys.stdin:
         print(f"{ts()} Upkeeper: {label} ERROR: {short(stripped)}", file=sys.stderr, flush=True)
 PY
 }
-

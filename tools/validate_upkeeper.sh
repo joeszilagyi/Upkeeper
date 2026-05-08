@@ -221,6 +221,29 @@ check_help_and_diff() {
   git diff --cached --check
 }
 
+check_live_output_filter_pipe() {
+  local temp_dir rc
+
+  log "checking live output filter consumes pipeline stdin"
+  temp_dir="$(mktemp -d /tmp/upkeeper-live-filter.XXXXXX)"
+
+  set +e
+  printf '%s\n' \
+    'exec' \
+    'python -m pytest' \
+    'exited 1 in 0.1s' \
+    | CODEX_TERMINAL_VERBOSITY=summary bash -lc 'cd "$1"; source ./Upkeeper; codex_live_output_filter validation' bash "$ROOT_DIR" \
+      >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 0 ]] || fail "live output filter exited $rc"
+  grep -Fq "validation running tests: python -m pytest" "$temp_dir/err.txt" || fail "live output filter did not report interesting command"
+  grep -Fq "validation ERROR tests failed: exited 1 in 0.1s" "$temp_dir/err.txt" || fail "live output filter did not report failed command"
+  [[ ! -s "$temp_dir/out.txt" ]] || fail "live output filter wrote unexpected stdout"
+  rm -r "$temp_dir"
+}
+
 check_central_dry_runs() {
   log "checking central dry-run startup"
   CODEX_TERMINAL_VERBOSITY=quiet UPKEEPER_DRY_RUN=1 ./Upkeeper >/dev/null
@@ -400,6 +423,7 @@ check_version_consistency
 check_module_map
 check_prompt_template
 check_help_and_diff
+check_live_output_filter_pipe
 
 if [[ "$MODE" == "full" ]]; then
   check_central_dry_runs

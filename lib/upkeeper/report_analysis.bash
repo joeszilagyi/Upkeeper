@@ -218,7 +218,7 @@ def capture_section(names):
             break
         if any(norm.startswith(header) for header in known_headers):
             break
-        if line.startswith("UPKEEPER_STATUS:"):
+        if line.startswith(("UPKEEPER_STATUS:", "UPKEEPER_LOG_REVIEW:")):
             break
         items.append(line)
         if len(items) >= 10:
@@ -248,18 +248,26 @@ for index, line in enumerate(lines):
     ) or re.match(
         r"selected\b.*\b(file|target)\b",
         norm,
+    ) or re.match(
+        r"selected\s+[`[]",
+        line,
+        re.I,
     )
     if not selected_label:
         continue
     source = line
     rest_after_colon = source.split(":", 1)[1].strip() if ":" in source else ""
-    if (":" not in source or not rest_after_colon) and index + 1 < len(lines):
+    has_inline_target = re.search(r"`[^`]+`|\]\([^)]+\)", source)
+    if not has_inline_target and (":" not in source or not rest_after_colon) and index + 1 < len(lines):
         for candidate in lines[index + 1 : index + 5]:
             if candidate:
                 source = candidate
                 break
     markdown_link = re.search(r"\]\(([^)]+)\)", source)
-    if markdown_link:
+    backtick_path = re.search(r"`([^`]+)`", source)
+    if backtick_path:
+        selected_file = backtick_path.group(1)
+    elif markdown_link:
         selected_file = markdown_link.group(1).strip("<>").split(":", 1)[0]
     elif ":" in source:
         selected_file = source.split(":", 1)[1].strip()

@@ -327,6 +327,34 @@ EOF
   rm -r "$temp_dir"
 }
 
+check_review_summary_parser() {
+  local temp_dir summary selected_file outcome
+
+  log "checking review summary parser"
+  temp_dir="$(mktemp -d /tmp/upkeeper-review-summary.XXXXXX)"
+  cat >"$temp_dir/last-message.txt" <<'EOF'
+REVIEWED_AND_FIXED
+
+Selected `lib/upkeeper/codex_io.bash` from the authoritative preselection.
+
+Implemented:
+- [lib/upkeeper/codex_io.bash](/home/joe/projects/Upkeeper/main/lib/upkeeper/codex_io.bash): hardened JSON assignment handling.
+
+Verification passed:
+- `tools/validate_upkeeper.sh --quick`
+
+UPKEEPER_LOG_REVIEW: CHECKED cycle=validation anomalies=none
+UPKEEPER_STATUS: WORK_DONE
+EOF
+
+  summary="$(bash -lc 'cd "$1"; source ./Upkeeper; review_report_summary_json "$2"' bash "$ROOT_DIR" "$temp_dir/last-message.txt")"
+  selected_file="$(printf '%s' "$summary" | jq -r '.selected_file')"
+  outcome="$(printf '%s' "$summary" | jq -r '.outcome')"
+  [[ "$selected_file" == "lib/upkeeper/codex_io.bash" ]] || fail "review summary selected_file was $selected_file"
+  [[ "$outcome" == "REVIEWED_AND_FIXED" ]] || fail "review summary outcome was $outcome"
+  rm -r "$temp_dir"
+}
+
 check_central_dry_runs() {
   log "checking central dry-run startup"
   CODEX_TERMINAL_VERBOSITY=quiet UPKEEPER_DRY_RUN=1 ./Upkeeper >/dev/null
@@ -507,6 +535,7 @@ check_module_map
 check_prompt_template
 check_help_and_diff
 check_live_output_filter_pipe
+check_review_summary_parser
 
 if [[ "$MODE" == "full" ]]; then
   check_central_dry_runs

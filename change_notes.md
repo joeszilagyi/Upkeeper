@@ -16,6 +16,7 @@ Version numbering note:
 	8. Reduced transcript signal noise by treating Codex prose, command status lines, command output, and diff blocks as separate phases before surfacing runtime failures, while de-duplicating repeated status markers.
 	9. Hardened Codex I/O helpers so unreadable prompt files fail during CLI resolution, malformed analyzer JSON fails through the wrapper error path, and transcript capture errors are logged instead of being hidden behind a successful Codex exit.
 	10. Added numbered command labels to summary terminal output and stopped classifying exploratory search failures as test/runtime failures.
+	11. Taught review-summary parsing to capture selected files from final responses that use the compact `Selected \`path\`` wording.
 
 2026-05-07: v1.1.3 changes:
 	1. Refreshed README examples, repository layout, and related-doc links after the module, prompt, validation, and dependency-documentation work.

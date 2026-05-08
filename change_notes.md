@@ -18,6 +18,7 @@ Version numbering note:
 	10. Added numbered command labels to summary terminal output and stopped classifying exploratory search failures as test/runtime failures.
 	11. Taught review-summary parsing to capture selected files from final responses that use the compact `Selected \`path\`` wording.
 	12. Fixed review-summary selected-file parsing when a Markdown selected-file link is followed by backticked metadata such as an mtime epoch.
+	13. Hardened parent-loop stop handling so invalid inherited parent PIDs are rejected before signal delivery and parent-exit races return logged outcomes instead of aborting under `set -e`.
 
 2026-05-07: v1.1.3 changes:
 	1. Refreshed README examples, repository layout, and related-doc links after the module, prompt, validation, and dependency-documentation work.

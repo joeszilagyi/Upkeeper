@@ -3,10 +3,18 @@
 # A quota stop must break the shell loop that is repeatedly launching this
 # script, not just this child process. Fallback children inherit the original
 # parent PID so nested recovery can still stop the real outer loop.
+parent_pid_is_stoppable() {
+  local pid="$1"
+
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  [[ "$pid" =~ ^0*[01]$ ]] && return 1
+  return 0
+}
+
 direct_parent_details() {
   local ppid_now
   ppid_now="$(ps -o ppid= -p "$$" | tr -d ' ')"
-  [[ -n "$ppid_now" ]] || return 1
+  parent_pid_is_stoppable "$ppid_now" || return 1
   ps -p "$ppid_now" >/dev/null 2>&1 || return 1
   local parent_comm
   local parent_args
@@ -20,6 +28,7 @@ parent_shell_details() {
   if [[ -n "$CODEX_LOOP_PARENT_PID" ]]; then
     local target_pid target_comm target_args
     target_pid="$CODEX_LOOP_PARENT_PID"
+    parent_pid_is_stoppable "$target_pid" || return 1
     if ps -p "$target_pid" >/dev/null 2>&1; then
       target_comm="$(ps -o comm= -p "$target_pid" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
       target_args="$(ps -o args= -p "$target_pid" | compact_process_args)"
@@ -91,6 +100,11 @@ stop_parent_loop() {
   local parent_pid parent_comm parent_args using_override
   IFS=$'\t' read -r parent_pid parent_comm parent_args using_override <<<"$details"
 
+  if ! parent_pid_is_stoppable "$parent_pid"; then
+    log_line "ERROR" "refusing to stop unsafe parent_pid=$parent_pid parent_comm=$parent_comm using_override=${using_override:-0}"
+    return 1
+  fi
+
   case "$parent_comm" in
     bash|sh|dash|zsh|ksh|fish)
       ;;
@@ -129,13 +143,22 @@ stop_parent_loop() {
   if [[ "${using_override:-0}" != "1" ]]; then
     local ppid_now
     ppid_now="$(ps -o ppid= -p "$$" | tr -d ' ')"
-    if [[ "$ppid_now" != "$parent_pid" ]]; then
+    if ! parent_pid_is_stoppable "$ppid_now" || [[ "$ppid_now" != "$parent_pid" ]]; then
       log_line "ERROR" "parent PID changed before stop; expected=$parent_pid actual=$ppid_now"
       return 1
     fi
   fi
 
-  kill -TERM "$parent_pid"
+  if ! kill -TERM "$parent_pid" 2>/dev/null; then
+    if ! kill -0 "$parent_pid" 2>/dev/null; then
+      PARENT_LOOP_STOP_OUTCOME="already_exited"
+      log_line "INFO" "parent_pid=$parent_pid exited before SIGTERM could be delivered"
+      return 0
+    fi
+    PARENT_LOOP_STOP_OUTCOME="sigterm_failed"
+    log_line "ERROR" "failed to send SIGTERM to parent_pid=$parent_pid"
+    return 1
+  fi
   log_line "WARN" "sent SIGTERM to parent_pid=$parent_pid"
 
   local elapsed=0
@@ -150,7 +173,16 @@ stop_parent_loop() {
   done
 
   log_line "WARN" "parent_pid=$parent_pid still alive after ${CODEX_LOOP_STOP_GRACE_SECONDS}s; sending SIGKILL"
-  kill -KILL "$parent_pid"
+  if ! kill -KILL "$parent_pid" 2>/dev/null; then
+    if ! kill -0 "$parent_pid" 2>/dev/null; then
+      PARENT_LOOP_STOP_OUTCOME="stopped_sigterm"
+      log_line "INFO" "parent_pid=$parent_pid exited before SIGKILL could be delivered"
+      return 0
+    fi
+    PARENT_LOOP_STOP_OUTCOME="sigkill_failed"
+    log_line "ERROR" "failed to send SIGKILL to parent_pid=$parent_pid"
+    return 1
+  fi
   sleep 0.2
 
   if kill -0 "$parent_pid" 2>/dev/null; then

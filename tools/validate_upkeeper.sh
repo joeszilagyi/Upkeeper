@@ -370,6 +370,68 @@ EOF
   rm -r "$temp_dir"
 }
 
+check_process_control_guards() {
+  local temp_dir
+
+  log "checking parent process-control guards"
+  temp_dir="$(mktemp -d /tmp/upkeeper-process-control.XXXXXX)"
+
+  if ! CODEX_LOG_FILE="$temp_dir/Upkeeper.log" CODEX_TERMINAL_VERBOSITY=quiet \
+    bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./Upkeeper
+
+      for invalid_pid in -1 0 1 abc "2 3"; do
+        CODEX_LOOP_PARENT_PID="$invalid_pid"
+        CODEX_LOOP_PARENT_COMM=bash
+        CODEX_LOOP_PARENT_ARGS="bash -lc while ./Upkeeper"
+        if parent_shell_details >"$2/invalid-parent.out"; then
+          printf "invalid parent PID was accepted: %s\n" "$invalid_pid" >&2
+          exit 1
+        fi
+      done
+
+      CODEX_LOOP_PARENT_PID=424242
+      CODEX_LOOP_PARENT_COMM=bash
+      CODEX_LOOP_PARENT_ARGS="bash -lc while ./Upkeeper"
+      CODEX_DISABLE_PARENT_STOP=0
+      UPKEEPER_DRY_RUN=0
+      CODEX_EXECUTION_ORIGIN=validation
+      CODEX_LOOP_STOP_GRACE_SECONDS=1
+      PARENT_LOOP_STOP_OUTCOME=
+      kill_probe_count=0
+
+      kill() {
+        case "$1" in
+          -0)
+            kill_probe_count=$((kill_probe_count + 1))
+            [[ "$kill_probe_count" -eq 1 ]]
+            ;;
+          -TERM)
+            return 1
+            ;;
+          *)
+            printf "unexpected kill invocation: %s\n" "$*" >&2
+            return 1
+            ;;
+        esac
+      }
+
+      stop_parent_loop
+      [[ "$PARENT_LOOP_STOP_OUTCOME" == "already_exited" ]] || {
+        printf "unexpected stop outcome: %s\n" "${PARENT_LOOP_STOP_OUTCOME:-missing}" >&2
+        exit 1
+      }
+    ' bash "$ROOT_DIR" "$temp_dir" >"$temp_dir/guard.out" 2>"$temp_dir/guard.err"; then
+    cat "$temp_dir/guard.err" >&2
+    fail "process-control guard check failed"
+  fi
+
+  grep -Fq "exited before SIGTERM could be delivered" "$temp_dir/Upkeeper.log" || fail "SIGTERM race was not logged"
+  rm -r "$temp_dir"
+}
+
 check_central_dry_runs() {
   log "checking central dry-run startup"
   CODEX_TERMINAL_VERBOSITY=quiet UPKEEPER_DRY_RUN=1 ./Upkeeper >/dev/null
@@ -551,6 +613,7 @@ check_prompt_template
 check_help_and_diff
 check_live_output_filter_pipe
 check_review_summary_parser
+check_process_control_guards
 
 if [[ "$MODE" == "full" ]]; then
   check_central_dry_runs

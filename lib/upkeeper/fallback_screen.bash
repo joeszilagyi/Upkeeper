@@ -1,3 +1,28 @@
+# Detached screen fallback supervision.
+#
+# This module owns the generated `screen` runner used when the primary Codex
+# path needs a stronger fallback child that can outlive the visible terminal. It
+# writes and reads small state artifacts under the current cycle's postmortem
+# directory; callers must treat those artifacts as operational evidence rather
+# than trusted shell input.
+screen_fallback_exit_code_or_default() {
+  local raw_exit="$1"
+  local fallback="${2-8}"
+
+  if [[ "$raw_exit" =~ ^[0-9]+$ ]]; then
+    raw_exit="${raw_exit#"${raw_exit%%[!0]*}"}"
+    raw_exit="${raw_exit:-0}"
+    case "$raw_exit" in
+      [0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])
+        printf '%s' "$raw_exit"
+        return 0
+        ;;
+    esac
+  fi
+
+  printf '%s' "$fallback"
+}
+
 screen_session_exists() {
   local session_name="$1"
   screen -list | grep -F ".$session_name" >/dev/null 2>&1
@@ -307,9 +332,9 @@ wait_for_screen_fallback_loop() {
   local session_name="$2"
   local exit_file="$3"
   local done_file="$4"
-  local child_exit=""
+  local child_exit="" raw_child_exit=""
   local screen_root current_child_id current_child_status heartbeat completed_count last_cycle_exit stop_reason
-  local status_file
+  local status_file exit_file_present=0
 
   screen_root="$(dirname "$exit_file")"
   status_file="$screen_root/current-child-status.txt"
@@ -350,9 +375,14 @@ wait_for_screen_fallback_loop() {
   teardown_fallback_screen_session "wait_complete_$trigger"
 
   if [[ -f "$exit_file" ]]; then
-    child_exit="$(tr -d '[:space:]' <"$exit_file")"
+    exit_file_present=1
+    raw_child_exit="$(tr -d '[:space:]' <"$exit_file")"
+    child_exit="$(screen_fallback_exit_code_or_default "$raw_child_exit" "")"
   fi
   if [[ -z "$child_exit" ]]; then
+    if [[ "$exit_file_present" == "1" ]]; then
+      log_line "WARN" "fallback.screen.finish invalid_exit_code_artifact=1 trigger=$trigger session_name=$session_name exit_file=$(shell_quote "$exit_file") raw_exit=$(shell_quote "$raw_child_exit") default_exit=8"
+    fi
     child_exit="8"
   fi
 

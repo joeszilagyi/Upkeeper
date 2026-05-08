@@ -95,18 +95,18 @@ adopt_completed_fallback_screen_result_on_signal() {
   local signal_name="$1"
   local screen_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen"
   local exit_file="$screen_root/final-exit-code.txt"
-  local child_exit current_child_id current_child_status completed_count last_cycle_exit stop_reason
+  local child_exit raw_child_exit current_child_id current_child_status completed_count last_cycle_exit stop_reason
 
   [[ "$CODEX_EXECUTION_ORIGIN" == "primary" ]] || return 1
   [[ "$FALLBACK_SCREEN_WATCH_ACTIVE" == "1" ]] || return 1
   completed_fallback_screen_result_available || return 1
 
-  child_exit="$(tr -d '[:space:]' <"$exit_file")"
-  case "$child_exit" in
-    ''|*[!0-9]*)
-      child_exit="8"
-      ;;
-  esac
+  raw_child_exit="$(tr -d '[:space:]' <"$exit_file")"
+  child_exit="$(screen_fallback_exit_code_or_default "$raw_child_exit" "")"
+  if [[ -z "$child_exit" ]]; then
+    log_line "WARN" "signal.completed_fallback_result invalid_exit_code_artifact=1 signal=$signal_name session_name=${FALLBACK_SCREEN_SESSION_NAME:-none} exit_file=$(shell_quote "$exit_file") raw_exit=$(shell_quote "$raw_child_exit") default_exit=8"
+    child_exit="8"
+  fi
 
   FALLBACK_SCREEN_EXIT_CODE="$child_exit"
   FALLBACK_SCREEN_WATCH_ACTIVE="0"

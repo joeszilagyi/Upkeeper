@@ -21,6 +21,7 @@ Version numbering note:
 	13. Hardened parent-loop stop handling so invalid inherited parent PIDs are rejected before signal delivery and parent-exit races return logged outcomes instead of aborting under `set -e`.
 	14. Classified file-view and discovery commands as search before validation/test matching so source-code fixtures no longer appear as live or post-run runtime error signals.
 	15. Hardened fallback artifact readers so transient missing or unreadable screen/marker state files return existing sentinel defaults instead of aborting wrapper cleanup or cooldown logging under `set -e`, with quick validation coverage for the helper contract.
+	16. Hardened detached screen fallback exit-code artifacts so corrupt or out-of-range values fall back to a logged wrapper failure instead of being propagated into shell return paths.
 
 2026-05-07: v1.1.3 changes:
 	1. Refreshed README examples, repository layout, and related-doc links after the module, prompt, validation, and dependency-documentation work.

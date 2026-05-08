@@ -347,6 +347,10 @@ parse_args() {
       --target-file)
         die "use --target-file=PATH (spaced form is intentionally unsupported)"
         ;;
+      --ignore-failure-queue|--bypass-failure-queue)
+        CODEX_TOOL_FAILURE_QUEUE_BYPASS="1"
+        shift
+        ;;
       --prompt-pass=*)
         CODEX_PROMPT_PASS="${1#--prompt-pass=}"
         [[ -n "$CODEX_PROMPT_PASS" ]] || die "--prompt-pass requires a value"

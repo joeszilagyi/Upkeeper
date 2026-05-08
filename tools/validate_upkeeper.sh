@@ -251,6 +251,7 @@ check_help_and_diff() {
   grep -Fq -- "--p25" <<<"$help" || fail "help missing --p25"
   grep -Fq -- "--p26" <<<"$help" || fail "help missing --p26"
   grep -Fq -- "--p27" <<<"$help" || fail "help missing --p27"
+  grep -Fq -- "--ignore-failure-queue" <<<"$help" || fail "help missing --ignore-failure-queue"
   git diff --check
   git diff --cached --check
 }
@@ -430,6 +431,158 @@ check_review_module_flags() {
   set -e
   [[ "$rc" -eq 3 ]] || fail "invalid review module exited $rc, expected 3"
   grep -Fq "unknown review module: nope" <<<"$output" || fail "invalid review module error was not clear"
+
+  rm -r "$temp_dir"
+}
+
+check_tool_failure_queue() {
+  local temp_dir transcript clean_transcript marker_path open_count resolved_count marker_id
+
+  log "checking tool failure queue"
+  temp_dir="$(mktemp -d /tmp/upkeeper-tool-failure-queue.XXXXXX)"
+  transcript="$temp_dir/failure-transcript.log"
+  clean_transcript="$temp_dir/clean-transcript.log"
+
+  cat >"$transcript" <<'EOF'
+codex
+exec
+/bin/bash -lc 'tools/validate_upkeeper.sh --quick'
+exited 1 in 0.1s
+EOF
+
+  (
+    cd "$ROOT_DIR"
+    LOG_FILE="$temp_dir/Upkeeper.log"
+    CODEX_TERMINAL_VERBOSITY=silent
+    CODEX_TOOL_FAILURE_QUEUE_ENABLED=1
+    CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures"
+    CODEX_TOOL_FAILURE_QUEUE_BYPASS=0
+    CYCLE_ID="validation-open"
+    CYCLE_RUN_HASH="validationhashopen"
+    RUN_SELECTED_FAILURE_MARKER_PATH=""
+    source lib/upkeeper/fallback_artifacts.bash
+    source lib/upkeeper/runtime_foundation.bash
+    source lib/upkeeper/tool_failure_queue.bash
+    tool_failure_queue_finalize_run "lib/upkeeper/codex_io.bash" "$transcript" 0 "BLOCKED"
+  )
+
+  open_count="$(find "$temp_dir/failures/open" -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$open_count" == "1" ]] || fail "tool failure queue did not create one open marker"
+  marker_path="$(find "$temp_dir/failures/open" -type f -name '*.json' | head -n 1)"
+  grep -Fq '"target_path": "lib/upkeeper/codex_io.bash"' "$marker_path" || fail "tool failure marker target missing"
+  grep -Fq '"last_failure_kind": "validation"' "$marker_path" || fail "tool failure marker kind missing"
+  grep -Fq "tool_failure_queue.open" "$temp_dir/Upkeeper.log" || fail "tool failure queue open event not logged"
+
+  (
+    cd "$ROOT_DIR"
+    LOG_FILE="$temp_dir/unaddressed.log"
+    CODEX_TERMINAL_VERBOSITY=silent
+    CODEX_TOOL_FAILURE_QUEUE_ENABLED=1
+    CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/unaddressed-failures"
+    CODEX_TOOL_FAILURE_QUEUE_BYPASS=0
+    CYCLE_ID="validation-unaddressed"
+    CYCLE_RUN_HASH="validationhashunaddressed"
+    RUN_SELECTED_FAILURE_MARKER_PATH=""
+    source lib/upkeeper/fallback_artifacts.bash
+    source lib/upkeeper/runtime_foundation.bash
+    source lib/upkeeper/tool_failure_queue.bash
+    tool_failure_queue_finalize_run "lib/upkeeper/help_selection.bash" "$transcript" 0 "WORK_DONE"
+  )
+  open_count="$(find "$temp_dir/unaddressed-failures/open" -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$open_count" == "1" ]] || fail "tool failure queue wrongly resolved unverified WORK_DONE failure"
+  grep -Fq "addressed_by_later_success=0" "$temp_dir/unaddressed.log" || fail "tool failure queue did not log unaddressed evidence"
+
+  cat >"$clean_transcript" <<'EOF'
+codex
+tokens used
+EOF
+
+  (
+    cd "$ROOT_DIR"
+    LOG_FILE="$temp_dir/Upkeeper.log"
+    CODEX_TERMINAL_VERBOSITY=silent
+    CODEX_TOOL_FAILURE_QUEUE_ENABLED=1
+    CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures"
+    CODEX_TOOL_FAILURE_QUEUE_BYPASS=0
+    CYCLE_ID="validation-resolve"
+    CYCLE_RUN_HASH="validationhashresolve"
+    RUN_SELECTED_FAILURE_MARKER_PATH="$marker_path"
+    source lib/upkeeper/fallback_artifacts.bash
+    source lib/upkeeper/runtime_foundation.bash
+    source lib/upkeeper/tool_failure_queue.bash
+    tool_failure_queue_finalize_run "lib/upkeeper/codex_io.bash" "$clean_transcript" 0 "WORK_DONE"
+  )
+
+  [[ ! -e "$marker_path" ]] || fail "tool failure queue did not remove resolved open marker"
+  resolved_count="$(find "$temp_dir/failures/resolved" -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$resolved_count" == "1" ]] || fail "tool failure queue did not keep one resolved marker"
+  grep -Fq "tool_failure_queue.resolved" "$temp_dir/Upkeeper.log" || fail "tool failure queue resolved event not logged"
+
+  marker_id="$(python3 - <<'PY'
+import hashlib
+print(hashlib.sha1(b"lib/upkeeper/codex_io.bash").hexdigest()[:24])
+PY
+)"
+  mkdir -p "$temp_dir/selection-failures/open"
+  python3 - "$temp_dir/selection-failures/open/$marker_id.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+path.write_text(json.dumps({
+    "version": 1,
+    "status": "open",
+    "marker_id": "selectionmarker",
+    "target_path": "lib/upkeeper/codex_io.bash",
+    "first_seen_epoch": 1,
+    "first_seen_cycle": "validation-selection",
+    "failure_count": 2,
+    "first_failure_kind": "validation",
+    "first_failure_exit_line": "exited 1 in 0.1s",
+}, sort_keys=True) + "\n", encoding="utf-8")
+PY
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
+
+  CODEX_HOME="$temp_dir/codex-home" \
+    CODEX_LOG_FILE="$temp_dir/selection.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/selection-failures" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
+    UPKEEPER_DRY_RUN=1 \
+    ./Upkeeper >"$temp_dir/selection.out" 2>"$temp_dir/selection.err"
+
+  grep -Fq "review.preselect path=lib/upkeeper/codex_io.bash" "$temp_dir/selection.log" || fail "failure queue did not force marked target"
+  grep -Fq "failure_queue_selected=1" "$temp_dir/selection.log" || fail "failure queue selection was not logged"
+
+  CODEX_HOME="$temp_dir/codex-home" \
+    CODEX_LOG_FILE="$temp_dir/bypass.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts-bypass" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active-bypass.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health-bypass" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates-bypass" \
+    CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/selection-failures" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    UPKEEPER_DRY_RUN=1 \
+    ./Upkeeper --ignore-failure-queue >"$temp_dir/bypass.out" 2>"$temp_dir/bypass.err"
+
+  grep -Fq "failure_queue_selected=0" "$temp_dir/bypass.log" || fail "failure queue bypass flag was not honored"
 
   rm -r "$temp_dir"
 }
@@ -1060,6 +1213,7 @@ check_codex_mode_validation
 check_cycle_start_log_contract
 check_quota_fallback_exit_contract
 check_review_module_flags
+check_tool_failure_queue
 check_public_docs_policy
 check_fallback_artifact_helpers
 check_postmortem_context_marker_classification

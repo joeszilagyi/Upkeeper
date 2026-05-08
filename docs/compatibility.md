@@ -30,7 +30,7 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--help`, `-h`, `--version`, `--prompt-file`, `--prompt`,
   `--review-module=...`, `--review-modules=...`, `--p24`, `--p25`, `--p26`,
   `--p27`, `--model-override=...`, `--target-file=...`, and
-  `--prompt-pass=all`.
+  `--ignore-failure-queue`, and `--prompt-pass=all`.
 - Existing documented environment knobs keep their meaning unless a change note
   states an unavoidable safety reason.
 - `CODEX_TERMINAL_VERBOSITY` keeps the documented modes and aliases for
@@ -46,13 +46,17 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Review summaries continue to log outcome, selected file, findings, changes,
   verification, Codex exit, and final status-marker evidence when available.
 - Runtime artifacts stay under documented local paths such as `runtime/`,
-  `runtime/upkeeper-transcripts`, and `runtime/journals/upkeeper-postmortems`.
+  `runtime/upkeeper-transcripts`, `runtime/journals/upkeeper-postmortems`, and
+  `runtime/unaddressed-tool-failures`.
 - Validation entrypoints remain available:
   `tools/validate_upkeeper.sh --deps`, `--quick`, and `--full`.
 - Default validation and future local stress-corpus checks do not spend backend
   Codex quota unless the operator explicitly opts in.
 - Central prompt files remain usable by absolute path from symlinked clients.
 - Central review modules remain usable by flag from symlinked clients.
+- Local unaddressed tool-failure markers can prioritize the next eligible target
+  without changing tracked source; operator `--target-file` and
+  `--ignore-failure-queue` still override that local queue for one cycle.
 - Public documentation, help text, prompt docs, code comments, and release
   notes remain understandable enough for public review without private context.
 - The default review prompt keeps the single-selected-file review contract and

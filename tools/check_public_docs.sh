@@ -80,7 +80,9 @@ grep -Fq -- "--p27" <<<"$help_text" || fail "help missing --p27"
 
 log "checking for obvious placeholder/legalese public text"
 placeholder_pattern='lorem ipsum|apache placeholder|placeholder framework|pending transitional|subsection c-x[0-9]+|rev 14 placeholder|private chat history required'
-if git grep -nEI "$placeholder_pattern" -- "${public_text_files[@]}"; then
+placeholder_matches="$(git grep -nEI "$placeholder_pattern" -- "${public_text_files[@]}" | grep -v '^tools/check_public_docs[.]sh:.*placeholder_pattern=' || true)"
+if [[ -n "$placeholder_matches" ]]; then
+  printf '%s\n' "$placeholder_matches" >&2
   fail "public text contains placeholder/legalese wording"
 fi
 

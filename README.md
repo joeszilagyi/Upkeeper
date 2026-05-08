@@ -38,6 +38,8 @@ On each cycle it:
 - tags log lines with a per-cycle `run_hash` and emits `--MARK--` heartbeat
   evidence for continuity checks
 - scans recent prior log entries for incomplete cycles before launching Codex
+- keeps a local queue of unaddressed script/tool command failures and prioritizes
+  the oldest still-eligible failure target on the next loop
 - logs a disk-space preflight before spending a backend run
 - optionally hands off to a bounded fallback model and postmortem path when the
   primary run blocks, fails, or hits a quota guardrail
@@ -254,6 +256,17 @@ If the preselected file cannot be reviewed because it is gone, unreadable,
 binary, generated, or explicitly excluded, Codex must state that exception and
 choose a replacement from the same source-safe boundary.
 
+If a prior run saw an interesting script/tool command fail, Upkeeper writes a
+local marker under `runtime/unaddressed-tool-failures/open/`. After explicit
+operator pins and startup anomaly gates, the next loop selects the oldest
+still-eligible marked target before stale-self review or normal timestamp
+rotation, without spending another model call to rediscover it. A successful
+`WORK_DONE` pass moves that marker to `runtime/unaddressed-tool-failures/resolved/`.
+If a run sees a new local command failure, the marker stays open unless a later
+successful command of the same broad kind shows the failure was rechecked.
+Use `--target-file=PATH` or `--ignore-failure-queue` when a human intentionally
+wants a different target for one cycle.
+
 For an explicit one-cycle Upkeeper self-review with all built-in P1-P23 passes,
 use equals-form operator flags:
 
@@ -355,6 +368,7 @@ Local runtime evidence is deliberately ignored by git:
 - `Upkeeper.log`
 - `runtime/`
 - `runtime/startup-anomaly-gates/`
+- `runtime/unaddressed-tool-failures/`
 - repo-local copied or linked wrappers such as `Upkeeper.sh`, when the client
   repo chooses to ignore them
 

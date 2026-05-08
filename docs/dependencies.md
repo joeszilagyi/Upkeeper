@@ -99,6 +99,6 @@ When adding, removing, or changing dependency expectations:
 - update this file,
 - update `tools/validate_upkeeper.sh --deps`,
 - update the wrapper preflight if runtime behavior changes,
-- update `README.md`, `docs/scripts/upkeeper.md`, and `change_notes.md` when the
-  change is operator-facing,
+- update `README.md`, `docs/scripts/upkeeper.md`, and the current year's root
+  `change_notes_YYYY.md` when the change is operator-facing,
 - run `tools/validate_upkeeper.sh --deps` and `tools/validate_upkeeper.sh --full`.

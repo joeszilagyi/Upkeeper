@@ -29,7 +29,7 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Existing documented CLI flags keep working:
   `--help`, `-h`, `--version`, `--prompt-file`, `--prompt`,
   `--review-module=...`, `--review-modules=...`, `--p24`, `--p25`, `--p26`,
-  `--p27`, `--model-override=...`, `--target-file=...`, and
+  `--p27`, `--p28`, `--model-override=...`, `--target-file=...`, and
   `--ignore-failure-queue`, and `--prompt-pass=all`.
 - Existing documented environment knobs keep their meaning unless a change note
   states an unavoidable safety reason.
@@ -102,8 +102,9 @@ If a breaking change is unavoidable:
 - Keep a compatibility alias, shim, warning, or migration path when feasible.
 - Prefer rejecting unsafe input with a clear diagnostic over silently changing
   behavior.
-- Update `UPKEEPER_VERSION`, root `change_notes.md`, README/operator-guide
-  docs, and any affected validation coverage in the same committed state.
+- Update `UPKEEPER_VERSION`, the current year's root `change_notes_YYYY.md`,
+  README/operator-guide docs, and any affected validation coverage in the same
+  committed state.
 - State the broken surface, reason compatibility could not be kept, operator
   impact, migration path, and rollback risk.
 - Avoid tracked client-repo churn for central wrapper compatibility changes.

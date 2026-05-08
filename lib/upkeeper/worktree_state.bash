@@ -92,6 +92,7 @@ startup_anomaly_gate_changed_path_violations() {
   local after_file="$2"
   python3 - "$before_file" "$after_file" <<'PY'
 import json
+import re
 import sys
 
 before_path, after_path = sys.argv[1:3]
@@ -105,7 +106,7 @@ except OSError:
 allowed_exact = {
     "Upkeeper",
     "README.md",
-    "change_notes.md",
+    "change_notes_2026.md",
     "docs/compatibility.md",
     "docs/dependencies.md",
     "docs/scripts/upkeeper.md",
@@ -121,7 +122,11 @@ allowed_prefixes = (
 
 
 def allowed(path):
-    return path in allowed_exact or any(path.startswith(prefix) for prefix in allowed_prefixes)
+    return (
+        path in allowed_exact
+        or re.fullmatch(r"change_notes_[0-9]{4}\.md", path) is not None
+        or any(path.startswith(prefix) for prefix in allowed_prefixes)
+    )
 
 
 for path in sorted(set(before) | set(after)):

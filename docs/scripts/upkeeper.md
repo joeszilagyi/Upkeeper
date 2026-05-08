@@ -12,10 +12,10 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27] [--review-modules=p24,p25,p26,p27] [--p24] [--p25] [--p26] [--p27] [--model-override=5.5_xhigh] [--target-file=PATH] [--ignore-failure-queue] [--prompt-pass=all]
+Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28] [--review-modules=p24,p25,p26,p27,p28] [--p24] [--p25] [--p26] [--p27] [--p28] [--model-override=5.5_xhigh] [--target-file=PATH] [--ignore-failure-queue] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.10
+Version: v1.1.11
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -230,7 +230,9 @@ Prompt behavior:
     `prompts/p26-public-documentation-review.md` for public documentation,
     comments, help text, and release-note clarity, plus
     `prompts/p27-educational-debrief-review.md` for a concise saved learning
-    debrief after the fix.
+    debrief after the fix, and
+    `prompts/p28-unit-test-harvesting-review.md` for turning cheap deterministic
+    discoveries into local tests or fixtures.
   - --prompt TEXT appends extra task guidance inline; an empty value is rejected
     for the same reason.
   - --review-module=p24 appends the central P24 de-LLM-ing viability review
@@ -241,9 +243,11 @@ Prompt behavior:
     module for this invoked cycle.
   - --review-module=p27 appends the central P27 educational debrief review
     module for this invoked cycle.
-  - --review-modules=p24,p25,p26,p27 appends multiple modules in a single flag;
+  - --review-module=p28 appends the central P28 unit test harvesting review
+    module for this invoked cycle.
+  - --review-modules=p24,p25,p26,p27,p28 appends multiple modules in a single flag;
     repeated --review-module flags are also accepted and duplicate modules are ignored.
-  - --p24, --p25, --p26, and --p27 are shorthand aliases for the corresponding review modules.
+  - --p24, --p25, --p26, --p27, and --p28 are shorthand aliases for the corresponding review modules.
     Review module flags are one-cycle guidance only and do not persist to later
     loop iterations. They are not enabled by --prompt-pass=all unless requested.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5
@@ -361,8 +365,8 @@ Exit codes:
 - Quota snapshot and post-run diagnostic handling extract all needed fields in
   one quoted `jq` pass per JSON object instead of spawning `jq` repeatedly for
   each field.
-- Notable operator-facing wrapper changes are recorded in root
-  `change_notes.md`; version bumps should keep that file current.
+- Notable operator-facing wrapper changes are recorded in the current year's
+  root `change_notes_YYYY.md`; version bumps should keep that file current.
 - The central checkout has a tracked validation harness at
   `tools/validate_upkeeper.sh`. Use `--deps` for runtime/tool dependency
   status, `--quick` for syntax/version/module-map checks, and `--full` before

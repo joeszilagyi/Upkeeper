@@ -4,7 +4,8 @@
 # quota guardrails stop a run. Later primary invocations read those markers
 # before spending more quota and stop until the recorded reset time passes.
 # Operator-facing behavior is summarized in docs/scripts/upkeeper.md; update
-# that guide and change_notes.md when changing marker semantics.
+# that guide and the current year's change_notes_YYYY.md when changing marker
+# semantics.
 latest_active_primary_quota_block_marker() {
   local target_model="$1"
 

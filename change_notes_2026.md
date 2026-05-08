@@ -1,9 +1,17 @@
-# Change Notes
+# 2026 Change Notes
 
 Version numbering note:
 	1. This file records committed Upkeeper wrapper states from v1.0.0 forward.
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
+	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
+
+2026-05-08: v1.1.11 changes:
+	1. Added P28 as a first-class opt-in review module through `--review-module=p28`, `--review-modules=...`, and `--p28` for unit-test harvesting.
+	2. Added `prompts/p28-unit-test-harvesting-review.md` so bugs, reusable exploratory commands, parser edge cases, and deterministic LLM-discovered facts can become cheap local tests or fixtures when practical.
+	3. Documented the P28 scope in README, help, the operator guide, prompt index, compatibility notes, and validation.
+	4. Renamed root release notes from `change_notes.md` to the annual file `change_notes_2026.md`.
+	5. Added the annual release-note contract: each new calendar year starts its own root `change_notes_YYYY.md` file, and validation checks the current year's file for the committed wrapper version entry.
 
 2026-05-08: v1.1.10 changes:
 	1. Added a local unaddressed tool-failure queue under `runtime/unaddressed-tool-failures/` that records interesting script/tool command failures from backend transcripts without launching another model pass.

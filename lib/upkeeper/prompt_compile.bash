@@ -22,6 +22,9 @@ review_module_prompt_path() {
     p27)
       printf '%s/prompts/p27-educational-debrief-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
       ;;
+    p28)
+      printf '%s/prompts/p28-unit-test-harvesting-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
+      ;;
     *)
       return 1
       ;;

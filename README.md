@@ -30,9 +30,9 @@ On each cycle it:
   `.git/`, ignored files, generated outputs, runtime evidence, or test trees by accident
 - applies the P23 data-contract pass to validators, importers, exporters,
   registry loaders, config readers, data readers, and input-boundary CLIs
-- can append opt-in P24/P25/P26/P27 review modules for de-LLM-ing viability,
-  contract/intent compliance, public documentation clarity, and educational
-  debriefs
+- can append opt-in P24/P25/P26/P27/P28 review modules for de-LLM-ing
+  viability, contract/intent compliance, public documentation clarity,
+  educational debriefs, and unit-test harvesting
 - runs Codex once with the configured model and reasoning effort
 - records terminal outcomes in `Upkeeper.log`
 - tags log lines with a per-cycle `run_hash` and emits `--MARK--` heartbeat
@@ -287,7 +287,7 @@ available as a standalone prompt file:
 ./Upkeeper.sh --prompt-file /work/tools/Upkeeper/prompts/p23-data-contract-negative-fixture-audit.md
 ```
 
-P24 through P27 are opt-in review modules. They are loaded from the central
+P24 through P28 are opt-in review modules. They are loaded from the central
 Upkeeper checkout, so symlinked clients can use the same flags without knowing
 absolute prompt-file paths.
 
@@ -314,15 +314,21 @@ captures what went wrong, why it probably happened, why it mattered, how to
 avoid the pattern, how it was fixed, what was already good, and what can still
 improve.
 
+P28 applies when a bug, reusable exploratory command, parser edge case,
+validation path, or deterministic LLM-discovered fact can become a cheap local
+test or fixture. It favors existing validation scripts and local fixtures over
+framework or service overhead.
+
 ```sh
 ./Upkeeper --review-module=p24
 ./Upkeeper --review-module=p25
 ./Upkeeper --review-module=p26
 ./Upkeeper --review-module=p27
-./Upkeeper --review-modules=p24,p25,p26,p27
+./Upkeeper --review-module=p28
+./Upkeeper --review-modules=p24,p25,p26,p27,p28
 
 # Shorthand aliases are also available.
-./Upkeeper --p24 --p25 --p26 --p27
+./Upkeeper --p24 --p25 --p26 --p27 --p28
 ```
 
 Before the primary Codex response emits its final marker, the prompt now requires
@@ -403,7 +409,8 @@ specific policy for publishing them.
 |   |-- p24-de-llm-ing-viability-review.md
 |   |-- p25-contract-intent-compliance-review.md
 |   |-- p26-public-documentation-review.md
-|   `-- p27-educational-debrief-review.md
+|   |-- p27-educational-debrief-review.md
+|   `-- p28-unit-test-harvesting-review.md
 |-- templates/
 |   |-- README.md
 |   `-- prompt-template.md
@@ -414,7 +421,7 @@ specific policy for publishing them.
 |-- LICENSE
 |-- .editorconfig
 |-- .gitignore
-|-- change_notes.md
+|-- change_notes_2026.md
 `-- README.md
 ```
 
@@ -453,6 +460,8 @@ specific policy for publishing them.
   P26 review module for public documentation and code-comment clarity
 - [prompts/p27-educational-debrief-review.md](prompts/p27-educational-debrief-review.md):
   P27 review module for concise saved educational debriefs
+- [prompts/p28-unit-test-harvesting-review.md](prompts/p28-unit-test-harvesting-review.md):
+  P28 review module for turning useful discoveries into local tests or fixtures
 - [prompts/git_hard_clean.md](prompts/git_hard_clean.md): explicit branch and backup cleanup
   workflow notes
 - [templates/prompt-template.md](templates/prompt-template.md): starter format

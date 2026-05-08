@@ -171,11 +171,12 @@ check_syntax() {
 }
 
 check_version_consistency() {
-  local version header_version guide_version version_output
+  local version header_version guide_version version_output release_notes_file
 
   log "checking version consistency"
   version="$(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)"
   [[ -n "$version" ]] || fail "UPKEEPER_VERSION not found"
+  release_notes_file="change_notes_$(date +%Y).md"
 
   header_version="$(sed -n 's/^## Version: //p' Upkeeper | sed -n '1p')"
   [[ "$header_version" == "$version" ]] || fail "Upkeeper header version $header_version != $version"
@@ -183,7 +184,9 @@ check_version_consistency() {
   guide_version="$(sed -n 's/^Version: //p' docs/scripts/upkeeper.md | sed -n '1p')"
   [[ "$guide_version" == "$version" ]] || fail "operator guide version $guide_version != $version"
 
-  grep -Fq "$version changes:" change_notes.md || fail "change_notes.md missing $version entry"
+  [[ ! -e change_notes.md ]] || fail "release notes must use annual change_notes_YYYY.md files"
+  [[ -s "$release_notes_file" ]] || fail "$release_notes_file is missing or empty"
+  grep -Fq "$version changes:" "$release_notes_file" || fail "$release_notes_file missing $version entry"
 
   version_output="$(./Upkeeper --version)"
   [[ "$version_output" == "Upkeeper $version" ]] || fail "./Upkeeper --version output unexpected: $version_output"
@@ -217,6 +220,7 @@ check_prompt_template() {
   [[ -s prompts/p25-contract-intent-compliance-review.md ]] || fail "P25 review module prompt is missing or empty"
   [[ -s prompts/p26-public-documentation-review.md ]] || fail "P26 review module prompt is missing or empty"
   [[ -s prompts/p27-educational-debrief-review.md ]] || fail "P27 review module prompt is missing or empty"
+  [[ -s prompts/p28-unit-test-harvesting-review.md ]] || fail "P28 review module prompt is missing or empty"
   grep -Fq "P24 - De-LLM-ing Viability Review" prompts/p24-de-llm-ing-viability-review.md || fail "P24 prompt title missing"
   grep -Fq "P24: not applicable" prompts/p24-de-llm-ing-viability-review.md || fail "P24 applicability gate missing"
   grep -Fq "no loss of operator-facing function" prompts/p24-de-llm-ing-viability-review.md || fail "P24 no-loss requirement missing"
@@ -233,8 +237,12 @@ check_prompt_template() {
   grep -Fq "P27: not applicable" prompts/p27-educational-debrief-review.md || fail "P27 applicability gate missing"
   grep -Fq "P27 Educational Debrief:" prompts/p27-educational-debrief-review.md || fail "P27 saved structure missing"
   grep -Fq "What went wrong:" prompts/p27-educational-debrief-review.md || fail "P27 debrief structure missing"
+  grep -Fq "P28 - Unit Test Harvesting Review" prompts/p28-unit-test-harvesting-review.md || fail "P28 prompt title missing"
+  grep -Fq "P28: not applicable" prompts/p28-unit-test-harvesting-review.md || fail "P28 applicability gate missing"
+  grep -Fq "without backend model quota" prompts/p28-unit-test-harvesting-review.md || fail "P28 local test contract missing"
   grep -Fq "code-comment clarity" README.md || fail "README missing P26 summary"
   grep -Fq "educational debrief" README.md || fail "README missing P27 summary"
+  grep -Fq "unit-test harvesting" README.md || fail "README missing P28 summary"
   grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 }
 
@@ -247,10 +255,12 @@ check_help_and_diff() {
   grep -Fq -- "--review-module=p25" <<<"$help" || fail "help missing --review-module=p25"
   grep -Fq -- "--review-module=p26" <<<"$help" || fail "help missing --review-module=p26"
   grep -Fq -- "--review-module=p27" <<<"$help" || fail "help missing --review-module=p27"
+  grep -Fq -- "--review-module=p28" <<<"$help" || fail "help missing --review-module=p28"
   grep -Fq -- "--p24" <<<"$help" || fail "help missing --p24"
   grep -Fq -- "--p25" <<<"$help" || fail "help missing --p25"
   grep -Fq -- "--p26" <<<"$help" || fail "help missing --p26"
   grep -Fq -- "--p27" <<<"$help" || fail "help missing --p27"
+  grep -Fq -- "--p28" <<<"$help" || fail "help missing --p28"
   grep -Fq -- "--ignore-failure-queue" <<<"$help" || fail "help missing --ignore-failure-queue"
   git diff --check
   git diff --cached --check
@@ -413,16 +423,17 @@ check_review_module_flags() {
     CODEX_FALLBACK_SCREEN_ENABLED=0 \
     CODEX_POSTMORTEM_ENABLED=0 \
     UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25,p26,p27 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+    ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25,p26,p27,p28 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
 
-  grep -Fq "review_modules=p24,p25,p26,p27" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules"
+  grep -Fq "review_modules=p24,p25,p26,p27,p28" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules"
   grep -Fq "review.module_prompt enabled module=p24" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P24"
   grep -Fq "review.module_prompt enabled module=p25" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P25"
   grep -Fq "review.module_prompt enabled module=p26" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P26"
   grep -Fq "review.module_prompt enabled module=p27" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P27"
+  grep -Fq "review.module_prompt enabled module=p28" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P28"
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not finish cleanly"
 
-  output="$(./Upkeeper --p24 --p25 --p26 --p27 --version)"
+  output="$(./Upkeeper --p24 --p25 --p26 --p27 --p28 --version)"
   [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "review module shorthand flags broke --version"
 
   set +e
@@ -709,7 +720,7 @@ ValueError, failed, or emit a Python traceback for normal malformed operator
 codex
 I am checking the selected file before running validation.
 exec
-/bin/bash -lc 'rg ERROR change_notes.md'
+/bin/bash -lc 'rg ERROR change_notes_2026.md'
 succeeded in 0ms:
 14 6. change-note output ERROR failed Exception
 exec
@@ -726,9 +737,9 @@ exited 2 in 104ms:
 exec
 /bin/bash -lc 'launcher_examples/spark_5.3_burn_out_xhigh.sh --bogus'
 exited 64 in 0ms:
-diff --git a/change_notes.md b/change_notes.md
---- a/change_notes.md
-+++ b/change_notes.md
+diff --git a/change_notes_2026.md b/change_notes_2026.md
+--- a/change_notes_2026.md
++++ b/change_notes_2026.md
 +8. diff-block output ERROR failed Exception
 exec
 /bin/bash -lc 'bash -n launcher_examples/*.sh'
@@ -762,7 +773,7 @@ EOF
   run_live_filter_mode verbose
   grep -Fq "[INFO] Upkeeper: validation LLM: I am checking the selected file before running validation." "$temp_dir/live-verbose.err" || fail "verbose live output did not report assistant status before command"
   awk '/LLM: I am checking the selected file before running validation[.]/{ found=1; if (prev != "") exit 2; if ((getline next_line) <= 0 || next_line != "") exit 3 } { prev=$0 } END { exit found ? 0 : 1 }' "$temp_dir/live-verbose.err" || fail "verbose live output did not bracket assistant status with blank lines"
-  grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ search started: /bin/bash -lc 'rg ERROR change_notes.md'" "$temp_dir/live-verbose.err" || fail "verbose live output did not report search command start"
+  grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ search started: /bin/bash -lc 'rg ERROR change_notes_2026.md'" "$temp_dir/live-verbose.err" || fail "verbose live output did not report search command start"
   grep -Eq '\[INFO\] Upkeeper: validation cmd#[0-9]+ search started: /bin/bash -lc "nl -ba tools/validate_upkeeper[.]sh' "$temp_dir/live-verbose.err" || fail "verbose live output did not classify source file view as search"
   grep -Eq '\[INFO\] Upkeeper: validation cmd#[0-9]+ search started: /bin/bash -lc "git ls-files' "$temp_dir/live-verbose.err" || fail "verbose live output did not classify git ls-files discovery as search"
   grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ search exited nonzero: exited 1 in 0ms:" "$temp_dir/live-verbose.err" || fail "verbose live output did not report git ls-files discovery as non-error search failure"
@@ -947,7 +958,7 @@ check_startup_anomaly_gate_allowlist() {
   cat >"$before_file" <<'JSON'
 {
   "Upkeeper": {"status": "clean", "hash": "old"},
-  "change_notes.md": {"status": "clean", "hash": "old"},
+  "change_notes_2026.md": {"status": "clean", "hash": "old"},
   "docs/scripts/upkeeper.md": {"status": "clean", "hash": "old"},
   "lib/upkeeper/worktree_state.bash": {"status": "clean", "hash": "old"},
   "tools/validate_upkeeper.sh": {"status": "clean", "hash": "old"},
@@ -957,7 +968,7 @@ JSON
   cat >"$after_file" <<'JSON'
 {
   "Upkeeper": {"status": "modified", "hash": "new"},
-  "change_notes.md": {"status": "modified", "hash": "new"},
+  "change_notes_2026.md": {"status": "modified", "hash": "new"},
   "docs/scripts/upkeeper.md": {"status": "modified", "hash": "new"},
   "lib/upkeeper/worktree_state.bash": {"status": "modified", "hash": "new"},
   "tools/validate_upkeeper.sh": {"status": "modified", "hash": "new"},

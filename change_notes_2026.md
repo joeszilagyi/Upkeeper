@@ -6,6 +6,29 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-08: v1.1.15 changes:
+	1. Fixed the explicit `--target-file` contract so human-pinned targets may be any source-safe readable text file inside the repo, including docs, prompts, config, tests, and scripts.
+	2. Kept automatic rotation limited to script/tool candidates while preserving exclusions for `.git`, ignored paths, runtime evidence, generated outputs, directories, unreadable files, and binary-looking files.
+	3. Added dry-run validation for explicit docs targets, unsafe runtime and `.git` targets, and automatic docs-only selection remaining outside script/tool rotation.
+
+2026-05-08: v1.1.14 changes:
+	1. Hardened disk-space preflight logging so path-like fields are shell-quoted, keeping space-bearing operator paths parseable in `disk.preflight` records and prompt notes.
+	2. Parsed the trusted `free_percent` field directly instead of scanning the whole log payload, preventing path text that contains `free_percent=` from creating false low-disk decisions.
+	3. Added quick validation coverage for disk-preflight log quoting and free-percent extraction.
+	4. Added tracked `testruns/*.sh` launchers for repeatable all-pass P-module loops, documentation-focused P26 loops, and manifest/enumerate selector dry-runs.
+	5. Hardened active-lock startup so a second wrapper exits on a fresh incomplete lock instead of reclaiming it during the owner process's state-file publish window, with validation coverage for that race.
+	6. Hardened operator-guide bootstrap so a guide created during startup cannot be overwritten by generated help output, with validation coverage for the no-overwrite race.
+	7. Made runtime JSON helper failures operator-visible instead of suppressing malformed-JSON diagnostics under `set -e`, with validation coverage for normal, null, boolean-false, and malformed helper input.
+	8. Hardened startup-anomaly state parsing so malformed state files and space-bearing state paths cannot inject ambiguous `previous_run.anomaly` log fields, with validation coverage for the negative fixture.
+	9. Hardened central-wrapper health logging so state-file and archive paths with spaces remain parseable, documented the retired-wrapper archive directory knob, and added validation coverage for stale-state archive log quoting.
+	10. Narrowed Codex arg0 temporary cleanup to stale `codex-arg0*` shim directories so unrelated stale directories under the same root remain untouched, with validation coverage for the negative path.
+	11. Hardened Codex bubblewrap temp preflight so operator-configured registry roots that begin with `-` are treated as paths rather than command options, with validation coverage for the path-boundary case.
+
+2026-05-08: v1.1.13 changes:
+	1. Added manifest-backed target selection defaults and related operator configuration fields for selection source, order, target root/depth, include/exclude globs, and selection review modules.
+	2. Hardened postmortem report and hardening phases so exit-0 auxiliary Codex runs must still return the expected `CODEX_POSTMORTEM_STATUS` marker before the wrapper treats the phase as complete, and intentional postmortem failure returns remain capturable by the fallback caller.
+	3. Hardened status-session JSONL parsing so malformed row shapes degrade to sentinel values instead of crashing wrapper status classification, with validation for malformed rows and log-safe abort reasons.
+
 2026-05-08: v1.1.12 changes:
 	1. Added root `Upkeeper.conf` as the default active configuration file, sourced before built-in defaults and before CLI parsing.
 	2. Added `configurations/default.conf` as the basic self-contained profile template for scheduled or named runs.

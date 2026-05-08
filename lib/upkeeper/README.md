@@ -64,6 +64,7 @@ Startup validation, quota, and selection:
 - `log_rotation.bash`
 - `disk_preflight.bash`
 - `previous_run_anomalies.bash`
+- `file_manifest.bash`
 - `worktree_state.bash`
 - `quota_state.bash`
 

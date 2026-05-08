@@ -31,7 +31,13 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--prompt-file`, `--prompt`,
   `--review-module=...`, `--review-modules=...`, `--p24`, `--p25`, `--p26`,
   `--p27`, `--p28`, `--model-override=...`, `--target-file=...`, and
-  `--ignore-failure-queue`, and `--prompt-pass=all`.
+  `--target-root=...`, `--target-depth=...`,
+  `--selection-source=manifest|enumerate`,
+  `--selection-order=oldest|newest|random`, `--refresh-manifest`,
+  `--manifest-file=...`, `--include-glob=...`, `--include-globs=...`,
+  `--exclude-glob=...`, `--exclude-globs=...`,
+  `--selection-review-modules=...`, `--ignore-failure-queue`, and
+  `--prompt-pass=all`.
 - The central default config remains `Upkeeper.conf`, and named config profiles
   can be selected per invocation with `--config-file=PATH`.
 - Existing documented environment knobs keep their meaning unless a change note
@@ -49,7 +55,8 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Review summaries continue to log outcome, selected file, findings, changes,
   verification, Codex exit, and final status-marker evidence when available.
 - Runtime artifacts stay under documented local paths such as `runtime/`,
-  `runtime/upkeeper-transcripts`, `runtime/journals/upkeeper-postmortems`, and
+  `runtime/upkeeper-transcripts`, `runtime/journals/upkeeper-postmortems`,
+  `runtime/upkeeper-file-manifest.json`, and
   `runtime/unaddressed-tool-failures`.
 - Validation entrypoints remain available:
   `tools/validate_upkeeper.sh --deps`, `--quick`, and `--full`.
@@ -62,6 +69,17 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--ignore-failure-queue` still override that local queue for one cycle.
 - Config files can provide scheduled-run defaults, but CLI flags remain the
   final one-cycle override surface.
+- The default target rotation is manifest-backed when a current local manifest
+  exists or can be built. Direct enumeration remains available through
+  `--selection-source=enumerate`, and operator-pinned `--target-file` keeps
+  priority over manifest, queue, and filter behavior.
+- Explicit `--target-file` pins may select any source-safe readable text file
+  inside the repo, including docs, prompts, config, tests, and scripts, while
+  automatic rotation remains limited to script/tool candidates.
+- Selection filters such as target root, depth, include/exclude globs, random
+  order, and review-module approximations narrow which file Upkeeper chooses.
+  They do not silently enable extra review modules or change the single-selected-
+  file prompt contract.
 - Public documentation, help text, prompt docs, code comments, and release
   notes remain understandable enough for public review without private context.
 - The default review prompt keeps the single-selected-file review contract and

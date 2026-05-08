@@ -1,3 +1,9 @@
+## Codex arg0 temp cleanup.
+##
+## Upkeeper owns cleanup for stale Codex `codex-arg0*` shim directories before a
+## live backend launch. Nonmatching directories under the same root are not
+## Upkeeper-managed state and must be left alone.
+
 remove_flat_codex_arg0_dir() {
   local dir="$1"
   local err_file="$2"
@@ -56,7 +62,7 @@ codex_arg0_tmp_cleanup_check() {
     return 1
   fi
 
-  mapfile -d '' candidates < <(find "$arg0_root" -mindepth 1 -maxdepth 1 -type d -mmin "+$stale_minutes" -print0 2>"$err_file")
+  mapfile -d '' candidates < <(find "$arg0_root" -mindepth 1 -maxdepth 1 -type d -name 'codex-arg0*' -mmin "+$stale_minutes" -print0 2>"$err_file")
   if [[ -s "$err_file" ]]; then
     printf 'find_failed:%s' "$(tr '\n' ' ' <"$err_file")"
     rm -f "$err_file"

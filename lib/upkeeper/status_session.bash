@@ -105,10 +105,26 @@ parse_session_end_state() {
 
   python3 - "$session_file" <<'PY'
 import json
+import re
 import sys
 
 path = sys.argv[1]
 state = "none"
+
+
+def event_payload(item):
+    if not isinstance(item, dict) or item.get("type") != "event_msg":
+        return None
+    payload = item.get("payload")
+    return payload if isinstance(payload, dict) else None
+
+
+def reason_token(value):
+    if not isinstance(value, str):
+        return "unknown"
+    token = re.sub(r"[^A-Za-z0-9_.:-]+", "_", value.strip()).strip("_")
+    return token[:120] or "unknown"
+
 
 try:
     with open(path, "r", encoding="utf-8", errors="ignore") as handle:
@@ -117,11 +133,11 @@ try:
                 item = json.loads(raw_line)
             except json.JSONDecodeError:
                 continue
-            if item.get("type") != "event_msg":
+            payload = event_payload(item)
+            if payload is None:
                 continue
-            payload = item.get("payload") or {}
             if payload.get("type") == "turn_aborted":
-                reason = payload.get("reason") or "unknown"
+                reason = reason_token(payload.get("reason"))
                 state = f"turn_aborted:{reason}"
             elif (
                 payload.get("type") == "task_complete"
@@ -162,6 +178,11 @@ summary = {
     "last_rate_limit_secondary_used_percent": "unknown",
 }
 
+
+def object_or_empty(value):
+    return value if isinstance(value, dict) else {}
+
+
 try:
     with open(path, "r", encoding="utf-8", errors="ignore") as handle:
         for raw_line in handle:
@@ -169,8 +190,10 @@ try:
                 item = json.loads(raw_line)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(item, dict):
+                continue
 
-            payload = item.get("payload") or {}
+            payload = object_or_empty(item.get("payload"))
             payload_type = payload.get("type")
 
             if item.get("type") == "response_item":
@@ -194,9 +217,11 @@ try:
                 else:
                     summary["task_complete_last_agent_message"] = "blank"
             elif payload_type == "token_count":
-                rate_limits = payload.get("rate_limits") or {}
-                primary = rate_limits.get("primary") or {}
-                secondary = rate_limits.get("secondary") or {}
+                rate_limits = payload.get("rate_limits")
+                if not isinstance(rate_limits, dict) or not rate_limits:
+                    continue
+                primary = object_or_empty(rate_limits.get("primary"))
+                secondary = object_or_empty(rate_limits.get("secondary"))
                 summary["last_rate_limit_reached_type"] = rate_limits.get("rate_limit_reached_type")
                 if summary["last_rate_limit_reached_type"] is None:
                     summary["last_rate_limit_reached_type"] = "null"
@@ -213,4 +238,3 @@ except OSError:
 print(json.dumps(summary, sort_keys=True))
 PY
 }
-

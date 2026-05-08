@@ -1,3 +1,6 @@
+# Tracks active central-wrapper runs before the active lock is acquired. These
+# state files let a later run distinguish a healthy peer from stale crash
+# evidence without touching client repositories or spending backend quota.
 wrapper_health_stale_seconds() {
   local interval="$CODEX_MARK_INTERVAL_SECONDS"
   if [[ "$interval" -lt 1 ]]; then
@@ -80,6 +83,7 @@ scan_wrapper_health_state() {
   python3 - "$state_dir" "$self_path_hash" "$wrapper_blob_hash" "$CYCLE_RUN_HASH" "$stale_seconds" "$(system_boot_id)" "$CODEX_WRAPPER_HEALTH_ARCHIVE_DIR" <<'PY'
 from pathlib import Path
 import os
+import shlex
 import sys
 import time
 
@@ -92,6 +96,10 @@ current_boot_id = sys.argv[6]
 archive_dir_raw = sys.argv[7].strip()
 now = int(time.time())
 prefix = f"{self_path_hash}.{wrapper_blob_hash}."
+
+
+def log_value(value):
+    return shlex.quote(str(value))
 
 
 def read_fields(path):
@@ -141,8 +149,8 @@ for path in sorted(state_dir.glob(f"{prefix}*.state")):
     fresh = last_mark > 0 and now - last_mark <= stale_seconds
     if alive and fingerprint_matches and boot_matches and fresh:
         print(
-            f"status=healthy action=allow peer_cycle={cycle_id} peer_run_hash={run_hash} "
-            f"peer_pid={pid} last_mark_age_seconds={now - last_mark} state_file={path}"
+            f"status=healthy action=allow peer_cycle={log_value(cycle_id)} peer_run_hash={log_value(run_hash)} "
+            f"peer_pid={log_value(pid)} last_mark_age_seconds={now - last_mark} state_file={log_value(path)}"
         )
         continue
     if not alive and not fresh:
@@ -157,9 +165,9 @@ for path in sorted(state_dir.glob(f"{prefix}*.state")):
                 archived_path = None
         if archived_path is not None:
             print(
-                f"status=reclaimed action=archive reason=pid_not_alive peer_cycle={cycle_id} "
-                f"peer_run_hash={run_hash} peer_pid={pid or 'unknown'} last_mark_age_seconds={now - last_mark if last_mark else 'unknown'} "
-                f"stale_seconds={stale_seconds} state_file={path} archived_state_file={archived_path}"
+                f"status=reclaimed action=archive reason=pid_not_alive peer_cycle={log_value(cycle_id)} "
+                f"peer_run_hash={log_value(run_hash)} peer_pid={log_value(pid or 'unknown')} last_mark_age_seconds={now - last_mark if last_mark else 'unknown'} "
+                f"stale_seconds={stale_seconds} state_file={log_value(path)} archived_state_file={log_value(archived_path)}"
             )
             continue
     reason = "unknown"
@@ -172,9 +180,9 @@ for path in sorted(state_dir.glob(f"{prefix}*.state")):
     elif not fresh:
         reason = "heartbeat_stale"
     print(
-        f"status=quarantine action=fail_closed reason={reason} peer_cycle={cycle_id} "
-        f"peer_run_hash={run_hash} peer_pid={pid or 'unknown'} last_mark_age_seconds={now - last_mark if last_mark else 'unknown'} "
-        f"stale_seconds={stale_seconds} state_file={path}"
+        f"status=quarantine action=fail_closed reason={reason} peer_cycle={log_value(cycle_id)} "
+        f"peer_run_hash={log_value(run_hash)} peer_pid={log_value(pid or 'unknown')} last_mark_age_seconds={now - last_mark if last_mark else 'unknown'} "
+        f"stale_seconds={stale_seconds} state_file={log_value(path)}"
     )
 PY
 }

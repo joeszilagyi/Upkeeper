@@ -111,6 +111,21 @@ sum_percent_thresholds() {
   ' 2>/dev/null || printf '%s' "$first"
 }
 
+sanitize_choice() {
+  local raw_value="$1"
+  local fallback="$2"
+  shift 2
+
+  local choice
+  for choice in "$@"; do
+    if [[ "$raw_value" == "$choice" ]]; then
+      printf '%s' "$raw_value"
+      return 0
+    fi
+  done
+  printf '%s' "$fallback"
+}
+
 normalize_guardrail_thresholds() {
   CODEX_5H_STOP_PERCENT="$(sanitize_percent_threshold "${CODEX_5H_STOP_PERCENT}" 5)"
   CODEX_SPARK_5H_STOP_PERCENT="$(sanitize_percent_threshold "${CODEX_SPARK_5H_STOP_PERCENT}" 0)"
@@ -125,8 +140,14 @@ normalize_guardrail_thresholds() {
   CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER="$(sanitize_nonnegative_integer "${CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER}" 1)"
   CODEX_SESSION_SCAN_LIMIT="$(sanitize_positive_integer "${CODEX_SESSION_SCAN_LIMIT}" 200 1)"
   CODEX_LOOP_STOP_GRACE_SECONDS="$(sanitize_nonnegative_integer "${CODEX_LOOP_STOP_GRACE_SECONDS}" 5)"
+  CODEX_SELECTION_SOURCE="$(sanitize_choice "${CODEX_SELECTION_SOURCE}" manifest manifest enumerate)"
+  CODEX_SELECTION_ORDER="$(sanitize_choice "${CODEX_SELECTION_ORDER}" oldest oldest newest random)"
+  CODEX_FILE_MANIFEST_MODE="$(sanitize_choice "${CODEX_FILE_MANIFEST_MODE}" auto auto refresh off)"
+  CODEX_FILE_MANIFEST_MAX_AGE_SECONDS="$(sanitize_nonnegative_integer "${CODEX_FILE_MANIFEST_MAX_AGE_SECONDS}" 300)"
+  if [[ -n "$CODEX_TARGET_MAX_DEPTH" ]]; then
+    CODEX_TARGET_MAX_DEPTH="$(sanitize_nonnegative_integer "${CODEX_TARGET_MAX_DEPTH}" "")"
+  fi
   if [[ "$CODEX_FALLBACK_SCREEN_POLL_SECONDS" -lt 1 ]]; then
     CODEX_FALLBACK_SCREEN_POLL_SECONDS=1
   fi
 }
-

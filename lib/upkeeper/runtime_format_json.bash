@@ -24,5 +24,12 @@ json_field() {
   local json="$1"
   local path="$2"
 
-  jq -r "$path // empty" <<<"$json" 2>/dev/null
+  # Callers pass wrapper-owned JSON. Malformed input is a wrapper defect, so
+  # keep the non-zero exit and make the failed extraction visible to operators.
+  # jq's // operator treats false as absent; preserve real booleans while still
+  # mapping missing or null fields to the empty string for marker callers.
+  if ! jq -r "($path) as \$value | if \$value == null then empty else \$value end" <<<"$json"; then
+    printf 'Upkeeper: ERROR: json_field failed for jq path %s\n' "$path" >&2
+    return 1
+  fi
 }

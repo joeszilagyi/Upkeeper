@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.0.49 changes:
+	1. Treated deferred quota decisions as launch blockers instead of allowing Codex probes against stale or partial exact-model snapshots.
+	2. Blocked auxiliary post-mortem/hardening Codex launches when either quota bucket is stale after reset, matching the primary quota-safety contract.
+	3. Preserved the existing stop/fallback path so operators see a quota warning rather than an empty `codex_exit=101` transcript.
+
 2026-05-07: v1.0.48 changes:
 	1. Reported non-zero primary and auxiliary Codex exits as live `ERROR` lines instead of routine `INFO` so quiet terminals still show faults.
 	2. Captured post-mortem auxiliary Codex return codes under `set +e` so failed diagnostics write normal failure records and `cycle.exit` instead of aborting through cleanup.

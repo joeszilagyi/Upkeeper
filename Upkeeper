@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.48
+## Version: v1.0.49
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.48"
+UPKEEPER_VERSION="v1.0.49"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -6424,6 +6424,10 @@ aux_quota_allows_run() {
     log_line "WARN" "$phase_label.skip reason=quota_snapshot_stale target_model=$target_model snapshot_current=$snapshot_current snapshot_stale_after_reset=$stale_after_reset primary_bucket_current=$primary_bucket_current secondary_bucket_current=$secondary_bucket_current source=$source"
     return 1
   fi
+  if [[ "$primary_guardrail_decision" == "defer" || "$secondary_guardrail_decision" == "defer" ]]; then
+    log_line "WARN" "$phase_label.skip reason=quota_snapshot_partial target_model=$target_model primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision primary_bucket_current=$primary_bucket_current secondary_bucket_current=$secondary_bucket_current primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired source=$source"
+    return 1
+  fi
 
   if [[ "$primary_guardrail_decision" == "stop" ]]; then
     stop_reason="projected 5-hour left ${primary_projected_left}% <= ${five_hour_threshold}%"
@@ -6438,10 +6442,6 @@ aux_quota_allows_run() {
     log_line "WARN" "$phase_label.skip reason=quota_guardrail target_model=$target_model detail=\"$stop_reason\""
     return 1
   fi
-  if [[ "$primary_guardrail_decision" == "defer" || "$secondary_guardrail_decision" == "defer" ]]; then
-    log_line "WARN" "$phase_label.quota partial_decision target_model=$target_model primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision primary_bucket_current=$primary_bucket_current secondary_bucket_current=$secondary_bucket_current primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired"
-  fi
-
   return 0
 }
 
@@ -8138,11 +8138,26 @@ main() {
       stop_reason="${stop_reason}projected weekly left ${secondary_projected_left}% <= ${week_threshold}% (base ${CODEX_WEEK_STOP_PERCENT}% + buffer ${week_buffer}%)"
     fi
     if [[ "$primary_guardrail_decision" == "defer" && "$secondary_guardrail_decision" == "defer" ]]; then
+      should_stop=1
+      if [[ -n "$stop_reason" ]]; then
+        stop_reason="$stop_reason; "
+      fi
+      stop_reason="${stop_reason}quota snapshot stale after reset for all buckets; exact model snapshot is not current"
       log_line "WARN" "quota.guardrails target_model=$CODEX_MODEL deferred reason=stale_snapshot_after_reset snapshot_current=$before_snapshot_is_current snapshot_stale_after_reset=$before_snapshot_stale_after_reset primary_bucket_current=$before_primary_bucket_current secondary_bucket_current=$before_secondary_bucket_current primary_reset=$(format_epoch_local "$primary_reset") primary_reset_age_seconds=$before_primary_reset_age_seconds secondary_reset=$(format_epoch_local "$secondary_reset") secondary_reset_age_seconds=$before_secondary_reset_age_seconds"
     elif [[ "$primary_guardrail_decision" == "defer" || "$secondary_guardrail_decision" == "defer" ]]; then
+      should_stop=1
+      if [[ -n "$stop_reason" ]]; then
+        stop_reason="$stop_reason; "
+      fi
+      stop_reason="${stop_reason}quota snapshot partial after reset; primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision"
       log_line "WARN" "quota.guardrails target_model=$CODEX_MODEL partial_decision primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision primary_bucket_current=$before_primary_bucket_current secondary_bucket_current=$before_secondary_bucket_current primary_reset_expired=$before_primary_reset_expired secondary_reset_expired=$before_secondary_reset_expired"
     fi
   else
+    should_stop=1
+    if [[ -n "$stop_reason" ]]; then
+      stop_reason="$stop_reason; "
+    fi
+    stop_reason="${stop_reason}quota snapshot is not exact for target model; snapshot_selection=$before_selection snapshot_model_hint=$before_model_hint"
     log_line "WARN" "quota.guardrails target_model=$CODEX_MODEL deferred until an exact model snapshot exists"
   fi
 

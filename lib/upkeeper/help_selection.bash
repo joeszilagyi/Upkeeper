@@ -114,6 +114,8 @@ Important:
       $UPKEEPER_MODULE_DIR
     Symlinked clients should point at the central Upkeeper entrypoint; copying
     only the launcher without the paired lib/upkeeper modules is unsupported.
+    The executable module load order is the UPKEEPER_MODULES array in root
+    Upkeeper; the module contract is documented in lib/upkeeper/README.md.
   - The large default review prompt is loaded from:
       $UPKEEPER_IMPLEMENTATION_DIR/prompts/default-review.md
     Symlinked clients share that central prompt; local prompt files are only

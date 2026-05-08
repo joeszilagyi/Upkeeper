@@ -144,6 +144,9 @@ Important:
     Backward compatibility is documented in docs/compatibility.md. Existing
     operator-visible behavior should be preserved unless compatibility would be
     unsafe or impossible.
+    Security and local trust boundaries are documented in docs/security.md.
+    Read that page before using unreviewed config files, broad sandbox modes,
+    shared machines, or repositories that may contain secrets.
     Local sample-repo stress testing is documented in docs/stress-corpus.md;
     those checks default to no real backend Codex work and keep model-backed
     sample runs behind explicit future opt-in commands.

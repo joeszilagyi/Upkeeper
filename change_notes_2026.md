@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-08: v1.1.18 changes:
+	1. Added `docs/security.md` as Upkeeper's local trust model for what the wrapper can read, write, execute, and record.
+	2. Documented shell-sourced config risks, Codex sandbox expectations, `$CODEX_HOME` session parsing, logs/transcripts, runtime artifacts, ignored files, symlinked central checkouts, client repo trust, fallback/postmortem behavior, secret handling, what not to commit, when not to run Upkeeper, and safe no-backend commands.
+	3. Linked the security model from README, the public documentation policy, and the operator guide/help text.
+	4. Extended public documentation checks to require the security trust model and its core coverage sections.
+
 2026-05-08: v1.1.17 changes:
 	1. Added `.github/workflows/ci.yml` for no-quota GitHub Actions validation on pushes and pull requests.
 	2. The CI workflow starts on `ubuntu-latest`, installs required tools including `jq`, and runs shell syntax checks, `tests/*.bash`, `tools/check_public_docs.sh --quick`, and `tools/validate_upkeeper.sh --quick`.

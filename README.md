@@ -116,6 +116,11 @@ The backward-compatibility contract is tracked in
 [`docs/compatibility.md`](docs/compatibility.md). Existing operator-visible
 behavior should be preserved unless compatibility would be unsafe or impossible.
 
+The local security and trust model is tracked in
+[`docs/security.md`](docs/security.md). Read it before using unreviewed config
+files, broad Codex sandbox modes, shared machines, or repositories that may
+contain secrets.
+
 Local multi-repo stress testing is implemented by
 [`tools/stress_upkeeper_corpus.sh`](tools/stress_upkeeper_corpus.sh):
 
@@ -495,6 +500,7 @@ specific policy for publishing them.
 |   |-- compatibility.md
 |   |-- dependencies.md
 |   |-- public-documentation-policy.md
+|   |-- security.md
 |   |-- stress-corpus.md
 |   `-- scripts/
 |       `-- upkeeper.md
@@ -544,6 +550,8 @@ specific policy for publishing them.
   and GitHub dependency-graph expectations
 - [docs/public-documentation-policy.md](docs/public-documentation-policy.md):
   public-by-default documentation, comment, release-note, and help-text policy
+- [docs/security.md](docs/security.md): local trust boundaries, safety model,
+  secret handling, and what not to commit
 - [docs/stress-corpus.md](docs/stress-corpus.md): local sample-repo
   stress-corpus contract and current coverage
 - [.github/workflows/ci.yml](.github/workflows/ci.yml): GitHub Actions

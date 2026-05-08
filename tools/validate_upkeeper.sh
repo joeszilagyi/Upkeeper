@@ -7,13 +7,52 @@ ROOT_DIR="$(cd -- "$TOOLS_DIR/.." && pwd)"
 
 MODE="quick"
 
+WRAPPER_REQUIRED_COMMANDS=(
+  awk
+  cat
+  cut
+  date
+  df
+  find
+  git
+  grep
+  jq
+  mkdir
+  mktemp
+  mv
+  ps
+  python3
+  rm
+  rmdir
+  sed
+  sort
+  tail
+  tee
+  tr
+)
+
+WRAPPER_BACKEND_COMMANDS=(
+  codex
+)
+
+WRAPPER_CONDITIONAL_COMMANDS=(
+  screen
+)
+
+WRAPPER_OPTIONAL_COMMANDS=(
+  realpath
+  stat
+  zip
+)
+
 usage() {
   cat <<'USAGE'
-Usage: tools/validate_upkeeper.sh [--quick|--full]
+Usage: tools/validate_upkeeper.sh [--quick|--full|--deps]
 
 Validate the central Upkeeper checkout.
 
 Modes:
+  --deps    Report runtime/tool dependency status.
   --quick   Run syntax, version, module-map, prompt-template, help, and diff checks.
   --full    Run quick checks plus safe dry-runs, symlink behavior, and failure paths.
 
@@ -37,6 +76,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --full)
       MODE="full"
+      ;;
+    --deps)
+      MODE="deps"
       ;;
     --help|-h)
       usage
@@ -62,6 +104,59 @@ require_commands() {
   for command_name in bash chmod cp diff find git grep ln mkdir mktemp rm sed sort touch tr wc; do
     require_command "$command_name"
   done
+}
+
+dependency_status_line() {
+  local class="$1"
+  local command_name="$2"
+  local note="$3"
+
+  if command -v "$command_name" >/dev/null 2>&1; then
+    printf 'ok\t%s\t%s\t%s\n' "$class" "$command_name" "$note"
+    return 0
+  fi
+
+  printf 'missing\t%s\t%s\t%s\n' "$class" "$command_name" "$note"
+  return 1
+}
+
+check_dependencies() {
+  local command_name
+  local missing_required=0
+
+  log "checking wrapper dependencies"
+  printf 'status\tclass\tcommand\tnote\n'
+
+  for command_name in "${WRAPPER_REQUIRED_COMMANDS[@]}"; do
+    dependency_status_line "required" "$command_name" "required by Upkeeper startup/runtime" || missing_required=1
+  done
+
+  for command_name in "${WRAPPER_BACKEND_COMMANDS[@]}"; do
+    dependency_status_line "backend" "$command_name" "required for non-dry-run codex exec cycles" || true
+  done
+
+  for command_name in "${WRAPPER_CONDITIONAL_COMMANDS[@]}"; do
+    dependency_status_line "conditional" "$command_name" "required when detached screen fallback is enabled" || true
+  done
+
+  for command_name in "${WRAPPER_OPTIONAL_COMMANDS[@]}"; do
+    case "$command_name" in
+      realpath)
+        dependency_status_line "optional" "$command_name" "central path resolution uses python3 fallback" || true
+        ;;
+      stat)
+        dependency_status_line "optional" "$command_name" "transcript sizing uses python3 fallback" || true
+        ;;
+      zip)
+        dependency_status_line "optional" "$command_name" "log rotation archives are disabled when missing" || true
+        ;;
+      *)
+        dependency_status_line "optional" "$command_name" "optional helper" || true
+        ;;
+    esac
+  done
+
+  [[ "$missing_required" -eq 0 ]] || fail "one or more required wrapper dependencies are missing"
 }
 
 check_syntax() {
@@ -201,6 +296,12 @@ check_missing_prompt_failure() {
 }
 
 require_commands
+if [[ "$MODE" == "deps" ]]; then
+  check_dependencies
+  log "dependency validation passed"
+  exit 0
+fi
+
 check_syntax
 check_version_consistency
 check_module_map

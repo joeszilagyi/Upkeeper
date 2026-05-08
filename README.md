@@ -74,6 +74,7 @@ Validate the central checkout before release or after touching module order,
 prompt packaging, or symlink behavior:
 
 ```sh
+tools/validate_upkeeper.sh --deps
 tools/validate_upkeeper.sh --quick
 tools/validate_upkeeper.sh --full
 ```
@@ -81,6 +82,10 @@ tools/validate_upkeeper.sh --full
 The full validation mode still avoids backend Codex work. It runs Upkeeper with
 `UPKEEPER_DRY_RUN=1` and exercises the symlinked-client, missing-module, and
 missing-prompt-template guardrails.
+
+Runtime/tool dependencies are tracked in [`docs/dependencies.md`](docs/dependencies.md).
+GitHub's dependency graph should stay enabled, but it is expected to show no
+package dependencies until the repo adds a real supported manifest or workflow.
 
 ## Client Repo Setup
 

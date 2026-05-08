@@ -5,6 +5,13 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-08: v1.1.8 changes:
+	1. Added P24 and P25 as first-class opt-in review modules through `--review-module=...`, `--review-modules=...`, and shorthand `--p24`/`--p25` flags while preserving existing `--prompt-file` behavior.
+	2. Added `prompts/p25-contract-intent-compliance-review.md` for explicit central-first, compatibility, simplicity, module ownership, dependency, validation, release-note, prompt-marker, and design-intent compliance review.
+	3. Appended selected review modules from the resolved central Upkeeper checkout during prompt compilation so symlinked clients can opt in by flag without hard-coding central prompt paths.
+	4. Propagated selected review modules into direct and screen fallback child invocations.
+	5. Documented the new flags in help, the operator guide, README, prompt index, and compatibility contract, with validation coverage for prompt existence and flag behavior.
+
 2026-05-08: v1.1.7 changes:
 	1. Added `prompts/p24-de-llm-ing-viability-review.md` as a standalone applicability-gated add-on prompt for reviewing whether stable LLM/Codex-adjacent behavior can move into deterministic local code with no operator-facing loss.
 	2. Documented explicit P24 prompt-file usage in the README, prompt index, and operator guide while keeping default and `--prompt-pass=all` behavior on the existing P1-P23 repertoire.

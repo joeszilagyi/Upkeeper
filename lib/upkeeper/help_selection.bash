@@ -2,7 +2,7 @@
 # operator guide; once the guide exists, the Markdown becomes the living document.
 show_help() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
+Usage: $SCRIPT_NAME [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25] [--review-modules=p24,p25] [--p24] [--p25] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: $UPKEEPER_VERSION
@@ -122,8 +122,8 @@ Important:
     Upkeeper; the module contract is documented in lib/upkeeper/README.md.
   - The large default review prompt is loaded from:
       $UPKEEPER_IMPLEMENTATION_DIR/prompts/default-review.md
-    Symlinked clients share that central prompt; local prompt files are only
-    needed for explicit --prompt-file overrides.
+    Symlinked clients share that central prompt and central review modules;
+    local prompt files are only needed for explicit --prompt-file overrides.
   - The central checkout can be validated without launching real Codex work with:
       tools/validate_upkeeper.sh --deps
       tools/validate_upkeeper.sh --quick
@@ -217,6 +217,15 @@ Prompt behavior:
     UPKEEPER_STATUS marker contract.
   - --prompt-file FILE appends extra task guidance from FILE.
   - --prompt TEXT appends extra task guidance inline.
+  - --review-module=p24 appends the central P24 de-LLM-ing viability review
+    module for this invoked cycle.
+  - --review-module=p25 appends the central P25 contract and intent compliance
+    review module for this invoked cycle.
+  - --review-modules=p24,p25 appends both modules in a single flag; repeated
+    --review-module flags are also accepted and duplicate modules are ignored.
+  - --p24 and --p25 are shorthand aliases for the corresponding review modules.
+    Review module flags are one-cycle guidance only and do not persist to later
+    loop iterations. They are not enabled by --prompt-pass=all unless requested.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5
     with xhigh reasoning effort. It is a CLI-only operator override and does
     not persist to later loop iterations. Use the equals form; spaced form is

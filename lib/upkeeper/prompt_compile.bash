@@ -6,6 +6,22 @@ default_review_prompt_path() {
   printf '%s/prompts/default-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
 }
 
+review_module_prompt_path() {
+  local module="$1"
+
+  case "$module" in
+    p24)
+      printf '%s/prompts/p24-de-llm-ing-viability-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
+      ;;
+    p25)
+      printf '%s/prompts/p25-contract-intent-compliance-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 append_default_review_prompt_or_exit() {
   local compiled_file="$1"
   local prompt_path
@@ -17,6 +33,40 @@ append_default_review_prompt_or_exit() {
   fi
 
   cat "$prompt_path" >>"$compiled_file"
+}
+
+append_review_module_prompts_or_exit() {
+  local compiled_file="$1"
+  local module prompt_path
+
+  [[ "${#CODEX_REVIEW_MODULES[@]}" -gt 0 ]] || return 0
+
+  {
+    printf '\nWRAPPER_REVIEW_MODULES\n'
+    printf 'review_modules=%s\n' "$(review_modules_csv)"
+    printf '\nRules for selected review modules:\n'
+    printf -- '- These modules were requested explicitly by operator flags for this invoked cycle.\n'
+    printf -- '- Apply each requested module only when its applicability gate matches the selected file.\n'
+    printf -- '- If a requested module is not applicable, state that using the module-specific not-applicable line and continue normal selected-file review.\n'
+    printf -- '- These flags are one-cycle CLI guidance only; they do not persist to later loop iterations.\n'
+  } >>"$compiled_file"
+
+  for module in "${CODEX_REVIEW_MODULES[@]}"; do
+    if ! prompt_path="$(review_module_prompt_path "$module")"; then
+      log_line "ERROR" "review.module_prompt_unknown module=$(shell_quote "$module")"
+      finish_cycle 70 REVIEW_MODULE_PROMPT_MISSING ERROR "codex_exec_started=0 module=$(shell_quote "$module")"
+    fi
+    if [[ ! -r "$prompt_path" ]]; then
+      log_line "ERROR" "review.module_prompt_missing module=$(shell_quote "$module") path=$(shell_quote "$prompt_path")"
+      finish_cycle 70 REVIEW_MODULE_PROMPT_MISSING ERROR "codex_exec_started=0 module=$(shell_quote "$module") path=$(shell_quote "$prompt_path")"
+    fi
+
+    {
+      printf '\nAdditional review module %s from %s:\n' "$module" "$prompt_path"
+      cat "$prompt_path"
+    } >>"$compiled_file"
+    log_line "INFO" "review.module_prompt enabled module=$(shell_quote "$module") path=$(shell_quote "$prompt_path")"
+  done
 }
 
 compile_prompt() {
@@ -61,6 +111,7 @@ compile_prompt() {
   fi
 
   append_default_review_prompt_or_exit "$compiled_file"
+  append_review_module_prompts_or_exit "$compiled_file"
 
   if [[ -n "$PROMPT_FILE" ]]; then
     {

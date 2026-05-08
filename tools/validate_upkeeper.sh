@@ -214,15 +214,27 @@ check_prompt_template() {
   [[ -s prompts/default-review.md ]] || fail "prompts/default-review.md is missing or empty"
   [[ -s prompts/p23-data-contract-negative-fixture-audit.md ]] || fail "P23 standalone prompt is missing or empty"
   [[ -s prompts/p24-de-llm-ing-viability-review.md ]] || fail "P24 standalone prompt is missing or empty"
+  [[ -s prompts/p25-contract-intent-compliance-review.md ]] || fail "P25 review module prompt is missing or empty"
   grep -Fq "P24 - De-LLM-ing Viability Review" prompts/p24-de-llm-ing-viability-review.md || fail "P24 prompt title missing"
   grep -Fq "P24: not applicable" prompts/p24-de-llm-ing-viability-review.md || fail "P24 applicability gate missing"
   grep -Fq "no loss of operator-facing function" prompts/p24-de-llm-ing-viability-review.md || fail "P24 no-loss requirement missing"
   grep -Fq "without material new runtime cost" prompts/p24-de-llm-ing-viability-review.md || fail "P24 cost ceiling missing"
+  grep -Fq "P25 - Contract And Intent Compliance Review" prompts/p25-contract-intent-compliance-review.md || fail "P25 prompt title missing"
+  grep -Fq "P25: not applicable" prompts/p25-contract-intent-compliance-review.md || fail "P25 applicability gate missing"
+  grep -Fq "central-first" prompts/p25-contract-intent-compliance-review.md || fail "P25 central-first contract missing"
+  grep -Fq "operator-visible behavior" prompts/p25-contract-intent-compliance-review.md || fail "P25 operator-visible contract missing"
+  grep -Fq "smallest sufficient" prompts/p25-contract-intent-compliance-review.md || fail "P25 simplicity contract missing"
 }
 
 check_help_and_diff() {
+  local help
+
   log "checking help and whitespace"
-  ./Upkeeper --help >/dev/null
+  help="$(./Upkeeper --help)"
+  grep -Fq -- "--review-module=p24" <<<"$help" || fail "help missing --review-module=p24"
+  grep -Fq -- "--review-module=p25" <<<"$help" || fail "help missing --review-module=p25"
+  grep -Fq -- "--p24" <<<"$help" || fail "help missing --p24"
+  grep -Fq -- "--p25" <<<"$help" || fail "help missing --p25"
   git diff --check
   git diff --cached --check
 }
@@ -360,6 +372,47 @@ check_quota_fallback_exit_contract() {
   [[ "$rc" -eq 7 ]] || fail "quota fallback dry-run exited $rc, expected 7"
   grep -Fq "fallback.finish trigger=primary_quota_before_run" "$temp_dir/Upkeeper.log" || fail "quota fallback dry-run did not finish fallback orchestration"
   grep -Fq "cycle.exit exit_code=7 reason=FALLBACK_CHAIN_EXIT" "$temp_dir/Upkeeper.log" || fail "quota fallback dry-run did not write cycle.exit"
+  rm -r "$temp_dir"
+}
+
+check_review_module_flags() {
+  local temp_dir output rc
+
+  log "checking review module flags"
+  temp_dir="$(mktemp -d /tmp/upkeeper-review-modules.XXXXXX)"
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
+
+  CODEX_HOME="$temp_dir/codex-home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    UPKEEPER_DRY_RUN=1 \
+    ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+
+  grep -Fq "review_modules=p24,p25" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules"
+  grep -Fq "review.module_prompt enabled module=p24" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P24"
+  grep -Fq "review.module_prompt enabled module=p25" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P25"
+  grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not finish cleanly"
+
+  output="$(./Upkeeper --p24 --p25 --version)"
+  [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "review module shorthand flags broke --version"
+
+  set +e
+  output="$(./Upkeeper --review-module=nope --version 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 3 ]] || fail "invalid review module exited $rc, expected 3"
+  grep -Fq "unknown review module: nope" <<<"$output" || fail "invalid review module error was not clear"
+
   rm -r "$temp_dir"
 }
 
@@ -983,6 +1036,7 @@ check_help_and_diff
 check_codex_mode_validation
 check_cycle_start_log_contract
 check_quota_fallback_exit_contract
+check_review_module_flags
 check_fallback_artifact_helpers
 check_postmortem_context_marker_classification
 check_live_output_filter_pipe

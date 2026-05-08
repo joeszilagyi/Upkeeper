@@ -12,10 +12,10 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
+Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25] [--review-modules=p24,p25] [--p24] [--p25] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.7
+Version: v1.1.8
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -134,8 +134,8 @@ Important:
     `Upkeeper`; the module contract is documented in `lib/upkeeper/README.md`.
   - The large default review prompt lives at `prompts/default-review.md` beside
     the resolved central Upkeeper file. Symlinked clients share that central
-    prompt; local prompt files are only needed for explicit `--prompt-file`
-    overrides.
+    prompt and central review modules; local prompt files are only needed for
+    explicit `--prompt-file` overrides.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output. The snapshot reader uses a
     tail-first scan of recent session JSONL files, with full-file fallback only
@@ -218,9 +218,20 @@ Prompt behavior:
     Standalone add-on prompts include
     `prompts/p23-data-contract-negative-fixture-audit.md` for explicit
     data-contract review and `prompts/p24-de-llm-ing-viability-review.md` for
-    applicability-gated local-code viability review of LLM/Codex boundaries.
+    applicability-gated local-code viability review of LLM/Codex boundaries,
+    plus `prompts/p25-contract-intent-compliance-review.md` for explicit
+    contract and intent compliance review.
   - --prompt TEXT appends extra task guidance inline; an empty value is rejected
     for the same reason.
+  - --review-module=p24 appends the central P24 de-LLM-ing viability review
+    module for this invoked cycle.
+  - --review-module=p25 appends the central P25 contract and intent compliance
+    review module for this invoked cycle.
+  - --review-modules=p24,p25 appends both modules in a single flag; repeated
+    --review-module flags are also accepted and duplicate modules are ignored.
+  - --p24 and --p25 are shorthand aliases for the corresponding review modules.
+    Review module flags are one-cycle guidance only and do not persist to later
+    loop iterations. They are not enabled by --prompt-pass=all unless requested.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5
     with xhigh reasoning effort. It is a CLI-only operator override and does
     not persist to later loop iterations. Use the equals form; spaced form is

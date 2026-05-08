@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.0.48 changes:
+	1. Reported non-zero primary and auxiliary Codex exits as live `ERROR` lines instead of routine `INFO` so quiet terminals still show faults.
+	2. Captured post-mortem auxiliary Codex return codes under `set +e` so failed diagnostics write normal failure records and `cycle.exit` instead of aborting through cleanup.
+	3. Allowed supervised fallback children to inherit the parent cycle's active lock, and treated cleanup/final marker wrapper-health states as terminal so later runs are not quarantined by already-cleaned-up failures.
+
 2026-05-07: v1.0.47 changes:
 	1. Added concise timestamped terminal progress in default summary mode for selected file, Codex start/finish, and long-running primary cycles.
 	2. Streamed live Codex/tool error lines from captured transcripts while keeping full raw prompt/code output in pruned transcript artifacts.

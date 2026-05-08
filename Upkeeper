@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.47
+## Version: v1.0.48
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.47"
+UPKEEPER_VERSION="v1.0.48"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -942,11 +942,22 @@ terminal_wants_quiet_output() {
   esac
 }
 
+terminal_suppresses_progress() {
+  case "${CODEX_TERMINAL_VERBOSITY:-summary}" in
+    none|silent|0|no|false)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 terminal_emit_progress() {
   local message="$*"
 
   terminal_wants_full_output && return 0
-  terminal_wants_quiet_output && return 0
+  terminal_suppresses_progress && return 0
   printf '%s Upkeeper: %s\n' "$(timestamp_now)" "$message" >&2
 }
 
@@ -959,7 +970,11 @@ terminal_emit_log_line() {
     return 0
   fi
   if terminal_wants_quiet_output; then
-    [[ "$level" == "ERROR" ]] && printf '%s\n' "$line" >&2
+    case "$level" in
+      WARN|ERROR)
+        printf '%s\n' "$line" >&2
+        ;;
+    esac
     return 0
   fi
   case "$level" in
@@ -1163,6 +1178,11 @@ acquire_active_lock_or_exit() {
     owner_cycle="$(active_lock_field cycle_id || true)"
     owner_run_hash="$(active_lock_field run_hash || true)"
     if process_fingerprint_alive "$owner_pid" "$owner_start" "$owner_boot"; then
+      if [[ "${CODEX_FALLBACK_CHAIN_ACTIVE:-0}" == "1" && "${CODEX_ATTEMPT_ROLE:-}" == "fallback" && -n "${CODEX_PARENT_CYCLE_ID:-}" && "$owner_cycle" == "$CODEX_PARENT_CYCLE_ID" ]]; then
+        log_line "INFO" "active_lock.inherited path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} child_cycle=$CYCLE_ID"
+        ACTIVE_LOCK_ACQUIRED="0"
+        return 0
+      fi
       log_line "WARN" "active_lock.held path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=exit"
       finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown}"
     fi
@@ -1323,7 +1343,7 @@ for path in sorted(state_dir.glob(f"{prefix}*.state")):
     if fields.get("run_hash") == current_run_hash:
         continue
     status = fields.get("status", "unknown")
-    if status in {"exited", "die", "resolved"}:
+    if status in {"exited", "aborted", "cleanup", "die", "finish", "resolved"}:
         continue
     pid = fields.get("pid", "")
     expected_start = fields.get("wrapper_start", "")
@@ -1463,7 +1483,7 @@ start_terminal_progress_heartbeat() {
   local interval
 
   terminal_wants_full_output && return 0
-  terminal_wants_quiet_output && return 0
+  terminal_suppresses_progress && return 0
   interval="$(sanitize_nonnegative_integer "${CODEX_TERMINAL_PROGRESS_INTERVAL_SECONDS:-$CODEX_MARK_INTERVAL_SECONDS}" "$CODEX_MARK_INTERVAL_SECONDS")"
   if [[ "$interval" -le 0 ]]; then
     return 0
@@ -2044,7 +2064,7 @@ import sys
 
 label = sys.argv[1]
 verbosity = os.environ.get("CODEX_TERMINAL_VERBOSITY", "summary").lower()
-quiet = verbosity in {"quiet", "none", "silent", "0", "no", "false"}
+silent = verbosity in {"none", "silent", "0", "no", "false"}
 
 promptish = re.compile(
     r"^(WRAPPER_|ABSOLUTE RULE|Background Review Prompt Repertoire|Summary Table|P\d+ - |-{8,}$|"
@@ -2158,12 +2178,12 @@ for raw in sys.stdin:
     if expecting_command and stripped:
         expecting_command = False
         last_kind = command_kind(stripped)
-        if not quiet and is_interesting_command(stripped):
+        if not silent and is_interesting_command(stripped):
             print(f"{ts()} Upkeeper: {label} running {last_kind}: {short(stripped)}", file=sys.stderr, flush=True)
         continue
 
     if re.match(r"succeeded in [0-9]+", stripped):
-        if not quiet:
+        if not silent:
             print(f"{ts()} Upkeeper: {label} {last_kind} completed: {short(stripped)}", file=sys.stderr, flush=True)
         continue
 
@@ -2172,7 +2192,7 @@ for raw in sys.stdin:
         continue
 
     if stripped.startswith(("UPKEEPER_STATUS:", "UPKEEPER_LOG_REVIEW:")):
-        if not quiet:
+        if not silent:
             print(f"{ts()} Upkeeper: {label} status: {short(stripped)}", file=sys.stderr, flush=True)
         continue
 
@@ -6537,7 +6557,11 @@ run_aux_codex_exec() {
   local aux_exit=$?
   set -e
 
-  log_line "INFO" "$phase_label.finish exit_code=$aux_exit model=$model transcript=$(shell_quote "$aux_transcript_file")"
+  if [[ "$aux_exit" -eq 0 ]]; then
+    log_line "INFO" "$phase_label.finish exit_code=$aux_exit model=$model transcript=$(shell_quote "$aux_transcript_file")"
+  else
+    log_line "ERROR" "$phase_label.finish exit_code=$aux_exit model=$model transcript=$(shell_quote "$aux_transcript_file")"
+  fi
   return "$aux_exit"
 
 }
@@ -7563,8 +7587,10 @@ EOF
   hardening_last_message="$(run_mktemp postmortem-hardening-last-message)"
 
   compile_postmortem_report_prompt "$report_prompt_file" "$context_path" "$report_path"
+  set +e
   run_aux_codex_exec "postmortem.report" "$CODEX_POSTMORTEM_MODEL" "$CODEX_POSTMORTEM_REASONING_EFFORT" "$CODEX_POSTMORTEM_MODE" "$report_prompt_file" "$report_last_message"
   report_exit=$?
+  set -e
   report_marker="$(parse_postmortem_marker "$report_last_message")"
   log_line "INFO" "postmortem.report.finish exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path report_exists=$([[ -e "$report_path" ]] && printf 1 || printf 0) report_nonempty=$([[ -s "$report_path" ]] && printf 1 || printf 0)"
 
@@ -7607,8 +7633,10 @@ EOF
   fi
 
   compile_postmortem_hardening_prompt "$hardening_prompt_file" "$context_path" "$report_path"
+  set +e
   run_aux_codex_exec "postmortem.hardening" "$CODEX_POSTMORTEM_MODEL" "$CODEX_POSTMORTEM_REASONING_EFFORT" "$CODEX_POSTMORTEM_MODE" "$hardening_prompt_file" "$hardening_last_message"
   hardening_exit=$?
+  set -e
   hardening_marker="$(parse_postmortem_marker "$hardening_last_message")"
 
   if [[ "$hardening_exit" -eq 86 ]]; then
@@ -8174,7 +8202,11 @@ main() {
   set -e
   stop_terminal_progress_heartbeat "codex_exit_$codex_exit"
 
-  log_line "INFO" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE")"
+  if [[ "$codex_exit" -eq 0 ]]; then
+    log_line "INFO" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE")"
+  else
+    log_line "ERROR" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE")"
+  fi
   terminal_emit_progress "codex finished target=${RUN_SELECTED_REVIEW_PATH:-unknown} exit=$codex_exit transcript=$RUN_TRANSCRIPT_FILE"
   local after_quota_json=""
   local after_error=""

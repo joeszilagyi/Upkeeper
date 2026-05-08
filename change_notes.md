@@ -23,6 +23,7 @@ Version numbering note:
 	15. Hardened fallback artifact readers so transient missing or unreadable screen/marker state files return existing sentinel defaults instead of aborting wrapper cleanup or cooldown logging under `set -e`, with quick validation coverage for the helper contract.
 	16. Hardened detached screen fallback exit-code artifacts so corrupt or out-of-range values fall back to a logged wrapper failure instead of being propagated into shell return paths.
 	17. Changed the default terminal mode to `basic`, moved command-level search/file-view chatter to `verbose`, introduced `debug1`, `quiet`, and `silent` terminal contracts, and kept raw backend streaming behind `full`.
+	18. Hardened primary quota cooldown markers so malformed non-finite reset epochs are ignored without tracebacks and marker creation writes through a temporary file before rename.
 
 2026-05-07: v1.1.3 changes:
 	1. Refreshed README examples, repository layout, and related-doc links after the module, prompt, validation, and dependency-documentation work.

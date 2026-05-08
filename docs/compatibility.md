@@ -60,6 +60,32 @@ Internal Bash function names, module boundaries, helper implementations, and
 prompt wording can change when the operator-visible behavior above remains
 compatible.
 
+## Maintainability And Simplicity Requirements
+
+Future compatibility work should make Upkeeper easier to maintain, not only
+larger.
+
+- Prefer small reusable local functions for behavior that is repeated, parsed,
+  logged, validated, or relied on by more than one module.
+- Keep the root `Upkeeper` entrypoint focused on orchestration; put reusable
+  behavior in `lib/upkeeper` modules with clear ownership.
+- Start with the smallest sufficient mechanism: a Bash helper, existing command,
+  focused Python parser, fixture, or validation check is preferred over a new
+  framework, service, daemon, database, or background runtime.
+- Add new dependencies only when the existing local toolchain would make the
+  solution materially less safe, less clear, or less testable.
+- Do not over-fragment one-off code. Split or extract only when it reduces real
+  coupling, removes meaningful duplication, clarifies a contract, or makes a
+  behavior easier to verify.
+- Prefer deterministic local code for stable parsing, classification,
+  formatting, routing, preflight, and guardrail enforcement. Keep LLM-backed
+  paths for open-ended review, ambiguous judgement, and remediation planning.
+- When a helper becomes part of a contract, add focused validation coverage for
+  both normal and malformed paths.
+- Avoid introducing a larger runtime system for a problem solved by a small
+  local helper. The simplest tool that satisfies the documented contract is the
+  preferred tool.
+
 ## Breaking-Change Requirements
 
 If a breaking change is unavoidable:

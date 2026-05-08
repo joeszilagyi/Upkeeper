@@ -1,8 +1,16 @@
+# Primary quota cooldown marker helpers.
+#
+# Upkeeper writes per-cycle markers under CODEX_POSTMORTEM_DIR when primary
+# quota guardrails stop a run. Later primary invocations read those markers
+# before spending more quota and stop until the recorded reset time passes.
+# Operator-facing behavior is summarized in docs/scripts/upkeeper.md; update
+# that guide and change_notes.md when changing marker semantics.
 latest_active_primary_quota_block_marker() {
   local target_model="$1"
 
   python3 - "$CODEX_POSTMORTEM_DIR" "$target_model" <<'PY'
 from pathlib import Path
+import math
 import sys
 import time
 
@@ -26,9 +34,12 @@ if root.exists():
         if fields.get("primary_model") != target_model:
             continue
         try:
-            blocked_until_epoch = int(float(fields.get("blocked_until_epoch", "")))
-        except ValueError:
+            blocked_until_value = float(fields.get("blocked_until_epoch", ""))
+        except (OverflowError, ValueError):
             continue
+        if not math.isfinite(blocked_until_value):
+            continue
+        blocked_until_epoch = int(blocked_until_value)
         if blocked_until_epoch <= now:
             continue
         try:
@@ -48,7 +59,7 @@ PY
 write_primary_quota_blocked_marker() {
   local stop_reason="$1"
   local marker_source_phase="${2:-before_run}"
-  local pm_root marker_path blocked_buckets blocked_until_epoch
+  local pm_root marker_path marker_tmp_path blocked_buckets blocked_until_epoch
   local created_at recommended_action
   local primary_reset_value secondary_reset_value
   local marker_primary_decision marker_secondary_decision
@@ -106,8 +117,13 @@ write_primary_quota_blocked_marker() {
   created_at="$(timestamp_now)"
   recommended_action="wait_until_reset_or_switch_primary_model"
 
-  mkdir -p "$pm_root"
-  cat >"$marker_path" <<EOF
+  if ! mkdir -p -- "$pm_root"; then
+    log_line "ERROR" "quota.blocked_marker_failed path=$(shell_quote "$marker_path") reason=mkdir_failed"
+    return 0
+  fi
+  marker_tmp_path="$marker_path.tmp.$$"
+  if ! {
+    cat <<EOF
 incident_cycle_id: $CYCLE_ID
 created_at: $created_at
 marker_source_phase: $marker_source_phase
@@ -145,6 +161,16 @@ secondary_reset_epoch: ${marker_secondary_reset:-unknown}
 secondary_reset: $(format_epoch_local "${marker_secondary_reset:-}")
 recommended_operator_action: $recommended_action
 EOF
+  } >"$marker_tmp_path"; then
+    rm -f -- "$marker_tmp_path"
+    log_line "ERROR" "quota.blocked_marker_failed path=$(shell_quote "$marker_path") reason=write_failed"
+    return 0
+  fi
+  if ! mv -f -- "$marker_tmp_path" "$marker_path"; then
+    rm -f -- "$marker_tmp_path"
+    log_line "ERROR" "quota.blocked_marker_failed path=$(shell_quote "$marker_path") reason=rename_failed"
+    return 0
+  fi
 
   log_line "WARN" "quota.blocked_marker path=$(shell_quote "$marker_path") target_model=$CODEX_MODEL marker_source_phase=$marker_source_phase blocked_bucket=$blocked_buckets blocked_until=$(format_epoch_local "$blocked_until_epoch") quota_identity_changed=$marker_identity_changed"
 }

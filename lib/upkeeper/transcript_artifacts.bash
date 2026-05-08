@@ -91,3 +91,15 @@ except OSError:
     print("unknown")
 PY
 }
+
+file_line_count() {
+  local path="$1"
+  local count
+
+  if count="$(wc -l <"$path" 2>/dev/null)"; then
+    printf '%s' "${count//[[:space:]]/}"
+    return 0
+  fi
+
+  printf 'unknown'
+}

@@ -81,15 +81,20 @@ Loop stop semantics:
     that reset time passes
   - root log rotation archives live logs older than ${CODEX_LOG_ROTATE_AFTER_HOURS} hours
     and prunes sibling zip archives older than ${CODEX_LOG_ROTATE_KEEP_HOURS} hours on startup.
-  - by default, live terminal output is summary-first: routine INFO logs and
-    full backend transcripts stay in log/transcript artifacts, while WARN,
-    ERROR, live tool/Codex error lines, timestamped progress heartbeats, status,
-    and bounded high-signal transcript summaries remain visible;
+  - by default, live terminal output is basic: routine INFO logs and full
+    backend transcripts stay in log/transcript artifacts, while selected target,
+    Codex start/finish, long-running heartbeats, status, checks/tests/validation
+    progress, WARN, ERROR, separated bounded "LLM:" task-status blocks before
+    backend tool phases, and a final review/finding/change/verification summary
+    remain visible;
     transcript artifacts live under:
       ${CODEX_TRANSCRIPT_DIR}
     and are pruned after ${CODEX_TRANSCRIPT_KEEP_HOURS} hours or when the
     directory exceeds ${CODEX_TRANSCRIPT_KEEP_MAX_MB} MB;
-    set CODEX_TERMINAL_VERBOSITY=full to stream the full backend transcript
+    use CODEX_TERMINAL_VERBOSITY=verbose for command-level progress,
+    debug1 for the first diagnostic tier, quiet for only major progress and
+    problems, silent for no routine terminal chatter, or full to stream the raw
+    backend transcript
 
 Important:
   - Run the loop in a dedicated shell or terminal tab.
@@ -119,14 +124,22 @@ Important:
       $UPKEEPER_IMPLEMENTATION_DIR/prompts/default-review.md
     Symlinked clients share that central prompt; local prompt files are only
     needed for explicit --prompt-file overrides.
-  - The central checkout can be validated without launching Codex with:
+  - The central checkout can be validated without launching real Codex work with:
       tools/validate_upkeeper.sh --deps
       tools/validate_upkeeper.sh --quick
       tools/validate_upkeeper.sh --full
+    Full validation uses dry-runs plus a local fake codex binary, not real
+    backend work.
     Runtime/tool dependencies are documented in docs/dependencies.md. GitHub's
     dependency graph is useful future-proofing, but it will not list Bash system
     tools unless the repo later adds a supported manifest, workflow, or
     dependency submission.
+    Backward compatibility is documented in docs/compatibility.md. Existing
+    operator-visible behavior should be preserved unless compatibility would be
+    unsafe or impossible.
+    Future local sample-repo stress testing is documented in
+    docs/stress-corpus.md; those checks should default to no real backend Codex
+    work and keep model-backed sample runs behind explicit opt-in commands.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output.
   - Exact-model Spark quota snapshots may still report the generic Codex
@@ -273,7 +286,7 @@ Environment overrides:
 Exit codes:
   0  One cycle completed, dry-run completed, or the loop was stopped on quota guardrails
   2  Codex reported BLOCKED
-  3  Wrapper/setup error
+  3  Wrapper/setup or Codex launch/capture error
   4  Safety stop was required but parent-loop termination was not confirmed
   5  No clear backend task remained; the wrapper stops the outer loop on purpose
   6  Codex turn was aborted/interrupted before emitting a final status marker
@@ -662,7 +675,7 @@ append_preselected_review_target() {
   } >>"$compiled_file"
 
   log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} worktree_hash=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} basis=$(shell_quote "${selected_basis:-unknown}")"
-  terminal_emit_progress "file selected is ${selected_path:-unknown}; reason: ${selected_basis:-unknown}; age=${selected_age:-unknown}"
+  terminal_emit_progress "selected file ${selected_path:-unknown} (age=${selected_age:-unknown}; reason=${selected_basis:-unknown}; eligible=${eligible_count:-unknown})"
 }
 
 operator_guide_snapshot_version() {

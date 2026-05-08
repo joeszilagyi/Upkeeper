@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.3
+Version: v1.1.5
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -94,10 +94,16 @@ Loop stop semantics:
     zip archives older than 144 hours on startup.
 
 Transcript and live terminal behavior:
-  - Default live terminal mode is summary-first. Routine INFO logs stay in
-    `Upkeeper.log`; full Codex stdout/stderr stays in transcript artifacts.
-  - WARN/ERROR lines, final status, and bounded high-signal transcript summaries
-    remain visible live.
+  - Default live terminal mode is `basic`: routine INFO logs stay in
+    `Upkeeper.log`; full Codex stdout/stderr stays in transcript artifacts; the
+    terminal shows selected target, Codex start/finish, long-running heartbeats,
+    status markers, checks/tests/validation/build commands, WARN, ERROR,
+    separated bounded `LLM:` task-status blocks before backend tool phases, and
+    a final review/finding/change/verification summary.
+  - Set `CODEX_TERMINAL_VERBOSITY=verbose` for command-level search/file-view
+    progress like `cmd#N search started`; `debug1` is the first diagnostic tier.
+  - Set `CODEX_TERMINAL_VERBOSITY=quiet` for only major progress, status,
+    WARN, and ERROR; set `silent` for no routine terminal chatter.
   - Transcript artifacts live under `runtime/upkeeper-transcripts` by default and
     are pruned after 24 hours or once the directory exceeds 200 MB.
   - Set `CODEX_TERMINAL_VERBOSITY=full` to stream the full backend transcript live.
@@ -252,7 +258,7 @@ Environment overrides:
   CODEX_LOG_ROTATE_AFTER_HOURS  Default: 72
   CODEX_LOG_ROTATE_KEEP_HOURS   Default: 144
   CODEX_PROCESS_ARGS_MAX_CHARS  Default: 600
-  CODEX_TERMINAL_VERBOSITY     Default: summary
+  CODEX_TERMINAL_VERBOSITY     Default: basic
   CODEX_TRANSCRIPT_DIR         Default: runtime/upkeeper-transcripts
   CODEX_TRANSCRIPT_KEEP_HOURS  Default: 24
   CODEX_TRANSCRIPT_KEEP_MAX_MB Default: 200
@@ -286,7 +292,7 @@ Environment overrides:
 Exit codes:
   0  One cycle completed, dry-run completed, or the loop was stopped on quota guardrails
   2  Codex reported BLOCKED
-  3  Wrapper/setup error
+  3  Wrapper/setup or Codex launch/capture error
   4  Safety stop was required but parent-loop termination was not confirmed
   5  No clear backend task remained; the wrapper stops the outer loop on purpose
   6  Codex turn was aborted/interrupted before emitting a final status marker
@@ -328,11 +334,18 @@ Exit codes:
   `tools/validate_upkeeper.sh`. Use `--deps` for runtime/tool dependency
   status, `--quick` for syntax/version/module-map checks, and `--full` before
   release or after touching module order, prompt packaging, symlink behavior, or
-  failure-path guardrails.
+  failure-path guardrails. Full validation uses dry-runs plus a local fake
+  `codex` binary; it does not launch real backend work.
 - Runtime/tool dependencies are tracked in `docs/dependencies.md`. GitHub's
   dependency graph should remain enabled, but it is expected to show no package
   dependencies until this repo adds a real supported manifest, workflow, or
   dependency submission.
+- Backward compatibility is documented in `docs/compatibility.md`. Existing
+  operator-visible behavior should be preserved unless compatibility would be
+  unsafe or impossible.
+- Future local sample-repo stress testing is documented in
+  `docs/stress-corpus.md`; those checks should default to no real backend Codex
+  work and keep model-backed sample runs behind explicit opt-in commands.
 - Startup-anomaly scans suppress older log-only `previous_run.anomaly` entries
   after a later `startup_anomaly.gate_resolved` has acknowledged
   `previous_run_anomaly`; unresolved gate state files still trigger the gate.

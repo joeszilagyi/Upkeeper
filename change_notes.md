@@ -5,6 +5,34 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.1.5 changes:
+	1. Added separated live `LLM:` task-status blocks in `basic`, `verbose`, and `debug1` terminal modes by reusing already-streamed assistant prose before backend tool phases, without launching any extra model work.
+	2. Added a concise terminal finale after each parsed review summary so `basic`, `quiet`, `verbose`, and `debug1` runs show what was wrong, what changed, and what verification ran without opening the transcript.
+	3. Kept `silent` terminal mode silent, moved the older raw `bugs/fixes found` terminal line behind `verbose`/`debug1`, and suppressed duplicate successful command-completion lines from repeated Codex stream events.
+	4. Documented the future stress-corpus contract for locally generated sample repositories across common language/toolchain shapes, with model-backed sample runs kept opt-in.
+	5. Added a binding backward-compatibility contract that preserves the operator-visible feature surface unless compatibility would be unsafe or impossible.
+	6. Rejected malformed auxiliary Codex mode strings before postmortem report or hardening launches so `CODEX_POSTMORTEM_MODE` triple-dash typos fail as clear environment skips instead of later Codex execution failures.
+
+2026-05-07: v1.1.4 changes:
+	1. Classified non-zero Codex exits with zero-byte primary transcripts as `CODEX_EXEC_EMPTY_TRANSCRIPT` before generic fallback, instead of borrowing turn-aborted state from a quota snapshot session.
+	2. Added transcript byte and line counts to `run.finish` records so launch/capture failures preserve direct local evidence.
+	3. Ignored session diagnostics for empty primary transcripts so `cycle.summary` no longer reports unrelated agent/tool counts from the surrounding Codex session.
+	4. Added a full-validation fake-Codex check for empty-transcript launch/capture failures.
+	5. Fixed the summary-mode live output filter so it consumes piped Codex output instead of replacing pipeline stdin with its Python here-doc.
+	6. Suppressed Codex's initial prompt echo as a block in live and post-run transcript signal extraction so prompt text containing words like `Exception`, `failed`, or `ERROR` is not reported as runtime evidence.
+	7. Added help, unexpected-argument rejection, and stop-percent validation to the Spark-5.3 xhigh launcher example so operators can inspect and validate it before starting a long-running loop.
+	8. Reduced transcript signal noise by treating Codex prose, command status lines, command output, and diff blocks as separate phases before surfacing runtime failures, while de-duplicating repeated status markers.
+	9. Hardened Codex I/O helpers so unreadable prompt files fail during CLI resolution, malformed analyzer JSON fails through the wrapper error path, and transcript capture errors are logged instead of being hidden behind a successful Codex exit.
+	10. Added numbered command labels to summary terminal output and stopped classifying exploratory search failures as test/runtime failures.
+	11. Taught review-summary parsing to capture selected files from final responses that use the compact `Selected \`path\`` wording.
+	12. Fixed review-summary selected-file parsing when a Markdown selected-file link is followed by backticked metadata such as an mtime epoch.
+	13. Hardened parent-loop stop handling so invalid inherited parent PIDs are rejected before signal delivery and parent-exit races return logged outcomes instead of aborting under `set -e`.
+	14. Classified file-view and discovery commands as search before validation/test matching so source-code fixtures no longer appear as live or post-run runtime error signals.
+	15. Hardened fallback artifact readers so transient missing or unreadable screen/marker state files return existing sentinel defaults instead of aborting wrapper cleanup or cooldown logging under `set -e`, with quick validation coverage for the helper contract.
+	16. Hardened detached screen fallback exit-code artifacts so corrupt or out-of-range values fall back to a logged wrapper failure instead of being propagated into shell return paths.
+	17. Changed the default terminal mode to `basic`, moved command-level search/file-view chatter to `verbose`, introduced `debug1`, `quiet`, and `silent` terminal contracts, and kept raw backend streaming behind `full`.
+	18. Hardened primary quota cooldown markers so malformed non-finite reset epochs are ignored without tracebacks and marker creation writes through a temporary file before rename.
+
 2026-05-07: v1.1.3 changes:
 	1. Refreshed README examples, repository layout, and related-doc links after the module, prompt, validation, and dependency-documentation work.
 	2. Fixed the README prompt-file example to reference tracked central prompt files instead of a nonexistent `prompts/review-release-blockers.md` path.

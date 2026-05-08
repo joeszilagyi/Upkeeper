@@ -11,12 +11,37 @@ emit_codex_transcript_summary() {
   python3 - "$label" "$transcript_file" "$codex_exit" "$signal_lines" "$error_tail_lines" "$LOG_FILE" "$CYCLE_ID" "$CYCLE_RUN_HASH" <<'PY'
 from datetime import datetime, timezone
 from pathlib import Path
+import os
 import re
 import sys
 
 label, path_raw, exit_raw, signal_raw, tail_raw, log_raw, cycle_id, run_hash = sys.argv[1:9]
 path = Path(path_raw)
 log_path = Path(log_raw)
+
+def terminal_mode() -> str:
+    raw = os.environ.get('CODEX_TERMINAL_VERBOSITY', 'basic').strip().lower()
+    aliases = {
+        '': 'basic',
+        'summary': 'basic',
+        'normal': 'basic',
+        'default': 'basic',
+        '1': 'verbose',
+        'yes': 'verbose',
+        'true': 'verbose',
+        'debug': 'debug1',
+        'none': 'silent',
+        '0': 'silent',
+        'no': 'silent',
+        'false': 'silent',
+        'raw': 'full',
+    }
+    return aliases.get(raw, raw)
+
+mode = terminal_mode()
+silent_terminal = mode == 'silent'
+diagnostic_terminal = mode in {'verbose', 'debug1'}
+
 try:
     signal_limit = max(0, int(signal_raw))
 except ValueError:
@@ -31,6 +56,28 @@ except OSError:
     print(f'Upkeeper: {label} transcript unavailable path={path}', file=sys.stderr)
     raise SystemExit(0)
 lines = text.splitlines()
+
+def strip_initial_prompt_echo(raw_lines: list[str]) -> tuple[list[str], bool]:
+    filtered = []
+    in_user_echo = False
+    saw_codex_marker = False
+    stripped_prompt_echo = False
+    for item in raw_lines:
+        stripped = item.strip()
+        if not saw_codex_marker:
+            if in_user_echo:
+                if stripped == 'codex':
+                    in_user_echo = False
+                    saw_codex_marker = True
+                    stripped_prompt_echo = True
+                continue
+            if stripped == 'user':
+                in_user_echo = True
+                continue
+        filtered.append(item)
+    return filtered, stripped_prompt_echo
+
+runtime_lines, stripped_prompt_echo = strip_initial_prompt_echo(lines)
 
 def ts():
     return datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%dT%H:%M:%S%z')
@@ -88,7 +135,108 @@ def is_signal(line: str) -> bool:
         return True
     return False
 
-signals = [short(line) for line in lines if is_signal(line)]
+def command_kind(line: str) -> str:
+    lowered = line.lower()
+    if re.search(r'\bcommand -v\s+', lowered):
+        return 'command'
+    if re.search(r'\bbash\s+-n\b|\bdiff\s+--check\b|git\s+diff\s+--check|\bshellcheck\b|\bruff\b|\bmypy\b', lowered):
+        return 'check'
+    if re.search(r'\b(rg|grep|find|cat)\b|\bgit\s+(?:grep|ls-files|diff|show|status|log)\b|\bnl\s+-ba\b|\bsed\s+-n\b', lowered):
+        return 'search'
+    if re.search(r'\btools/validate_[a-z0-9_.-]+(?:\.sh)?\b|validate_upkeeper\.sh', lowered):
+        return 'validation'
+    if re.search(r'\b(pytest|bats)\b|\bpython[0-9.]*\s+-m\s+pytest\b|\bgo\s+test\b|\bcargo\s+test\b|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b|\bmake\s+(?:[^;&|]*\s+)?test\b', lowered):
+        return 'tests'
+    if re.search(r'\b(npm|pnpm|yarn|node|make|cargo|go)\b', lowered):
+        return 'build'
+    if re.search(r'\bgit\b', lowered):
+        return 'git'
+    return 'command'
+
+def is_interesting_command(line: str) -> bool:
+    return command_kind(line) in {'tests', 'validation', 'check', 'build'}
+
+def collect_signals(raw_lines: list[str]) -> list[str]:
+    collected = []
+    expecting_command = False
+    current_command_interesting = False
+    in_command_output = False
+    in_codex_message = stripped_prompt_echo
+    in_diff_block = False
+
+    for line in raw_lines:
+        stripped = line.strip()
+
+        if stripped == 'codex' or stripped.startswith('tokens used'):
+            expecting_command = False
+            current_command_interesting = False
+            in_command_output = False
+            in_codex_message = True
+            in_diff_block = False
+            continue
+
+        if stripped == 'exec':
+            expecting_command = True
+            current_command_interesting = False
+            in_command_output = False
+            in_codex_message = False
+            in_diff_block = False
+            continue
+
+        if line.startswith('diff --git '):
+            in_diff_block = True
+            continue
+
+        if in_diff_block:
+            continue
+
+        if expecting_command and stripped:
+            expecting_command = False
+            current_command_interesting = is_interesting_command(stripped)
+            in_command_output = False
+            in_codex_message = False
+            continue
+
+        if re.match(r'succeeded in [0-9]+', stripped):
+            in_command_output = True
+            in_codex_message = False
+            continue
+
+        if re.match(r'exited [1-9][0-9]* in ', stripped):
+            if current_command_interesting:
+                collected.append(short(stripped))
+            in_command_output = True
+            in_codex_message = False
+            continue
+
+        if in_command_output:
+            if current_command_interesting and is_signal(line):
+                collected.append(short(line))
+            continue
+
+        if stripped.startswith(('UPKEEPER_STATUS:', 'UPKEEPER_LOG_REVIEW:')):
+            collected.append(short(stripped))
+            continue
+
+        if in_codex_message:
+            continue
+
+        if is_signal(line):
+            collected.append(short(line))
+
+    return collected
+
+def dedupe_signals(raw_signals: list[str]) -> list[str]:
+    seen = set()
+    deduped = []
+    for item in raw_signals:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
+
+signals = dedupe_signals(collect_signals(runtime_lines))
 summary = (
     f'codex.transcript.summary label={label} path={path} exit={exit_raw} lines={len(lines)} '
     f'diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count} signal_lines={len(signals)}'
@@ -102,14 +250,16 @@ try:
             handle.write(item + '\n')
 except OSError:
     pass
-print(f'Upkeeper: {label} transcript captured path={path} exit={exit_raw} lines={len(lines)} diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count}', file=sys.stderr)
-if signals and signal_limit:
-    print(f'Upkeeper: {label} high-signal transcript tail (last {min(signal_limit, len(signals))}):', file=sys.stderr)
+if not silent_terminal and (diagnostic_terminal or exit_raw not in {'0', ''}):
+    print(f'{ts()} [INFO] Upkeeper: {label} transcript captured path={path} exit={exit_raw} lines={len(lines)} diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count}', file=sys.stderr)
+if not silent_terminal and diagnostic_terminal and signals and signal_limit:
+    print(f'{ts()} [INFO] Upkeeper: {label} high-signal transcript tail (last {min(signal_limit, len(signals))}):', file=sys.stderr)
     for line in signals[-signal_limit:]:
         print(f'  {line}', file=sys.stderr)
-if exit_raw not in {'0', ''} and tail_limit:
-    print(f'Upkeeper: {label} failure transcript tail (last {min(tail_limit, len(lines))} lines):', file=sys.stderr)
-    for line in lines[-tail_limit:]:
+if not silent_terminal and exit_raw not in {'0', ''} and tail_limit:
+    tail_lines = runtime_lines if runtime_lines else lines
+    print(f'{ts()} [ERROR] Upkeeper: {label} failure transcript tail (last {min(tail_limit, len(tail_lines))} lines):', file=sys.stderr)
+    for line in tail_lines[-tail_limit:]:
         print(f'  {short(line)}', file=sys.stderr)
 PY
 }
@@ -117,15 +267,41 @@ PY
 codex_live_output_filter() {
   local label="$1"
 
-  python3 - "$label" <<'PY'
+  python3 /dev/fd/3 "$label" 3<<'PY'
 from datetime import datetime, timezone
 import os
 import re
 import sys
 
 label = sys.argv[1]
-verbosity = os.environ.get("CODEX_TERMINAL_VERBOSITY", "summary").lower()
-silent = verbosity in {"none", "silent", "0", "no", "false"}
+
+
+def terminal_mode() -> str:
+    raw = os.environ.get("CODEX_TERMINAL_VERBOSITY", "basic").strip().lower()
+    aliases = {
+        "": "basic",
+        "summary": "basic",
+        "normal": "basic",
+        "default": "basic",
+        "1": "verbose",
+        "yes": "verbose",
+        "true": "verbose",
+        "debug": "debug1",
+        "none": "silent",
+        "0": "silent",
+        "no": "silent",
+        "false": "silent",
+        "raw": "full",
+    }
+    return aliases.get(raw, raw)
+
+
+mode = terminal_mode()
+silent = mode in {"silent", "full"}
+quiet = mode == "quiet"
+basic = mode == "basic"
+diagnostic = mode in {"verbose", "debug1"}
+llm_status_enabled = mode in {"basic", "verbose", "debug1"}
 
 promptish = re.compile(
     r"^(WRAPPER_|ABSOLUTE RULE|Background Review Prompt Repertoire|Summary Table|P\d+ - |-{8,}$|"
@@ -194,71 +370,196 @@ def is_error_line(line: str) -> bool:
 
 def command_kind(line: str) -> str:
     lowered = line.lower()
-    if "pytest" in lowered or " test" in lowered or "/test" in lowered:
-        return "tests"
-    if "bash -n" in lowered or "--check" in lowered or "diff --check" in lowered:
+    if re.search(r"\bcommand -v\s+", lowered):
+        return "command"
+    if re.search(r"\bbash\s+-n\b|\bdiff\s+--check\b|git\s+diff\s+--check|\bshellcheck\b|\bruff\b|\bmypy\b", lowered):
         return "check"
+    if re.search(r"\b(rg|grep|find|cat)\b|\bgit\s+(?:grep|ls-files|diff|show|status|log)\b|\bnl\s+-ba\b|\bsed\s+-n\b", lowered):
+        return "search"
+    if re.search(r"\btools/validate_[a-z0-9_.-]+(?:\.sh)?\b|validate_upkeeper\.sh", lowered):
+        return "validation"
+    if re.search(r"\b(pytest|bats)\b|\bpython[0-9.]*\s+-m\s+pytest\b|\bgo\s+test\b|\bcargo\s+test\b|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b|\bmake\s+(?:[^;&|]*\s+)?test\b", lowered):
+        return "tests"
+    if re.search(r"\b(npm|pnpm|yarn|node|make|cargo|go)\b", lowered):
+        return "build"
+    if re.search(r"\bgit\b", lowered):
+        return "git"
     return "command"
 
 
-def is_interesting_command(line: str) -> bool:
-    lowered = line.lower()
-    return any(
-        token in lowered
-        for token in (
-            "pytest",
-            " test",
-            "/test",
-            "bash -n",
-            "--check",
-            "diff --check",
-            "python",
-            "node",
-            "npm",
-            "make",
-            "cargo",
-            "go test",
-            "ruff",
-            "mypy",
-            "shellcheck",
-        )
-    )
+def should_announce_start(kind: str) -> bool:
+    if diagnostic:
+        return kind in {"tests", "validation", "check", "build", "search"}
+    if basic:
+        return kind in {"tests", "validation", "check", "build"}
+    return False
+
+
+def should_report_success(kind: str) -> bool:
+    if diagnostic or basic:
+        return kind in {"tests", "validation", "check", "build"}
+    return False
+
+
+def should_report_failure_as_error(kind: str) -> bool:
+    return kind in {"tests", "validation", "check", "build"}
+
+
+def emit(level: str, message: str) -> None:
+    if silent:
+        return
+    print(f"{ts()} [{level}] Upkeeper: {message}", file=sys.stderr, flush=True)
+
+
+def emit_llm_status(message: str) -> None:
+    if silent:
+        return
+    print("", file=sys.stderr, flush=True)
+    emit("INFO", f"{label} LLM: {message}")
+    print("", file=sys.stderr, flush=True)
+
+
+def maybe_assistant_status(line: str) -> str:
+    candidate = line.strip()
+    if not candidate:
+        return ""
+    if candidate.startswith(("hook:", "UPKEEPER_STATUS:", "UPKEEPER_LOG_REVIEW:", "diff --git ")):
+        return ""
+    if candidate.startswith(("REVIEWED_", "STOPPED_ON_BLOCKER", "RUN_RESULT=", "tokens used")):
+        return ""
+    if is_prompt_or_contract(candidate):
+        return ""
+    if re.match(r"^(?:---|\+\+\+|@@|\+|-)\s", candidate):
+        return ""
+    return short(candidate, 440)
 
 
 expecting_command = False
 last_kind = "command"
+last_command_id = 0
+current_command_interesting = False
+current_command_reports_success = False
+current_command_exit_reported = False
+current_command_success_reported = False
+in_command_output = False
+in_codex_message = False
+in_diff_block = False
+in_user_echo = False
+saw_codex_marker = False
+emitted_status_markers = set()
+assistant_status = ""
+last_emitted_assistant_status = ""
 
-for raw in sys.stdin:
-    line = raw.rstrip("\r\n")
-    stripped = line.strip()
+try:
+    for raw in sys.stdin:
+        line = raw.rstrip("\r\n")
+        stripped = line.strip()
 
-    if stripped == "exec":
-        expecting_command = True
-        continue
+        if not saw_codex_marker:
+            if in_user_echo:
+                if stripped == "codex":
+                    in_user_echo = False
+                    saw_codex_marker = True
+                    in_codex_message = True
+                continue
+            if stripped == "user":
+                in_user_echo = True
+                continue
 
-    if expecting_command and stripped:
-        expecting_command = False
-        last_kind = command_kind(stripped)
-        if not silent and is_interesting_command(stripped):
-            print(f"{ts()} Upkeeper: {label} running {last_kind}: {short(stripped)}", file=sys.stderr, flush=True)
-        continue
+        if stripped == "codex" or stripped.startswith("tokens used"):
+            expecting_command = False
+            current_command_interesting = False
+            current_command_reports_success = False
+            current_command_exit_reported = False
+            current_command_success_reported = False
+            in_command_output = False
+            in_codex_message = True
+            in_diff_block = False
+            assistant_status = ""
+            continue
 
-    if re.match(r"succeeded in [0-9]+", stripped):
-        if not silent:
-            print(f"{ts()} Upkeeper: {label} {last_kind} completed: {short(stripped)}", file=sys.stderr, flush=True)
-        continue
+        if stripped == "exec":
+            if llm_status_enabled and assistant_status and assistant_status != last_emitted_assistant_status:
+                emit_llm_status(assistant_status)
+                last_emitted_assistant_status = assistant_status
+            assistant_status = ""
+            expecting_command = True
+            current_command_interesting = False
+            current_command_reports_success = False
+            current_command_exit_reported = False
+            current_command_success_reported = False
+            in_command_output = False
+            in_codex_message = False
+            in_diff_block = False
+            continue
 
-    if re.match(r"exited [1-9][0-9]* in ", stripped):
-        print(f"{ts()} Upkeeper: {label} ERROR {last_kind} failed: {short(stripped)}", file=sys.stderr, flush=True)
-        continue
+        if line.startswith("diff --git "):
+            in_diff_block = True
+            continue
 
-    if stripped.startswith(("UPKEEPER_STATUS:", "UPKEEPER_LOG_REVIEW:")):
-        if not silent:
-            print(f"{ts()} Upkeeper: {label} status: {short(stripped)}", file=sys.stderr, flush=True)
-        continue
+        if in_diff_block:
+            continue
 
-    if is_error_line(stripped):
-        print(f"{ts()} Upkeeper: {label} ERROR: {short(stripped)}", file=sys.stderr, flush=True)
+        if expecting_command and stripped:
+            expecting_command = False
+            last_command_id += 1
+            last_kind = command_kind(stripped)
+            current_command_interesting = should_announce_start(last_kind)
+            current_command_reports_success = should_report_success(last_kind)
+            current_command_exit_reported = False
+            current_command_success_reported = False
+            in_command_output = False
+            in_codex_message = False
+            if not silent and current_command_interesting:
+                if diagnostic:
+                    emit("INFO", f"{label} cmd#{last_command_id} {last_kind} started: {short(stripped)}")
+                else:
+                    emit("INFO", f"{label} running {last_kind} cmd#{last_command_id}: {short(stripped)}")
+            continue
+
+        if re.match(r"succeeded in [0-9]+", stripped):
+            in_command_output = True
+            in_codex_message = False
+            if not silent and current_command_reports_success and not current_command_success_reported:
+                current_command_success_reported = True
+                if diagnostic:
+                    emit("INFO", f"{label} cmd#{last_command_id} {last_kind} passed: {short(stripped)}")
+                else:
+                    emit("INFO", f"{label} finished {last_kind} cmd#{last_command_id}: {short(stripped)}")
+            continue
+
+        if re.match(r"exited [1-9][0-9]* in ", stripped):
+            in_command_output = True
+            in_codex_message = False
+            if not current_command_exit_reported:
+                current_command_exit_reported = True
+                if should_report_failure_as_error(last_kind):
+                    emit("ERROR", f"{label} cmd#{last_command_id} {last_kind} failed: {short(stripped)}")
+                elif not silent and current_command_interesting:
+                    emit("INFO", f"{label} cmd#{last_command_id} {last_kind} exited nonzero: {short(stripped)}")
+            continue
+
+        if in_command_output:
+            if current_command_reports_success and is_error_line(stripped):
+                emit("ERROR", f"{label}: {short(stripped)}")
+            continue
+
+        if stripped.startswith(("UPKEEPER_STATUS:", "UPKEEPER_LOG_REVIEW:")):
+            if not silent and stripped not in emitted_status_markers:
+                emitted_status_markers.add(stripped)
+                emit("INFO", f"{label} status: {short(stripped)}")
+            continue
+
+        if in_codex_message:
+            if llm_status_enabled:
+                status_candidate = maybe_assistant_status(stripped)
+                if status_candidate:
+                    assistant_status = status_candidate
+            continue
+
+        if is_error_line(stripped):
+            emit("ERROR", f"{label}: {short(stripped)}")
+except KeyboardInterrupt:
+    raise SystemExit(130)
 PY
 }
-

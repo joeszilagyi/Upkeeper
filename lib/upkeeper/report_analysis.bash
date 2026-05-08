@@ -218,7 +218,7 @@ def capture_section(names):
             break
         if any(norm.startswith(header) for header in known_headers):
             break
-        if line.startswith("UPKEEPER_STATUS:"):
+        if line.startswith(("UPKEEPER_STATUS:", "UPKEEPER_LOG_REVIEW:")):
             break
         items.append(line)
         if len(items) >= 10:
@@ -248,19 +248,27 @@ for index, line in enumerate(lines):
     ) or re.match(
         r"selected\b.*\b(file|target)\b",
         norm,
+    ) or re.match(
+        r"selected\s+[`[]",
+        line,
+        re.I,
     )
     if not selected_label:
         continue
     source = line
     rest_after_colon = source.split(":", 1)[1].strip() if ":" in source else ""
-    if (":" not in source or not rest_after_colon) and index + 1 < len(lines):
+    has_inline_target = re.search(r"`[^`]+`|\]\([^)]+\)", source)
+    if not has_inline_target and (":" not in source or not rest_after_colon) and index + 1 < len(lines):
         for candidate in lines[index + 1 : index + 5]:
             if candidate:
                 source = candidate
                 break
     markdown_link = re.search(r"\]\(([^)]+)\)", source)
+    backtick_path = re.search(r"`([^`]+)`", source)
     if markdown_link:
         selected_file = markdown_link.group(1).strip("<>").split(":", 1)[0]
+    elif backtick_path:
+        selected_file = backtick_path.group(1)
     elif ":" in source:
         selected_file = source.split(":", 1)[1].strip()
     else:
@@ -391,6 +399,7 @@ log_review_report_summary() {
   [[ -n "$selected_file" ]] || selected_file="unknown"
   log_line "INFO" "review.summary status_marker=${status_marker_value:-missing} review_outcome=$outcome selected_file=$(shell_quote "$selected_file") findings=$(shell_quote "$findings") changes=$(shell_quote "$changes") verification=$(shell_quote "$verification") codex_exit=$codex_exit_value"
   terminal_emit_progress "review completed outcome=$outcome status_marker=${status_marker_value:-missing} selected_file=$selected_file"
+  terminal_emit_review_finale "$outcome" "$selected_file" "$findings" "$changes" "$verification"
 
   if [[ "$outcome" == "REVIEWED_AND_FIXED" || ( "$outcome" == "unknown" && -n "$changes" ) ]]; then
     local terminal_findings="$findings"
@@ -398,7 +407,9 @@ log_review_report_summary() {
     [[ "${#terminal_findings}" -le 260 ]] || terminal_findings="${terminal_findings:0:260}..."
     [[ "${#terminal_changes}" -le 260 ]] || terminal_changes="${terminal_changes:0:260}..."
     log_line "INFO" "review.fix_details review_outcome=$outcome selected_file=$(shell_quote "$selected_file") findings=$(shell_quote "$findings") changes=$(shell_quote "$changes")"
-    terminal_emit_progress "bugs/fixes found: ${terminal_findings:-none}; changes: ${terminal_changes:-none}"
+    if terminal_wants_verbose_output; then
+      terminal_emit_progress "bugs/fixes found: ${terminal_findings:-none}; changes: ${terminal_changes:-none}"
+    fi
   fi
 
   if [[ "${CODEX_PROMPT_PASS:-}" == "all" ]]; then
@@ -416,6 +427,53 @@ log_review_report_summary() {
     else
       log_line "WARN" "review.pass_coverage prompt_pass=all status=unavailable expected=23 present=unknown missing=unknown"
     fi
+  fi
+}
+
+terminal_emit_review_finale() {
+  local outcome="$1"
+  local selected_file="$2"
+  local findings="$3"
+  local changes="$4"
+  local verification="$5"
+  local terminal_findings="$findings"
+  local terminal_changes="$changes"
+  local terminal_verification="$verification"
+  local mode
+  local level="INFO"
+
+  terminal_wants_full_output && return 0
+  terminal_wants_silent_output && return 0
+  mode="$(terminal_mode)"
+  case "$mode" in
+    basic|quiet|verbose|debug1)
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  [[ "${#terminal_findings}" -le 420 ]] || terminal_findings="${terminal_findings:0:420}..."
+  [[ "${#terminal_changes}" -le 420 ]] || terminal_changes="${terminal_changes:0:420}..."
+  [[ "${#terminal_verification}" -le 300 ]] || terminal_verification="${terminal_verification:0:300}..."
+
+  if [[ "$outcome" == "STOPPED_ON_BLOCKER" ]]; then
+    level="WARN"
+  fi
+
+  printf '%s [%s] Upkeeper: final review for %s -> %s\n' "$(timestamp_now)" "$level" "${selected_file:-unknown}" "${outcome:-unknown}" >&2
+  if [[ -n "$terminal_findings" ]]; then
+    printf '%s [%s] Upkeeper: what was wrong: %s\n' "$(timestamp_now)" "$level" "$terminal_findings" >&2
+  elif [[ "$outcome" == "REVIEWED_AND_FIXED" && -n "$terminal_changes" ]]; then
+    printf '%s [INFO] Upkeeper: what was wrong: see change summary\n' "$(timestamp_now)" >&2
+  elif [[ "$outcome" == "REVIEWED_CLEAN" ]]; then
+    printf '%s [INFO] Upkeeper: what was wrong: nothing found\n' "$(timestamp_now)" >&2
+  fi
+  if [[ -n "$terminal_changes" ]]; then
+    printf '%s [INFO] Upkeeper: what changed: %s\n' "$(timestamp_now)" "$terminal_changes" >&2
+  fi
+  if [[ -n "$terminal_verification" ]]; then
+    printf '%s [INFO] Upkeeper: verification: %s\n' "$(timestamp_now)" "$terminal_verification" >&2
   fi
 }
 

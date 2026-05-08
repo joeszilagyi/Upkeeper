@@ -150,11 +150,20 @@ run_aux_codex_exec() {
   local prompt_file="$5"
   local last_message_file="$6"
   local session_store_detail session_store_detail_q arg0_tmp_detail arg0_tmp_detail_q bwrap_tmp_detail bwrap_tmp_detail_q
+  local first_mode_token first_mode_token_q
 
   local -a aux_mode_args=()
   read -r -a aux_mode_args <<<"$mode_string"
+  first_mode_token="${aux_mode_args[0]:-}"
 
   log_line "INFO" "$phase_label.start model=$model effort=$effort mode=$mode_string prompt=$prompt_file output=$last_message_file"
+
+  if [[ "$first_mode_token" == ---* ]]; then
+    first_mode_token_q="$(shell_quote "$first_mode_token")"
+    write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "invalid first mode token $first_mode_token_q; expected a Codex option beginning with --" "Codex auxiliary mode is invalid"
+    log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=invalid_aux_mode first_token=$first_mode_token_q mode=$(shell_quote "$mode_string")"
+    return 87
+  fi
 
   if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
     log_line "INFO" "$phase_label.skip dry_run=1 model=$model"

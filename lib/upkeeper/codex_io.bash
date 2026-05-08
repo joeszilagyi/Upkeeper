@@ -1,25 +1,65 @@
+# Codex I/O and CLI boundary helpers.
+#
+# This module is sourced by the root Upkeeper entrypoint after logging helpers
+# are available. It owns Codex transcript capture, analyzer JSON-to-shell
+# assignment bridges, per-cycle CLI flags, and command availability checks.
+# Operator-facing flag changes must stay aligned with docs/scripts/upkeeper.md
+# and lib/upkeeper/help_selection.bash.
+
 run_codex_exec_capture() {
   local label="$1"
   local transcript_file="$2"
   local stdin_file="$3"
   local codex_rc
+  local tee_rc=0
+  local filter_rc=0
+  local -a pipe_status
   shift 3
 
   if terminal_wants_full_output; then
     "$@" <"$stdin_file" 2>&1 | tee "$transcript_file"
-    codex_rc="${PIPESTATUS[0]}"
+    pipe_status=("${PIPESTATUS[@]}")
+    codex_rc="${pipe_status[0]}"
+    tee_rc="${pipe_status[1]}"
   else
     "$@" <"$stdin_file" 2>&1 | tee "$transcript_file" | codex_live_output_filter "$label"
-    codex_rc="${PIPESTATUS[0]}"
+    pipe_status=("${PIPESTATUS[@]}")
+    codex_rc="${pipe_status[0]}"
+    tee_rc="${pipe_status[1]}"
+    filter_rc="${pipe_status[2]}"
     emit_codex_transcript_summary "$label" "$transcript_file" "$codex_rc"
   fi
+
+  if [[ "$tee_rc" -ne 0 ]]; then
+    log_line "ERROR" "codex.transcript_capture_failed label=$label transcript=$(shell_quote "$transcript_file") tee_exit=$tee_rc codex_exit=$codex_rc" || true
+    [[ "$codex_rc" -ne 0 ]] || return "$tee_rc"
+  fi
+  if [[ "$filter_rc" -ne 0 ]]; then
+    log_line "WARN" "codex.live_output_filter_failed label=$label transcript=$(shell_quote "$transcript_file") filter_exit=$filter_rc codex_exit=$codex_rc" || true
+  fi
   return "$codex_rc"
+}
+
+emit_assignment_failure_command() {
+  local message="$1"
+
+  printf 'die %q\n' "$message"
+}
+
+validate_assignment_prefix() {
+  local prefix="$1"
+
+  if [[ ! "$prefix" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    emit_assignment_failure_command "invalid shell assignment prefix: $prefix"
+    return 1
+  fi
 }
 
 quota_json_assignments() {
   local json="$1"
   local prefix="$2"
 
+  validate_assignment_prefix "$prefix" || return 1
   jq -r --arg prefix "$prefix" '
     def value($path; $fallback):
       (getpath($path) // $fallback | tostring);
@@ -54,13 +94,17 @@ quota_json_assignments() {
       assignment("projected_secondary_delta"; ["projection", "secondary_delta"]; ""),
       assignment("projected_basis"; ["projection", "basis"]; "unknown")
     ] | .[]
-  ' <<<"$json"
+  ' <<<"$json" || {
+    emit_assignment_failure_command "invalid quota snapshot JSON for shell assignment prefix: $prefix"
+    return 1
+  }
 }
 
 status_marker_analysis_assignments() {
   local json="$1"
   local prefix="$2"
 
+  validate_assignment_prefix "$prefix" || return 1
   jq -r --arg prefix "$prefix" '
     def value($path; $fallback):
       (getpath($path) // $fallback | tostring);
@@ -72,13 +116,17 @@ status_marker_analysis_assignments() {
       assignment("candidate_rejection_reason"; ["candidate_rejection_reason"]; ""),
       assignment("accepted_marker"; ["accepted_marker"]; "")
     ] | .[]
-  ' <<<"$json"
+  ' <<<"$json" || {
+    emit_assignment_failure_command "invalid status marker analysis JSON for shell assignment prefix: $prefix"
+    return 1
+  }
 }
 
 session_diagnostics_assignments() {
   local json="$1"
   local prefix="$2"
 
+  validate_assignment_prefix "$prefix" || return 1
   jq -r --arg prefix "$prefix" '
     def value($path; $fallback):
       (getpath($path) // $fallback | tostring);
@@ -96,13 +144,17 @@ session_diagnostics_assignments() {
       assignment("last_rate_limit_primary_used_percent"; ["last_rate_limit_primary_used_percent"]; "unknown"),
       assignment("last_rate_limit_secondary_used_percent"; ["last_rate_limit_secondary_used_percent"]; "unknown")
     ] | .[]
-  ' <<<"$json"
+  ' <<<"$json" || {
+    emit_assignment_failure_command "invalid session diagnostics JSON for shell assignment prefix: $prefix"
+    return 1
+  }
 }
 
 review_summary_assignments() {
   local json="$1"
   local prefix="$2"
 
+  validate_assignment_prefix "$prefix" || return 1
   jq -r --arg prefix "$prefix" '
     def value($path; $fallback):
       (getpath($path) // $fallback | tostring);
@@ -115,13 +167,17 @@ review_summary_assignments() {
       assignment("changes"; ["changes"]; ""),
       assignment("verification"; ["verification"]; "")
     ] | .[]
-  ' <<<"$json"
+  ' <<<"$json" || {
+    emit_assignment_failure_command "invalid review summary JSON for shell assignment prefix: $prefix"
+    return 1
+  }
 }
 
 review_pass_coverage_assignments() {
   local json="$1"
   local prefix="$2"
 
+  validate_assignment_prefix "$prefix" || return 1
   jq -r --arg prefix "$prefix" '
     def value($path; $fallback):
       (getpath($path) // $fallback | tostring);
@@ -133,7 +189,10 @@ review_pass_coverage_assignments() {
       assignment("present"; ["present"]; "0"),
       assignment("missing"; ["missing"]; "unknown")
     ] | .[]
-  ' <<<"$json"
+  ' <<<"$json" || {
+    emit_assignment_failure_command "invalid review pass coverage JSON for shell assignment prefix: $prefix"
+    return 1
+  }
 }
 
 resolve_path() {
@@ -256,6 +315,6 @@ resolve_prompt_file() {
   if [[ -n "$PROMPT_FILE" ]]; then
     PROMPT_FILE="$(resolve_path "$PROMPT_FILE")"
     [[ -f "$PROMPT_FILE" ]] || die "prompt file not found: $PROMPT_FILE"
+    [[ -r "$PROMPT_FILE" ]] || die "prompt file not readable: $PROMPT_FILE"
   fi
 }
-

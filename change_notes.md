@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.0.53 changes:
+	1. Split the runtime module into focused foundation, transcript artifact, active-lock, wrapper-health, progress logging, startup-anomaly state, operator-guide, cleanup/signal, JSON/time-format, and transcript-output modules.
+	2. Preserved the original runtime function definition order while reducing the largest shared lifecycle module.
+	3. Kept root `Upkeeper` as the only operator entrypoint with explicit module sourcing for symlinked client compatibility.
+
 2026-05-07: v1.0.52 changes:
 	1. Split the fallback/postmortem module into explicit process-control, fallback, quota-marker, screen-supervision, auxiliary-Codex, report-analysis, postmortem, and status/session modules.
 	2. Kept the root `Upkeeper` entrypoint and module loader explicit so dependency order stays reviewable while reducing the largest single implementation file.

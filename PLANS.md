@@ -46,3 +46,30 @@ Validation:
 - `tools/validate_upkeeper.sh --quick`
 - `tools/validate_upkeeper.sh --full`
 - `git diff --check`
+
+## P29 Contract Alignment
+
+Status: completed
+
+Goal:
+Align the P29 prompt and alias surface exactly with the handoff contract after
+the first P29 implementation landed.
+
+Constraints:
+- Do not add an actual reuse refactor in this patch.
+- Preserve the existing P29 runtime wiring and no-backend validation behavior.
+- Keep docs, version, annual change notes, and validation aligned.
+
+Files likely touched:
+- `Upkeeper`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `lib/upkeeper/codex_io.bash`
+- `prompts/p29-reuse-harvesting-review.md`
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash`
+- `tools/check_public_docs.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`

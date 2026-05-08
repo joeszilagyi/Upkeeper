@@ -250,10 +250,11 @@ check_prompt_template() {
   grep -Fq "P28 - Unit Test Harvesting Review" prompts/p28-unit-test-harvesting-review.md || fail "P28 prompt title missing"
   grep -Fq "P28: not applicable" prompts/p28-unit-test-harvesting-review.md || fail "P28 applicability gate missing"
   grep -Fq "without backend model quota" prompts/p28-unit-test-harvesting-review.md || fail "P28 local test contract missing"
-  grep -Fq "P29 - Reuse Harvesting Review" prompts/p29-reuse-harvesting-review.md || fail "P29 prompt title missing"
+  grep -Fq "# P29 Reuse Harvesting Review" prompts/p29-reuse-harvesting-review.md || fail "P29 prompt title missing"
   grep -Fq "P29: not applicable" prompts/p29-reuse-harvesting-review.md || fail "P29 applicability gate missing"
   grep -Fq "stable contract" prompts/p29-reuse-harvesting-review.md || fail "P29 stable-contract rule missing"
-  grep -Fq 'generic `utils.bash` dumping ground' prompts/p29-reuse-harvesting-review.md || fail "P29 utility-dumping-ground boundary missing"
+  grep -Fq 'generic "utils.bash" dumping ground' prompts/p29-reuse-harvesting-review.md || fail "P29 utils dumping-ground boundary missing"
+  grep -Fq 'generic "utility dumping ground" functions' prompts/p29-reuse-harvesting-review.md || fail "P29 utility dumping-ground boundary missing"
   grep -Fq "code-comment clarity" README.md || fail "README missing P26 summary"
   grep -Fq "educational debrief" README.md || fail "README missing P27 summary"
   grep -Fq "unit-test harvesting" README.md || fail "README missing P28 summary"
@@ -724,6 +725,9 @@ check_review_module_flags() {
 
   output="$(./Upkeeper --p24 --p25 --p26 --p27 --p28 --p29 --version)"
   [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "review module shorthand flags broke --version"
+
+  output="$(./Upkeeper --review-module=library-reuse --review-module=function-reuse --review-module=asset-reuse --version)"
+  [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "P29 reuse aliases broke --version"
 
   set +e
   output="$(./Upkeeper --review-module=nope --version 2>&1)"

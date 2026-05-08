@@ -1,3 +1,11 @@
+# Postmortem evidence context helpers.
+#
+# Sourced by the root Upkeeper entrypoint after fallback handling to preserve
+# per-cycle incident context under CODEX_POSTMORTEM_DIR. Generated fields feed
+# operator review, auxiliary postmortem prompts, and bug-record stubs, so keep
+# marker interpretation consistent across every artifact writer.
+# Documentation: lib/upkeeper/README.md and docs/scripts/upkeeper.md.
+
 postmortem_incident_classification() {
   local trigger="$1"
   local child_exit="$2"
@@ -7,6 +15,23 @@ postmortem_incident_classification() {
     printf 'CONTROLLED_QUOTA_HANDOFF'
   else
     printf 'INCIDENT_REVIEW'
+  fi
+}
+
+postmortem_fallback_child_status_marker_fields() {
+  local fallback_marker_analysis="$1"
+  local accepted_marker candidate_marker candidate_rejection_reason
+
+  accepted_marker="$(json_field "$fallback_marker_analysis" '.accepted_marker')"
+  candidate_marker="$(json_field "$fallback_marker_analysis" '.candidate_marker')"
+  candidate_rejection_reason="$(json_field "$fallback_marker_analysis" '.candidate_rejection_reason')"
+
+  if [[ -n "$accepted_marker" ]]; then
+    printf '%s exact' "$accepted_marker"
+  elif [[ -n "$candidate_marker" && "$candidate_rejection_reason" != "decorated_marker" ]]; then
+    printf '%s recovered_malformed_candidate' "$candidate_marker"
+  else
+    printf 'missing missing'
   fi
 }
 
@@ -37,7 +62,7 @@ write_postmortem_context() {
   local screen_root fallback_current_child_id fallback_current_child_started_at fallback_current_child_status
   local fallback_completed_child_count fallback_last_cycle_exit fallback_runner_stop_reason fallback_heartbeat
   local fallback_marker_analysis fallback_child_status_marker fallback_child_status_marker_source
-  local fallback_child_status_marker_candidate fallback_child_status_marker_candidate_reason
+  local fallback_child_status_marker_fields
   local incident_classification
 
   if [[ "$trigger" == "primary_quota_before_run" ]]; then
@@ -60,18 +85,9 @@ write_postmortem_context() {
   fallback_runner_stop_reason="$(read_artifact_or_unknown "$screen_root/stop-reason.txt")"
   fallback_heartbeat="$(read_artifact_or_unknown "$screen_root/heartbeat.txt")"
   fallback_marker_analysis="$(while_marker_analysis_json "${FALLBACK_SCREEN_TRANSCRIPT_PATH:-}")"
-  fallback_child_status_marker="$(json_field "$fallback_marker_analysis" '.accepted_marker')"
-  fallback_child_status_marker_candidate="$(json_field "$fallback_marker_analysis" '.candidate_marker')"
-  fallback_child_status_marker_candidate_reason="$(json_field "$fallback_marker_analysis" '.candidate_rejection_reason')"
-  if [[ -n "$fallback_child_status_marker" ]]; then
-    fallback_child_status_marker_source="exact"
-  elif [[ -n "$fallback_child_status_marker_candidate" && "$fallback_child_status_marker_candidate_reason" != "decorated_marker" ]]; then
-    fallback_child_status_marker="$fallback_child_status_marker_candidate"
-    fallback_child_status_marker_source="recovered_malformed_candidate"
-  else
-    fallback_child_status_marker="missing"
-    fallback_child_status_marker_source="missing"
-  fi
+  fallback_child_status_marker_fields="$(postmortem_fallback_child_status_marker_fields "$fallback_marker_analysis")"
+  fallback_child_status_marker="${fallback_child_status_marker_fields%% *}"
+  fallback_child_status_marker_source="${fallback_child_status_marker_fields#* }"
   incident_classification="$(postmortem_incident_classification "$trigger" "$child_exit" "$fallback_child_status_marker")"
 
   cat >"$context_path" <<EOF
@@ -177,7 +193,8 @@ write_postmortem_bug_record() {
   local context_path="$7"
   local incident_log_path="$8"
   local screen_root fallback_completed_child_count fallback_current_child_id fallback_current_child_status fallback_runner_stop_reason
-  local fallback_marker_analysis fallback_child_status_marker incident_classification
+  local fallback_marker_analysis fallback_child_status_marker fallback_child_status_marker_source
+  local fallback_child_status_marker_fields incident_classification
 
   screen_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen"
   fallback_completed_child_count="$(read_artifact_or_unknown "$screen_root/completed-child-count.txt")"
@@ -185,10 +202,9 @@ write_postmortem_bug_record() {
   fallback_current_child_status="$(read_artifact_or_unknown "$screen_root/current-child-status.txt")"
   fallback_runner_stop_reason="$(read_artifact_or_unknown "$screen_root/stop-reason.txt")"
   fallback_marker_analysis="$(while_marker_analysis_json "${FALLBACK_SCREEN_TRANSCRIPT_PATH:-}")"
-  fallback_child_status_marker="$(json_field "$fallback_marker_analysis" '.accepted_marker')"
-  if [[ -z "$fallback_child_status_marker" ]]; then
-    fallback_child_status_marker="missing"
-  fi
+  fallback_child_status_marker_fields="$(postmortem_fallback_child_status_marker_fields "$fallback_marker_analysis")"
+  fallback_child_status_marker="${fallback_child_status_marker_fields%% *}"
+  fallback_child_status_marker_source="${fallback_child_status_marker_fields#* }"
   incident_classification="$(postmortem_incident_classification "$trigger" "$child_exit" "$fallback_child_status_marker")"
 
   cat >"$bug_record_path" <<EOF
@@ -223,6 +239,7 @@ Upkeeper incident: $trigger in cycle $CYCLE_ID
 - fallback_current_child_cycle_id: $fallback_current_child_id
 - fallback_current_child_status: $fallback_current_child_status
 - fallback_child_status_marker: $fallback_child_status_marker
+- fallback_child_status_marker_source: $fallback_child_status_marker_source
 - fallback_runner_stop_reason: $fallback_runner_stop_reason
 
 ## Repo State Snapshot

@@ -281,6 +281,10 @@ suite has been checked or remediated. The gate also writes ignored runtime state
 under `runtime/startup-anomaly-gates/` so a truncated or rotated live log is not
 the only durable signal.
 
+The gated self-repair surface is intentionally narrow: the root `Upkeeper`
+entrypoint, `lib/upkeeper` modules, central operator docs and release notes,
+prompts/templates, launcher examples, and the validation harness.
+
 Each invocation also acquires a repo-level active lock at
 `runtime/upkeeper-active.lock` before local guide bootstrap, anomaly scanning, or
 Codex launch. If a matching live PID/start fingerprint still owns that lock, the

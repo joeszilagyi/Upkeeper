@@ -70,6 +70,18 @@ Dry-run is the first check to run in a new repo. It verifies wrapper startup,
 quota discovery, operator guide state, and target preselection without launching
 a Codex backend task.
 
+Validate the central checkout before release or after touching module order,
+prompt packaging, or symlink behavior:
+
+```sh
+tools/validate_upkeeper.sh --quick
+tools/validate_upkeeper.sh --full
+```
+
+The full validation mode still avoids backend Codex work. It runs Upkeeper with
+`UPKEEPER_DRY_RUN=1` and exercises the symlinked-client, missing-module, and
+missing-prompt-template guardrails.
+
 ## Client Repo Setup
 
 The most useful pattern is to keep this repository as the central source and

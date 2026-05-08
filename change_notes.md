@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.1.1 changes:
+	1. Added `tools/validate_upkeeper.sh` as a tracked validation harness for syntax, version, module-map, prompt-template, help, whitespace, dry-run, symlink, and fail-fast guardrail checks.
+	2. Documented quick and full validation modes in the README, operator guide, and help text so future module or prompt packaging changes have a repeatable local release gate.
+	3. Kept full validation Codex-safe by using `UPKEEPER_DRY_RUN=1` for central and symlinked startup checks.
+
 2026-05-07: v1.1.0 changes:
 	1. Stabilized the modular Upkeeper layout after the staged extraction work and kept root `Upkeeper` as the only operator entrypoint.
 	2. Replaced the long module source block with an explicit `UPKEEPER_MODULES` load-order map while preserving the same module order and missing-module fail-fast behavior.

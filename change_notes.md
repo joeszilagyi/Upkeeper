@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.1.0 changes:
+	1. Stabilized the modular Upkeeper layout after the staged extraction work and kept root `Upkeeper` as the only operator entrypoint.
+	2. Replaced the long module source block with an explicit `UPKEEPER_MODULES` load-order map while preserving the same module order and missing-module fail-fast behavior.
+	3. Added `lib/upkeeper/README.md` to document source-only module expectations, load-order ownership, and the current module groups.
+
 2026-05-07: v1.0.55 changes:
 	1. Moved the large static default review prompt body out of Bash and into `prompts/default-review.md`.
 	2. Split prompt handling into prompt pruning and prompt compilation modules while keeping dynamic wrapper context, prompt overrides, and log-review instructions in shell.

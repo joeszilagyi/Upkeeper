@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.55
+## Version: v1.1.0
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.55"
+UPKEEPER_VERSION="v1.1.0"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -184,42 +184,59 @@ source_upkeeper_module() {
   source "$path"
 }
 
-source_upkeeper_module "help_selection.bash"
-source_upkeeper_module "runtime_foundation.bash"
-source_upkeeper_module "transcript_artifacts.bash"
-source_upkeeper_module "active_lock.bash"
-source_upkeeper_module "wrapper_health.bash"
-source_upkeeper_module "progress_logging.bash"
-source_upkeeper_module "startup_anomaly_state.bash"
-source_upkeeper_module "operator_guide.bash"
-source_upkeeper_module "cycle_cleanup_signals.bash"
-source_upkeeper_module "runtime_format_json.bash"
-source_upkeeper_module "transcript_output.bash"
-source_upkeeper_module "codex_io.bash"
-source_upkeeper_module "config_validation.bash"
-source_upkeeper_module "quota_guardrails.bash"
-source_upkeeper_module "session_store_preflight.bash"
-source_upkeeper_module "bwrap_preflight.bash"
-source_upkeeper_module "arg0_preflight.bash"
-source_upkeeper_module "process_args.bash"
-source_upkeeper_module "log_rotation.bash"
-source_upkeeper_module "disk_preflight.bash"
-source_upkeeper_module "previous_run_anomalies.bash"
-source_upkeeper_module "worktree_state.bash"
-source_upkeeper_module "quota_state.bash"
-source_upkeeper_module "prompt_pruning.bash"
-source_upkeeper_module "prompt_compile.bash"
-source_upkeeper_module "process_control.bash"
-source_upkeeper_module "fallback_availability.bash"
-source_upkeeper_module "fallback_artifacts.bash"
-source_upkeeper_module "quota_block_markers.bash"
-source_upkeeper_module "fallback_screen.bash"
-source_upkeeper_module "aux_codex.bash"
-source_upkeeper_module "report_analysis.bash"
-source_upkeeper_module "postmortem_context.bash"
-source_upkeeper_module "postmortem_sequence.bash"
-source_upkeeper_module "fallback_orchestration.bash"
-source_upkeeper_module "status_session.bash"
+# Module load order is the executable module map. Keep order explicit here:
+# modules share the wrapper's global state, and several later modules depend on
+# functions defined by earlier runtime, preflight, prompt, and fallback groups.
+UPKEEPER_MODULES=(
+  # CLI/help and runtime evidence.
+  "help_selection.bash"
+  "runtime_foundation.bash"
+  "transcript_artifacts.bash"
+  "active_lock.bash"
+  "wrapper_health.bash"
+  "progress_logging.bash"
+  "startup_anomaly_state.bash"
+  "operator_guide.bash"
+  "cycle_cleanup_signals.bash"
+  "runtime_format_json.bash"
+  "transcript_output.bash"
+  "codex_io.bash"
+
+  # Startup validation, quota, and target-selection inputs.
+  "config_validation.bash"
+  "quota_guardrails.bash"
+  "session_store_preflight.bash"
+  "bwrap_preflight.bash"
+  "arg0_preflight.bash"
+  "process_args.bash"
+  "log_rotation.bash"
+  "disk_preflight.bash"
+  "previous_run_anomalies.bash"
+  "worktree_state.bash"
+  "quota_state.bash"
+
+  # Prompt assembly and process control.
+  "prompt_pruning.bash"
+  "prompt_compile.bash"
+  "process_control.bash"
+
+  # Fallback, postmortem, and status-session helpers.
+  "fallback_availability.bash"
+  "fallback_artifacts.bash"
+  "quota_block_markers.bash"
+  "fallback_screen.bash"
+  "aux_codex.bash"
+  "report_analysis.bash"
+  "postmortem_context.bash"
+  "postmortem_sequence.bash"
+  "fallback_orchestration.bash"
+  "status_session.bash"
+)
+
+for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
+  source_upkeeper_module "$upkeeper_module"
+done
+unset upkeeper_module
 
 # Main cycle.
 #

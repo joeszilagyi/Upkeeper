@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.0.50 changes:
+	1. Stopped quota guardrails from sending SIGTERM/SIGKILL to a bare interactive parent shell such as `bash`, preventing direct one-shot runs from closing the operator's terminal.
+	2. Added `CODEX_PARENT_STOP_SKIPPED_EXIT_CODE` with default `75` so skipped parent-stop guardrails still return a loop-breaking status.
+	3. Logged explicit `parent_stop_outcome` details on quota guardrail exits so future terminal-stop incidents can be diagnosed from `Upkeeper.log`.
+
 2026-05-07: v1.0.49 changes:
 	1. Treated deferred quota decisions as launch blockers instead of allowing Codex probes against stale or partial exact-model snapshots.
 	2. Blocked auxiliary post-mortem/hardening Codex launches when either quota bucket is stale after reset, matching the primary quota-safety contract.

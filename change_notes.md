@@ -5,6 +5,14 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.1.5 changes:
+	1. Added separated live `LLM:` task-status blocks in `basic`, `verbose`, and `debug1` terminal modes by reusing already-streamed assistant prose before backend tool phases, without launching any extra model work.
+	2. Added a concise terminal finale after each parsed review summary so `basic`, `quiet`, `verbose`, and `debug1` runs show what was wrong, what changed, and what verification ran without opening the transcript.
+	3. Kept `silent` terminal mode silent, moved the older raw `bugs/fixes found` terminal line behind `verbose`/`debug1`, and suppressed duplicate successful command-completion lines from repeated Codex stream events.
+	4. Documented the future stress-corpus contract for locally generated sample repositories across common language/toolchain shapes, with model-backed sample runs kept opt-in.
+	5. Added a binding backward-compatibility contract that preserves the operator-visible feature surface unless compatibility would be unsafe or impossible.
+	6. Rejected malformed auxiliary Codex mode strings before postmortem report or hardening launches so `CODEX_POSTMORTEM_MODE` triple-dash typos fail as clear environment skips instead of later Codex execution failures.
+
 2026-05-07: v1.1.4 changes:
 	1. Classified non-zero Codex exits with zero-byte primary transcripts as `CODEX_EXEC_EMPTY_TRANSCRIPT` before generic fallback, instead of borrowing turn-aborted state from a quota snapshot session.
 	2. Added transcript byte and line counts to `run.finish` records so launch/capture failures preserve direct local evidence.

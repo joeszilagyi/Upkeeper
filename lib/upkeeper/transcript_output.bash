@@ -301,6 +301,7 @@ silent = mode in {"silent", "full"}
 quiet = mode == "quiet"
 basic = mode == "basic"
 diagnostic = mode in {"verbose", "debug1"}
+llm_status_enabled = mode in {"basic", "verbose", "debug1"}
 
 promptish = re.compile(
     r"^(WRAPPER_|ABSOLUTE RULE|Background Review Prompt Repertoire|Summary Table|P\d+ - |-{8,}$|"
@@ -410,18 +411,44 @@ def emit(level: str, message: str) -> None:
     print(f"{ts()} [{level}] Upkeeper: {message}", file=sys.stderr, flush=True)
 
 
+def emit_llm_status(message: str) -> None:
+    if silent:
+        return
+    print("", file=sys.stderr, flush=True)
+    emit("INFO", f"{label} LLM: {message}")
+    print("", file=sys.stderr, flush=True)
+
+
+def maybe_assistant_status(line: str) -> str:
+    candidate = line.strip()
+    if not candidate:
+        return ""
+    if candidate.startswith(("hook:", "UPKEEPER_STATUS:", "UPKEEPER_LOG_REVIEW:", "diff --git ")):
+        return ""
+    if candidate.startswith(("REVIEWED_", "STOPPED_ON_BLOCKER", "RUN_RESULT=", "tokens used")):
+        return ""
+    if is_prompt_or_contract(candidate):
+        return ""
+    if re.match(r"^(?:---|\+\+\+|@@|\+|-)\s", candidate):
+        return ""
+    return short(candidate, 440)
+
+
 expecting_command = False
 last_kind = "command"
 last_command_id = 0
 current_command_interesting = False
 current_command_reports_success = False
 current_command_exit_reported = False
+current_command_success_reported = False
 in_command_output = False
 in_codex_message = False
 in_diff_block = False
 in_user_echo = False
 saw_codex_marker = False
 emitted_status_markers = set()
+assistant_status = ""
+last_emitted_assistant_status = ""
 
 try:
     for raw in sys.stdin:
@@ -444,16 +471,23 @@ try:
             current_command_interesting = False
             current_command_reports_success = False
             current_command_exit_reported = False
+            current_command_success_reported = False
             in_command_output = False
             in_codex_message = True
             in_diff_block = False
+            assistant_status = ""
             continue
 
         if stripped == "exec":
+            if llm_status_enabled and assistant_status and assistant_status != last_emitted_assistant_status:
+                emit_llm_status(assistant_status)
+                last_emitted_assistant_status = assistant_status
+            assistant_status = ""
             expecting_command = True
             current_command_interesting = False
             current_command_reports_success = False
             current_command_exit_reported = False
+            current_command_success_reported = False
             in_command_output = False
             in_codex_message = False
             in_diff_block = False
@@ -473,6 +507,7 @@ try:
             current_command_interesting = should_announce_start(last_kind)
             current_command_reports_success = should_report_success(last_kind)
             current_command_exit_reported = False
+            current_command_success_reported = False
             in_command_output = False
             in_codex_message = False
             if not silent and current_command_interesting:
@@ -485,7 +520,8 @@ try:
         if re.match(r"succeeded in [0-9]+", stripped):
             in_command_output = True
             in_codex_message = False
-            if not silent and current_command_reports_success:
+            if not silent and current_command_reports_success and not current_command_success_reported:
+                current_command_success_reported = True
                 if diagnostic:
                     emit("INFO", f"{label} cmd#{last_command_id} {last_kind} passed: {short(stripped)}")
                 else:
@@ -515,6 +551,10 @@ try:
             continue
 
         if in_codex_message:
+            if llm_status_enabled:
+                status_candidate = maybe_assistant_status(stripped)
+                if status_candidate:
+                    assistant_status = status_candidate
             continue
 
         if is_error_line(stripped):

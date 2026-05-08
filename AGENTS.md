@@ -48,6 +48,17 @@ Upkeeper is expected to stress test both itself and client repositories.
   central Upkeeper instead.
 - When unsure, prefer a central Upkeeper patch plus a local symlink verification.
 
+## Compatibility Discipline
+
+- Keep Upkeeper backward compatible unless there is literally no responsible
+  choice, such as a security/safety risk or an external dependency change that
+  makes compatibility impossible.
+- Treat `docs/compatibility.md` as the binding operator-visible feature surface.
+  Preserve that surface through aliases, shims, warnings, or migration paths
+  whenever feasible.
+- If a breaking change is unavoidable, document the reason, operator impact,
+  migration path, and validation coverage in the same committed state.
+
 ## Release Notes Discipline
 
 - Keep root `change_notes.md` current for notable Upkeeper behavior,

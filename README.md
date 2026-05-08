@@ -88,6 +88,15 @@ GitHub's dependency graph should stay enabled, but it is expected to show no
 package dependencies until the repo adds a real supported manifest, workflow, or
 dependency submission.
 
+The backward-compatibility contract is tracked in
+[`docs/compatibility.md`](docs/compatibility.md). Existing operator-visible
+behavior should be preserved unless compatibility would be unsafe or impossible.
+
+Future multi-repo stress testing is tracked in
+[`docs/stress-corpus.md`](docs/stress-corpus.md). The contract starts with
+locally generated sample repositories across common language/toolchain shapes
+and keeps real backend Codex runs behind explicit opt-in commands.
+
 ## Client Repo Setup
 
 The most useful pattern is to keep this repository as the central source and
@@ -303,7 +312,9 @@ specific policy for publishing them.
 ```text
 .
 |-- docs/
+|   |-- compatibility.md
 |   |-- dependencies.md
+|   |-- stress-corpus.md
 |   `-- scripts/
 |       `-- upkeeper.md
 |-- launcher_examples/
@@ -336,8 +347,12 @@ specific policy for publishing them.
 
 - [docs/scripts/upkeeper.md](docs/scripts/upkeeper.md): detailed operator guide
   and environment knobs
+- [docs/compatibility.md](docs/compatibility.md): binding backward-compatible
+  operator-visible feature surface
 - [docs/dependencies.md](docs/dependencies.md): runtime/tool dependency surface
   and GitHub dependency-graph expectations
+- [docs/stress-corpus.md](docs/stress-corpus.md): future local sample-repo
+  stress-corpus contract
 - [lib/upkeeper/README.md](lib/upkeeper/README.md): module contract, load-order
   ownership, and module groups
 - [tools/validate_upkeeper.sh](tools/validate_upkeeper.sh): local validation

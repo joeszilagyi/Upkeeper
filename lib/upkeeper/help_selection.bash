@@ -84,7 +84,9 @@ Loop stop semantics:
   - by default, live terminal output is basic: routine INFO logs and full
     backend transcripts stay in log/transcript artifacts, while selected target,
     Codex start/finish, long-running heartbeats, status, checks/tests/validation
-    progress, WARN, and ERROR remain visible;
+    progress, WARN, ERROR, separated bounded "LLM:" task-status blocks before
+    backend tool phases, and a final review/finding/change/verification summary
+    remain visible;
     transcript artifacts live under:
       ${CODEX_TRANSCRIPT_DIR}
     and are pruned after ${CODEX_TRANSCRIPT_KEEP_HOURS} hours or when the
@@ -132,6 +134,12 @@ Important:
     dependency graph is useful future-proofing, but it will not list Bash system
     tools unless the repo later adds a supported manifest, workflow, or
     dependency submission.
+    Backward compatibility is documented in docs/compatibility.md. Existing
+    operator-visible behavior should be preserved unless compatibility would be
+    unsafe or impossible.
+    Future local sample-repo stress testing is documented in
+    docs/stress-corpus.md; those checks should default to no real backend Codex
+    work and keep model-backed sample runs behind explicit opt-in commands.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output.
   - Exact-model Spark quota snapshots may still report the generic Codex

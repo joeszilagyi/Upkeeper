@@ -273,6 +273,7 @@ user
 - broad except Exception that treats malformed input as absence
 ValueError, failed, or emit a Python traceback for normal malformed operator
 codex
+I am checking the selected file before running validation.
 exec
 /bin/bash -lc 'rg ERROR change_notes.md'
 succeeded in 0ms:
@@ -298,6 +299,7 @@ diff --git a/change_notes.md b/change_notes.md
 exec
 /bin/bash -lc 'bash -n launcher_examples/*.sh'
 succeeded in 0ms:
+succeeded in 1ms:
 exec
 python -m pytest
 exited 1 in 0.1s
@@ -324,6 +326,8 @@ EOF
   }
 
   run_live_filter_mode verbose
+  grep -Fq "[INFO] Upkeeper: validation LLM: I am checking the selected file before running validation." "$temp_dir/live-verbose.err" || fail "verbose live output did not report assistant status before command"
+  awk '/LLM: I am checking the selected file before running validation[.]/{ found=1; if (prev != "") exit 2; if ((getline next_line) <= 0 || next_line != "") exit 3 } { prev=$0 } END { exit found ? 0 : 1 }' "$temp_dir/live-verbose.err" || fail "verbose live output did not bracket assistant status with blank lines"
   grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ search started: /bin/bash -lc 'rg ERROR change_notes.md'" "$temp_dir/live-verbose.err" || fail "verbose live output did not report search command start"
   grep -Eq '\[INFO\] Upkeeper: validation cmd#[0-9]+ search started: /bin/bash -lc "nl -ba tools/validate_upkeeper[.]sh' "$temp_dir/live-verbose.err" || fail "verbose live output did not classify source file view as search"
   grep -Eq '\[INFO\] Upkeeper: validation cmd#[0-9]+ search started: /bin/bash -lc "git ls-files' "$temp_dir/live-verbose.err" || fail "verbose live output did not classify git ls-files discovery as search"
@@ -331,6 +335,7 @@ EOF
   grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ search exited nonzero: exited 2 in 104ms:" "$temp_dir/live-verbose.err" || fail "verbose live output did not report non-error search failure"
   grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ check started: /bin/bash -lc 'bash -n launcher_examples/[*][.]sh'" "$temp_dir/live-verbose.err" || fail "verbose live output did not report successful check start"
   grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ check passed: succeeded in 0ms:" "$temp_dir/live-verbose.err" || fail "verbose live output did not report successful check completion"
+  [[ "$(grep -Ec "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ check passed:" "$temp_dir/live-verbose.err")" -eq 1 ]] || fail "verbose live output repeated successful check completion"
   grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ tests started: python -m pytest" "$temp_dir/live-verbose.err" || fail "verbose live output did not report interesting command"
   grep -Eq "\\[ERROR\\] Upkeeper: validation cmd#[0-9]+ tests failed: exited 1 in 0.1s" "$temp_dir/live-verbose.err" || fail "verbose live output did not report failed command"
   [[ "$(grep -Fc "[INFO] Upkeeper: validation status: UPKEEPER_STATUS: WORK_DONE" "$temp_dir/live-verbose.err")" -eq 1 ]] || fail "verbose live output repeated duplicate status markers"
@@ -339,8 +344,11 @@ EOF
   fi
 
   run_live_filter_mode basic
+  grep -Fq "[INFO] Upkeeper: validation LLM: I am checking the selected file before running validation." "$temp_dir/live-basic.err" || fail "basic live output did not report assistant status before command"
+  awk '/LLM: I am checking the selected file before running validation[.]/{ found=1; if (prev != "") exit 2; if ((getline next_line) <= 0 || next_line != "") exit 3 } { prev=$0 } END { exit found ? 0 : 1 }' "$temp_dir/live-basic.err" || fail "basic live output did not bracket assistant status with blank lines"
   grep -Eq "\\[INFO\\] Upkeeper: validation running check cmd#[0-9]+: /bin/bash -lc 'bash -n launcher_examples/[*][.]sh'" "$temp_dir/live-basic.err" || fail "basic live output did not report check start"
   grep -Eq "\\[INFO\\] Upkeeper: validation finished check cmd#[0-9]+: succeeded in 0ms:" "$temp_dir/live-basic.err" || fail "basic live output did not report check completion"
+  [[ "$(grep -Ec "\\[INFO\\] Upkeeper: validation finished check cmd#[0-9]+:" "$temp_dir/live-basic.err")" -eq 1 ]] || fail "basic live output repeated successful check completion"
   grep -Eq "\\[ERROR\\] Upkeeper: validation cmd#[0-9]+ tests failed: exited 1 in 0.1s" "$temp_dir/live-basic.err" || fail "basic live output did not report failed command"
   if grep -Eq "search started|search exited nonzero|change-note output|source-view output|diff-block output|Final prose mentions" "$temp_dir/live-basic.err"; then
     fail "basic live output reported verbose search chatter or filtered text"
@@ -349,7 +357,7 @@ EOF
   run_live_filter_mode quiet
   grep -Eq "\\[ERROR\\] Upkeeper: validation cmd#[0-9]+ tests failed: exited 1 in 0.1s" "$temp_dir/live-quiet.err" || fail "quiet live output did not report failed command"
   [[ "$(grep -Fc "[INFO] Upkeeper: validation status: UPKEEPER_STATUS: WORK_DONE" "$temp_dir/live-quiet.err")" -eq 1 ]] || fail "quiet live output did not report one status marker"
-  if grep -Eq "search started|running check|finished check|tests started|change-note output|source-view output" "$temp_dir/live-quiet.err"; then
+  if grep -Eq "LLM:|search started|running check|finished check|tests started|change-note output|source-view output" "$temp_dir/live-quiet.err"; then
     fail "quiet live output was too chatty"
   fi
 
@@ -415,6 +423,20 @@ EOF
   summary="$(bash -lc 'cd "$1"; source ./Upkeeper; review_report_summary_json "$2"' bash "$ROOT_DIR" "$temp_dir/last-message.txt")"
   selected_file="$(printf '%s' "$summary" | jq -r '.selected_file')"
   [[ "$selected_file" == "/home/joe/projects/Upkeeper/main/lib/upkeeper/fallback_availability.bash" ]] || fail "review summary selected markdown file was $selected_file"
+
+  CODEX_TERMINAL_VERBOSITY=basic \
+    bash -lc 'cd "$1"; source ./Upkeeper; terminal_emit_review_finale REVIEWED_AND_FIXED lib/upkeeper/example.bash "parser accepted malformed JSON as absent" "added strict rejection" "bash -n passed"' bash "$ROOT_DIR" \
+      >"$temp_dir/finale-basic.out" 2>"$temp_dir/finale-basic.err"
+  grep -Fq "final review for lib/upkeeper/example.bash -> REVIEWED_AND_FIXED" "$temp_dir/finale-basic.err" || fail "basic finale did not report final review"
+  grep -Fq "what was wrong: parser accepted malformed JSON as absent" "$temp_dir/finale-basic.err" || fail "basic finale did not report finding"
+  grep -Fq "what changed: added strict rejection" "$temp_dir/finale-basic.err" || fail "basic finale did not report change"
+  grep -Fq "verification: bash -n passed" "$temp_dir/finale-basic.err" || fail "basic finale did not report verification"
+
+  CODEX_TERMINAL_VERBOSITY=silent \
+    bash -lc 'cd "$1"; source ./Upkeeper; terminal_emit_review_finale REVIEWED_AND_FIXED lib/upkeeper/example.bash "finding" "change" "verification"' bash "$ROOT_DIR" \
+      >"$temp_dir/finale-silent.out" 2>"$temp_dir/finale-silent.err"
+  [[ ! -s "$temp_dir/finale-silent.err" ]] || fail "silent finale wrote terminal output"
+
   rm -r "$temp_dir"
 }
 

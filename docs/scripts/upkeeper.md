@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.4
+Version: v1.1.5
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -97,7 +97,9 @@ Transcript and live terminal behavior:
   - Default live terminal mode is `basic`: routine INFO logs stay in
     `Upkeeper.log`; full Codex stdout/stderr stays in transcript artifacts; the
     terminal shows selected target, Codex start/finish, long-running heartbeats,
-    status markers, checks/tests/validation/build commands, WARN, and ERROR.
+    status markers, checks/tests/validation/build commands, WARN, ERROR,
+    separated bounded `LLM:` task-status blocks before backend tool phases, and
+    a final review/finding/change/verification summary.
   - Set `CODEX_TERMINAL_VERBOSITY=verbose` for command-level search/file-view
     progress like `cmd#N search started`; `debug1` is the first diagnostic tier.
   - Set `CODEX_TERMINAL_VERBOSITY=quiet` for only major progress, status,
@@ -338,6 +340,12 @@ Exit codes:
   dependency graph should remain enabled, but it is expected to show no package
   dependencies until this repo adds a real supported manifest, workflow, or
   dependency submission.
+- Backward compatibility is documented in `docs/compatibility.md`. Existing
+  operator-visible behavior should be preserved unless compatibility would be
+  unsafe or impossible.
+- Future local sample-repo stress testing is documented in
+  `docs/stress-corpus.md`; those checks should default to no real backend Codex
+  work and keep model-backed sample runs behind explicit opt-in commands.
 - Startup-anomaly scans suppress older log-only `previous_run.anomaly` entries
   after a later `startup_anomaly.gate_resolved` has acknowledged
   `previous_run_anomaly`; unresolved gate state files still trigger the gate.

@@ -69,6 +69,22 @@ Upkeeper is expected to stress test both itself and client repositories.
   run profile.
 - Treat CLI flags as one-cycle overrides over config-file defaults.
 
+## Selection And Manifest Discipline
+
+- Treat `runtime/upkeeper-file-manifest.json` as local runtime state, not source.
+  Do not commit generated manifests from client repos or this central checkout.
+- Keep normal target selection local and deterministic before Codex starts.
+  Manifest refresh, direct enumeration, target-root/depth filters,
+  include/exclude globs, ordering, and review-module selection filters should
+  not require another model call.
+- Preserve `--target-file` as the strongest one-cycle pin. It should override
+  the manifest, normal timestamp rotation, local failure queue, and selection
+  filters unless the target is physically impossible or unsafe to read.
+- Selection review-module filters narrow candidate files only. They do not
+  request P24 through P28 prompt modules; use `--review-module`,
+  `--review-modules`, or shorthand flags when the prompt module itself is
+  wanted.
+
 ## Release Notes Discipline
 
 - Keep the current year's root `change_notes_YYYY.md` file current for notable

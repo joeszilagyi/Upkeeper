@@ -1,0 +1,240 @@
+# File manifest cache for deterministic target selection.
+#
+# The manifest is local runtime state: it records source-visible files with
+# mtimes, sizes, and absolute paths so selection can work from a ready sorted
+# list instead of asking the backend model to rediscover repository shape.
+
+resolve_upkeeper_manifest_path() {
+  local raw_path="$1"
+
+  if [[ "$raw_path" == /* ]]; then
+    printf '%s' "$raw_path"
+  else
+    printf '%s/%s' "$ROOT_DIR" "$raw_path"
+  fi
+}
+
+ensure_file_manifest_for_selection() {
+  local manifest_path manifest_dir output rc
+
+  manifest_path="$(resolve_upkeeper_manifest_path "$CODEX_FILE_MANIFEST_PATH")"
+  CODEX_FILE_MANIFEST_PATH="$manifest_path"
+
+  if [[ "$CODEX_FILE_MANIFEST_MODE" == "off" ]]; then
+    log_line "INFO" "file_manifest.skip reason=manifest_mode_off source=$CODEX_SELECTION_SOURCE mode=$CODEX_FILE_MANIFEST_MODE path=$(shell_quote "$manifest_path")"
+    CODEX_SELECTION_SOURCE="enumerate"
+    return 0
+  fi
+
+  if [[ "$CODEX_SELECTION_SOURCE" != "manifest" ]]; then
+    log_line "INFO" "file_manifest.skip reason=selection_source_disabled source=$CODEX_SELECTION_SOURCE mode=$CODEX_FILE_MANIFEST_MODE path=$(shell_quote "$manifest_path")"
+    return 0
+  fi
+
+  manifest_dir="$(dirname -- "$manifest_path")"
+  if ! mkdir -p "$manifest_dir"; then
+    log_line "WARN" "file_manifest.skip reason=manifest_dir_unwritable path=$(shell_quote "$manifest_path") action=fall_back_to_enumerate"
+    CODEX_SELECTION_SOURCE="enumerate"
+    return 0
+  fi
+
+  set +e
+  output="$(python3 - "$ROOT_DIR" "$manifest_path" "$CODEX_FILE_MANIFEST_MODE" "$CODEX_FILE_MANIFEST_MAX_AGE_SECONDS" <<'PY'
+import hashlib
+import json
+import os
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+manifest_path = Path(sys.argv[2])
+mode = sys.argv[3]
+try:
+    max_age_seconds = max(0, int(sys.argv[4]))
+except ValueError:
+    max_age_seconds = 300
+
+
+def emit(**fields: object) -> None:
+    for key, value in fields.items():
+        print(f"{key}={str(value).replace(chr(10), ' ')}")
+
+
+def git(args: list[str]) -> bytes:
+    return subprocess.check_output(["git", "-C", str(root), *args], stderr=subprocess.DEVNULL)
+
+
+def inside_git_repo() -> bool:
+    try:
+        return git(["rev-parse", "--is-inside-work-tree"]).strip() == b"true"
+    except (OSError, subprocess.CalledProcessError):
+        return False
+
+
+def root_relative(path: Path) -> str:
+    try:
+        rel = path.resolve().relative_to(root)
+    except (OSError, ValueError):
+        return ""
+    return rel.as_posix()
+
+
+def git_paths() -> list[str]:
+    raw = git(["ls-files", "-co", "--exclude-standard", "-z"])
+    return sorted(path for path in raw.decode("utf-8", "surrogateescape").split("\0") if path)
+
+
+def local_paths() -> list[str]:
+    paths: list[str] = []
+    excluded_dirs = {".git", "runtime"}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name not in excluded_dirs]
+        for filename in filenames:
+            rel = root_relative(Path(dirpath) / filename)
+            if rel:
+                paths.append(rel)
+    return sorted(paths)
+
+
+def file_entry(rel_path: str) -> dict[str, object] | None:
+    path = root / rel_path
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        return None
+    return {
+        "rel_path": rel_path,
+        "abs_path": str(path.resolve()),
+        "mtime": int(st.st_mtime),
+        "mtime_ns": int(st.st_mtime_ns),
+        "size": int(st.st_size),
+        "mode": format(stat.S_IMODE(st.st_mode), "04o"),
+    }
+
+
+def build_payload() -> tuple[dict[str, object], str]:
+    source = "git" if inside_git_repo() else "find"
+    raw_paths = git_paths() if source == "git" else local_paths()
+    entries = [entry for rel in raw_paths if (entry := file_entry(rel)) is not None]
+    entries.sort(key=lambda item: (int(item["mtime_ns"]), str(item["rel_path"])))
+
+    fingerprint_input = "\n".join(
+        f"{entry['rel_path']}\t{entry['mtime_ns']}\t{entry['size']}\t{entry['mode']}"
+        for entry in entries
+    )
+    fingerprint = hashlib.sha256(f"{source}\n{fingerprint_input}".encode("utf-8", "surrogateescape")).hexdigest()
+
+    git_head = "none"
+    git_status_hash = "none"
+    if source == "git":
+        try:
+            git_head = git(["rev-parse", "--verify", "HEAD"]).decode("utf-8", "replace").strip() or "none"
+        except (OSError, subprocess.CalledProcessError):
+            git_head = "none"
+        try:
+            status_raw = git(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+            git_status_hash = hashlib.sha256(status_raw).hexdigest()
+        except (OSError, subprocess.CalledProcessError):
+            git_status_hash = "unknown"
+
+    payload = {
+        "schema_version": 1,
+        "generated_epoch": int(time.time()),
+        "root": str(root),
+        "source": source,
+        "fingerprint": fingerprint,
+        "git_head": git_head,
+        "git_status_hash": git_status_hash,
+        "files": entries,
+    }
+    return payload, source
+
+
+def existing_payload() -> dict[str, object] | None:
+    try:
+        with manifest_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("schema_version") != 1 or payload.get("root") != str(root):
+        return None
+    if not isinstance(payload.get("files"), list):
+        return None
+    return payload
+
+
+def write_payload(payload: dict[str, object]) -> None:
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{manifest_path.name}.", suffix=".tmp", dir=str(manifest_path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+        os.replace(temp_name, manifest_path)
+    finally:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+
+
+current_payload, source = build_payload()
+existing = existing_payload()
+now = int(time.time())
+reason = "missing"
+action = "rebuilt"
+
+if mode == "refresh":
+    reason = "forced_refresh"
+elif existing is None:
+    reason = "missing_or_invalid"
+elif existing.get("fingerprint") != current_payload["fingerprint"]:
+    reason = "fingerprint_changed"
+elif max_age_seconds and now - int(existing.get("generated_epoch", 0) or 0) > max_age_seconds:
+    reason = "max_age_exceeded"
+else:
+    action = "reused"
+    reason = "current"
+
+if action == "rebuilt":
+    write_payload(current_payload)
+    payload = current_payload
+else:
+    payload = existing or current_payload
+
+emit(
+    action=action,
+    reason=reason,
+    source=payload.get("source", source),
+    count=len(payload.get("files", [])),
+    path=str(manifest_path),
+    fingerprint=str(payload.get("fingerprint", "unknown"))[:16],
+)
+PY
+)"
+  rc=$?
+  set -e
+
+  if [[ "$rc" -ne 0 ]]; then
+    log_line "WARN" "file_manifest.skip reason=manifest_update_failed path=$(shell_quote "$manifest_path") action=fall_back_to_enumerate detail=$(shell_quote "$output")"
+    CODEX_SELECTION_SOURCE="enumerate"
+    return 0
+  fi
+
+  local action reason source count fingerprint
+  action="$(sed -n 's/^action=//p' <<<"$output" | tail -1)"
+  reason="$(sed -n 's/^reason=//p' <<<"$output" | tail -1)"
+  source="$(sed -n 's/^source=//p' <<<"$output" | tail -1)"
+  count="$(sed -n 's/^count=//p' <<<"$output" | tail -1)"
+  fingerprint="$(sed -n 's/^fingerprint=//p' <<<"$output" | tail -1)"
+
+  log_line "INFO" "file_manifest.ready action=${action:-unknown} reason=${reason:-unknown} source=${source:-unknown} count=${count:-unknown} path=$(shell_quote "$manifest_path") fingerprint=${fingerprint:-unknown}"
+}

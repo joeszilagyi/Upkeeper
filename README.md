@@ -25,9 +25,12 @@ On each cycle it:
 
 - reads recent Codex quota snapshots from `$CODEX_HOME/sessions`
 - logs current and projected quota use before spending another run
-- preselects one eligible script/tool target with `git ls-files -co --exclude-standard`
-- prepends that target to the default maintenance prompt so Codex does not scan
-  `.git/`, ignored files, generated outputs, runtime evidence, or test trees by accident
+- maintains a local file manifest and preselects one eligible script/tool target
+  before Codex starts, falling back to direct local enumeration when requested or
+  when a manifest cannot be used
+- prepends that target to the default maintenance prompt so Codex does not spend
+  model/tool cycles rediscovering `.git/`, ignored files, generated outputs,
+  runtime evidence, or test trees by accident
 - applies the P23 data-contract pass to validators, importers, exporters,
   registry loaders, config readers, data readers, and input-boundary CLIs
 - can append opt-in P24/P25/P26/P27/P28 review modules for de-LLM-ing
@@ -139,11 +142,26 @@ UPKEEPER_REVIEW_MODULES="p26,p28"
 UPKEEPER_PROMPT_PASS="all"
 ```
 
+Selection is also configurable. The default is a local manifest-backed oldest
+eligible file rotation; scheduled profiles can narrow that rotation without
+adding another wrapper script:
+
+```sh
+UPKEEPER_SELECTION_SOURCE="manifest"
+UPKEEPER_SELECTION_ORDER="oldest"
+UPKEEPER_TARGET_ROOT="docs"
+UPKEEPER_TARGET_MAX_DEPTH="3"
+UPKEEPER_INCLUDE_GLOBS="*.md,*.txt"
+UPKEEPER_EXCLUDE_GLOBS="vendor/**,runtime/**"
+UPKEEPER_SELECTION_REVIEW_MODULES="p26"
+```
+
 CLI flags are the final one-cycle overrides. That means a cron profile can set
 the normal model, target, and review modules, while an operator can still run:
 
 ```sh
 ./Upkeeper --config-file=configurations/default.conf --target-file=Upkeeper --p25
+./Upkeeper --target-root=docs --target-depth=3 --selection-order=newest --refresh-manifest
 ```
 
 ## Client Repo Setup
@@ -272,14 +290,21 @@ operator can resume from evidence instead of guessing.
 
 ## Prompt Behavior
 
-The default prompt is a rotating single-file maintenance review. It asks Codex
-to review the oldest eligible non-test script/tool file by modification time.
+The default prompt is a rotating single-file maintenance review. By default,
+Upkeeper keeps a local runtime manifest at
+`runtime/upkeeper-file-manifest.json`, refreshes it when it is missing, stale,
+invalid, or out of sync with local file metadata, and reviews the oldest
+eligible non-test script/tool file by modification time.
+
+Use `--selection-source=enumerate` when a run should bypass the manifest and
+scan the local tree directly. Use `--refresh-manifest` when a run should rebuild
+the manifest immediately and then select from it.
 
 When the repo-local `Upkeeper` implementation itself is eligible and has not
 been touched for at least seven days, the wrapper selects it first. Otherwise it
 falls back to the normal oldest eligible script/tool rotation.
 
-The wrapper does that selection before Codex starts and prepends a
+The wrapper does selection before Codex starts and prepends a
 `WRAPPER_PRESELECTED_REVIEW_TARGET` block to the prompt. That block is meant to
 prevent expensive or unsafe rediscovery patterns such as:
 
@@ -290,6 +315,15 @@ prevent expensive or unsafe rediscovery patterns such as:
 If the preselected file cannot be reviewed because it is gone, unreadable,
 binary, generated, or explicitly excluded, Codex must state that exception and
 choose a replacement from the same source-safe boundary.
+
+Operators can narrow normal rotation with `--target-root=PATH`,
+`--target-depth=N`, `--include-glob=PATTERN`, `--exclude-glob=PATTERN`, and
+`--selection-review-modules=p24,p25,p26,p27,p28`. `--selection-order=random`
+or `--random-target` chooses a random eligible target within the filtered set.
+These filters shape target selection only; review-module prompts still require
+`--review-module`, `--review-modules`, or the `--p24` through `--p28` shorthands.
+`--target-file=PATH` remains the strongest one-cycle pin and takes precedence
+over the failure queue and selection filters.
 
 If a prior run saw an interesting script/tool command fail, Upkeeper writes a
 local marker under `runtime/unaddressed-tool-failures/open/`. After explicit
@@ -408,6 +442,7 @@ Local runtime evidence is deliberately ignored by git:
 
 - `Upkeeper.log`
 - `runtime/`
+- `runtime/upkeeper-file-manifest.json`
 - `runtime/startup-anomaly-gates/`
 - `runtime/unaddressed-tool-failures/`
 - repo-local copied or linked wrappers such as `Upkeeper.sh`, when the client

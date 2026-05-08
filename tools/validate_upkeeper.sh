@@ -263,6 +263,16 @@ check_help_and_diff() {
   grep -Fq -- "--review-module=p28" <<<"$help" || fail "help missing --review-module=p28"
   grep -Fq -- "--config-file=PATH" <<<"$help" || fail "help missing --config-file"
   grep -Fq -- "--no-config" <<<"$help" || fail "help missing --no-config"
+  grep -Fq -- "--target-root=PATH" <<<"$help" || fail "help missing --target-root"
+  grep -Fq -- "--selection-source=manifest|enumerate" <<<"$help" || fail "help missing --selection-source"
+  grep -Fq -- "--selection-order=oldest|newest|random" <<<"$help" || fail "help missing --selection-order"
+  grep -Fq -- "--refresh-manifest" <<<"$help" || fail "help missing --refresh-manifest"
+  grep -Fq -- "--manifest-file=PATH" <<<"$help" || fail "help missing --manifest-file"
+  grep -Fq -- "--include-glob=PATTERN" <<<"$help" || fail "help missing --include-glob"
+  grep -Fq -- "--include-globs=a,b" <<<"$help" || fail "help missing --include-globs"
+  grep -Fq -- "--exclude-glob=PATTERN" <<<"$help" || fail "help missing --exclude-glob"
+  grep -Fq -- "--exclude-globs=a,b" <<<"$help" || fail "help missing --exclude-globs"
+  grep -Fq -- "--selection-review-modules=p24,p25,p26,p27,p28" <<<"$help" || fail "help missing --selection-review-modules"
   grep -Fq -- "--p24" <<<"$help" || fail "help missing --p24"
   grep -Fq -- "--p25" <<<"$help" || fail "help missing --p25"
   grep -Fq -- "--p26" <<<"$help" || fail "help missing --p26"
@@ -539,6 +549,99 @@ EOF
   rm -r "$temp_dir"
 }
 
+check_file_manifest_selection() {
+  local temp_dir manifest_path output rc
+
+  log "checking file manifest selection"
+  temp_dir="$(mktemp -d /tmp/upkeeper-file-manifest.XXXXXX)"
+  manifest_path="$temp_dir/manifest.json"
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
+
+  run_manifest_dry_run() {
+    local log_file="$1"
+    shift
+    CODEX_HOME="$temp_dir/codex-home" \
+      CODEX_LOG_FILE="$log_file" \
+      CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+      CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+      CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+      CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+      CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+      CODEX_TERMINAL_VERBOSITY=quiet \
+      CODEX_MODEL=gpt-5.5 \
+      CODEX_REASONING_EFFORT=xhigh \
+      CODEX_FALLBACK_ENABLED=0 \
+      CODEX_FALLBACK_SCREEN_ENABLED=0 \
+      CODEX_POSTMORTEM_ENABLED=0 \
+      CODEX_FILE_MANIFEST_PATH="$manifest_path" \
+      CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
+      UPKEEPER_DRY_RUN=1 \
+      ./Upkeeper "$@" >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  }
+
+  run_manifest_dry_run "$temp_dir/manifest.log" \
+    --target-root=lib/upkeeper \
+    --target-depth=1 \
+    --selection-source=manifest \
+    --selection-order=oldest \
+    --refresh-manifest
+
+  [[ -s "$manifest_path" ]] || fail "manifest dry-run did not write manifest"
+  grep -Fq "file_manifest.ready action=rebuilt reason=forced_refresh" "$temp_dir/manifest.log" || fail "manifest refresh was not logged"
+  grep -Fq "selection_source=manifest" "$temp_dir/manifest.log" || fail "manifest selection source was not logged"
+  grep -Fq "target_root=lib/upkeeper" "$temp_dir/manifest.log" || fail "manifest target root was not logged"
+  grep -Fq "target_depth=1" "$temp_dir/manifest.log" || fail "manifest target depth was not logged"
+  grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/manifest.log" || fail "manifest dry-run did not finish cleanly"
+  jq -e '.schema_version == 1 and (.files | length) > 0 and (.files[0].abs_path | length > 0)' "$manifest_path" >/dev/null || fail "manifest JSON contract is invalid"
+
+  run_manifest_dry_run "$temp_dir/newest.log" \
+    --target-root=lib/upkeeper \
+    --target-depth=1 \
+    --selection-source=manifest \
+    --selection-order=newest
+
+  grep -Fq "file_manifest.ready action=reused reason=current" "$temp_dir/newest.log" || fail "current manifest was not reused"
+  grep -Fq "selection_order=newest" "$temp_dir/newest.log" || fail "newest selection order was not logged"
+
+  run_manifest_dry_run "$temp_dir/enumerate.log" \
+    --selection-source=enumerate \
+    --selection-order=random \
+    --target-root=lib/upkeeper \
+    --target-depth=1 \
+    --include-glob='*.bash' \
+    --exclude-glob='status_session.bash' \
+    --selection-review-modules=p25,p26
+
+  grep -Fq "file_manifest.skip reason=selection_source_disabled source=enumerate" "$temp_dir/enumerate.log" || fail "enumerate mode did not skip manifest"
+  grep -Fq "selection_source=enumerate" "$temp_dir/enumerate.log" || fail "enumerate selection source was not logged"
+  grep -Fq "selection_order=random" "$temp_dir/enumerate.log" || fail "random selection order was not logged"
+  grep -Fq "include_globs=\\*.bash" "$temp_dir/enumerate.log" || fail "include glob was not shell-escaped in log"
+  grep -Fq "exclude_globs=status_session.bash" "$temp_dir/enumerate.log" || fail "exclude glob was not logged"
+  grep -Fq "selection_review_modules=p25\\,p26" "$temp_dir/enumerate.log" || fail "selection review module filter was not shell-escaped in log"
+
+  CODEX_FILE_MANIFEST_MODE=off run_manifest_dry_run "$temp_dir/mode-off.log" \
+    --selection-source=manifest \
+    --target-root=lib/upkeeper \
+    --target-depth=1
+  grep -Fq "file_manifest.skip reason=manifest_mode_off" "$temp_dir/mode-off.log" || fail "manifest mode off was not logged"
+  grep -Fq "selection_source=enumerate" "$temp_dir/mode-off.log" || fail "manifest mode off did not fall back to enumerate selection"
+
+  run_manifest_dry_run "$temp_dir/forced.log" \
+    --target-file=Upkeeper \
+    --target-root=lib/upkeeper \
+    --selection-source=manifest
+  grep -Fq "review.preselect path=Upkeeper" "$temp_dir/forced.log" || fail "--target-file did not override target-root selection filter"
+
+  set +e
+  output="$(./Upkeeper --selection-review-modules=nope --version 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 3 ]] || fail "invalid selection review module exited $rc, expected 3"
+  grep -Fq "unknown review module filter: nope" <<<"$output" || fail "invalid selection review module error was not clear"
+
+  rm -r "$temp_dir"
+}
+
 check_tool_failure_queue() {
   local temp_dir transcript clean_transcript marker_path open_count resolved_count marker_id
 
@@ -797,6 +900,117 @@ check_postmortem_context_marker_classification() {
   rm -r "$temp_dir"
 }
 
+check_postmortem_sequence_marker_contract() {
+  local temp_dir case_name case_dir rc expected_status expected_log
+
+  log "checking postmortem sequence marker contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-postmortem-sequence.XXXXXX)"
+
+  for case_name in report_missing_marker hardening_missing_marker; do
+    case_dir="$temp_dir/$case_name"
+    mkdir -p "$case_dir/tmp"
+
+    if ! CODEX_LOG_FILE="$case_dir/Upkeeper.log" \
+      CODEX_POSTMORTEM_DIR="$case_dir/postmortems" \
+      CODEX_TRANSCRIPT_DIR="$case_dir/transcripts" \
+      CODEX_ACTIVE_LOCK_DIR="$case_dir/active.lock" \
+      CODEX_WRAPPER_HEALTH_STATE_DIR="$case_dir/health" \
+      CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+      CODEX_TERMINAL_VERBOSITY=silent \
+      TMPDIR="$case_dir/tmp" \
+      bash -lc '
+        set -euo pipefail
+        cd "$1"
+        case_dir="$2"
+        case_name="$3"
+
+        source ./Upkeeper
+
+        CYCLE_ID="validation-$case_name"
+        CYCLE_RUN_HASH="validation-$case_name"
+        LOG_FILE="$case_dir/Upkeeper.log"
+        CODEX_POSTMORTEM_DIR="$case_dir/postmortems"
+        TMPDIR="$case_dir/tmp"
+        last_message_file="$case_dir/primary-last-message.txt"
+        FALLBACK_SCREEN_TRANSCRIPT_PATH="$case_dir/fallback-last-message.txt"
+        FALLBACK_SCREEN_EXIT_CODE=0
+        DIRTY_PATH_COUNT=0
+        TRACKED_MODIFIED_PATH_COUNT=0
+        UNTRACKED_PATH_COUNT=0
+
+        : >"$LOG_FILE"
+        : >"$last_message_file"
+        : >"$FALLBACK_SCREEN_TRANSCRIPT_PATH"
+
+        run_aux_codex_exec() {
+          local phase_label="$1"
+          local last_message_path="$6"
+
+          case "$phase_label:$case_name" in
+            postmortem.report:report_missing_marker)
+              {
+                printf "# Upkeeper Postmortem\n"
+                printf "## Incident Summary\n"
+                printf "Report fixture without required marker.\n"
+              } >"$POSTMORTEM_REPORT_PATH"
+              printf "report fixture omitted required marker\n" >"$last_message_path"
+              return 0
+              ;;
+            postmortem.report:hardening_missing_marker)
+              {
+                printf "# Upkeeper Postmortem\n"
+                printf "## Incident Summary\n"
+                printf "Report fixture with required marker.\n"
+              } >"$POSTMORTEM_REPORT_PATH"
+              printf "CODEX_POSTMORTEM_STATUS: REPORT_WRITTEN\n" >"$last_message_path"
+              return 0
+              ;;
+            postmortem.hardening:hardening_missing_marker)
+              printf "hardening fixture omitted required marker\n" >"$last_message_path"
+              return 0
+              ;;
+          esac
+
+          printf "unexpected auxiliary phase: %s for %s\n" "$phase_label" "$case_name" >&2
+          return 64
+        }
+
+        set +e
+        run_postmortem_sequence "failure" "marker contract" "0" >"$case_dir/sequence.out" 2>"$case_dir/sequence.err"
+        rc=$?
+        set -e
+
+        printf "%s\n" "$rc" >"$case_dir/rc.txt"
+        printf "%s\n" "$POSTMORTEM_SEQUENCE_STATUS" >"$case_dir/status.txt"
+      ' bash "$ROOT_DIR" "$case_dir" "$case_name" >"$case_dir/bash.out" 2>"$case_dir/bash.err"; then
+      cat "$case_dir/bash.err" >&2
+      fail "postmortem sequence marker contract setup failed for $case_name"
+    fi
+
+    rc="$(tr -d '[:space:]' <"$case_dir/rc.txt")"
+    [[ "$rc" == "8" ]] || fail "$case_name exited $rc, expected 8"
+
+    case "$case_name" in
+      report_missing_marker)
+        expected_status="report_failed"
+        expected_log="postmortem.report failed exit_code=0 marker=missing expected_marker=REPORT_WRITTEN"
+        ;;
+      hardening_missing_marker)
+        expected_status="hardening_failed"
+        expected_log="postmortem.hardening failed exit_code=0 marker=missing expected_marker=HARDENING_DONE"
+        ;;
+      *)
+        fail "unknown marker contract case: $case_name"
+        ;;
+    esac
+
+    grep -Fxq "$expected_status" "$case_dir/status.txt" || fail "$case_name status was not $expected_status"
+    grep -Fq "$expected_log" "$case_dir/Upkeeper.log" || fail "$case_name did not log expected marker failure"
+  done
+
+  rm -r "$temp_dir"
+}
+
 check_live_output_filter_pipe() {
   local temp_dir rc
 
@@ -974,6 +1188,32 @@ EOF
     bash -lc 'cd "$1"; source ./Upkeeper; terminal_emit_review_finale REVIEWED_AND_FIXED lib/upkeeper/example.bash "finding" "change" "verification"' bash "$ROOT_DIR" \
       >"$temp_dir/finale-silent.out" 2>"$temp_dir/finale-silent.err"
   [[ ! -s "$temp_dir/finale-silent.err" ]] || fail "silent finale wrote terminal output"
+
+  rm -r "$temp_dir"
+}
+
+check_status_session_jsonl_contract() {
+  local temp_dir session_file state diagnostics agent_messages reached_type
+
+  log "checking status session JSONL contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-status-session.XXXXXX)"
+  session_file="$temp_dir/session.jsonl"
+  printf '%s\n' \
+    '[]' \
+    '{"type":"event_msg","payload":"not-an-object"}' \
+    '{"type":"event_msg","payload":{"type":"turn_aborted","reason":"rate limit / retry"}}' \
+    '{"type":"response_item","payload":{"type":"message","role":"assistant"}}' \
+    '{"type":"event_msg","payload":{"type":"token_count","rate_limits":"not-an-object"}}' \
+    >"$session_file"
+
+  state="$(bash -lc 'cd "$1"; source lib/upkeeper/status_session.bash; parse_session_end_state "$2"' bash "$ROOT_DIR" "$session_file")"
+  [[ "$state" == "turn_aborted:rate_limit_retry" ]] || fail "malformed JSONL state was $state"
+
+  diagnostics="$(bash -lc 'cd "$1"; source lib/upkeeper/status_session.bash; session_diagnostics_json "$2"' bash "$ROOT_DIR" "$session_file")"
+  agent_messages="$(jq -r '.agent_message_count' <<<"$diagnostics")"
+  reached_type="$(jq -r '.last_rate_limit_reached_type' <<<"$diagnostics")"
+  [[ "$agent_messages" == "1" ]] || fail "malformed JSONL agent message count was $agent_messages"
+  [[ "$reached_type" == "unknown" ]] || fail "malformed JSONL rate-limit sentinel was $reached_type"
 
   rm -r "$temp_dir"
 }
@@ -1318,12 +1558,15 @@ check_cycle_start_log_contract
 check_quota_fallback_exit_contract
 check_review_module_flags
 check_config_file_support
+check_file_manifest_selection
 check_tool_failure_queue
 check_public_docs_policy
 check_fallback_artifact_helpers
 check_postmortem_context_marker_classification
+check_postmortem_sequence_marker_contract
 check_live_output_filter_pipe
 check_review_summary_parser
+check_status_session_jsonl_contract
 check_process_control_guards
 check_startup_anomaly_gate_allowlist
 

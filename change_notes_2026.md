@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-08: v1.1.13 changes:
+	1. Added manifest-backed target selection defaults and related operator configuration fields for selection source, order, target root/depth, include/exclude globs, and selection review modules.
+	2. Hardened postmortem report and hardening phases so exit-0 auxiliary Codex runs must still return the expected `CODEX_POSTMORTEM_STATUS` marker before the wrapper treats the phase as complete, and intentional postmortem failure returns remain capturable by the fallback caller.
+	3. Hardened status-session JSONL parsing so malformed row shapes degrade to sentinel values instead of crashing wrapper status classification, with validation for malformed rows and log-safe abort reasons.
+
 2026-05-08: v1.1.12 changes:
 	1. Added root `Upkeeper.conf` as the default active configuration file, sourced before built-in defaults and before CLI parsing.
 	2. Added `configurations/default.conf` as the basic self-contained profile template for scheduled or named runs.

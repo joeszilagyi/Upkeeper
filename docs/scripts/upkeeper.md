@@ -12,10 +12,10 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28] [--review-modules=p24,p25,p26,p27,p28] [--p24] [--p25] [--p26] [--p27] [--p28] [--model-override=5.5_xhigh] [--target-file=PATH] [--ignore-failure-queue] [--prompt-pass=all]
+Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28] [--review-modules=p24,p25,p26,p27,p28] [--p24] [--p25] [--p26] [--p27] [--p28] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28] [--ignore-failure-queue] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.12
+Version: v1.1.13
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -145,8 +145,12 @@ Important:
     `CODEX_*` runtime knobs and `UPKEEPER_*` flag defaults such as
     `UPKEEPER_TARGET_FILE`, `UPKEEPER_REVIEW_MODULES`, `UPKEEPER_PROMPT_FILE`,
     `UPKEEPER_PROMPT`, `UPKEEPER_PROMPT_PASS`, `UPKEEPER_MODEL_OVERRIDE`, and
-    `UPKEEPER_IGNORE_FAILURE_QUEUE`. CLI flags remain the final one-cycle
-    overrides.
+    `UPKEEPER_IGNORE_FAILURE_QUEUE`. They may also set selection defaults such
+    as `UPKEEPER_SELECTION_SOURCE`, `UPKEEPER_SELECTION_ORDER`,
+    `UPKEEPER_FILE_MANIFEST_MODE`, `UPKEEPER_TARGET_ROOT`,
+    `UPKEEPER_TARGET_MAX_DEPTH`, `UPKEEPER_INCLUDE_GLOBS`,
+    `UPKEEPER_EXCLUDE_GLOBS`, and `UPKEEPER_SELECTION_REVIEW_MODULES`. CLI
+    flags remain the final one-cycle overrides.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output. The snapshot reader uses a
     tail-first scan of recent session JSONL files, with full-file fallback only
@@ -190,16 +194,21 @@ Important:
     Upkeeper suite is checked or remediated.
 
 Prompt behavior:
-  - By default, the script asks Codex to select the oldest eligible script/tool
-    file by last-modified timestamp and review exactly one file per cycle.
+  - By default, the wrapper maintains a local file manifest at
+      runtime/upkeeper-file-manifest.json
+    and selects the oldest eligible script/tool file by last-modified timestamp.
+    If the manifest is missing, stale, invalid, or out of sync with local file
+    metadata, startup refreshes it before selection. Set
+    `--selection-source=enumerate` for a one-cycle direct scan without using the
+    manifest, or `--refresh-manifest` to rebuild the manifest immediately.
   - Exception: when the repo-local Upkeeper implementation itself is eligible
     and has not been touched for at least 7 days, it is selected first. If it is
     newer than that threshold, normal oldest-file selection applies.
   - Before launching Codex, the wrapper preselects that script/tool target from
-    `git ls-files -co --exclude-standard` and prepends the selected path to the
-    prompt. That avoids spending model/tool cycles on broad tree discovery and
-    keeps `.git/`, ignored paths, runtime evidence, generated outputs, and tests
-    out of the selection scan.
+    the manifest or a direct local enumeration pass and prepends the selected
+    path to the prompt. That avoids spending model/tool cycles on broad tree
+    discovery and keeps `.git/`, ignored paths, runtime evidence, generated
+    outputs, and tests out of the selection scan.
   - When a prior run leaves an open local tool-failure marker, preselection
     chooses the oldest still-eligible marked target after explicit operator
     pins and startup anomaly gates, but before stale-self and normal timestamp
@@ -270,6 +279,22 @@ Prompt behavior:
     rejected.
   - --target-file=PATH pins this invoked cycle to one source-safe repo file and
     bypasses timestamp selection. Use the equals form; spaced form is rejected.
+  - --target-root=PATH restricts timestamp selection to one file or directory
+    tree. --target-dir=PATH is an alias.
+  - --target-depth=N limits descendant depth below the selected target root.
+    --target-max-depth=N is an alias.
+  - --selection-order=oldest, newest, or random chooses the target ordering for
+    this invoked cycle. --random-target is shorthand for random ordering.
+  - --selection-source=manifest uses the local manifest; --selection-source=enumerate
+    bypasses it for this cycle. --refresh-manifest rebuilds and uses the
+    manifest immediately.
+  - --manifest-file=PATH selects a different local manifest path for this cycle.
+  - --include-glob=PATTERN and --exclude-glob=PATTERN add local path filters.
+    --include-globs=a,b and --exclude-globs=a,b replace the configured lists.
+  - --selection-review-modules=p24,p25,p26,p27,p28 filters candidates using
+    deterministic local approximations for files likely relevant to those
+    optional review modules. It is a selection filter, not a review-module
+    prompt request; pair it with --review-module when you want both.
   - --ignore-failure-queue bypasses local unaddressed tool-failure markers for
     this invoked cycle only. --target-file also takes priority over the queue.
   - --prompt-pass=all forces the selected target through all P1-P23 repertoire
@@ -285,6 +310,16 @@ Environment overrides:
   UPKEEPER_PROMPT_PASS          Default: empty
   UPKEEPER_MODEL_OVERRIDE       Default: empty
   UPKEEPER_IGNORE_FAILURE_QUEUE Default: 0
+  UPKEEPER_SELECTION_SOURCE     Default: manifest
+  UPKEEPER_SELECTION_ORDER      Default: oldest
+  UPKEEPER_FILE_MANIFEST_MODE   Default: auto
+  UPKEEPER_FILE_MANIFEST_PATH   Default: runtime/upkeeper-file-manifest.json
+  UPKEEPER_TARGET_ROOT          Default: empty
+  UPKEEPER_TARGET_MAX_DEPTH     Default: empty
+  UPKEEPER_INCLUDE_GLOBS        Default: empty
+  UPKEEPER_EXCLUDE_GLOBS        Default: empty
+  UPKEEPER_SELECTION_REVIEW_MODULES Default: empty
+  CODEX_FILE_MANIFEST_MAX_AGE_SECONDS Default: 300
   CODEX_MODEL                   Default: gpt-5.3-codex-spark
   CODEX_REASONING_EFFORT        Default: xhigh
   CODEX_MODE                    Default: --sandbox workspace-write
@@ -425,6 +460,9 @@ Exit codes:
 - `Upkeeper.log` and `runtime/` are local evidence artifacts and are ignored by
   git. Promote only durable operating rules, postmortem conclusions, or wrapper
   behavior changes into tracked files.
+- `runtime/upkeeper-file-manifest.json` is local selector state. It can be
+  rebuilt with `--refresh-manifest`, bypassed with `--selection-source=enumerate`,
+  or relocated for one run with `--manifest-file=PATH`.
 - Open tool-failure queue markers live under
   `runtime/unaddressed-tool-failures/open/`; resolved markers move to
   `runtime/unaddressed-tool-failures/resolved/`.

@@ -1,3 +1,10 @@
+# Postmortem sequence orchestration.
+#
+# The parent wrapper owns these phases after fallback because the useful
+# evidence spans the failed primary handoff, fallback child, quota state, and
+# local runtime checks. Documentation: lib/upkeeper/README.md and
+# docs/scripts/upkeeper.md.
+
 compile_postmortem_report_prompt() {
   local compiled_file="$1"
   local context_path="$2"
@@ -237,7 +244,7 @@ run_postmortem_sequence() {
   local pm_root report_path context_path incident_log_path bug_record_path primary_last_message_copy
   local report_prompt_file report_last_message hardening_prompt_file hardening_last_message
   local report_exit report_marker hardening_exit hardening_marker
-  local incident_classification
+  local incident_classification errexit_was_set
 
   pm_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID"
   report_path="$pm_root/postmortem.md"
@@ -295,10 +302,18 @@ EOF
   hardening_last_message="$(run_mktemp postmortem-hardening-last-message)"
 
   compile_postmortem_report_prompt "$report_prompt_file" "$context_path" "$report_path"
+  # The fallback caller disables errexit so it can record intentional postmortem
+  # return codes. Preserve that state while still capturing the auxiliary exit.
+  errexit_was_set=0
+  [[ $- == *e* ]] && errexit_was_set=1
   set +e
   run_aux_codex_exec "postmortem.report" "$CODEX_POSTMORTEM_MODEL" "$CODEX_POSTMORTEM_REASONING_EFFORT" "$CODEX_POSTMORTEM_MODE" "$report_prompt_file" "$report_last_message"
   report_exit=$?
-  set -e
+  if [[ "$errexit_was_set" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
   report_marker="$(parse_postmortem_marker "$report_last_message")"
   log_line "INFO" "postmortem.report.finish exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path report_exists=$([[ -e "$report_path" ]] && printf 1 || printf 0) report_nonempty=$([[ -s "$report_path" ]] && printf 1 || printf 0)"
 
@@ -331,9 +346,12 @@ EOF
     return 7
   fi
 
-  if [[ "$report_exit" -ne 0 || "$report_marker" == "BLOCKED" || ! -s "$report_path" ]]; then
+  # Exit 0 alone is not enough here: the auxiliary prompt marker is the
+  # machine-readable contract that tells the parent which phase actually
+  # completed.
+  if [[ "$report_exit" -ne 0 || "$report_marker" != "REPORT_WRITTEN" || ! -s "$report_path" ]]; then
     POSTMORTEM_SEQUENCE_STATUS="report_failed"
-    log_line "ERROR" "postmortem.report failed exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path"
+    log_line "ERROR" "postmortem.report failed exit_code=$report_exit marker=${report_marker:-missing} expected_marker=REPORT_WRITTEN report_path=$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
     rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
@@ -341,10 +359,18 @@ EOF
   fi
 
   compile_postmortem_hardening_prompt "$hardening_prompt_file" "$context_path" "$report_path"
+  # Preserve the caller's errexit state here for the same reason as the report
+  # phase: non-zero sequence returns are part of the wrapper contract.
+  errexit_was_set=0
+  [[ $- == *e* ]] && errexit_was_set=1
   set +e
   run_aux_codex_exec "postmortem.hardening" "$CODEX_POSTMORTEM_MODEL" "$CODEX_POSTMORTEM_REASONING_EFFORT" "$CODEX_POSTMORTEM_MODE" "$hardening_prompt_file" "$hardening_last_message"
   hardening_exit=$?
-  set -e
+  if [[ "$errexit_was_set" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
   hardening_marker="$(parse_postmortem_marker "$hardening_last_message")"
 
   if [[ "$hardening_exit" -eq 86 ]]; then
@@ -377,9 +403,9 @@ EOF
     return 7
   fi
 
-  if [[ "$hardening_exit" -ne 0 || "$hardening_marker" == "BLOCKED" ]]; then
+  if [[ "$hardening_exit" -ne 0 || "$hardening_marker" != "HARDENING_DONE" ]]; then
     POSTMORTEM_SEQUENCE_STATUS="hardening_failed"
-    log_line "ERROR" "postmortem.hardening failed exit_code=$hardening_exit marker=${hardening_marker:-missing} report_path=$report_path"
+    log_line "ERROR" "postmortem.hardening failed exit_code=$hardening_exit marker=${hardening_marker:-missing} expected_marker=HARDENING_DONE report_path=$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
     rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"

@@ -270,6 +270,31 @@ add_review_modules_spec() {
   done
 }
 
+normalize_review_modules_spec_csv() {
+  local spec="$1"
+  local item module existing
+  local -a items=()
+  local -a modules=()
+
+  [[ -n "$spec" ]] || die "review module filter requires a non-empty value"
+  IFS=, read -r -a items <<<"$spec"
+  for item in "${items[@]}"; do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    [[ -n "$item" ]] || die "review module filter contains an empty value"
+    if ! module="$(normalize_review_module "$item")"; then
+      die "unknown review module filter: $item (supported: p24, p25, p26, p27, p28)"
+    fi
+    for existing in "${modules[@]}"; do
+      [[ "$existing" == "$module" ]] && continue 2
+    done
+    modules+=("$module")
+  done
+
+  local IFS=,
+  printf '%s' "${modules[*]}"
+}
+
 review_modules_csv() {
   if [[ "${#CODEX_REVIEW_MODULES[@]}" -eq 0 ]]; then
     printf 'none'
@@ -291,6 +316,18 @@ config_truthy() {
       return 1
       ;;
   esac
+}
+
+append_csv_value() {
+  local current="$1"
+  local value="$2"
+
+  [[ -n "$value" ]] || die "empty comma-list value"
+  if [[ -n "$current" ]]; then
+    printf '%s,%s' "$current" "$value"
+  else
+    printf '%s' "$value"
+  fi
 }
 
 validate_codex_mode_args_or_exit() {
@@ -340,6 +377,10 @@ apply_configured_cli_defaults() {
 
   if config_truthy "${UPKEEPER_IGNORE_FAILURE_QUEUE:-0}"; then
     CODEX_TOOL_FAILURE_QUEUE_BYPASS="1"
+  fi
+
+  if [[ -n "${CODEX_SELECTION_REVIEW_MODULES:-}" ]]; then
+    CODEX_SELECTION_REVIEW_MODULES="$(normalize_review_modules_spec_csv "$CODEX_SELECTION_REVIEW_MODULES")"
   fi
 }
 
@@ -434,6 +475,86 @@ parse_args() {
         ;;
       --target-file)
         die "use --target-file=PATH (spaced form is intentionally unsupported)"
+        ;;
+      --target-root=*|--target-dir=*)
+        CODEX_TARGET_ROOT="${1#*=}"
+        [[ -n "$CODEX_TARGET_ROOT" ]] || die "--target-root requires a value"
+        shift
+        ;;
+      --target-root|--target-dir)
+        die "use --target-root=PATH (spaced form is intentionally unsupported)"
+        ;;
+      --target-depth=*|--target-max-depth=*)
+        CODEX_TARGET_MAX_DEPTH="${1#*=}"
+        [[ -n "$CODEX_TARGET_MAX_DEPTH" ]] || die "--target-depth requires a value"
+        shift
+        ;;
+      --target-depth|--target-max-depth)
+        die "use --target-depth=N (spaced form is intentionally unsupported)"
+        ;;
+      --selection-source=*)
+        CODEX_SELECTION_SOURCE="${1#--selection-source=}"
+        [[ -n "$CODEX_SELECTION_SOURCE" ]] || die "--selection-source requires a value"
+        shift
+        ;;
+      --selection-source)
+        die "use --selection-source=manifest or --selection-source=enumerate (spaced form is intentionally unsupported)"
+        ;;
+      --selection-order=*)
+        CODEX_SELECTION_ORDER="${1#--selection-order=}"
+        [[ -n "$CODEX_SELECTION_ORDER" ]] || die "--selection-order requires a value"
+        shift
+        ;;
+      --selection-order)
+        die "use --selection-order=oldest|newest|random (spaced form is intentionally unsupported)"
+        ;;
+      --random-target)
+        CODEX_SELECTION_ORDER="random"
+        shift
+        ;;
+      --refresh-manifest)
+        CODEX_FILE_MANIFEST_MODE="refresh"
+        CODEX_SELECTION_SOURCE="manifest"
+        shift
+        ;;
+      --manifest-file=*)
+        CODEX_FILE_MANIFEST_PATH="${1#--manifest-file=}"
+        [[ -n "$CODEX_FILE_MANIFEST_PATH" ]] || die "--manifest-file requires a value"
+        shift
+        ;;
+      --manifest-file)
+        die "use --manifest-file=PATH (spaced form is intentionally unsupported)"
+        ;;
+      --include-glob=*)
+        CODEX_SELECTION_INCLUDE_GLOBS="$(append_csv_value "$CODEX_SELECTION_INCLUDE_GLOBS" "${1#--include-glob=}")"
+        shift
+        ;;
+      --include-globs=*)
+        CODEX_SELECTION_INCLUDE_GLOBS="${1#--include-globs=}"
+        [[ -n "$CODEX_SELECTION_INCLUDE_GLOBS" ]] || die "--include-globs requires a value"
+        shift
+        ;;
+      --include-glob|--include-globs)
+        die "use --include-glob=PATTERN or --include-globs=a,b (spaced form is intentionally unsupported)"
+        ;;
+      --exclude-glob=*)
+        CODEX_SELECTION_EXCLUDE_GLOBS="$(append_csv_value "$CODEX_SELECTION_EXCLUDE_GLOBS" "${1#--exclude-glob=}")"
+        shift
+        ;;
+      --exclude-globs=*)
+        CODEX_SELECTION_EXCLUDE_GLOBS="${1#--exclude-globs=}"
+        [[ -n "$CODEX_SELECTION_EXCLUDE_GLOBS" ]] || die "--exclude-globs requires a value"
+        shift
+        ;;
+      --exclude-glob|--exclude-globs)
+        die "use --exclude-glob=PATTERN or --exclude-globs=a,b (spaced form is intentionally unsupported)"
+        ;;
+      --selection-review-modules=*)
+        CODEX_SELECTION_REVIEW_MODULES="$(normalize_review_modules_spec_csv "${1#--selection-review-modules=}")"
+        shift
+        ;;
+      --selection-review-modules)
+        die "use --selection-review-modules=p24,p25,p26,p27,p28 (spaced form is intentionally unsupported)"
         ;;
       --ignore-failure-queue|--bypass-failure-queue)
         CODEX_TOOL_FAILURE_QUEUE_BYPASS="1"

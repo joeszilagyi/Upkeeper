@@ -16,8 +16,10 @@ tools/validate_upkeeper.sh --full
 ```
 
 `--deps` reports command availability. `--full` runs the release guardrails with
-`UPKEEPER_DRY_RUN=1`, including central startup, symlinked-client startup,
-missing-module failure, and missing prompt-template failure.
+`UPKEEPER_DRY_RUN=1` for startup checks and a local fake `codex` binary for
+launch/capture failure classification, including central startup,
+symlinked-client startup, missing-module failure, missing prompt-template
+failure, and empty-transcript failure.
 
 ## GitHub Settings
 

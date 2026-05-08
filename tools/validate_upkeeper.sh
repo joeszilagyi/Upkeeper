@@ -56,7 +56,8 @@ Modes:
   --quick   Run syntax, version, module-map, prompt-template, help, and diff checks.
   --full    Run quick checks plus safe dry-runs, symlink behavior, and failure paths.
 
-No mode launches a Codex backend task. Full mode uses UPKEEPER_DRY_RUN=1.
+No mode launches a real Codex backend task. Full mode uses UPKEEPER_DRY_RUN=1
+plus a local fake codex binary for launch/capture failure checks.
 USAGE
 }
 
@@ -101,7 +102,7 @@ require_command() {
 
 require_commands() {
   local command_name
-  for command_name in bash chmod cp diff find git grep ln mkdir mktemp rm sed sort touch tr wc; do
+  for command_name in bash chmod cp diff find git grep jq ln mkdir mktemp rm sed sort touch tr wc; do
     require_command "$command_name"
   done
 }
@@ -295,6 +296,98 @@ check_missing_prompt_failure() {
   rm -r "$temp_dir"
 }
 
+check_empty_transcript_failure() {
+  local temp_dir rc
+
+  log "checking empty transcript failure classification"
+  temp_dir="$(mktemp -d /tmp/upkeeper-empty-transcript.XXXXXX)"
+  mkdir -p "$temp_dir/bin" "$temp_dir/codex-home/sessions/2026/05/07"
+
+  cat >"$temp_dir/bin/codex" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "exec" ]]; then
+  cat >/dev/null
+  exit 101
+fi
+exit 101
+SH
+  chmod +x "$temp_dir/bin/codex"
+
+  python3 - "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" <<'PY'
+import json
+import sys
+import time
+from datetime import datetime, timezone
+
+path = sys.argv[1]
+now = int(time.time())
+event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
+rows = [
+    {"type": "turn_context", "payload": {"model": "gpt-5.5"}},
+    {
+        "timestamp": event_timestamp,
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "rate_limits": {
+                "limit_id": "validation-gpt-5.5",
+                "limit_name": "gpt-5.5 validation",
+                "plan_type": "validation",
+                "rate_limit_reached_type": None,
+                "primary": {
+                    "used_percent": 10.0,
+                    "window_minutes": 300,
+                    "resets_at": now + 3600,
+                },
+                "secondary": {
+                    "used_percent": 10.0,
+                    "window_minutes": 10080,
+                    "resets_at": now + 86400,
+                },
+            },
+        },
+    },
+]
+with open(path, "w", encoding="utf-8") as handle:
+    for row in rows:
+        print(json.dumps(row, separators=(",", ":")), file=handle)
+PY
+
+  set +e
+  PATH="$temp_dir/bin:$PATH" \
+    CODEX_HOME="$temp_dir/codex-home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=1 \
+    CODEX_FALLBACK_MODEL=gpt-5.3-codex-spark \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    "$ROOT_DIR/Upkeeper" --target-file=launcher_examples/spark_5.3_burn_out_xhigh.sh \
+      >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 3 ]] || fail "empty-transcript check exited $rc, expected 3"
+  grep -Fq "reason=CODEX_EXEC_EMPTY_TRANSCRIPT" "$temp_dir/Upkeeper.log" || fail "empty-transcript reason not logged"
+  grep -Fq "codex.session_diagnostics_ignored reason=empty_transcript" "$temp_dir/Upkeeper.log" || fail "empty-transcript diagnostics ignore not logged"
+  grep -Fq "transcript_bytes=0 transcript_lines=0" "$temp_dir/Upkeeper.log" || fail "empty-transcript size evidence not logged"
+  grep -Fq "session_end_state=codex_no_output agent_messages=0 tool_calls=0 tool_results=0" "$temp_dir/Upkeeper.log" || fail "empty-transcript summary still reported stale session diagnostics"
+  if grep -Fq "TURN_ABORTED_WITHOUT_MARKER" "$temp_dir/Upkeeper.log"; then
+    fail "empty-transcript check was misclassified as TURN_ABORTED_WITHOUT_MARKER"
+  fi
+  if grep -Fq "fallback.start" "$temp_dir/Upkeeper.log"; then
+    fail "empty-transcript check attempted generic fallback before classification"
+  fi
+  rm -r "$temp_dir"
+}
+
 require_commands
 if [[ "$MODE" == "deps" ]]; then
   check_dependencies
@@ -313,6 +406,7 @@ if [[ "$MODE" == "full" ]]; then
   check_symlinked_client
   check_missing_module_failure
   check_missing_prompt_failure
+  check_empty_transcript_failure
 fi
 
 log "$MODE validation passed"

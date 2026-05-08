@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.3
+Version: v1.1.4
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -286,7 +286,7 @@ Environment overrides:
 Exit codes:
   0  One cycle completed, dry-run completed, or the loop was stopped on quota guardrails
   2  Codex reported BLOCKED
-  3  Wrapper/setup error
+  3  Wrapper/setup or Codex launch/capture error
   4  Safety stop was required but parent-loop termination was not confirmed
   5  No clear backend task remained; the wrapper stops the outer loop on purpose
   6  Codex turn was aborted/interrupted before emitting a final status marker
@@ -328,7 +328,8 @@ Exit codes:
   `tools/validate_upkeeper.sh`. Use `--deps` for runtime/tool dependency
   status, `--quick` for syntax/version/module-map checks, and `--full` before
   release or after touching module order, prompt packaging, symlink behavior, or
-  failure-path guardrails.
+  failure-path guardrails. Full validation uses dry-runs plus a local fake
+  `codex` binary; it does not launch real backend work.
 - Runtime/tool dependencies are tracked in `docs/dependencies.md`. GitHub's
   dependency graph should remain enabled, but it is expected to show no package
   dependencies until this repo adds a real supported manifest, workflow, or

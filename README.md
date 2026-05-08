@@ -79,9 +79,9 @@ tools/validate_upkeeper.sh --quick
 tools/validate_upkeeper.sh --full
 ```
 
-The full validation mode still avoids backend Codex work. It runs Upkeeper with
-`UPKEEPER_DRY_RUN=1` and exercises the symlinked-client, missing-module, and
-missing-prompt-template guardrails.
+The full validation mode still avoids real backend Codex work. It runs Upkeeper
+with `UPKEEPER_DRY_RUN=1` for startup checks, then uses a local fake `codex`
+binary to exercise launch/capture failure classification without spending quota.
 
 Runtime/tool dependencies are tracked in [`docs/dependencies.md`](docs/dependencies.md).
 GitHub's dependency graph should stay enabled, but it is expected to show no
@@ -342,7 +342,7 @@ specific policy for publishing them.
   ownership, and module groups
 - [tools/validate_upkeeper.sh](tools/validate_upkeeper.sh): local validation
   harness for dependencies, syntax, module map, prompts, dry-runs, symlink
-  behavior, and fail-fast guardrails
+  behavior, launch/capture classification, and fail-fast guardrails
 - [launcher_examples/README.md](launcher_examples/README.md): tracked shell
   launcher examples for common Upkeeper loops
 - [prompts/default-review.md](prompts/default-review.md): runtime default review

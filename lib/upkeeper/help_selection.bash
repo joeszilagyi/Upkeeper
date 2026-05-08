@@ -119,10 +119,12 @@ Important:
       $UPKEEPER_IMPLEMENTATION_DIR/prompts/default-review.md
     Symlinked clients share that central prompt; local prompt files are only
     needed for explicit --prompt-file overrides.
-  - The central checkout can be validated without launching Codex with:
+  - The central checkout can be validated without launching real Codex work with:
       tools/validate_upkeeper.sh --deps
       tools/validate_upkeeper.sh --quick
       tools/validate_upkeeper.sh --full
+    Full validation uses dry-runs plus a local fake codex binary, not real
+    backend work.
     Runtime/tool dependencies are documented in docs/dependencies.md. GitHub's
     dependency graph is useful future-proofing, but it will not list Bash system
     tools unless the repo later adds a supported manifest, workflow, or
@@ -273,7 +275,7 @@ Environment overrides:
 Exit codes:
   0  One cycle completed, dry-run completed, or the loop was stopped on quota guardrails
   2  Codex reported BLOCKED
-  3  Wrapper/setup error
+  3  Wrapper/setup or Codex launch/capture error
   4  Safety stop was required but parent-loop termination was not confirmed
   5  No clear backend task remained; the wrapper stops the outer loop on purpose
   6  Codex turn was aborted/interrupted before emitting a final status marker

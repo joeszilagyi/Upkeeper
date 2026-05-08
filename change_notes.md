@@ -5,6 +5,12 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.1.4 changes:
+	1. Classified non-zero Codex exits with zero-byte primary transcripts as `CODEX_EXEC_EMPTY_TRANSCRIPT` before generic fallback, instead of borrowing turn-aborted state from a quota snapshot session.
+	2. Added transcript byte and line counts to `run.finish` records so launch/capture failures preserve direct local evidence.
+	3. Ignored session diagnostics for empty primary transcripts so `cycle.summary` no longer reports unrelated agent/tool counts from the surrounding Codex session.
+	4. Added a full-validation fake-Codex check for empty-transcript launch/capture failures.
+
 2026-05-07: v1.1.3 changes:
 	1. Refreshed README examples, repository layout, and related-doc links after the module, prompt, validation, and dependency-documentation work.
 	2. Fixed the README prompt-file example to reference tracked central prompt files instead of a nonexistent `prompts/review-release-blockers.md` path.

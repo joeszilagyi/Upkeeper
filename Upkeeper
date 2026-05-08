@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.1.3
+## Version: v1.1.4
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.1.3"
+UPKEEPER_VERSION="v1.1.4"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -478,10 +478,18 @@ main() {
   set -e
   stop_terminal_progress_heartbeat "codex_exit_$codex_exit"
 
+  local run_transcript_bytes run_transcript_lines codex_empty_transcript
+  run_transcript_bytes="$(file_size_bytes "$RUN_TRANSCRIPT_FILE")"
+  run_transcript_lines="$(file_line_count "$RUN_TRANSCRIPT_FILE")"
+  codex_empty_transcript=0
+  if [[ "$codex_exit" -ne 0 && "$run_transcript_bytes" == "0" ]]; then
+    codex_empty_transcript=1
+  fi
+
   if [[ "$codex_exit" -eq 0 ]]; then
-    log_line "INFO" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE")"
+    log_line "INFO" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE") transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
   else
-    log_line "ERROR" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE")"
+    log_line "ERROR" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE") transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
   fi
   terminal_emit_progress "codex finished target=${RUN_SELECTED_REVIEW_PATH:-unknown} exit=$codex_exit transcript=$RUN_TRANSCRIPT_FILE"
   local after_quota_json=""
@@ -570,13 +578,21 @@ main() {
   local primary_failure_classification
   local post_run_should_stop=0
   local post_run_stop_reason=""
+  local primary_session_diagnostics_source=""
   status_marker_analysis="$(while_marker_analysis_json "$last_message_file")"
   eval "$(status_marker_analysis_assignments "$status_marker_analysis" marker)"
   status_marker_candidate="$marker_candidate_line"
   status_marker_candidate_marker="$marker_candidate_marker"
   status_marker_candidate_rejection_reason="$marker_candidate_rejection_reason"
-  session_end_state="$(parse_session_end_state "${after_source:-}")"
-  primary_session_diagnostics="$(session_diagnostics_json "${after_source:-}")"
+  primary_session_diagnostics_source="${after_source:-}"
+  if [[ "$codex_empty_transcript" == "1" ]]; then
+    log_line "WARN" "codex.session_diagnostics_ignored reason=empty_transcript codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE") transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines ignored_session_source=${after_source:-unknown}"
+    primary_session_diagnostics_source=""
+    session_end_state="codex_no_output"
+  else
+    session_end_state="$(parse_session_end_state "$primary_session_diagnostics_source")"
+  fi
+  primary_session_diagnostics="$(session_diagnostics_json "$primary_session_diagnostics_source")"
   eval "$(session_diagnostics_assignments "$primary_session_diagnostics" session)"
   primary_session_agent_message_count="$session_agent_message_count"
   primary_session_tool_call_count="$session_tool_call_count"
@@ -717,6 +733,10 @@ main() {
         ensure_codex_session_store_writable_or_exit "after_run" "1"
         ensure_codex_arg0_tmp_clean_or_exit "after_run" "1"
         ensure_codex_bwrap_tmp_writable_or_exit "after_run" "1"
+      fi
+      if [[ "$codex_exit" -ne 0 && "$session_end_state" == "codex_no_output" ]]; then
+        log_line "ERROR" "codex exited non-zero without transcript output"
+        finish_cycle 3 CODEX_EXEC_EMPTY_TRANSCRIPT ERROR "codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE") transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
       fi
       if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_FAILURE" == "1" ]] && fallback_available; then
         local fallback_exit

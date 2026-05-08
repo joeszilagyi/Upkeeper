@@ -2,6 +2,103 @@
 
 This repository is the central source of truth for Upkeeper wrapper behavior.
 
+## Repository Layout
+
+- `Upkeeper` is the executable entrypoint and loader for the central wrapper.
+- `lib/upkeeper/*.bash` contains sourced runtime modules. Keep module changes
+  narrow and respect the load-order notes in `lib/upkeeper/README.md`.
+- `prompts/*.md` contains default and opt-in review-module contracts.
+- `docs/` contains public operator documentation. `docs/scripts/upkeeper.md`
+  mirrors operator-facing help and must stay aligned with `./Upkeeper --help`.
+- `tools/` contains deterministic local validation and corpus harnesses.
+- `tests/*.bash` contains focused local unit tests.
+- `testruns/*.sh` contains operator launchers for repeatable dry-run/live
+  scenarios.
+- `runtime/`, `Upkeeper.log`, transcripts, manifests, locks, and postmortem
+  artifacts are local evidence and must not be committed.
+
+## Planning Rules
+
+- For complex changes, create or update root `PLANS.md` before broad editing.
+  A complex change is one that spans multiple runtime modules, changes a public
+  contract, changes target selection, changes config semantics, alters fallback
+  or quota behavior, or needs more than one meaningful implementation step.
+- Keep `PLANS.md` practical: goal, constraints, files likely touched, validation
+  commands, rollout/compatibility notes, and current status are enough.
+- Small single-file docs or test-only patches do not need a plan unless the user
+  asks for one.
+- Do not run real backend Codex validation unless the user explicitly requests
+  it. Prefer `UPKEEPER_DRY_RUN=1`, fake Codex fixtures, unit tests, and the
+  local stress corpus.
+
+## Required Validation Commands
+
+Use the smallest command set that covers the change, and record anything that
+could not be run.
+
+For shell/runtime changes in `Upkeeper`, `lib/upkeeper`, `tools`, `tests`,
+`testruns`, config files, or launcher examples:
+
+```sh
+bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf
+for test_script in tests/*.bash; do bash "$test_script"; done
+git diff --check
+tools/validate_upkeeper.sh --quick
+```
+
+For docs, prompt, help, release-note, README, AGENTS, compatibility, security,
+or public documentation policy changes:
+
+```sh
+tools/check_public_docs.sh --quick
+tools/validate_upkeeper.sh --quick
+git diff --check
+```
+
+When `./Upkeeper --help`, `docs/scripts/upkeeper.md`, README examples, prompt
+module docs, or operator-visible defaults change, also verify the relevant
+operator-facing text directly, for example:
+
+```sh
+./Upkeeper --help
+./Upkeeper --version
+```
+
+For target-selection, manifest, explicit-target, failure-queue, startup-anomaly,
+or symlinked-client behavior:
+
+```sh
+tools/validate_upkeeper.sh --quick
+tools/validate_upkeeper.sh --full
+tools/stress_upkeeper_corpus.sh --local
+```
+
+The full validator and stress corpus must remain no-quota local validation.
+They should not launch real backend Codex work.
+
+## Done Criteria
+
+- The patch is scoped to the requested behavior or documentation change.
+- Public docs, help text, compatibility notes, prompt docs, and the current
+  year's `change_notes_YYYY.md` are updated when operator-visible behavior
+  changes.
+- Backward-compatible behavior is preserved unless the same patch documents why
+  compatibility is unsafe or impossible.
+- New reusable parsing, selection, config, manifest, quota, fallback, or
+  transcript behavior has deterministic local validation.
+- No `runtime/`, `Upkeeper.log`, transcripts, local manifests, locks, Codex
+  session files, or other machine-local evidence is committed.
+- Validation commands appropriate to the touched files have passed, or any
+  skipped command is named with the reason.
+
+## PR And Git Expectations
+
+- Work on a feature branch and use a PR for changes that are pushed to GitHub.
+- Keep commits coherent and explain operator-facing impact in the PR body.
+- Wait for CI on the PR before merging.
+- After merge, verify local `main` is clean and synced with `origin/main`.
+- Delete or prune merged feature branches so the repo returns to a clean sheet.
+
 ## Central-First Rule
 
 - Make Upkeeper behavior changes in this repository, primarily in the root

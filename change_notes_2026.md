@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-08: v1.1.16 changes:
+	1. Added `tools/stress_upkeeper_corpus.sh --local`, a no-quota local stress corpus harness that generates temporary sample repositories and exercises Upkeeper through repo-local `./Upkeeper.sh` symlinks.
+	2. Covered Bash, Python, Node/TypeScript, docs-only, generated-heavy, symlinked-client, dirty-worktree, historical-log, active-lock, terminal-mode, review-summary, and transcript-filter local scenarios without launching real Codex backend work.
+	3. Wired the stress corpus into `tools/validate_upkeeper.sh --full` while keeping `--quick` free of sample-repo runtime cost.
+	4. Updated README, operator guide, compatibility notes, and `docs/stress-corpus.md` with the implemented command, current coverage, and the future backend-mode boundary.
+
 2026-05-08: v1.1.15 changes:
 	1. Fixed the explicit `--target-file` contract so human-pinned targets may be any source-safe readable text file inside the repo, including docs, prompts, config, tests, and scripts.
 	2. Kept automatic rotation limited to script/tool candidates while preserving exclusions for `.git`, ignored paths, runtime evidence, generated outputs, directories, unreadable files, and binary-looking files.

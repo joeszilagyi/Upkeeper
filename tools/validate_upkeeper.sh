@@ -55,7 +55,8 @@ Validate the central Upkeeper checkout.
 Modes:
   --deps    Report runtime/tool dependency status.
   --quick   Run syntax, version, module-map, prompt-template, help, and diff checks.
-  --full    Run quick checks plus safe dry-runs, symlink behavior, and failure paths.
+  --full    Run quick checks plus safe dry-runs, symlink behavior, the local
+            stress corpus, and failure paths.
 
 No mode launches a real Codex backend task. Full mode uses UPKEEPER_DRY_RUN=1
 plus a local fake codex binary for launch/capture failure checks.
@@ -103,7 +104,7 @@ require_command() {
 
 require_commands() {
   local command_name
-  for command_name in bash chmod cp diff find git grep jq ln mkdir mktemp rm sed sort touch tr wc; do
+  for command_name in bash chmod cp date diff find git grep jq ln mkdir mktemp python3 rm sed sort touch tr wc; do
     require_command "$command_name"
   done
 }
@@ -171,6 +172,7 @@ check_syntax() {
   for module in lib/upkeeper/*.bash; do
     bash -n "$module"
   done
+  bash -n tools/*.sh
   bash -n testruns/*.sh
 }
 
@@ -227,6 +229,7 @@ check_prompt_template() {
   [[ -s prompts/p28-unit-test-harvesting-review.md ]] || fail "P28 review module prompt is missing or empty"
   [[ -s Upkeeper.conf ]] || fail "root Upkeeper.conf is missing or empty"
   [[ -s configurations/default.conf ]] || fail "configurations/default.conf is missing or empty"
+  [[ -x tools/stress_upkeeper_corpus.sh ]] || fail "stress corpus harness is missing or not executable"
   grep -Fq "P24 - De-LLM-ing Viability Review" prompts/p24-de-llm-ing-viability-review.md || fail "P24 prompt title missing"
   grep -Fq "P24: not applicable" prompts/p24-de-llm-ing-viability-review.md || fail "P24 applicability gate missing"
   grep -Fq "no loss of operator-facing function" prompts/p24-de-llm-ing-viability-review.md || fail "P24 no-loss requirement missing"
@@ -250,6 +253,8 @@ check_prompt_template() {
   grep -Fq "educational debrief" README.md || fail "README missing P27 summary"
   grep -Fq "unit-test harvesting" README.md || fail "README missing P28 summary"
   grep -Fq "Upkeeper.conf" README.md || fail "README missing config file summary"
+  grep -Fq "tools/stress_upkeeper_corpus.sh --local" README.md || fail "README missing stress corpus command"
+  grep -Fq "tools/stress_upkeeper_corpus.sh --local" docs/stress-corpus.md || fail "stress corpus docs missing implemented command"
   grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 }
 
@@ -1905,6 +1910,11 @@ PY
   rm -r "$temp_dir"
 }
 
+check_stress_corpus_harness() {
+  log "checking local stress corpus harness"
+  tools/stress_upkeeper_corpus.sh --local
+}
+
 require_commands
 if [[ "$MODE" == "deps" ]]; then
   check_dependencies
@@ -1948,6 +1958,7 @@ if [[ "$MODE" == "full" ]]; then
   check_missing_module_failure
   check_missing_prompt_failure
   check_empty_transcript_failure
+  check_stress_corpus_harness
 fi
 
 log "$MODE validation passed"

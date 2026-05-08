@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.1.3 changes:
+	1. Refreshed README examples, repository layout, and related-doc links after the module, prompt, validation, and dependency-documentation work.
+	2. Fixed the README prompt-file example to reference tracked central prompt files instead of a nonexistent `prompts/review-release-blockers.md` path.
+	3. Aligned help/operator-guide wording for fallback, log rotation, current-cycle log review, and dependency-graph expectations without changing wrapper behavior.
+
 2026-05-07: v1.1.2 changes:
 	1. Added `docs/dependencies.md` to track Upkeeper's real Bash/system-tool dependency surface separately from GitHub's package dependency graph.
 	2. Added `tools/validate_upkeeper.sh --deps` so operators can report required, backend, conditional, and optional command availability without launching Codex.

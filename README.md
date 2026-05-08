@@ -85,7 +85,8 @@ missing-prompt-template guardrails.
 
 Runtime/tool dependencies are tracked in [`docs/dependencies.md`](docs/dependencies.md).
 GitHub's dependency graph should stay enabled, but it is expected to show no
-package dependencies until the repo adds a real supported manifest or workflow.
+package dependencies until the repo adds a real supported manifest, workflow, or
+dependency submission.
 
 ## Client Repo Setup
 
@@ -189,10 +190,13 @@ Append one-time guidance without changing the default prompt:
 ./Upkeeper.sh --prompt "Focus on failing validator tests. Keep fixes scoped and verify before final status."
 ```
 
-Use a prompt file for a focused cleanup lane:
+Use a tracked prompt file from the central checkout for a focused cleanup lane:
 
 ```sh
-./Upkeeper.sh --prompt-file prompts/review-release-blockers.md
+./Upkeeper --prompt-file prompts/git_hard_clean.md
+
+# From a symlinked client repo, use the central prompt file's absolute path.
+./Upkeeper.sh --prompt-file /work/tools/Upkeeper/prompts/git_hard_clean.md
 ```
 
 Inspect what happened after a run:
@@ -216,7 +220,7 @@ When the repo-local `Upkeeper` implementation itself is eligible and has not
 been touched for at least seven days, the wrapper selects it first. Otherwise it
 falls back to the normal oldest eligible script/tool rotation.
 
-The wrapper now does that selection before Codex starts and prepends a
+The wrapper does that selection before Codex starts and prepends a
 `WRAPPER_PRESELECTED_REVIEW_TARGET` block to the prompt. That block is meant to
 prevent expensive or unsafe rediscovery patterns such as:
 
@@ -299,23 +303,32 @@ specific policy for publishing them.
 ```text
 .
 |-- docs/
+|   |-- dependencies.md
 |   `-- scripts/
 |       `-- upkeeper.md
 |-- launcher_examples/
 |   |-- README.md
 |   `-- spark_5.3_burn_out_xhigh.sh
+|-- lib/
+|   `-- upkeeper/
+|       |-- README.md
+|       `-- *.bash
 |-- prompts/
 |   |-- README.md
 |   |-- caretaking_23_items.md
+|   |-- default-review.md
 |   |-- git_hard_clean.md
 |   `-- p23-data-contract-negative-fixture-audit.md
 |-- templates/
 |   |-- README.md
 |   `-- prompt-template.md
+|-- tools/
+|   `-- validate_upkeeper.sh
 |-- Upkeeper
 |-- LICENSE
 |-- .editorconfig
 |-- .gitignore
+|-- change_notes.md
 `-- README.md
 ```
 
@@ -323,10 +336,19 @@ specific policy for publishing them.
 
 - [docs/scripts/upkeeper.md](docs/scripts/upkeeper.md): detailed operator guide
   and environment knobs
+- [docs/dependencies.md](docs/dependencies.md): runtime/tool dependency surface
+  and GitHub dependency-graph expectations
+- [lib/upkeeper/README.md](lib/upkeeper/README.md): module contract, load-order
+  ownership, and module groups
+- [tools/validate_upkeeper.sh](tools/validate_upkeeper.sh): local validation
+  harness for dependencies, syntax, module map, prompts, dry-runs, symlink
+  behavior, and fail-fast guardrails
 - [launcher_examples/README.md](launcher_examples/README.md): tracked shell
   launcher examples for common Upkeeper loops
-- [prompts/caretaking_23_items.md](prompts/caretaking_23_items.md): the rotating maintenance
-  review repertoire used by the default prompt family
+- [prompts/default-review.md](prompts/default-review.md): runtime default review
+  prompt template loaded by Upkeeper
+- [prompts/caretaking_23_items.md](prompts/caretaking_23_items.md): full
+  rotating maintenance review repertoire reference
 - [prompts/p23-data-contract-negative-fixture-audit.md](prompts/p23-data-contract-negative-fixture-audit.md):
   standalone P23 add-on prompt for explicit data-contract audit runs
 - [prompts/git_hard_clean.md](prompts/git_hard_clean.md): explicit branch and backup cleanup

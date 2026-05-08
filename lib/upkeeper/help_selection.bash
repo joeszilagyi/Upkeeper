@@ -120,6 +120,9 @@ Important:
       $UPKEEPER_IMPLEMENTATION_DIR/prompts/default-review.md
     Symlinked clients share that central prompt; local prompt files are only
     needed for explicit --prompt-file overrides.
+  - The central checkout can be validated without launching Codex with:
+      tools/validate_upkeeper.sh --quick
+      tools/validate_upkeeper.sh --full
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output.
   - Exact-model Spark quota snapshots may still report the generic Codex

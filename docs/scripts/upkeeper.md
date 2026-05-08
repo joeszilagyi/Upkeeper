@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.1
+Version: v1.1.2
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -328,9 +328,13 @@ Exit codes:
 - Notable operator-facing wrapper changes are recorded in root
   `change_notes.md`; version bumps should keep that file current.
 - The central checkout has a tracked validation harness at
-  `tools/validate_upkeeper.sh`. Use `--quick` for syntax/version/module-map
-  checks and `--full` before release or after touching module order, prompt
-  packaging, symlink behavior, or failure-path guardrails.
+  `tools/validate_upkeeper.sh`. Use `--deps` for runtime/tool dependency
+  status, `--quick` for syntax/version/module-map checks, and `--full` before
+  release or after touching module order, prompt packaging, symlink behavior, or
+  failure-path guardrails.
+- Runtime/tool dependencies are tracked in `docs/dependencies.md`. GitHub's
+  dependency graph should remain enabled, but it is expected to show no package
+  dependencies until this repo adds a real supported manifest or workflow.
 - Startup-anomaly scans suppress older log-only `previous_run.anomaly` entries
   after a later `startup_anomaly.gate_resolved` has acknowledged
   `previous_run_anomaly`; unresolved gate state files still trigger the gate.

@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.1.2 changes:
+	1. Added `docs/dependencies.md` to track Upkeeper's real Bash/system-tool dependency surface separately from GitHub's package dependency graph.
+	2. Added `tools/validate_upkeeper.sh --deps` so operators can report required, backend, conditional, and optional command availability without launching Codex.
+	3. Documented that GitHub dependency graph and Dependabot alerts should remain enabled, while "No dependencies found" is expected until the repo has a real supported manifest or workflow.
+
 2026-05-07: v1.1.1 changes:
 	1. Added `tools/validate_upkeeper.sh` as a tracked validation harness for syntax, version, module-map, prompt-template, help, whitespace, dry-run, symlink, and fail-fast guardrail checks.
 	2. Documented quick and full validation modes in the README, operator guide, and help text so future module or prompt packaging changes have a repeatable local release gate.

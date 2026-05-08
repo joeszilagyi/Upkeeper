@@ -121,8 +121,12 @@ Important:
     Symlinked clients share that central prompt; local prompt files are only
     needed for explicit --prompt-file overrides.
   - The central checkout can be validated without launching Codex with:
+      tools/validate_upkeeper.sh --deps
       tools/validate_upkeeper.sh --quick
       tools/validate_upkeeper.sh --full
+    Runtime/tool dependencies are documented in docs/dependencies.md. GitHub's
+    dependency graph is useful future-proofing, but it will not list Bash system
+    tools unless the repo later adds a supported manifest or workflow.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output.
   - Exact-model Spark quota snapshots may still report the generic Codex

@@ -2,8 +2,9 @@
 
 Store finished or in-progress prompts in this directory.
 
-Focused prompt add-ons:
+Tracked prompts:
 
+- [`default-review.md`](default-review.md) - runtime template loaded by Upkeeper.
 - [`caretaking_23_items.md`](caretaking_23_items.md)
 - [`git_hard_clean.md`](git_hard_clean.md)
 - [`p23-data-contract-negative-fixture-audit.md`](p23-data-contract-negative-fixture-audit.md)

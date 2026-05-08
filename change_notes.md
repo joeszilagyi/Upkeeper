@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.0.55 changes:
+	1. Moved the large static default review prompt body out of Bash and into `prompts/default-review.md`.
+	2. Split prompt handling into prompt pruning and prompt compilation modules while keeping dynamic wrapper context, prompt overrides, and log-review instructions in shell.
+	3. Loaded the default prompt from the resolved central implementation directory so symlinked clients continue to share central prompt behavior without local prompt copies.
+
 2026-05-07: v1.0.54 changes:
 	1. Split the preflight/quota module into focused config validation, quota guardrail, session-store, bubblewrap, arg0, process-argument, log-rotation, disk-preflight, previous-run anomaly, worktree-state, and quota-state modules.
 	2. Preserved the original preflight and quota function definition order while reducing the last large mixed lifecycle module outside prompt text.

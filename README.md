@@ -77,6 +77,9 @@ symlink the wrapper into each repo that should receive the same behavior.
 The symlink should point at the root `Upkeeper` entrypoint; that launcher loads
 its paired implementation modules from `lib/upkeeper` in the resolved central
 checkout.
+It also loads the default review prompt from the central checkout's
+`prompts/default-review.md`; client-local prompt files are only needed when you
+pass an explicit `--prompt-file`.
 
 Sanitized example:
 

@@ -60,8 +60,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   `runtime/unaddressed-tool-failures`.
 - Validation entrypoints remain available:
   `tools/validate_upkeeper.sh --deps`, `--quick`, and `--full`.
-- Default validation and future local stress-corpus checks do not spend backend
-  Codex quota unless the operator explicitly opts in.
+- The local stress-corpus entrypoint remains available:
+  `tools/stress_upkeeper_corpus.sh --local`.
+- Default validation and local stress-corpus checks do not spend backend Codex
+  quota unless the operator explicitly opts in through a future backend-specific
+  command.
 - Central prompt files remain usable by absolute path from symlinked clients.
 - Central review modules remain usable by flag from symlinked clients.
 - Local unaddressed tool-failure markers can prioritize the next eligible target

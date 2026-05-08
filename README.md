@@ -109,10 +109,18 @@ The backward-compatibility contract is tracked in
 [`docs/compatibility.md`](docs/compatibility.md). Existing operator-visible
 behavior should be preserved unless compatibility would be unsafe or impossible.
 
-Future multi-repo stress testing is tracked in
-[`docs/stress-corpus.md`](docs/stress-corpus.md). The contract starts with
-locally generated sample repositories across common language/toolchain shapes
-and keeps real backend Codex runs behind explicit opt-in commands.
+Local multi-repo stress testing is implemented by
+[`tools/stress_upkeeper_corpus.sh`](tools/stress_upkeeper_corpus.sh):
+
+```sh
+tools/stress_upkeeper_corpus.sh --local
+```
+
+The harness generates tiny temp repositories across Bash, Python,
+Node/TypeScript, docs-only, generated-heavy, symlinked-client, dirty-worktree,
+and historical-log shapes. It runs only dry-runs and local fixtures, so it does
+not spend Codex quota. The broader contract is tracked in
+[`docs/stress-corpus.md`](docs/stress-corpus.md).
 
 ## Configuration
 
@@ -505,6 +513,7 @@ specific policy for publishing them.
 |   `-- *.sh
 |-- tools/
 |   |-- check_public_docs.sh
+|   |-- stress_upkeeper_corpus.sh
 |   `-- validate_upkeeper.sh
 |-- Upkeeper
 |-- Upkeeper.conf
@@ -525,13 +534,16 @@ specific policy for publishing them.
   and GitHub dependency-graph expectations
 - [docs/public-documentation-policy.md](docs/public-documentation-policy.md):
   public-by-default documentation, comment, release-note, and help-text policy
-- [docs/stress-corpus.md](docs/stress-corpus.md): future local sample-repo
-  stress-corpus contract
+- [docs/stress-corpus.md](docs/stress-corpus.md): local sample-repo
+  stress-corpus contract and current coverage
 - [lib/upkeeper/README.md](lib/upkeeper/README.md): module contract, load-order
   ownership, and module groups
 - [tools/validate_upkeeper.sh](tools/validate_upkeeper.sh): local validation
   harness for dependencies, syntax, module map, prompts, dry-runs, symlink
   behavior, launch/capture classification, and fail-fast guardrails
+- [tools/stress_upkeeper_corpus.sh](tools/stress_upkeeper_corpus.sh): local
+  no-quota sample-repo stress harness; run
+  `tools/stress_upkeeper_corpus.sh --local`
 - [tools/check_public_docs.sh](tools/check_public_docs.sh): deterministic
   public documentation policy checks
 - [launcher_examples/README.md](launcher_examples/README.md): tracked shell

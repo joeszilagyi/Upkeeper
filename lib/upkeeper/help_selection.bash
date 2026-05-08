@@ -130,6 +130,10 @@ Important:
       tools/validate_upkeeper.sh --full
     Full validation uses dry-runs plus a local fake codex binary, not real
     backend work.
+    Sample-repo stress coverage is available without backend quota with:
+      tools/stress_upkeeper_corpus.sh --local
+    Full validation runs that local stress corpus after the central wrapper
+    checks.
     Runtime/tool dependencies are documented in docs/dependencies.md. GitHub's
     dependency graph is useful future-proofing, but it will not list Bash system
     tools unless the repo later adds a supported manifest, workflow, or
@@ -137,9 +141,9 @@ Important:
     Backward compatibility is documented in docs/compatibility.md. Existing
     operator-visible behavior should be preserved unless compatibility would be
     unsafe or impossible.
-    Future local sample-repo stress testing is documented in
-    docs/stress-corpus.md; those checks should default to no real backend Codex
-    work and keep model-backed sample runs behind explicit opt-in commands.
+    Local sample-repo stress testing is documented in docs/stress-corpus.md;
+    those checks default to no real backend Codex work and keep model-backed
+    sample runs behind explicit future opt-in commands.
   - The default active config file is:
       $UPKEEPER_CONFIG_DEFAULT_FILE
     The central checkout tracks that file plus configurations/default.conf as a

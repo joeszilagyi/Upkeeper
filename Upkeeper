@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.52
+## Version: v1.0.53
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.52"
+UPKEEPER_VERSION="v1.0.53"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -185,7 +185,16 @@ source_upkeeper_module() {
 }
 
 source_upkeeper_module "help_selection.bash"
-source_upkeeper_module "runtime.bash"
+source_upkeeper_module "runtime_foundation.bash"
+source_upkeeper_module "transcript_artifacts.bash"
+source_upkeeper_module "active_lock.bash"
+source_upkeeper_module "wrapper_health.bash"
+source_upkeeper_module "progress_logging.bash"
+source_upkeeper_module "startup_anomaly_state.bash"
+source_upkeeper_module "operator_guide.bash"
+source_upkeeper_module "cycle_cleanup_signals.bash"
+source_upkeeper_module "runtime_format_json.bash"
+source_upkeeper_module "transcript_output.bash"
 source_upkeeper_module "codex_io.bash"
 source_upkeeper_module "preflight_quota.bash"
 source_upkeeper_module "prompts.bash"

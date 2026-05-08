@@ -221,6 +221,44 @@ check_help_and_diff() {
   git diff --cached --check
 }
 
+check_fallback_artifact_helpers() {
+  local temp_dir artifact_file marker_file got
+
+  log "checking fallback artifact helper contracts"
+  temp_dir="$(mktemp -d /tmp/upkeeper-fallback-artifacts.XXXXXX)"
+  artifact_file="$temp_dir/artifact.txt"
+  marker_file="$temp_dir/marker.txt"
+
+  source lib/upkeeper/fallback_artifacts.bash
+
+  printf 'child-1\n' >"$artifact_file"
+  got="$(read_artifact_or_unknown "$artifact_file")"
+  [[ "$got" == "child-1" ]] || fail "artifact helper returned $got for normal artifact"
+
+  printf 'blocked_until: 2026-05-07 10:00\nblocked_until_epoch: 177\n' >"$marker_file"
+  got="$(marker_field "$marker_file" "blocked_until")"
+  [[ "$got" == "2026-05-07 10:00" ]] || fail "marker helper returned $got for blocked_until"
+  got="$(marker_field "$marker_file" "blocked_until_epoch")"
+  [[ "$got" == "177" ]] || fail "marker helper returned $got for blocked_until_epoch"
+
+  : >"$artifact_file"
+  got="$(read_artifact_or_unknown "$artifact_file")"
+  [[ "$got" == "unknown" ]] || fail "empty artifact returned $got instead of unknown"
+  got="$(marker_field "$marker_file" "missing_key")"
+  [[ -z "$got" ]] || fail "missing marker key returned $got instead of empty"
+
+  got="$(read_artifact_or_unknown "$temp_dir/missing.txt")"
+  [[ "$got" == "unknown" ]] || fail "missing artifact returned $got instead of unknown"
+  got="$(read_artifact_or_unknown "$temp_dir")"
+  [[ "$got" == "unknown" ]] || fail "directory artifact returned $got instead of unknown"
+  got="$(marker_field "$temp_dir/missing-marker.txt" "blocked_until")"
+  [[ -z "$got" ]] || fail "missing marker returned $got instead of empty"
+  got="$(marker_field "$temp_dir" "blocked_until")"
+  [[ -z "$got" ]] || fail "directory marker returned $got instead of empty"
+
+  rm -r "$temp_dir"
+}
+
 check_live_output_filter_pipe() {
   local temp_dir rc
 
@@ -633,6 +671,7 @@ check_version_consistency
 check_module_map
 check_prompt_template
 check_help_and_diff
+check_fallback_artifact_helpers
 check_live_output_filter_pipe
 check_review_summary_parser
 check_process_control_guards

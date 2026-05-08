@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.49
+## Version: v1.0.50
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.49"
+UPKEEPER_VERSION="v1.0.50"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -92,6 +92,7 @@ CODEX_LOOP_STOP_GRACE_SECONDS="${CODEX_LOOP_STOP_GRACE_SECONDS:-5}"
 CODEX_CONTINUE_ON_NO_BACKEND_TASK="${CODEX_CONTINUE_ON_NO_BACKEND_TASK:-0}"
 CODEX_DISABLE_PARENT_STOP="${CODEX_DISABLE_PARENT_STOP:-0}"
 CODEX_GUARDRAIL_STOP_EXIT_CODE="${CODEX_GUARDRAIL_STOP_EXIT_CODE:-0}"
+CODEX_PARENT_STOP_SKIPPED_EXIT_CODE="${CODEX_PARENT_STOP_SKIPPED_EXIT_CODE:-75}"
 CODEX_EXECUTION_ORIGIN="${CODEX_EXECUTION_ORIGIN:-primary}"
 CODEX_BWRAP_TMP_ROOT="${CODEX_BWRAP_TMP_ROOT:-/tmp/codex-bwrap-synthetic-mount-targets}"
 CODEX_BWRAP_TMP_PREFLIGHT="${CODEX_BWRAP_TMP_PREFLIGHT:-1}"
@@ -400,6 +401,7 @@ Environment overrides:
   CODEX_CONTINUE_ON_NO_BACKEND_TASK Default: 0
   CODEX_DISABLE_PARENT_STOP      Default: 0
   CODEX_GUARDRAIL_STOP_EXIT_CODE Default: 0
+  CODEX_PARENT_STOP_SKIPPED_EXIT_CODE Default: 75
   CODEX_EXECUTION_ORIGIN         Default: primary
   CODEX_BWRAP_TMP_ROOT           Default: /tmp/codex-bwrap-synthetic-mount-targets
   CODEX_BWRAP_TMP_PREFLIGHT      Default: 1
@@ -5665,12 +5667,50 @@ parent_shell_details() {
   printf '%s\t%s\n' "$direct_details" "0"
 }
 
-stop_parent_loop() {
+parent_stop_skip_reason() {
+  local parent_comm="$1"
+  local parent_args="$2"
+  local using_override="$3"
+
   if [[ "$CODEX_DISABLE_PARENT_STOP" == "1" ]]; then
-    log_line "INFO" "parent loop stop suppressed because CODEX_DISABLE_PARENT_STOP=1 execution_origin=$CODEX_EXECUTION_ORIGIN"
+    printf 'disabled_by_env'
     return 0
   fi
 
+  # Explicit loop-parent overrides are only injected by Upkeeper-supervised
+  # children. Trust those because nested fallback/postmortem workers must still
+  # be able to stop the original loop controller.
+  if [[ "${using_override:-0}" == "1" ]]; then
+    return 1
+  fi
+
+  # A direct interactive terminal normally appears as parent_comm=bash with
+  # parent_args=bash (or another bare shell name). Killing that PID can close the
+  # operator's terminal, so treat it as a local one-shot invocation and let this
+  # child exit instead.
+  case "$parent_args" in
+    ""|bash|-bash|/bin/bash|*/bash|sh|-sh|/bin/sh|*/sh|dash|-dash|zsh|-zsh|ksh|-ksh|fish|-fish)
+      printf 'interactive_parent_shell'
+      return 0
+      ;;
+  esac
+
+  # Non-interactive launchers such as `bash -lc 'while ./Upkeeper.sh ...'` or
+  # `bash -lc 'for ...; do ./Upkeeper.sh; ...'` are safe loop supervisors to
+  # stop. Unknown shell commands are fail-closed so a quota guardrail cannot kill
+  # an unrelated operator shell just because it is the direct parent.
+  case "$parent_args" in
+    *Upkeeper*|*upkeeper*|*'while '*|*'for '*|*'; do '*)
+      return 1
+      ;;
+    *)
+      printf 'unrecognized_parent_shell_command'
+      return 0
+      ;;
+  esac
+}
+
+stop_parent_loop() {
   local details
   if ! details="$(parent_shell_details)"; then
     log_line "ERROR" "could not resolve parent shell details for stop"
@@ -5693,14 +5733,24 @@ stop_parent_loop() {
     parent_args="${parent_args:0:240}..."
   fi
 
+  local skip_reason
+  if skip_reason="$(parent_stop_skip_reason "$parent_comm" "$parent_args" "${using_override:-0}")"; then
+    PARENT_LOOP_STOP_OUTCOME="skipped_$skip_reason"
+    log_line "WARN" "parent loop stop skipped reason=$skip_reason execution_origin=$CODEX_EXECUTION_ORIGIN parent_pid=$parent_pid parent_comm=$parent_comm using_override=${using_override:-0} parent_args=$parent_args"
+    return 0
+  fi
+
   if ! kill -0 "$parent_pid" 2>/dev/null; then
+    PARENT_LOOP_STOP_OUTCOME="already_exited"
     log_line "INFO" "loop parent already exited; parent_pid=$parent_pid parent_comm=$parent_comm using_override=${using_override:-0}"
     return 0
   fi
 
+  PARENT_LOOP_STOP_OUTCOME="stopping"
   log_line "WARN" "quota guardrail tripped; parent_pid=$parent_pid parent_comm=$parent_comm using_override=${using_override:-0} parent_args=$parent_args"
 
   if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
+    PARENT_LOOP_STOP_OUTCOME="dry_run"
     log_line "INFO" "dry-run active; would send SIGTERM to parent_pid=$parent_pid"
     return 0
   fi
@@ -5720,6 +5770,7 @@ stop_parent_loop() {
   local elapsed=0
   while (( elapsed < CODEX_LOOP_STOP_GRACE_SECONDS * 10 )); do
     if ! kill -0 "$parent_pid" 2>/dev/null; then
+      PARENT_LOOP_STOP_OUTCOME="stopped_sigterm"
       log_line "INFO" "confirmed parent_pid=$parent_pid exited after SIGTERM"
       return 0
     fi
@@ -5732,10 +5783,12 @@ stop_parent_loop() {
   sleep 0.2
 
   if kill -0 "$parent_pid" 2>/dev/null; then
+    PARENT_LOOP_STOP_OUTCOME="sigkill_failed"
     log_line "ERROR" "parent_pid=$parent_pid still exists after SIGKILL"
     return 1
   fi
 
+  PARENT_LOOP_STOP_OUTCOME="stopped_sigkill"
   log_line "INFO" "confirmed parent_pid=$parent_pid exited after SIGKILL"
   return 0
 }
@@ -8171,7 +8224,15 @@ main() {
     fi
     log_line "WARN" "quota.stop reason=\"$stop_reason\""
     if stop_parent_loop; then
-      finish_cycle "$CODEX_GUARDRAIL_STOP_EXIT_CODE" QUOTA_GUARDRAIL_STOP INFO "codex_exec_started=0 execution_origin=$CODEX_EXECUTION_ORIGIN"
+      guardrail_stop_exit_code="$CODEX_GUARDRAIL_STOP_EXIT_CODE"
+      guardrail_stop_reason="QUOTA_GUARDRAIL_STOP"
+      if [[ "${PARENT_LOOP_STOP_OUTCOME:-}" == skipped_* ]]; then
+        if [[ "$CODEX_GUARDRAIL_STOP_EXIT_CODE" == "0" ]]; then
+          guardrail_stop_exit_code="$CODEX_PARENT_STOP_SKIPPED_EXIT_CODE"
+        fi
+        guardrail_stop_reason="QUOTA_GUARDRAIL_STOP_PARENT_SKIPPED"
+      fi
+      finish_cycle "$guardrail_stop_exit_code" "$guardrail_stop_reason" INFO "codex_exec_started=0 execution_origin=$CODEX_EXECUTION_ORIGIN parent_stop_outcome=${PARENT_LOOP_STOP_OUTCOME:-unknown}"
     fi
     log_line "ERROR" "cycle.stop failed to confirm parent loop termination"
     finish_cycle 4 QUOTA_GUARDRAIL_STOP_FAILED ERROR "codex_exec_started=0"
@@ -8406,7 +8467,15 @@ main() {
     fi
     log_line "WARN" "quota.stop phase=after_run reason=\"$post_run_stop_reason\" codex_exit=$codex_exit status_marker=${status_marker:-missing}"
     if stop_parent_loop; then
-      finish_cycle "$CODEX_GUARDRAIL_STOP_EXIT_CODE" QUOTA_GUARDRAIL_STOP_AFTER_RUN INFO "status_marker=${status_marker:-missing} codex_exit=$codex_exit execution_origin=$CODEX_EXECUTION_ORIGIN"
+      guardrail_stop_exit_code="$CODEX_GUARDRAIL_STOP_EXIT_CODE"
+      guardrail_stop_reason="QUOTA_GUARDRAIL_STOP_AFTER_RUN"
+      if [[ "${PARENT_LOOP_STOP_OUTCOME:-}" == skipped_* ]]; then
+        if [[ "$CODEX_GUARDRAIL_STOP_EXIT_CODE" == "0" ]]; then
+          guardrail_stop_exit_code="$CODEX_PARENT_STOP_SKIPPED_EXIT_CODE"
+        fi
+        guardrail_stop_reason="QUOTA_GUARDRAIL_STOP_PARENT_SKIPPED_AFTER_RUN"
+      fi
+      finish_cycle "$guardrail_stop_exit_code" "$guardrail_stop_reason" INFO "status_marker=${status_marker:-missing} codex_exit=$codex_exit execution_origin=$CODEX_EXECUTION_ORIGIN parent_stop_outcome=${PARENT_LOOP_STOP_OUTCOME:-unknown}"
     fi
     log_line "ERROR" "cycle.stop failed to confirm parent loop termination after run"
     finish_cycle 4 QUOTA_GUARDRAIL_STOP_FAILED_AFTER_RUN ERROR "status_marker=${status_marker:-missing} codex_exit=$codex_exit"

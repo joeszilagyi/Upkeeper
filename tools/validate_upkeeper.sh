@@ -352,6 +352,21 @@ EOF
   outcome="$(printf '%s' "$summary" | jq -r '.outcome')"
   [[ "$selected_file" == "lib/upkeeper/codex_io.bash" ]] || fail "review summary selected_file was $selected_file"
   [[ "$outcome" == "REVIEWED_AND_FIXED" ]] || fail "review summary outcome was $outcome"
+
+  cat >"$temp_dir/last-message.txt" <<'EOF'
+REVIEWED_AND_FIXED
+
+Selected [lib/upkeeper/fallback_availability.bash](/home/joe/projects/Upkeeper/main/lib/upkeeper/fallback_availability.bash) per the authoritative preselection. Baseline mtime was epoch `1778201006`.
+
+Applied two focused fixes:
+- Added a module header.
+
+UPKEEPER_STATUS: WORK_DONE
+EOF
+
+  summary="$(bash -lc 'cd "$1"; source ./Upkeeper; review_report_summary_json "$2"' bash "$ROOT_DIR" "$temp_dir/last-message.txt")"
+  selected_file="$(printf '%s' "$summary" | jq -r '.selected_file')"
+  [[ "$selected_file" == "/home/joe/projects/Upkeeper/main/lib/upkeeper/fallback_availability.bash" ]] || fail "review summary selected markdown file was $selected_file"
   rm -r "$temp_dir"
 }
 

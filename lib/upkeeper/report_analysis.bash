@@ -265,10 +265,10 @@ for index, line in enumerate(lines):
                 break
     markdown_link = re.search(r"\]\(([^)]+)\)", source)
     backtick_path = re.search(r"`([^`]+)`", source)
-    if backtick_path:
-        selected_file = backtick_path.group(1)
-    elif markdown_link:
+    if markdown_link:
         selected_file = markdown_link.group(1).strip("<>").split(":", 1)[0]
+    elif backtick_path:
+        selected_file = backtick_path.group(1)
     elif ":" in source:
         selected_file = source.split(":", 1)[1].strip()
     else:

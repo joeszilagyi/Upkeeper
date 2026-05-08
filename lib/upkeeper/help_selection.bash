@@ -114,6 +114,10 @@ Important:
       $UPKEEPER_MODULE_DIR
     Symlinked clients should point at the central Upkeeper entrypoint; copying
     only the launcher without the paired lib/upkeeper modules is unsupported.
+  - The large default review prompt is loaded from:
+      $UPKEEPER_IMPLEMENTATION_DIR/prompts/default-review.md
+    Symlinked clients share that central prompt; local prompt files are only
+    needed for explicit --prompt-file overrides.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output.
   - Exact-model Spark quota snapshots may still report the generic Codex

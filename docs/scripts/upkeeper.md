@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.0.54
+Version: v1.0.55
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -127,6 +127,10 @@ Important:
     beside the resolved central Upkeeper file. Symlinked clients should point at
     the central entrypoint; copying only the launcher without the paired modules
     is unsupported.
+  - The large default review prompt lives at `prompts/default-review.md` beside
+    the resolved central Upkeeper file. Symlinked clients share that central
+    prompt; local prompt files are only needed for explicit `--prompt-file`
+    overrides.
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output. The snapshot reader uses a
     tail-first scan of recent session JSONL files, with full-file fallback only
@@ -331,6 +335,9 @@ Exit codes:
   lives in sourced `lib/upkeeper/*.bash` modules loaded from the resolved central
   wrapper directory, preserving symlinked client behavior while reducing review
   scope inside the wrapper source.
+- The default review prompt body lives in tracked `prompts/default-review.md`
+  and is loaded from the resolved central wrapper directory. Prompt overrides
+  still use the operator-supplied `--prompt-file` path.
 - `Upkeeper.log` and `runtime/` are local evidence artifacts and are ignored by
   git. Promote only durable operating rules, postmortem conclusions, or wrapper
   behavior changes into tracked files.

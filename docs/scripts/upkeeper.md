@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28] [--review-modules=p24,p25,p26,p27,p28] [--p24] [--p25] [--p26] [--p27] [--p28] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28] [--ignore-failure-queue] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.17
+Version: v1.1.18
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -451,6 +451,9 @@ Exit codes:
 - Backward compatibility is documented in `docs/compatibility.md`. Existing
   operator-visible behavior should be preserved unless compatibility would be
   unsafe or impossible.
+- Security and local trust boundaries are documented in `docs/security.md`.
+  Read that page before using unreviewed config files, broad sandbox modes,
+  shared machines, or repositories that may contain secrets.
 - Local sample-repo stress testing is documented in `docs/stress-corpus.md`;
   those checks default to no real backend Codex work and keep model-backed
   sample runs behind explicit future opt-in commands.

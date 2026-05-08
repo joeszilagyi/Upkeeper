@@ -2,7 +2,7 @@
 # operator guide; once the guide exists, the Markdown becomes the living document.
 show_help() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25] [--review-modules=p24,p25] [--p24] [--p25] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
+Usage: $SCRIPT_NAME [--help] [--version] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27] [--review-modules=p24,p25,p26,p27] [--p24] [--p25] [--p26] [--p27] [--model-override=5.5_xhigh] [--target-file=PATH] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: $UPKEEPER_VERSION
@@ -221,9 +221,13 @@ Prompt behavior:
     module for this invoked cycle.
   - --review-module=p25 appends the central P25 contract and intent compliance
     review module for this invoked cycle.
-  - --review-modules=p24,p25 appends both modules in a single flag; repeated
-    --review-module flags are also accepted and duplicate modules are ignored.
-  - --p24 and --p25 are shorthand aliases for the corresponding review modules.
+  - --review-module=p26 appends the central P26 public documentation review
+    module for this invoked cycle.
+  - --review-module=p27 appends the central P27 educational debrief review
+    module for this invoked cycle.
+  - --review-modules=p24,p25,p26,p27 appends multiple modules in a single flag;
+    repeated --review-module flags are also accepted and duplicate modules are ignored.
+  - --p24, --p25, --p26, and --p27 are shorthand aliases for the corresponding review modules.
     Review module flags are one-cycle guidance only and do not persist to later
     loop iterations. They are not enabled by --prompt-pass=all unless requested.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5

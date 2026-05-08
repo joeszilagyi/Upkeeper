@@ -69,3 +69,15 @@ Upkeeper is expected to stress test both itself and client repositories.
   wrapper state.
 - Release-note entries should describe operator-facing impact, not just commit
   mechanics.
+
+## Public Documentation Discipline
+
+- Treat every committed patch and release as public project material.
+- Keep docs, comments, prompts, help text, examples, logs, and release notes
+  understandable from tracked source without private chat history.
+- Use `docs/public-documentation-policy.md` as the writing and review standard.
+- Use P26 for explicit public documentation and comment clarity review.
+- Use P27 when a run should leave a concise educational debrief explaining what
+  went wrong, why it mattered, how it was fixed, and what to improve.
+- Run `tools/check_public_docs.sh` or `tools/validate_upkeeper.sh --quick` when
+  public documentation, prompt contracts, help text, or release notes change.

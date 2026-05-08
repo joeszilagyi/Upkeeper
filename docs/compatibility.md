@@ -28,8 +28,9 @@ Future changes should preserve this operator-visible surface as far as possible:
   from the central checkout, not from each client repo.
 - Existing documented CLI flags keep working:
   `--help`, `-h`, `--version`, `--prompt-file`, `--prompt`,
-  `--review-module=...`, `--review-modules=...`, `--p24`, `--p25`,
-  `--model-override=...`, `--target-file=...`, and `--prompt-pass=all`.
+  `--review-module=...`, `--review-modules=...`, `--p24`, `--p25`, `--p26`,
+  `--p27`, `--model-override=...`, `--target-file=...`, and
+  `--prompt-pass=all`.
 - Existing documented environment knobs keep their meaning unless a change note
   states an unavoidable safety reason.
 - `CODEX_TERMINAL_VERBOSITY` keeps the documented modes and aliases for
@@ -52,6 +53,8 @@ Future changes should preserve this operator-visible surface as far as possible:
   Codex quota unless the operator explicitly opts in.
 - Central prompt files remain usable by absolute path from symlinked clients.
 - Central review modules remain usable by flag from symlinked clients.
+- Public documentation, help text, prompt docs, code comments, and release
+  notes remain understandable enough for public review without private context.
 - The default review prompt keeps the single-selected-file review contract and
   the P1-P23 pass repertoire, including the P23 data-contract pass.
 - Client repos keep `Upkeeper.sh`, `Upkeeper.log`, `runtime/`, and local

@@ -10,6 +10,8 @@ Tracked prompts:
 - [`p23-data-contract-negative-fixture-audit.md`](p23-data-contract-negative-fixture-audit.md) - standalone P23 add-on prompt.
 - [`p24-de-llm-ing-viability-review.md`](p24-de-llm-ing-viability-review.md) - P24 opt-in review module for de-LLM-ing viability.
 - [`p25-contract-intent-compliance-review.md`](p25-contract-intent-compliance-review.md) - P25 opt-in review module for contract and intent compliance.
+- [`p26-public-documentation-review.md`](p26-public-documentation-review.md) - P26 opt-in review module for public documentation and comment clarity.
+- [`p27-educational-debrief-review.md`](p27-educational-debrief-review.md) - P27 opt-in review module for a concise saved learning debrief.
 
 Guidelines:
 

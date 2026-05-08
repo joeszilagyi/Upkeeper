@@ -215,6 +215,8 @@ check_prompt_template() {
   [[ -s prompts/p23-data-contract-negative-fixture-audit.md ]] || fail "P23 standalone prompt is missing or empty"
   [[ -s prompts/p24-de-llm-ing-viability-review.md ]] || fail "P24 standalone prompt is missing or empty"
   [[ -s prompts/p25-contract-intent-compliance-review.md ]] || fail "P25 review module prompt is missing or empty"
+  [[ -s prompts/p26-public-documentation-review.md ]] || fail "P26 review module prompt is missing or empty"
+  [[ -s prompts/p27-educational-debrief-review.md ]] || fail "P27 review module prompt is missing or empty"
   grep -Fq "P24 - De-LLM-ing Viability Review" prompts/p24-de-llm-ing-viability-review.md || fail "P24 prompt title missing"
   grep -Fq "P24: not applicable" prompts/p24-de-llm-ing-viability-review.md || fail "P24 applicability gate missing"
   grep -Fq "no loss of operator-facing function" prompts/p24-de-llm-ing-viability-review.md || fail "P24 no-loss requirement missing"
@@ -224,6 +226,16 @@ check_prompt_template() {
   grep -Fq "central-first" prompts/p25-contract-intent-compliance-review.md || fail "P25 central-first contract missing"
   grep -Fq "operator-visible behavior" prompts/p25-contract-intent-compliance-review.md || fail "P25 operator-visible contract missing"
   grep -Fq "smallest sufficient" prompts/p25-contract-intent-compliance-review.md || fail "P25 simplicity contract missing"
+  grep -Fq "P26 - Public Documentation And Readability Review" prompts/p26-public-documentation-review.md || fail "P26 prompt title missing"
+  grep -Fq "P26: not applicable" prompts/p26-public-documentation-review.md || fail "P26 applicability gate missing"
+  grep -Fq "current checked-in state as the delivered product" prompts/p26-public-documentation-review.md || fail "P26 delivered-product rule missing"
+  grep -Fq "P27 - Educational Debrief Review" prompts/p27-educational-debrief-review.md || fail "P27 prompt title missing"
+  grep -Fq "P27: not applicable" prompts/p27-educational-debrief-review.md || fail "P27 applicability gate missing"
+  grep -Fq "P27 Educational Debrief:" prompts/p27-educational-debrief-review.md || fail "P27 saved structure missing"
+  grep -Fq "What went wrong:" prompts/p27-educational-debrief-review.md || fail "P27 debrief structure missing"
+  grep -Fq "code-comment clarity" README.md || fail "README missing P26 summary"
+  grep -Fq "educational debrief" README.md || fail "README missing P27 summary"
+  grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 }
 
 check_help_and_diff() {
@@ -233,8 +245,12 @@ check_help_and_diff() {
   help="$(./Upkeeper --help)"
   grep -Fq -- "--review-module=p24" <<<"$help" || fail "help missing --review-module=p24"
   grep -Fq -- "--review-module=p25" <<<"$help" || fail "help missing --review-module=p25"
+  grep -Fq -- "--review-module=p26" <<<"$help" || fail "help missing --review-module=p26"
+  grep -Fq -- "--review-module=p27" <<<"$help" || fail "help missing --review-module=p27"
   grep -Fq -- "--p24" <<<"$help" || fail "help missing --p24"
   grep -Fq -- "--p25" <<<"$help" || fail "help missing --p25"
+  grep -Fq -- "--p26" <<<"$help" || fail "help missing --p26"
+  grep -Fq -- "--p27" <<<"$help" || fail "help missing --p27"
   git diff --check
   git diff --cached --check
 }
@@ -396,14 +412,16 @@ check_review_module_flags() {
     CODEX_FALLBACK_SCREEN_ENABLED=0 \
     CODEX_POSTMORTEM_ENABLED=0 \
     UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+    ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25,p26,p27 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
 
-  grep -Fq "review_modules=p24,p25" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules"
+  grep -Fq "review_modules=p24,p25,p26,p27" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules"
   grep -Fq "review.module_prompt enabled module=p24" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P24"
   grep -Fq "review.module_prompt enabled module=p25" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P25"
+  grep -Fq "review.module_prompt enabled module=p26" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P26"
+  grep -Fq "review.module_prompt enabled module=p27" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P27"
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not finish cleanly"
 
-  output="$(./Upkeeper --p24 --p25 --version)"
+  output="$(./Upkeeper --p24 --p25 --p26 --p27 --version)"
   [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "review module shorthand flags broke --version"
 
   set +e
@@ -414,6 +432,11 @@ check_review_module_flags() {
   grep -Fq "unknown review module: nope" <<<"$output" || fail "invalid review module error was not clear"
 
   rm -r "$temp_dir"
+}
+
+check_public_docs_policy() {
+  log "checking public documentation policy"
+  tools/check_public_docs.sh --quick
 }
 
 check_fallback_artifact_helpers() {
@@ -1037,6 +1060,7 @@ check_codex_mode_validation
 check_cycle_start_log_contract
 check_quota_fallback_exit_contract
 check_review_module_flags
+check_public_docs_policy
 check_fallback_artifact_helpers
 check_postmortem_context_marker_classification
 check_live_output_filter_pipe

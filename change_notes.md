@@ -5,6 +5,11 @@ Version numbering note:
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 
+2026-05-07: v1.0.54 changes:
+	1. Split the preflight/quota module into focused config validation, quota guardrail, session-store, bubblewrap, arg0, process-argument, log-rotation, disk-preflight, previous-run anomaly, worktree-state, and quota-state modules.
+	2. Preserved the original preflight and quota function definition order while reducing the last large mixed lifecycle module outside prompt text.
+	3. Kept explicit module loading in the root `Upkeeper` entrypoint so symlinked clients continue to resolve the central implementation tree.
+
 2026-05-07: v1.0.53 changes:
 	1. Split the runtime module into focused foundation, transcript artifact, active-lock, wrapper-health, progress logging, startup-anomaly state, operator-guide, cleanup/signal, JSON/time-format, and transcript-output modules.
 	2. Preserved the original runtime function definition order while reducing the largest shared lifecycle module.

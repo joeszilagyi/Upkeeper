@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.0.53
+## Version: v1.0.54
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.0.53"
+UPKEEPER_VERSION="v1.0.54"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -196,7 +196,17 @@ source_upkeeper_module "cycle_cleanup_signals.bash"
 source_upkeeper_module "runtime_format_json.bash"
 source_upkeeper_module "transcript_output.bash"
 source_upkeeper_module "codex_io.bash"
-source_upkeeper_module "preflight_quota.bash"
+source_upkeeper_module "config_validation.bash"
+source_upkeeper_module "quota_guardrails.bash"
+source_upkeeper_module "session_store_preflight.bash"
+source_upkeeper_module "bwrap_preflight.bash"
+source_upkeeper_module "arg0_preflight.bash"
+source_upkeeper_module "process_args.bash"
+source_upkeeper_module "log_rotation.bash"
+source_upkeeper_module "disk_preflight.bash"
+source_upkeeper_module "previous_run_anomalies.bash"
+source_upkeeper_module "worktree_state.bash"
+source_upkeeper_module "quota_state.bash"
 source_upkeeper_module "prompts.bash"
 source_upkeeper_module "process_control.bash"
 source_upkeeper_module "fallback_availability.bash"

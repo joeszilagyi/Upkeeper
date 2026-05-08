@@ -75,7 +75,7 @@ grep -Fq "P26: not applicable" prompts/p26-public-documentation-review.md || fai
 grep -Fq "P27 - Educational Debrief Review" prompts/p27-educational-debrief-review.md || fail "P27 prompt title missing"
 grep -Fq "P27 Educational Debrief:" prompts/p27-educational-debrief-review.md || fail "P27 saved debrief structure missing"
 grep -Fq "P28 - Unit Test Harvesting Review" prompts/p28-unit-test-harvesting-review.md || fail "P28 prompt title missing"
-grep -Fq "P29 - Reuse Harvesting Review" prompts/p29-reuse-harvesting-review.md || fail "P29 prompt title missing"
+grep -Fq "# P29 Reuse Harvesting Review" prompts/p29-reuse-harvesting-review.md || fail "P29 prompt title missing"
 grep -Fq "P29: not applicable" prompts/p29-reuse-harvesting-review.md || fail "P29 applicability line missing"
 grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 grep -Fq "tools/check_public_docs.sh" docs/public-documentation-policy.md || fail "public documentation policy missing tool reference"

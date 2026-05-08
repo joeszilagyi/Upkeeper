@@ -234,7 +234,7 @@ normalize_review_module() {
     p28|unit-test|unit-tests|unit-testing|test-harvest|test-harvesting|fixture-harvest|fixture-harvesting)
       printf 'p28'
       ;;
-    p29|reuse|reuse-harvest|reuse-harvesting|reusable|consolidation|extract-helper|helper-extraction)
+    p29|reuse|reuse-harvest|reuse-harvesting|reusable|library-reuse|function-reuse|asset-reuse|consolidation|extract-helper|helper-extraction)
       printf 'p29'
       ;;
     *)

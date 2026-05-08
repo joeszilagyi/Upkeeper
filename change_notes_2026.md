@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-08: v1.1.20 changes:
+	1. Tightened the P29 reuse harvesting prompt to the full handoff contract text while preserving the existing `# P29 Reuse Harvesting Review` heading.
+	2. Added the explicit P29 aliases `library-reuse`, `function-reuse`, and `asset-reuse` for `--review-module`, `--review-modules`, config defaults, and selection review-module filters.
+	3. Extended quick validation to prove the new P29 reuse aliases are accepted and that the prompt keeps both the utility dumping-ground and `utils.bash` hard boundaries.
+
 2026-05-08: v1.1.19 changes:
 	1. Added P29 as an opt-in reuse harvesting review module through `--review-module=p29`, `--review-modules=...`, `--p29`, config defaults, and selection-review filtering.
 	2. Added `prompts/p29-reuse-harvesting-review.md` so reusable helpers, fixtures, prompt language, docs, command idioms, validation patterns, and local assets can be extracted or consolidated when they have stable contracts and clear owners.

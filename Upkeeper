@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.1.6
+## Version: v1.1.7
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -35,7 +35,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Keep these as environment knobs instead of flags so the normal shell loop stays
 # boring. Flags are reserved for per-run task guidance; policy belongs in env.
-UPKEEPER_VERSION="v1.1.6"
+UPKEEPER_VERSION="v1.1.7"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -285,7 +285,7 @@ main() {
   local loop_parent_start_fingerprint
   loop_parent_start_fingerprint="$(process_start_fingerprint "$loop_parent_pid")"
 
-  log_line "INFO" "cycle.start execution_origin=$CODEX_EXECUTION_ORIGIN script=$SELF_INVOKE_PATH implementation=$SELF_PATH cwd=$ROOT_DIR pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$direct_parent_comm parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$loop_parent_comm loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT mode=$CODEX_MODE_STRING model_override=${CODEX_MODEL_OVERRIDE_SPEC:-none} model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") prompt_pass=${CODEX_PROMPT_PASS:-default} attempt_role=$CODEX_ATTEMPT_ROLE fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=${CODEX_PRIMARY_MODEL_CONTEXT:-none} fallback_trigger=${CODEX_FALLBACK_TRIGGER:-none} screen_fallback_child_id=${CODEX_SCREEN_FALLBACK_CHILD_ID:-none} code_home=$CODEX_HOME_DIR dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
+  log_line "INFO" "cycle.start execution_origin=$(shell_quote "$CODEX_EXECUTION_ORIGIN") script=$(shell_quote "$SELF_INVOKE_PATH") implementation=$(shell_quote "$SELF_PATH") cwd=$(shell_quote "$ROOT_DIR") pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$(shell_quote "$direct_parent_comm") parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$(shell_quote "$loop_parent_comm") loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override model=$(shell_quote "$CODEX_MODEL") effort=$(shell_quote "$CODEX_REASONING_EFFORT") mode=$(shell_quote "$CODEX_MODE_STRING") model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}") model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") prompt_pass=$(shell_quote "${CODEX_PROMPT_PASS:-default}") attempt_role=$(shell_quote "$CODEX_ATTEMPT_ROLE") fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=$(shell_quote "${CODEX_PRIMARY_MODEL_CONTEXT:-none}") fallback_trigger=$(shell_quote "${CODEX_FALLBACK_TRIGGER:-none}") screen_fallback_child_id=$(shell_quote "${CODEX_SCREEN_FALLBACK_CHILD_ID:-none}") code_home=$(shell_quote "$CODEX_HOME_DIR") dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
   start_run_mark_heartbeat
   check_disk_space_preflight
   if [[ "$STARTUP_ANOMALY_GATE" == "1" ]]; then
@@ -417,9 +417,8 @@ main() {
   if [[ "$should_stop" -eq 1 ]]; then
     write_primary_quota_blocked_marker "$stop_reason"
     if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
-      local fallback_exit
-      run_fallback_cycle "primary_quota_before_run" "$stop_reason"
-      fallback_exit=$?
+      local fallback_exit=0
+      run_fallback_cycle "primary_quota_before_run" "$stop_reason" || fallback_exit=$?
       finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=primary_quota_before_run final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
     fi
     log_line "WARN" "quota.stop reason=\"$stop_reason\""
@@ -669,9 +668,8 @@ main() {
       write_primary_quota_blocked_marker "$post_run_stop_reason codex_exit=$codex_exit status_marker=missing session_end_state=$session_end_state classification=$primary_failure_classification" "after_run"
     fi
     if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
-      local fallback_exit
-      run_fallback_cycle "primary_quota_after_run" "$post_run_stop_reason codex_exit=$codex_exit status_marker=${status_marker:-missing} session_end_state=$session_end_state classification=$primary_failure_classification"
-      fallback_exit=$?
+      local fallback_exit=0
+      run_fallback_cycle "primary_quota_after_run" "$post_run_stop_reason codex_exit=$codex_exit status_marker=${status_marker:-missing} session_end_state=$session_end_state classification=$primary_failure_classification" || fallback_exit=$?
       if [[ "$primary_failure_classification" == "PRIMARY_NO_AGENT_MESSAGE_AFTER_QUOTA_EXHAUSTION" ]]; then
         local fallback_child_id fallback_child_marker
         fallback_child_id="$(read_artifact_or_unknown "$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen/current-child-cycle-id.txt")"
@@ -704,9 +702,8 @@ main() {
     NO_BACKEND_TASK)
       if [[ "$DIRTY_PATH_COUNT" -gt 0 ]]; then
         if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK" == "1" ]] && fallback_available; then
-          local fallback_exit
-          run_fallback_cycle "dirty_no_backend_task" "dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
-          fallback_exit=$?
+          local fallback_exit=0
+          run_fallback_cycle "dirty_no_backend_task" "dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT" || fallback_exit=$?
           finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=dirty_no_backend_task final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
         fi
         log_line "WARN" "cycle.stop no backend task reported on a dirty worktree; treating this as a soft miss and continuing the outer loop"
@@ -721,9 +718,8 @@ main() {
       ;;
     BLOCKED)
       if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_BLOCKED" == "1" ]] && fallback_available; then
-        local fallback_exit
-        run_fallback_cycle "blocked" "codex_exit=$codex_exit"
-        fallback_exit=$?
+        local fallback_exit=0
+        run_fallback_cycle "blocked" "codex_exit=$codex_exit" || fallback_exit=$?
         finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=blocked final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
       fi
       finish_cycle 2 BLOCKED WARN "codex_exit=$codex_exit"
@@ -739,9 +735,8 @@ main() {
         finish_cycle 3 CODEX_EXEC_EMPTY_TRANSCRIPT ERROR "codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE") transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
       fi
       if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_FAILURE" == "1" ]] && fallback_available; then
-        local fallback_exit
-        run_fallback_cycle "failure" "codex_exit=$codex_exit session_end_state=$session_end_state status_marker=${status_marker:-missing} status_marker_source=$status_marker_source"
-        fallback_exit=$?
+        local fallback_exit=0
+        run_fallback_cycle "failure" "codex_exit=$codex_exit session_end_state=$session_end_state status_marker=${status_marker:-missing} status_marker_source=$status_marker_source" || fallback_exit=$?
         finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=failure final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
       fi
       if [[ "$codex_exit" -ne 0 ]]; then

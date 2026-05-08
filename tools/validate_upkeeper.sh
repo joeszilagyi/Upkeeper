@@ -210,8 +210,14 @@ check_module_map() {
 }
 
 check_prompt_template() {
-  log "checking default prompt template"
+  log "checking prompt templates"
   [[ -s prompts/default-review.md ]] || fail "prompts/default-review.md is missing or empty"
+  [[ -s prompts/p23-data-contract-negative-fixture-audit.md ]] || fail "P23 standalone prompt is missing or empty"
+  [[ -s prompts/p24-de-llm-ing-viability-review.md ]] || fail "P24 standalone prompt is missing or empty"
+  grep -Fq "P24 - De-LLM-ing Viability Review" prompts/p24-de-llm-ing-viability-review.md || fail "P24 prompt title missing"
+  grep -Fq "P24: not applicable" prompts/p24-de-llm-ing-viability-review.md || fail "P24 applicability gate missing"
+  grep -Fq "no loss of operator-facing function" prompts/p24-de-llm-ing-viability-review.md || fail "P24 no-loss requirement missing"
+  grep -Fq "without material new runtime cost" prompts/p24-de-llm-ing-viability-review.md || fail "P24 cost ceiling missing"
 }
 
 check_help_and_diff() {
@@ -239,6 +245,122 @@ check_codex_mode_validation() {
   set -e
   [[ "$rc" -eq 2 ]] || fail "triple-hyphen CODEX_MODE exited $rc, expected 2"
   grep -Fq "invalid CODEX_MODE first token ---sandbox" <<<"$output" || fail "triple-hyphen CODEX_MODE error was not clear"
+}
+
+write_validation_quota_snapshot() {
+  local session_file="$1"
+  local model="$2"
+  local primary_reset_offset="${3:-3600}"
+  local secondary_reset_offset="${4:-86400}"
+
+  python3 - "$session_file" "$model" "$primary_reset_offset" "$secondary_reset_offset" <<'PY'
+import json
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+model = sys.argv[2]
+primary_reset_offset = int(sys.argv[3])
+secondary_reset_offset = int(sys.argv[4])
+path.parent.mkdir(parents=True, exist_ok=True)
+now = int(time.time())
+event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
+rows = [
+    {"type": "turn_context", "payload": {"model": model}},
+    {
+        "timestamp": event_timestamp,
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "rate_limits": {
+                "limit_id": f"validation-{model}",
+                "limit_name": f"{model} validation",
+                "plan_type": "validation",
+                "rate_limit_reached_type": None,
+                "primary": {
+                    "used_percent": 10.0,
+                    "window_minutes": 300,
+                    "resets_at": now + primary_reset_offset,
+                },
+                "secondary": {
+                    "used_percent": 10.0,
+                    "window_minutes": 10080,
+                    "resets_at": now + secondary_reset_offset,
+                },
+            },
+        },
+    },
+]
+with path.open("w", encoding="utf-8") as handle:
+    for row in rows:
+        print(json.dumps(row, separators=(",", ":")), file=handle)
+PY
+}
+
+check_cycle_start_log_contract() {
+  local temp_dir code_home_q rc
+
+  log "checking cycle.start log quoting"
+  temp_dir="$(mktemp -d /tmp/upkeeper-log-contract.XXXXXX)"
+  write_validation_quota_snapshot "$temp_dir/codex home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
+  printf -v code_home_q '%q' "$temp_dir/codex home"
+
+  set +e
+  CODEX_HOME="$temp_dir/codex home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    UPKEEPER_DRY_RUN=1 \
+    CODEX_MODE='--sandbox workspace-write' \
+    ./Upkeeper >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 0 ]] || fail "cycle.start log contract dry-run exited $rc"
+  grep -Fq 'mode=--sandbox\ workspace-write' "$temp_dir/Upkeeper.log" || fail "cycle.start did not quote CODEX_MODE with spaces"
+  grep -Fq "code_home=$code_home_q" "$temp_dir/Upkeeper.log" || fail "cycle.start did not quote CODEX_HOME with spaces"
+  grep -Fq "reason=DRY_RUN" "$temp_dir/Upkeeper.log" || fail "cycle.start log contract dry-run did not finish cleanly"
+  rm -r "$temp_dir"
+}
+
+check_quota_fallback_exit_contract() {
+  local temp_dir rc
+
+  log "checking quota fallback cycle.exit contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-quota-fallback.XXXXXX)"
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.3-codex-spark" "-3600" "86400"
+
+  set +e
+  CODEX_HOME="$temp_dir/codex-home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.3-codex-spark \
+    CODEX_REASONING_EFFORT=xhigh \
+    UPKEEPER_DRY_RUN=1 \
+    ./Upkeeper --target-file=Upkeeper --prompt-file prompts/p24-de-llm-ing-viability-review.md >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 7 ]] || fail "quota fallback dry-run exited $rc, expected 7"
+  grep -Fq "fallback.finish trigger=primary_quota_before_run" "$temp_dir/Upkeeper.log" || fail "quota fallback dry-run did not finish fallback orchestration"
+  grep -Fq "cycle.exit exit_code=7 reason=FALLBACK_CHAIN_EXIT" "$temp_dir/Upkeeper.log" || fail "quota fallback dry-run did not write cycle.exit"
+  rm -r "$temp_dir"
 }
 
 check_fallback_artifact_helpers() {
@@ -803,6 +925,8 @@ check_module_map
 check_prompt_template
 check_help_and_diff
 check_codex_mode_validation
+check_cycle_start_log_contract
+check_quota_fallback_exit_contract
 check_fallback_artifact_helpers
 check_postmortem_context_marker_classification
 check_live_output_filter_pipe

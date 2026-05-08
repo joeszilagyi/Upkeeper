@@ -32,6 +32,26 @@ except OSError:
     raise SystemExit(0)
 lines = text.splitlines()
 
+def strip_initial_prompt_echo(raw_lines: list[str]) -> list[str]:
+    filtered = []
+    in_user_echo = False
+    saw_codex_marker = False
+    for item in raw_lines:
+        stripped = item.strip()
+        if not saw_codex_marker:
+            if in_user_echo:
+                if stripped == 'codex':
+                    in_user_echo = False
+                    saw_codex_marker = True
+                continue
+            if stripped == 'user':
+                in_user_echo = True
+                continue
+        filtered.append(item)
+    return filtered
+
+runtime_lines = strip_initial_prompt_echo(lines)
+
 def ts():
     return datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%dT%H:%M:%S%z')
 
@@ -88,7 +108,7 @@ def is_signal(line: str) -> bool:
         return True
     return False
 
-signals = [short(line) for line in lines if is_signal(line)]
+signals = [short(line) for line in runtime_lines if is_signal(line)]
 summary = (
     f'codex.transcript.summary label={label} path={path} exit={exit_raw} lines={len(lines)} '
     f'diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count} signal_lines={len(signals)}'
@@ -108,8 +128,9 @@ if signals and signal_limit:
     for line in signals[-signal_limit:]:
         print(f'  {line}', file=sys.stderr)
 if exit_raw not in {'0', ''} and tail_limit:
-    print(f'Upkeeper: {label} failure transcript tail (last {min(tail_limit, len(lines))} lines):', file=sys.stderr)
-    for line in lines[-tail_limit:]:
+    tail_lines = runtime_lines if runtime_lines else lines
+    print(f'Upkeeper: {label} failure transcript tail (last {min(tail_limit, len(tail_lines))} lines):', file=sys.stderr)
+    for line in tail_lines[-tail_limit:]:
         print(f'  {short(line)}', file=sys.stderr)
 PY
 }
@@ -227,37 +248,52 @@ def is_interesting_command(line: str) -> bool:
 
 expecting_command = False
 last_kind = "command"
+in_user_echo = False
+saw_codex_marker = False
 
-for raw in sys.stdin:
-    line = raw.rstrip("\r\n")
-    stripped = line.strip()
+try:
+    for raw in sys.stdin:
+        line = raw.rstrip("\r\n")
+        stripped = line.strip()
 
-    if stripped == "exec":
-        expecting_command = True
-        continue
+        if not saw_codex_marker:
+            if in_user_echo:
+                if stripped == "codex":
+                    in_user_echo = False
+                    saw_codex_marker = True
+                continue
+            if stripped == "user":
+                in_user_echo = True
+                continue
 
-    if expecting_command and stripped:
-        expecting_command = False
-        last_kind = command_kind(stripped)
-        if not silent and is_interesting_command(stripped):
-            print(f"{ts()} Upkeeper: {label} running {last_kind}: {short(stripped)}", file=sys.stderr, flush=True)
-        continue
+        if stripped == "exec":
+            expecting_command = True
+            continue
 
-    if re.match(r"succeeded in [0-9]+", stripped):
-        if not silent:
-            print(f"{ts()} Upkeeper: {label} {last_kind} completed: {short(stripped)}", file=sys.stderr, flush=True)
-        continue
+        if expecting_command and stripped:
+            expecting_command = False
+            last_kind = command_kind(stripped)
+            if not silent and is_interesting_command(stripped):
+                print(f"{ts()} Upkeeper: {label} running {last_kind}: {short(stripped)}", file=sys.stderr, flush=True)
+            continue
 
-    if re.match(r"exited [1-9][0-9]* in ", stripped):
-        print(f"{ts()} Upkeeper: {label} ERROR {last_kind} failed: {short(stripped)}", file=sys.stderr, flush=True)
-        continue
+        if re.match(r"succeeded in [0-9]+", stripped):
+            if not silent:
+                print(f"{ts()} Upkeeper: {label} {last_kind} completed: {short(stripped)}", file=sys.stderr, flush=True)
+            continue
 
-    if stripped.startswith(("UPKEEPER_STATUS:", "UPKEEPER_LOG_REVIEW:")):
-        if not silent:
-            print(f"{ts()} Upkeeper: {label} status: {short(stripped)}", file=sys.stderr, flush=True)
-        continue
+        if re.match(r"exited [1-9][0-9]* in ", stripped):
+            print(f"{ts()} Upkeeper: {label} ERROR {last_kind} failed: {short(stripped)}", file=sys.stderr, flush=True)
+            continue
 
-    if is_error_line(stripped):
-        print(f"{ts()} Upkeeper: {label} ERROR: {short(stripped)}", file=sys.stderr, flush=True)
+        if stripped.startswith(("UPKEEPER_STATUS:", "UPKEEPER_LOG_REVIEW:")):
+            if not silent:
+                print(f"{ts()} Upkeeper: {label} status: {short(stripped)}", file=sys.stderr, flush=True)
+            continue
+
+        if is_error_line(stripped):
+            print(f"{ts()} Upkeeper: {label} ERROR: {short(stripped)}", file=sys.stderr, flush=True)
+except KeyboardInterrupt:
+    raise SystemExit(130)
 PY
 }

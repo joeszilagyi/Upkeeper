@@ -11,6 +11,7 @@ Version numbering note:
 	3. Ignored session diagnostics for empty primary transcripts so `cycle.summary` no longer reports unrelated agent/tool counts from the surrounding Codex session.
 	4. Added a full-validation fake-Codex check for empty-transcript launch/capture failures.
 	5. Fixed the summary-mode live output filter so it consumes piped Codex output instead of replacing pipeline stdin with its Python here-doc.
+	6. Suppressed Codex's initial prompt echo as a block in live and post-run transcript signal extraction so prompt text containing words like `Exception`, `failed`, or `ERROR` is not reported as runtime evidence.
 
 2026-05-07: v1.1.3 changes:
 	1. Refreshed README examples, repository layout, and related-doc links after the module, prompt, validation, and dependency-documentation work.

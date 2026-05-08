@@ -229,6 +229,11 @@ check_live_output_filter_pipe() {
 
   set +e
   printf '%s\n' \
+    'Reading prompt from stdin...' \
+    'user' \
+    '- broad except Exception that treats malformed input as absence' \
+    'ValueError, failed, or emit a Python traceback for normal malformed operator' \
+    'codex' \
     'exec' \
     'python -m pytest' \
     'exited 1 in 0.1s' \
@@ -240,7 +245,31 @@ check_live_output_filter_pipe() {
   [[ "$rc" -eq 0 ]] || fail "live output filter exited $rc"
   grep -Fq "validation running tests: python -m pytest" "$temp_dir/err.txt" || fail "live output filter did not report interesting command"
   grep -Fq "validation ERROR tests failed: exited 1 in 0.1s" "$temp_dir/err.txt" || fail "live output filter did not report failed command"
+  if grep -Eq "broad except|ValueError|Python traceback" "$temp_dir/err.txt"; then
+    fail "live output filter reported prompt-echo text as runtime signal"
+  fi
   [[ ! -s "$temp_dir/out.txt" ]] || fail "live output filter wrote unexpected stdout"
+
+  cat >"$temp_dir/transcript.log" <<'EOF'
+Reading prompt from stdin...
+OpenAI Codex v0.128.0 (research preview)
+--------
+user
+- broad except Exception that treats malformed input as absence
+ValueError, failed, or emit a Python traceback for normal malformed operator
+codex
+exec
+python -m pytest
+exited 1 in 0.1s
+EOF
+  CODEX_LOG_FILE="$temp_dir/Upkeeper.log" CYCLE_ID=validation CYCLE_RUN_HASH=filter-test \
+    CODEX_TERMINAL_VERBOSITY=summary \
+    bash -lc 'cd "$1"; source ./Upkeeper; emit_codex_transcript_summary validation "$2" 1' bash "$ROOT_DIR" "$temp_dir/transcript.log" \
+      >"$temp_dir/summary.out" 2>"$temp_dir/summary.err"
+  grep -Fq "codex.transcript.signal label=validation text=exited\\ 1\\ in\\ 0.1s" "$temp_dir/Upkeeper.log" || fail "transcript summary did not report runtime failure"
+  if grep -Eq "broad except|ValueError|Python traceback" "$temp_dir/Upkeeper.log" "$temp_dir/summary.err"; then
+    fail "transcript summary reported prompt-echo text as runtime signal"
+  fi
   rm -r "$temp_dir"
 }
 

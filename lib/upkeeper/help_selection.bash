@@ -81,15 +81,18 @@ Loop stop semantics:
     that reset time passes
   - root log rotation archives live logs older than ${CODEX_LOG_ROTATE_AFTER_HOURS} hours
     and prunes sibling zip archives older than ${CODEX_LOG_ROTATE_KEEP_HOURS} hours on startup.
-  - by default, live terminal output is summary-first: routine INFO logs and
-    full backend transcripts stay in log/transcript artifacts, while WARN,
-    ERROR, numbered command-category progress, timestamped progress heartbeats,
-    status, and bounded high-signal transcript summaries remain visible;
+  - by default, live terminal output is basic: routine INFO logs and full
+    backend transcripts stay in log/transcript artifacts, while selected target,
+    Codex start/finish, long-running heartbeats, status, checks/tests/validation
+    progress, WARN, and ERROR remain visible;
     transcript artifacts live under:
       ${CODEX_TRANSCRIPT_DIR}
     and are pruned after ${CODEX_TRANSCRIPT_KEEP_HOURS} hours or when the
     directory exceeds ${CODEX_TRANSCRIPT_KEEP_MAX_MB} MB;
-    set CODEX_TERMINAL_VERBOSITY=full to stream the full backend transcript
+    use CODEX_TERMINAL_VERBOSITY=verbose for command-level progress,
+    debug1 for the first diagnostic tier, quiet for only major progress and
+    problems, silent for no routine terminal chatter, or full to stream the raw
+    backend transcript
 
 Important:
   - Run the loop in a dedicated shell or terminal tab.
@@ -664,7 +667,7 @@ append_preselected_review_target() {
   } >>"$compiled_file"
 
   log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} worktree_hash=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} basis=$(shell_quote "${selected_basis:-unknown}")"
-  terminal_emit_progress "file selected is ${selected_path:-unknown}; reason: ${selected_basis:-unknown}; age=${selected_age:-unknown}"
+  terminal_emit_progress "selected file ${selected_path:-unknown} (age=${selected_age:-unknown}; reason=${selected_basis:-unknown}; eligible=${eligible_count:-unknown})"
 }
 
 operator_guide_snapshot_version() {

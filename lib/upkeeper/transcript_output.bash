@@ -11,12 +11,37 @@ emit_codex_transcript_summary() {
   python3 - "$label" "$transcript_file" "$codex_exit" "$signal_lines" "$error_tail_lines" "$LOG_FILE" "$CYCLE_ID" "$CYCLE_RUN_HASH" <<'PY'
 from datetime import datetime, timezone
 from pathlib import Path
+import os
 import re
 import sys
 
 label, path_raw, exit_raw, signal_raw, tail_raw, log_raw, cycle_id, run_hash = sys.argv[1:9]
 path = Path(path_raw)
 log_path = Path(log_raw)
+
+def terminal_mode() -> str:
+    raw = os.environ.get('CODEX_TERMINAL_VERBOSITY', 'basic').strip().lower()
+    aliases = {
+        '': 'basic',
+        'summary': 'basic',
+        'normal': 'basic',
+        'default': 'basic',
+        '1': 'verbose',
+        'yes': 'verbose',
+        'true': 'verbose',
+        'debug': 'debug1',
+        'none': 'silent',
+        '0': 'silent',
+        'no': 'silent',
+        'false': 'silent',
+        'raw': 'full',
+    }
+    return aliases.get(raw, raw)
+
+mode = terminal_mode()
+silent_terminal = mode == 'silent'
+diagnostic_terminal = mode in {'verbose', 'debug1'}
+
 try:
     signal_limit = max(0, int(signal_raw))
 except ValueError:
@@ -225,14 +250,15 @@ try:
             handle.write(item + '\n')
 except OSError:
     pass
-print(f'Upkeeper: {label} transcript captured path={path} exit={exit_raw} lines={len(lines)} diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count}', file=sys.stderr)
-if signals and signal_limit:
-    print(f'Upkeeper: {label} high-signal transcript tail (last {min(signal_limit, len(signals))}):', file=sys.stderr)
+if not silent_terminal and (diagnostic_terminal or exit_raw not in {'0', ''}):
+    print(f'{ts()} [INFO] Upkeeper: {label} transcript captured path={path} exit={exit_raw} lines={len(lines)} diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count}', file=sys.stderr)
+if not silent_terminal and diagnostic_terminal and signals and signal_limit:
+    print(f'{ts()} [INFO] Upkeeper: {label} high-signal transcript tail (last {min(signal_limit, len(signals))}):', file=sys.stderr)
     for line in signals[-signal_limit:]:
         print(f'  {line}', file=sys.stderr)
-if exit_raw not in {'0', ''} and tail_limit:
+if not silent_terminal and exit_raw not in {'0', ''} and tail_limit:
     tail_lines = runtime_lines if runtime_lines else lines
-    print(f'Upkeeper: {label} failure transcript tail (last {min(tail_limit, len(tail_lines))} lines):', file=sys.stderr)
+    print(f'{ts()} [ERROR] Upkeeper: {label} failure transcript tail (last {min(tail_limit, len(tail_lines))} lines):', file=sys.stderr)
     for line in tail_lines[-tail_limit:]:
         print(f'  {short(line)}', file=sys.stderr)
 PY
@@ -248,8 +274,33 @@ import re
 import sys
 
 label = sys.argv[1]
-verbosity = os.environ.get("CODEX_TERMINAL_VERBOSITY", "summary").lower()
-silent = verbosity in {"none", "silent", "0", "no", "false"}
+
+
+def terminal_mode() -> str:
+    raw = os.environ.get("CODEX_TERMINAL_VERBOSITY", "basic").strip().lower()
+    aliases = {
+        "": "basic",
+        "summary": "basic",
+        "normal": "basic",
+        "default": "basic",
+        "1": "verbose",
+        "yes": "verbose",
+        "true": "verbose",
+        "debug": "debug1",
+        "none": "silent",
+        "0": "silent",
+        "no": "silent",
+        "false": "silent",
+        "raw": "full",
+    }
+    return aliases.get(raw, raw)
+
+
+mode = terminal_mode()
+silent = mode in {"silent", "full"}
+quiet = mode == "quiet"
+basic = mode == "basic"
+diagnostic = mode in {"verbose", "debug1"}
 
 promptish = re.compile(
     r"^(WRAPPER_|ABSOLUTE RULE|Background Review Prompt Repertoire|Summary Table|P\d+ - |-{8,}$|"
@@ -336,15 +387,27 @@ def command_kind(line: str) -> str:
 
 
 def should_announce_start(kind: str) -> bool:
-    return kind in {"tests", "validation", "check", "build", "search"}
+    if diagnostic:
+        return kind in {"tests", "validation", "check", "build", "search"}
+    if basic:
+        return kind in {"tests", "validation", "check", "build"}
+    return False
 
 
 def should_report_success(kind: str) -> bool:
-    return kind in {"tests", "validation", "check", "build"}
+    if diagnostic or basic:
+        return kind in {"tests", "validation", "check", "build"}
+    return False
 
 
 def should_report_failure_as_error(kind: str) -> bool:
     return kind in {"tests", "validation", "check", "build"}
+
+
+def emit(level: str, message: str) -> None:
+    if silent:
+        return
+    print(f"{ts()} [{level}] Upkeeper: {message}", file=sys.stderr, flush=True)
 
 
 expecting_command = False
@@ -413,14 +476,20 @@ try:
             in_command_output = False
             in_codex_message = False
             if not silent and current_command_interesting:
-                print(f"{ts()} Upkeeper: {label} cmd#{last_command_id} {last_kind} started: {short(stripped)}", file=sys.stderr, flush=True)
+                if diagnostic:
+                    emit("INFO", f"{label} cmd#{last_command_id} {last_kind} started: {short(stripped)}")
+                else:
+                    emit("INFO", f"{label} running {last_kind} cmd#{last_command_id}: {short(stripped)}")
             continue
 
         if re.match(r"succeeded in [0-9]+", stripped):
             in_command_output = True
             in_codex_message = False
             if not silent and current_command_reports_success:
-                print(f"{ts()} Upkeeper: {label} cmd#{last_command_id} {last_kind} passed: {short(stripped)}", file=sys.stderr, flush=True)
+                if diagnostic:
+                    emit("INFO", f"{label} cmd#{last_command_id} {last_kind} passed: {short(stripped)}")
+                else:
+                    emit("INFO", f"{label} finished {last_kind} cmd#{last_command_id}: {short(stripped)}")
             continue
 
         if re.match(r"exited [1-9][0-9]* in ", stripped):
@@ -429,27 +498,27 @@ try:
             if not current_command_exit_reported:
                 current_command_exit_reported = True
                 if should_report_failure_as_error(last_kind):
-                    print(f"{ts()} Upkeeper: {label} ERROR cmd#{last_command_id} {last_kind} failed: {short(stripped)}", file=sys.stderr, flush=True)
+                    emit("ERROR", f"{label} cmd#{last_command_id} {last_kind} failed: {short(stripped)}")
                 elif not silent and current_command_interesting:
-                    print(f"{ts()} Upkeeper: {label} cmd#{last_command_id} {last_kind} exited nonzero: {short(stripped)}", file=sys.stderr, flush=True)
+                    emit("INFO", f"{label} cmd#{last_command_id} {last_kind} exited nonzero: {short(stripped)}")
             continue
 
         if in_command_output:
             if current_command_reports_success and is_error_line(stripped):
-                print(f"{ts()} Upkeeper: {label} ERROR: {short(stripped)}", file=sys.stderr, flush=True)
+                emit("ERROR", f"{label}: {short(stripped)}")
             continue
 
         if stripped.startswith(("UPKEEPER_STATUS:", "UPKEEPER_LOG_REVIEW:")):
             if not silent and stripped not in emitted_status_markers:
                 emitted_status_markers.add(stripped)
-                print(f"{ts()} Upkeeper: {label} status: {short(stripped)}", file=sys.stderr, flush=True)
+                emit("INFO", f"{label} status: {short(stripped)}")
             continue
 
         if in_codex_message:
             continue
 
         if is_error_line(stripped):
-            print(f"{ts()} Upkeeper: {label} ERROR: {short(stripped)}", file=sys.stderr, flush=True)
+            emit("ERROR", f"{label}: {short(stripped)}")
 except KeyboardInterrupt:
     raise SystemExit(130)
 PY

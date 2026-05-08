@@ -54,7 +54,7 @@ start_terminal_progress_heartbeat() {
   local interval
 
   terminal_wants_full_output && return 0
-  terminal_suppresses_progress && return 0
+  terminal_suppresses_heartbeat && return 0
   interval="$(sanitize_nonnegative_integer "${CODEX_TERMINAL_PROGRESS_INTERVAL_SECONDS:-$CODEX_MARK_INTERVAL_SECONDS}" "$CODEX_MARK_INTERVAL_SECONDS")"
   if [[ "$interval" -le 0 ]]; then
     return 0
@@ -85,7 +85,7 @@ start_terminal_progress_heartbeat() {
         transcript_bytes="missing"
         transcript_updated="missing"
       fi
-      printf '%s Upkeeper: %s still running target=%s elapsed=%ss transcript_lines=%s transcript_bytes=%s last_update=%s\n' \
+      printf '%s [INFO] Upkeeper: %s still working on %s; elapsed=%ss transcript_lines=%s transcript_bytes=%s last_update=%s\n' \
         "$(timestamp_now)" \
         "$label" \
         "${target:-unknown}" \
@@ -138,4 +138,3 @@ stop_run_mark_heartbeat() {
   fi
   emit_run_mark "finish"
 }
-

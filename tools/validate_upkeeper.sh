@@ -265,67 +265,6 @@ check_live_output_filter_pipe() {
   log "checking live output filter consumes pipeline stdin"
   temp_dir="$(mktemp -d /tmp/upkeeper-live-filter.XXXXXX)"
 
-  set +e
-  printf '%s\n' \
-    'Reading prompt from stdin...' \
-    'user' \
-    '- broad except Exception that treats malformed input as absence' \
-    'ValueError, failed, or emit a Python traceback for normal malformed operator' \
-    'codex' \
-    'exec' \
-    "/bin/bash -lc 'rg ERROR change_notes.md'" \
-    'succeeded in 0ms:' \
-    '14 6. change-note output ERROR failed Exception' \
-    'exec' \
-    "/bin/bash -lc \"nl -ba tools/validate_upkeeper.sh | sed -n '220,310p'\"" \
-    'succeeded in 0ms:' \
-    '238 source-view output ERROR failed Exception' \
-    '273 validation ERROR cmd#[0-9]+ tests failed: exited 1 in 0.1s' \
-    'exec' \
-    "/bin/bash -lc \"git ls-files | rg '(^|/)(tests?|specs?)/|(_test|test_)|\\.bats$'\"" \
-    'exited 1 in 0ms:' \
-    'exec' \
-    "/bin/bash -lc 'rg -n \"prompt-file|model-override\" tests Upkeeper lib docs 2>/dev/null'" \
-    'exited 2 in 104ms:' \
-    'exec' \
-    "/bin/bash -lc 'launcher_examples/spark_5.3_burn_out_xhigh.sh --bogus'" \
-    'exited 64 in 0ms:' \
-    'diff --git a/change_notes.md b/change_notes.md' \
-    '--- a/change_notes.md' \
-    '+++ b/change_notes.md' \
-    '+8. diff-block output ERROR failed Exception' \
-    'exec' \
-    "/bin/bash -lc 'bash -n launcher_examples/*.sh'" \
-    'succeeded in 0ms:' \
-    'exec' \
-    'python -m pytest' \
-    'exited 1 in 0.1s' \
-    'tokens used' \
-    '123' \
-    'Final prose mentions ERROR and failed but is not runtime evidence.' \
-    'UPKEEPER_STATUS: WORK_DONE' \
-    'UPKEEPER_STATUS: WORK_DONE' \
-    | CODEX_TERMINAL_VERBOSITY=summary bash -lc 'cd "$1"; source ./Upkeeper; codex_live_output_filter validation' bash "$ROOT_DIR" \
-      >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
-  rc=$?
-  set -e
-
-  [[ "$rc" -eq 0 ]] || fail "live output filter exited $rc"
-  grep -Eq "validation cmd#[0-9]+ search started: /bin/bash -lc 'rg ERROR change_notes.md'" "$temp_dir/err.txt" || fail "live output filter did not report search command start"
-  grep -Eq 'validation cmd#[0-9]+ search started: /bin/bash -lc "nl -ba tools/validate_upkeeper[.]sh' "$temp_dir/err.txt" || fail "live output filter did not classify source file view as search"
-  grep -Eq 'validation cmd#[0-9]+ search started: /bin/bash -lc "git ls-files' "$temp_dir/err.txt" || fail "live output filter did not classify git ls-files discovery as search"
-  grep -Eq "validation cmd#[0-9]+ search exited nonzero: exited 1 in 0ms:" "$temp_dir/err.txt" || fail "live output filter did not report git ls-files discovery as non-error search failure"
-  grep -Eq "validation cmd#[0-9]+ search exited nonzero: exited 2 in 104ms:" "$temp_dir/err.txt" || fail "live output filter did not report non-error search failure"
-  grep -Eq "validation cmd#[0-9]+ check started: /bin/bash -lc 'bash -n launcher_examples/[*][.]sh'" "$temp_dir/err.txt" || fail "live output filter did not report interesting successful check"
-  grep -Eq "validation cmd#[0-9]+ check passed: succeeded in 0ms:" "$temp_dir/err.txt" || fail "live output filter did not report successful interesting check completion"
-  grep -Eq "validation cmd#[0-9]+ tests started: python -m pytest" "$temp_dir/err.txt" || fail "live output filter did not report interesting command"
-  grep -Eq "validation ERROR cmd#[0-9]+ tests failed: exited 1 in 0.1s" "$temp_dir/err.txt" || fail "live output filter did not report failed command"
-  [[ "$(grep -Fc "validation status: UPKEEPER_STATUS: WORK_DONE" "$temp_dir/err.txt")" -eq 1 ]] || fail "live output filter repeated duplicate status markers"
-  if grep -Eq "broad except|ValueError|Python traceback|change-note output|source-view output|diff-block output|ERROR .*exited 1 in 0ms|ERROR .*exited 2|ERROR .*exited 64|tests failed: exited 1 in 0ms|Final prose mentions|validation command completed" "$temp_dir/err.txt"; then
-    fail "live output filter reported prompt, uninteresting command output, or Codex prose as runtime signal"
-  fi
-  [[ ! -s "$temp_dir/out.txt" ]] || fail "live output filter wrote unexpected stdout"
-
   cat >"$temp_dir/transcript.log" <<'EOF'
 Reading prompt from stdin...
 OpenAI Codex v0.128.0 (research preview)
@@ -368,8 +307,57 @@ Final prose mentions ERROR and failed but is not runtime evidence.
 UPKEEPER_STATUS: WORK_DONE
 UPKEEPER_STATUS: WORK_DONE
 EOF
+
+  run_live_filter_mode() {
+    local mode="$1"
+    local out_file="$temp_dir/live-$mode.out"
+    local err_file="$temp_dir/live-$mode.err"
+
+    set +e
+    CODEX_TERMINAL_VERBOSITY="$mode" \
+      bash -lc 'cd "$1"; source ./Upkeeper; codex_live_output_filter validation' bash "$ROOT_DIR" \
+        <"$temp_dir/transcript.log" >"$out_file" 2>"$err_file"
+    rc=$?
+    set -e
+    [[ "$rc" -eq 0 ]] || fail "live output filter exited $rc for mode $mode"
+    [[ ! -s "$out_file" ]] || fail "live output filter wrote unexpected stdout for mode $mode"
+  }
+
+  run_live_filter_mode verbose
+  grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ search started: /bin/bash -lc 'rg ERROR change_notes.md'" "$temp_dir/live-verbose.err" || fail "verbose live output did not report search command start"
+  grep -Eq '\[INFO\] Upkeeper: validation cmd#[0-9]+ search started: /bin/bash -lc "nl -ba tools/validate_upkeeper[.]sh' "$temp_dir/live-verbose.err" || fail "verbose live output did not classify source file view as search"
+  grep -Eq '\[INFO\] Upkeeper: validation cmd#[0-9]+ search started: /bin/bash -lc "git ls-files' "$temp_dir/live-verbose.err" || fail "verbose live output did not classify git ls-files discovery as search"
+  grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ search exited nonzero: exited 1 in 0ms:" "$temp_dir/live-verbose.err" || fail "verbose live output did not report git ls-files discovery as non-error search failure"
+  grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ search exited nonzero: exited 2 in 104ms:" "$temp_dir/live-verbose.err" || fail "verbose live output did not report non-error search failure"
+  grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ check started: /bin/bash -lc 'bash -n launcher_examples/[*][.]sh'" "$temp_dir/live-verbose.err" || fail "verbose live output did not report successful check start"
+  grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ check passed: succeeded in 0ms:" "$temp_dir/live-verbose.err" || fail "verbose live output did not report successful check completion"
+  grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ tests started: python -m pytest" "$temp_dir/live-verbose.err" || fail "verbose live output did not report interesting command"
+  grep -Eq "\\[ERROR\\] Upkeeper: validation cmd#[0-9]+ tests failed: exited 1 in 0.1s" "$temp_dir/live-verbose.err" || fail "verbose live output did not report failed command"
+  [[ "$(grep -Fc "[INFO] Upkeeper: validation status: UPKEEPER_STATUS: WORK_DONE" "$temp_dir/live-verbose.err")" -eq 1 ]] || fail "verbose live output repeated duplicate status markers"
+  if grep -Eq "broad except|ValueError|Python traceback|change-note output|source-view output|diff-block output|ERROR .*exited 1 in 0ms|ERROR .*exited 2|ERROR .*exited 64|tests failed: exited 1 in 0ms|Final prose mentions|validation command completed" "$temp_dir/live-verbose.err"; then
+    fail "verbose live output reported prompt, uninteresting command output, or Codex prose as runtime signal"
+  fi
+
+  run_live_filter_mode basic
+  grep -Eq "\\[INFO\\] Upkeeper: validation running check cmd#[0-9]+: /bin/bash -lc 'bash -n launcher_examples/[*][.]sh'" "$temp_dir/live-basic.err" || fail "basic live output did not report check start"
+  grep -Eq "\\[INFO\\] Upkeeper: validation finished check cmd#[0-9]+: succeeded in 0ms:" "$temp_dir/live-basic.err" || fail "basic live output did not report check completion"
+  grep -Eq "\\[ERROR\\] Upkeeper: validation cmd#[0-9]+ tests failed: exited 1 in 0.1s" "$temp_dir/live-basic.err" || fail "basic live output did not report failed command"
+  if grep -Eq "search started|search exited nonzero|change-note output|source-view output|diff-block output|Final prose mentions" "$temp_dir/live-basic.err"; then
+    fail "basic live output reported verbose search chatter or filtered text"
+  fi
+
+  run_live_filter_mode quiet
+  grep -Eq "\\[ERROR\\] Upkeeper: validation cmd#[0-9]+ tests failed: exited 1 in 0.1s" "$temp_dir/live-quiet.err" || fail "quiet live output did not report failed command"
+  [[ "$(grep -Fc "[INFO] Upkeeper: validation status: UPKEEPER_STATUS: WORK_DONE" "$temp_dir/live-quiet.err")" -eq 1 ]] || fail "quiet live output did not report one status marker"
+  if grep -Eq "search started|running check|finished check|tests started|change-note output|source-view output" "$temp_dir/live-quiet.err"; then
+    fail "quiet live output was too chatty"
+  fi
+
+  run_live_filter_mode silent
+  [[ ! -s "$temp_dir/live-silent.err" ]] || fail "silent live output wrote unexpected stderr"
+
   CODEX_LOG_FILE="$temp_dir/Upkeeper.log" CYCLE_ID=validation CYCLE_RUN_HASH=filter-test \
-    CODEX_TERMINAL_VERBOSITY=summary \
+    CODEX_TERMINAL_VERBOSITY=basic \
     bash -lc 'cd "$1"; source ./Upkeeper; emit_codex_transcript_summary validation "$2" 1' bash "$ROOT_DIR" "$temp_dir/transcript.log" \
       >"$temp_dir/summary.out" 2>"$temp_dir/summary.err"
   grep -Fq "codex.transcript.signal label=validation text=exited\\ 1\\ in\\ 0.1s" "$temp_dir/Upkeeper.log" || fail "transcript summary did not report runtime failure"

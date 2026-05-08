@@ -82,7 +82,7 @@ CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT="${CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT:-5}
 CODEX_LOG_ROTATE_AFTER_HOURS="${CODEX_LOG_ROTATE_AFTER_HOURS:-72}"
 CODEX_LOG_ROTATE_KEEP_HOURS="${CODEX_LOG_ROTATE_KEEP_HOURS:-144}"
 CODEX_PROCESS_ARGS_MAX_CHARS="${CODEX_PROCESS_ARGS_MAX_CHARS:-600}"
-CODEX_TERMINAL_VERBOSITY="${CODEX_TERMINAL_VERBOSITY:-summary}"
+CODEX_TERMINAL_VERBOSITY="${CODEX_TERMINAL_VERBOSITY:-basic}"
 CODEX_TRANSCRIPT_DIR="${CODEX_TRANSCRIPT_DIR:-$ROOT_DIR/runtime/upkeeper-transcripts}"
 CODEX_TRANSCRIPT_KEEP_HOURS="${CODEX_TRANSCRIPT_KEEP_HOURS:-24}"
 CODEX_TRANSCRIPT_KEEP_MAX_MB="${CODEX_TRANSCRIPT_KEEP_MAX_MB:-200}"
@@ -463,7 +463,7 @@ main() {
   RUN_TRANSCRIPT_FILE="$(new_transcript_file primary)"
   log_line "INFO" "run.start execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=${PROMPT_FILE:-inline/default} compiled_prompt=$compiled_prompt_file transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE")"
   RUN_CODEX_STARTED_EPOCH="$(date '+%s')"
-  terminal_emit_progress "codex started target=${RUN_SELECTED_REVIEW_PATH:-unknown} model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT prompt_pass=${CODEX_PROMPT_PASS:-default} transcript=$RUN_TRANSCRIPT_FILE"
+  terminal_emit_progress "starting Codex review for ${RUN_SELECTED_REVIEW_PATH:-unknown} (model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT pass=${CODEX_PROMPT_PASS:-default}; transcript=$RUN_TRANSCRIPT_FILE)"
   start_terminal_progress_heartbeat "primary" "$RUN_TRANSCRIPT_FILE" "$RUN_CODEX_STARTED_EPOCH" "${RUN_SELECTED_REVIEW_PATH:-unknown}"
 
   set +e
@@ -491,7 +491,7 @@ main() {
   else
     log_line "ERROR" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE") transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
   fi
-  terminal_emit_progress "codex finished target=${RUN_SELECTED_REVIEW_PATH:-unknown} exit=$codex_exit transcript=$RUN_TRANSCRIPT_FILE"
+  terminal_emit_progress "Codex review finished for ${RUN_SELECTED_REVIEW_PATH:-unknown} (exit=$codex_exit; transcript=$RUN_TRANSCRIPT_FILE)"
   local after_quota_json=""
   local after_error=""
   local after_ts="" after_source="" after_selection="" after_model_hint="" after_snapshot_is_current=""

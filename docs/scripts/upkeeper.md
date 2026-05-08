@@ -94,10 +94,14 @@ Loop stop semantics:
     zip archives older than 144 hours on startup.
 
 Transcript and live terminal behavior:
-  - Default live terminal mode is summary-first. Routine INFO logs stay in
-    `Upkeeper.log`; full Codex stdout/stderr stays in transcript artifacts.
-  - Numbered command-category progress, WARN/ERROR lines, final status, and
-    bounded high-signal transcript summaries remain visible live.
+  - Default live terminal mode is `basic`: routine INFO logs stay in
+    `Upkeeper.log`; full Codex stdout/stderr stays in transcript artifacts; the
+    terminal shows selected target, Codex start/finish, long-running heartbeats,
+    status markers, checks/tests/validation/build commands, WARN, and ERROR.
+  - Set `CODEX_TERMINAL_VERBOSITY=verbose` for command-level search/file-view
+    progress like `cmd#N search started`; `debug1` is the first diagnostic tier.
+  - Set `CODEX_TERMINAL_VERBOSITY=quiet` for only major progress, status,
+    WARN, and ERROR; set `silent` for no routine terminal chatter.
   - Transcript artifacts live under `runtime/upkeeper-transcripts` by default and
     are pruned after 24 hours or once the directory exceeds 200 MB.
   - Set `CODEX_TERMINAL_VERBOSITY=full` to stream the full backend transcript live.
@@ -252,7 +256,7 @@ Environment overrides:
   CODEX_LOG_ROTATE_AFTER_HOURS  Default: 72
   CODEX_LOG_ROTATE_KEEP_HOURS   Default: 144
   CODEX_PROCESS_ARGS_MAX_CHARS  Default: 600
-  CODEX_TERMINAL_VERBOSITY     Default: summary
+  CODEX_TERMINAL_VERBOSITY     Default: basic
   CODEX_TRANSCRIPT_DIR         Default: runtime/upkeeper-transcripts
   CODEX_TRANSCRIPT_KEEP_HOURS  Default: 24
   CODEX_TRANSCRIPT_KEEP_MAX_MB Default: 200

@@ -43,9 +43,37 @@ process_start_fingerprint() {
   printf 'proc_start_ticks=unknown'
 }
 
+terminal_mode() {
+  local raw="${CODEX_TERMINAL_VERBOSITY:-basic}"
+  raw="${raw,,}"
+  case "$raw" in
+    ''|basic|summary|normal|default)
+      printf 'basic'
+      ;;
+    verbose|1|yes|true)
+      printf 'verbose'
+      ;;
+    debug|debug1)
+      printf 'debug1'
+      ;;
+    quiet)
+      printf 'quiet'
+      ;;
+    silent|none|0|no|false)
+      printf 'silent'
+      ;;
+    full|raw)
+      printf 'full'
+      ;;
+    *)
+      printf '%s' "$raw"
+      ;;
+  esac
+}
+
 terminal_wants_full_output() {
-  case "${CODEX_TERMINAL_VERBOSITY:-summary}" in
-    full|verbose|debug|trace|1|yes|true)
+  case "$(terminal_mode)" in
+    full)
       return 0
       ;;
     *)
@@ -55,8 +83,30 @@ terminal_wants_full_output() {
 }
 
 terminal_wants_quiet_output() {
-  case "${CODEX_TERMINAL_VERBOSITY:-summary}" in
-    quiet|none|silent|0|no|false)
+  case "$(terminal_mode)" in
+    quiet)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+terminal_wants_silent_output() {
+  case "$(terminal_mode)" in
+    silent)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+terminal_wants_verbose_output() {
+  case "$(terminal_mode)" in
+    verbose|debug1)
       return 0
       ;;
     *)
@@ -66,8 +116,19 @@ terminal_wants_quiet_output() {
 }
 
 terminal_suppresses_progress() {
-  case "${CODEX_TERMINAL_VERBOSITY:-summary}" in
-    none|silent|0|no|false)
+  case "$(terminal_mode)" in
+    silent)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+terminal_suppresses_heartbeat() {
+  case "$(terminal_mode)" in
+    quiet|silent|full)
       return 0
       ;;
     *)
@@ -78,10 +139,21 @@ terminal_suppresses_progress() {
 
 terminal_emit_progress() {
   local message="$*"
+  local mode
 
   terminal_wants_full_output && return 0
   terminal_suppresses_progress && return 0
-  printf '%s Upkeeper: %s\n' "$(timestamp_now)" "$message" >&2
+  mode="$(terminal_mode)"
+  if [[ "$mode" == "quiet" ]]; then
+    case "$message" in
+      selected\ file*|starting\ Codex*|Codex\ review\ finished*|review\ completed*)
+        ;;
+      *)
+        return 0
+        ;;
+    esac
+  fi
+  printf '%s [INFO] Upkeeper: %s\n' "$(timestamp_now)" "$message" >&2
 }
 
 terminal_emit_log_line() {
@@ -92,6 +164,7 @@ terminal_emit_log_line() {
     printf '%s\n' "$line"
     return 0
   fi
+  terminal_wants_silent_output && return 0
   if terminal_wants_quiet_output; then
     case "$level" in
       WARN|ERROR)

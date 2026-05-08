@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Quota-respecting watch loop for full Upkeeper review coverage.
-# Runs P1-P23 with --prompt-pass=all and appends P24-P28.
+# Runs P1-P23 with --prompt-pass=all and appends P24-P29.
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -38,7 +38,7 @@ while true; do
     CODEX_5H_STOP_PERCENT="$UPKEEPER_TEST_5H_STOP_PERCENT" \
     CODEX_WEEK_STOP_PERCENT="$UPKEEPER_TEST_WEEK_STOP_PERCENT" \
     CODEX_TERMINAL_VERBOSITY="$UPKEEPER_TEST_TERMINAL_VERBOSITY" \
-    "$UPKEEPER_CMD" --prompt-pass=all --review-modules=p24,p25,p26,p27,p28 "$@"
+    "$UPKEEPER_CMD" --prompt-pass=all --review-modules=p24,p25,p26,p27,p28,p29 "$@"
   rc=$?
   set -e
 

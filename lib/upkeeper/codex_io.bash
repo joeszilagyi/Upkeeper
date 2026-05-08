@@ -234,6 +234,9 @@ normalize_review_module() {
     p28|unit-test|unit-tests|unit-testing|test-harvest|test-harvesting|fixture-harvest|fixture-harvesting)
       printf 'p28'
       ;;
+    p29|reuse|reuse-harvest|reuse-harvesting|reusable|consolidation|extract-helper|helper-extraction)
+      printf 'p29'
+      ;;
     *)
       return 1
       ;;
@@ -246,7 +249,7 @@ add_review_module() {
 
   [[ -n "$raw_module" ]] || die "--review-module requires a non-empty value"
   if ! module="$(normalize_review_module "$raw_module")"; then
-    die "unknown review module: $raw_module (supported: p24, p25, p26, p27, p28)"
+    die "unknown review module: $raw_module (supported: p24, p25, p26, p27, p28, p29)"
   fi
 
   for existing in "${CODEX_REVIEW_MODULES[@]}"; do
@@ -283,7 +286,7 @@ normalize_review_modules_spec_csv() {
     item="${item%"${item##*[![:space:]]}"}"
     [[ -n "$item" ]] || die "review module filter contains an empty value"
     if ! module="$(normalize_review_module "$item")"; then
-      die "unknown review module filter: $item (supported: p24, p25, p26, p27, p28)"
+      die "unknown review module filter: $item (supported: p24, p25, p26, p27, p28, p29)"
     fi
     for existing in "${modules[@]}"; do
       [[ "$existing" == "$module" ]] && continue 2
@@ -424,7 +427,7 @@ parse_args() {
         shift
         ;;
       --review-module)
-        die "use --review-module=p24, --review-module=p25, --review-module=p26, --review-module=p27, or --review-module=p28 (spaced form is intentionally unsupported)"
+        die "use --review-module=p24, --review-module=p25, --review-module=p26, --review-module=p27, --review-module=p28, or --review-module=p29 (spaced form is intentionally unsupported)"
         ;;
       --review-modules=*)
         reset_config_review_modules_for_cli_override
@@ -432,7 +435,7 @@ parse_args() {
         shift
         ;;
       --review-modules)
-        die "use --review-modules=p24,p25,p26,p27,p28 (spaced form is intentionally unsupported)"
+        die "use --review-modules=p24,p25,p26,p27,p28,p29 (spaced form is intentionally unsupported)"
         ;;
       --p24)
         reset_config_review_modules_for_cli_override
@@ -457,6 +460,11 @@ parse_args() {
       --p28)
         reset_config_review_modules_for_cli_override
         add_review_module p28
+        shift
+        ;;
+      --p29)
+        reset_config_review_modules_for_cli_override
+        add_review_module p29
         shift
         ;;
       --model-override=*)
@@ -554,7 +562,7 @@ parse_args() {
         shift
         ;;
       --selection-review-modules)
-        die "use --selection-review-modules=p24,p25,p26,p27,p28 (spaced form is intentionally unsupported)"
+        die "use --selection-review-modules=p24,p25,p26,p27,p28,p29 (spaced form is intentionally unsupported)"
         ;;
       --ignore-failure-queue|--bypass-failure-queue)
         CODEX_TOOL_FAILURE_QUEUE_BYPASS="1"

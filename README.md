@@ -33,9 +33,9 @@ On each cycle it:
   runtime evidence, or test trees by accident
 - applies the P23 data-contract pass to validators, importers, exporters,
   registry loaders, config readers, data readers, and input-boundary CLIs
-- can append opt-in P24/P25/P26/P27/P28 review modules for de-LLM-ing
+- can append opt-in P24/P25/P26/P27/P28/P29 review modules for de-LLM-ing
   viability, contract/intent compliance, public documentation clarity,
-  educational debriefs, and unit-test harvesting
+  educational debriefs, unit-test harvesting, and reuse harvesting
 - runs Codex once with the configured model and reasoning effort
 - records terminal outcomes in `Upkeeper.log`
 - tags log lines with a per-cycle `run_hash` and emits `--MARK--` heartbeat
@@ -348,10 +348,10 @@ choose a replacement from the same source-safe boundary.
 
 Operators can narrow normal rotation with `--target-root=PATH`,
 `--target-depth=N`, `--include-glob=PATTERN`, `--exclude-glob=PATTERN`, and
-`--selection-review-modules=p24,p25,p26,p27,p28`. `--selection-order=random`
+`--selection-review-modules=p24,p25,p26,p27,p28,p29`. `--selection-order=random`
 or `--random-target` chooses a random eligible target within the filtered set.
 These filters shape target selection only; review-module prompts still require
-`--review-module`, `--review-modules`, or the `--p24` through `--p28` shorthands.
+`--review-module`, `--review-modules`, or the `--p24` through `--p29` shorthands.
 `--target-file=PATH` remains the strongest one-cycle pin and takes precedence
 over the failure queue and selection filters. Automatic rotation stays focused
 on script/tool candidates, but an explicit operator pin may target any
@@ -391,7 +391,7 @@ available as a standalone prompt file:
 ./Upkeeper.sh --prompt-file /work/tools/Upkeeper/prompts/p23-data-contract-negative-fixture-audit.md
 ```
 
-P24 through P28 are opt-in review modules. They are loaded from the central
+P24 through P29 are opt-in review modules. They are loaded from the central
 Upkeeper checkout, so symlinked clients can use the same flags without knowing
 absolute prompt-file paths.
 
@@ -423,16 +423,23 @@ validation path, or deterministic LLM-discovered fact can become a cheap local
 test or fixture. It favors existing validation scripts and local fixtures over
 framework or service overhead.
 
+P29 applies when project knowledge should become a reusable helper, fixture,
+prompt section, documentation reference, command idiom, validation pattern,
+template, or local asset instead of being rediscovered or rewritten in later
+cycles. It requires a stable contract, a clear owner, local verification, and a
+smaller or safer future maintenance path.
+
 ```sh
 ./Upkeeper --review-module=p24
 ./Upkeeper --review-module=p25
 ./Upkeeper --review-module=p26
 ./Upkeeper --review-module=p27
 ./Upkeeper --review-module=p28
-./Upkeeper --review-modules=p24,p25,p26,p27,p28
+./Upkeeper --review-module=p29
+./Upkeeper --review-modules=p24,p25,p26,p27,p28,p29
 
 # Shorthand aliases are also available.
-./Upkeeper --p24 --p25 --p26 --p27 --p28
+./Upkeeper --p24 --p25 --p26 --p27 --p28 --p29
 ```
 
 Before the primary Codex response emits its final marker, the prompt now requires
@@ -521,7 +528,8 @@ specific policy for publishing them.
 |   |-- p25-contract-intent-compliance-review.md
 |   |-- p26-public-documentation-review.md
 |   |-- p27-educational-debrief-review.md
-|   `-- p28-unit-test-harvesting-review.md
+|   |-- p28-unit-test-harvesting-review.md
+|   `-- p29-reuse-harvesting-review.md
 |-- templates/
 |   |-- README.md
 |   `-- prompt-template.md
@@ -534,6 +542,7 @@ specific policy for publishing them.
 |-- Upkeeper
 |-- Upkeeper.conf
 |-- LICENSE
+|-- PLANS.md
 |-- .editorconfig
 |-- .gitignore
 |-- change_notes_2026.md
@@ -569,6 +578,7 @@ specific policy for publishing them.
 - [launcher_examples/README.md](launcher_examples/README.md): tracked shell
   launcher examples for common Upkeeper loops
 - `testruns/*.sh`: tracked local launchers for repeatable Upkeeper test cycles
+- [PLANS.md](PLANS.md): brief implementation plans for complex Upkeeper changes
 - [prompts/default-review.md](prompts/default-review.md): runtime default review
   prompt template loaded by Upkeeper
 - [prompts/caretaking_23_items.md](prompts/caretaking_23_items.md): full
@@ -585,6 +595,8 @@ specific policy for publishing them.
   P27 review module for concise saved educational debriefs
 - [prompts/p28-unit-test-harvesting-review.md](prompts/p28-unit-test-harvesting-review.md):
   P28 review module for turning useful discoveries into local tests or fixtures
+- [prompts/p29-reuse-harvesting-review.md](prompts/p29-reuse-harvesting-review.md):
+  P29 review module for extracting bounded reusable project knowledge
 - [prompts/git_hard_clean.md](prompts/git_hard_clean.md): explicit branch and backup cleanup
   workflow notes
 - [templates/prompt-template.md](templates/prompt-template.md): starter format

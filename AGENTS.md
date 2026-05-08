@@ -178,7 +178,7 @@ Upkeeper is expected to stress test both itself and client repositories.
   the manifest, normal timestamp rotation, local failure queue, and selection
   filters unless the target is physically impossible or unsafe to read.
 - Selection review-module filters narrow candidate files only. They do not
-  request P24 through P28 prompt modules; use `--review-module`,
+  request P24 through P29 prompt modules; use `--review-module`,
   `--review-modules`, or shorthand flags when the prompt module itself is
   wanted.
 

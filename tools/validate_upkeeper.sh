@@ -227,6 +227,7 @@ check_prompt_template() {
   [[ -s prompts/p26-public-documentation-review.md ]] || fail "P26 review module prompt is missing or empty"
   [[ -s prompts/p27-educational-debrief-review.md ]] || fail "P27 review module prompt is missing or empty"
   [[ -s prompts/p28-unit-test-harvesting-review.md ]] || fail "P28 review module prompt is missing or empty"
+  [[ -s prompts/p29-reuse-harvesting-review.md ]] || fail "P29 review module prompt is missing or empty"
   [[ -s Upkeeper.conf ]] || fail "root Upkeeper.conf is missing or empty"
   [[ -s configurations/default.conf ]] || fail "configurations/default.conf is missing or empty"
   [[ -x tools/stress_upkeeper_corpus.sh ]] || fail "stress corpus harness is missing or not executable"
@@ -249,9 +250,14 @@ check_prompt_template() {
   grep -Fq "P28 - Unit Test Harvesting Review" prompts/p28-unit-test-harvesting-review.md || fail "P28 prompt title missing"
   grep -Fq "P28: not applicable" prompts/p28-unit-test-harvesting-review.md || fail "P28 applicability gate missing"
   grep -Fq "without backend model quota" prompts/p28-unit-test-harvesting-review.md || fail "P28 local test contract missing"
+  grep -Fq "P29 - Reuse Harvesting Review" prompts/p29-reuse-harvesting-review.md || fail "P29 prompt title missing"
+  grep -Fq "P29: not applicable" prompts/p29-reuse-harvesting-review.md || fail "P29 applicability gate missing"
+  grep -Fq "stable contract" prompts/p29-reuse-harvesting-review.md || fail "P29 stable-contract rule missing"
+  grep -Fq 'generic `utils.bash` dumping ground' prompts/p29-reuse-harvesting-review.md || fail "P29 utility-dumping-ground boundary missing"
   grep -Fq "code-comment clarity" README.md || fail "README missing P26 summary"
   grep -Fq "educational debrief" README.md || fail "README missing P27 summary"
   grep -Fq "unit-test harvesting" README.md || fail "README missing P28 summary"
+  grep -Fq "reuse harvesting" README.md || fail "README missing P29 summary"
   grep -Fq "Upkeeper.conf" README.md || fail "README missing config file summary"
   grep -Fq "tools/stress_upkeeper_corpus.sh --local" README.md || fail "README missing stress corpus command"
   grep -Fq "tools/stress_upkeeper_corpus.sh --local" docs/stress-corpus.md || fail "stress corpus docs missing implemented command"
@@ -268,6 +274,7 @@ check_help_and_diff() {
   grep -Fq -- "--review-module=p26" <<<"$help" || fail "help missing --review-module=p26"
   grep -Fq -- "--review-module=p27" <<<"$help" || fail "help missing --review-module=p27"
   grep -Fq -- "--review-module=p28" <<<"$help" || fail "help missing --review-module=p28"
+  grep -Fq -- "--review-module=p29" <<<"$help" || fail "help missing --review-module=p29"
   grep -Fq -- "--config-file=PATH" <<<"$help" || fail "help missing --config-file"
   grep -Fq -- "--no-config" <<<"$help" || fail "help missing --no-config"
   grep -Fq -- "--target-root=PATH" <<<"$help" || fail "help missing --target-root"
@@ -279,12 +286,13 @@ check_help_and_diff() {
   grep -Fq -- "--include-globs=a,b" <<<"$help" || fail "help missing --include-globs"
   grep -Fq -- "--exclude-glob=PATTERN" <<<"$help" || fail "help missing --exclude-glob"
   grep -Fq -- "--exclude-globs=a,b" <<<"$help" || fail "help missing --exclude-globs"
-  grep -Fq -- "--selection-review-modules=p24,p25,p26,p27,p28" <<<"$help" || fail "help missing --selection-review-modules"
+  grep -Fq -- "--selection-review-modules=p24,p25,p26,p27,p28,p29" <<<"$help" || fail "help missing --selection-review-modules"
   grep -Fq -- "--p24" <<<"$help" || fail "help missing --p24"
   grep -Fq -- "--p25" <<<"$help" || fail "help missing --p25"
   grep -Fq -- "--p26" <<<"$help" || fail "help missing --p26"
   grep -Fq -- "--p27" <<<"$help" || fail "help missing --p27"
   grep -Fq -- "--p28" <<<"$help" || fail "help missing --p28"
+  grep -Fq -- "--p29" <<<"$help" || fail "help missing --p29"
   grep -Fq -- "--ignore-failure-queue" <<<"$help" || fail "help missing --ignore-failure-queue"
   git diff --check
   git diff --cached --check
@@ -703,17 +711,18 @@ check_review_module_flags() {
     CODEX_FALLBACK_SCREEN_ENABLED=0 \
     CODEX_POSTMORTEM_ENABLED=0 \
     UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25,p26,p27,p28 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+    ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25,p26,p27,p28,p29 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
 
-  grep -Fq "review_modules=p24,p25,p26,p27,p28" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules"
+  grep -Fq "review_modules=p24,p25,p26,p27,p28,p29" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules"
   grep -Fq "review.module_prompt enabled module=p24" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P24"
   grep -Fq "review.module_prompt enabled module=p25" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P25"
   grep -Fq "review.module_prompt enabled module=p26" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P26"
   grep -Fq "review.module_prompt enabled module=p27" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P27"
   grep -Fq "review.module_prompt enabled module=p28" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P28"
+  grep -Fq "review.module_prompt enabled module=p29" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P29"
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not finish cleanly"
 
-  output="$(./Upkeeper --p24 --p25 --p26 --p27 --p28 --version)"
+  output="$(./Upkeeper --p24 --p25 --p26 --p27 --p28 --p29 --version)"
   [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "review module shorthand flags broke --version"
 
   set +e

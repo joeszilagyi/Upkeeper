@@ -12,6 +12,27 @@ finish_cycle() {
   if [[ $# -gt 0 ]]; then
     message="$message $*"
   fi
+  local status_marker="" codex_exit="" codex_exec_started="0"
+  case "$reason" in
+    WORK_DONE)
+      status_marker="WORK_DONE"
+      ;;
+    BLOCKED)
+      status_marker="BLOCKED"
+      ;;
+    NO_BACKEND_TASK|NO_BACKEND_TASK_CONTINUE|NO_BACKEND_TASK_DIRTY_CONTINUE)
+      status_marker="NO_BACKEND_TASK"
+      ;;
+  esac
+  if [[ "$message" =~ codex_exit=([-0-9]+) ]]; then
+    codex_exit="${BASH_REMATCH[1]}"
+  fi
+  if [[ "$message" =~ codex_exec_started=([01]) ]]; then
+    codex_exec_started="${BASH_REMATCH[1]}"
+  elif [[ -n "${RUN_CODEX_STARTED_EPOCH:-}" ]]; then
+    codex_exec_started="1"
+  fi
+  lattice_record_cycle_finish "$exit_code" "$reason" "$level" "$status_marker" "$codex_exit" "$codex_exec_started" "${RUN_SELECTED_REVIEW_PATH:-}" || true
   log_line "$level" "$message"
   finalize_wrapper_health_state "exited"
   release_active_lock

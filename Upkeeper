@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.1.22
+## Version: v1.2.0
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -107,7 +107,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.1.22"
+UPKEEPER_VERSION="v1.2.0"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -125,6 +125,12 @@ UPKEEPER_INCLUDE_GLOBS="${UPKEEPER_INCLUDE_GLOBS:-}"
 UPKEEPER_EXCLUDE_GLOBS="${UPKEEPER_EXCLUDE_GLOBS:-}"
 UPKEEPER_SELECTION_REVIEW_MODULES="${UPKEEPER_SELECTION_REVIEW_MODULES:-}"
 UPKEEPER_SELECTION_RANDOM_SEED="${UPKEEPER_SELECTION_RANDOM_SEED:-}"
+UPKEEPER_LATTICE_ENABLED="${UPKEEPER_LATTICE_ENABLED:-1}"
+UPKEEPER_LATTICE_REQUIRED="${UPKEEPER_LATTICE_REQUIRED:-0}"
+UPKEEPER_LATTICE_DB="${UPKEEPER_LATTICE_DB:-$ROOT_DIR/runtime/upkeeper-lattice/lattice.sqlite3}"
+UPKEEPER_LATTICE_SELECTION_MODE="${UPKEEPER_LATTICE_SELECTION_MODE:-oldest-mtime}"
+UPKEEPER_LATTICE_RAW_STORAGE="${UPKEEPER_LATTICE_RAW_STORAGE:-limited}"
+UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE="${UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE:-delete}"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -270,6 +276,10 @@ RUN_SELECTED_FAILURE_MARKER_PATH=""
 ACTIVE_LOCK_ACQUIRED="0"
 WRAPPER_HEALTH_STATE_FILE=""
 WRAPPER_HEALTH_STATE_FINALIZED="0"
+UPKEEPER_LATTICE_AVAILABLE="0"
+UPKEEPER_LATTICE_WARNED="0"
+UPKEEPER_LATTICE_FINISH_RECORDED="0"
+LATTICE_LAST_OUTPUT=""
 
 source_upkeeper_module() {
   local module="$1"
@@ -299,6 +309,7 @@ UPKEEPER_MODULES=(
   "operator_guide.bash"
   "cycle_cleanup_signals.bash"
   "runtime_format_json.bash"
+  "lattice.bash"
   "transcript_output.bash"
   "tool_failure_queue.bash"
   "codex_io.bash"
@@ -390,6 +401,8 @@ main() {
   loop_parent_start_fingerprint="$(process_start_fingerprint "$loop_parent_pid")"
 
   log_line "INFO" "cycle.start execution_origin=$(shell_quote "$CODEX_EXECUTION_ORIGIN") script=$(shell_quote "$SELF_INVOKE_PATH") implementation=$(shell_quote "$SELF_PATH") cwd=$(shell_quote "$ROOT_DIR") pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$(shell_quote "$direct_parent_comm") parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$(shell_quote "$loop_parent_comm") loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override config_loaded=$UPKEEPER_CONFIG_LOADED config_file=$(shell_quote "$UPKEEPER_CONFIG_SOURCE") model=$(shell_quote "$CODEX_MODEL") effort=$(shell_quote "$CODEX_REASONING_EFFORT") mode=$(shell_quote "$CODEX_MODE_STRING") model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}") model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") target_root=$(shell_quote "${CODEX_TARGET_ROOT:-none}") target_depth=$(shell_quote "${CODEX_TARGET_MAX_DEPTH:-none}") selection_source=$(shell_quote "$CODEX_SELECTION_SOURCE") selection_order=$(shell_quote "$CODEX_SELECTION_ORDER") manifest_mode=$(shell_quote "$CODEX_FILE_MANIFEST_MODE") manifest_path=$(shell_quote "$CODEX_FILE_MANIFEST_PATH") include_globs=$(shell_quote "${CODEX_SELECTION_INCLUDE_GLOBS:-none}") exclude_globs=$(shell_quote "${CODEX_SELECTION_EXCLUDE_GLOBS:-none}") selection_review_modules=$(shell_quote "${CODEX_SELECTION_REVIEW_MODULES:-none}") prompt_pass=$(shell_quote "${CODEX_PROMPT_PASS:-default}") review_modules=$(review_modules_csv) attempt_role=$(shell_quote "$CODEX_ATTEMPT_ROLE") fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=$(shell_quote "${CODEX_PRIMARY_MODEL_CONTEXT:-none}") fallback_trigger=$(shell_quote "${CODEX_FALLBACK_TRIGGER:-none}") screen_fallback_child_id=$(shell_quote "${CODEX_SCREEN_FALLBACK_CHILD_ID:-none}") code_home=$(shell_quote "$CODEX_HOME_DIR") dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
+  lattice_init_and_doctor_or_exit
+  lattice_record_cycle_start
   start_run_mark_heartbeat
   check_disk_space_preflight
   if [[ "$STARTUP_ANOMALY_GATE" == "1" ]]; then
@@ -738,6 +751,7 @@ main() {
   primary_failure_classification="none"
   log_line "INFO" "cycle.summary execution_origin=$CODEX_EXECUTION_ORIGIN model=$CODEX_MODEL observed_primary_delta=$observed_primary_delta observed_secondary_delta=$observed_secondary_delta observed_delta_status=$observed_delta_status status_marker=${status_marker:-missing} status_marker_source=$status_marker_source session_end_state=$session_end_state agent_messages=$primary_session_agent_message_count tool_calls=$primary_session_tool_call_count tool_results=$primary_session_tool_result_count task_complete_last_agent_message=$primary_session_task_complete_last_agent_message codex_exit=$codex_exit"
   log_review_report_summary "$last_message_file" "${status_marker:-missing}" "$codex_exit"
+  lattice_record_pass_results "$last_message_file" "${RUN_SELECTED_REVIEW_PATH:-}" "$(lattice_planned_passes_csv)"
   enforce_startup_anomaly_changed_paths
   record_startup_anomaly_gate_review "$last_message_file" "${status_marker:-missing}" "$codex_exit"
   tool_failure_queue_finalize_run "${RUN_SELECTED_REVIEW_PATH:-}" "${RUN_TRANSCRIPT_FILE:-}" "$codex_exit" "${status_marker:-missing}"

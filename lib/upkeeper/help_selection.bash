@@ -214,6 +214,17 @@ Prompt behavior:
     metadata, startup refreshes it before selection. Set
     --selection-source=enumerate for a one-cycle direct scan without using the
     manifest, or --refresh-manifest to rebuild the manifest immediately.
+  - Upkeeper Lattice is enabled by default as a local SQLite evidence ledger at:
+      $UPKEEPER_LATTICE_DB
+    It records cycle starts/finishes, preselection evidence, candidate rows,
+    pass-result markers, worktree snapshots, imports, exports, backups, and
+    recovery facts under ignored runtime state. Lattice does not replace live
+    source-safe eligibility; explicit targets, startup anomaly gates, and the
+    local failure queue still keep their existing priority.
+    If Lattice is unavailable and UPKEEPER_LATTICE_REQUIRED=0, the wrapper logs
+    one warning, spools a small recovery record when possible, and continues the
+    existing cycle behavior. If UPKEEPER_LATTICE_REQUIRED=1, startup fails
+    before Codex launch.
   - Exception: when the repo-local Upkeeper implementation itself is eligible
     and has not been touched for at least
     ${CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS} days, it is selected first. If it is
@@ -323,6 +334,12 @@ Environment overrides:
   UPKEEPER_INCLUDE_GLOBS        Default: empty
   UPKEEPER_EXCLUDE_GLOBS        Default: empty
   UPKEEPER_SELECTION_REVIEW_MODULES Default: empty
+  UPKEEPER_LATTICE_ENABLED     Default: 1
+  UPKEEPER_LATTICE_REQUIRED    Default: 0
+  UPKEEPER_LATTICE_DB          Default: runtime/upkeeper-lattice/lattice.sqlite3
+  UPKEEPER_LATTICE_SELECTION_MODE Default: oldest-mtime
+  UPKEEPER_LATTICE_RAW_STORAGE Default: limited
+  UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE Default: delete
   CODEX_FILE_MANIFEST_MAX_AGE_SECONDS Default: 300
   CODEX_MODEL                   Default: gpt-5.3-codex-spark
   CODEX_REASONING_EFFORT        Default: xhigh
@@ -1074,6 +1091,7 @@ append_preselected_review_target() {
   local selection selector_rc err_file detail selected_path selected_epoch selected_age eligible_count selected_git_status selected_content_state selected_worktree_hash selected_basis
   local selection_mode selection_source manifest_status selection_order target_root target_max_depth include_globs exclude_globs selection_review_modules
   local failure_queue_selected failure_marker_id failure_marker_path failure_marker_first_seen_epoch failure_marker_failure_count failure_marker_first_failure_kind failure_marker_first_failure_exit_line
+  local selection_file
 
   if ! err_file="$(run_mktemp preselect-error)"; then
     log_line "WARN" "review.preselect.skip reason=tempfile_failed"
@@ -1137,6 +1155,10 @@ append_preselected_review_target() {
   RUN_SELECTED_FROM_FAILURE_QUEUE="${failure_queue_selected:-0}"
   RUN_SELECTED_FAILURE_MARKER_ID="$failure_marker_id"
   RUN_SELECTED_FAILURE_MARKER_PATH="$failure_marker_path"
+  if selection_file="$(run_mktemp lattice-preselect)"; then
+    printf '%s\n' "$selection" >"$selection_file"
+    lattice_record_preselect "$selection_file" ""
+  fi
 
   {
     printf 'WRAPPER_PRESELECTED_REVIEW_TARGET\n'

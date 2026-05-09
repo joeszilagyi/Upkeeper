@@ -8,6 +8,10 @@ show no dependencies unless the repo later adds a supported manifest or lock
 file such as `package.json`, `requirements.txt`, `Gemfile`, or `go.mod`, or
 submits dependencies through GitHub's dependency submission API.
 
+Upkeeper Lattice uses Python's standard-library `sqlite3` module. It does not
+add a Python package manifest, ORM, daemon, service, network client, or package
+manager dependency.
+
 Do not add fake package manifests just to populate the dependency graph. Track
 Upkeeper's real dependency surface here and validate it locally with:
 

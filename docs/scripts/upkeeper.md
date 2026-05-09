@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--prompt-pass=all]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.1.22
+Version: v1.2.0
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -202,6 +202,17 @@ Prompt behavior:
     metadata, startup refreshes it before selection. Set
     `--selection-source=enumerate` for a one-cycle direct scan without using the
     manifest, or `--refresh-manifest` to rebuild the manifest immediately.
+  - Upkeeper Lattice is enabled by default as a local SQLite evidence ledger at:
+      runtime/upkeeper-lattice/lattice.sqlite3
+    It records cycle starts/finishes, preselection evidence, candidate rows,
+    pass-result markers, worktree snapshots, imports, exports, backups, and
+    recovery facts under ignored runtime state. Lattice does not replace live
+    source-safe eligibility; explicit targets, startup anomaly gates, and the
+    local failure queue still keep their existing priority.
+    If Lattice is unavailable and `UPKEEPER_LATTICE_REQUIRED=0`, the wrapper
+    logs one warning, spools a small recovery record when possible, and
+    continues the existing cycle behavior. If `UPKEEPER_LATTICE_REQUIRED=1`,
+    startup fails before Codex launch.
   - Exception: when the repo-local Upkeeper implementation itself is eligible
     and has not been touched for at least 7 days, it is selected first. If it is
     newer than that threshold, normal oldest-file selection applies.
@@ -330,6 +341,12 @@ Environment overrides:
   UPKEEPER_INCLUDE_GLOBS        Default: empty
   UPKEEPER_EXCLUDE_GLOBS        Default: empty
   UPKEEPER_SELECTION_REVIEW_MODULES Default: empty
+  UPKEEPER_LATTICE_ENABLED     Default: 1
+  UPKEEPER_LATTICE_REQUIRED    Default: 0
+  UPKEEPER_LATTICE_DB          Default: runtime/upkeeper-lattice/lattice.sqlite3
+  UPKEEPER_LATTICE_SELECTION_MODE Default: oldest-mtime
+  UPKEEPER_LATTICE_RAW_STORAGE Default: limited
+  UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE Default: delete
   CODEX_FILE_MANIFEST_MAX_AGE_SECONDS Default: 300
   CODEX_MODEL                   Default: gpt-5.3-codex-spark
   CODEX_REASONING_EFFORT        Default: xhigh
@@ -423,6 +440,10 @@ Exit codes:
   P1 through P23. Upkeeper logs `review.pass_coverage` so all-pass cycles are
   auditable from machine logs, not only from prose. The parser accepts common
   Markdown line prefixes such as bullets and bold/code emphasis around `P<N>`.
+- Final responses may include additive `UPKEEPER_PASS_RESULT` lines for every
+  P* pass actually applied or explicitly found not applicable. Missing lines do
+  not fail a cycle; malformed lines are rejected evidence for Lattice instead
+  of clean pass results.
 - Review prompts avoid legacy editor-specific persistence instructions and keep
   only the Codex-relevant mtime/content verification contract, reducing prompt
   tokens without weakening the review workflow.

@@ -173,6 +173,7 @@ check_syntax() {
     bash -n "$module"
   done
   bash -n tools/*.sh
+  bash -n tests/*.bash
   bash -n testruns/*.sh
 }
 
@@ -228,6 +229,10 @@ check_prompt_template() {
   [[ -s prompts/p27-educational-debrief-review.md ]] || fail "P27 review module prompt is missing or empty"
   [[ -s prompts/p28-unit-test-harvesting-review.md ]] || fail "P28 review module prompt is missing or empty"
   [[ -s prompts/p29-reuse-harvesting-review.md ]] || fail "P29 review module prompt is missing or empty"
+  [[ -x tools/upkeeper_lattice.py ]] || fail "Lattice tool is missing or not executable"
+  [[ -s lib/upkeeper/lattice.bash ]] || fail "Lattice wrapper module is missing or empty"
+  [[ -s tests/lattice_test.bash ]] || fail "Lattice test is missing or empty"
+  [[ -s docs/lattice.md ]] || fail "Lattice documentation is missing or empty"
   [[ -s Upkeeper.conf ]] || fail "root Upkeeper.conf is missing or empty"
   [[ -s configurations/default.conf ]] || fail "configurations/default.conf is missing or empty"
   [[ -x tools/stress_upkeeper_corpus.sh ]] || fail "stress corpus harness is missing or not executable"
@@ -262,6 +267,11 @@ check_prompt_template() {
   grep -Fq "Registry Preference" prompts/p29-reuse-harvesting-review.md || fail "P29 registry preference missing"
   grep -Fq "Reuse Debt Output" prompts/p29-reuse-harvesting-review.md || fail "P29 reuse debt output missing"
   grep -Fq "ShellCheck Integration Policy" prompts/p29-reuse-harvesting-review.md || fail "P29 ShellCheck policy missing"
+  grep -Fq "UPKEEPER_PASS_RESULT" prompts/default-review.md || fail "default prompt missing pass-result marker contract"
+  grep -Fq "UPKEEPER_LATTICE_ENABLED" Upkeeper.conf || fail "root config missing Lattice defaults"
+  grep -Fq "UPKEEPER_LATTICE_ENABLED" configurations/default.conf || fail "default profile missing Lattice defaults"
+  grep -Fq "local SQLite evidence ledger" docs/lattice.md || fail "Lattice docs missing local SQLite summary"
+  grep -Fq "source-safe live eligibility remains authoritative" docs/lattice.md || fail "Lattice docs missing live eligibility boundary"
   grep -Fq "Reusable Asset Ownership" lib/upkeeper/README.md || fail "module README missing reusable asset ownership map"
   grep -Fq "code-comment clarity" README.md || fail "README missing P26 summary"
   grep -Fq "educational debrief" README.md || fail "README missing P27 summary"
@@ -1125,6 +1135,14 @@ PY
   rm -r "$temp_dir"
 }
 
+check_lattice_contract() {
+  log "checking Upkeeper Lattice"
+  bash tests/lattice_test.bash
+  if rg -n '\b(curl|gh|requests|urllib|http\.client|GITHUB_TOKEN)\b' tools/upkeeper_lattice.py lib/upkeeper/lattice.bash >/dev/null; then
+    fail "Lattice implementation contains a default network/token surface"
+  fi
+}
+
 check_public_docs_policy() {
   log "checking public documentation policy"
   tools/check_public_docs.sh --quick
@@ -1961,6 +1979,7 @@ check_review_module_flags
 check_config_file_support
 check_file_manifest_selection
 check_tool_failure_queue
+check_lattice_contract
 check_public_docs_policy
 check_fallback_artifact_helpers
 check_runtime_format_json_helpers

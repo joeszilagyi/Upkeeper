@@ -58,6 +58,19 @@ Future changes should preserve this operator-visible surface as far as possible:
   `runtime/upkeeper-transcripts`, `runtime/journals/upkeeper-postmortems`,
   `runtime/upkeeper-file-manifest.json`, and
   `runtime/unaddressed-tool-failures`.
+- Upkeeper Lattice is additive local runtime evidence at
+  `runtime/upkeeper-lattice/lattice.sqlite3`. Runtime artifacts under
+  `runtime/upkeeper-lattice/`, including SQLite side files, backups, exports,
+  and recovery records, remain ignored local state.
+- `UPKEEPER_PASS_RESULT` is additive. `UPKEEPER_STATUS` and
+  `UPKEEPER_LOG_REVIEW` remain unchanged.
+- Missing `UPKEEPER_PASS_RESULT` markers do not fail a cycle. Malformed
+  pass-result markers are recorded as rejected evidence, not clean pass results.
+- Default target selection remains current-compatible. Live source-safe
+  eligibility stays authoritative; Lattice does not replace current eligibility
+  with stale database rows.
+- Explicit targets still win. Startup anomaly gates still win. The local
+  failure queue still wins before normal timestamp rotation.
 - Validation entrypoints remain available:
   `tools/validate_upkeeper.sh --deps`, `--quick`, and `--full`.
 - The GitHub Actions no-quota CI workflow remains available at

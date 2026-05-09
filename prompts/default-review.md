@@ -98,6 +98,21 @@ If no fixes are found:
   WRAPPER_PRESELECTED_REVIEW_TARGET metadata
 - count the execution as completed
 
+Machine-readable pass-result evidence:
+
+- Keep `UPKEEPER_LOG_REVIEW` and `UPKEEPER_STATUS` unchanged.
+- For every P* pass you actually applied or explicitly found not applicable,
+  include one raw final-response line that starts with `UPKEEPER_PASS_RESULT:`.
+- Use key/value fields so Upkeeper Lattice can record pass rows without schema
+  changes for future P30 or P999 passes.
+- Examples:
+  - `UPKEEPER_PASS_RESULT: pass=P23 file=lib/upkeeper/example.bash applicable=1 outcome=clean changed=0 regression=0`
+  - `UPKEEPER_PASS_RESULT: pass=P24 file=lib/upkeeper/example.bash applicable=1 outcome=fixed changed=1 regression=0`
+  - `UPKEEPER_PASS_RESULT: pass=P25 file=lib/upkeeper/example.bash applicable=0 outcome=not_applicable changed=0 regression=0 reason=no_matching_surface`
+- Do not put these marker lines inside Markdown code fences.
+- Missing pass-result lines do not fail the cycle; malformed lines are rejected
+  evidence, not clean pass results.
+
 To be clear:
 
 You are looking for the ===ONE=== oldest file that is a script or tool that you can update and improve.

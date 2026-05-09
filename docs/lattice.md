@@ -295,7 +295,11 @@ the original evidence.
 `import-git` uses local Git as canonical when a clone is available. It imports
 contributors, commits, file changes, renames, deletes, recreations, copies, and
 shallow/incomplete state through import cursors. It uses NUL-safe Git output
-where practical. Without `.git`, it reports unavailable with reason
+where practical. Per-commit file-change rows are idempotent by repository,
+commit, path, old path, and status, so an accidental rerun reports duplicates
+without multiplying Git churn evidence. Normal `init` also removes duplicate
+Git file-change rows left by older local databases before recreating the unique
+guard index. Without `.git`, it reports unavailable with reason
 `no_git_repository` and does not classify the condition as a DB failure.
 
 `import-upkeeper-log` reconstructs parseable cycle and preselection facts from

@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-09: v1.2.1 changes:
+	1. Hardened `tools/upkeeper_lattice.py import-git` so rerunning a local Git import skips already-recorded per-commit file changes instead of multiplying `git_file_changes` churn evidence.
+	2. Added a unique Git file-change guard and normal `init` repair for duplicate Git change rows left by older local Lattice databases.
+	3. Kept renamed-file lineage attached when a renamed path is changed later, and allowed `file-history` queries to resolve through prior path aliases.
+	4. Extended Lattice validation with repeated Git import, duplicate repair, and rename-after-modify fixtures.
+
 2026-05-08: v1.2.0 changes:
 	1. Added Upkeeper Lattice as a default-on local SQLite evidence ledger at `runtime/upkeeper-lattice/lattice.sqlite3`, using Python stdlib `sqlite3` without a daemon, ORM, package manifest, network sync, or GitHub token storage.
 	2. Added the normalized schema v1 ledger, doctor, backup, JSONL export/import, local recovery, Git import, Upkeeper log import, change-note import, regression marking, pruning, and initial query surface.

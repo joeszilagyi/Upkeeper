@@ -73,6 +73,9 @@ make_repo() {
     git commit -q -m "initial torture fixtures"
     git mv rename-old.sh rename-new.sh
     git commit -q -m "rename fixture"
+    printf '# renamed path changed\n' >>rename-new.sh
+    git add rename-new.sh
+    git commit -q -m "modify renamed fixture"
     git rm -q delete-me.sh
     git commit -q -m "delete fixture"
     printf '#!/usr/bin/env bash\nprintf "recreated\\n"\n' >delete-me.sh
@@ -121,6 +124,19 @@ PY
 )"
   [[ "$got" =~ ^[0-9]+$ ]] || fail "expected numeric SQL [$sql], got [$got]"
   (( got >= expected_min )) || fail "expected SQL [$sql] >= [$expected_min], got [$got]"
+}
+
+run_sql() {
+  local sql="$1"
+  python3 - "$DB" "$sql" <<'PY'
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+conn.execute("PRAGMA foreign_keys=ON")
+with conn:
+    conn.executescript(sys.argv[2])
+PY
 }
 
 test_lattice_cli_contracts() {
@@ -345,7 +361,43 @@ EOF
 
   lattice import-git >$TEST_TMP_ROOT/lattice-git.json
   assert_sql_value "1" "select count(*) from git_file_changes where status like 'R%' and old_path='rename-old.sh' and path='rename-new.sh'"
+  assert_sql_value "1" "select count(distinct file_id) from git_file_changes where path in ('rename-old.sh','rename-new.sh')"
+  assert_sql_value "0" "select count(*) from (select commit_id, status, path, old_path, count(*) as c from git_file_changes group by commit_id, status, path, old_path having c > 1)"
+  lattice import-git >$TEST_TMP_ROOT/lattice-git-repeat.json
+  python3 - "$TEST_TMP_ROOT/lattice-git-repeat.json" <<'PY' || fail "repeated Git import was not idempotent"
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["status"] == "ok", data
+assert data["commits_written"] == 0, data
+assert data["file_changes_written"] == 0, data
+assert data["file_changes_duplicate"] > 0, data
+PY
+  assert_sql_value "0" "select count(*) from (select commit_id, status, path, old_path, count(*) as c from git_file_changes group by commit_id, status, path, old_path having c > 1)"
+  run_sql "drop index idx_git_file_changes_unique_event;
+insert into git_file_changes(repo_id, commit_id, file_id, status, path, old_path, additions, deletions, change_epoch, source_id)
+select repo_id, commit_id, file_id, status, path, old_path, additions, deletions, change_epoch, source_id
+from git_file_changes
+limit 3;"
+  assert_sql_value "3" "select count(*) from (select commit_id, status, path, old_path, count(*) as c from git_file_changes group by commit_id, status, path, old_path having c > 1)"
+  lattice init >$TEST_TMP_ROOT/lattice-init-dedupe.json
+  assert_sql_value "0" "select count(*) from (select commit_id, status, path, old_path, count(*) as c from git_file_changes group by commit_id, status, path, old_path having c > 1)"
+  assert_sql_value "1" "select count(*) from sqlite_master where type='index' and name='idx_git_file_changes_unique_event'"
   lattice query file-history --path "space name.sh" --format json >$TEST_TMP_ROOT/lattice-history.json
+  lattice query file-history --path "rename-new.sh" --format json >$TEST_TMP_ROOT/lattice-rename-history.json
+  lattice query file-history --path "rename-old.sh" --format json >$TEST_TMP_ROOT/lattice-rename-old-history.json
+  python3 - "$TEST_TMP_ROOT/lattice-rename-history.json" <<'PY' || fail "renamed file history did not stay on one lineage"
+import json, sys
+rows = json.load(open(sys.argv[1], encoding="utf-8"))
+statuses = [row.get("status", "") for row in rows if row.get("kind") == "git_change"]
+assert "A" in statuses, rows
+assert any(status.startswith("R") for status in statuses), rows
+assert "M" in statuses, rows
+PY
+  python3 - "$TEST_TMP_ROOT/lattice-rename-old-history.json" <<'PY' || fail "old rename path did not resolve through file path aliases"
+import json, sys
+rows = json.load(open(sys.argv[1], encoding="utf-8"))
+assert any(row.get("path") == "rename-new.sh" and row.get("status", "").startswith("R") for row in rows), rows
+PY
 
   lattice backup >$TEST_TMP_ROOT/lattice-backup.json
   python3 - $TEST_TMP_ROOT/lattice-backup.json <<'PY' || fail "backup command did not create a backup"

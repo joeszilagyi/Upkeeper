@@ -149,6 +149,7 @@ REQUIRED_INDEXES = {
     "idx_file_pass_runs_repo_pass_outcome": "file_pass_runs",
     "idx_file_events_repo_file_epoch": "file_events",
     "idx_git_commits_repo_sha": "git_commits",
+    "idx_git_file_changes_unique_event": "git_file_changes",
     "idx_git_file_changes_repo_path_epoch": "git_file_changes",
     "idx_regression_events_repo_file_epoch": "regression_events",
     "idx_extension_facts_lookup": "extension_facts",
@@ -885,6 +886,7 @@ CREATE_INDEX_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_file_pass_runs_repo_pass_outcome ON file_pass_runs(repo_id, pass_code, outcome)",
     "CREATE INDEX IF NOT EXISTS idx_file_events_repo_file_epoch ON file_events(repo_id, file_id, event_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_git_commits_repo_sha ON git_commits(repo_id, sha)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_git_file_changes_unique_event ON git_file_changes(repo_id, commit_id, path, coalesce(old_path, ''), coalesce(status, ''))",
     "CREATE INDEX IF NOT EXISTS idx_git_file_changes_repo_path_epoch ON git_file_changes(repo_id, path, change_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_regression_events_repo_file_epoch ON regression_events(repo_id, file_id, marked_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_extension_facts_lookup ON extension_facts(namespace, key, subject_type, subject_pk)",
@@ -1092,11 +1094,38 @@ def table_primary_key(conn: sqlite3.Connection, table: str) -> str | None:
     return None
 
 
+def dedupe_git_file_changes(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        """
+        select count(*) from (
+          select 1
+          from git_file_changes
+          group by repo_id, commit_id, path, coalesce(old_path, ''), coalesce(status, '')
+          having count(*) > 1
+        )
+        """
+    ).fetchone()
+    duplicate_groups = int(row[0] or 0) if row else 0
+    if duplicate_groups:
+        conn.execute(
+            """
+            delete from git_file_changes
+            where git_file_change_id not in (
+              select min(git_file_change_id)
+              from git_file_changes
+              group by repo_id, commit_id, path, coalesce(old_path, ''), coalesce(status, '')
+            )
+            """
+        )
+    return duplicate_groups
+
+
 def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
     now = epoch_now()
     with conn:
         for sql in CREATE_TABLE_SQL:
             conn.execute(sql)
+        deduped_git_change_groups = dedupe_git_file_changes(conn)
         for sql in CREATE_INDEX_SQL:
             conn.execute(sql)
         conn.execute("PRAGMA user_version=1")
@@ -1120,6 +1149,15 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
             """,
             (1, 0, 1, now, "applied", sha256_text("\n".join(CREATE_TABLE_SQL + CREATE_INDEX_SQL)), "{}"),
         )
+        if deduped_git_change_groups:
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("git_file_changes_deduped_groups", str(deduped_git_change_groups)),
+            )
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("git_file_changes_deduped_epoch", str(now)),
+            )
     install_pass_registry(conn, root or default_root())
 
 
@@ -1285,10 +1323,35 @@ def ensure_file(
     canonical = normalize_rel_path(canonical_path or path)
     if not path:
         raise ValueError("empty path")
-    row = conn.execute(
-        "select file_id from files where repo_id=? and canonical_path=?",
-        (repo_id, canonical),
-    ).fetchone()
+    row = None
+    if canonical == path:
+        row = conn.execute(
+            """
+            select file_id
+            from files
+            where repo_id=? and current_path=?
+            order by case when canonical_path <> ? then 0 else 1 end, file_id
+            limit 1
+            """,
+            (repo_id, path, path),
+        ).fetchone()
+    if not row:
+        row = conn.execute(
+            "select file_id from files where repo_id=? and canonical_path=?",
+            (repo_id, canonical),
+        ).fetchone()
+    if not row:
+        row = conn.execute(
+            """
+            select f.file_id
+            from file_paths p
+            join files f on f.file_id=p.file_id
+            where f.repo_id=? and p.path=?
+            order by f.last_seen_epoch desc, f.file_id
+            limit 1
+            """,
+            (repo_id, path),
+        ).fetchone()
     if row:
         file_id = int(row["file_id"])
         conn.execute(
@@ -1315,6 +1378,36 @@ def ensure_file(
         (file_id, path, now, now, source_id),
     )
     return file_id
+
+
+def file_id_for_path(conn: sqlite3.Connection, repo_id: int, path: str) -> int | None:
+    path = normalize_rel_path(path)
+    if not path:
+        return None
+    row = conn.execute(
+        """
+        select file_id
+        from files
+        where repo_id=? and current_path=?
+        order by case when canonical_path <> ? then 0 else 1 end, file_id
+        limit 1
+        """,
+        (repo_id, path, path),
+    ).fetchone()
+    if row:
+        return int(row["file_id"])
+    row = conn.execute(
+        """
+        select f.file_id
+        from file_paths p
+        join files f on f.file_id=p.file_id
+        where f.repo_id=? and p.path=?
+        order by case when f.current_path=? then 0 else 1 end, f.last_seen_epoch desc, f.file_id
+        limit 1
+        """,
+        (repo_id, path, path),
+    ).fetchone()
+    return int(row["file_id"]) if row else None
 
 
 def normalize_rel_path(path: str) -> str:
@@ -3056,7 +3149,10 @@ def command_import_git(args: argparse.Namespace) -> int:
     conn = connect(normalize_db_path(args.db, root), args.journal_mode)
     ensure_schema(conn)
     rows_seen = 0
+    commits_written = 0
+    file_changes_seen = 0
     rows_written = 0
+    duplicate_file_changes = 0
     with conn:
         repo_id = ensure_repository(conn, root)
         import_id = start_import(conn, repo_id, "local_git", {"root": str(root)})
@@ -3079,6 +3175,8 @@ def command_import_git(args: argparse.Namespace) -> int:
                         "-C",
                         str(root),
                         "show",
+                        "--no-ext-diff",
+                        "--no-textconv",
                         "--format=%H%x00%an%x00%ae%x00%at%x00%cn%x00%ce%x00%ct%x00%s%x00",
                         "--name-status",
                         "--find-renames",
@@ -3092,41 +3190,44 @@ def command_import_git(args: argparse.Namespace) -> int:
             if len(parts) < 8:
                 continue
             commit_sha, an, ae, at, cn, ce, ct, subject = parts[:8]
-            author_id = ensure_contributor(conn, an, ae)
-            committer_id = ensure_contributor(conn, cn, ce)
-            commit_source_id = ensure_source_record(
-                conn,
-                repo_id,
-                "local_git",
-                raw_ref=commit_sha,
-                parsed={"subject": subject},
-                source_epoch=int(at or 0) if str(at).isdigit() else None,
-                parse_status="parsed",
-            )
-            conn.execute(
-                """
-                insert or ignore into git_commits(
-                  repo_id, sha, author_id, committer_id, author_epoch, committer_epoch, subject, source_id
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    repo_id,
-                    commit_sha,
-                    author_id,
-                    committer_id,
-                    int(at or 0) if str(at).isdigit() else None,
-                    int(ct or 0) if str(ct).isdigit() else None,
-                    subject,
-                    commit_source_id,
-                ),
-            )
             commit_row = conn.execute(
-                "select commit_id from git_commits where repo_id=? and sha=?",
+                "select commit_id, source_id from git_commits where repo_id=? and sha=?",
                 (repo_id, commit_sha),
             ).fetchone()
-            if not commit_row:
-                continue
-            commit_id = int(commit_row["commit_id"])
+            if commit_row:
+                commit_id = int(commit_row["commit_id"])
+                commit_source_id = int(commit_row["source_id"]) if commit_row["source_id"] is not None else None
+            else:
+                author_id = ensure_contributor(conn, an, ae)
+                committer_id = ensure_contributor(conn, cn, ce)
+                commit_source_id = ensure_source_record(
+                    conn,
+                    repo_id,
+                    "local_git",
+                    raw_ref=commit_sha,
+                    parsed={"subject": subject},
+                    source_epoch=int(at or 0) if str(at).isdigit() else None,
+                    parse_status="parsed",
+                )
+                cur = conn.execute(
+                    """
+                    insert into git_commits(
+                      repo_id, sha, author_id, committer_id, author_epoch, committer_epoch, subject, source_id
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        repo_id,
+                        commit_sha,
+                        author_id,
+                        committer_id,
+                        int(at or 0) if str(at).isdigit() else None,
+                        int(ct or 0) if str(ct).isdigit() else None,
+                        subject,
+                        commit_source_id,
+                    ),
+                )
+                commit_id = int(cur.lastrowid)
+                commits_written += 1
             i = 8
             while i < len(parts):
                 status_code = parts[i].strip()
@@ -3151,9 +3252,10 @@ def command_import_git(args: argparse.Namespace) -> int:
                 canonical = old_path if status_code.startswith("R") and old_path else path
                 state = "deleted" if status_code.startswith("D") else ("renamed" if status_code.startswith("R") else "active")
                 file_id = ensure_file(conn, repo_id, path, canonical_path=canonical, state=state, source_id=commit_source_id)
-                conn.execute(
+                file_changes_seen += 1
+                cur = conn.execute(
                     """
-                    insert into git_file_changes(
+                    insert or ignore into git_file_changes(
                       repo_id, commit_id, file_id, status, path, old_path, additions, deletions, change_epoch, source_id
                     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
@@ -3170,7 +3272,37 @@ def command_import_git(args: argparse.Namespace) -> int:
                         commit_source_id,
                     ),
                 )
-                rows_written += 1
+                if cur.rowcount:
+                    rows_written += 1
+                else:
+                    duplicate_file_changes += 1
+                    conn.execute(
+                        """
+                        update git_file_changes
+                        set file_id=?,
+                            additions=coalesce(additions, ?),
+                            deletions=coalesce(deletions, ?),
+                            change_epoch=coalesce(change_epoch, ?),
+                            source_id=coalesce(source_id, ?)
+                        where repo_id=?
+                          and commit_id=?
+                          and path=?
+                          and coalesce(old_path, '')=?
+                          and coalesce(status, '')=?
+                        """,
+                        (
+                            file_id,
+                            None,
+                            None,
+                            int(at or 0) if str(at).isdigit() else None,
+                            commit_source_id,
+                            repo_id,
+                            commit_id,
+                            path,
+                            old_path or "",
+                            status_code,
+                        ),
+                    )
         shallow = git_output(root, ["rev-parse", "--is-shallow-repository"], "false") == "true"
         conn.execute(
             """
@@ -3185,8 +3317,30 @@ def command_import_git(args: argparse.Namespace) -> int:
             """,
             (repo_id, shas[-1] if shas else "", epoch_now(), 0 if shallow else 1, "shallow_repository" if shallow else None, source_id),
         )
-        finish_import(conn, import_id, "ok", rows_seen, rows_written, 0, {"shallow": shallow})
-    print_json({"status": "ok", "commits_seen": rows_seen, "file_changes_written": rows_written})
+        finish_import(
+            conn,
+            import_id,
+            "ok",
+            rows_seen,
+            rows_written,
+            0,
+            {
+                "shallow": shallow,
+                "commits_written": commits_written,
+                "file_changes_seen": file_changes_seen,
+                "file_changes_duplicate": duplicate_file_changes,
+            },
+        )
+    print_json(
+        {
+            "status": "ok",
+            "commits_seen": rows_seen,
+            "commits_written": commits_written,
+            "file_changes_seen": file_changes_seen,
+            "file_changes_written": rows_written,
+            "file_changes_duplicate": duplicate_file_changes,
+        }
+    )
     return EXIT_SUCCESS
 
 
@@ -3765,10 +3919,9 @@ def import_failure_markers(root: Path, db_path: Path, journal_mode: str, marker_
 
 
 def pass_counts_for_path(conn: sqlite3.Connection, repo_id: int, path: str, pass_code: str | None = None) -> list[dict[str, Any]]:
-    row = conn.execute("select file_id from files where repo_id=? and current_path=?", (repo_id, path)).fetchone()
-    if not row:
+    file_id = file_id_for_path(conn, repo_id, path)
+    if not file_id:
         return []
-    file_id = int(row["file_id"])
     params: list[Any] = [repo_id, file_id]
     where = "where repo_id=? and file_id=?"
     if pass_code:
@@ -3802,16 +3955,16 @@ def query_never_pass(conn: sqlite3.Connection, root: Path, repo_id: int, args: a
     paths = current_scope_paths(conn, root, repo_id, args.scope)
     rows = []
     for path in paths:
-        file_row = conn.execute("select file_id from files where repo_id=? and current_path=?", (repo_id, path)).fetchone()
+        file_id = file_id_for_path(conn, repo_id, path)
         completed = 0
-        if file_row:
+        if file_id:
             completed = int(
                 conn.execute(
                     """
                     select count(*) from file_pass_runs
                     where repo_id=? and file_id=? and pass_code=? and outcome in ('clean','fixed','regression_found')
                     """,
-                    (repo_id, int(file_row["file_id"]), pass_code),
+                    (repo_id, file_id, pass_code),
                 ).fetchone()[0]
             )
         if completed == 0:
@@ -3825,10 +3978,9 @@ def query_pass_counts(conn: sqlite3.Connection, root: Path, repo_id: int, args: 
 
 def query_file_history(conn: sqlite3.Connection, root: Path, repo_id: int, args: argparse.Namespace) -> list[dict[str, Any]]:
     path = normalize_rel_path(args.path)
-    file_row = conn.execute("select file_id from files where repo_id=? and current_path=?", (repo_id, path)).fetchone()
-    if not file_row:
+    file_id = file_id_for_path(conn, repo_id, path)
+    if not file_id:
         return []
-    file_id = int(file_row["file_id"])
     rows: list[dict[str, Any]] = []
     for row in conn.execute(
         """
@@ -3856,11 +4008,11 @@ def query_regressions(conn: sqlite3.Connection, root: Path, repo_id: int, args: 
     params: list[Any] = [repo_id]
     where = "where r.repo_id=?"
     if args.path:
-        row = conn.execute("select file_id from files where repo_id=? and current_path=?", (repo_id, normalize_rel_path(args.path))).fetchone()
-        if not row:
+        file_id = file_id_for_path(conn, repo_id, args.path)
+        if not file_id:
             return []
         where += " and r.file_id=?"
-        params.append(int(row["file_id"]))
+        params.append(file_id)
     return [
         dict(row)
         for row in conn.execute(
@@ -3882,8 +4034,7 @@ def query_least_reviewed(conn: sqlite3.Connection, root: Path, repo_id: int, arg
     paths = current_scope_paths(conn, root, repo_id, args.scope)
     rows = []
     for path in paths:
-        file_row = conn.execute("select file_id from files where repo_id=? and current_path=?", (repo_id, path)).fetchone()
-        file_id = int(file_row["file_id"]) if file_row else None
+        file_id = file_id_for_path(conn, repo_id, path)
         completed_pass_count = completed_cycle_count = 0
         last_epoch = None
         if file_id:
@@ -3932,10 +4083,9 @@ def query_most_fragile(conn: sqlite3.Connection, root: Path, repo_id: int, args:
     paths = current_scope_paths(conn, root, repo_id, args.scope)
     rows = []
     for path in paths:
-        file_row = conn.execute("select file_id from files where repo_id=? and current_path=?", (repo_id, path)).fetchone()
-        if not file_row:
+        file_id = file_id_for_path(conn, repo_id, path)
+        if not file_id:
             continue
-        file_id = int(file_row["file_id"])
         active_asserted = scalar_count(conn, "regression_events", "repo_id=? and file_id=? and status='active' and confidence='asserted'", (repo_id, file_id))
         active_inferred = scalar_count(conn, "regression_events", "repo_id=? and file_id=? and status='active' and confidence='inferred'", (repo_id, file_id))
         active_suspected = scalar_count(conn, "regression_events", "repo_id=? and file_id=? and status='active' and confidence='suspected'", (repo_id, file_id))
@@ -3977,8 +4127,7 @@ def query_changed_since_last_pass(conn: sqlite3.Connection, root: Path, repo_id:
     paths = current_scope_paths(conn, root, repo_id, args.scope)
     rows = []
     for path in paths:
-        file_row = conn.execute("select file_id from files where repo_id=? and current_path=?", (repo_id, path)).fetchone()
-        file_id = int(file_row["file_id"]) if file_row else None
+        file_id = file_id_for_path(conn, repo_id, path)
         latest_pass = None
         latest_git = None
         changed = True

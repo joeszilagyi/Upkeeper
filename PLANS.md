@@ -54,6 +54,47 @@ Completed notes:
   remains a future hardening item; Phase 1 records manual and pass-marker
   regression evidence.
 
+## Lattice Git Import Hardening
+
+Status: completed
+
+Goal:
+Make `tools/upkeeper_lattice.py import-git` safe for first population and
+accidental reruns by preserving one fact per commit/path/status change and by
+keeping rename lineage attached to later changes on the renamed path.
+
+Constraints:
+- Preserve the existing schema version unless a true incompatible migration is
+  required.
+- Keep the importer local-only and NUL-safe.
+- Keep live source-safe eligibility authoritative; Git history remains evidence
+  only.
+- Repair existing duplicate Git file-change evidence during normal `init`
+  without requiring a separate operator migration command.
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `docs/lattice.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash tests/lattice_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+Current status:
+- Reproduced duplicate `git_file_changes` rows after two `import-git` runs.
+- Added an idempotent Git file-change guard, init-time duplicate repair,
+  renamed-path lineage resolution, file-history alias lookup, tests, public
+  docs, and v1.2.1 release notes.
+- Validation passed: `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh
+  tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`,
+  `for test_script in tests/*.bash; do bash "$test_script"; done`,
+  `tools/check_public_docs.sh --quick`, `tools/validate_upkeeper.sh --quick`,
+  `./Upkeeper --version`, `./Upkeeper --help`, and `git diff --check`.
+
 ## P29 Reuse System Hardening
 
 Status: completed

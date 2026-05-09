@@ -53,6 +53,8 @@ _upkeeper_complete() {
     --selection-review-modules=
     --ignore-failure-queue --bypass-failure-queue --backup-queue -backup_queue
     --prompt-pass= --max-cover
+    --bug-report-only --file-bug-only --report-bug-only
+    --fix-next-issue --fix-oldest-bug
   "
 
   case "$prev" in

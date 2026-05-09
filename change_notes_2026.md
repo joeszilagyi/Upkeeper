@@ -6,6 +6,14 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-09: v1.2.4 changes:
+	1. Added `--bug-report-only` with `--file-bug-only` and `--report-bug-only` aliases so an Upkeeper cycle can investigate and file/report confirmed bugs without editing or touching tracked source.
+	2. Made `FlameOn` pass `--bug-report-only` by default, turning high-coverage burn cycles into issue-finding/reporting runs instead of source-fixing runs.
+	3. Added a bug-report-only source mutation fingerprint check so a non-dry-run report-only cycle fails as `BUG_REPORT_ONLY_MUTATION_VIOLATION` if tracked source state changes during the run.
+	4. Added `--fix-next-issue` with the `--fix-oldest-bug` alias so Upkeeper can select the oldest open GitHub issue by priority label order `security`, `data-integrity`, then `bug`, infer a starting target file from the issue body, and run a focused repair cycle.
+	5. Added the `REVIEWED_AND_REPORTED` review outcome for cycles that file an issue or produce a complete issue-ready bug report without applying a source fix.
+	6. Documented and validated the new mode flags, config defaults, FlameOn default, completion entries, and compatibility boundaries.
+
 2026-05-09: v1.2.3 changes:
 	1. Added `.upkeeperignore` as a first-class Upkeeper target-selection firewall for files Git may still track but Upkeeper should not spend model upkeep cycles reviewing.
 	2. Wired `.upkeeperignore` into manifest construction, normal selection, explicit `--target-file` eligibility, failure-queue target eligibility, and Lattice/max-cover candidate ranking.

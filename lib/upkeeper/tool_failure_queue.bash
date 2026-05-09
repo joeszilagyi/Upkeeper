@@ -39,7 +39,8 @@ tool_failure_queue_finalize_run() {
     "$status_marker" \
     "$CYCLE_ID" \
     "$CYCLE_RUN_HASH" \
-    "${RUN_SELECTED_FAILURE_MARKER_PATH:-}" <<'PY'
+    "${RUN_SELECTED_FAILURE_MARKER_PATH:-}" \
+    "${CODEX_BUG_REPORT_ONLY:-0}" <<'PY'
 import hashlib
 import json
 import os
@@ -48,11 +49,12 @@ import sys
 import time
 from pathlib import Path
 
-queue_dir_raw, target_path, transcript_raw, codex_exit, status_marker, cycle_id, run_hash, selected_marker_raw = sys.argv[1:9]
+queue_dir_raw, target_path, transcript_raw, codex_exit, status_marker, cycle_id, run_hash, selected_marker_raw, bug_report_only_raw = sys.argv[1:10]
 queue_dir = Path(queue_dir_raw)
 open_dir = queue_dir / "open"
 resolved_dir = queue_dir / "resolved"
 transcript_path = Path(transcript_raw)
+bug_report_only = str(bug_report_only_raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def short(value: str, limit: int = 500) -> str:
@@ -246,14 +248,16 @@ if failures:
         "addressed_by_later_success": addressed_by_later_success,
     }
     write_json_atomic(marker_path, data)
-    if status_marker == "WORK_DONE" and addressed_by_later_success:
+    if status_marker == "WORK_DONE" and addressed_by_later_success and not bug_report_only:
         resolved_path = resolve_marker(marker_path, "work_done_after_detected_failure")
         print(f"action=resolved_same_run marker_id={field(marker_id)} marker_path={field(str(resolved_path))} target_path={field(target_path)} failures={len(failures)} addressed_by_later_success=1")
     else:
         print(f"action=open marker_id={field(marker_id)} marker_path={field(str(marker_path))} target_path={field(target_path)} failures={len(failures)} addressed_by_later_success=0 kind={field(first['kind'])} exit_line={field(first['exit_line'])}")
     raise SystemExit(0)
 
-if status_marker == "WORK_DONE" and selected_marker_path.exists():
+if status_marker == "WORK_DONE" and selected_marker_path.exists() and bug_report_only:
+    print(f"action=preserved_report_only marker_id={field(marker_id)} marker_path={field(str(selected_marker_path))} target_path={field(target_path)} failures=0")
+elif status_marker == "WORK_DONE" and selected_marker_path.exists():
     resolved_path = resolve_marker(selected_marker_path, "work_done_without_new_tool_failure")
     print(f"action=resolved marker_id={field(marker_id)} marker_path={field(str(resolved_path))} target_path={field(target_path)} failures=0")
 else:
@@ -276,6 +280,9 @@ PY
         ;;
       action=resolved*|action=resolved_same_run*)
         log_line "INFO" "tool_failure_queue.resolved $line"
+        ;;
+      action=preserved_report_only*)
+        log_line "INFO" "tool_failure_queue.preserved $line"
         ;;
       action=none*)
         log_line "INFO" "tool_failure_queue.clean $line"

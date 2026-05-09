@@ -233,7 +233,7 @@ def capture_section(names):
         norm = normalized(line)
         if re.match(r"p(?:[1-9]|1[0-9]|2[0-3])\b", norm):
             break
-        if re.search(r"\b(REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", line):
+        if re.search(r"\b(REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", line):
             break
         if any(norm.startswith(header) for header in known_headers):
             break
@@ -247,14 +247,14 @@ def capture_section(names):
 
 outcome = ""
 for line in lines:
-    match = re.search(r"\b(REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", line)
+    match = re.search(r"\b(REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", line)
     if match:
         outcome = match.group(1)
         break
 
 selected_file = ""
 for line in lines:
-    match = re.search(r"\b(?:REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b\s+for\s+(.+)", line)
+    match = re.search(r"\b(?:REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b\s+for\s+(.+)", line)
     if not match:
         continue
     selected_file = selected_file_from_source(match.group(1))
@@ -309,6 +309,12 @@ changes = capture_section(
         "applied change",
         "applied changes",
         "changes applied",
+        "bug report",
+        "bug reports",
+        "issue filed",
+        "issues filed",
+        "report filed",
+        "reports filed",
     )
 )
 verification = capture_section(
@@ -328,7 +334,7 @@ if outcome == "REVIEWED_AND_FIXED" and not changes:
         norm = normalized(line)
         if line.startswith("UPKEEPER_STATUS:"):
             continue
-        if re.search(r"\b(REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", line):
+        if re.search(r"\b(REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", line):
             continue
         if re.match(r"p(?:[1-9]|1[0-9]|2[0-3])\b", norm):
             continue
@@ -422,7 +428,7 @@ log_review_report_summary() {
   terminal_emit_progress "review completed outcome=$outcome status_marker=${status_marker_value:-missing} selected_file=$selected_file"
   terminal_emit_review_finale "$outcome" "$selected_file" "$findings" "$changes" "$verification"
 
-  if [[ "$outcome" == "REVIEWED_AND_FIXED" || ( "$outcome" == "unknown" && -n "$changes" ) ]]; then
+  if [[ "$outcome" == "REVIEWED_AND_FIXED" || "$outcome" == "REVIEWED_AND_REPORTED" || ( "$outcome" == "unknown" && -n "$changes" ) ]]; then
     local terminal_findings="$findings"
     local terminal_changes="$changes"
     [[ "${#terminal_findings}" -le 260 ]] || terminal_findings="${terminal_findings:0:260}..."
@@ -487,6 +493,8 @@ terminal_emit_review_finale() {
     printf '%s [%s] Upkeeper: what was wrong: %s\n' "$(timestamp_now)" "$level" "$terminal_findings" >&2
   elif [[ "$outcome" == "REVIEWED_AND_FIXED" && -n "$terminal_changes" ]]; then
     printf '%s [INFO] Upkeeper: what was wrong: see change summary\n' "$(timestamp_now)" >&2
+  elif [[ "$outcome" == "REVIEWED_AND_REPORTED" && -n "$terminal_changes" ]]; then
+    printf '%s [INFO] Upkeeper: what was wrong: see issue report summary\n' "$(timestamp_now)" >&2
   elif [[ "$outcome" == "REVIEWED_CLEAN" ]]; then
     printf '%s [INFO] Upkeeper: what was wrong: nothing found\n' "$(timestamp_now)" >&2
   fi

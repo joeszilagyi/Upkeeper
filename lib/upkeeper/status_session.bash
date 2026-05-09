@@ -17,7 +17,7 @@ recover_status_marker_from_review_outcome() {
   summary_json="$(review_report_summary_json "$last_message_file")" || return 1
   eval "$(review_summary_assignments "$summary_json" recovery)"
   case "$recovery_outcome" in
-    REVIEWED_AND_FIXED|REVIEWED_CLEAN)
+    REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN)
       recovered_marker="WORK_DONE"
       ;;
     STOPPED_ON_BLOCKER)

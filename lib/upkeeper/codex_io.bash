@@ -328,6 +328,33 @@ config_truthy() {
   esac
 }
 
+truthy_as_int() {
+  if config_truthy "${1:-0}"; then
+    printf '1'
+  else
+    printf '0'
+  fi
+}
+
+upkeeper_bug_report_only_enabled() {
+  config_truthy "${CODEX_BUG_REPORT_ONLY:-0}"
+}
+
+upkeeper_issue_fix_next_enabled() {
+  config_truthy "${CODEX_ISSUE_FIX_NEXT:-0}"
+}
+
+upkeeper_source_mutation_fingerprint() {
+  {
+    printf 'tracked-diff\n'
+    git diff --no-ext-diff --binary --
+    printf '\nindexed-diff\n'
+    git diff --cached --no-ext-diff --binary --
+    printf '\nstatus\n'
+    git status --porcelain=v1 --untracked-files=all
+  } 2>/dev/null | git hash-object --stdin
+}
+
 append_csv_value() {
   local current="$1"
   local value="$2"
@@ -396,6 +423,188 @@ apply_configured_cli_defaults() {
   if [[ -n "${CODEX_SELECTION_REVIEW_MODULES:-}" ]]; then
     CODEX_SELECTION_REVIEW_MODULES="$(normalize_review_modules_spec_csv "$CODEX_SELECTION_REVIEW_MODULES")"
   fi
+
+  if upkeeper_issue_fix_next_enabled; then
+    CODEX_BUG_REPORT_ONLY="0"
+  fi
+}
+
+resolve_issue_fix_next_or_exit() {
+  local issue_json status target_from_issue
+
+  upkeeper_issue_fix_next_enabled || return 0
+
+  if ! command -v gh >/dev/null 2>&1; then
+    log_line "ERROR" "issue.fix_next unavailable reason=gh_missing"
+    finish_cycle 3 ISSUE_FIX_GH_MISSING ERROR "codex_exec_started=0"
+  fi
+
+  set +e
+  issue_json="$(
+    python3 - "$ROOT_DIR" "${CODEX_ISSUE_PRIORITY_LABELS:-security,data-integrity,bug}" "${CODEX_ISSUE_SKIP_LABELS:-}" <<'PY'
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+priority_labels = [item.strip() for item in sys.argv[2].split(",") if item.strip()]
+skip_labels = {item.strip().lower() for item in sys.argv[3].split(",") if item.strip()}
+
+
+def gh_json(args):
+    cp = subprocess.run(["gh", *args], text=True, capture_output=True, check=False)
+    if cp.returncode != 0:
+        print(json.dumps({"status": "gh_error", "stderr": cp.stderr.strip()}))
+        raise SystemExit(2)
+    try:
+        return json.loads(cp.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        print(json.dumps({"status": "gh_json_error", "error": str(exc)}))
+        raise SystemExit(2)
+
+
+def issue_label_names(issue):
+    return [str(label.get("name", "")).lower() for label in issue.get("labels", []) if label.get("name")]
+
+
+def skip_issue(issue):
+    names = set(issue_label_names(issue))
+    return bool(names & skip_labels)
+
+
+def normalize_candidate(raw):
+    candidate = raw.strip().strip("`'\"()[]{}<>.,;")
+    if not candidate:
+        return ""
+    candidate = re.sub(r"(?::L?\d+(?:-L?\d+)?)$", "", candidate)
+    candidate = re.sub(r"#L?\d+(?:-L?\d+)?$", "", candidate)
+    candidate = candidate.strip().strip("`'\"()[]{}<>.,;")
+    if not candidate:
+        return ""
+    path = Path(os.path.expanduser(candidate))
+    if path.is_absolute():
+        try:
+            rel = path.resolve().relative_to(root)
+        except (OSError, ValueError):
+            return ""
+    else:
+        rel = Path(candidate)
+    rel_text = str(rel).replace(os.sep, "/")
+    if rel_text in {"", "."} or rel_text.startswith("../") or "/../" in f"/{rel_text}/":
+        return ""
+    abs_path = root / rel_text
+    if abs_path.is_file():
+        return rel_text
+    return ""
+
+
+def candidate_paths(text):
+    seen = set()
+    patterns = [
+        r"`([^`\n]+)`",
+        r"\[([^\]\n]+)\]\([^)\n]+\)",
+        r"(?<![\w./-])((?:\.?/)?(?:Upkeeper|FlameOn|README\.md|AGENTS\.md|LICENSE|\.gitignore|Upkeeper\.conf|change_notes_2026\.md|[A-Za-z0-9_.+-]+/[A-Za-z0-9_./+@-]+))(?![\w./-])",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
+            groups = [group for group in match.groups() if group]
+            raw = groups[0] if groups else match.group(0)
+            normalized = normalize_candidate(raw)
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                yield normalized
+
+
+for priority_label in priority_labels:
+    issues = gh_json(
+        [
+            "issue",
+            "list",
+            "--state",
+            "open",
+            "--label",
+            priority_label,
+            "--limit",
+            "200",
+            "--json",
+            "number,title,url,labels,createdAt",
+        ]
+    )
+    candidates = [issue for issue in issues if not skip_issue(issue)]
+    if not candidates:
+        continue
+    candidates.sort(key=lambda issue: (str(issue.get("createdAt", "")), int(issue.get("number", 0))))
+    selected = candidates[0]
+    number = str(selected.get("number", ""))
+    body_data = gh_json(["issue", "view", number, "--json", "body"])
+    body = str(body_data.get("body", ""))
+    combined = "\n".join([str(selected.get("title", "")), body])
+    target = next(candidate_paths(combined), "")
+    label_names = [str(label.get("name", "")) for label in selected.get("labels", []) if label.get("name")]
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "number": number,
+                "title": str(selected.get("title", "")),
+                "url": str(selected.get("url", "")),
+                "labels": ",".join(label_names),
+                "selected_label": priority_label,
+                "created_at": str(selected.get("createdAt", "")),
+                "target_file": target,
+                "body": body,
+            }
+        )
+    )
+    raise SystemExit(0)
+
+print(json.dumps({"status": "none"}))
+PY
+  )"
+  local issue_rc=$?
+  set -e
+
+  if [[ "$issue_rc" -ne 0 ]]; then
+    log_line "ERROR" "issue.fix_next select_failed rc=$issue_rc detail=$(shell_quote "$issue_json")"
+    finish_cycle 3 ISSUE_FIX_SELECTION_FAILED ERROR "codex_exec_started=0"
+  fi
+
+  status="$(jq -r '.status // "unknown"' <<<"$issue_json")"
+  case "$status" in
+    ok)
+      ;;
+    none)
+      log_line "INFO" "issue.fix_next none priority_labels=$(shell_quote "${CODEX_ISSUE_PRIORITY_LABELS:-none}") skip_labels=$(shell_quote "${CODEX_ISSUE_SKIP_LABELS:-none}")"
+      finish_cycle 5 NO_ISSUE_FIX_TARGET INFO "codex_exec_started=0"
+      ;;
+    *)
+      log_line "ERROR" "issue.fix_next select_failed status=$(shell_quote "$status") detail=$(shell_quote "$issue_json")"
+      finish_cycle 3 ISSUE_FIX_SELECTION_FAILED ERROR "codex_exec_started=0"
+      ;;
+  esac
+
+  CODEX_ISSUE_FIX_NUMBER="$(jq -r '.number // ""' <<<"$issue_json")"
+  CODEX_ISSUE_FIX_TITLE="$(jq -r '.title // ""' <<<"$issue_json")"
+  CODEX_ISSUE_FIX_URL="$(jq -r '.url // ""' <<<"$issue_json")"
+  CODEX_ISSUE_FIX_LABELS="$(jq -r '.labels // ""' <<<"$issue_json")"
+  CODEX_ISSUE_FIX_SELECTED_LABEL="$(jq -r '.selected_label // ""' <<<"$issue_json")"
+  CODEX_ISSUE_FIX_CREATED_AT="$(jq -r '.created_at // ""' <<<"$issue_json")"
+  CODEX_ISSUE_FIX_TARGET_FILE="$(jq -r '.target_file // ""' <<<"$issue_json")"
+  CODEX_ISSUE_FIX_BODY="$(jq -r '.body // ""' <<<"$issue_json")"
+
+  target_from_issue="$CODEX_ISSUE_FIX_TARGET_FILE"
+  if [[ -z "${CODEX_TARGET_FILE:-}" ]]; then
+    if [[ -n "$target_from_issue" ]]; then
+      CODEX_TARGET_FILE="$target_from_issue"
+    else
+      CODEX_TARGET_FILE="Upkeeper"
+    fi
+  fi
+
+  log_line "INFO" "issue.fix_next selected number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") selected_label=$(shell_quote "$CODEX_ISSUE_FIX_SELECTED_LABEL") labels=$(shell_quote "$CODEX_ISSUE_FIX_LABELS") created_at=$(shell_quote "$CODEX_ISSUE_FIX_CREATED_AT") target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") inferred_target=$(shell_quote "${CODEX_ISSUE_FIX_TARGET_FILE:-none}") url=$(shell_quote "$CODEX_ISSUE_FIX_URL") title=$(shell_quote "$CODEX_ISSUE_FIX_TITLE")"
 }
 
 parse_args() {
@@ -579,6 +788,16 @@ parse_args() {
         enable_max_cover_mode
         shift
         ;;
+      --bug-report-only|--file-bug-only|--report-bug-only)
+        CODEX_BUG_REPORT_ONLY="1"
+        CODEX_ISSUE_FIX_NEXT="0"
+        shift
+        ;;
+      --fix-next-issue|--fix-oldest-bug)
+        CODEX_ISSUE_FIX_NEXT="1"
+        CODEX_BUG_REPORT_ONLY="0"
+        shift
+        ;;
       --backup-queue|-backup_queue)
         CODEX_TOOL_FAILURE_QUEUE_DIR="$ROOT_DIR/runtime/unaddressed-tool-failures-backup"
         CODEX_TOOL_FAILURE_QUEUE_BYPASS="0"
@@ -619,6 +838,11 @@ require_commands() {
       log_line "ERROR" "required command missing: codex dry_run=0"
       missing=1
     fi
+  fi
+
+  if upkeeper_issue_fix_next_enabled && ! command -v gh >/dev/null 2>&1; then
+    log_line "ERROR" "required command missing: gh issue_fix_next=1"
+    missing=1
   fi
 
   if [[ "$CODEX_FALLBACK_ENABLED" == "1" && "$CODEX_FALLBACK_SCREEN_ENABLED" == "1" ]] && ! command -v screen >/dev/null 2>&1; then

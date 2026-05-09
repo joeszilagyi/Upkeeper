@@ -41,7 +41,10 @@ On each cycle it:
   viability, contract/intent compliance, public documentation clarity,
   educational debriefs, unit-test harvesting, and reuse harvesting
 - provides `FlameOn`, a thin one-command launcher for the highest local
-  max-cover smoke/burn cycle while preserving Upkeeper quota guardrails
+  max-cover smoke/burn cycle that defaults to filing/reporting bugs instead of
+  patching source while preserving Upkeeper quota guardrails
+- can select the oldest open GitHub bug by priority label order
+  `security > data-integrity > bug` for focused issue-repair cycles
 - runs Codex once with the configured model and reasoning effort
 - records terminal outcomes in `Upkeeper.log`
 - tags log lines with a per-cycle `run_hash` and emits `--MARK--` heartbeat
@@ -102,10 +105,12 @@ FLAMEON_DRY_RUN=1 ./FlameOn
 ```
 
 `FlameOn` is intentionally thin. It resolves to
-`./Upkeeper --model-override=5.5_xhigh --max-cover`, sets
+`./Upkeeper --model-override=5.5_xhigh --max-cover --bug-report-only`, sets
 `CODEX_TERMINAL_VERBOSITY` to `silent`, `basic`, or `debug1`, and keeps the
 same quota, startup, fallback, failure-queue, evidence, and local safety checks
-as normal Upkeeper runs. `-backup_queue` and `--backup-queue` switch that one
+as normal Upkeeper runs. In bug-report-only mode, Codex must not edit or touch
+tracked source; it investigates, runs deterministic checks, and files or fully
+reports confirmed bugs. `-backup_queue` and `--backup-queue` switch that one
 cycle to `runtime/unaddressed-tool-failures-backup`.
 
 Bash completion for both `Upkeeper` and `FlameOn` is available as an opt-in
@@ -200,6 +205,8 @@ UPKEEPER_TARGET_FILE="docs/scripts/upkeeper.md"
 UPKEEPER_REVIEW_MODULES="p26,p28"
 UPKEEPER_PROMPT_PASS="all"
 UPKEEPER_MAX_COVER="0"
+UPKEEPER_BUG_REPORT_ONLY="0"
+UPKEEPER_FIX_NEXT_ISSUE="0"
 ```
 
 Selection is also configurable. The default is a local manifest-backed oldest
@@ -445,6 +452,22 @@ source-safe text files. The ranking prefers the oldest file with any unrun pass,
 then files with the lowest per-pass coverage count, then oldest mtime. Explicit
 targets, startup anomaly gates, and open failure-queue markers still keep their
 normal priority.
+
+Use `--bug-report-only` when a cycle should investigate and file/report bugs
+without fixing them. It is also accepted as `--file-bug-only` or
+`--report-bug-only`. This mode explicitly overrides the normal clean-review
+touch requirement; if Codex changes tracked source anyway, the wrapper compares
+the source mutation fingerprint from before and after the run and fails the
+cycle as `BUG_REPORT_ONLY_MUTATION_VIOLATION`.
+
+Use `--fix-next-issue` when Upkeeper itself should pick a GitHub issue to fix
+before launching Codex. It selects the oldest open issue in priority order:
+`security`, then `data-integrity`, then `bug`, skipping issues with labels such
+as `in-progress`, `blocked`, `duplicate`, `wontfix`, `invalid`, `needs-info`,
+`done`, `merged`, or `has-pr`. It infers a starting `--target-file` from the
+issue title/body when a repo-local path is present, then injects the issue body
+as evidence for a focused repair task. The alias `--fix-oldest-bug` is accepted
+for the same mode.
 
 For an explicit one-cycle Upkeeper self-review with all built-in P1-P23 passes,
 use equals-form operator flags:

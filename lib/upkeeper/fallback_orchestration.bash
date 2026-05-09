@@ -53,6 +53,9 @@ run_fallback_cycle() {
       if [[ -n "$CODEX_PROMPT_PASS" ]]; then
         child_args+=("--prompt-pass=$CODEX_PROMPT_PASS")
       fi
+      if upkeeper_bug_report_only_enabled; then
+        child_args+=("--bug-report-only")
+      fi
       set +e
       CODEX_MODEL="$CODEX_FALLBACK_MODEL" \
       CODEX_REASONING_EFFORT="$CODEX_FALLBACK_REASONING_EFFORT" \

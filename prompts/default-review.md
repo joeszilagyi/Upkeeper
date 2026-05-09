@@ -1307,6 +1307,7 @@ OUTPUT:
 - final git diff/stat for changed files
 - final status:
   REVIEWED_AND_FIXED
+  REVIEWED_AND_REPORTED
   REVIEWED_CLEAN
   STOPPED_ON_BLOCKER
 

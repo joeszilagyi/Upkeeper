@@ -167,6 +167,25 @@ def no_change_summary(value):
     )
 
 
+def selected_file_from_source(source):
+    markdown_link = re.search(r"\]\(([^)]+)\)", source)
+    backtick_path = re.search(r"`([^`]+)`", source)
+    if markdown_link:
+        value = markdown_link.group(1).strip("<>").split(":", 1)[0]
+    elif backtick_path:
+        value = backtick_path.group(1)
+    elif ":" in source:
+        value = source.split(":", 1)[1].strip()
+    else:
+        value = source.strip("- ")
+    value = clean(value, 240)
+    if re.fullmatch(r"\d+(?:\.\d+)?", value):
+        return ""
+    if re.match(r"^(epoch|age|mtime|hash)\b", value.lower()):
+        return ""
+    return value
+
+
 def capture_section(names):
     known_headers = (
         "review run",
@@ -234,8 +253,20 @@ for line in lines:
         break
 
 selected_file = ""
+for line in lines:
+    match = re.search(r"\b(?:REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b\s+for\s+(.+)", line)
+    if not match:
+        continue
+    selected_file = selected_file_from_source(match.group(1))
+    if selected_file:
+        break
+
 for index, line in enumerate(lines):
+    if selected_file:
+        break
     norm = normalized(line)
+    if norm.startswith(("selected target baseline", "selected file baseline", "target baseline")):
+        continue
     selected_label = norm.startswith(
         (
             "selected file",
@@ -263,17 +294,7 @@ for index, line in enumerate(lines):
             if candidate:
                 source = candidate
                 break
-    markdown_link = re.search(r"\]\(([^)]+)\)", source)
-    backtick_path = re.search(r"`([^`]+)`", source)
-    if markdown_link:
-        selected_file = markdown_link.group(1).strip("<>").split(":", 1)[0]
-    elif backtick_path:
-        selected_file = backtick_path.group(1)
-    elif ":" in source:
-        selected_file = source.split(":", 1)[1].strip()
-    else:
-        selected_file = source.strip("- ")
-    selected_file = clean(selected_file, 240)
+    selected_file = selected_file_from_source(source)
     break
 
 findings = capture_section(("findings",))

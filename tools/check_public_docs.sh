@@ -31,12 +31,16 @@ EOF
     ;;
 esac
 
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
+  fail "not a Git worktree: $ROOT_DIR"
+
 mapfile -t public_text_files < <(
   git ls-files --cached --others --exclude-standard \
     AGENTS.md \
     PLANS.md \
     README.md \
     Upkeeper.conf \
+    .upkeeperignore \
     'change_notes_[0-9][0-9][0-9][0-9].md' \
     'configurations/*.conf' \
     '.github/workflows/*.yml' \
@@ -46,6 +50,8 @@ mapfile -t public_text_files < <(
     'prompts/*.md' \
     'templates/*.md' \
     Upkeeper \
+    FlameOn \
+    'completions/*.bash' \
     'lib/upkeeper/*.bash' \
     'tools/*.sh' \
     | sort -u
@@ -66,6 +72,7 @@ grep -Fq "$wrapper_version changes" "$release_notes_file" || fail "$release_note
 
 [[ -s docs/public-documentation-policy.md ]] || fail "public documentation policy is missing or empty"
 [[ -s docs/security.md ]] || fail "security trust model is missing or empty"
+[[ -s .upkeeperignore ]] || fail ".upkeeperignore is missing or empty"
 [[ -s LICENSE ]] || fail "LICENSE is missing or empty"
 grep -Fq "MIT License" LICENSE || fail "LICENSE is not MIT"
 grep -Fq 'released under the `MIT` license' README.md || fail "README license summary is not MIT"
@@ -83,6 +90,10 @@ grep -Fq "P29: not applicable" prompts/p29-reuse-harvesting-review.md || fail "P
 grep -Fq "Shell Reuse Safety Gates" prompts/p29-reuse-harvesting-review.md || fail "P29 shell safety gates missing"
 grep -Fq "Reuse Debt Output" prompts/p29-reuse-harvesting-review.md || fail "P29 reuse debt output missing"
 grep -Fq "Reusable Asset Ownership" lib/upkeeper/README.md || fail "module README missing reusable asset ownership map"
+grep -Fq ".upkeeperignore" README.md || fail "README missing .upkeeperignore selection-firewall docs"
+grep -Fq ".upkeeperignore" docs/scripts/upkeeper.md || fail "operator guide missing .upkeeperignore docs"
+grep -Fq ".upkeeperignore" docs/compatibility.md || fail "compatibility docs missing .upkeeperignore contract"
+grep -Fq ".upkeeperignore" docs/security.md || fail "security docs missing .upkeeperignore boundary"
 grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 grep -Fq "tools/check_public_docs.sh" docs/public-documentation-policy.md || fail "public documentation policy missing tool reference"
 grep -Fq "docs/public-documentation-policy.md" README.md || fail "README does not link the public documentation policy"
@@ -105,6 +116,7 @@ grep -Fq ".github/workflows/ci.yml" README.md || fail "README does not mention t
 grep -Fq "tools/validate_upkeeper.sh --quick" .github/workflows/ci.yml || fail "CI workflow does not run quick validation"
 grep -Fq "tools/check_public_docs.sh --quick" .github/workflows/ci.yml || fail "CI workflow does not run public docs check"
 grep -Fq "tests/*.bash" .github/workflows/ci.yml || fail "CI workflow does not run unit tests"
+grep -Fq "bash -n FlameOn" .github/workflows/ci.yml || fail "CI workflow does not syntax-check FlameOn"
 grep -Fq "tools/stress_upkeeper_corpus.sh --local" README.md || fail "README does not document the local stress corpus command"
 grep -Fq "tools/stress_upkeeper_corpus.sh --local" docs/stress-corpus.md || fail "stress corpus docs do not document the implemented command"
 grep -Fq "p26-public-documentation-review.md" prompts/README.md || fail "prompt index does not list P26"
@@ -121,6 +133,10 @@ grep -Fq -- "--p26" <<<"$help_text" || fail "help missing --p26"
 grep -Fq -- "--p27" <<<"$help_text" || fail "help missing --p27"
 grep -Fq -- "--p28" <<<"$help_text" || fail "help missing --p28"
 grep -Fq -- "--p29" <<<"$help_text" || fail "help missing --p29"
+grep -Fq -- "--backup-queue" <<<"$help_text" || fail "help missing --backup-queue"
+grep -Fq -- "--max-cover" <<<"$help_text" || fail "help missing --max-cover"
+grep -Fq "FlameOn" README.md || fail "README does not document FlameOn"
+grep -Fq "completions/upkeeper.bash" README.md || fail "README does not document Bash completions"
 
 log "checking for obvious placeholder/legalese public text"
 placeholder_pattern='lorem ipsum|apache placeholder|placeholder framework|pending transitional|subsection c-x[0-9]+|rev 14 placeholder|private chat history required'

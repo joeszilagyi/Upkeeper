@@ -1,5 +1,10 @@
 # Prompt Title
 
+<!--
+Copy this scaffold into prompts/ and replace bracketed placeholders before use.
+Keep reusable prompts generic; put task-specific caveats in Notes.
+-->
+
 ## Goal
 
 Describe the result you want from the model.
@@ -28,6 +33,11 @@ Requirements:
 Output:
 - [expected format]
 ```
+
+## Verification
+
+Describe how the result should be checked or what evidence should appear when
+the prompt succeeds.
 
 ## Notes
 

@@ -22,6 +22,8 @@ hide malformed operator data as absence.
 Future changes should preserve this operator-visible surface as far as possible:
 
 - Root `Upkeeper` remains the executable entrypoint.
+- Root `FlameOn` remains a thin convenience launcher over `Upkeeper` max-cover
+  mode rather than a second implementation path.
 - Symlinked clients can continue invoking a local `./Upkeeper.sh` that points to
   the central root `Upkeeper` file.
 - The root entrypoint resolves paired modules, prompt files, and documentation
@@ -36,8 +38,12 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--selection-order=oldest|newest|random`, `--refresh-manifest`,
   `--manifest-file=...`, `--include-glob=...`, `--include-globs=...`,
   `--exclude-glob=...`, `--exclude-globs=...`,
-  `--selection-review-modules=...`, `--ignore-failure-queue`, and
-  `--prompt-pass=all`.
+  `--selection-review-modules=...`, `--ignore-failure-queue`,
+  `--backup-queue`, `-backup_queue`, `--prompt-pass=all`, and `--max-cover`.
+- `.upkeeperignore` remains the repo-local target-selection firewall. It blocks
+  normal rotation, Lattice/max-cover candidates, failure-queue eligibility,
+  manifest entries, and explicit `--target-file` pins for matching paths without
+  changing Git tracking or Codex sandbox access.
 - The central default config remains `Upkeeper.conf`, and named config profiles
   can be selected per invocation with `--config-file=PATH`.
 - Existing documented environment knobs keep their meaning unless a change note
@@ -57,7 +63,8 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Runtime artifacts stay under documented local paths such as `runtime/`,
   `runtime/upkeeper-transcripts`, `runtime/journals/upkeeper-postmortems`,
   `runtime/upkeeper-file-manifest.json`, and
-  `runtime/unaddressed-tool-failures`.
+  `runtime/unaddressed-tool-failures`. Backup failure-queue runs use
+  `runtime/unaddressed-tool-failures-backup`.
 - Upkeeper Lattice is additive local runtime evidence at
   `runtime/upkeeper-lattice/lattice.sqlite3`. Runtime artifacts under
   `runtime/upkeeper-lattice/`, including SQLite side files, backups, exports,
@@ -69,6 +76,9 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Default target selection remains current-compatible. Live source-safe
   eligibility stays authoritative; Lattice does not replace current eligibility
   with stale database rows.
+- `--max-cover` may ask Lattice to rank a broader current tracked text-file
+  pool, but final selection still revalidates the live source-safe boundary in
+  the same cycle.
 - Explicit targets still win. Startup anomaly gates still win. The local
   failure queue still wins before normal timestamp rotation.
 - Validation entrypoints remain available:
@@ -77,6 +87,8 @@ Future changes should preserve this operator-visible surface as far as possible:
   `.github/workflows/ci.yml` for pushes and pull requests.
 - The local stress-corpus entrypoint remains available:
   `tools/stress_upkeeper_corpus.sh --local`.
+- Optional Bash completion remains an additive helper at
+  `completions/upkeeper.bash`.
 - Default validation and local stress-corpus checks do not spend backend Codex
   quota unless the operator explicitly opts in through a future backend-specific
   command.

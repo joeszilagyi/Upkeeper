@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -997,6 +998,64 @@ def git_path_ignored(root: Path, path: Path) -> bool:
         return False
 
 
+def normalize_upkeeper_ignore_file(root: Path, raw: str | None = None) -> Path:
+    raw = raw or os.environ.get("CODEX_UPKEEPER_IGNORE_FILE") or os.environ.get("UPKEEPER_IGNORE_FILE") or ".upkeeperignore"
+    path = Path(raw).expanduser()
+    return path.resolve() if path.is_absolute() else (root / path).resolve()
+
+
+def load_upkeeperignore_patterns(root: Path, raw: str | None = None) -> list[tuple[bool, str]]:
+    ignore_file = normalize_upkeeper_ignore_file(root, raw)
+    patterns: list[tuple[bool, str]] = []
+    try:
+        lines = ignore_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return patterns
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        negated = line.startswith("!")
+        if negated:
+            line = line[1:].strip()
+            if not line:
+                continue
+        patterns.append((negated, line.replace("\\", "/")))
+    return patterns
+
+
+def upkeeperignore_pattern_matches(path: str, pattern: str) -> bool:
+    pattern = pattern.strip()
+    if not pattern:
+        return False
+    anchored = pattern.startswith("/")
+    if anchored:
+        pattern = pattern.lstrip("/")
+    directory_only = pattern.endswith("/")
+    if directory_only:
+        pattern = pattern.rstrip("/")
+    if not pattern:
+        return False
+
+    if directory_only:
+        if "/" in pattern or anchored:
+            return path == pattern or path.startswith(pattern + "/")
+        return pattern in path.split("/")
+
+    name = Path(path).name
+    if anchored or "/" in pattern:
+        return fnmatch.fnmatch(path, pattern)
+    return fnmatch.fnmatch(name, pattern) or any(fnmatch.fnmatch(part, pattern) for part in path.split("/"))
+
+
+def upkeeper_path_ignored(path: str, patterns: list[tuple[bool, str]]) -> bool:
+    ignored = False
+    for negated, pattern in patterns:
+        if upkeeperignore_pattern_matches(path, pattern):
+            ignored = not negated
+    return ignored
+
+
 def git_path_tracked(root: Path, path: Path) -> bool:
     rel = repo_rel_path(root, path)
     if not rel:
@@ -1752,9 +1811,13 @@ def is_text_file(path: Path) -> bool:
         return False
 
 
-def live_candidate_paths(root: Path) -> list[dict[str, Any]]:
+def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper_ignore_file: str | None = None) -> list[dict[str, Any]]:
+    upkeeperignore_patterns = load_upkeeperignore_patterns(root, upkeeper_ignore_file)
     if inside_git_repo(root):
-        raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "-z"])
+        if candidate_scope == "current-tracked":
+            raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"])
+        else:
+            raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "-z"])
         paths = [p for p in raw.decode("utf-8", "surrogateescape").split("\0") if p]
     else:
         paths = []
@@ -1773,8 +1836,8 @@ def live_candidate_paths(root: Path) -> list[dict[str, Any]]:
             reason = "excluded_exact"
         elif rel.startswith(".git/") or rel.startswith("runtime/"):
             reason = "excluded_prefix"
-        elif is_test_path(rel):
-            reason = "test_path"
+        elif upkeeper_path_ignored(rel, upkeeperignore_patterns):
+            reason = "upkeeperignore"
         else:
             try:
                 st = p.stat()
@@ -1783,7 +1846,12 @@ def live_candidate_paths(root: Path) -> list[dict[str, Any]]:
             else:
                 if not stat.S_ISREG(st.st_mode):
                     reason = "not_regular_file"
+                elif candidate_scope == "current-tracked":
+                    if not is_text_file(p):
+                        reason = "binary_or_unreadable"
                 else:
+                    if is_test_path(rel):
+                        reason = "test_path"
                     name = p.name
                     ext = p.suffix.lower()
                     candidate = name in BUILD_NAMES or ext in SCRIPT_EXTS
@@ -4168,12 +4236,68 @@ def query_changed_since_last_pass(conn: sqlite3.Connection, root: Path, repo_id:
     return rows
 
 
+def pass_coverage_counts_for_file(conn: sqlite3.Connection, repo_id: int, file_id: int | None) -> dict[str, int]:
+    counts = {item["pass_code"]: 0 for item in PASS_REGISTRY if item.get("active", True)}
+    if not file_id:
+        return counts
+    for row in conn.execute(
+        """
+        select pass_code,
+          sum(
+            case
+              when outcome in ('clean','fixed','regression_found','not_applicable','blocked') then 1
+              when attempted=1 then 1
+              else 0
+            end
+          ) as covered_count
+        from file_pass_runs
+        where repo_id=? and file_id=?
+        group by pass_code
+        """,
+        (repo_id, file_id),
+    ):
+        pass_code = normalize_pass_code(str(row["pass_code"]))
+        if pass_code in counts:
+            counts[pass_code] = int(row["covered_count"] or 0)
+    return counts
+
+
+def annotate_max_cover_scores(conn: sqlite3.Connection, repo_id: int, rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        if row["candidate_state"] != "eligible":
+            continue
+        file_id = file_id_for_path(conn, repo_id, row["path"])
+        counts = pass_coverage_counts_for_file(conn, repo_id, file_id)
+        unrun = sorted(pass_code for pass_code, count in counts.items() if count == 0)
+        min_count = min(counts.values()) if counts else 0
+        row["score_json"] = json_dumps(
+            {
+                "coverage_mode": "max-cover",
+                "pass_count": len(counts),
+                "unrun_pass_count": len(unrun),
+                "oldest_unrun_pass": unrun[0] if unrun else "",
+                "least_covered_count": min_count,
+            }
+        )
+
+
 def query_selection_candidates(conn: sqlite3.Connection, root: Path, repo_id: int, args: argparse.Namespace) -> list[dict[str, Any]]:
-    rows = live_candidate_paths(root)
+    mode = args.mode
+    candidate_scope = "current-tracked" if mode == "max-cover" else "eligible"
+    rows = live_candidate_paths(root, candidate_scope=candidate_scope, upkeeper_ignore_file=getattr(args, "upkeeper_ignore_file", None))
     eligible = [row for row in rows if row["candidate_state"] == "eligible"]
     excluded = [row for row in rows if row["candidate_state"] != "eligible"]
-    mode = args.mode
-    if mode.startswith("never-pass:"):
+    if mode == "max-cover":
+        annotate_max_cover_scores(conn, repo_id, eligible)
+        eligible.sort(
+            key=lambda r: (
+                0 if json.loads(r.get("score_json") or "{}").get("unrun_pass_count", 0) else 1,
+                json.loads(r.get("score_json") or "{}").get("least_covered_count", 0),
+                r.get("mtime_epoch") or 0,
+                r["path"],
+            )
+        )
+    elif mode.startswith("never-pass:"):
         pass_code = normalize_pass_code(mode.split(":", 1)[1])
         for row in eligible:
             counts = pass_counts_for_path(conn, repo_id, row["path"], pass_code)
@@ -4412,6 +4536,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db", default=None, help="SQLite DB path")
     parser.add_argument("--journal-mode", default=os.environ.get("UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE", "delete"), choices=["delete", "wal"])
     parser.add_argument("--allow-unsafe-db", action="store_true", default=os.environ.get("UPKEEPER_LATTICE_ALLOW_UNSAFE_DB") == "1")
+    parser.add_argument("--upkeeper-ignore-file", default=os.environ.get("CODEX_UPKEEPER_IGNORE_FILE", os.environ.get("UPKEEPER_IGNORE_FILE", ".upkeeperignore")), help="Upkeeper target-selection ignore file")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("init")
@@ -4610,4 +4735,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout = open(os.devnull, "w", encoding="utf-8")
+        except OSError:
+            pass
+        raise SystemExit(EXIT_SUCCESS)

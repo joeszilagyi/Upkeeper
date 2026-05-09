@@ -214,6 +214,13 @@ apply_model_override() {
   esac
 }
 
+enable_max_cover_mode() {
+  CODEX_MAX_COVER_MODE="1"
+  UPKEEPER_LATTICE_SELECTION_MODE="max-cover"
+  set_prompt_pass_or_die "all"
+  add_review_modules_spec "p24,p25,p26,p27,p28,p29"
+}
+
 normalize_review_module() {
   local module="$1"
 
@@ -376,6 +383,10 @@ apply_configured_cli_defaults() {
 
   if [[ -n "${CODEX_PROMPT_PASS:-}" ]]; then
     set_prompt_pass_or_die "$CODEX_PROMPT_PASS"
+  fi
+
+  if config_truthy "${UPKEEPER_MAX_COVER:-0}"; then
+    enable_max_cover_mode
   fi
 
   if config_truthy "${UPKEEPER_IGNORE_FAILURE_QUEUE:-0}"; then
@@ -563,6 +574,15 @@ parse_args() {
         ;;
       --selection-review-modules)
         die "use --selection-review-modules=p24,p25,p26,p27,p28,p29 (spaced form is intentionally unsupported)"
+        ;;
+      --max-cover)
+        enable_max_cover_mode
+        shift
+        ;;
+      --backup-queue|-backup_queue)
+        CODEX_TOOL_FAILURE_QUEUE_DIR="$ROOT_DIR/runtime/unaddressed-tool-failures-backup"
+        CODEX_TOOL_FAILURE_QUEUE_BYPASS="0"
+        shift
         ;;
       --ignore-failure-queue|--bypass-failure-queue)
         CODEX_TOOL_FAILURE_QUEUE_BYPASS="1"

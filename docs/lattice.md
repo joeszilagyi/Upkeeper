@@ -48,9 +48,9 @@ Lattice does not replace Git or tracked source. Git and the working tree remain
 canonical for code. Lattice records evidence about what Upkeeper observed and
 did. In short, source-safe live eligibility remains authoritative: current
 selection still starts from live local files, ignores `.git/`, `runtime/`,
-`Upkeeper.log`, ignored files, generated outputs, caches, and vendor content,
-and then applies explicit target, startup-anomaly, and failure-queue priority
-rules before normal oldest-mtime rotation.
+`Upkeeper.log`, Git-ignored files, `.upkeeperignore` paths, generated outputs,
+caches, and vendor content, and then applies explicit target, startup-anomaly,
+and failure-queue priority rules before normal oldest-mtime rotation.
 
 ## Defaults
 
@@ -233,6 +233,7 @@ tools/upkeeper_lattice.py query least-reviewed
 tools/upkeeper_lattice.py query most-fragile
 tools/upkeeper_lattice.py query changed-since-last-pass --pass P23
 tools/upkeeper_lattice.py query selection-candidates --mode oldest-mtime
+tools/upkeeper_lattice.py query selection-candidates --mode max-cover
 tools/upkeeper_lattice.py query explain-selection --cycle CYCLE_ID
 tools/upkeeper_lattice.py query explain-selection --path PATH
 ```
@@ -265,6 +266,15 @@ selection must still be revalidated against the current live source-safe
 candidate boundary in the same cycle. The default
 `UPKEEPER_LATTICE_SELECTION_MODE=oldest-mtime` preserves current-compatible
 selection behavior.
+
+`selection-candidates --mode max-cover` is the selection query used by
+`./Upkeeper --max-cover` and `./FlameOn`. It ranks current tracked source-safe
+text files by coverage pressure: first the oldest file with any unrun active
+pass, then files with the lowest per-pass coverage count, then oldest mtime.
+The query emits `score_json` with the active pass count, unrun pass count,
+oldest unrun pass, and least-covered pass count. The wrapper still revalidates
+the returned path against live local source-safety checks before launching
+Codex.
 
 ## Regression Evidence
 

@@ -6,6 +6,25 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-09: v1.2.3 changes:
+	1. Added `.upkeeperignore` as a first-class Upkeeper target-selection firewall for files Git may still track but Upkeeper should not spend model upkeep cycles reviewing.
+	2. Wired `.upkeeperignore` into manifest construction, normal selection, explicit `--target-file` eligibility, failure-queue target eligibility, and Lattice/max-cover candidate ranking.
+	3. Added `UPKEEPER_IGNORE_FILE` so scheduled profiles can point a checkout at a different ignore file while preserving `.upkeeperignore` as the default.
+	4. Documented that `.upkeeperignore` is a spend/selection control, not a Git ignore rule, Codex sandbox boundary, or secret-protection mechanism.
+	5. Extended validation and Lattice tests so `.upkeeperignore` paths cannot become explicit targets or max-cover candidates.
+
+2026-05-09: v1.2.2 changes:
+	1. Added the repo-root `FlameOn` launcher for one-command high-coverage smoke/burn runs. It invokes Upkeeper with `--model-override=5.5_xhigh --max-cover`, limits terminal verbosity flags to `--silent`, `--basic`, and `--debug1`, and preserves normal quota, startup, fallback, and evidence guardrails.
+	2. Added `--max-cover` and `UPKEEPER_MAX_COVER` as one-cycle/high-coverage mode controls that force `--prompt-pass=all`, append P24-P29, and ask Lattice for max-cover target ranking.
+	3. Added `--backup-queue` plus the legacy `-backup_queue` spelling so one cycle can use `runtime/unaddressed-tool-failures-backup` without changing the normal failure queue.
+	4. Extended Lattice `selection-candidates --mode max-cover` to rank current tracked source-safe text by unrun active passes, least per-pass coverage count, and oldest mtime while keeping live source-safety revalidation authoritative.
+	5. Added optional Bash completion for `Upkeeper`, `Upkeeper.sh`, and `FlameOn` at `completions/upkeeper.bash`, plus deterministic tests and docs for the new launcher and max-cover path.
+	6. Clarified that Upkeeper config files are sourced by Bash and must be treated as trusted executable shell code, not inert data.
+	7. Made `tools/check_public_docs.sh` fail with an explicit `not a Git worktree` diagnostic when run from a checkout copy without Git metadata.
+	8. Hardened review-summary parsing so baseline metadata such as `Selected target baseline: epoch ...` cannot replace the actual selected file in compact `review.summary` log fields.
+	9. Reduced validator log noise and transient failure risk by keeping expected invalid-flag checks in temp logs and allowing manifest-reuse validation to continue when the repo fingerprint changes during an active validation window.
+	10. Made Lattice query output tolerate closed stdout pipes, so commands such as `tools/upkeeper_lattice.py query selection-candidates ... | head` do not print a Python `BrokenPipeError`.
+
 2026-05-09: v1.2.1 changes:
 	1. Hardened `tools/upkeeper_lattice.py import-git` so rerunning a local Git import skips already-recorded per-commit file changes instead of multiplying `git_file_changes` churn evidence.
 	2. Added a unique Git file-change guard and normal `init` repair for duplicate Git change rows left by older local Lattice databases.

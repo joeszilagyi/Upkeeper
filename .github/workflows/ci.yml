@@ -41,8 +41,10 @@ jobs:
       - name: Shell syntax
         run: |
           bash -n Upkeeper
+          bash -n FlameOn
           bash -n Upkeeper.conf
           bash -n configurations/default.conf
+          bash -n completions/*.bash
           bash -n lib/upkeeper/*.bash
           bash -n tools/*.sh
           bash -n tests/*.bash

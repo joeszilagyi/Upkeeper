@@ -33,11 +33,15 @@ On each cycle it:
 - prepends that target to the default maintenance prompt so Codex does not spend
   model/tool cycles rediscovering `.git/`, ignored files, generated outputs,
   runtime evidence, or test trees by accident
+- respects `.upkeeperignore` as a selection/spend firewall for files Git may
+  still track but Upkeeper should not spend model cycles reviewing
 - applies the P23 data-contract pass to validators, importers, exporters,
   registry loaders, config readers, data readers, and input-boundary CLIs
 - can append opt-in P24/P25/P26/P27/P28/P29 review modules for de-LLM-ing
   viability, contract/intent compliance, public documentation clarity,
   educational debriefs, unit-test harvesting, and reuse harvesting
+- provides `FlameOn`, a thin one-command launcher for the highest local
+  max-cover smoke/burn cycle while preserving Upkeeper quota guardrails
 - runs Codex once with the configured model and reasoning effort
 - records terminal outcomes in `Upkeeper.log`
 - tags log lines with a per-cycle `run_hash` and emits `--MARK--` heartbeat
@@ -88,6 +92,28 @@ done
 Dry-run is the first check to run in a new repo. It verifies wrapper startup,
 quota discovery, operator guide state, and target preselection without launching
 a Codex backend task.
+
+For a one-command high-coverage smoke/burn cycle, use the repo-root launcher:
+
+```sh
+FLAMEON_DRY_RUN=1 ./FlameOn
+./FlameOn --basic
+./FlameOn --debug1 -backup_queue
+```
+
+`FlameOn` is intentionally thin. It resolves to
+`./Upkeeper --model-override=5.5_xhigh --max-cover`, sets
+`CODEX_TERMINAL_VERBOSITY` to `silent`, `basic`, or `debug1`, and keeps the
+same quota, startup, fallback, failure-queue, evidence, and local safety checks
+as normal Upkeeper runs. `-backup_queue` and `--backup-queue` switch that one
+cycle to `runtime/unaddressed-tool-failures-backup`.
+
+Bash completion for both `Upkeeper` and `FlameOn` is available as an opt-in
+shell helper:
+
+```sh
+source completions/upkeeper.bash
+```
 
 Validate the central checkout before release or after touching module order,
 prompt packaging, or symlink behavior:
@@ -150,6 +176,10 @@ sources it before applying built-in defaults and before parsing CLI flags. The
 file is intentionally one shell-compatible top-level config, not a directory of
 chained includes.
 
+Config files are trusted executable shell code, not inert data. Upkeeper sources
+them with Bash, so do not load profiles from untrusted repositories, downloaded
+snippets, or any path you would not be willing to run as a shell script.
+
 The tracked [configurations/default.conf](configurations/default.conf) is a
 basic profile template for scheduled runs or future named profiles. For now,
 keep profiles self-contained and select one per invocation:
@@ -169,6 +199,7 @@ CODEX_REASONING_EFFORT="xhigh"
 UPKEEPER_TARGET_FILE="docs/scripts/upkeeper.md"
 UPKEEPER_REVIEW_MODULES="p26,p28"
 UPKEEPER_PROMPT_PASS="all"
+UPKEEPER_MAX_COVER="0"
 ```
 
 Selection is also configurable. The default is a local manifest-backed oldest
@@ -182,8 +213,16 @@ UPKEEPER_TARGET_ROOT="docs"
 UPKEEPER_TARGET_MAX_DEPTH="3"
 UPKEEPER_INCLUDE_GLOBS="*.md,*.txt"
 UPKEEPER_EXCLUDE_GLOBS="vendor/**,runtime/**"
+UPKEEPER_IGNORE_FILE="$ROOT_DIR/.upkeeperignore"
 UPKEEPER_SELECTION_REVIEW_MODULES="p26"
 ```
+
+`.upkeeperignore` is separate from `.gitignore`: Git ignore rules decide what
+belongs in source control, while `.upkeeperignore` decides what Upkeeper may
+select for model upkeep. Patterns use simple Gitignore-style glob lines and
+block manifest entries, normal rotation, Lattice/max-cover candidates,
+failure-queue eligibility, and explicit `--target-file` pins. It is a
+spend/selection control, not a sandbox or secret-protection boundary.
 
 Lattice is also configurable from the same shell-compatible profile. The
 defaults keep it on, local, ignored, and compatible with the current selector:
@@ -208,6 +247,7 @@ the normal model, target, and review modules, while an operator can still run:
 ```sh
 ./Upkeeper --config-file=configurations/default.conf --target-file=Upkeeper --p25
 ./Upkeeper --target-root=docs --target-depth=3 --selection-order=newest --refresh-manifest
+./Upkeeper --max-cover
 ```
 
 ## Client Repo Setup
@@ -294,6 +334,7 @@ The tracked launcher examples package common loop shapes as explicit scripts:
 ```sh
 UPKEEPER_LOOP_DRY_RUN=1 launcher_examples/spark_5.3_burn_out_xhigh.sh
 launcher_examples/spark_5.3_burn_out_xhigh.sh
+FLAMEON_DRY_RUN=1 ./FlameOn --debug1
 ```
 
 Tracked testruns under `testruns/` are plain shell launchers for common local
@@ -396,6 +437,14 @@ If a run sees a new local command failure, the marker stays open unless a later
 successful command of the same broad kind shows the failure was rechecked.
 Use `--target-file=PATH` or `--ignore-failure-queue` when a human intentionally
 wants a different target for one cycle.
+
+Use `--max-cover` when the run should maximize review/pass coverage rather than
+stay on normal script/tool rotation. It enables `--prompt-pass=all`, appends
+P24 through P29, and asks Lattice for max-cover ranking across current tracked
+source-safe text files. The ranking prefers the oldest file with any unrun pass,
+then files with the lowest per-pass coverage count, then oldest mtime. Explicit
+targets, startup anomaly gates, and open failure-queue markers still keep their
+normal priority.
 
 For an explicit one-cycle Upkeeper self-review with all built-in P1-P23 passes,
 use equals-form operator flags:
@@ -518,12 +567,17 @@ Local runtime evidence is deliberately ignored by git:
 - `runtime/upkeeper-file-manifest.json`
 - `runtime/startup-anomaly-gates/`
 - `runtime/unaddressed-tool-failures/`
+- `runtime/unaddressed-tool-failures-backup/`
 - repo-local copied or linked wrappers such as `Upkeeper.sh`, when the client
   repo chooses to ignore them
 
 Promote durable lessons into tracked docs or wrapper behavior. Leave raw logs,
 transcripts, temporary outputs, and postmortem evidence local unless a repo has a
 specific policy for publishing them.
+
+Tracked source paths matched by `.upkeeperignore` are not runtime evidence and
+may remain in Git; they are simply blocked from Upkeeper target selection so a
+test loop does not spend cycles on known low-value or generated material.
 
 ## Repository Layout
 
@@ -534,6 +588,8 @@ specific policy for publishing them.
 |       `-- ci.yml
 |-- configurations/
 |   `-- default.conf
+|-- completions/
+|   `-- upkeeper.bash
 |-- docs/
 |   |-- compatibility.md
 |   |-- dependencies.md
@@ -572,6 +628,7 @@ specific policy for publishing them.
 |   `-- validate_upkeeper.sh
 |-- Upkeeper
 |-- Upkeeper.conf
+|-- FlameOn
 |-- LICENSE
 |-- PLANS.md
 |-- .editorconfig
@@ -608,6 +665,8 @@ specific policy for publishing them.
   public documentation policy checks
 - [launcher_examples/README.md](launcher_examples/README.md): tracked shell
   launcher examples for common Upkeeper loops
+- [completions/upkeeper.bash](completions/upkeeper.bash): optional Bash
+  completion for `Upkeeper`, `Upkeeper.sh`, and `FlameOn`
 - `testruns/*.sh`: tracked local launchers for repeatable Upkeeper test cycles
 - [PLANS.md](PLANS.md): brief implementation plans for complex Upkeeper changes
 - [prompts/default-review.md](prompts/default-review.md): runtime default review

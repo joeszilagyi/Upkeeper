@@ -167,8 +167,10 @@ check_syntax() {
 
   log "checking Bash syntax"
   bash -n Upkeeper
+  bash -n FlameOn
   bash -n Upkeeper.conf
   bash -n configurations/default.conf
+  bash -n completions/*.bash
   for module in lib/upkeeper/*.bash; do
     bash -n "$module"
   done
@@ -233,6 +235,9 @@ check_prompt_template() {
   [[ -s lib/upkeeper/lattice.bash ]] || fail "Lattice wrapper module is missing or empty"
   [[ -s tests/lattice_test.bash ]] || fail "Lattice test is missing or empty"
   [[ -s docs/lattice.md ]] || fail "Lattice documentation is missing or empty"
+  [[ -x FlameOn ]] || fail "FlameOn launcher is missing or not executable"
+  [[ -s completions/upkeeper.bash ]] || fail "Bash completion helper is missing or empty"
+  [[ -s .upkeeperignore ]] || fail ".upkeeperignore is missing or empty"
   [[ -s Upkeeper.conf ]] || fail "root Upkeeper.conf is missing or empty"
   [[ -s configurations/default.conf ]] || fail "configurations/default.conf is missing or empty"
   [[ -x tools/stress_upkeeper_corpus.sh ]] || fail "stress corpus harness is missing or not executable"
@@ -270,8 +275,11 @@ check_prompt_template() {
   grep -Fq "UPKEEPER_PASS_RESULT" prompts/default-review.md || fail "default prompt missing pass-result marker contract"
   grep -Fq "UPKEEPER_LATTICE_ENABLED" Upkeeper.conf || fail "root config missing Lattice defaults"
   grep -Fq "UPKEEPER_LATTICE_ENABLED" configurations/default.conf || fail "default profile missing Lattice defaults"
+  grep -Fq "UPKEEPER_IGNORE_FILE" Upkeeper.conf || fail "root config missing .upkeeperignore default"
+  grep -Fq "UPKEEPER_IGNORE_FILE" configurations/default.conf || fail "default profile missing .upkeeperignore default"
   grep -Fq "local SQLite evidence ledger" docs/lattice.md || fail "Lattice docs missing local SQLite summary"
   grep -Fq "source-safe live eligibility remains authoritative" docs/lattice.md || fail "Lattice docs missing live eligibility boundary"
+  grep -Fq ".upkeeperignore" docs/lattice.md || fail "Lattice docs missing .upkeeperignore candidate boundary"
   grep -Fq "Reusable Asset Ownership" lib/upkeeper/README.md || fail "module README missing reusable asset ownership map"
   grep -Fq "code-comment clarity" README.md || fail "README missing P26 summary"
   grep -Fq "educational debrief" README.md || fail "README missing P27 summary"
@@ -279,6 +287,10 @@ check_prompt_template() {
   grep -Fq "reuse harvesting" README.md || fail "README missing P29 summary"
   grep -Fq "Upkeeper.conf" README.md || fail "README missing config file summary"
   grep -Fq "tools/stress_upkeeper_corpus.sh --local" README.md || fail "README missing stress corpus command"
+  grep -Fq ".upkeeperignore" README.md || fail "README missing .upkeeperignore docs"
+  grep -Fq ".upkeeperignore" docs/scripts/upkeeper.md || fail "operator guide missing .upkeeperignore docs"
+  grep -Fq ".upkeeperignore" docs/compatibility.md || fail "compatibility docs missing .upkeeperignore contract"
+  grep -Fq ".upkeeperignore" docs/security.md || fail "security docs missing .upkeeperignore boundary"
   grep -Fq "tools/stress_upkeeper_corpus.sh --local" docs/stress-corpus.md || fail "stress corpus docs missing implemented command"
   grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 }
@@ -313,6 +325,9 @@ check_help_and_diff() {
   grep -Fq -- "--p28" <<<"$help" || fail "help missing --p28"
   grep -Fq -- "--p29" <<<"$help" || fail "help missing --p29"
   grep -Fq -- "--ignore-failure-queue" <<<"$help" || fail "help missing --ignore-failure-queue"
+  grep -Fq -- "--backup-queue" <<<"$help" || fail "help missing --backup-queue"
+  grep -Fq -- "--max-cover" <<<"$help" || fail "help missing --max-cover"
+  grep -Fq -- "UPKEEPER_MAX_COVER" <<<"$help" || fail "help missing UPKEEPER_MAX_COVER"
   git diff --check
   git diff --cached --check
 }
@@ -748,7 +763,10 @@ check_review_module_flags() {
   [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "P29 reuse aliases broke --version"
 
   set +e
-  output="$(./Upkeeper --review-module=nope --version 2>&1)"
+  output="$(
+    CODEX_LOG_FILE="$temp_dir/invalid-review-module.log" \
+      ./Upkeeper --review-module=nope --version 2>&1
+  )"
   rc=$?
   set -e
   [[ "$rc" -eq 3 ]] || fail "invalid review module exited $rc, expected 3"
@@ -869,6 +887,8 @@ check_file_manifest_selection() {
       CODEX_POSTMORTEM_ENABLED=0 \
       CODEX_FILE_MANIFEST_PATH="$manifest_path" \
       CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
+      CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
+      UPKEEPER_LATTICE_DB="$temp_dir/lattice.sqlite3" \
       UPKEEPER_DRY_RUN=1 \
       ./Upkeeper "$@" >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
   }
@@ -894,7 +914,17 @@ check_file_manifest_selection() {
     --selection-source=manifest \
     --selection-order=newest
 
-  grep -Fq "file_manifest.ready action=reused reason=current" "$temp_dir/newest.log" || fail "current manifest was not reused"
+  if ! grep -Fq "file_manifest.ready action=reused reason=current" "$temp_dir/newest.log"; then
+    local manifest_fingerprint newest_fingerprint
+    manifest_fingerprint="$(sed -n 's/.*file_manifest.ready .* fingerprint=\([^ ]*\).*/\1/p' "$temp_dir/manifest.log" | tail -1)"
+    newest_fingerprint="$(sed -n 's/.*file_manifest.ready .* fingerprint=\([^ ]*\).*/\1/p' "$temp_dir/newest.log" | tail -1)"
+    if grep -Fq "file_manifest.ready action=rebuilt reason=fingerprint_changed" "$temp_dir/newest.log" &&
+      [[ -n "$manifest_fingerprint" && -n "$newest_fingerprint" && "$manifest_fingerprint" != "$newest_fingerprint" ]]; then
+      log "manifest reuse check observed fingerprint drift during validation; continuing"
+    else
+      fail "current manifest was not reused"
+    fi
+  fi
   grep -Fq "selection_order=newest" "$temp_dir/newest.log" || fail "newest selection order was not logged"
 
   run_manifest_dry_run "$temp_dir/enumerate.log" \
@@ -935,6 +965,22 @@ check_file_manifest_selection() {
   grep -Fq "selection_mode=explicit_target" "$temp_dir/docs-target.log" || fail "explicit docs target was not logged as explicit target mode"
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/docs-target.log" || fail "explicit docs target dry-run did not finish cleanly"
 
+  printf 'docs/scripts/upkeeper.md\ntemplates/**\n' >"$temp_dir/upkeeperignore"
+  set +e
+  CODEX_UPKEEPER_IGNORE_FILE="$temp_dir/upkeeperignore" run_manifest_dry_run "$temp_dir/upkeeperignore-target.log" \
+    --target-file=docs/scripts/upkeeper.md
+  rc=$?
+  set -e
+  [[ "$rc" -eq 3 ]] || fail "explicit .upkeeperignore target exited $rc, expected 3"
+  grep -Fq "reason=TARGET_FILE_NOT_ELIGIBLE" "$temp_dir/upkeeperignore-target.log" || fail ".upkeeperignore explicit target did not fail as ineligible"
+  grep -Fq ".upkeeperignore" "$temp_dir/upkeeperignore-target.log" || fail ".upkeeperignore explicit target did not name ignore reason"
+
+  CODEX_UPKEEPER_IGNORE_FILE="$temp_dir/upkeeperignore" run_manifest_dry_run "$temp_dir/upkeeperignore-max-cover.log" \
+    --max-cover \
+    --target-root=templates \
+    --include-glob='*.md'
+  grep -Fq "review.preselect.none reason=no_eligible_script_tool" "$temp_dir/upkeeperignore-max-cover.log" || fail ".upkeeperignore did not block max-cover template candidates"
+
   (
     export UPKEEPER_TARGET_FILE="docs/scripts/upkeeper.md"
     export UPKEEPER_REVIEW_MODULES="p26,p28"
@@ -953,6 +999,15 @@ check_file_manifest_selection() {
   if grep -Fq "review.preselect path=docs/scripts/upkeeper.md" "$temp_dir/docs-auto.log"; then
     fail "automatic rotation selected a docs-only target"
   fi
+
+  run_manifest_dry_run "$temp_dir/max-cover.log" \
+    --max-cover \
+    --target-root=docs \
+    --include-glob='*.md'
+  grep -Fq "selection_mode=lattice_max_cover" "$temp_dir/max-cover.log" || fail "max-cover did not use Lattice max-cover selection"
+  grep -Fq "prompt_pass=all" "$temp_dir/max-cover.log" || fail "max-cover did not force all prompt passes"
+  grep -Fq "review_modules=p24,p25,p26,p27,p28,p29" "$temp_dir/max-cover.log" || fail "max-cover did not append P24-P29"
+  grep -Fq "max_cover=1" "$temp_dir/max-cover.log" || fail "max-cover was not recorded in cycle.start"
 
   mkdir -p runtime
   printf 'runtime explicit target fixture\n' >runtime/upkeeper-explicit-target-fixture.txt
@@ -974,7 +1029,10 @@ check_file_manifest_selection() {
   grep -Fq "reason=TARGET_FILE_NOT_ELIGIBLE" "$temp_dir/git-target.log" || fail "explicit .git target did not fail as ineligible"
 
   set +e
-  output="$(./Upkeeper --selection-review-modules=nope --version 2>&1)"
+  output="$(
+    CODEX_LOG_FILE="$temp_dir/invalid-selection-review-module.log" \
+      ./Upkeeper --selection-review-modules=nope --version 2>&1
+  )"
   rc=$?
   set -e
   [[ "$rc" -eq 3 ]] || fail "invalid selection review module exited $rc, expected 3"
@@ -1144,8 +1202,25 @@ check_lattice_contract() {
 }
 
 check_public_docs_policy() {
+  local temp_dir output rc
+
   log "checking public documentation policy"
   tools/check_public_docs.sh --quick
+
+  temp_dir="$(mktemp -d /tmp/upkeeper-public-docs-git.XXXXXX)"
+  mkdir -p "$temp_dir/tools"
+  cp tools/check_public_docs.sh "$temp_dir/tools/check_public_docs.sh"
+  set +e
+  output="$(
+    cd "$temp_dir" &&
+      bash tools/check_public_docs.sh --quick 2>&1
+  )"
+  rc=$?
+  set -e
+  rm -r "$temp_dir"
+  [[ "$rc" -ne 0 ]] || fail "public docs check unexpectedly passed outside a Git worktree"
+  grep -Fq "not a Git worktree:" <<<"$output" ||
+    fail "public docs outside-Git diagnostic was not clear: $output"
 }
 
 check_fallback_artifact_helpers() {
@@ -1583,6 +1658,20 @@ EOF
   summary="$(bash -lc 'cd "$1"; source ./Upkeeper; review_report_summary_json "$2"' bash "$ROOT_DIR" "$temp_dir/last-message.txt")"
   selected_file="$(printf '%s' "$summary" | jq -r '.selected_file')"
   [[ "$selected_file" == "/home/joe/projects/Upkeeper/main/lib/upkeeper/fallback_availability.bash" ]] || fail "review summary selected markdown file was $selected_file"
+
+  cat >"$temp_dir/last-message.txt" <<'EOF'
+REVIEWED_AND_FIXED for [templates/README.md](/tmp/root/templates/README.md:1).
+
+Selected target baseline: epoch `1777826501`, `2026-05-03 09:41:41 -0700`, age `129h 54m`.
+
+Changed `templates/README.md` to name `prompt-template.md` as the scaffold.
+
+UPKEEPER_STATUS: WORK_DONE
+EOF
+
+  summary="$(bash -lc 'cd "$1"; source ./Upkeeper; review_report_summary_json "$2"' bash "$ROOT_DIR" "$temp_dir/last-message.txt")"
+  selected_file="$(printf '%s' "$summary" | jq -r '.selected_file')"
+  [[ "$selected_file" == "/tmp/root/templates/README.md" ]] || fail "review summary baseline line contaminated selected file: $selected_file"
 
   CODEX_TERMINAL_VERBOSITY=basic \
     bash -lc 'cd "$1"; source ./Upkeeper; terminal_emit_review_finale REVIEWED_AND_FIXED lib/upkeeper/example.bash "parser accepted malformed JSON as absent" "added strict rejection" "bash -n passed"' bash "$ROOT_DIR" \

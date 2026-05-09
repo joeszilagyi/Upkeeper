@@ -12,10 +12,10 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--prompt-pass=all]
+Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.1
+Version: v1.2.3
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -141,12 +141,16 @@ Important:
     `configurations/default.conf` as a basic profile template. Use
     `--config-file=PATH` to select one shell-compatible config file for this
     invocation, or `--no-config` to skip the default config. Relative config
-    paths are resolved from the invocation repository root. Config files may set
-    `CODEX_*` runtime knobs and `UPKEEPER_*` flag defaults such as
+    paths are resolved from the invocation repository root. Config files are
+    sourced by Bash, so treat them as trusted executable shell code, not inert
+    config data; do not load profiles from untrusted repositories or downloaded
+    snippets. Config files may set `CODEX_*` runtime knobs and `UPKEEPER_*` flag
+    defaults such as
     `UPKEEPER_TARGET_FILE`, `UPKEEPER_REVIEW_MODULES`, `UPKEEPER_PROMPT_FILE`,
     `UPKEEPER_PROMPT`, `UPKEEPER_PROMPT_PASS`, `UPKEEPER_MODEL_OVERRIDE`, and
-    `UPKEEPER_IGNORE_FAILURE_QUEUE`. They may also set selection defaults such
-    as `UPKEEPER_SELECTION_SOURCE`, `UPKEEPER_SELECTION_ORDER`,
+    `UPKEEPER_IGNORE_FAILURE_QUEUE`, and `UPKEEPER_MAX_COVER`. They may also
+    set selection defaults such as `UPKEEPER_SELECTION_SOURCE`,
+    `UPKEEPER_SELECTION_ORDER`,
     `UPKEEPER_FILE_MANIFEST_MODE`, `UPKEEPER_TARGET_ROOT`,
     `UPKEEPER_TARGET_MAX_DEPTH`, `UPKEEPER_INCLUDE_GLOBS`,
     `UPKEEPER_EXCLUDE_GLOBS`, and `UPKEEPER_SELECTION_REVIEW_MODULES`. CLI
@@ -221,6 +225,12 @@ Prompt behavior:
     path to the prompt. That avoids spending model/tool cycles on broad tree
     discovery and keeps `.git/`, ignored paths, runtime evidence, generated
     outputs, and tests out of the selection scan.
+  - A repo-root `.upkeeperignore`, or the file named by `UPKEEPER_IGNORE_FILE`,
+    is a target-selection firewall. It uses simple Gitignore-style glob lines
+    to block normal rotation, Lattice/max-cover candidates, failure-queue target
+    eligibility, manifest entries, and explicit `--target-file` pins. It
+    controls spend/selection only; it is not a Git, sandbox, or
+    secret-protection rule.
   - When a prior run leaves an open local tool-failure marker, preselection
     chooses the oldest still-eligible marked target after explicit operator
     pins and startup anomaly gates, but before stale-self and normal timestamp
@@ -319,8 +329,15 @@ Prompt behavior:
     prompt request; pair it with --review-module when you want both.
   - --ignore-failure-queue bypasses local unaddressed tool-failure markers for
     this invoked cycle only. --target-file also takes priority over the queue.
+  - --backup-queue, or legacy spelling -backup_queue, uses
+    runtime/unaddressed-tool-failures-backup for this invoked cycle instead of
+    the normal local failure queue.
   - --prompt-pass=all forces the selected target through all P1-P23 repertoire
     passes for this invoked cycle. Use the equals form; spaced form is rejected.
+  - --max-cover is a one-cycle high-coverage mode. It sets --prompt-pass=all,
+    appends P24-P29, and asks Lattice for max-cover target ranking across
+    current tracked source-safe text files. Explicit targets, startup anomaly
+    gates, and active failure-queue markers still keep their existing priority.
 
 Environment overrides:
   UPKEEPER_CONFIG_FILE          Default: Upkeeper.conf
@@ -336,11 +353,13 @@ Environment overrides:
   UPKEEPER_SELECTION_ORDER      Default: oldest
   UPKEEPER_FILE_MANIFEST_MODE   Default: auto
   UPKEEPER_FILE_MANIFEST_PATH   Default: runtime/upkeeper-file-manifest.json
+  UPKEEPER_IGNORE_FILE          Default: .upkeeperignore
   UPKEEPER_TARGET_ROOT          Default: empty
   UPKEEPER_TARGET_MAX_DEPTH     Default: empty
   UPKEEPER_INCLUDE_GLOBS        Default: empty
   UPKEEPER_EXCLUDE_GLOBS        Default: empty
   UPKEEPER_SELECTION_REVIEW_MODULES Default: empty
+  UPKEEPER_MAX_COVER           Default: 0
   UPKEEPER_LATTICE_ENABLED     Default: 1
   UPKEEPER_LATTICE_REQUIRED    Default: 0
   UPKEEPER_LATTICE_DB          Default: runtime/upkeeper-lattice/lattice.sqlite3
@@ -426,6 +445,25 @@ Exit codes:
   9  Detached screen worker stopped on a guardrail without requesting parent termination
 ```
 
+## FlameOn Launcher
+
+`./FlameOn` is a repo-root convenience launcher for one high-coverage
+smoke/burn cycle without typing the long Upkeeper flag set. It invokes
+`./Upkeeper --model-override=5.5_xhigh --max-cover`, preserves normal quota and
+startup guardrails, and only exposes terminal verbosity flags `--silent`,
+`--basic`, and `--debug1`.
+
+Use `FLAMEON_DRY_RUN=1 ./FlameOn` to print the resolved command without
+launching Codex. Use `./FlameOn -backup_queue` or `./FlameOn --backup-queue`
+when that cycle should read and write the backup local failure queue instead of
+the default queue.
+
+Optional Bash completion is available with:
+
+```sh
+source completions/upkeeper.bash
+```
+
 ## Operational Notes
 
 - `CODEX_MODE` defaults to `--sandbox workspace-write`. Set `CODEX_MODE` only
@@ -508,6 +546,8 @@ Exit codes:
 - Open tool-failure queue markers live under
   `runtime/unaddressed-tool-failures/open/`; resolved markers move to
   `runtime/unaddressed-tool-failures/resolved/`.
+- Backup queue runs use `runtime/unaddressed-tool-failures-backup/open/` and
+  `runtime/unaddressed-tool-failures-backup/resolved/` for that one cycle.
 - A repo-level active lock at `runtime/upkeeper-active.lock` prevents two
   Upkeeper loops from running the same checkout concurrently; stale locks are
   reclaimed only when the recorded PID/start fingerprint no longer matches.

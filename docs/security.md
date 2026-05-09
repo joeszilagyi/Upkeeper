@@ -143,10 +143,10 @@ sanitized artifacts.
 
 ## Ignored Files
 
-Automatic rotation avoids `.git/`, ignored paths, runtime evidence, generated
-outputs, and test trees. Explicit `--target-file` pins still reject ignored
-paths, runtime evidence, `.git`, directories, unreadable files, and binary-like
-files.
+Automatic rotation avoids `.git/`, ignored paths, `.upkeeperignore` paths,
+runtime evidence, generated outputs, and test trees. Explicit `--target-file`
+pins still reject ignored paths, `.upkeeperignore` paths, runtime evidence,
+`.git`, directories, unreadable files, and binary-like files.
 
 That selection policy is a safety guardrail, not a data-loss prevention system.
 If a real backend task runs commands that print or read ignored files, that

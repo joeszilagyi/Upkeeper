@@ -1,0 +1,26 @@
+# Upkeeper target-selection firewall.
+#
+# These patterns control what Upkeeper may spend model review cycles on. They do
+# not affect Git tracking, Codex sandbox access, or secret handling.
+
+# Local Upkeeper evidence and generated run state.
+runtime/
+Upkeeper.log
+Upkeeper.log.*
+out
+
+# Common generated or cache-heavy paths.
+__pycache__/
+.pytest_cache/
+.cache/
+node_modules/
+vendor/
+dist/
+build/
+coverage/
+
+# Local scratch artifacts.
+*.log
+*.tmp
+*.bak
+*.pyc

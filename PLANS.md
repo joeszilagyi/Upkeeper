@@ -95,6 +95,75 @@ Current status:
   `tools/check_public_docs.sh --quick`, `tools/validate_upkeeper.sh --quick`,
   `./Upkeeper --version`, `./Upkeeper --help`, and `git diff --check`.
 
+## FlameOn Max-Cover Launcher
+
+Status: completed
+
+Goal:
+Add a repo-root `FlameOn` launcher for high-coverage smoke/burn runs without
+retyping Upkeeper's long max-coverage flag set, backed by testable Upkeeper and
+Lattice selection surfaces.
+
+Constraints:
+- Keep `FlameOn` as a thin launcher. Reusable behavior belongs in Upkeeper flags
+  and Lattice selection modes.
+- Respect Upkeeper quota guardrails. The launcher must not bypass quota checks
+  or run backend validation during local tests.
+- Limit `FlameOn` verbosity flags to `--silent`, `--basic`, and `--debug1`,
+  matching `CODEX_TERMINAL_VERBOSITY` values.
+- Add an opt-in backup-queue path without changing the default failure queue.
+- Keep live source safety authoritative even when max-cover selection uses a
+  broader current tracked-file candidate pool than normal script/tool rotation.
+
+Files likely touched:
+- `FlameOn`
+- `Upkeeper`
+- `Upkeeper.conf`
+- `configurations/default.conf`
+- `completions/upkeeper.bash`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/help_selection.bash`
+- `lib/upkeeper/lattice.bash`
+- `tools/upkeeper_lattice.py`
+- `tests/*.bash`
+- `tools/validate_upkeeper.sh`
+- `tools/check_public_docs.sh`
+- `.github/workflows/ci.yml`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `docs/lattice.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added root `FlameOn` as a thin max-cover launcher over Upkeeper with only
+  `--silent`, `--basic`, `--debug1`, `-backup_queue`, and `--backup-queue`
+  operator flags.
+- Added `--max-cover` / `UPKEEPER_MAX_COVER` so Upkeeper can force all P1-P23
+  passes, append P24-P29, and request Lattice max-cover target ranking.
+- Added Lattice `selection-candidates --mode max-cover`, ranking current tracked
+  source-safe text files by unrun pass coverage, least-covered pass count, and
+  oldest mtime.
+- Added optional Bash completion for Upkeeper and FlameOn.
+- Updated operator docs, compatibility notes, release notes, CI syntax coverage,
+  public-doc checks, unit tests, and quick/full validation.
+
+Validation run:
+- `bash -n Upkeeper FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf completions/*.bash`
+- `python3 -m py_compile tools/upkeeper_lattice.py`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `git diff --check`
+
 ## P29 Reuse System Hardening
 
 Status: completed
@@ -133,6 +202,54 @@ Validation:
 - `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash`
 - `tools/check_public_docs.sh`
 - `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Upkeeper Ignore Firebreak
+
+Status: in progress
+
+Goal:
+Add a first-class `.upkeeperignore` selection/spend firewall so Upkeeper can
+exclude tracked or untracked text that should not receive model upkeep cycles,
+independent of whether Git tracks it.
+
+Constraints:
+- Preserve `.gitignore` behavior and hard exclusions for `.git/`, `runtime/`,
+  and `Upkeeper.log`.
+- Keep explicit `--target-file` as the strongest normal operator pin, but reject
+  `.upkeeperignore` paths by default unless a future force contract is added.
+- Apply the same ignore firebreak to normal selection, manifest-backed
+  selection, Lattice max-cover candidates, failure-queue eligibility, and
+  explicit targets.
+- Do not run real backend Codex validation.
+- Update docs, compatibility notes, config defaults, validation, and annual
+  change notes because this changes public target-selection behavior.
+
+Files likely touched:
+- `.upkeeperignore`
+- `Upkeeper`
+- `Upkeeper.conf`
+- `configurations/default.conf`
+- `lib/upkeeper/file_manifest.bash`
+- `lib/upkeeper/help_selection.bash`
+- `tools/upkeeper_lattice.py`
+- `tools/validate_upkeeper.sh`
+- `tests/lattice_test.bash`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `docs/lattice.md`
+- `docs/security.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `python3 -m py_compile tools/upkeeper_lattice.py`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `tools/stress_upkeeper_corpus.sh --local`
 - `git diff --check`
 
 ## P29 Reuse Harvesting Review Module

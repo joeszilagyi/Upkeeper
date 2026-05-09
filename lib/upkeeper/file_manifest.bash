@@ -39,7 +39,8 @@ ensure_file_manifest_for_selection() {
   fi
 
   set +e
-  output="$(python3 - "$ROOT_DIR" "$manifest_path" "$CODEX_FILE_MANIFEST_MODE" "$CODEX_FILE_MANIFEST_MAX_AGE_SECONDS" <<'PY'
+  output="$(python3 - "$ROOT_DIR" "$manifest_path" "$CODEX_FILE_MANIFEST_MODE" "$CODEX_FILE_MANIFEST_MAX_AGE_SECONDS" "$CODEX_UPKEEPER_IGNORE_FILE" <<'PY'
+import fnmatch
 import hashlib
 import json
 import os
@@ -53,6 +54,9 @@ from pathlib import Path
 root = Path(sys.argv[1]).resolve()
 manifest_path = Path(sys.argv[2])
 mode = sys.argv[3]
+ignore_file = Path(sys.argv[5]).expanduser()
+if not ignore_file.is_absolute():
+    ignore_file = (root / ignore_file).resolve()
 try:
     max_age_seconds = max(0, int(sys.argv[4]))
 except ValueError:
@@ -81,6 +85,60 @@ def root_relative(path: Path) -> str:
     except (OSError, ValueError):
         return ""
     return rel.as_posix()
+
+
+def load_upkeeperignore_patterns() -> list[tuple[bool, str]]:
+    patterns: list[tuple[bool, str]] = []
+    try:
+        lines = ignore_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return patterns
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        negated = line.startswith("!")
+        if negated:
+            line = line[1:].strip()
+            if not line:
+                continue
+        patterns.append((negated, line.replace("\\", "/")))
+    return patterns
+
+
+upkeeperignore_patterns = load_upkeeperignore_patterns()
+
+
+def upkeeperignore_pattern_matches(path: str, pattern: str) -> bool:
+    pattern = pattern.strip()
+    if not pattern:
+        return False
+    anchored = pattern.startswith("/")
+    if anchored:
+        pattern = pattern.lstrip("/")
+    directory_only = pattern.endswith("/")
+    if directory_only:
+        pattern = pattern.rstrip("/")
+    if not pattern:
+        return False
+
+    if directory_only:
+        if "/" in pattern or anchored:
+            return path == pattern or path.startswith(pattern + "/")
+        return pattern in path.split("/")
+
+    name = os.path.basename(path)
+    if anchored or "/" in pattern:
+        return fnmatch.fnmatch(path, pattern)
+    return fnmatch.fnmatch(name, pattern) or any(fnmatch.fnmatch(part, pattern) for part in path.split("/"))
+
+
+def upkeeper_path_ignored(path: str) -> bool:
+    ignored = False
+    for negated, pattern in upkeeperignore_patterns:
+        if upkeeperignore_pattern_matches(path, pattern):
+            ignored = not negated
+    return ignored
 
 
 def git_paths() -> list[str]:
@@ -121,7 +179,7 @@ def file_entry(rel_path: str) -> dict[str, object] | None:
 def build_payload() -> tuple[dict[str, object], str]:
     source = "git" if inside_git_repo() else "find"
     raw_paths = git_paths() if source == "git" else local_paths()
-    entries = [entry for rel in raw_paths if (entry := file_entry(rel)) is not None]
+    entries = [entry for rel in raw_paths if not upkeeper_path_ignored(rel) and (entry := file_entry(rel)) is not None]
     entries.sort(key=lambda item: (int(item["mtime_ns"]), str(item["rel_path"])))
 
     fingerprint_input = "\n".join(

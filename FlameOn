@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Thin max-cover smoke/burn launcher for one quota-guarded Upkeeper cycle.
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+UPKEEPER_CMD="${UPKEEPER_CMD:-$ROOT_DIR/Upkeeper}"
+FLAMEON_VERBOSITY="${FLAMEON_VERBOSITY:-basic}"
+FLAMEON_MODEL_OVERRIDE="${FLAMEON_MODEL_OVERRIDE:-5.5_xhigh}"
+FLAMEON_BACKUP_QUEUE="0"
+
+usage() {
+  cat <<EOF
+Usage: ${0##*/} [--silent|--basic|--debug1] [-backup_queue|--backup-queue] [--help]
+
+Run one quota-respecting Upkeeper max-cover cycle:
+  - gpt-5.5 xhigh via Upkeeper's model override
+  - all P1-P23 passes plus P24-P29 review modules
+  - Lattice max-cover target ranking
+  - normal Upkeeper quota, startup, fallback, and evidence handling
+
+Flags:
+  --silent        Set CODEX_TERMINAL_VERBOSITY=silent
+  --basic         Set CODEX_TERMINAL_VERBOSITY=basic (default)
+  --debug1        Set CODEX_TERMINAL_VERBOSITY=debug1
+  -backup_queue   Use the backup local failure queue for this cycle
+  --backup-queue  Same as -backup_queue
+  --help          Show this help
+
+Environment:
+  UPKEEPER_CMD             Upkeeper command path (default: ./Upkeeper)
+  FLAMEON_MODEL_OVERRIDE   Upkeeper model override (default: 5.5_xhigh)
+  FLAMEON_VERBOSITY        Default verbosity when no flag is given
+  FLAMEON_DRY_RUN          Set to 1 to print the resolved command
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    --silent)
+      FLAMEON_VERBOSITY="silent"
+      shift
+      ;;
+    --basic)
+      FLAMEON_VERBOSITY="basic"
+      shift
+      ;;
+    --debug1)
+      FLAMEON_VERBOSITY="debug1"
+      shift
+      ;;
+    -backup_queue|--backup-queue)
+      FLAMEON_BACKUP_QUEUE="1"
+      shift
+      ;;
+    *)
+      printf 'FlameOn: unknown argument: %s\n' "$1" >&2
+      usage >&2
+      exit 64
+      ;;
+  esac
+done
+
+case "$FLAMEON_VERBOSITY" in
+  silent|basic|debug1)
+    ;;
+  *)
+    printf 'FlameOn: unsupported verbosity: %s\n' "$FLAMEON_VERBOSITY" >&2
+    exit 64
+    ;;
+esac
+
+if [[ ! -x "$UPKEEPER_CMD" ]]; then
+  printf 'FlameOn: Upkeeper command is not executable: %s\n' "$UPKEEPER_CMD" >&2
+  exit 127
+fi
+
+args=(
+  "--model-override=$FLAMEON_MODEL_OVERRIDE"
+  "--max-cover"
+)
+
+if [[ "$FLAMEON_BACKUP_QUEUE" == "1" ]]; then
+  args+=("--backup-queue")
+fi
+
+if [[ "${FLAMEON_DRY_RUN:-0}" == "1" ]]; then
+  printf 'CODEX_TERMINAL_VERBOSITY=%q ' "$FLAMEON_VERBOSITY"
+  printf '%q' "$UPKEEPER_CMD"
+  printf ' %q' "${args[@]}"
+  printf '\n'
+  exit 0
+fi
+
+CODEX_TERMINAL_VERBOSITY="$FLAMEON_VERBOSITY" exec "$UPKEEPER_CMD" "${args[@]}"

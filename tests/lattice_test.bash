@@ -59,6 +59,11 @@ make_repo() {
     git config user.name "Lattice Test"
     git config user.email "lattice@example.invalid"
     printf 'runtime/\n' >.gitignore
+    mkdir -p tests
+    printf '# Lattice Test Fixture\n' >README.md
+    printf 'tracked test fixture\n' >tests/example.txt
+    touch -t 201901010000 README.md
+    touch -t 201901020000 tests/example.txt
     printf '#!/usr/bin/env bash\nprintf "space\\n"\n' >"space name.sh"
     printf '#!/usr/bin/env bash\nprintf "single\\n"\n' >"quote'name.sh"
     printf '#!/usr/bin/env bash\nprintf "double\\n"\n' >'double"quote.sh'
@@ -189,6 +194,90 @@ EOF
     fail "selection candidates missed space-bearing fixture"
   grep -Fq 'newline name' "$TEST_TMP_ROOT/candidates.jsonl" ||
     fail "selection candidates missed newline-name fixture evidence"
+
+  lattice query selection-candidates --mode max-cover --format jsonl >"$TEST_TMP_ROOT/max-cover-candidates.jsonl"
+  first_max_cover_path="$(python3 - "$TEST_TMP_ROOT/max-cover-candidates.jsonl" <<'PY'
+import json
+import sys
+
+for line in open(sys.argv[1], encoding="utf-8"):
+    row = json.loads(line)
+    if row.get("candidate_state") == "eligible":
+        print(row.get("path", ""))
+        break
+PY
+)"
+  [[ "$first_max_cover_path" == "README.md" ]] ||
+    fail "max-cover did not prefer the oldest tracked text file with unrun passes; got $first_max_cover_path"
+  grep -Fq '"path":"tests/example.txt"' "$TEST_TMP_ROOT/max-cover-candidates.jsonl" ||
+    fail "max-cover selection missed tracked test text fixture"
+  grep -Fq 'coverage_mode' "$TEST_TMP_ROOT/max-cover-candidates.jsonl" ||
+    fail "max-cover selection did not emit score_json"
+
+  printf 'README.md\ntests/\n' >"$TEST_TMP_ROOT/upkeeperignore"
+  CODEX_UPKEEPER_IGNORE_FILE="$TEST_TMP_ROOT/upkeeperignore" lattice query selection-candidates --mode max-cover --format jsonl >"$TEST_TMP_ROOT/max-cover-upkeeperignore.jsonl"
+  python3 - "$TEST_TMP_ROOT/max-cover-upkeeperignore.jsonl" <<'PY' ||
+import json
+import sys
+
+states = {}
+for line in open(sys.argv[1], encoding="utf-8"):
+    row = json.loads(line)
+    states[row.get("path", "")] = (row.get("candidate_state"), row.get("exclusion_reason"))
+assert states.get("README.md") == ("excluded", "upkeeperignore"), states.get("README.md")
+assert states.get("tests/example.txt") == ("excluded", "upkeeperignore"), states.get("tests/example.txt")
+PY
+    fail ".upkeeperignore did not exclude max-cover Lattice candidates"
+
+  set +e
+  lattice query selection-candidates --mode max-cover --format jsonl \
+    2>"$TEST_TMP_ROOT/max-cover-head.err" |
+    head -n 1 >"$TEST_TMP_ROOT/max-cover-head.jsonl"
+  pipe_status=("${PIPESTATUS[@]}")
+  set -e
+  [[ "${pipe_status[0]}" -eq 0 ]] || fail "max-cover query did not tolerate a closed stdout pipe"
+  [[ "${pipe_status[1]}" -eq 0 ]] || fail "head unexpectedly failed for max-cover pipe"
+  [[ -s "$TEST_TMP_ROOT/max-cover-head.jsonl" ]] || fail "max-cover pipe did not emit one row"
+  [[ ! -s "$TEST_TMP_ROOT/max-cover-head.err" ]] || fail "max-cover pipe wrote stderr on closed pipe"
+
+  for pass_num in $(seq 1 29); do
+    lattice record-pass-result \
+      --pass "P$pass_num" \
+      --file "README.md" \
+      --applicable 1 \
+      --outcome clean \
+      --changed 0 \
+      --regression 0 >/dev/null
+  done
+  lattice query selection-candidates --mode max-cover --format jsonl >"$TEST_TMP_ROOT/max-cover-after-readme.jsonl"
+  first_after_readme="$(python3 - "$TEST_TMP_ROOT/max-cover-after-readme.jsonl" <<'PY'
+import json
+import sys
+
+for line in open(sys.argv[1], encoding="utf-8"):
+    row = json.loads(line)
+    if row.get("candidate_state") == "eligible":
+        print(row.get("path", ""))
+        break
+PY
+)"
+  [[ "$first_after_readme" != "README.md" ]] ||
+    fail "max-cover still preferred fully covered README.md over unrun tracked text"
+  python3 - "$TEST_TMP_ROOT/max-cover-after-readme.jsonl" <<'PY' ||
+import json
+import sys
+
+for line in open(sys.argv[1], encoding="utf-8"):
+    row = json.loads(line)
+    if row.get("path") == "README.md":
+        score = json.loads(row.get("score_json") or "{}")
+        assert score.get("unrun_pass_count") == 0, score
+        assert score.get("least_covered_count") == 1, score
+        break
+else:
+    raise AssertionError("README.md max-cover score missing")
+PY
+    fail "fully covered README.md did not get the expected max-cover score"
   lattice record-preselect \
     --cycle-id cycle-1 \
     --run-hash hash-1 \

@@ -2,7 +2,7 @@
 # operator guide; once the guide exists, the Markdown becomes the living document.
 show_help() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--prompt-pass=all]
+Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: $UPKEEPER_VERSION
@@ -234,6 +234,11 @@ Prompt behavior:
     the prompt. That avoids spending model/tool cycles on broad tree discovery
     and keeps .git/, ignored paths, runtime evidence, generated outputs, and
     tests out of the selection scan.
+  - A repo-root .upkeeperignore, or the file named by UPKEEPER_IGNORE_FILE,
+    is a target-selection firewall. It uses simple Gitignore-style glob lines
+    to block normal rotation, Lattice/max-cover candidates, failure-queue target
+    eligibility, manifest entries, and explicit --target-file pins. It controls
+    spend/selection only; it is not a Git, sandbox, or secret-protection rule.
   - When a prior run leaves an open local tool-failure marker, preselection
     chooses the oldest still-eligible marked target after explicit operator
     pins and startup anomaly gates, but before stale-self and normal timestamp
@@ -312,8 +317,15 @@ Prompt behavior:
     prompt request; pair it with --review-module when you want both.
   - --ignore-failure-queue bypasses local unaddressed tool-failure markers for
     this invoked cycle only. --target-file also takes priority over the queue.
+  - --backup-queue, or legacy spelling -backup_queue, uses
+    runtime/unaddressed-tool-failures-backup for this invoked cycle instead of
+    the normal local failure queue.
   - --prompt-pass=all forces the selected target through all P1-P23 repertoire
     passes for this invoked cycle. Use the equals form; spaced form is rejected.
+  - --max-cover is a one-cycle high-coverage mode. It sets --prompt-pass=all,
+    appends P24-P29, and asks Lattice for max-cover target ranking across
+    current tracked source-safe text files. Explicit targets, startup anomaly
+    gates, and active failure-queue markers still keep their existing priority.
 
 Environment overrides:
   UPKEEPER_CONFIG_FILE          Default: $UPKEEPER_CONFIG_DEFAULT_FILE
@@ -329,11 +341,13 @@ Environment overrides:
   UPKEEPER_SELECTION_ORDER      Default: oldest
   UPKEEPER_FILE_MANIFEST_MODE   Default: auto
   UPKEEPER_FILE_MANIFEST_PATH   Default: runtime/upkeeper-file-manifest.json
+  UPKEEPER_IGNORE_FILE          Default: .upkeeperignore
   UPKEEPER_TARGET_ROOT          Default: empty
   UPKEEPER_TARGET_MAX_DEPTH     Default: empty
   UPKEEPER_INCLUDE_GLOBS        Default: empty
   UPKEEPER_EXCLUDE_GLOBS        Default: empty
   UPKEEPER_SELECTION_REVIEW_MODULES Default: empty
+  UPKEEPER_MAX_COVER           Default: 0
   UPKEEPER_LATTICE_ENABLED     Default: 1
   UPKEEPER_LATTICE_REQUIRED    Default: 0
   UPKEEPER_LATTICE_DB          Default: runtime/upkeeper-lattice/lattice.sqlite3
@@ -495,7 +509,7 @@ enforce_startup_anomaly_gate_target_or_exit() {
 }
 
 preselect_review_target() {
-  python3 - "$ROOT_DIR" "$SELF_PATH" "$CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS" "$STARTUP_ANOMALY_GATE" "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" "$CODEX_TARGET_FILE" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$CODEX_TOOL_FAILURE_QUEUE_ENABLED" "$CODEX_TOOL_FAILURE_QUEUE_BYPASS" "$CODEX_SELECTION_SOURCE" "$CODEX_FILE_MANIFEST_PATH" "$CODEX_SELECTION_ORDER" "$CODEX_TARGET_ROOT" "$CODEX_TARGET_MAX_DEPTH" "$CODEX_SELECTION_INCLUDE_GLOBS" "$CODEX_SELECTION_EXCLUDE_GLOBS" "$CODEX_SELECTION_REVIEW_MODULES" "$CODEX_SELECTION_RANDOM_SEED" <<'PY'
+  python3 - "$ROOT_DIR" "$SELF_PATH" "$CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS" "$STARTUP_ANOMALY_GATE" "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" "$CODEX_TARGET_FILE" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$CODEX_TOOL_FAILURE_QUEUE_ENABLED" "$CODEX_TOOL_FAILURE_QUEUE_BYPASS" "$CODEX_SELECTION_SOURCE" "$CODEX_FILE_MANIFEST_PATH" "$CODEX_SELECTION_ORDER" "$CODEX_TARGET_ROOT" "$CODEX_TARGET_MAX_DEPTH" "$CODEX_SELECTION_INCLUDE_GLOBS" "$CODEX_SELECTION_EXCLUDE_GLOBS" "$CODEX_SELECTION_REVIEW_MODULES" "$CODEX_SELECTION_RANDOM_SEED" "$CODEX_MAX_COVER_MODE" "$UPKEEPER_LATTICE_ENABLED" "$UPKEEPER_LATTICE_SELECTION_MODE" "$(lattice_tool_path)" "$UPKEEPER_LATTICE_DB" "$UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE" "$CODEX_UPKEEPER_IGNORE_FILE" <<'PY'
 import datetime
 import fnmatch
 import json
@@ -526,8 +540,19 @@ from pathlib import Path
     exclude_globs,
     selection_review_modules,
     selection_random_seed,
-) = sys.argv[1:19]
+    max_cover_mode,
+    lattice_enabled,
+    lattice_selection_mode,
+    lattice_tool_path,
+    lattice_db_path,
+    lattice_journal_mode,
+    upkeeper_ignore_file,
+) = sys.argv[1:26]
 os.chdir(root)
+root_path = Path(root).resolve()
+ignore_file = Path(upkeeper_ignore_file).expanduser()
+if not ignore_file.is_absolute():
+    ignore_file = (root_path / ignore_file).resolve()
 try:
     self_review_threshold_seconds = max(0, int(self_review_after_days)) * 86400
 except ValueError:
@@ -570,6 +595,60 @@ excluded_exact = {"Upkeeper.log"}
 test_dirs = {"__tests__", "test", "tests"}
 
 
+def load_upkeeperignore_patterns() -> list[tuple[bool, str]]:
+    patterns: list[tuple[bool, str]] = []
+    try:
+        lines = ignore_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return patterns
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        negated = line.startswith("!")
+        if negated:
+            line = line[1:].strip()
+            if not line:
+                continue
+        patterns.append((negated, line.replace("\\", "/")))
+    return patterns
+
+
+upkeeperignore_patterns = load_upkeeperignore_patterns()
+
+
+def upkeeperignore_pattern_matches(path: str, pattern: str) -> bool:
+    pattern = pattern.strip()
+    if not pattern:
+        return False
+    anchored = pattern.startswith("/")
+    if anchored:
+        pattern = pattern.lstrip("/")
+    directory_only = pattern.endswith("/")
+    if directory_only:
+        pattern = pattern.rstrip("/")
+    if not pattern:
+        return False
+
+    if directory_only:
+        if "/" in pattern or anchored:
+            return path == pattern or path.startswith(pattern + "/")
+        return pattern in path.split("/")
+
+    name = os.path.basename(path)
+    if anchored or "/" in pattern:
+        return fnmatch.fnmatch(path, pattern)
+    return fnmatch.fnmatch(name, pattern) or any(fnmatch.fnmatch(part, pattern) for part in path.split("/"))
+
+
+def upkeeper_path_ignored(path: str) -> bool:
+    ignored = False
+    for negated, pattern in upkeeperignore_patterns:
+        if upkeeperignore_pattern_matches(path, pattern):
+            ignored = not negated
+    return ignored
+
+
 def is_test_path(path: str) -> bool:
     parts = path.split("/")
     name = parts[-1]
@@ -607,6 +686,8 @@ def explicit_target_error(path: str) -> str:
         return "target path is outside the repository"
     if path in excluded_exact or path.startswith(excluded_prefixes):
         return "target path is excluded from Upkeeper review"
+    if upkeeper_path_ignored(path):
+        return "target path is ignored by .upkeeperignore"
     if git_path_is_ignored(path):
         return "target path is ignored by git"
     try:
@@ -894,6 +975,79 @@ def open_failure_markers(candidate_paths: set[str]) -> list[dict[str, object]]:
     return sorted(markers, key=lambda item: (item["first_seen_epoch"], item["target_path"], item["marker_id"]))
 
 
+def source_safe_text_paths() -> list[tuple[float, str]]:
+    if not git_output(["git", "rev-parse", "--is-inside-work-tree"]):
+        return []
+    try:
+        raw = subprocess.check_output(["git", "ls-files", "-z"])
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    result: list[tuple[float, str]] = []
+    for path in raw.decode("utf-8", "surrogateescape").split("\0"):
+        if not path:
+            continue
+        if explicit_target_error(path):
+            continue
+        if not path_within_target_root(path, target_root, target_max_depth):
+            continue
+        if not path_matches_any(path, include_patterns):
+            continue
+        if path_excluded(path, exclude_patterns):
+            continue
+        if not module_filter_match(path, module_filter):
+            continue
+        try:
+            result.append((os.stat(path).st_mtime, path))
+        except OSError:
+            continue
+    return sorted(result, key=lambda item: (item[0], item[1]))
+
+
+def lattice_ranked_max_cover_paths() -> tuple[list[dict[str, object]], str]:
+    if max_cover_mode != "1":
+        return [], "max_cover_disabled"
+    if lattice_enabled not in ("1", "true", "TRUE", "yes", "YES", "on", "ON"):
+        return [], "lattice_disabled"
+    if lattice_selection_mode != "max-cover":
+        return [], "lattice_mode_not_max_cover"
+    if not lattice_tool_path or not os.path.isfile(lattice_tool_path):
+        return [], "lattice_tool_missing"
+    args = [
+        "python3",
+        lattice_tool_path,
+        "--root",
+        root,
+        "--db",
+        lattice_db_path,
+        "--journal-mode",
+        lattice_journal_mode,
+        "--upkeeper-ignore-file",
+        str(ignore_file),
+        "query",
+        "selection-candidates",
+        "--mode",
+        "max-cover",
+        "--format",
+        "jsonl",
+    ]
+    try:
+        output = subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        return [], "lattice_query_failed"
+
+    rows: list[dict[str, object]] = []
+    for line in output.splitlines():
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows, "lattice_query"
+
+
 selection_source_used = selection_source
 manifest_status = "not_used"
 if selection_source == "manifest":
@@ -926,6 +1080,8 @@ for manifest_mtime, path in paths:
     if not path:
         continue
     if path in excluded_exact or path.startswith(excluded_prefixes) or is_test_path(path):
+        continue
+    if upkeeper_path_ignored(path):
         continue
     is_forced_path = bool(forced_target and path == forced_target)
     if not is_forced_path:
@@ -971,7 +1127,10 @@ stale_self_candidates = [
     if now - item[0] >= self_review_threshold_seconds
 ]
 candidate_map = {path: mtime for mtime, path in candidates}
-failure_queue_markers = open_failure_markers(set(candidate_map))
+max_cover_candidates = source_safe_text_paths() if max_cover_mode == "1" else []
+max_cover_candidate_map = {path: mtime for mtime, path in max_cover_candidates}
+failure_queue_candidate_map = max_cover_candidate_map if max_cover_mode == "1" and max_cover_candidate_map else candidate_map
+failure_queue_markers = open_failure_markers(set(failure_queue_candidate_map))
 selected_failure_marker = {}
 if forced_target:
     if forced_target_error:
@@ -987,7 +1146,7 @@ if forced_target:
         f"operator --target-file={forced_target} override; "
         "normal oldest eligible selection bypassed for this invoked cycle"
     )
-elif not candidates:
+elif not candidates and not (max_cover_mode == "1" and max_cover_candidates):
     sys.exit(0)
 elif startup_anomaly_gate == "1" and startup_force_upkeeper == "1" and not all_self_candidates:
     print(
@@ -1006,12 +1165,41 @@ elif startup_anomaly_gate == "1" and startup_force_upkeeper == "1" and all_self_
 elif failure_queue_markers:
     selected_failure_marker = failure_queue_markers[0]
     path = str(selected_failure_marker["target_path"])
-    mtime = candidate_map[path]
+    mtime = failure_queue_candidate_map[path]
     selection_mode = "failure_queue"
     selection_basis = (
         "oldest unaddressed local tool-failure marker forced this target; "
         "normal oldest eligible selection bypassed until the failure is checked/remediated"
     )
+elif max_cover_mode == "1":
+    ranked_rows, lattice_status = lattice_ranked_max_cover_paths()
+    selected_row = {}
+    for row in ranked_rows:
+        row_path = str(row.get("path", ""))
+        if row.get("candidate_state") != "eligible" or not row_path:
+            continue
+        if row_path not in max_cover_candidate_map:
+            continue
+        selected_row = row
+        break
+    if selected_row:
+        path = str(selected_row["path"])
+        mtime = max_cover_candidate_map[path]
+        selection_mode = "lattice_max_cover"
+        selection_basis = (
+            "Lattice max-cover ranking selected the oldest current tracked text "
+            "file with any unrun pass; after full pass coverage, it prefers the "
+            "least-covered pass count, then oldest mtime"
+        )
+    elif max_cover_candidates:
+        mtime, path = max_cover_candidates[0]
+        selection_mode = "max_cover_fallback"
+        selection_basis = (
+            f"Lattice max-cover ranking unavailable ({lattice_status}); "
+            "fallback selected the oldest current tracked source-safe text file"
+        )
+    else:
+        sys.exit(0)
 elif stale_self_candidates:
     mtime, path = sorted(stale_self_candidates, key=lambda item: (item[0], item[1]))[0]
     selection_mode = "stale_self_review"
@@ -1052,6 +1240,7 @@ mtime_text = datetime.datetime.fromtimestamp(mtime).astimezone().strftime(
     "%Y-%m-%d %H:%M:%S %z"
 )
 metadata = selected_git_metadata(path)
+eligible_output_count = len(max_cover_candidates) if max_cover_mode == "1" and max_cover_candidates else len(candidates)
 
 print(f"path={path}")
 print(f"epoch={int(mtime)}")
@@ -1061,7 +1250,7 @@ print(f"git_status={metadata['git_status']}")
 print(f"content_state={metadata['content_state']}")
 print(f"head_blob={metadata['head_blob']}")
 print(f"worktree_hash={metadata['worktree_hash']}")
-print(f"eligible_count={len(candidates)}")
+print(f"eligible_count={eligible_output_count}")
 print(f"selection_mode={selection_mode}")
 print(f"selection_source={selection_source_used}")
 print(f"manifest_status={manifest_status}")

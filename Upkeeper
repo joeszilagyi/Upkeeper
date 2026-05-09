@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.1
+## Version: v1.2.3
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -107,7 +107,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.1"
+UPKEEPER_VERSION="v1.2.3"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -125,6 +125,7 @@ UPKEEPER_INCLUDE_GLOBS="${UPKEEPER_INCLUDE_GLOBS:-}"
 UPKEEPER_EXCLUDE_GLOBS="${UPKEEPER_EXCLUDE_GLOBS:-}"
 UPKEEPER_SELECTION_REVIEW_MODULES="${UPKEEPER_SELECTION_REVIEW_MODULES:-}"
 UPKEEPER_SELECTION_RANDOM_SEED="${UPKEEPER_SELECTION_RANDOM_SEED:-}"
+UPKEEPER_MAX_COVER="${UPKEEPER_MAX_COVER:-0}"
 UPKEEPER_LATTICE_ENABLED="${UPKEEPER_LATTICE_ENABLED:-1}"
 UPKEEPER_LATTICE_REQUIRED="${UPKEEPER_LATTICE_REQUIRED:-0}"
 UPKEEPER_LATTICE_DB="${UPKEEPER_LATTICE_DB:-$ROOT_DIR/runtime/upkeeper-lattice/lattice.sqlite3}"
@@ -173,12 +174,14 @@ CODEX_SELECTION_ORDER="${CODEX_SELECTION_ORDER:-${UPKEEPER_SELECTION_ORDER:-olde
 CODEX_FILE_MANIFEST_MODE="${CODEX_FILE_MANIFEST_MODE:-${UPKEEPER_FILE_MANIFEST_MODE:-auto}}"
 CODEX_FILE_MANIFEST_PATH="${CODEX_FILE_MANIFEST_PATH:-${UPKEEPER_FILE_MANIFEST_PATH:-$ROOT_DIR/runtime/upkeeper-file-manifest.json}}"
 CODEX_FILE_MANIFEST_MAX_AGE_SECONDS="${CODEX_FILE_MANIFEST_MAX_AGE_SECONDS:-300}"
+CODEX_UPKEEPER_IGNORE_FILE="${CODEX_UPKEEPER_IGNORE_FILE:-${UPKEEPER_IGNORE_FILE:-$ROOT_DIR/.upkeeperignore}}"
 CODEX_TARGET_ROOT="${CODEX_TARGET_ROOT:-$UPKEEPER_TARGET_ROOT}"
 CODEX_TARGET_MAX_DEPTH="${CODEX_TARGET_MAX_DEPTH:-$UPKEEPER_TARGET_MAX_DEPTH}"
 CODEX_SELECTION_INCLUDE_GLOBS="${CODEX_SELECTION_INCLUDE_GLOBS:-$UPKEEPER_INCLUDE_GLOBS}"
 CODEX_SELECTION_EXCLUDE_GLOBS="${CODEX_SELECTION_EXCLUDE_GLOBS:-$UPKEEPER_EXCLUDE_GLOBS}"
 CODEX_SELECTION_REVIEW_MODULES="${CODEX_SELECTION_REVIEW_MODULES:-$UPKEEPER_SELECTION_REVIEW_MODULES}"
 CODEX_SELECTION_RANDOM_SEED="${CODEX_SELECTION_RANDOM_SEED:-$UPKEEPER_SELECTION_RANDOM_SEED}"
+CODEX_MAX_COVER_MODE="${CODEX_MAX_COVER_MODE:-$UPKEEPER_MAX_COVER}"
 CODEX_SESSION_SCAN_LIMIT="${CODEX_SESSION_SCAN_LIMIT:-200}"
 CODEX_5H_STOP_PERCENT="${CODEX_5H_STOP_PERCENT:-5}"
 CODEX_SPARK_5H_STOP_PERCENT="${CODEX_SPARK_5H_STOP_PERCENT:-0}"
@@ -400,7 +403,7 @@ main() {
   local loop_parent_start_fingerprint
   loop_parent_start_fingerprint="$(process_start_fingerprint "$loop_parent_pid")"
 
-  log_line "INFO" "cycle.start execution_origin=$(shell_quote "$CODEX_EXECUTION_ORIGIN") script=$(shell_quote "$SELF_INVOKE_PATH") implementation=$(shell_quote "$SELF_PATH") cwd=$(shell_quote "$ROOT_DIR") pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$(shell_quote "$direct_parent_comm") parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$(shell_quote "$loop_parent_comm") loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override config_loaded=$UPKEEPER_CONFIG_LOADED config_file=$(shell_quote "$UPKEEPER_CONFIG_SOURCE") model=$(shell_quote "$CODEX_MODEL") effort=$(shell_quote "$CODEX_REASONING_EFFORT") mode=$(shell_quote "$CODEX_MODE_STRING") model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}") model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") target_root=$(shell_quote "${CODEX_TARGET_ROOT:-none}") target_depth=$(shell_quote "${CODEX_TARGET_MAX_DEPTH:-none}") selection_source=$(shell_quote "$CODEX_SELECTION_SOURCE") selection_order=$(shell_quote "$CODEX_SELECTION_ORDER") manifest_mode=$(shell_quote "$CODEX_FILE_MANIFEST_MODE") manifest_path=$(shell_quote "$CODEX_FILE_MANIFEST_PATH") include_globs=$(shell_quote "${CODEX_SELECTION_INCLUDE_GLOBS:-none}") exclude_globs=$(shell_quote "${CODEX_SELECTION_EXCLUDE_GLOBS:-none}") selection_review_modules=$(shell_quote "${CODEX_SELECTION_REVIEW_MODULES:-none}") prompt_pass=$(shell_quote "${CODEX_PROMPT_PASS:-default}") review_modules=$(review_modules_csv) attempt_role=$(shell_quote "$CODEX_ATTEMPT_ROLE") fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=$(shell_quote "${CODEX_PRIMARY_MODEL_CONTEXT:-none}") fallback_trigger=$(shell_quote "${CODEX_FALLBACK_TRIGGER:-none}") screen_fallback_child_id=$(shell_quote "${CODEX_SCREEN_FALLBACK_CHILD_ID:-none}") code_home=$(shell_quote "$CODEX_HOME_DIR") dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
+  log_line "INFO" "cycle.start execution_origin=$(shell_quote "$CODEX_EXECUTION_ORIGIN") script=$(shell_quote "$SELF_INVOKE_PATH") implementation=$(shell_quote "$SELF_PATH") cwd=$(shell_quote "$ROOT_DIR") pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$(shell_quote "$direct_parent_comm") parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$(shell_quote "$loop_parent_comm") loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override config_loaded=$UPKEEPER_CONFIG_LOADED config_file=$(shell_quote "$UPKEEPER_CONFIG_SOURCE") model=$(shell_quote "$CODEX_MODEL") effort=$(shell_quote "$CODEX_REASONING_EFFORT") mode=$(shell_quote "$CODEX_MODE_STRING") model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}") model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") target_root=$(shell_quote "${CODEX_TARGET_ROOT:-none}") target_depth=$(shell_quote "${CODEX_TARGET_MAX_DEPTH:-none}") selection_source=$(shell_quote "$CODEX_SELECTION_SOURCE") selection_order=$(shell_quote "$CODEX_SELECTION_ORDER") max_cover=$CODEX_MAX_COVER_MODE manifest_mode=$(shell_quote "$CODEX_FILE_MANIFEST_MODE") manifest_path=$(shell_quote "$CODEX_FILE_MANIFEST_PATH") include_globs=$(shell_quote "${CODEX_SELECTION_INCLUDE_GLOBS:-none}") exclude_globs=$(shell_quote "${CODEX_SELECTION_EXCLUDE_GLOBS:-none}") selection_review_modules=$(shell_quote "${CODEX_SELECTION_REVIEW_MODULES:-none}") prompt_pass=$(shell_quote "${CODEX_PROMPT_PASS:-default}") review_modules=$(review_modules_csv) attempt_role=$(shell_quote "$CODEX_ATTEMPT_ROLE") fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=$(shell_quote "${CODEX_PRIMARY_MODEL_CONTEXT:-none}") fallback_trigger=$(shell_quote "${CODEX_FALLBACK_TRIGGER:-none}") screen_fallback_child_id=$(shell_quote "${CODEX_SCREEN_FALLBACK_CHILD_ID:-none}") code_home=$(shell_quote "$CODEX_HOME_DIR") dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
   lattice_init_and_doctor_or_exit
   lattice_record_cycle_start
   start_run_mark_heartbeat

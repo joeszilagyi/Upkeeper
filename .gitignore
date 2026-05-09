@@ -8,4 +8,4 @@ Thumbs.db
 # Upkeeper local run artifacts.
 Upkeeper.log
 runtime/
-out
+/out

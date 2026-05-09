@@ -106,6 +106,9 @@ launch_screen_fallback_loop() {
     printf -v prompt_pass_q '%q' "$CODEX_PROMPT_PASS"
     prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--prompt-pass=$prompt_pass_q"
   fi
+  if upkeeper_bug_report_only_enabled; then
+    prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--bug-report-only"
+  fi
 
   cat >"$runner_script" <<EOF
 #!/usr/bin/env bash

@@ -277,6 +277,10 @@ check_prompt_template() {
   grep -Fq "UPKEEPER_LATTICE_ENABLED" configurations/default.conf || fail "default profile missing Lattice defaults"
   grep -Fq "UPKEEPER_IGNORE_FILE" Upkeeper.conf || fail "root config missing .upkeeperignore default"
   grep -Fq "UPKEEPER_IGNORE_FILE" configurations/default.conf || fail "default profile missing .upkeeperignore default"
+  grep -Fq "UPKEEPER_BUG_REPORT_ONLY" Upkeeper.conf || fail "root config missing bug-report-only default"
+  grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" Upkeeper.conf || fail "root config missing issue-fix default"
+  grep -Fq "UPKEEPER_BUG_REPORT_ONLY" configurations/default.conf || fail "default profile missing bug-report-only default"
+  grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" configurations/default.conf || fail "default profile missing issue-fix default"
   grep -Fq "local SQLite evidence ledger" docs/lattice.md || fail "Lattice docs missing local SQLite summary"
   grep -Fq "source-safe live eligibility remains authoritative" docs/lattice.md || fail "Lattice docs missing live eligibility boundary"
   grep -Fq ".upkeeperignore" docs/lattice.md || fail "Lattice docs missing .upkeeperignore candidate boundary"
@@ -327,9 +331,39 @@ check_help_and_diff() {
   grep -Fq -- "--ignore-failure-queue" <<<"$help" || fail "help missing --ignore-failure-queue"
   grep -Fq -- "--backup-queue" <<<"$help" || fail "help missing --backup-queue"
   grep -Fq -- "--max-cover" <<<"$help" || fail "help missing --max-cover"
+  grep -Fq -- "--bug-report-only" <<<"$help" || fail "help missing --bug-report-only"
+  grep -Fq -- "--fix-next-issue" <<<"$help" || fail "help missing --fix-next-issue"
   grep -Fq -- "UPKEEPER_MAX_COVER" <<<"$help" || fail "help missing UPKEEPER_MAX_COVER"
+  grep -Fq -- "UPKEEPER_BUG_REPORT_ONLY" <<<"$help" || fail "help missing UPKEEPER_BUG_REPORT_ONLY"
+  grep -Fq -- "UPKEEPER_FIX_NEXT_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_NEXT_ISSUE"
+  local flameon_cmd
+  flameon_cmd="$(FLAMEON_DRY_RUN=1 ./FlameOn)"
+  grep -Fq -- "--max-cover" <<<"$flameon_cmd" || fail "FlameOn dry-run missing --max-cover"
+  grep -Fq -- "--bug-report-only" <<<"$flameon_cmd" || fail "FlameOn dry-run missing --bug-report-only"
   git diff --check
   git diff --cached --check
+}
+
+check_gitignore_contract() {
+  local output path
+
+  log "checking Git ignore contract"
+  for path in Upkeeper.log runtime/example runtime/upkeeper-file-manifest.json out out/tmp; do
+    output="$(
+      GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+        git -c core.excludesfile=/dev/null check-ignore -v --no-index -- "$path"
+    )" || fail "Git ignore contract does not ignore $path"
+    [[ "$output" == .gitignore:* ]] || fail "Git ignore contract ignores $path outside .gitignore: $output"
+  done
+
+  for path in docs/out docs/out/tmp; do
+    if output="$(
+      GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+        git -c core.excludesfile=/dev/null check-ignore -v --no-index -- "$path"
+    )"; then
+      fail "Git ignore contract should not ignore nested source path $path: $output"
+    fi
+  done
 }
 
 check_codex_mode_validation() {
@@ -1009,6 +1043,75 @@ check_file_manifest_selection() {
   grep -Fq "review_modules=p24,p25,p26,p27,p28,p29" "$temp_dir/max-cover.log" || fail "max-cover did not append P24-P29"
   grep -Fq "max_cover=1" "$temp_dir/max-cover.log" || fail "max-cover was not recorded in cycle.start"
 
+  run_manifest_dry_run "$temp_dir/bug-report-only.log" \
+    --target-file=Upkeeper \
+    --bug-report-only
+  grep -Fq "bug_report_only=1" "$temp_dir/bug-report-only.log" || fail "bug-report-only was not recorded in cycle.start"
+  grep -Fq "bug_report_only.prompt appended" "$temp_dir/bug-report-only.log" || fail "bug-report-only prompt addendum was not appended"
+
+  mkdir -p "$temp_dir/bin"
+  cat >"$temp_dir/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
+  label=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --label)
+        label="$2"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  case "$label" in
+    security)
+      cat <<'JSON'
+[
+  {"number":910,"title":"High: fake security issue in `lib/upkeeper/codex_io.bash`","url":"https://example.invalid/issues/910","createdAt":"2026-05-01T00:00:00Z","labels":[{"name":"bug"},{"name":"security"}]},
+  {"number":911,"title":"Newer security issue","url":"https://example.invalid/issues/911","createdAt":"2026-05-02T00:00:00Z","labels":[{"name":"bug"},{"name":"security"}]}
+]
+JSON
+      ;;
+    data-integrity|bug)
+      printf '[]\n'
+      ;;
+    *)
+      printf '[]\n'
+      ;;
+  esac
+  exit 0
+fi
+
+if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
+  case "${3:-}" in
+    910)
+      cat <<'JSON'
+{"body":"Repro points at `lib/upkeeper/codex_io.bash:1` and should infer that repo-local file."}
+JSON
+      ;;
+    *)
+      printf '{"body":""}\n'
+      ;;
+  esac
+  exit 0
+fi
+
+printf 'unexpected fake gh invocation: %s\n' "$*" >&2
+exit 2
+EOF
+  chmod +x "$temp_dir/bin/gh"
+  PATH="$temp_dir/bin:$PATH" run_manifest_dry_run "$temp_dir/fix-next-issue.log" \
+    --fix-next-issue
+  grep -Fq "issue.fix_next selected number=910" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue did not select the oldest security issue"
+  grep -Fq "selected_label=security" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue did not use security priority first"
+  grep -Fq "target_file=lib/upkeeper/codex_io.bash" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue did not infer the repo-local target file"
+  grep -Fq "review.preselect path=lib/upkeeper/codex_io.bash" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue did not pin the inferred target"
+  grep -Fq "issue.fix_prompt appended number=910" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue prompt addendum was not appended"
+
   mkdir -p runtime
   printf 'runtime explicit target fixture\n' >runtime/upkeeper-explicit-target-fixture.txt
   set +e
@@ -1645,6 +1748,24 @@ EOF
   [[ "$outcome" == "REVIEWED_AND_FIXED" ]] || fail "review summary outcome was $outcome"
 
   cat >"$temp_dir/last-message.txt" <<'EOF'
+REVIEWED_AND_REPORTED for `lib/upkeeper/codex_io.bash`
+
+Findings:
+- Confirmed a report-only bug.
+
+Issue filed:
+- https://github.com/example/repo/issues/910
+
+UPKEEPER_STATUS: WORK_DONE
+EOF
+
+  summary="$(bash -lc 'cd "$1"; source ./Upkeeper; review_report_summary_json "$2"' bash "$ROOT_DIR" "$temp_dir/last-message.txt")"
+  selected_file="$(printf '%s' "$summary" | jq -r '.selected_file')"
+  outcome="$(printf '%s' "$summary" | jq -r '.outcome')"
+  [[ "$selected_file" == "lib/upkeeper/codex_io.bash" ]] || fail "reported review summary selected_file was $selected_file"
+  [[ "$outcome" == "REVIEWED_AND_REPORTED" ]] || fail "reported review summary outcome was $outcome"
+
+  cat >"$temp_dir/last-message.txt" <<'EOF'
 REVIEWED_AND_FIXED
 
 Selected [lib/upkeeper/fallback_availability.bash](/home/joe/projects/Upkeeper/main/lib/upkeeper/fallback_availability.bash) per the authoritative preselection. Baseline mtime was epoch `1778201006`.
@@ -2055,6 +2176,7 @@ check_version_consistency
 check_module_map
 check_prompt_template
 check_help_and_diff
+check_gitignore_contract
 check_codex_mode_validation
 check_cycle_start_log_contract
 check_disk_preflight_log_contract

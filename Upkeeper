@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.3
+## Version: v1.2.4
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -107,7 +107,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.3"
+UPKEEPER_VERSION="v1.2.4"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -126,6 +126,10 @@ UPKEEPER_EXCLUDE_GLOBS="${UPKEEPER_EXCLUDE_GLOBS:-}"
 UPKEEPER_SELECTION_REVIEW_MODULES="${UPKEEPER_SELECTION_REVIEW_MODULES:-}"
 UPKEEPER_SELECTION_RANDOM_SEED="${UPKEEPER_SELECTION_RANDOM_SEED:-}"
 UPKEEPER_MAX_COVER="${UPKEEPER_MAX_COVER:-0}"
+UPKEEPER_BUG_REPORT_ONLY="${UPKEEPER_BUG_REPORT_ONLY:-0}"
+UPKEEPER_FIX_NEXT_ISSUE="${UPKEEPER_FIX_NEXT_ISSUE:-0}"
+UPKEEPER_ISSUE_PRIORITY_LABELS="${UPKEEPER_ISSUE_PRIORITY_LABELS:-security,data-integrity,bug}"
+UPKEEPER_ISSUE_SKIP_LABELS="${UPKEEPER_ISSUE_SKIP_LABELS:-in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr}"
 UPKEEPER_LATTICE_ENABLED="${UPKEEPER_LATTICE_ENABLED:-1}"
 UPKEEPER_LATTICE_REQUIRED="${UPKEEPER_LATTICE_REQUIRED:-0}"
 UPKEEPER_LATTICE_DB="${UPKEEPER_LATTICE_DB:-$ROOT_DIR/runtime/upkeeper-lattice/lattice.sqlite3}"
@@ -182,6 +186,10 @@ CODEX_SELECTION_EXCLUDE_GLOBS="${CODEX_SELECTION_EXCLUDE_GLOBS:-$UPKEEPER_EXCLUD
 CODEX_SELECTION_REVIEW_MODULES="${CODEX_SELECTION_REVIEW_MODULES:-$UPKEEPER_SELECTION_REVIEW_MODULES}"
 CODEX_SELECTION_RANDOM_SEED="${CODEX_SELECTION_RANDOM_SEED:-$UPKEEPER_SELECTION_RANDOM_SEED}"
 CODEX_MAX_COVER_MODE="${CODEX_MAX_COVER_MODE:-$UPKEEPER_MAX_COVER}"
+CODEX_BUG_REPORT_ONLY="${CODEX_BUG_REPORT_ONLY:-$UPKEEPER_BUG_REPORT_ONLY}"
+CODEX_ISSUE_FIX_NEXT="${CODEX_ISSUE_FIX_NEXT:-$UPKEEPER_FIX_NEXT_ISSUE}"
+CODEX_ISSUE_PRIORITY_LABELS="${CODEX_ISSUE_PRIORITY_LABELS:-$UPKEEPER_ISSUE_PRIORITY_LABELS}"
+CODEX_ISSUE_SKIP_LABELS="${CODEX_ISSUE_SKIP_LABELS:-$UPKEEPER_ISSUE_SKIP_LABELS}"
 CODEX_SESSION_SCAN_LIMIT="${CODEX_SESSION_SCAN_LIMIT:-200}"
 CODEX_5H_STOP_PERCENT="${CODEX_5H_STOP_PERCENT:-5}"
 CODEX_SPARK_5H_STOP_PERCENT="${CODEX_SPARK_5H_STOP_PERCENT:-0}"
@@ -283,6 +291,14 @@ UPKEEPER_LATTICE_AVAILABLE="0"
 UPKEEPER_LATTICE_WARNED="0"
 UPKEEPER_LATTICE_FINISH_RECORDED="0"
 LATTICE_LAST_OUTPUT=""
+CODEX_ISSUE_FIX_NUMBER=""
+CODEX_ISSUE_FIX_TITLE=""
+CODEX_ISSUE_FIX_URL=""
+CODEX_ISSUE_FIX_LABELS=""
+CODEX_ISSUE_FIX_SELECTED_LABEL=""
+CODEX_ISSUE_FIX_CREATED_AT=""
+CODEX_ISSUE_FIX_TARGET_FILE=""
+CODEX_ISSUE_FIX_BODY=""
 
 source_upkeeper_module() {
   local module="$1"
@@ -403,7 +419,8 @@ main() {
   local loop_parent_start_fingerprint
   loop_parent_start_fingerprint="$(process_start_fingerprint "$loop_parent_pid")"
 
-  log_line "INFO" "cycle.start execution_origin=$(shell_quote "$CODEX_EXECUTION_ORIGIN") script=$(shell_quote "$SELF_INVOKE_PATH") implementation=$(shell_quote "$SELF_PATH") cwd=$(shell_quote "$ROOT_DIR") pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$(shell_quote "$direct_parent_comm") parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$(shell_quote "$loop_parent_comm") loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override config_loaded=$UPKEEPER_CONFIG_LOADED config_file=$(shell_quote "$UPKEEPER_CONFIG_SOURCE") model=$(shell_quote "$CODEX_MODEL") effort=$(shell_quote "$CODEX_REASONING_EFFORT") mode=$(shell_quote "$CODEX_MODE_STRING") model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}") model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") target_root=$(shell_quote "${CODEX_TARGET_ROOT:-none}") target_depth=$(shell_quote "${CODEX_TARGET_MAX_DEPTH:-none}") selection_source=$(shell_quote "$CODEX_SELECTION_SOURCE") selection_order=$(shell_quote "$CODEX_SELECTION_ORDER") max_cover=$CODEX_MAX_COVER_MODE manifest_mode=$(shell_quote "$CODEX_FILE_MANIFEST_MODE") manifest_path=$(shell_quote "$CODEX_FILE_MANIFEST_PATH") include_globs=$(shell_quote "${CODEX_SELECTION_INCLUDE_GLOBS:-none}") exclude_globs=$(shell_quote "${CODEX_SELECTION_EXCLUDE_GLOBS:-none}") selection_review_modules=$(shell_quote "${CODEX_SELECTION_REVIEW_MODULES:-none}") prompt_pass=$(shell_quote "${CODEX_PROMPT_PASS:-default}") review_modules=$(review_modules_csv) attempt_role=$(shell_quote "$CODEX_ATTEMPT_ROLE") fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=$(shell_quote "${CODEX_PRIMARY_MODEL_CONTEXT:-none}") fallback_trigger=$(shell_quote "${CODEX_FALLBACK_TRIGGER:-none}") screen_fallback_child_id=$(shell_quote "${CODEX_SCREEN_FALLBACK_CHILD_ID:-none}") code_home=$(shell_quote "$CODEX_HOME_DIR") dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
+  log_line "INFO" "cycle.start execution_origin=$(shell_quote "$CODEX_EXECUTION_ORIGIN") script=$(shell_quote "$SELF_INVOKE_PATH") implementation=$(shell_quote "$SELF_PATH") cwd=$(shell_quote "$ROOT_DIR") pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$(shell_quote "$direct_parent_comm") parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$(shell_quote "$loop_parent_comm") loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override config_loaded=$UPKEEPER_CONFIG_LOADED config_file=$(shell_quote "$UPKEEPER_CONFIG_SOURCE") model=$(shell_quote "$CODEX_MODEL") effort=$(shell_quote "$CODEX_REASONING_EFFORT") mode=$(shell_quote "$CODEX_MODE_STRING") model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}") model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") target_root=$(shell_quote "${CODEX_TARGET_ROOT:-none}") target_depth=$(shell_quote "${CODEX_TARGET_MAX_DEPTH:-none}") selection_source=$(shell_quote "$CODEX_SELECTION_SOURCE") selection_order=$(shell_quote "$CODEX_SELECTION_ORDER") max_cover=$CODEX_MAX_COVER_MODE bug_report_only=$(truthy_as_int "${CODEX_BUG_REPORT_ONLY:-0}") issue_fix_next=$(truthy_as_int "${CODEX_ISSUE_FIX_NEXT:-0}") issue_priority_labels=$(shell_quote "${CODEX_ISSUE_PRIORITY_LABELS:-none}") manifest_mode=$(shell_quote "$CODEX_FILE_MANIFEST_MODE") manifest_path=$(shell_quote "$CODEX_FILE_MANIFEST_PATH") include_globs=$(shell_quote "${CODEX_SELECTION_INCLUDE_GLOBS:-none}") exclude_globs=$(shell_quote "${CODEX_SELECTION_EXCLUDE_GLOBS:-none}") selection_review_modules=$(shell_quote "${CODEX_SELECTION_REVIEW_MODULES:-none}") prompt_pass=$(shell_quote "${CODEX_PROMPT_PASS:-default}") review_modules=$(review_modules_csv) attempt_role=$(shell_quote "$CODEX_ATTEMPT_ROLE") fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=$(shell_quote "${CODEX_PRIMARY_MODEL_CONTEXT:-none}") fallback_trigger=$(shell_quote "${CODEX_FALLBACK_TRIGGER:-none}") screen_fallback_child_id=$(shell_quote "${CODEX_SCREEN_FALLBACK_CHILD_ID:-none}") code_home=$(shell_quote "$CODEX_HOME_DIR") dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
+  resolve_issue_fix_next_or_exit
   lattice_init_and_doctor_or_exit
   lattice_record_cycle_start
   start_run_mark_heartbeat
@@ -560,6 +577,7 @@ main() {
 
   local compiled_prompt_file
   local last_message_file
+  local bug_report_only_worktree_before=""
   ensure_run_tmp_dir
   compiled_prompt_file="$(run_mktemp compiled-prompt)"
   last_message_file="$(run_mktemp last-message)"
@@ -575,6 +593,15 @@ main() {
   if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
     log_line "INFO" "dry-run active; skipping codex exec"
     finish_cycle 0 DRY_RUN INFO "codex_exec_started=0"
+  fi
+
+  if upkeeper_bug_report_only_enabled; then
+    if bug_report_only_worktree_before="$(upkeeper_source_mutation_fingerprint)"; then
+      log_line "INFO" "bug_report_only.baseline source_fingerprint=$bug_report_only_worktree_before"
+    else
+      log_line "WARN" "bug_report_only.baseline source_fingerprint=unavailable"
+      bug_report_only_worktree_before=""
+    fi
   fi
 
   ensure_codex_session_store_writable_or_exit "before_run" "0"
@@ -758,6 +785,19 @@ main() {
   enforce_startup_anomaly_changed_paths
   record_startup_anomaly_gate_review "$last_message_file" "${status_marker:-missing}" "$codex_exit"
   tool_failure_queue_finalize_run "${RUN_SELECTED_REVIEW_PATH:-}" "${RUN_TRANSCRIPT_FILE:-}" "$codex_exit" "${status_marker:-missing}"
+
+  if upkeeper_bug_report_only_enabled && [[ -n "$bug_report_only_worktree_before" ]]; then
+    local bug_report_only_worktree_after
+    if bug_report_only_worktree_after="$(upkeeper_source_mutation_fingerprint)"; then
+      if [[ "$bug_report_only_worktree_after" != "$bug_report_only_worktree_before" ]]; then
+        log_line "ERROR" "bug_report_only.mutation_violation before=$bug_report_only_worktree_before after=$bug_report_only_worktree_after codex_exit=$codex_exit status_marker=${status_marker:-missing}"
+        finish_cycle 3 BUG_REPORT_ONLY_MUTATION_VIOLATION ERROR "codex_exit=$codex_exit status_marker=${status_marker:-missing}"
+      fi
+      log_line "INFO" "bug_report_only.source_unchanged source_fingerprint=$bug_report_only_worktree_after"
+    else
+      log_line "WARN" "bug_report_only.source_unchanged source_fingerprint=unavailable"
+    fi
+  fi
 
   if [[ "$after_selection" == "exact_model" ]]; then
     if [[ "$after_primary_guardrail_decision" == "stop" ]]; then

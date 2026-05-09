@@ -17,6 +17,7 @@ Run one quota-respecting Upkeeper max-cover cycle:
   - gpt-5.5 xhigh via Upkeeper's model override
   - all P1-P23 passes plus P24-P29 review modules
   - Lattice max-cover target ranking
+  - bug-report-only investigation and issue filing instead of source fixing
   - normal Upkeeper quota, startup, fallback, and evidence handling
 
 Flags:
@@ -82,6 +83,7 @@ fi
 args=(
   "--model-override=$FLAMEON_MODEL_OVERRIDE"
   "--max-cover"
+  "--bug-report-only"
 )
 
 if [[ "$FLAMEON_BACKUP_QUEUE" == "1" ]]; then

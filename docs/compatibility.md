@@ -39,7 +39,12 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--manifest-file=...`, `--include-glob=...`, `--include-globs=...`,
   `--exclude-glob=...`, `--exclude-globs=...`,
   `--selection-review-modules=...`, `--ignore-failure-queue`,
-  `--backup-queue`, `-backup_queue`, `--prompt-pass=all`, and `--max-cover`.
+  `--backup-queue`, `-backup_queue`, `--prompt-pass=all`, `--max-cover`,
+  `--bug-report-only`, `--file-bug-only`, `--report-bug-only`,
+  `--fix-next-issue`, and `--fix-oldest-bug`.
+- `FlameOn` remains a thin max-cover launcher and defaults to
+  `--bug-report-only`; it should investigate and file/report bugs rather than
+  patch tracked source during burn cycles.
 - `.upkeeperignore` remains the repo-local target-selection firewall. It blocks
   normal rotation, Lattice/max-cover candidates, failure-queue eligibility,
   manifest entries, and explicit `--target-file` pins for matching paths without
@@ -71,6 +76,8 @@ Future changes should preserve this operator-visible surface as far as possible:
   and recovery records, remain ignored local state.
 - `UPKEEPER_PASS_RESULT` is additive. `UPKEEPER_STATUS` and
   `UPKEEPER_LOG_REVIEW` remain unchanged.
+- Review outcomes recognized in final prose include `REVIEWED_AND_FIXED`,
+  `REVIEWED_AND_REPORTED`, `REVIEWED_CLEAN`, and `STOPPED_ON_BLOCKER`.
 - Missing `UPKEEPER_PASS_RESULT` markers do not fail a cycle. Malformed
   pass-result markers are recorded as rejected evidence, not clean pass results.
 - Default target selection remains current-compatible. Live source-safe
@@ -79,6 +86,12 @@ Future changes should preserve this operator-visible surface as far as possible:
 - `--max-cover` may ask Lattice to rank a broader current tracked text-file
   pool, but final selection still revalidates the live source-safe boundary in
   the same cycle.
+- `--bug-report-only` is a no-fix mode. It must not edit or touch tracked
+  source, and the wrapper must fail the cycle if the source mutation
+  fingerprint changes during a non-dry-run bug-report-only cycle.
+- `--fix-next-issue` and `--fix-oldest-bug` may require the GitHub CLI for
+  pre-launch issue selection, but normal Upkeeper and bug-report-only cycles do
+  not make `gh` a hard runtime dependency.
 - Explicit targets still win. Startup anomaly gates still win. The local
   failure queue still wins before normal timestamp rotation.
 - Validation entrypoints remain available:

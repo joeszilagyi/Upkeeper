@@ -3,6 +3,68 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Bug Report And Issue-Fix Modes
+
+Status: completed
+
+Goal:
+Add explicit Upkeeper modes for no-fix bug reporting and for issue-driven repair
+of the oldest prioritized open bug, then make `FlameOn` default to bug-report
+mode instead of applying source fixes.
+
+Constraints:
+- `--bug-report-only` must tell Codex not to edit, touch, format, or otherwise
+  mutate tracked source while still allowing local read-only investigation and
+  deterministic repro commands.
+- `FlameOn` stays thin and continues to invoke Upkeeper rather than duplicating
+  wrapper behavior.
+- `--fix-next-issue` should select open GitHub issues by priority label order:
+  `security`, then `data-integrity`, then `bug`, oldest first within each label.
+- Issue-fix mode may require `gh`; normal Upkeeper and bug-report-only mode
+  must not make `gh` a hard runtime dependency.
+- Do not run real backend Codex validation in local tests.
+- Update help, docs, compatibility notes, completions, validation, and annual
+  change notes because this changes operator-facing behavior.
+
+Files likely touched:
+- `Upkeeper`
+- `FlameOn`
+- `Upkeeper.conf`
+- `configurations/default.conf`
+- `completions/upkeeper.bash`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `lib/upkeeper/report_analysis.bash`
+- `lib/upkeeper/status_session.bash`
+- `lib/upkeeper/help_selection.bash`
+- `tools/validate_upkeeper.sh`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf completions/*.bash`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `git diff --check`
+
+Completed in this patch:
+- Added `--bug-report-only` plus `--file-bug-only` and `--report-bug-only`
+  aliases, with prompt rules that forbid source fixes/touches and a post-run
+  source mutation fingerprint guard for non-dry-run cycles.
+- Made `FlameOn` pass `--bug-report-only` by default while remaining a thin
+  `--model-override=5.5_xhigh --max-cover` wrapper.
+- Added `--fix-next-issue` plus `--fix-oldest-bug`, selecting open GitHub
+  issues by `security`, then `data-integrity`, then `bug`, oldest first, and
+  deriving a starting target file from issue text when possible.
+- Added `REVIEWED_AND_REPORTED` as a parsed review outcome for issue-filed or
+  issue-ready report cycles.
+- Extended docs, help, config defaults, completion, compatibility notes, change
+  notes, and local validation coverage.
+
 ## Upkeeper Lattice
 
 Status: completed

@@ -12,10 +12,10 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover]
+Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.3
+Version: v1.2.4
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -147,8 +147,9 @@ Important:
     snippets. Config files may set `CODEX_*` runtime knobs and `UPKEEPER_*` flag
     defaults such as
     `UPKEEPER_TARGET_FILE`, `UPKEEPER_REVIEW_MODULES`, `UPKEEPER_PROMPT_FILE`,
-    `UPKEEPER_PROMPT`, `UPKEEPER_PROMPT_PASS`, `UPKEEPER_MODEL_OVERRIDE`, and
-    `UPKEEPER_IGNORE_FAILURE_QUEUE`, and `UPKEEPER_MAX_COVER`. They may also
+    `UPKEEPER_PROMPT`, `UPKEEPER_PROMPT_PASS`, `UPKEEPER_MODEL_OVERRIDE`,
+    `UPKEEPER_IGNORE_FAILURE_QUEUE`, `UPKEEPER_MAX_COVER`,
+    `UPKEEPER_BUG_REPORT_ONLY`, and `UPKEEPER_FIX_NEXT_ISSUE`. They may also
     set selection defaults such as `UPKEEPER_SELECTION_SOURCE`,
     `UPKEEPER_SELECTION_ORDER`,
     `UPKEEPER_FILE_MANIFEST_MODE`, `UPKEEPER_TARGET_ROOT`,
@@ -338,6 +339,14 @@ Prompt behavior:
     appends P24-P29, and asks Lattice for max-cover target ranking across
     current tracked source-safe text files. Explicit targets, startup anomaly
     gates, and active failure-queue markers still keep their existing priority.
+  - --bug-report-only, also accepted as --file-bug-only or --report-bug-only,
+    makes the cycle investigate and file/report confirmed bugs without editing
+    or touching tracked source. It intentionally supersedes the normal clean
+    review touch requirement for that invocation.
+  - --fix-next-issue, also accepted as --fix-oldest-bug, asks Upkeeper to pick
+    the oldest open non-skipped GitHub issue by priority label order
+    security > data-integrity > bug, infer a starting file from the issue body
+    when possible, and run the cycle as a focused repair task.
 
 Environment overrides:
   UPKEEPER_CONFIG_FILE          Default: Upkeeper.conf
@@ -360,6 +369,10 @@ Environment overrides:
   UPKEEPER_EXCLUDE_GLOBS        Default: empty
   UPKEEPER_SELECTION_REVIEW_MODULES Default: empty
   UPKEEPER_MAX_COVER           Default: 0
+  UPKEEPER_BUG_REPORT_ONLY     Default: 0
+  UPKEEPER_FIX_NEXT_ISSUE      Default: 0
+  UPKEEPER_ISSUE_PRIORITY_LABELS Default: security,data-integrity,bug
+  UPKEEPER_ISSUE_SKIP_LABELS   Default: in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr
   UPKEEPER_LATTICE_ENABLED     Default: 1
   UPKEEPER_LATTICE_REQUIRED    Default: 0
   UPKEEPER_LATTICE_DB          Default: runtime/upkeeper-lattice/lattice.sqlite3
@@ -449,9 +462,10 @@ Exit codes:
 
 `./FlameOn` is a repo-root convenience launcher for one high-coverage
 smoke/burn cycle without typing the long Upkeeper flag set. It invokes
-`./Upkeeper --model-override=5.5_xhigh --max-cover`, preserves normal quota and
-startup guardrails, and only exposes terminal verbosity flags `--silent`,
-`--basic`, and `--debug1`.
+`./Upkeeper --model-override=5.5_xhigh --max-cover --bug-report-only`,
+preserves normal quota and startup guardrails, and only exposes terminal
+verbosity flags `--silent`, `--basic`, and `--debug1`. Its default cycle files
+or fully reports confirmed bugs instead of patching tracked source.
 
 Use `FLAMEON_DRY_RUN=1 ./FlameOn` to print the resolved command without
 launching Codex. Use `./FlameOn -backup_queue` or `./FlameOn --backup-queue`

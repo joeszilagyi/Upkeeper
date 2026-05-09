@@ -206,7 +206,7 @@ Validation:
 
 ## Upkeeper Ignore Firebreak
 
-Status: in progress
+Status: completed
 
 Goal:
 Add a first-class `.upkeeperignore` selection/spend firewall so Upkeeper can

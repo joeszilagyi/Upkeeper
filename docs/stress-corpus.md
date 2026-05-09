@@ -77,8 +77,8 @@ The tracked harness currently covers:
 - Symlinked client invocation through local `./Upkeeper.sh`, proving modules and
   prompts resolve from the central checkout while the target repo remains local.
 - Dirty worktree selection metadata, proving dirty content is baseline state.
-- Historical log anomaly handling that gates normal rotation to the repo-local
-  Upkeeper symlink.
+- Historical log anomaly handling that gates normal rotation to a repo-local
+  regular Upkeeper fixture, since pre-contact backups reject symlink targets.
 - Active-lock failure classification without backend work.
 - Terminal mode assertions for `basic`, `quiet`, and `silent`.
 - Review-summary parsing from a final-message fixture.

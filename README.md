@@ -52,6 +52,8 @@ On each cycle it:
 - scans recent prior log entries for incomplete cycles before launching Codex
 - keeps a local queue of unaddressed script/tool command failures and prioritizes
   the oldest still-eligible failure target on the next loop
+- creates a selected-target pre-contact backup before the prompt grants Codex
+  target authority, with optional age public-recipient encryption
 - logs a disk-space preflight before spending a backend run
 - optionally hands off to a bounded fallback model and postmortem path when the
   primary run blocks, fails, or hits a quota guardrail
@@ -248,6 +250,26 @@ one warning, spools a small recovery record when possible, and continues the
 existing cycle behavior. Set `UPKEEPER_LATTICE_REQUIRED=1` only when a run must
 fail before Codex launch unless Lattice is writable and healthy.
 
+Selected-target pre-contact backups are enabled and required by default. The
+default vault is outside the repository, and Upkeeper logs only an opaque
+`backup_id`, selected relative target, content sha256, mode, encrypted flag,
+protection flag, and `path_redacted=1`. Plain mode is a recovery aid, not a
+same-user security boundary; use age mode when the backup content should be
+encrypted before storage:
+
+```sh
+UPKEEPER_PRECONTACT_BACKUP_MODE="auto"
+UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT="age1..."
+UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED="1"
+UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE="20"
+```
+
+Restore a plain backup by id with:
+
+```sh
+tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID
+```
+
 CLI flags are the final one-cycle overrides. That means a cron profile can set
 the normal model, target, and review modules, while an operator can still run:
 
@@ -418,7 +440,8 @@ prevent expensive or unsafe rediscovery patterns such as:
 
 If the preselected file cannot be reviewed because it is gone, unreadable,
 binary, generated, or explicitly excluded, Codex must state that exception and
-choose a replacement from the same source-safe boundary.
+report `BLOCKED` for the cycle. Replacement target selection is wrapper-only
+because pre-contact backup coverage is target-specific.
 
 Operators can narrow normal rotation with `--target-root=PATH`,
 `--target-depth=N`, `--include-glob=PATTERN`, `--exclude-glob=PATTERN`, and
@@ -431,8 +454,8 @@ over the failure queue and selection filters. Automatic rotation stays focused
 on script/tool candidates, but an explicit operator pin may target any
 source-safe readable text file inside the repo, including docs, prompts, config,
 tests, and scripts. Explicit pins still reject `.git`, ignored paths, runtime
-evidence, generated outputs, directories, unreadable files, and binary-looking
-files.
+evidence, generated outputs, directories, symlinks, unreadable files, and
+binary-looking files.
 
 If a prior run saw an interesting script/tool command fail, Upkeeper writes a
 local marker under `runtime/unaddressed-tool-failures/open/`. After explicit

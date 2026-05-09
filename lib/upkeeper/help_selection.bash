@@ -18,11 +18,13 @@ Each invocation:
          plus any model-specific weekly safety buffer
      then it terminates the parent shell running the loop and exits without
      starting a new Codex run, unless fallback handoff is enabled.
-  5. Before launching Codex, verifies that $CODEX_HOME_DIR/sessions is writable,
+  5. After selecting a review target and before compiling its prompt authority,
+     creates the configured selected-target pre-contact backup.
+  6. Before launching Codex, verifies that $CODEX_HOME_DIR/sessions is writable,
      stale Codex arg0 temp shims can be cleaned or quarantined, and Codex's
      shared bubblewrap temp registry is writable.
-  6. Otherwise it runs exactly one codex exec cycle and exits.
-  7. If the primary model fails, blocks, or exhausts its bucket, it can hand off
+  7. Otherwise it runs exactly one codex exec cycle and exits.
+  8. If the primary model fails, blocks, or exhausts its bucket, it can hand off
      to one stronger fallback cycle in the same outer-loop iteration.
 
 Designed for loops like:
@@ -160,8 +162,10 @@ Important:
     as UPKEEPER_TARGET_FILE, UPKEEPER_REVIEW_MODULES, UPKEEPER_PROMPT_FILE,
     UPKEEPER_PROMPT, UPKEEPER_PROMPT_PASS, UPKEEPER_MODEL_OVERRIDE,
     UPKEEPER_IGNORE_FAILURE_QUEUE, UPKEEPER_BUG_REPORT_ONLY, and
-    UPKEEPER_FIX_NEXT_ISSUE. They may also set selection defaults such as
-    UPKEEPER_SELECTION_SOURCE, UPKEEPER_SELECTION_ORDER,
+    UPKEEPER_FIX_NEXT_ISSUE. They may also set pre-contact backup defaults such
+    as UPKEEPER_PRECONTACT_BACKUP_MODE, UPKEEPER_PRECONTACT_BACKUP_ROOT, and
+    UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT. They may also set selection
+    defaults such as UPKEEPER_SELECTION_SOURCE, UPKEEPER_SELECTION_ORDER,
     UPKEEPER_FILE_MANIFEST_MODE, UPKEEPER_TARGET_ROOT,
     UPKEEPER_TARGET_MAX_DEPTH, UPKEEPER_INCLUDE_GLOBS,
     UPKEEPER_EXCLUDE_GLOBS, and UPKEEPER_SELECTION_REVIEW_MODULES. CLI flags
@@ -235,6 +239,16 @@ Prompt behavior:
     the prompt. That avoids spending model/tool cycles on broad tree discovery
     and keeps .git/, ignored paths, runtime evidence, generated outputs, and
     tests out of the selection scan.
+  - After target selection and before the selected-target prompt block is
+    appended, Upkeeper creates a pre-contact backup when enabled. The default
+    vault is outside the repository. Auto mode uses age encryption when
+    UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT is set and age is available;
+    otherwise it uses plain local mode unless encrypted backup is required.
+    Plain mode is a recovery aid, not a same-user security boundary. Backup
+    logs and prompts include only backup_id, target, sha256, mode, encrypted,
+    protected_from_backend, and path_redacted=1; the vault path is not
+    prompt-visible. Restore a plain backup by id with:
+      tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID
   - A repo-root .upkeeperignore, or the file named by UPKEEPER_IGNORE_FILE,
     is a target-selection firewall. It uses simple Gitignore-style glob lines
     to block normal rotation, Lattice/max-cover candidates, failure-queue target
@@ -300,8 +314,8 @@ Prompt behavior:
     failure queue. Explicit pins may target tracked or non-ignored untracked
     docs, prompts, configs, tests, or scripts inside the repo. They still reject
     .git, ignored paths, runtime evidence, generated outputs, directories,
-    unreadable files, and binary-looking files. Use the equals form; spaced form
-    is rejected.
+    symlinks, unreadable files, and binary-looking files. Use the equals form;
+    spaced form is rejected.
   - --target-root=PATH restricts timestamp selection to one file or directory
     tree; --target-depth=N limits descendant depth below that root.
   - --selection-order=oldest, newest, or random chooses the target ordering for
@@ -367,6 +381,14 @@ Environment overrides:
   UPKEEPER_LATTICE_SELECTION_MODE Default: oldest-mtime
   UPKEEPER_LATTICE_RAW_STORAGE Default: limited
   UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE Default: delete
+  UPKEEPER_PRECONTACT_BACKUP_ENABLED Default: $UPKEEPER_PRECONTACT_BACKUP_ENABLED
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRED Default: $UPKEEPER_PRECONTACT_BACKUP_REQUIRED
+  UPKEEPER_PRECONTACT_BACKUP_MODE Default: $UPKEEPER_PRECONTACT_BACKUP_MODE
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED Default: $UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED
+  UPKEEPER_PRECONTACT_BACKUP_ROOT Default: $UPKEEPER_PRECONTACT_BACKUP_ROOT
+  UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE Default: $UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE
+  UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT Default: empty
+  UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS Default: $UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS
   CODEX_FILE_MANIFEST_MAX_AGE_SECONDS Default: 300
   CODEX_MODEL                   Default: gpt-5.3-codex-spark
   CODEX_REASONING_EFFORT        Default: xhigh
@@ -434,8 +456,9 @@ Exit codes:
   4  Safety stop was required but parent-loop termination was not confirmed
   5  No clear backend task remained; the wrapper stops the outer loop on purpose
   6  Codex turn was aborted/interrupted before emitting a final status marker
-  7  Fallback plus post-mortem sequence completed, or a persisted quota cooldown
-     is active; manually relaunch after review or after the recorded reset time
+  7  Fallback plus post-mortem sequence completed, a persisted quota cooldown
+     is active, or a required pre-contact backup failed before backend launch;
+     manually relaunch after review or after the recorded reset time
   8  Fallback ran but the scripted post-mortem or hardening sequence failed
   9  Detached screen worker stopped on a guardrail without requesting parent termination
 EOF
@@ -485,14 +508,13 @@ except subprocess.CalledProcessError:
 repo_paths = set(raw_paths.decode("utf-8", "surrogateescape").split("\0"))
 matches = []
 for path in sorted(eligible_names):
-    # Client checkouts commonly use ignored local Upkeeper.sh symlinks to the
-    # central wrapper. Startup-anomaly gates should accept that local execution
-    # handle even though normal timestamp rotation must not treat ignored
-    # wrapper artifacts as source files.
+    # Pre-contact backups intentionally reject symlink targets. A symlinked
+    # client can still invoke the central wrapper, but a startup-anomaly
+    # self-review target must be a repo-local regular file.
     if path not in repo_paths and path != "Upkeeper.sh":
         continue
     try:
-        stat_result = os.stat(path)
+        stat_result = os.lstat(path)
     except OSError:
         continue
     if statmod.S_ISREG(stat_result.st_mode):
@@ -703,6 +725,8 @@ def explicit_target_error(path: str) -> str:
         return "target path is ignored by .upkeeperignore"
     if git_path_is_ignored(path):
         return "target path is ignored by git"
+    if os.path.islink(path):
+        return "target path is a symlink"
     try:
         stat_result = os.stat(path)
     except OSError:
@@ -901,6 +925,8 @@ def enumerate_paths() -> tuple[list[tuple[float, str]], str]:
     for path in raw:
         if not path:
             continue
+        if os.path.islink(path):
+            continue
         try:
             stat_result = os.stat(path)
         except OSError:
@@ -1096,6 +1122,8 @@ for manifest_mtime, path in paths:
         continue
     if upkeeper_path_ignored(path):
         continue
+    if os.path.islink(path):
+        continue
     is_forced_path = bool(forced_target and path == forced_target)
     if not is_forced_path:
         if not path_within_target_root(path, target_root, target_max_depth):
@@ -1127,7 +1155,7 @@ if startup_anomaly_gate == "1" and startup_force_upkeeper == "1":
         if any(candidate_path == path for _, candidate_path in candidates):
             continue
         try:
-            stat_result = os.stat(path)
+            stat_result = os.lstat(path)
         except OSError:
             continue
         if statmod.S_ISREG(stat_result.st_mode):
@@ -1359,6 +1387,13 @@ append_preselected_review_target() {
   RUN_SELECTED_FAILURE_MARKER_PATH="$failure_marker_path"
   if selection_file="$(run_mktemp lattice-preselect)"; then
     printf '%s\n' "$selection" >"$selection_file"
+  else
+    selection_file=""
+  fi
+
+  precontact_backup_selected_target_or_exit "$selected_path" "$selection_file"
+
+  if [[ -n "$selection_file" ]]; then
     lattice_record_preselect "$selection_file" ""
   fi
 
@@ -1376,11 +1411,15 @@ append_preselected_review_target() {
     printf -- '- This preselected target overrides all later P1-P23 selection rules; run applicable prompts against this same file.\n'
     printf -- '- Use git_status/content_state/head_blob/worktree_hash above as the pre-run baseline for this file.\n'
     printf -- '- If content_state differs_from_head or git_status is not clean, that dirty content existed before this review; do not reset it or block solely because git diff versus HEAD is non-empty.\n'
+    if [[ -n "${RUN_PRECONTACT_BACKUP_ID:-}" ]]; then
+      printf -- '- Pre-contact backup was created by the wrapper before this prompt was compiled: backup_id=%s sha256=%s mode=%s encrypted=%s protected_from_backend=%s.\n' "$RUN_PRECONTACT_BACKUP_ID" "$RUN_PRECONTACT_BACKUP_SHA256" "$RUN_PRECONTACT_BACKUP_MODE" "$RUN_PRECONTACT_BACKUP_ENCRYPTED" "$RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND"
+      printf -- '- Do not attempt to access, inspect, prune, restore, modify, or discover backup artifacts. Vault paths are intentionally not prompt-visible.\n'
+    fi
     printf -- '- For a clean no-edit pass, record the selected file hash before touch, touch it, then verify the mtime changed and the content hash is unchanged from the pre-touch hash.\n'
     printf -- '- Do not run broad repository discovery commands to second-guess this selection.\n'
-    printf -- '- If this target is physically impossible or unsafe to review, state the exception and then use the same source-safe selection boundary for the replacement.\n'
+    printf -- '- If this target is physically impossible or unsafe to review, report BLOCKED for this cycle and do not choose a replacement target. Replacement target selection is wrapper-only because backup coverage is pre-contact and target-specific.\n'
     if [[ -n "$CODEX_TARGET_FILE" ]]; then
-      printf -- '- This target was pinned by operator flag `--target-file=%s`; do not replace it unless the physical/safety exception above applies.\n' "$CODEX_TARGET_FILE"
+      printf -- '- This target was pinned by operator flag `--target-file=%s`; do not replace it. If the physical/safety exception above applies, report BLOCKED.\n' "$CODEX_TARGET_FILE"
     fi
     if [[ "${failure_queue_selected:-0}" == "1" ]]; then
       printf -- '- This target was forced by the local unaddressed tool-failure queue. Treat the queued failure as the priority repair/upkeep task before normal timestamp care.\n'

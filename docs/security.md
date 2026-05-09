@@ -61,6 +61,45 @@ During a real backend cycle, Codex can modify repository files according to the
 configured Codex sandbox mode and the task it performs. Dry-run mode
 (`UPKEEPER_DRY_RUN=1`) stops before launching real backend work.
 
+## Selected-Target Pre-Contact Backups
+
+After Upkeeper selects a review target and before it appends the selected-target
+authority block to the compiled prompt, it creates a pre-contact backup when
+`UPKEEPER_PRECONTACT_BACKUP_ENABLED=1`. The default is required
+(`UPKEEPER_PRECONTACT_BACKUP_REQUIRED=1`), so backup creation failures stop the
+cycle before backend launch with `codex_exec_started=0`.
+
+The default vault root is outside the repository:
+
+```sh
+${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/precontact-vault
+```
+
+Upkeeper does not put that vault path in the compiled prompt, Lattice preselect
+evidence, or pre-contact backup log lines. Success logs contain only the
+selected relative target, content sha256, opaque `backup_id`, backup mode,
+encrypted flag, backend-protection flag, and `path_redacted=1`.
+
+Plain backup mode copies the selected file and a JSON sidecar. It is useful for
+quick recovery, but it is not a security boundary: a same-user backend process
+that can discover and access the vault through other means may be able to read
+or delete plain artifacts. Upkeeper therefore records plain backups as
+`encrypted=false` and `protected_from_backend=false`.
+
+Age mode encrypts the backup payload to a configured public recipient. Backup
+creation uses only the public recipient; it must not request, read, log, or
+source a private age identity. The private identity is needed only for manual
+restore and must not be committed to config, included in prompts, printed in
+logs, or placed in an environment visible to backend Codex processes. Without a
+separate backend confinement layer, encrypted mode protects content at rest but
+does not make same-user deletion impossible.
+
+Landlock, bubblewrap allowlists, root-owned or dedicated-user vaults, fs-verity,
+and immutable file attributes are separate hardening layers. They may be useful
+future defenses, but this first local slice deliberately does not install root
+helpers, sudoers rules, services, ownership tricks, or a custom confinement
+launcher.
+
 ## What Upkeeper Can Execute
 
 The wrapper itself runs local shell commands needed for startup, validation,
@@ -146,7 +185,7 @@ sanitized artifacts.
 Automatic rotation avoids `.git/`, ignored paths, `.upkeeperignore` paths,
 runtime evidence, generated outputs, and test trees. Explicit `--target-file`
 pins still reject ignored paths, `.upkeeperignore` paths, runtime evidence,
-`.git`, directories, unreadable files, and binary-like files.
+`.git`, directories, symlinks, unreadable files, and binary-like files.
 
 That selection policy is a safety guardrail, not a data-loss prevention system.
 If a real backend task runs commands that print or read ignored files, that

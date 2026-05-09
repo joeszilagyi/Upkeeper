@@ -6,6 +6,15 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-09: v1.2.5 changes:
+	1. Added selected-target pre-contact backups before the compiled prompt grants Codex authority over the shell-selected target.
+	2. Added plain local backup mode as a recovery aid and age public-recipient encrypted mode for encrypted backup artifacts without requiring a private identity during backup creation.
+	3. Made required backup failures stop before backend launch with `codex_exec_started=0`, while logging only opaque backup id, selected relative target, content sha256, mode, encrypted flag, backend-protection flag, and `path_redacted=1`.
+	4. Added retention pruning per repo/path key, conservative manual restore by backup id through `tools/upkeeper_precontact_restore.sh`, and local tests for success, failure, redaction, retention, restore, and age command behavior.
+	5. Removed prompt authority for Codex to choose a replacement target when the preselected target is impossible or unsafe; the prompt now requires `BLOCKED` because replacement selection is wrapper-only and backup coverage is target-specific.
+	6. Rejected symlink selected targets for this first backup slice and updated symlinked-client stress coverage so invocation still works while backup targets remain regular files.
+	7. Documented the no-root/no-sudo boundary, including that plain same-user backups are not LLM-inaccessible and that Landlock, bubblewrap, and privileged vaults are separate future hardening layers.
+
 2026-05-09: v1.2.4 changes:
 	1. Added `--bug-report-only` with `--file-bug-only` and `--report-bug-only` aliases so an Upkeeper cycle can investigate and file/report confirmed bugs without editing or touching tracked source.
 	2. Made `FlameOn` pass `--bug-report-only` by default, turning high-coverage burn cycles into issue-finding/reporting runs instead of source-fixing runs.

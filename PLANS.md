@@ -3,6 +3,67 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Pre-Contact Selected-Target Backups
+
+Status: completed
+
+Goal:
+Create a local no-root/no-sudo backup of the shell-selected review target before
+the selected-target prompt block is compiled or any backend Codex process can
+start.
+
+Constraints:
+- Keep the default vault outside the repository and never write the vault path
+  into logs, prompts, transcripts, or Lattice evidence.
+- Support plain local backups as recovery aids, but mark them unprotected from
+  same-user deletion.
+- Support age public-recipient encryption without requiring, reading, or logging
+  private identities during backup creation.
+- Fail closed before backend launch when required backup creation is unavailable
+  or fails.
+- Keep replacement target authority in the wrapper; the prompt must tell Codex
+  to report BLOCKED rather than selecting an unbacked replacement target.
+- Do not implement privileged vaults, sudo/root helpers, chattr, fs-verity,
+  systemd services, or a custom Landlock launcher in this slice.
+
+Files likely touched:
+- `Upkeeper`
+- `Upkeeper.conf`
+- `configurations/default.conf`
+- `lib/upkeeper/precontact_backup.bash`
+- `lib/upkeeper/help_selection.bash`
+- `lib/upkeeper/README.md`
+- `tools/upkeeper_precontact_restore.sh`
+- `tools/validate_upkeeper.sh`
+- `tests/precontact_backup_test.bash`
+- `docs/security.md`
+- `docs/dependencies.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `README.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added `lib/upkeeper/precontact_backup.bash` and loaded it before prompt
+  compilation so selected targets are hashed and backed up before Codex receives
+  the `WRAPPER_PRESELECTED_REVIEW_TARGET` block.
+- Added plain and age backup modes, required/fail-closed behavior, redacted
+  success/failure logs, per-path retention, and conservative restore by opaque
+  backup id.
+- Kept symlinked client invocation working while rejecting symlink selected
+  targets for this first backup slice.
+- Updated prompt rules so impossible/unsafe selected targets require `BLOCKED`
+  instead of model-chosen replacement targets.
+- Updated operator docs, dependency docs, security docs, compatibility notes,
+  stress corpus expectations, tests, validation, and v1.2.5 release notes.
+
 ## Bug Report And Issue-Fix Modes
 
 Status: completed

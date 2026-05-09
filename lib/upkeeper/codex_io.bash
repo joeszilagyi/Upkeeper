@@ -824,7 +824,7 @@ parse_args() {
 require_commands() {
   local missing=0
   local cmd
-  for cmd in awk cat cut date df find git grep jq ln mkdir mktemp mv ps python3 rm rmdir sed sort tail tee tr; do
+  for cmd in awk cat chmod cut date df find git grep jq ln mkdir mktemp mv ps python3 rm rmdir sed sort tail tee tr wc; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       log_line "ERROR" "required command missing: $cmd"
       missing=1

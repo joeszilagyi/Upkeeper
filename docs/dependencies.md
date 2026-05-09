@@ -70,6 +70,7 @@ These commands are required by normal Upkeeper startup/runtime paths:
 
 - `awk`
 - `cat`
+- `chmod`
 - `cut`
 - `date`
 - `df`
@@ -90,6 +91,7 @@ These commands are required by normal Upkeeper startup/runtime paths:
 - `tail`
 - `tee`
 - `tr`
+- `wc`
 
 ## Backend Dependency
 
@@ -106,6 +108,13 @@ Codex backend task.
 
 ## Optional Dependencies
 
+- `age` is used for encrypted selected-target pre-contact backups. It is
+  optional in the default `auto` mode: when no recipient is configured, or when a
+  recipient is configured but `age` is unavailable and encrypted backups are not
+  required, Upkeeper falls back to plain local backup mode. If
+  `UPKEEPER_PRECONTACT_BACKUP_MODE=age` or
+  `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=1`, missing `age` or a missing
+  recipient fails the cycle before backend launch.
 - `realpath` is used for central implementation path resolution when available;
   `python3` is the fallback.
 - `stat` is used for transcript sizing when available; `python3` is the

@@ -49,6 +49,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   normal rotation, Lattice/max-cover candidates, failure-queue eligibility,
   manifest entries, and explicit `--target-file` pins for matching paths without
   changing Git tracking or Codex sandbox access.
+- Selected-target pre-contact backups remain shell-side and happen after target
+  selection but before the selected-target prompt block is compiled. Required
+  backup failures must stop before backend launch with `codex_exec_started=0`.
+  The default vault is outside the repository, and wrapper-generated prompts,
+  logs, and Lattice preselect evidence must not expose the vault root.
 - The central default config remains `Upkeeper.conf`, and named config profiles
   can be selected per invocation with `--config-file=PATH`.
 - Existing documented environment knobs keep their meaning unless a change note
@@ -94,6 +99,10 @@ Future changes should preserve this operator-visible surface as far as possible:
   not make `gh` a hard runtime dependency.
 - Explicit targets still win. Startup anomaly gates still win. The local
   failure queue still wins before normal timestamp rotation.
+- Codex must not receive authority to choose an unbacked replacement target. If
+  the preselected target is physically impossible or unsafe to review, the
+  prompt contract is to report `BLOCKED`; replacement selection remains a
+  wrapper-only behavior for a later cycle.
 - Validation entrypoints remain available:
   `tools/validate_upkeeper.sh --deps`, `--quick`, and `--full`.
 - The GitHub Actions no-quota CI workflow remains available at
@@ -118,7 +127,8 @@ Future changes should preserve this operator-visible surface as far as possible:
   priority over manifest, queue, and filter behavior.
 - Explicit `--target-file` pins may select any source-safe readable text file
   inside the repo, including docs, prompts, config, tests, and scripts, while
-  automatic rotation remains limited to script/tool candidates.
+  automatic rotation remains limited to script/tool candidates. Selected targets
+  must not be symlinks in this pre-contact backup slice.
 - Selection filters such as target root, depth, include/exclude globs, random
   order, and review-module approximations narrow which file Upkeeper chooses.
   They do not silently enable extra review modules or change the single-selected-

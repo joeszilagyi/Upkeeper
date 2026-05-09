@@ -442,6 +442,12 @@ create_historical_log_sample() {
   local repo stamp boot_id
   repo="$(init_sample_repo historical-log)"
   mkdir -p "$repo/scripts"
+  cat >"$repo/Upkeeper" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'repo-local Upkeeper gate fixture\n'
+SH
+  chmod +x "$repo/Upkeeper"
   cat >"$repo/scripts/repair.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -550,9 +556,9 @@ check_historical_log_sample() {
   run_upkeeper_dry historical-log "$repo" basic 0 "$log_file" >/dev/null
   assert_file_contains "$log_file" "previous_run.anomaly" "historical log sample did not detect prior incomplete cycle"
   assert_file_contains "$log_file" "previous_cycle=stress-prior" "historical log sample did not name the prior cycle"
-  assert_file_contains "$log_file" "startup_anomaly.gate_target status=eligible path=Upkeeper.sh" "historical log sample did not use repo-local Upkeeper symlink gate target"
+  assert_file_contains "$log_file" "startup_anomaly.gate_target status=eligible path=Upkeeper" "historical log sample did not use repo-local regular Upkeeper gate target"
   assert_file_contains "$log_file" "selection_mode=startup_anomaly_gate" "historical log sample did not force startup anomaly selection mode"
-  pass "historical log anomaly forced local Upkeeper gate target"
+  pass "historical log anomaly forced regular local Upkeeper gate target"
 }
 
 check_active_lock_sample() {

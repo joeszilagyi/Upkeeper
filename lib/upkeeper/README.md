@@ -104,6 +104,7 @@ Startup validation, quota, and selection:
 
 Prompt assembly and process control:
 
+- `precontact_backup.bash`
 - `prompt_pruning.bash`
 - `prompt_compile.bash`
 - `process_control.bash`

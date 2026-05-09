@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.4
+Version: v1.2.5
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -28,11 +28,13 @@ Each invocation:
          plus any model-specific weekly safety buffer
      then it terminates the parent shell running the loop and exits without
      starting a new Codex run, unless fallback handoff is enabled.
-  5. Before launching Codex, verifies that $CODEX_HOME/sessions is writable,
+  5. After selecting a review target and before compiling its prompt authority,
+     creates the configured selected-target pre-contact backup.
+  6. Before launching Codex, verifies that $CODEX_HOME/sessions is writable,
      stale Codex arg0 temp shims can be cleaned or quarantined, and Codex's
      shared bubblewrap temp registry is writable.
-  6. Otherwise it runs exactly one codex exec cycle and exits.
-  7. If the primary model fails, blocks, or exhausts its bucket, it can hand off
+  7. Otherwise it runs exactly one codex exec cycle and exits.
+  8. If the primary model fails, blocks, or exhausts its bucket, it can hand off
      to one stronger fallback cycle in the same outer-loop iteration.
 
 Designed for loops like:
@@ -150,7 +152,9 @@ Important:
     `UPKEEPER_PROMPT`, `UPKEEPER_PROMPT_PASS`, `UPKEEPER_MODEL_OVERRIDE`,
     `UPKEEPER_IGNORE_FAILURE_QUEUE`, `UPKEEPER_MAX_COVER`,
     `UPKEEPER_BUG_REPORT_ONLY`, and `UPKEEPER_FIX_NEXT_ISSUE`. They may also
-    set selection defaults such as `UPKEEPER_SELECTION_SOURCE`,
+    set pre-contact backup defaults such as `UPKEEPER_PRECONTACT_BACKUP_MODE`,
+    `UPKEEPER_PRECONTACT_BACKUP_ROOT`, and
+    `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT`. They may also set selection defaults such as `UPKEEPER_SELECTION_SOURCE`,
     `UPKEEPER_SELECTION_ORDER`,
     `UPKEEPER_FILE_MANIFEST_MODE`, `UPKEEPER_TARGET_ROOT`,
     `UPKEEPER_TARGET_MAX_DEPTH`, `UPKEEPER_INCLUDE_GLOBS`,
@@ -226,6 +230,16 @@ Prompt behavior:
     path to the prompt. That avoids spending model/tool cycles on broad tree
     discovery and keeps `.git/`, ignored paths, runtime evidence, generated
     outputs, and tests out of the selection scan.
+  - After target selection and before the selected-target prompt block is
+    appended, Upkeeper creates a pre-contact backup when enabled. The default
+    vault is outside the repository. Auto mode uses age encryption when
+    `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` is set and `age` is available;
+    otherwise it uses plain local mode unless encrypted backup is required.
+    Plain mode is a recovery aid, not a same-user security boundary. Backup logs
+    and prompts include only `backup_id`, target, sha256, mode, encrypted,
+    `protected_from_backend`, and `path_redacted=1`; the vault path is not
+    prompt-visible. Restore a plain backup by id with:
+      `tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID`
   - A repo-root `.upkeeperignore`, or the file named by `UPKEEPER_IGNORE_FILE`,
     is a target-selection firewall. It uses simple Gitignore-style glob lines
     to block normal rotation, Lattice/max-cover candidates, failure-queue target
@@ -240,8 +254,10 @@ Prompt behavior:
     same broad kind shows the failure was rechecked.
   - A `WRAPPER_PRESELECTED_REVIEW_TARGET` section overrides every later
     repertoire selection rule for that cycle; all applicable review prompts run
-    against that same target unless the file is physically impossible or unsafe
-    to read.
+    against that same target. If the file is physically impossible or unsafe to
+    read, Codex must report `BLOCKED` and must not choose a replacement target.
+    Replacement target selection is wrapper-only because pre-contact backup
+    coverage is target-specific.
   - Preselection records the selected target's git status and content hash before
     Codex starts. If the selected file is already dirty, that is baseline state,
     not a blocker by itself; touch verification must compare against the
@@ -310,8 +326,8 @@ Prompt behavior:
     failure queue. Explicit pins may target tracked or non-ignored untracked
     docs, prompts, configs, tests, or scripts inside the repo. They still reject
     `.git`, ignored paths, runtime evidence, generated outputs, directories,
-    unreadable files, and binary-looking files. Use the equals form; spaced
-    form is rejected.
+    symlinks, unreadable files, and binary-looking files. Use the equals form;
+    spaced form is rejected.
   - --target-root=PATH restricts timestamp selection to one file or directory
     tree. --target-dir=PATH is an alias.
   - --target-depth=N limits descendant depth below the selected target root.
@@ -379,6 +395,14 @@ Environment overrides:
   UPKEEPER_LATTICE_SELECTION_MODE Default: oldest-mtime
   UPKEEPER_LATTICE_RAW_STORAGE Default: limited
   UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE Default: delete
+  UPKEEPER_PRECONTACT_BACKUP_ENABLED Default: 1
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRED Default: 1
+  UPKEEPER_PRECONTACT_BACKUP_MODE Default: auto
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED Default: 0
+  UPKEEPER_PRECONTACT_BACKUP_ROOT Default: ${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/precontact-vault
+  UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE Default: 20
+  UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT Default: empty
+  UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS Default: 1
   CODEX_FILE_MANIFEST_MAX_AGE_SECONDS Default: 300
   CODEX_MODEL                   Default: gpt-5.3-codex-spark
   CODEX_REASONING_EFFORT        Default: xhigh
@@ -452,8 +476,9 @@ Exit codes:
   4  Safety stop was required but parent-loop termination was not confirmed
   5  No clear backend task remained; the wrapper stops the outer loop on purpose
   6  Codex turn was aborted/interrupted before emitting a final status marker
-  7  Fallback plus post-mortem sequence completed, or a persisted quota cooldown
-     is active; manually relaunch after review or after the recorded reset time
+  7  Fallback plus post-mortem sequence completed, a persisted quota cooldown
+     is active, or a required pre-contact backup failed before backend launch;
+     manually relaunch after review or after the recorded reset time
   8  Fallback ran but the scripted post-mortem or hardening sequence failed
   9  Detached screen worker stopped on a guardrail without requesting parent termination
 ```
@@ -477,6 +502,47 @@ Optional Bash completion is available with:
 ```sh
 source completions/upkeeper.bash
 ```
+
+## Pre-Contact Backup Examples
+
+Plain local backup mode keeps a copy outside the repository. It is useful for
+manual recovery, but it is not protected from same-user deletion:
+
+```sh
+UPKEEPER_PRECONTACT_BACKUP_ENABLED=1
+UPKEEPER_PRECONTACT_BACKUP_REQUIRED=1
+UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE=20
+```
+
+Age encrypted mode writes encrypted backup payloads using only a public
+recipient. Do not put the private identity in prompts, logs, committed config,
+or backend-visible environment:
+
+```sh
+UPKEEPER_PRECONTACT_BACKUP_MODE=age
+UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT=age1...
+```
+
+Require encrypted backup mode when a cycle must fail before backend launch
+unless age encryption is available:
+
+```sh
+UPKEEPER_PRECONTACT_BACKUP_MODE=auto
+UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT=age1...
+UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=1
+```
+
+Restore by opaque backup id:
+
+```sh
+tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID
+tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID --identity=/path/to/age-identity.txt
+```
+
+`UPKEEPER_PRECONTACT_BACKUP_ROOT` may point at an operator-local vault outside
+the repository. The wrapper never includes the generated vault path in compiled
+prompts, backup log lines, or Lattice preselect evidence.
 
 ## Operational Notes
 
@@ -538,9 +604,10 @@ source completions/upkeeper.bash
 - Startup-anomaly scans suppress older log-only `previous_run.anomaly` entries
   after a later `startup_anomaly.gate_resolved` has acknowledged
   `previous_run_anomaly`; unresolved gate state files still trigger the gate.
-- Startup-anomaly self-review gates accept ignored local `Upkeeper.sh` symlinks
-  to the central wrapper as valid local gate targets; normal timestamp rotation
-  still excludes ignored wrapper artifacts.
+- Startup-anomaly self-review gates require a repo-local regular Upkeeper file
+  for this pre-contact backup slice. Symlinked clients still invoke the central
+  wrapper through `Upkeeper.sh`, but that symlink is not selected as a backed-up
+  review target.
 - Root `Upkeeper` remains the only operator entrypoint. The implementation now
   lives in sourced `lib/upkeeper/*.bash` modules loaded from the resolved central
   wrapper directory, preserving symlinked client behavior while reducing review

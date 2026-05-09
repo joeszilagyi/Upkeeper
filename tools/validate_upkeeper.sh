@@ -10,6 +10,7 @@ MODE="quick"
 WRAPPER_REQUIRED_COMMANDS=(
   awk
   cat
+  chmod
   cut
   date
   df
@@ -30,6 +31,7 @@ WRAPPER_REQUIRED_COMMANDS=(
   tail
   tee
   tr
+  wc
 )
 
 WRAPPER_BACKEND_COMMANDS=(
@@ -43,6 +45,7 @@ WRAPPER_CONDITIONAL_COMMANDS=(
 WRAPPER_OPTIONAL_COMMANDS=(
   realpath
   stat
+  age
   zip
 )
 
@@ -97,6 +100,10 @@ done
 
 cd "$ROOT_DIR"
 
+VALIDATION_TMP_ROOT="$(mktemp -d /tmp/upkeeper-validate.XXXXXX)"
+trap 'rm -r "$VALIDATION_TMP_ROOT" 2>/dev/null || true' EXIT
+export UPKEEPER_PRECONTACT_BACKUP_ROOT="$VALIDATION_TMP_ROOT/precontact-vault"
+
 require_command() {
   local command_name="$1"
   command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name"
@@ -149,6 +156,9 @@ check_dependencies() {
         ;;
       stat)
         dependency_status_line "optional" "$command_name" "transcript sizing uses python3 fallback" || true
+        ;;
+      age)
+        dependency_status_line "optional" "$command_name" "required only when encrypted pre-contact backup mode is selected or required" || true
         ;;
       zip)
         dependency_status_line "optional" "$command_name" "log rotation archives are disabled when missing" || true
@@ -233,8 +243,11 @@ check_prompt_template() {
   [[ -s prompts/p29-reuse-harvesting-review.md ]] || fail "P29 review module prompt is missing or empty"
   [[ -x tools/upkeeper_lattice.py ]] || fail "Lattice tool is missing or not executable"
   [[ -s lib/upkeeper/lattice.bash ]] || fail "Lattice wrapper module is missing or empty"
+  [[ -s lib/upkeeper/precontact_backup.bash ]] || fail "pre-contact backup module is missing or empty"
   [[ -s tests/lattice_test.bash ]] || fail "Lattice test is missing or empty"
+  [[ -s tests/precontact_backup_test.bash ]] || fail "pre-contact backup test is missing or empty"
   [[ -s docs/lattice.md ]] || fail "Lattice documentation is missing or empty"
+  [[ -x tools/upkeeper_precontact_restore.sh ]] || fail "pre-contact restore helper is missing or not executable"
   [[ -x FlameOn ]] || fail "FlameOn launcher is missing or not executable"
   [[ -s completions/upkeeper.bash ]] || fail "Bash completion helper is missing or empty"
   [[ -s .upkeeperignore ]] || fail ".upkeeperignore is missing or empty"
@@ -279,8 +292,10 @@ check_prompt_template() {
   grep -Fq "UPKEEPER_IGNORE_FILE" configurations/default.conf || fail "default profile missing .upkeeperignore default"
   grep -Fq "UPKEEPER_BUG_REPORT_ONLY" Upkeeper.conf || fail "root config missing bug-report-only default"
   grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" Upkeeper.conf || fail "root config missing issue-fix default"
+  grep -Fq "UPKEEPER_PRECONTACT_BACKUP_ENABLED" Upkeeper.conf || fail "root config missing pre-contact backup defaults"
   grep -Fq "UPKEEPER_BUG_REPORT_ONLY" configurations/default.conf || fail "default profile missing bug-report-only default"
   grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" configurations/default.conf || fail "default profile missing issue-fix default"
+  grep -Fq "UPKEEPER_PRECONTACT_BACKUP_ENABLED" configurations/default.conf || fail "default profile missing pre-contact backup defaults"
   grep -Fq "local SQLite evidence ledger" docs/lattice.md || fail "Lattice docs missing local SQLite summary"
   grep -Fq "source-safe live eligibility remains authoritative" docs/lattice.md || fail "Lattice docs missing live eligibility boundary"
   grep -Fq ".upkeeperignore" docs/lattice.md || fail "Lattice docs missing .upkeeperignore candidate boundary"
@@ -295,6 +310,9 @@ check_prompt_template() {
   grep -Fq ".upkeeperignore" docs/scripts/upkeeper.md || fail "operator guide missing .upkeeperignore docs"
   grep -Fq ".upkeeperignore" docs/compatibility.md || fail "compatibility docs missing .upkeeperignore contract"
   grep -Fq ".upkeeperignore" docs/security.md || fail "security docs missing .upkeeperignore boundary"
+  grep -Fq "pre-contact backup" docs/security.md || fail "security docs missing pre-contact backup boundary"
+  grep -Fq "age" docs/dependencies.md || fail "dependency docs missing age optional dependency"
+  grep -Fq "tools/upkeeper_precontact_restore.sh" docs/scripts/upkeeper.md || fail "operator guide missing pre-contact restore helper"
   grep -Fq "tools/stress_upkeeper_corpus.sh --local" docs/stress-corpus.md || fail "stress corpus docs missing implemented command"
   grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 }
@@ -336,6 +354,8 @@ check_help_and_diff() {
   grep -Fq -- "UPKEEPER_MAX_COVER" <<<"$help" || fail "help missing UPKEEPER_MAX_COVER"
   grep -Fq -- "UPKEEPER_BUG_REPORT_ONLY" <<<"$help" || fail "help missing UPKEEPER_BUG_REPORT_ONLY"
   grep -Fq -- "UPKEEPER_FIX_NEXT_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_NEXT_ISSUE"
+  grep -Fq -- "UPKEEPER_PRECONTACT_BACKUP_ENABLED" <<<"$help" || fail "help missing UPKEEPER_PRECONTACT_BACKUP_ENABLED"
+  grep -Fq -- "pre-contact backup" <<<"$help" || fail "help missing pre-contact backup summary"
   local flameon_cmd
   flameon_cmd="$(FLAMEON_DRY_RUN=1 ./FlameOn)"
   grep -Fq -- "--max-cover" <<<"$flameon_cmd" || fail "FlameOn dry-run missing --max-cover"

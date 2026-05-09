@@ -138,6 +138,19 @@ compile_prompt() {
   fi
 
   {
+    printf '\nMachine-readable pass result evidence -- requested when a pass is actually applied or explicitly not applicable:\n'
+    printf -- '- Keep UPKEEPER_LOG_REVIEW and UPKEEPER_STATUS exactly as documented; these pass-result lines are additive evidence for Upkeeper Lattice.\n'
+    printf -- '- For every P* pass you actually applied or explicitly found not applicable, include one raw line in the final response using this exact prefix: `UPKEEPER_PASS_RESULT:`\n'
+    printf -- '- Format examples:\n'
+    printf -- '  UPKEEPER_PASS_RESULT: pass=P23 file=lib/upkeeper/example.bash applicable=1 outcome=clean changed=0 regression=0\n'
+    printf -- '  UPKEEPER_PASS_RESULT: pass=P24 file=lib/upkeeper/example.bash applicable=1 outcome=fixed changed=1 regression=0\n'
+    printf -- '  UPKEEPER_PASS_RESULT: pass=P25 file=lib/upkeeper/example.bash applicable=0 outcome=not_applicable changed=0 regression=0 reason=no_matching_surface\n'
+    printf -- '- Valid outcomes are planned, not_applicable, clean, fixed, blocked, regression_found, and unknown.\n'
+    printf -- '- Use future pass codes as rows, for example P30 or P999, instead of inventing new marker names.\n'
+    printf -- '- Do not put these marker lines inside Markdown code fences. The wrapper ignores fenced marker-looking text.\n'
+    printf -- '- If a pass line is missing, the cycle still succeeds; Lattice records planned-but-unknown evidence when it can.\n'
+    printf -- '- If a pass found or caused a regression, set regression=1 and use outcome=regression_found when appropriate.\n'
+
     printf '\nCurrent-cycle log self-review -- required final task before your final response:\n'
     printf -- '- After all selected-file review work, edits, touches, and verification are complete, inspect this cycle'\''s own Upkeeper log lines before writing the final response.\n'
     printf -- '- Log file: `%s`\n' "$LOG_FILE"

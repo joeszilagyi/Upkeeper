@@ -3,6 +3,57 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Upkeeper Lattice
+
+Status: completed
+
+Goal:
+Add a local SQLite-backed evidence ledger for file-affecting Upkeeper activity,
+with deterministic query/import/export/backup/recovery surfaces and wrapper
+hooks that preserve current live source-safe target selection.
+
+Constraints:
+- Default DB is local ignored runtime state:
+  `runtime/upkeeper-lattice/lattice.sqlite3`.
+- Use Python stdlib `sqlite3`; no daemon, service, ORM, package manifest,
+  default network access, or GitHub token storage.
+- Keep source-safe live eligibility authoritative. Lattice records and scores
+  evidence, but it must not replace current selection by stale DB rows.
+- Preserve `UPKEEPER_STATUS` and `UPKEEPER_LOG_REVIEW`; add
+  `UPKEEPER_PASS_RESULT` as optional parseable evidence.
+
+Files likely touched:
+- `Upkeeper`
+- `Upkeeper.conf`
+- `configurations/default.conf`
+- `lib/upkeeper/lattice.bash`
+- `lib/upkeeper/help_selection.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `lib/upkeeper/report_analysis.bash`
+- `lib/upkeeper/cycle_cleanup_signals.bash`
+- `tools/upkeeper_lattice.py`
+- `tools/validate_upkeeper.sh`
+- `tests/lattice_test.bash`
+- `docs/lattice.md`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `docs/dependencies.md`
+- `prompts/default-review.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/lattice_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed notes:
+- GitHub reconciliation remains a Phase 2 opt-in surface.
+- Automatic inferred/suspected regression correlation from reopened tool failures
+  remains a future hardening item; Phase 1 records manual and pass-marker
+  regression evidence.
+
 ## P29 Reuse System Hardening
 
 Status: completed

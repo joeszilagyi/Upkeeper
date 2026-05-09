@@ -6,6 +6,14 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-08: v1.2.0 changes:
+	1. Added Upkeeper Lattice as a default-on local SQLite evidence ledger at `runtime/upkeeper-lattice/lattice.sqlite3`, using Python stdlib `sqlite3` without a daemon, ORM, package manifest, network sync, or GitHub token storage.
+	2. Added the normalized schema v1 ledger, doctor, backup, JSONL export/import, local recovery, Git import, Upkeeper log import, change-note import, regression marking, pruning, and initial query surface.
+	3. Wired wrapper lifecycle hooks to record cycle starts, preselection evidence, candidate rows, pass-result markers, worktree snapshots, and terminal finish paths while preserving live source-safe target eligibility and current oldest-mtime default behavior.
+	4. Added optional `UPKEEPER_PASS_RESULT` final-response markers; `UPKEEPER_STATUS` and `UPKEEPER_LOG_REVIEW` remain unchanged, missing markers do not fail a cycle, and malformed markers become rejected evidence.
+	5. Added `UPKEEPER_LATTICE_*` defaults to central configs and documented required/optional behavior: `REQUIRED=0` warns and continues with recovery spooling, while `REQUIRED=1` fails before Codex launch.
+	6. Added Lattice docs and local validation covering schema initialization, doctor, backup, export/import idempotence, import conflicts, P999 pass rows and attributes, malformed pass markers, Git import, no-Git handling, recovery, unsafe DB paths, wrapper required policy, and filename torture fixtures.
+
 2026-05-08: v1.1.22 changes:
 	1. Switched the repository license from `0BSD` to `MIT`.
 	2. Updated the README license summary and added public-documentation validation so `LICENSE` and the README license line stay aligned.

@@ -44,6 +44,7 @@ unless there is no clearer owner and the new file has one named responsibility.
 - Runtime, logging, terminal, temp, and evidence helpers:
   `runtime_foundation.bash`
 - JSON field and time formatting helpers: `runtime_format_json.bash`
+- Local SQLite evidence-ledger lifecycle hooks: `lattice.bash`
 - Fallback marker, quote, and artifact field helpers:
   `fallback_artifacts.bash`
 - Transcript path, hash, size, and line-count helpers:
@@ -81,6 +82,7 @@ Runtime evidence:
 - `operator_guide.bash`
 - `cycle_cleanup_signals.bash`
 - `runtime_format_json.bash`
+- `lattice.bash`
 - `transcript_output.bash`
 - `tool_failure_queue.bash`
 - `codex_io.bash`

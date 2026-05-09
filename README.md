@@ -28,6 +28,8 @@ On each cycle it:
 - maintains a local file manifest and preselects one eligible script/tool target
   before Codex starts, falling back to direct local enumeration when requested or
   when a manifest cannot be used
+- records file-affecting activity in Upkeeper Lattice, a default-on local
+  SQLite evidence ledger under ignored `runtime/` state
 - prepends that target to the default maintenance prompt so Codex does not spend
   model/tool cycles rediscovering `.git/`, ignored files, generated outputs,
   runtime evidence, or test trees by accident
@@ -116,6 +118,13 @@ The backward-compatibility contract is tracked in
 [`docs/compatibility.md`](docs/compatibility.md). Existing operator-visible
 behavior should be preserved unless compatibility would be unsafe or impossible.
 
+Upkeeper Lattice is documented in [`docs/lattice.md`](docs/lattice.md). It is a
+local SQLite evidence ledger, selection-intelligence layer, and recovery/export
+surface. It is on by default, writes to
+`runtime/upkeeper-lattice/lattice.sqlite3`, uses Python's stdlib `sqlite3`, and
+does not add a daemon, ORM, package manifest, network sync, or GitHub token
+storage.
+
 The local security and trust model is tracked in
 [`docs/security.md`](docs/security.md). Read it before using unreviewed config
 files, broad Codex sandbox modes, shared machines, or repositories that may
@@ -175,6 +184,23 @@ UPKEEPER_INCLUDE_GLOBS="*.md,*.txt"
 UPKEEPER_EXCLUDE_GLOBS="vendor/**,runtime/**"
 UPKEEPER_SELECTION_REVIEW_MODULES="p26"
 ```
+
+Lattice is also configurable from the same shell-compatible profile. The
+defaults keep it on, local, ignored, and compatible with the current selector:
+
+```sh
+UPKEEPER_LATTICE_ENABLED="1"
+UPKEEPER_LATTICE_REQUIRED="0"
+UPKEEPER_LATTICE_DB="$ROOT_DIR/runtime/upkeeper-lattice/lattice.sqlite3"
+UPKEEPER_LATTICE_SELECTION_MODE="oldest-mtime"
+UPKEEPER_LATTICE_RAW_STORAGE="limited"
+UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE="delete"
+```
+
+If the local DB is unavailable and `UPKEEPER_LATTICE_REQUIRED=0`, Upkeeper logs
+one warning, spools a small recovery record when possible, and continues the
+existing cycle behavior. Set `UPKEEPER_LATTICE_REQUIRED=1` only when a run must
+fail before Codex launch unless Lattice is writable and healthy.
 
 CLI flags are the final one-cycle overrides. That means a cron profile can set
 the normal model, target, and review modules, while an operator can still run:
@@ -448,6 +474,11 @@ a current-cycle `Upkeeper.log` review and a machine-readable acknowledgment:
 review exposes a concrete central wrapper or prompt defect while running in this
 repo, Codex may apply the smallest safe self-repair immediately and report it as
 a log self-repair.
+
+The prompt also asks for additive `UPKEEPER_PASS_RESULT` lines for each P* pass
+that was actually applied or explicitly found not applicable. Missing lines do
+not fail a cycle; malformed lines are preserved as rejected Lattice evidence
+instead of being treated as clean pass results.
 
 At script startup, Upkeeper also scans the recent live log for prior cycles that
 started without a terminal `cycle.exit` or `run.finish`, writes

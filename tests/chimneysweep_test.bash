@@ -69,16 +69,41 @@ chmod +x "$TEST_TMP_ROOT/bin/gh"
 cat >"$TEST_TMP_ROOT/bin/upkeeper" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$@" >"${CHIMNEYSWEEP_CAPTURE:?}"
+{
+  printf 'BEGIN\n'
+  printf '%s\n' "$@"
+} >>"${CHIMNEYSWEEP_CAPTURE:?}"
 EOF
 chmod +x "$TEST_TMP_ROOT/bin/upkeeper"
 
 run_chimneysweep() {
   PATH="$TEST_TMP_ROOT/bin:$PATH" \
     UPKEEPER_CMD="$TEST_TMP_ROOT/bin/upkeeper" \
+    UPKEEPER_OBLIGATION_DIR="${UPKEEPER_OBLIGATION_DIR:-$TEST_TMP_ROOT/empty-obligations}" \
     CHIMNEYSWEEP_CAPTURE="$TEST_TMP_ROOT/capture.txt" \
     GH_SCENARIO="${GH_SCENARIO:-clean}" \
     "$ROOT_DIR/ChimneySweep" "$@"
+}
+
+write_open_obligation() {
+  local obligation_dir="$1"
+  mkdir -p "$obligation_dir/open"
+  cat >"$obligation_dir/open/obligation-fixture.json" <<'JSON'
+{
+  "schema": 1,
+  "record_type": "automation_obligation",
+  "status": "open",
+  "id": "obligation-fixture",
+  "created_at": "2026-05-10T00:00:00-0700",
+  "kind": "issue_workflow_comment_unavailable",
+  "severity": "high",
+  "summary": "Fixture obligation takes priority over GitHub issue ranking",
+  "target_file": "lib/upkeeper/codex_io.bash",
+  "source_cycle_id": "fixture-cycle",
+  "source_run_hash": "fixture-run",
+  "required_resolution": ["repair the fixture"]
+}
+JSON
 }
 
 test_chimneysweep_help_documents_fix_contract() {
@@ -89,6 +114,10 @@ test_chimneysweep_help_documents_fix_contract() {
   grep -Fq "security-class issues, then data-integrity-class issues" <<<"$help" || fail "help missing class priority"
   grep -Fq "exit 25" <<<"$help" || fail "help missing clean exit code"
   grep -Fq -- "--dry-run" <<<"$help" || fail "help missing dry-run flag"
+  grep -Fq -- "--workflow=" <<<"$help" || fail "help missing workflow flag"
+  grep -Fq "comment -> review -> apply" <<<"$help" || fail "help missing staged workflow"
+  grep -Fq "full pass/module coverage" <<<"$help" || fail "help missing full burn contract"
+  grep -Fq "Lattice required" <<<"$help" || fail "help missing required Lattice contract"
 }
 
 test_chimneysweep_clean_queue_exits_25() {
@@ -119,6 +148,38 @@ test_chimneysweep_security_class_wins() {
   output="$(GH_SCENARIO=security run_chimneysweep --dry-run 2>&1)"
   grep -Fq -- "--fix-issue=50" <<<"$output" || fail "security scenario did not lock oldest security issue"
   grep -Fq "class=security" <<<"$output" || fail "security scenario did not report class"
+  grep -Fq -- "--prompt-pass=all" <<<"$output" || fail "security scenario did not request all prompt passes"
+  grep -Fq -- "--review-modules=p24\\,p25\\,p26\\,p27\\,p28\\,p29" <<<"$output" || fail "security scenario did not request all review modules"
+  grep -Fq -- "--issue-workflow-stage=comment" <<<"$output" || fail "security scenario did not request comment stage"
+  grep -Fq -- "--issue-workflow-stage=review" <<<"$output" || fail "security scenario did not request review stage"
+  grep -Fq -- "--issue-workflow-stage=apply" <<<"$output" || fail "security scenario did not request apply stage"
+  grep -Fq "UPKEEPER_LATTICE_REQUIRED=1" <<<"$output" || fail "security scenario missing required Lattice burn default"
+  grep -Fq "UPKEEPER_PRECONTACT_BACKUP_MODE=age" <<<"$output" || fail "security scenario missing age backup burn default"
+  grep -Fq "UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=1" <<<"$output" || fail "security scenario missing encrypted backup requirement"
+  grep -Fq "CODEX_5H_STOP_PERCENT=0" <<<"$output" || fail "security scenario missing five-hour spend-to-zero quota default"
+  grep -Fq "CODEX_WEEK_STOP_PERCENT=0" <<<"$output" || fail "security scenario missing weekly spend-to-zero quota default"
+  grep -Fq "CODEX_QUOTA_GUARDRAIL_BYPASS=1" <<<"$output" || fail "security scenario missing quota guardrail bypass for launcher burn"
+  grep -Fq "CODEX_QUOTA_COOLDOWN_BYPASS=1" <<<"$output" || fail "security scenario missing cooldown bypass for launcher burn"
+  grep -Fq "UPKEEPER_AUTOMATION_LAUNCHER=ChimneySweep" <<<"$output" || fail "security scenario missing ChimneySweep automation identity"
+  grep -Fq "UPKEEPER_AUTOMATION_VARIANT=issue-repair" <<<"$output" || fail "security scenario missing ChimneySweep automation variant"
+  grep -Fq "UPKEEPER_AUTOMATION_POLICY=own-bug-queue" <<<"$output" || fail "security scenario missing ChimneySweep automation policy"
+  grep -Fq "UPKEEPER_AUTOMATION_WORKFLOW=comment-review-apply" <<<"$output" || fail "security scenario missing ChimneySweep automation workflow"
+}
+
+test_chimneysweep_reconciles_obligations_before_github_queue() {
+  local output obligation_dir
+
+  obligation_dir="$TEST_TMP_ROOT/chimneysweep-obligations"
+  write_open_obligation "$obligation_dir"
+  output="$(UPKEEPER_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run 2>&1)"
+  grep -Fq "selected automation obligation obligation-fixture" <<<"$output" || fail "ChimneySweep did not select open automation obligation first"
+  grep -Fq "UPKEEPER_AUTOMATION_WORKFLOW=obligation-repair" <<<"$output" || fail "ChimneySweep obligation run missing obligation workflow"
+  grep -Fq "UPKEEPER_AUTOMATION_OBLIGATION_ID=obligation-fixture" <<<"$output" || fail "ChimneySweep obligation run missing obligation id"
+  grep -Fq -- "--target-file=lib/upkeeper/codex_io.bash" <<<"$output" || fail "ChimneySweep obligation run did not lock obligation target"
+  grep -Fq -- "--prompt-file" <<<"$output" || fail "ChimneySweep obligation run did not pass wrapper-generated prompt file"
+  if grep -Fq -- "--fix-issue=50" <<<"$output"; then
+    fail "ChimneySweep ranked GitHub issues before reconciling open obligations"
+  fi
 }
 
 test_chimneysweep_data_integrity_after_security_clear() {
@@ -140,14 +201,27 @@ test_chimneysweep_general_queue_prefers_containment_signal() {
 test_chimneysweep_exec_hands_locked_issue_to_upkeeper() {
   rm -f "$TEST_TMP_ROOT/capture.txt"
   GH_SCENARIO=security run_chimneysweep >/dev/null 2>&1
+  [[ "$(grep -c '^BEGIN$' "$TEST_TMP_ROOT/capture.txt")" -eq 3 ]] || fail "exec did not run three workflow stages"
   grep -Fxq -- "--model-override=5.5_xhigh" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not pass model override"
+  grep -Fxq -- "--prompt-pass=all" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not pass all prompt pass"
+  grep -Fxq -- "--review-modules=p24,p25,p26,p27,p28,p29" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not pass all review modules"
   grep -Fxq -- "--fix-issue=50" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not pass locked issue"
+  grep -Fxq -- "--issue-workflow-stage=comment" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not run comment stage"
+  grep -Fxq -- "--issue-workflow-stage=review" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not run review stage"
+  grep -Fxq -- "--issue-workflow-stage=apply" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not run apply stage"
+}
+
+test_chimneysweep_apply_workflow_runs_one_stage() {
+  rm -f "$TEST_TMP_ROOT/capture.txt"
+  GH_SCENARIO=security run_chimneysweep --workflow=apply >/dev/null 2>&1
+  [[ "$(grep -c '^BEGIN$' "$TEST_TMP_ROOT/capture.txt")" -eq 1 ]] || fail "apply workflow did not run one stage"
+  grep -Fxq -- "--issue-workflow-stage=apply" "$TEST_TMP_ROOT/capture.txt" || fail "apply workflow did not pass apply stage"
 }
 
 test_chimneysweep_completion_loads() {
-  local output
+  local debug_output workflow_output
 
-  output="$(
+  debug_output="$(
     source "$ROOT_DIR/completions/upkeeper.bash"
     complete -p ./ChimneySweep >/dev/null
     COMP_WORDS=(./ChimneySweep --d)
@@ -155,16 +229,28 @@ test_chimneysweep_completion_loads() {
     _chimneysweep_complete
     printf '%s\n' "${COMPREPLY[@]}"
   )"
-  grep -Fxq -- "--dry-run" <<<"$output" || fail "ChimneySweep completion did not suggest --dry-run"
-  grep -Fxq -- "--debug1" <<<"$output" || fail "ChimneySweep completion did not suggest --debug1"
+  grep -Fxq -- "--dry-run" <<<"$debug_output" || fail "ChimneySweep completion did not suggest --dry-run"
+  grep -Fxq -- "--debug1" <<<"$debug_output" || fail "ChimneySweep completion did not suggest --debug1"
+
+  workflow_output="$(
+    source "$ROOT_DIR/completions/upkeeper.bash"
+    complete -p ./ChimneySweep >/dev/null
+    COMP_WORDS=(./ChimneySweep --w)
+    COMP_CWORD=1
+    _chimneysweep_complete
+    printf '%s\n' "${COMPREPLY[@]}"
+  )"
+  grep -Fxq -- "--workflow=" <<<"$workflow_output" || fail "ChimneySweep completion did not suggest --workflow"
 }
 
 test_chimneysweep_help_documents_fix_contract
 test_chimneysweep_clean_queue_exits_25
 test_chimneysweep_skipped_queue_counts_clean
 test_chimneysweep_security_class_wins
+test_chimneysweep_reconciles_obligations_before_github_queue
 test_chimneysweep_data_integrity_after_security_clear
 test_chimneysweep_general_queue_prefers_containment_signal
 test_chimneysweep_exec_hands_locked_issue_to_upkeeper
+test_chimneysweep_apply_workflow_runs_one_stage
 test_chimneysweep_completion_loads
 printf 'ok - chimneysweep\n'

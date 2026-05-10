@@ -51,6 +51,8 @@ Upkeeper can write local control-plane evidence:
 - `runtime/upkeeper-file-manifest.json`
 - `runtime/startup-anomaly-gates/`
 - `runtime/unaddressed-tool-failures/`
+- `runtime/upkeeper-automation-ledger/`
+- `runtime/upkeeper-obligations/`
 - `runtime/journals/upkeeper-postmortems/`
 - `runtime/upkeeper-active.lock`
 - configured wrapper health state under `$CODEX_HOME/upkeeper/`
@@ -93,6 +95,48 @@ restore and must not be committed to config, included in prompts, printed in
 logs, or placed in an environment visible to backend Codex processes. Without a
 separate backend confinement layer, encrypted mode protects content at rest but
 does not make same-user deletion impossible.
+
+The repo-root automation launchers `FlameOn` and `ChimneySweep` run the
+full-burn profile: Lattice is required, selected-target backup is required,
+encrypted backup is required, and `CODEX_MODE` is pinned to
+`--sandbox workspace-write`. They also set quota stop floors and weekly buffers
+to `0`, bypass wrapper quota guardrail stops, and bypass persisted quota
+cooldown markers, so live launcher runs can spend the selected model bucket down
+to the provider floor. Live launcher runs therefore require `age` and an
+`UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` before any backend Codex task can
+start.
+
+ChimneySweep's default issue workflow is staged across separate backend
+instantiations: comment, review, then apply. The comment and review stages are
+tracked-source read-only; the wrapper fingerprints tracked source before launch
+and fails the stage if tracked source changes. Those stages also force backend
+Codex into a read-only repository sandbox. The proposed issue comment is carried
+back in a final-message draft block that the wrapper extracts only after the
+source guard passes. GitHub I/O is wrapper-brokered: the wrapper fetches issue
+bodies/comments before launch, backend Codex receives only that issue packet,
+and the wrapper posts comments or later issue updates after validation. Backend
+Codex launches do not inherit GitHub token variables, use an empty per-run `gh`
+config directory, and shadow direct `gh`, `curl`, `wget`, and `hub` commands
+with blocker stubs. The apply stage is the stage that may edit source, but it
+still does not contact GitHub
+directly.
+
+Install and configure the public recipient outside the repository:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y age
+
+mkdir -p "$HOME/.config/age"
+chmod 700 "$HOME/.config/age"
+age-keygen -o "$HOME/.config/age/upkeeper.txt"
+chmod 600 "$HOME/.config/age/upkeeper.txt"
+export UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT="$(age-keygen -y "$HOME/.config/age/upkeeper.txt")"
+```
+
+Only the exported recipient is public. The private identity path should be used
+for manual restore only and must not be passed into model prompts or committed
+configuration.
 
 Landlock, bubblewrap allowlists, root-owned or dedicated-user vaults, fs-verity,
 and immutable file attributes are separate hardening layers. They may be useful
@@ -143,9 +187,11 @@ UPKEEPER_DRY_RUN=1 ./Upkeeper
 ```
 
 Do not weaken `CODEX_MODE` unless the repository, machine, credentials, and task
-are trusted for that broader access. If a task needs access outside the repo,
-prefer a short manual run with reviewed inputs instead of a long unattended
-loop.
+are trusted for that broader access. Upkeeper rejects `danger-full-access` and
+`--dangerously-bypass-approvals-and-sandbox`, because those modes are
+incompatible with the Genie Protocol rule that backend Codex stays inside a
+small brokered execution space. If a task needs access outside the repo, prefer
+a short manual run with reviewed inputs instead of a long unattended loop.
 
 ## CODEX_HOME Session Parsing
 
@@ -157,9 +203,13 @@ metadata, and fragments of prior Codex interactions. Treat `$CODEX_HOME` as
 local private state. Do not commit it, attach it to public issues, or copy it
 into client repositories.
 
-If `$CODEX_HOME/sessions` is missing, stale, unreadable, or unwritable, Upkeeper
-should fail or degrade with local-environment evidence rather than spending more
-backend work.
+If `$CODEX_HOME/sessions` is missing, stale, unreadable, unwritable, symlinked,
+not owned by the current user, or cannot be made private, Upkeeper should fail
+or degrade with local-environment evidence rather than spending more backend
+work. An existing session directory owned by the operator but created with weak
+inherited permissions is repaired to `0700` before probing. Session-store write
+probes use an unpredictable private probe directory instead of a predictable
+marker file.
 
 ## Logs, Transcripts, And Runtime Artifacts
 
@@ -174,11 +224,18 @@ Those records can include:
 - snippets of command output
 - quota metadata
 - incident classifications and postmortem context
+- automation run records and unresolved obligation records
 
 Because project commands may accidentally print secrets, logs and transcripts
 must be treated as potentially sensitive. Keep `Upkeeper.log` and `runtime/`
 ignored unless a repo has a deliberate, reviewed policy for publishing specific
 sanitized artifacts.
+
+Upkeeper refuses unsafe live log paths before its first wrapper log write. A
+repo-local `Upkeeper.log` that is a symlink, non-regular file, hard-linked file,
+or owned by another user is rejected before Codex launch; a symlink log parent
+directory is rejected as well. This prevents a contaminated checkout from
+redirecting wrapper log appends into an operator-writable file outside the repo.
 
 ## Ignored Files
 
@@ -186,6 +243,10 @@ Automatic rotation avoids `.git/`, ignored paths, `.upkeeperignore` paths,
 runtime evidence, generated outputs, and test trees. Explicit `--target-file`
 pins still reject ignored paths, `.upkeeperignore` paths, runtime evidence,
 `.git`, directories, symlinks, unreadable files, and binary-like files.
+Manifest-backed selection, direct enumeration, and Lattice/max-cover diagnostics
+also reject source paths that are symlinks before following, statting, or
+sampling them, so a tracked symlink cannot be used to hand Codex an outside-repo
+target.
 
 That selection policy is a safety guardrail, not a data-loss prevention system.
 If a real backend task runs commands that print or read ignored files, that

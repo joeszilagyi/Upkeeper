@@ -45,6 +45,8 @@ unless there is no clearer owner and the new file has one named responsibility.
   `runtime_foundation.bash`
 - JSON field and time formatting helpers: `runtime_format_json.bash`
 - Local SQLite evidence-ledger lifecycle hooks: `lattice.bash`
+- Shared automation run and obligation records:
+  `automation_obligations.bash`
 - Fallback marker, quote, and artifact field helpers:
   `fallback_artifacts.bash`
 - Transcript path, hash, size, and line-count helpers:
@@ -59,6 +61,8 @@ unless there is no clearer owner and the new file has one named responsibility.
   `file_manifest.bash` and `worktree_state.bash`
 - Validation harness helpers: `tools/validate_upkeeper.sh`
 - Public documentation drift checks: `tools/check_public_docs.sh`
+- Repo-root automation launcher full-burn defaults:
+  `launcher_full_burn.bash`
 - Prompt-module index and reusable review-language ownership:
   `prompts/README.md` and `prompts/*.md`
 
@@ -82,6 +86,7 @@ Runtime evidence:
 - `operator_guide.bash`
 - `cycle_cleanup_signals.bash`
 - `runtime_format_json.bash`
+- `automation_obligations.bash`
 - `lattice.bash`
 - `transcript_output.bash`
 - `tool_failure_queue.bash`
@@ -121,3 +126,7 @@ Fallback, postmortem, and status sessions:
 - `postmortem_sequence.bash`
 - `fallback_orchestration.bash`
 - `status_session.bash`
+
+Launcher-only helpers:
+
+- `launcher_full_burn.bash`

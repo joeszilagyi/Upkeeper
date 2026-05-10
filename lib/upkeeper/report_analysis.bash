@@ -423,6 +423,9 @@ log_review_report_summary() {
   fi
 
   [[ -n "$outcome" ]] || outcome="unknown"
+  if [[ -z "$selected_file" && -n "${RUN_SELECTED_REVIEW_PATH:-}" ]]; then
+    selected_file="$RUN_SELECTED_REVIEW_PATH"
+  fi
   [[ -n "$selected_file" ]] || selected_file="unknown"
   log_line "INFO" "review.summary status_marker=${status_marker_value:-missing} review_outcome=$outcome selected_file=$(shell_quote "$selected_file") findings=$(shell_quote "$findings") changes=$(shell_quote "$changes") verification=$(shell_quote "$verification") codex_exit=$codex_exit_value"
   terminal_emit_progress "review completed outcome=$outcome status_marker=${status_marker_value:-missing} selected_file=$selected_file"

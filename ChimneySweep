@@ -6,31 +6,45 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 UPKEEPER_CMD="${UPKEEPER_CMD:-$ROOT_DIR/Upkeeper}"
+source "$ROOT_DIR/lib/upkeeper/launcher_full_burn.bash"
+source "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+upkeeper_launcher_apply_full_burn_defaults
+upkeeper_launcher_apply_automation_identity "ChimneySweep" "issue-repair" "own-bug-queue"
+
 CHIMNEYSWEEP_VERBOSITY="${CHIMNEYSWEEP_VERBOSITY:-basic}"
 CHIMNEYSWEEP_MODEL_OVERRIDE="${CHIMNEYSWEEP_MODEL_OVERRIDE:-5.5_xhigh}"
 CHIMNEYSWEEP_SKIP_LABELS="${CHIMNEYSWEEP_SKIP_LABELS:-in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr}"
 CHIMNEYSWEEP_CLEAN_EXIT_CODE="${CHIMNEYSWEEP_CLEAN_EXIT_CODE:-25}"
+CHIMNEYSWEEP_WORKFLOW="${CHIMNEYSWEEP_WORKFLOW:-comment-review-apply}"
 CHIMNEYSWEEP_DRY_RUN="${CHIMNEYSWEEP_DRY_RUN:-0}"
 CHIMNEYSWEEP_JSON="0"
 
 usage() {
   cat <<EOF
-Usage: ${0##*/} [--silent|--basic|--debug1] [--dry-run] [--json] [--help]
+Usage: ${0##*/} [--silent|--basic|--debug1] [--workflow=comment-review-apply|comment-review|comment|review|apply] [--dry-run] [--json] [--help]
 
 Script one issue-fix Upkeeper cycle:
+  - reconcile open Upkeeper automation obligations before GitHub issue ranking
   - list open GitHub issues before any backend Codex process can start
   - if the actionable open queue is clean, print "high five yay" and exit 25
   - prefer security-class issues, then data-integrity-class issues
   - within security/data-integrity, choose the least recently touched issue
   - after those classes are clear, rank the remaining queue by containment
     title/tag signals, severity words, then longest untouched
-  - hand the selected issue to Upkeeper as --fix-issue=NUMBER
-  - keep normal Upkeeper quota, backup, fallback, and evidence handling
+  - default to a comment -> review -> apply workflow using separate Upkeeper
+    backend instantiations for each stage
+  - hand the selected issue to every stage as --fix-issue=NUMBER
+  - request full pass/module coverage against the locked issue target
+  - make comment/review stages source read-only and make apply work the bug
+  - fail-closed launcher burn: Lattice required, encrypted pre-contact backup
+    required, and workspace-write containment pinned before launch
 
 Flags:
   --silent        Set CODEX_TERMINAL_VERBOSITY=silent
   --basic         Set CODEX_TERMINAL_VERBOSITY=basic (default)
   --debug1        Set CODEX_TERMINAL_VERBOSITY=debug1
+  --workflow=...  Stage workflow: comment-review-apply (default), comment-review,
+                  comment, review, or apply
   --dry-run       Print the selected issue and resolved Upkeeper command
   --json          Print the scripted selection JSON before launching
   --help          Show this help
@@ -41,7 +55,10 @@ Environment:
   CHIMNEYSWEEP_VERBOSITY        Default verbosity when no flag is given
   CHIMNEYSWEEP_SKIP_LABELS      Comma-separated labels to skip
   CHIMNEYSWEEP_CLEAN_EXIT_CODE  Clean queue exit code (default: 25)
+  CHIMNEYSWEEP_WORKFLOW         Default workflow (default: comment-review-apply)
   CHIMNEYSWEEP_DRY_RUN          Set to 1 to print the resolved command
+  UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT
+                              Required for live encrypted backup full burn
 EOF
 }
 
@@ -66,6 +83,14 @@ while [[ $# -gt 0 ]]; do
     --dry-run)
       CHIMNEYSWEEP_DRY_RUN="1"
       shift
+      ;;
+    --workflow=*)
+      CHIMNEYSWEEP_WORKFLOW="${1#--workflow=}"
+      shift
+      ;;
+    --workflow)
+      printf 'ChimneySweep: use --workflow=comment-review-apply, --workflow=comment-review, --workflow=comment, --workflow=review, or --workflow=apply\n' >&2
+      exit 64
       ;;
     --json)
       CHIMNEYSWEEP_JSON="1"
@@ -95,13 +120,75 @@ case "$CHIMNEYSWEEP_CLEAN_EXIT_CODE" in
     ;;
 esac
 
-if ! command -v gh >/dev/null 2>&1; then
-  printf 'ChimneySweep: required command missing: gh\n' >&2
-  exit 127
-fi
+case "$CHIMNEYSWEEP_WORKFLOW" in
+  staged)
+    CHIMNEYSWEEP_WORKFLOW="comment-review-apply"
+    ;;
+  comment-review-apply|comment-review|comment|review|apply)
+    ;;
+  *)
+    printf 'ChimneySweep: unsupported workflow: %s\n' "$CHIMNEYSWEEP_WORKFLOW" >&2
+    exit 64
+    ;;
+esac
+UPKEEPER_AUTOMATION_WORKFLOW="$CHIMNEYSWEEP_WORKFLOW"
+export UPKEEPER_AUTOMATION_WORKFLOW
 
 if [[ ! -x "$UPKEEPER_CMD" ]]; then
   printf 'ChimneySweep: Upkeeper command is not executable: %s\n' "$UPKEEPER_CMD" >&2
+  exit 127
+fi
+
+obligation_json="$(automation_select_open_obligation_json)"
+obligation_status="$(automation_json_field "$obligation_json" status)"
+if [[ "$obligation_status" == "ok" ]]; then
+  obligation_id="$(automation_json_field "$obligation_json" id)"
+  obligation_path="$(automation_json_field "$obligation_json" path)"
+  obligation_target="$(automation_json_field "$obligation_json" target_file)"
+  obligation_kind="$(automation_json_field "$obligation_json" kind)"
+  obligation_summary="$(automation_json_field "$obligation_json" summary)"
+  obligation_prompt_file="$(automation_prepare_obligation_prompt_file "$obligation_json")" || {
+    printf 'ChimneySweep: failed to prepare automation obligation prompt\n' >&2
+    exit 3
+  }
+  UPKEEPER_AUTOMATION_WORKFLOW="obligation-repair"
+  UPKEEPER_AUTOMATION_OBLIGATION_ID="$obligation_id"
+  UPKEEPER_AUTOMATION_OBLIGATION_PATH="$obligation_path"
+  export UPKEEPER_AUTOMATION_WORKFLOW
+  export UPKEEPER_AUTOMATION_OBLIGATION_ID
+  export UPKEEPER_AUTOMATION_OBLIGATION_PATH
+
+  args=(
+    "--model-override=$CHIMNEYSWEEP_MODEL_OVERRIDE"
+    "--prompt-pass=all"
+    "--review-modules=p24,p25,p26,p27,p28,p29"
+    "--target-file=$obligation_target"
+    "--prompt-file"
+    "$obligation_prompt_file"
+  )
+
+  printf 'ChimneySweep: selected automation obligation %s for repair\n' "$obligation_id" >&2
+  printf 'ChimneySweep: obligation kind=%s target=%s summary=%s\n' "$obligation_kind" "$obligation_target" "$obligation_summary" >&2
+
+  if [[ "$CHIMNEYSWEEP_JSON" == "1" ]]; then
+    printf '%s\n' "$obligation_json"
+  fi
+
+  if [[ "$CHIMNEYSWEEP_DRY_RUN" == "1" ]]; then
+    upkeeper_launcher_print_full_burn_env_prefix
+    printf 'CODEX_TERMINAL_VERBOSITY=%q ' "$CHIMNEYSWEEP_VERBOSITY"
+    printf '%q' "$UPKEEPER_CMD"
+    printf ' %q' "${args[@]}"
+    printf '\n'
+    exit 0
+  fi
+
+  upkeeper_launcher_report_full_burn "ChimneySweep"
+  CODEX_TERMINAL_VERBOSITY="$CHIMNEYSWEEP_VERBOSITY" exec "$UPKEEPER_CMD" "${args[@]}"
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  printf 'ChimneySweep: required command missing: gh\n' >&2
   exit 127
 fi
 
@@ -314,8 +401,28 @@ PY
 
 args=(
   "--model-override=$CHIMNEYSWEEP_MODEL_OVERRIDE"
+  "--prompt-pass=all"
+  "--review-modules=p24,p25,p26,p27,p28,p29"
   "--fix-issue=$issue_number"
 )
+
+case "$CHIMNEYSWEEP_WORKFLOW" in
+  comment-review-apply)
+    workflow_stages=(comment review apply)
+    ;;
+  comment-review)
+    workflow_stages=(comment review)
+    ;;
+  comment)
+    workflow_stages=(comment)
+    ;;
+  review)
+    workflow_stages=(review)
+    ;;
+  apply)
+    workflow_stages=(apply)
+    ;;
+esac
 
 printf 'ChimneySweep: selected issue #%s for repair\n' "$issue_number" >&2
 python3 - "$selection_json" <<'PY' >&2
@@ -325,13 +432,21 @@ data = json.loads(sys.argv[1])
 print(f"ChimneySweep: class={data.get('class', 'unknown')} updated_at={data.get('updated_at', 'unknown')} basis={data.get('selection_basis', 'unknown')}")
 print(f"ChimneySweep: title={data.get('title', '')}")
 PY
+printf 'ChimneySweep: workflow=%s stages=%s\n' "$CHIMNEYSWEEP_WORKFLOW" "$(IFS=,; printf '%s' "${workflow_stages[*]}")" >&2
 
 if [[ "$CHIMNEYSWEEP_DRY_RUN" == "1" ]]; then
-  printf 'CODEX_TERMINAL_VERBOSITY=%q ' "$CHIMNEYSWEEP_VERBOSITY"
-  printf '%q' "$UPKEEPER_CMD"
-  printf ' %q' "${args[@]}"
-  printf '\n'
+  for workflow_stage in "${workflow_stages[@]}"; do
+    upkeeper_launcher_print_full_burn_env_prefix
+    printf 'CODEX_TERMINAL_VERBOSITY=%q ' "$CHIMNEYSWEEP_VERBOSITY"
+    printf '%q' "$UPKEEPER_CMD"
+    printf ' %q' "${args[@]}" "--issue-workflow-stage=$workflow_stage"
+    printf '\n'
+  done
   exit 0
 fi
 
-CODEX_TERMINAL_VERBOSITY="$CHIMNEYSWEEP_VERBOSITY" exec "$UPKEEPER_CMD" "${args[@]}"
+upkeeper_launcher_report_full_burn "ChimneySweep"
+for workflow_stage in "${workflow_stages[@]}"; do
+  printf 'ChimneySweep: starting workflow stage=%s issue=%s\n' "$workflow_stage" "$issue_number" >&2
+  CODEX_TERMINAL_VERBOSITY="$CHIMNEYSWEEP_VERBOSITY" "$UPKEEPER_CMD" "${args[@]}" "--issue-workflow-stage=$workflow_stage"
+done

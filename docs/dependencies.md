@@ -28,7 +28,7 @@ failure, and empty-transcript failure.
 
 GitHub Actions runs the no-quota CI path from `.github/workflows/ci.yml` on
 pushes and pull requests. That workflow starts on `ubuntu-latest`, installs
-required tools including `jq`, and runs:
+required tools including `jq` and `age`, and runs:
 
 ```sh
 bash -n Upkeeper Upkeeper.conf configurations/default.conf lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh
@@ -106,15 +106,38 @@ Codex backend task.
 - `screen` is required when detached screen fallback is enabled. That is the
   default when `CODEX_FALLBACK_ENABLED=1` and `CODEX_FALLBACK_SCREEN_ENABLED=1`.
 
+## Full-Burn Launcher Dependencies
+
+- `age` is required for live `FlameOn` and `ChimneySweep` runs. Those repo-root
+  automation launchers force encrypted selected-target pre-contact backup before
+  backend launch, so a missing `age` binary or missing
+  `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` stops the cycle with
+  `PRECONTACT_BACKUP_UNAVAILABLE` and `codex_exec_started=0`.
+
+Install and configure a public recipient before live launcher use:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y age
+
+mkdir -p "$HOME/.config/age"
+chmod 700 "$HOME/.config/age"
+age-keygen -o "$HOME/.config/age/upkeeper.txt"
+chmod 600 "$HOME/.config/age/upkeeper.txt"
+age-keygen -y "$HOME/.config/age/upkeeper.txt"
+export UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT="age1..."
+```
+
+The exported recipient is public. The private identity file is needed only for
+manual restore and must not be committed, placed in prompts, or exported to
+backend-visible environments.
+
 ## Optional Dependencies
 
-- `age` is used for encrypted selected-target pre-contact backups. It is
-  optional in the default `auto` mode: when no recipient is configured, or when a
-  recipient is configured but `age` is unavailable and encrypted backups are not
-  required, Upkeeper falls back to plain local backup mode. If
-  `UPKEEPER_PRECONTACT_BACKUP_MODE=age` or
-  `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=1`, missing `age` or a missing
-  recipient fails the cycle before backend launch.
+- `age` is optional only for plain `./Upkeeper` compatibility runs that do not
+  require encrypted selected-target backup. If `UPKEEPER_PRECONTACT_BACKUP_MODE`
+  is `age`, or `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=1`, missing `age`
+  or a missing recipient fails the cycle before backend launch.
 - `realpath` is used for central implementation path resolution when available;
   `python3` is the fallback.
 - `stat` is used for transcript sizing when available; `python3` is the

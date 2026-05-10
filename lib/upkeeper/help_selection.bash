@@ -2,7 +2,7 @@
 # operator guide; once the guide exists, the Markdown becomes the living document.
 show_help() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER]
+Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: $UPKEEPER_VERSION
@@ -190,6 +190,19 @@ Important:
     Review cycles also write compact review.summary lines, and
     review.fix_details lines when the final response reports fixes, so later
     commits can recover what changed and why.
+  - Every cycle also writes a shared automation run record under:
+      $UPKEEPER_AUTOMATION_LEDGER_DIR
+    Non-zero cycle exits create unresolved automation obligations under:
+      $UPKEEPER_OBLIGATION_DIR
+    FlameOn, ChimneySweep, and future derivative launchers use the same
+    Upkeeper-owned record format and only supply launcher identity and policy.
+    Those launchers reconcile open obligations before normal bug-finding or
+    issue-queue selection, handing the oldest/highest-priority obligation back
+    to Upkeeper as a locked repair target.
+  - Before the first wrapper log write, Upkeeper rejects unsafe log paths:
+    symlink log files, non-regular log files, hard-linked log files, log files
+    not owned by the current user, and symlink log parent directories fail
+    closed before Codex launch.
   - The default prompt makes the primary agent inspect this cycle's own log:
       $LOG_FILE
     before its final marker. If the log review exposes a concrete wrapper or
@@ -352,6 +365,12 @@ Prompt behavior:
   - --fix-issue=NUMBER skips Upkeeper's issue ranking and locks this cycle to
     the named open GitHub issue. This is the handoff used by scripted fix
     launchers such as ChimneySweep after they have already ranked the queue.
+  - --issue-workflow-stage=comment|review|apply adds a ChimneySweep stage
+    contract to an issue-fix cycle. comment and review are source read-only
+    stages that leave issue comments; apply is the implementation stage.
+    The read-only stages force backend Codex into a read-only repository
+    sandbox and carry issue-comment text back in a final-message draft block
+    that the wrapper extracts and posts after validation.
 
 Environment overrides:
   UPKEEPER_CONFIG_FILE          Default: $UPKEEPER_CONFIG_DEFAULT_FILE
@@ -377,8 +396,18 @@ Environment overrides:
   UPKEEPER_BUG_REPORT_ONLY     Default: 0
   UPKEEPER_FIX_NEXT_ISSUE      Default: 0
   UPKEEPER_FIX_ISSUE           Default: empty
+  UPKEEPER_ISSUE_WORKFLOW_STAGE Default: empty
   UPKEEPER_ISSUE_PRIORITY_LABELS Default: security,data-integrity,bug
   UPKEEPER_ISSUE_SKIP_LABELS   Default: in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr
+  UPKEEPER_AUTOMATION_LEDGER_ENABLED Default: 1
+  UPKEEPER_AUTOMATION_LEDGER_DIR Default: runtime/upkeeper-automation-ledger
+  UPKEEPER_OBLIGATION_DIR       Default: runtime/upkeeper-obligations
+  UPKEEPER_AUTOMATION_LAUNCHER  Default: current entrypoint name
+  UPKEEPER_AUTOMATION_VARIANT   Default: standard
+  UPKEEPER_AUTOMATION_POLICY    Default: one-cycle
+  UPKEEPER_AUTOMATION_WORKFLOW  Default: empty
+  UPKEEPER_AUTOMATION_OBLIGATION_ID Default: empty
+  UPKEEPER_AUTOMATION_OBLIGATION_PATH Default: empty
   UPKEEPER_LATTICE_ENABLED     Default: 1
   UPKEEPER_LATTICE_REQUIRED    Default: 0
   UPKEEPER_LATTICE_DB          Default: runtime/upkeeper-lattice/lattice.sqlite3
@@ -422,6 +451,8 @@ Environment overrides:
   CODEX_WEEK_STOP_PERCENT       Default: 15
   CODEX_WEEK_STOP_BUFFER_PERCENT Default: 0
   CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT Default: 5
+  CODEX_QUOTA_GUARDRAIL_BYPASS Default: 0
+  CODEX_QUOTA_COOLDOWN_BYPASS   Default: 0
   CODEX_LOG_ROTATE_AFTER_HOURS  Default: 72
   CODEX_LOG_ROTATE_KEEP_HOURS   Default: 144
   CODEX_PROCESS_ARGS_MAX_CHARS  Default: 600
@@ -550,6 +581,7 @@ enforce_startup_anomaly_gate_target_or_exit() {
 preselect_review_target() {
   python3 - "$ROOT_DIR" "$SELF_PATH" "$CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS" "$STARTUP_ANOMALY_GATE" "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" "$CODEX_TARGET_FILE" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$CODEX_TOOL_FAILURE_QUEUE_ENABLED" "$CODEX_TOOL_FAILURE_QUEUE_BYPASS" "$CODEX_SELECTION_SOURCE" "$CODEX_FILE_MANIFEST_PATH" "$CODEX_SELECTION_ORDER" "$CODEX_TARGET_ROOT" "$CODEX_TARGET_MAX_DEPTH" "$CODEX_SELECTION_INCLUDE_GLOBS" "$CODEX_SELECTION_EXCLUDE_GLOBS" "$CODEX_SELECTION_REVIEW_MODULES" "$CODEX_SELECTION_RANDOM_SEED" "$CODEX_MAX_COVER_MODE" "$UPKEEPER_LATTICE_ENABLED" "$UPKEEPER_LATTICE_SELECTION_MODE" "$(lattice_tool_path)" "$UPKEEPER_LATTICE_DB" "$UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE" "$CODEX_UPKEEPER_IGNORE_FILE" <<'PY'
 import datetime
+import errno
 import fnmatch
 import json
 import os
@@ -632,6 +664,7 @@ build_names = {
 excluded_prefixes = (".git/", "runtime/")
 excluded_exact = {"Upkeeper.log"}
 test_dirs = {"__tests__", "test", "tests"}
+sample_bytes = 4096
 
 
 def load_upkeeperignore_patterns() -> list[tuple[bool, str]]:
@@ -698,19 +731,81 @@ def is_test_path(path: str) -> bool:
     )
 
 
-def executable_text_candidate(path: str) -> bool:
+def repo_relative_parts(path: str) -> list[str] | None:
+    normalized = os.path.normpath(path).replace(os.sep, "/")
+    if not normalized or normalized == "." or normalized.startswith("../") or os.path.isabs(normalized):
+        return None
+    parts = normalized.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return None
+    return parts
+
+
+def real_path_within_root(path: str) -> bool:
     try:
-        with open(path, "rb") as handle:
-            sample = handle.read(4096)
-    except OSError:
+        return os.path.commonpath([str(root_path), os.path.realpath(path)]) == str(root_path)
+    except (OSError, ValueError):
         return False
-    return b"\0" not in sample
+
+
+def source_safe_file_stat(path: str, *, require_text: bool = False) -> tuple[os.stat_result | None, str]:
+    parts = repo_relative_parts(path)
+    if parts is None:
+        return None, "target path is outside the repository"
+    try:
+        lstat_result = os.lstat(path)
+    except OSError:
+        return None, "target path is missing or unreadable"
+    if statmod.S_ISLNK(lstat_result.st_mode):
+        return None, "target path is a symlink"
+    if not real_path_within_root(path):
+        return None, "target path resolves outside the repository"
+
+    open_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    dir_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
+    nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
+    dir_fd = -1
+    file_fd = -1
+    try:
+        dir_fd = os.open(str(root_path), dir_flags)
+        for part in parts[:-1]:
+            next_fd = os.open(part, dir_flags | nofollow_flag, dir_fd=dir_fd)
+            os.close(dir_fd)
+            dir_fd = next_fd
+        file_fd = os.open(parts[-1], open_flags | nofollow_flag, dir_fd=dir_fd)
+        stat_result = os.fstat(file_fd)
+        if not statmod.S_ISREG(stat_result.st_mode):
+            return None, "target path is not a regular file"
+        if require_text and b"\0" in os.read(file_fd, sample_bytes):
+            return None, "target path appears to be binary"
+        return stat_result, ""
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            return None, "target path is a symlink"
+        return None, "target path is missing or unreadable"
+    finally:
+        for fd in (file_fd, dir_fd):
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+
+def executable_text_candidate(path: str) -> bool:
+    _, error = source_safe_file_stat(path, require_text=True)
+    return not error
+
+
+def source_safe_text_stat(path: str) -> os.stat_result | None:
+    stat_result, error = source_safe_file_stat(path, require_text=True)
+    return None if error else stat_result
 
 
 def git_path_is_ignored(path: str) -> bool:
     try:
         result = subprocess.run(
-            ["git", "check-ignore", "-q", "--", path],
+            ["git", "check-ignore", "-q", "--no-index", "--", path],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -729,19 +824,8 @@ def explicit_target_error(path: str) -> str:
         return "target path is ignored by .upkeeperignore"
     if git_path_is_ignored(path):
         return "target path is ignored by git"
-    if os.path.islink(path):
-        return "target path is a symlink"
-    try:
-        stat_result = os.stat(path)
-    except OSError:
-        return "target path is missing or unreadable"
-    if not statmod.S_ISREG(stat_result.st_mode):
-        return "target path is not a regular file"
-    if not os.access(path, os.R_OK):
-        return "target path is not readable"
-    if not executable_text_candidate(path):
-        return "target path appears to be binary"
-    return ""
+    _, error = source_safe_file_stat(path, require_text=True)
+    return error
 
 
 def git_output(args: list[str]) -> str:
@@ -929,13 +1013,8 @@ def enumerate_paths() -> tuple[list[tuple[float, str]], str]:
     for path in raw:
         if not path:
             continue
-        if os.path.islink(path):
-            continue
-        try:
-            stat_result = os.stat(path)
-        except OSError:
-            continue
-        if statmod.S_ISREG(stat_result.st_mode):
+        stat_result, error = source_safe_file_stat(path)
+        if not error and stat_result is not None:
             paths.append((stat_result.st_mtime, path))
     return sorted(paths, key=lambda item: (item[0], item[1])), source
 
@@ -1039,10 +1118,10 @@ def source_safe_text_paths() -> list[tuple[float, str]]:
             continue
         if not module_filter_match(path, module_filter):
             continue
-        try:
-            result.append((os.stat(path).st_mtime, path))
-        except OSError:
+        stat_result = source_safe_text_stat(path)
+        if stat_result is None:
             continue
+        result.append((stat_result.st_mtime, path))
     return sorted(result, key=lambda item: (item[0], item[1]))
 
 
@@ -1126,7 +1205,7 @@ for manifest_mtime, path in paths:
         continue
     if upkeeper_path_ignored(path):
         continue
-    if os.path.islink(path):
+    if git_path_is_ignored(path):
         continue
     is_forced_path = bool(forced_target and path == forced_target)
     if not is_forced_path:
@@ -1138,11 +1217,8 @@ for manifest_mtime, path in paths:
             continue
         if not module_filter_match(path, module_filter):
             continue
-    try:
-        stat_result = os.stat(path)
-    except OSError:
-        continue
-    if not statmod.S_ISREG(stat_result.st_mode):
+    stat_result, source_safe_error = source_safe_file_stat(path)
+    if source_safe_error or stat_result is None:
         continue
 
     name = os.path.basename(path)
@@ -1150,6 +1226,11 @@ for manifest_mtime, path in paths:
     is_candidate = name in build_names or ext in script_exts
     if not is_candidate and stat_result.st_mode & 0o111:
         is_candidate = executable_text_candidate(path)
+    if is_candidate:
+        text_stat = source_safe_text_stat(path)
+        if text_stat is None:
+            continue
+        stat_result = text_stat
     if is_candidate:
         mtime = manifest_mtime if selection_source_used == "manifest" else stat_result.st_mtime
         candidates.append((mtime, path))
@@ -1184,7 +1265,14 @@ if forced_target:
             file=sys.stderr,
         )
         sys.exit(8)
-    mtime = os.stat(forced_target).st_mtime
+    forced_target_stat = source_safe_text_stat(forced_target)
+    if forced_target_stat is None:
+        print(
+            f"--target-file={forced_target} is not an eligible explicit target: target path is missing or unreadable",
+            file=sys.stderr,
+        )
+        sys.exit(8)
+    mtime = forced_target_stat.st_mtime
     path = forced_target
     selection_mode = "explicit_target"
     selection_basis = (

@@ -14,6 +14,7 @@ WRAPPER_REQUIRED_COMMANDS=(
   cut
   date
   df
+  env
   find
   git
   grep
@@ -42,10 +43,13 @@ WRAPPER_CONDITIONAL_COMMANDS=(
   screen
 )
 
+WRAPPER_LAUNCHER_REQUIRED_COMMANDS=(
+  age
+)
+
 WRAPPER_OPTIONAL_COMMANDS=(
   realpath
   stat
-  age
   zip
 )
 
@@ -102,7 +106,25 @@ cd "$ROOT_DIR"
 
 VALIDATION_TMP_ROOT="$(mktemp -d /tmp/upkeeper-validate.XXXXXX)"
 trap 'rm -r "$VALIDATION_TMP_ROOT" 2>/dev/null || true' EXIT
+export CODEX_POSTMORTEM_DIR="$VALIDATION_TMP_ROOT/postmortems"
 export UPKEEPER_PRECONTACT_BACKUP_ROOT="$VALIDATION_TMP_ROOT/precontact-vault"
+export UPKEEPER_AUTOMATION_LEDGER_DIR="$VALIDATION_TMP_ROOT/automation-ledger"
+export UPKEEPER_OBLIGATION_DIR="$VALIDATION_TMP_ROOT/automation-obligations"
+
+# The validator is often launched from FlameOn/ChimneySweep full-burn cycles.
+# Keep validation fixtures on the plain Upkeeper defaults unless an individual
+# check explicitly exercises launcher behavior.
+export CODEX_5H_STOP_PERCENT=5
+export CODEX_SPARK_5H_STOP_PERCENT=0
+export CODEX_WEEK_STOP_PERCENT=15
+export CODEX_WEEK_STOP_BUFFER_PERCENT=0
+export CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT=5
+export CODEX_QUOTA_GUARDRAIL_BYPASS=0
+export CODEX_QUOTA_COOLDOWN_BYPASS=0
+export UPKEEPER_LATTICE_REQUIRED=0
+export UPKEEPER_PRECONTACT_BACKUP_MODE=auto
+export UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+export UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT=""
 
 require_command() {
   local command_name="$1"
@@ -133,6 +155,7 @@ dependency_status_line() {
 check_dependencies() {
   local command_name
   local missing_required=0
+  local missing_launcher_required=0
 
   log "checking wrapper dependencies"
   printf 'status\tclass\tcommand\tnote\n'
@@ -149,6 +172,10 @@ check_dependencies() {
     dependency_status_line "conditional" "$command_name" "required when detached screen fallback is enabled" || true
   done
 
+  for command_name in "${WRAPPER_LAUNCHER_REQUIRED_COMMANDS[@]}"; do
+    dependency_status_line "launcher-required" "$command_name" "required for live FlameOn/ChimneySweep full-burn encrypted backup" || missing_launcher_required=1
+  done
+
   for command_name in "${WRAPPER_OPTIONAL_COMMANDS[@]}"; do
     case "$command_name" in
       realpath)
@@ -156,9 +183,6 @@ check_dependencies() {
         ;;
       stat)
         dependency_status_line "optional" "$command_name" "transcript sizing uses python3 fallback" || true
-        ;;
-      age)
-        dependency_status_line "optional" "$command_name" "required only when encrypted pre-contact backup mode is selected or required" || true
         ;;
       zip)
         dependency_status_line "optional" "$command_name" "log rotation archives are disabled when missing" || true
@@ -170,6 +194,7 @@ check_dependencies() {
   done
 
   [[ "$missing_required" -eq 0 ]] || fail "one or more required wrapper dependencies are missing"
+  [[ "$missing_launcher_required" -eq 0 ]] || fail "one or more full-burn launcher dependencies are missing"
 }
 
 check_syntax() {
@@ -356,16 +381,24 @@ check_help_and_diff() {
   grep -Fq -- "--bug-report-only" <<<"$help" || fail "help missing --bug-report-only"
   grep -Fq -- "--fix-next-issue" <<<"$help" || fail "help missing --fix-next-issue"
   grep -Fq -- "--fix-issue=NUMBER" <<<"$help" || fail "help missing --fix-issue"
+  grep -Fq -- "--issue-workflow-stage=comment|review|apply" <<<"$help" || fail "help missing issue workflow stage"
   grep -Fq -- "UPKEEPER_MAX_COVER" <<<"$help" || fail "help missing UPKEEPER_MAX_COVER"
   grep -Fq -- "UPKEEPER_BUG_REPORT_ONLY" <<<"$help" || fail "help missing UPKEEPER_BUG_REPORT_ONLY"
   grep -Fq -- "UPKEEPER_FIX_NEXT_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_NEXT_ISSUE"
   grep -Fq -- "UPKEEPER_FIX_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_ISSUE"
+  grep -Fq -- "UPKEEPER_ISSUE_WORKFLOW_STAGE" <<<"$help" || fail "help missing UPKEEPER_ISSUE_WORKFLOW_STAGE"
   grep -Fq -- "UPKEEPER_PRECONTACT_BACKUP_ENABLED" <<<"$help" || fail "help missing UPKEEPER_PRECONTACT_BACKUP_ENABLED"
   grep -Fq -- "pre-contact backup" <<<"$help" || fail "help missing pre-contact backup summary"
   local flameon_cmd
   flameon_cmd="$(FLAMEON_DRY_RUN=1 ./FlameOn)"
   grep -Fq -- "--max-cover" <<<"$flameon_cmd" || fail "FlameOn dry-run missing --max-cover"
   grep -Fq -- "--bug-report-only" <<<"$flameon_cmd" || fail "FlameOn dry-run missing --bug-report-only"
+  grep -Fq -- "UPKEEPER_LATTICE_REQUIRED=1" <<<"$flameon_cmd" || fail "FlameOn dry-run missing required Lattice full-burn default"
+  grep -Fq -- "UPKEEPER_PRECONTACT_BACKUP_MODE=age" <<<"$flameon_cmd" || fail "FlameOn dry-run missing age backup full-burn default"
+  grep -Fq -- "UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=1" <<<"$flameon_cmd" || fail "FlameOn dry-run missing encrypted backup full-burn default"
+  grep -Fq -- "CODEX_WEEK_STOP_PERCENT=0" <<<"$flameon_cmd" || fail "FlameOn dry-run missing spend-to-zero quota full-burn default"
+  grep -Fq -- "CODEX_QUOTA_GUARDRAIL_BYPASS=1" <<<"$flameon_cmd" || fail "FlameOn dry-run missing quota guardrail bypass"
+  grep -Fq -- "CODEX_QUOTA_COOLDOWN_BYPASS=1" <<<"$flameon_cmd" || fail "FlameOn dry-run missing quota cooldown bypass"
   git diff --check
   git diff --cached --check
 }
@@ -392,6 +425,212 @@ check_gitignore_contract() {
   done
 }
 
+check_force_added_gitignored_target_selection() {
+  local temp_dir client manifest_path rc
+
+  log "checking force-added Git-ignored target exclusion"
+  temp_dir="$(mktemp -d /tmp/upkeeper-gitignored-target.XXXXXX)"
+  client="$temp_dir/client"
+  manifest_path="$temp_dir/manifest.json"
+  mkdir -p "$client"
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/10/fake-session.jsonl" "gpt-5.5"
+
+  (
+    cd "$client"
+    git init -q
+    git config user.name "Upkeeper Validation"
+    git config user.email "upkeeper-validation@example.invalid"
+    printf 'secrets.sh\n' >.gitignore
+    printf '#!/usr/bin/env bash\nprintf "ignored fixture\\n"\n' >secrets.sh
+    chmod +x secrets.sh
+    git add -f secrets.sh
+    ln -s "$ROOT_DIR/Upkeeper" Upkeeper
+  )
+
+  run_gitignored_target_dry_run() {
+    local log_file="$1"
+    shift
+    (
+      cd "$client"
+      CODEX_HOME="$temp_dir/codex-home" \
+        CODEX_LOG_FILE="$log_file" \
+        CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+        CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+        CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+        CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+        CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+        CODEX_TERMINAL_VERBOSITY=quiet \
+        CODEX_MODEL=gpt-5.5 \
+        CODEX_REASONING_EFFORT=xhigh \
+        CODEX_FALLBACK_ENABLED=0 \
+        CODEX_FALLBACK_SCREEN_ENABLED=0 \
+        CODEX_POSTMORTEM_ENABLED=0 \
+        CODEX_FILE_MANIFEST_PATH="$manifest_path" \
+        CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
+        CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
+        UPKEEPER_LATTICE_DB="$temp_dir/lattice.sqlite3" \
+        UPKEEPER_DRY_RUN=1 \
+        ./Upkeeper "$@"
+    ) >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  }
+
+  set +e
+  run_gitignored_target_dry_run "$temp_dir/explicit.log" --target-file=secrets.sh
+  rc=$?
+  set -e
+  [[ "$rc" -eq 3 ]] || fail "explicit force-added ignored target exited $rc, expected 3"
+  grep -Fq "reason=TARGET_FILE_NOT_ELIGIBLE" "$temp_dir/explicit.log" || fail "force-added ignored target did not fail as ineligible"
+  grep -Fq "ignored\\ by\\ git" "$temp_dir/explicit.log" || fail "force-added ignored target did not name Git ignore reason"
+
+  run_gitignored_target_dry_run "$temp_dir/enumerate.log" --selection-source=enumerate
+  grep -Fq "review.preselect.none reason=no_eligible_script_tool" "$temp_dir/enumerate.log" || fail "force-added ignored target was not excluded from enumerate selection"
+  if grep -Fq "review.preselect path=secrets.sh" "$temp_dir/enumerate.log"; then
+    fail "enumerate selection chose a force-added ignored target"
+  fi
+
+  run_gitignored_target_dry_run "$temp_dir/manifest.log" --selection-source=manifest --refresh-manifest
+  jq -e 'all(.files[]?; .rel_path != "secrets.sh")' "$manifest_path" >/dev/null ||
+    fail "manifest included a force-added ignored target"
+  grep -Fq "review.preselect.none reason=no_eligible_script_tool" "$temp_dir/manifest.log" || fail "force-added ignored target was not excluded from manifest selection"
+
+  "$ROOT_DIR/tools/upkeeper_lattice.py" \
+    --root "$client" \
+    --db "$temp_dir/lattice-direct.sqlite3" \
+    init >"$temp_dir/lattice-init.json"
+  "$ROOT_DIR/tools/upkeeper_lattice.py" \
+    --root "$client" \
+    --db "$temp_dir/lattice-direct.sqlite3" \
+    query selection-candidates --mode max-cover --format jsonl >"$temp_dir/lattice-candidates.jsonl"
+  python3 - "$temp_dir/lattice-candidates.jsonl" <<'PY' ||
+import json
+import sys
+
+seen_secret = False
+for line in open(sys.argv[1], encoding="utf-8"):
+    row = json.loads(line)
+    if row.get("path") == "secrets.sh":
+        seen_secret = True
+        assert row.get("candidate_state") == "excluded", row
+        assert row.get("exclusion_reason") == "gitignore", row
+assert seen_secret, "secrets.sh was not represented in Lattice candidate diagnostics"
+PY
+    fail "Lattice did not exclude the force-added ignored target"
+
+  rm -r "$temp_dir"
+}
+
+check_symlink_target_selection_guard() {
+  local temp_dir client manifest_path outside_target rc
+
+  log "checking symlink target selection guard"
+  temp_dir="$(mktemp -d /tmp/upkeeper-symlink-target.XXXXXX)"
+  client="$temp_dir/client"
+  manifest_path="$temp_dir/manifest.json"
+  outside_target="$temp_dir/outside-sentinel.txt"
+  mkdir -p "$client"
+  printf 'outside sentinel\n' >"$outside_target"
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/10/fake-session.jsonl" "gpt-5.5"
+
+  (
+    cd "$client"
+    git init -q
+    git config user.name "Upkeeper Validation"
+    git config user.email "upkeeper-validation@example.invalid"
+    mkdir -p tools
+    ln -s "$outside_target" tools/review.sh
+    git add tools/review.sh
+    ln -s "$ROOT_DIR/Upkeeper" Upkeeper
+  )
+
+  run_symlink_target_dry_run() {
+    local log_file="$1"
+    shift
+    (
+      cd "$client"
+      CODEX_HOME="$temp_dir/codex-home" \
+        CODEX_LOG_FILE="$log_file" \
+        CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+        CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+        CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+        CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+        CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+        CODEX_TERMINAL_VERBOSITY=quiet \
+        CODEX_MODEL=gpt-5.5 \
+        CODEX_REASONING_EFFORT=xhigh \
+        CODEX_FALLBACK_ENABLED=0 \
+        CODEX_FALLBACK_SCREEN_ENABLED=0 \
+        CODEX_POSTMORTEM_ENABLED=0 \
+        CODEX_FILE_MANIFEST_PATH="$manifest_path" \
+        CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
+        CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
+        UPKEEPER_LATTICE_DB="$temp_dir/lattice.sqlite3" \
+        UPKEEPER_DRY_RUN=1 \
+        ./Upkeeper "$@"
+    ) >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  }
+
+  set +e
+  run_symlink_target_dry_run "$temp_dir/explicit.log" --target-file=tools/review.sh
+  rc=$?
+  set -e
+  [[ "$rc" -eq 3 ]] || fail "explicit symlink target exited $rc, expected 3"
+  grep -Fq "reason=TARGET_FILE_NOT_ELIGIBLE" "$temp_dir/explicit.log" || fail "symlink target did not fail as ineligible"
+  grep -Fq "target\\ path\\ is\\ a\\ symlink" "$temp_dir/explicit.log" || fail "symlink target did not name symlink reason"
+
+  run_symlink_target_dry_run "$temp_dir/enumerate.log" --selection-source=enumerate
+  grep -Fq "review.preselect.none reason=no_eligible_script_tool" "$temp_dir/enumerate.log" || fail "symlink target was not excluded from enumerate selection"
+  if grep -Fq "review.preselect path=tools/review.sh" "$temp_dir/enumerate.log"; then
+    fail "enumerate selection chose a symlink target"
+  fi
+
+  run_symlink_target_dry_run "$temp_dir/manifest.log" --selection-source=manifest --refresh-manifest
+  jq -e 'all(.files[]?; .rel_path != "tools/review.sh")' "$manifest_path" >/dev/null ||
+    fail "manifest included a symlink target"
+  grep -Fq "review.preselect.none reason=no_eligible_script_tool" "$temp_dir/manifest.log" || fail "symlink target was not excluded from manifest selection"
+
+  "$ROOT_DIR/tools/upkeeper_lattice.py" \
+    --root "$client" \
+    --db "$temp_dir/lattice-direct.sqlite3" \
+    init >"$temp_dir/lattice-init.json"
+  "$ROOT_DIR/tools/upkeeper_lattice.py" \
+    --root "$client" \
+    --db "$temp_dir/lattice-direct.sqlite3" \
+    query selection-candidates --mode max-cover --format jsonl >"$temp_dir/lattice-candidates.jsonl"
+  python3 - "$temp_dir/lattice-candidates.jsonl" <<'PY' ||
+import json
+import sys
+
+seen_link = False
+for line in open(sys.argv[1], encoding="utf-8"):
+    row = json.loads(line)
+    if row.get("path") == "tools/review.sh":
+        seen_link = True
+        assert row.get("candidate_state") == "excluded", row
+        assert row.get("exclusion_reason") == "symlink", row
+assert seen_link, "tools/review.sh was not represented in Lattice candidate diagnostics"
+PY
+    fail "Lattice did not exclude the symlink target"
+
+  grep -Fqx "outside sentinel" "$outside_target" || fail "symlink target sentinel content changed"
+  rm -r "$temp_dir"
+}
+
+check_validation_environment_isolation() {
+  log "checking validation environment isolation"
+
+  [[ "$CODEX_5H_STOP_PERCENT" == "5" ]] || fail "validation inherited CODEX_5H_STOP_PERCENT=$CODEX_5H_STOP_PERCENT"
+  [[ "$CODEX_SPARK_5H_STOP_PERCENT" == "0" ]] || fail "validation inherited CODEX_SPARK_5H_STOP_PERCENT=$CODEX_SPARK_5H_STOP_PERCENT"
+  [[ "$CODEX_WEEK_STOP_PERCENT" == "15" ]] || fail "validation inherited CODEX_WEEK_STOP_PERCENT=$CODEX_WEEK_STOP_PERCENT"
+  [[ "$CODEX_WEEK_STOP_BUFFER_PERCENT" == "0" ]] || fail "validation inherited CODEX_WEEK_STOP_BUFFER_PERCENT=$CODEX_WEEK_STOP_BUFFER_PERCENT"
+  [[ "$CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT" == "5" ]] || fail "validation inherited CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT=$CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT"
+  [[ "$CODEX_QUOTA_GUARDRAIL_BYPASS" == "0" ]] || fail "validation inherited CODEX_QUOTA_GUARDRAIL_BYPASS=$CODEX_QUOTA_GUARDRAIL_BYPASS"
+  [[ "$CODEX_QUOTA_COOLDOWN_BYPASS" == "0" ]] || fail "validation inherited CODEX_QUOTA_COOLDOWN_BYPASS=$CODEX_QUOTA_COOLDOWN_BYPASS"
+  [[ "$UPKEEPER_LATTICE_REQUIRED" == "0" ]] || fail "validation inherited UPKEEPER_LATTICE_REQUIRED=$UPKEEPER_LATTICE_REQUIRED"
+  [[ "$UPKEEPER_PRECONTACT_BACKUP_MODE" == "auto" ]] || fail "validation inherited UPKEEPER_PRECONTACT_BACKUP_MODE=$UPKEEPER_PRECONTACT_BACKUP_MODE"
+  [[ "$UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED" == "0" ]] || fail "validation inherited UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=$UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED"
+  [[ -z "$UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT" ]] || fail "validation inherited UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT"
+}
+
 check_codex_mode_validation() {
   local output rc
 
@@ -410,6 +649,20 @@ check_codex_mode_validation() {
   set -e
   [[ "$rc" -eq 2 ]] || fail "triple-hyphen CODEX_MODE exited $rc, expected 2"
   grep -Fq "invalid CODEX_MODE first token ---sandbox" <<<"$output" || fail "triple-hyphen CODEX_MODE error was not clear"
+
+  set +e
+  output="$(CODEX_MODE='--sandbox danger-full-access' ./Upkeeper --version 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 2 ]] || fail "danger-full-access CODEX_MODE exited $rc, expected 2"
+  grep -Fq "Genie Protocol requires sandboxed backend Codex execution" <<<"$output" || fail "danger-full-access CODEX_MODE error was not clear"
+
+  set +e
+  output="$(CODEX_MODE='--dangerously-bypass-approvals-and-sandbox' ./Upkeeper --version 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 2 ]] || fail "dangerously-bypass CODEX_MODE exited $rc, expected 2"
+  grep -Fq "Genie Protocol requires sandboxed backend Codex execution" <<<"$output" || fail "dangerously-bypass CODEX_MODE error was not clear"
 }
 
 write_validation_quota_snapshot() {
@@ -499,6 +752,38 @@ check_cycle_start_log_contract() {
   rm -r "$temp_dir"
 }
 
+check_log_path_symlink_guard() {
+  local temp_dir outside_target before_size after_size rc
+
+  log "checking unsafe Upkeeper.log symlink rejection"
+  temp_dir="$(mktemp -d /tmp/upkeeper-log-symlink.XXXXXX)"
+  outside_target="$temp_dir/outside-target.txt"
+  printf 'sentinel\n' >"$outside_target"
+  before_size="$(wc -c <"$outside_target")"
+
+  ln -s "$ROOT_DIR/Upkeeper" "$temp_dir/Upkeeper.sh"
+  ln -s "$outside_target" "$temp_dir/Upkeeper.log"
+
+  set +e
+  (
+    cd "$temp_dir"
+    UPKEEPER_DRY_RUN=1 \
+      CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+      CODEX_TERMINAL_VERBOSITY=quiet \
+      ./Upkeeper.sh >out.txt 2>err.txt
+  )
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 3 ]] || fail "symlinked Upkeeper.log guard exited $rc"
+  grep -Fq "reason=symlink_log_file" "$temp_dir/err.txt" || fail "symlinked Upkeeper.log rejection reason missing"
+  after_size="$(wc -c <"$outside_target")"
+  [[ "$after_size" == "$before_size" ]] || fail "symlinked Upkeeper.log target was modified"
+  grep -Fqx "sentinel" "$outside_target" || fail "symlinked Upkeeper.log target content changed"
+
+  rm -r "$temp_dir"
+}
+
 check_disk_preflight_log_contract() {
   local temp_dir path_with_token path_q output extracted_free synthetic_free
 
@@ -566,6 +851,184 @@ check_arg0_tmp_cleanup_contract() {
   [[ -f "$arg0_root/unmanaged-cache/keep" ]] || fail "non-codex stale directory was modified"
 
   rm -r "$temp_dir"
+}
+
+check_automation_obligation_framework() {
+  local temp_dir run_record obligation_count obligation_file obligation_id resolved_file selected_json prompt_file
+
+  log "checking automation obligation framework"
+  temp_dir="$(mktemp -d /tmp/upkeeper-automation-obligations.XXXXXX)"
+  printf 'transcript\n' >"$temp_dir/transcript.log"
+
+  (
+    cd "$ROOT_DIR"
+    ROOT_DIR="$ROOT_DIR"
+    SCRIPT_NAME="Upkeeper"
+    CYCLE_ID="validation-automation"
+    CYCLE_RUN_HASH="validationhashautomation"
+    LOG_FILE="$temp_dir/Upkeeper.log"
+    CODEX_TERMINAL_VERBOSITY="silent"
+    UPKEEPER_AUTOMATION_LEDGER_DIR="$temp_dir/ledger"
+    UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations"
+    UPKEEPER_AUTOMATION_LAUNCHER="ChimneySweep"
+    UPKEEPER_AUTOMATION_VARIANT="issue-repair"
+    UPKEEPER_AUTOMATION_POLICY="own-bug-queue"
+    UPKEEPER_AUTOMATION_WORKFLOW="comment-review-apply"
+    CODEX_ISSUE_WORKFLOW_STAGE="review"
+    CODEX_ISSUE_FIX_NUMBER="125"
+    CODEX_ISSUE_FIX_TITLE="High security validation fixture"
+    CODEX_TARGET_FILE="Upkeeper"
+    RUN_SELECTED_REVIEW_PATH="lib/upkeeper/session_store_preflight.bash"
+    RUN_TRANSCRIPT_FILE="$temp_dir/transcript.log"
+    RUN_AUTOMATION_RECORD_FILE=""
+    source lib/upkeeper/runtime_foundation.bash
+    source lib/upkeeper/automation_obligations.bash
+    automation_record_cycle_start
+    automation_record_cycle_finish 2 BLOCKED WARN BLOCKED 0 1 "$RUN_SELECTED_REVIEW_PATH"
+  )
+
+  run_record="$temp_dir/ledger/runs/validation-automation.json"
+  [[ -f "$run_record" ]] || fail "automation run record was not written"
+  [[ "$(jq -r '.status' "$run_record")" == "finished" ]] || fail "automation run record was not finalized"
+  [[ "$(jq -r '.launcher' "$run_record")" == "ChimneySweep" ]] || fail "automation run record lost launcher identity"
+  [[ "$(jq -r '.variant' "$run_record")" == "issue-repair" ]] || fail "automation run record lost variant"
+  [[ "$(jq -r '.policy' "$run_record")" == "own-bug-queue" ]] || fail "automation run record lost policy"
+  [[ "$(jq -r '.workflow' "$run_record")" == "comment-review-apply" ]] || fail "automation run record lost workflow"
+  [[ "$(jq -r '.stage' "$run_record")" == "review" ]] || fail "automation run record lost stage"
+  [[ "$(jq -r '.selected_target' "$run_record")" == "lib/upkeeper/session_store_preflight.bash" ]] || fail "automation run record lost selected target"
+  [[ "$(jq -r '.exit_code' "$run_record")" == "2" ]] || fail "automation run record lost exit code"
+
+  obligation_count="$(find "$temp_dir/obligations/open" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$obligation_count" == "1" ]] || fail "automation obligation count was $obligation_count, expected 1"
+  obligation_file="$(find "$temp_dir/obligations/open" -maxdepth 1 -type f -name '*.json' | head -1)"
+  obligation_id="$(jq -r '.id' "$obligation_file")"
+  [[ "$(jq -r '.kind' "$obligation_file")" == "blocked" ]] || fail "automation obligation did not record blocked kind"
+  [[ "$(jq -r '.launcher' "$obligation_file")" == "ChimneySweep" ]] || fail "automation obligation lost launcher identity"
+  [[ "$(jq -r '.target_file' "$obligation_file")" == "lib/upkeeper/session_store_preflight.bash" ]] || fail "automation obligation lost target file"
+  grep -Fq "automation.obligation.open" "$temp_dir/Upkeeper.log" || fail "automation obligation open event was not logged"
+
+  selected_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
+      bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.status' <<<"$selected_json")" == "ok" ]] || fail "automation obligation selector did not find open obligation"
+  [[ "$(jq -r '.id' <<<"$selected_json")" == "$obligation_id" ]] || fail "automation obligation selector returned the wrong obligation"
+  prompt_file="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
+      bash -c 'source "$1"; automation_prepare_obligation_prompt_file "$2"' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash" "$selected_json"
+  )"
+  [[ -f "$prompt_file" ]] || fail "automation obligation prompt file was not written"
+  grep -Fq "Upkeeper automation obligation repair task." "$prompt_file" || fail "automation obligation prompt file missing task header"
+
+  (
+    cd "$ROOT_DIR"
+    ROOT_DIR="$ROOT_DIR"
+    SCRIPT_NAME="Upkeeper"
+    CYCLE_ID="validation-automation-resolve"
+    CYCLE_RUN_HASH="validationhashresolve"
+    LOG_FILE="$temp_dir/resolve.log"
+    CODEX_TERMINAL_VERBOSITY="silent"
+    UPKEEPER_AUTOMATION_LEDGER_DIR="$temp_dir/ledger"
+    UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations"
+    UPKEEPER_AUTOMATION_LAUNCHER="ChimneySweep"
+    UPKEEPER_AUTOMATION_VARIANT="issue-repair"
+    UPKEEPER_AUTOMATION_POLICY="own-bug-queue"
+    UPKEEPER_AUTOMATION_WORKFLOW="obligation-repair"
+    UPKEEPER_AUTOMATION_OBLIGATION_ID="$obligation_id"
+    UPKEEPER_AUTOMATION_OBLIGATION_PATH="$obligation_file"
+    RUN_SELECTED_REVIEW_PATH="lib/upkeeper/session_store_preflight.bash"
+    RUN_TRANSCRIPT_FILE="$temp_dir/transcript.log"
+    RUN_AUTOMATION_RECORD_FILE=""
+    source lib/upkeeper/runtime_foundation.bash
+    source lib/upkeeper/automation_obligations.bash
+    automation_record_cycle_start
+    automation_record_cycle_finish 0 WORK_DONE INFO WORK_DONE 0 1 "$RUN_SELECTED_REVIEW_PATH"
+  )
+
+  [[ ! -e "$obligation_file" ]] || fail "automation obligation was not removed from open after clean selected cycle"
+  resolved_file="$temp_dir/obligations/resolved/$obligation_id.json"
+  [[ -f "$resolved_file" ]] || fail "automation obligation was not moved to resolved after clean selected cycle"
+  [[ "$(jq -r '.status' "$resolved_file")" == "resolved" ]] || fail "resolved automation obligation status was not resolved"
+  [[ "$(jq -r '.resolved_by_cycle_id' "$resolved_file")" == "validation-automation-resolve" ]] || fail "resolved automation obligation lost resolver cycle"
+
+  rm -r "$temp_dir"
+}
+
+check_session_store_preflight_contract() {
+  local temp_dir session_dir sentinel output rc
+
+  log "checking Codex session store preflight contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-session-store-preflight.XXXXXX)"
+  session_dir="$temp_dir/codex-home/sessions"
+
+  if ! output="$(
+    CODEX_HOME_DIR="$temp_dir/codex-home" \
+      bash -c 'umask 077; source "$1"; codex_session_store_write_check' bash "$ROOT_DIR/lib/upkeeper/session_store_preflight.bash"
+  )"; then
+    fail "session store preflight failed for a normal private session root"
+  fi
+
+  [[ "$output" == "ok" ]] || fail "session store preflight returned unexpected output: $output"
+  if compgen -G "$session_dir/.upkeeper-write-test.*" >/dev/null; then
+    fail "session store preflight left a probe directory behind"
+  fi
+
+  sentinel="$temp_dir/sentinel-target"
+  printf 'sentinel data\n' >"$sentinel"
+  if ! output="$(
+    CODEX_HOME_DIR="$temp_dir/codex-home" \
+      bash -c '
+        source "$1"
+        mkdir -p -- "$CODEX_HOME_DIR/sessions"
+        legacy_path="$CODEX_HOME_DIR/sessions/.upkeeper-write-test.$$"
+        ln -s -- "$2" "$legacy_path"
+        result="$(codex_session_store_write_check)" || exit 41
+        [[ -L "$legacy_path" ]] || exit 42
+        printf "%s" "$result"
+      ' bash "$ROOT_DIR/lib/upkeeper/session_store_preflight.bash" "$sentinel"
+  )"; then
+    fail "session store preflight followed or removed a predictable symlink marker"
+  fi
+
+  [[ "$output" == "ok" ]] || fail "session store preflight returned unexpected symlink-probe output: $output"
+  [[ "$(cat "$sentinel")" == "sentinel data" ]] || fail "session store preflight truncated the predictable symlink target"
+
+  rm -r -- "$temp_dir/codex-home"
+  mkdir -p -- "$temp_dir/codex-home" "$temp_dir/real-sessions"
+  ln -s -- "$temp_dir/real-sessions" "$temp_dir/codex-home/sessions"
+  set +e
+  output="$(
+    CODEX_HOME_DIR="$temp_dir/codex-home" \
+      bash -c 'source "$1"; codex_session_store_write_check' bash "$ROOT_DIR/lib/upkeeper/session_store_preflight.bash"
+  )"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 1 ]] || fail "session store symlink check exited $rc, expected 1"
+  [[ "$output" == unsafe_symlink:* ]] || fail "session store symlink check returned unexpected output: $output"
+  if compgen -G "$temp_dir/real-sessions/.upkeeper-write-test.*" >/dev/null; then
+    fail "session store symlink check probed through the symlinked sessions directory"
+  fi
+
+  rm -r -- "$temp_dir/codex-home" "$temp_dir/real-sessions"
+  mkdir -p -- "$temp_dir/codex-home/sessions"
+  chmod 0777 "$temp_dir/codex-home/sessions"
+  set +e
+  output="$(
+    CODEX_HOME_DIR="$temp_dir/codex-home" \
+      bash -c 'source "$1"; codex_session_store_write_check' bash "$ROOT_DIR/lib/upkeeper/session_store_preflight.bash"
+  )"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 0 ]] || fail "session store owned weak-mode repair exited $rc, expected 0"
+  [[ "$output" == "ok" ]] || fail "session store owned weak-mode repair returned unexpected output: $output"
+  [[ "$(stat -c '%a' "$temp_dir/codex-home/sessions")" == "700" ]] || fail "session store owned weak-mode repair did not chmod sessions to 700"
+  if compgen -G "$temp_dir/codex-home/sessions/.upkeeper-write-test.*" >/dev/null; then
+    fail "session store owned weak-mode repair left a probe directory behind"
+  fi
+
+  rm -r -- "$temp_dir"
 }
 
 check_bwrap_tmp_preflight_contract() {
@@ -1151,6 +1614,25 @@ EOF
   grep -Fq "review.preselect path=lib/upkeeper/help_selection.bash" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not pin the explicit inferred target"
   grep -Fq "issue.fix_prompt appended number=912" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue prompt addendum was not appended"
 
+  PATH="$temp_dir/bin:$PATH" run_manifest_dry_run "$temp_dir/fix-comment-stage.log" \
+    --fix-issue=912 \
+    --issue-workflow-stage=comment
+  grep -Fq "issue.workflow_prompt appended stage=comment number=912" "$temp_dir/fix-comment-stage.log" || fail "issue comment stage prompt addendum was not appended"
+  grep -Fq "issue.workflow_comment.destination stage=comment number=912" "$temp_dir/fix-comment-stage.log" || fail "issue comment stage wrapper destination was not prepared"
+  grep -Fq "issue_workflow_stage=comment" "$temp_dir/fix-comment-stage.log" || fail "issue workflow stage was not logged at cycle start"
+  if grep -Fq 'gh issue comment "$CODEX_ISSUE_FIX_NUMBER"' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash"; then
+    fail "issue comment stage prompt still relies on an unexported issue-number environment variable"
+  fi
+  if grep -Fq 'Post the comment with `gh issue comment' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash"; then
+    fail "issue workflow stage prompt still asks Codex to post GitHub comments directly"
+  fi
+  grep -Fq 'issue_workflow_comment_transport=final_message_block' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash" || fail "issue workflow stage prompt does not declare final-message comment transport"
+  grep -Fq 'UPKEEPER_ISSUE_COMMENT_DRAFT_START' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash" || fail "issue workflow stage prompt does not require a final-message draft block"
+  if grep -Fq 'issue_workflow_comment_file=%s' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash"; then
+    fail "issue workflow stage prompt still exposes a backend-writable comment file"
+  fi
+  grep -Fq 'wrapper-fetched recent issue comments' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash" || fail "issue workflow stage prompt does not use wrapper-fetched comments"
+
   mkdir -p runtime
   printf 'runtime explicit target fixture\n' >runtime/upkeeper-explicit-target-fixture.txt
   set +e
@@ -1184,7 +1666,7 @@ EOF
 }
 
 check_tool_failure_queue() {
-  local temp_dir transcript clean_transcript marker_path open_count resolved_count marker_id
+  local temp_dir transcript addressed_transcript clean_transcript marker_path open_count resolved_count marker_id
 
   log "checking tool failure queue"
   temp_dir="$(mktemp -d /tmp/upkeeper-tool-failure-queue.XXXXXX)"
@@ -1239,6 +1721,40 @@ EOF
   open_count="$(find "$temp_dir/unaddressed-failures/open" -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
   [[ "$open_count" == "1" ]] || fail "tool failure queue wrongly resolved unverified WORK_DONE failure"
   grep -Fq "addressed_by_later_success=0" "$temp_dir/unaddressed.log" || fail "tool failure queue did not log unaddressed evidence"
+
+  addressed_transcript="$temp_dir/addressed-transcript.log"
+  cat >"$addressed_transcript" <<'EOF'
+codex
+exec
+/bin/bash -lc 'tools/validate_upkeeper.sh --quick'
+exited 2 in 490ms:
+exec
+/bin/bash -lc 'tools/validate_upkeeper.sh --quick'
+succeeded in 28695ms:
+UPKEEPER_STATUS: BLOCKED
+EOF
+
+  (
+    cd "$ROOT_DIR"
+    LOG_FILE="$temp_dir/addressed.log"
+    CODEX_TERMINAL_VERBOSITY=silent
+    CODEX_TOOL_FAILURE_QUEUE_ENABLED=1
+    CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/addressed-failures"
+    CODEX_TOOL_FAILURE_QUEUE_BYPASS=0
+    CYCLE_ID="validation-addressed-blocked"
+    CYCLE_RUN_HASH="validationhashaddressed"
+    RUN_SELECTED_FAILURE_MARKER_PATH=""
+    source lib/upkeeper/fallback_artifacts.bash
+    source lib/upkeeper/runtime_foundation.bash
+    source lib/upkeeper/tool_failure_queue.bash
+    tool_failure_queue_finalize_run "lib/upkeeper/help_selection.bash" "$addressed_transcript" 0 "BLOCKED"
+  )
+  open_count="$(find "$temp_dir/addressed-failures/open" -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$open_count" == "0" ]] || fail "tool failure queue kept an open marker for same-run addressed BLOCKED evidence"
+  resolved_count="$(find "$temp_dir/addressed-failures/resolved" -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$resolved_count" == "1" ]] || fail "tool failure queue did not resolve same-run addressed BLOCKED evidence"
+  grep -Fq "tool_failure_queue.resolved" "$temp_dir/addressed.log" || fail "tool failure queue did not log addressed BLOCKED resolution"
+  grep -Fq "later_success_after_detected_failure" "$temp_dir/addressed-failures/resolved/"*.json || fail "tool failure queue did not record addressed BLOCKED resolution reason"
 
   cat >"$clean_transcript" <<'EOF'
 codex
@@ -1331,6 +1847,257 @@ PY
     ./Upkeeper --ignore-failure-queue >"$temp_dir/bypass.out" 2>"$temp_dir/bypass.err"
 
   grep -Fq "failure_queue_selected=0" "$temp_dir/bypass.log" || fail "failure queue bypass flag was not honored"
+
+  rm -r "$temp_dir"
+}
+
+check_issue_workflow_comment_relay() {
+  local temp_dir draft_file posted_file last_message_file expected_file
+
+  log "checking issue workflow comment relay"
+  temp_dir="$(mktemp -d /tmp/upkeeper-issue-workflow-relay.XXXXXX)"
+  draft_file="$temp_dir/comment.md"
+  posted_file="$temp_dir/posted.md"
+  last_message_file="$temp_dir/last-message.txt"
+  expected_file="$temp_dir/expected.md"
+  mkdir -p "$temp_dir/bin"
+  cat >"$temp_dir/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "issue" && "${2:-}" == "comment" && "${3:-}" == "125" && "${4:-}" == "--body-file" ]]; then
+  cp -- "$5" "$UPKEEPER_TEST_POSTED_FILE"
+  exit 0
+fi
+
+printf 'unexpected gh invocation: %s\n' "$*" >&2
+exit 2
+EOF
+  chmod +x "$temp_dir/bin/gh"
+  : >"$draft_file"
+  cat >"$last_message_file" <<'EOF'
+Issue comment draft follows.
+UPKEEPER_ISSUE_COMMENT_DRAFT_START
+ChimneySweep proposal:
+
+Relay-posted body.
+UPKEEPER_ISSUE_COMMENT_DRAFT_END
+UPKEEPER_STATUS: WORK_DONE
+EOF
+  cat >"$expected_file" <<'EOF'
+ChimneySweep proposal:
+
+Relay-posted body.
+EOF
+
+  (
+    cd "$ROOT_DIR"
+    PATH="$temp_dir/bin:$PATH"
+    LOG_FILE="$temp_dir/Upkeeper.log"
+    CODEX_TERMINAL_VERBOSITY=silent
+    CYCLE_ID="validation-issue-workflow-relay"
+    CYCLE_RUN_HASH="validationhashrelay"
+    CODEX_ISSUE_WORKFLOW_STAGE=comment
+    CODEX_ISSUE_FIX_NUMBER=125
+    RUN_ISSUE_WORKFLOW_COMMENT_FILE="$draft_file"
+    RUN_LAST_MESSAGE_FILE="$last_message_file"
+    UPKEEPER_TEST_POSTED_FILE="$posted_file"
+    export UPKEEPER_TEST_POSTED_FILE
+    source lib/upkeeper/fallback_artifacts.bash
+    source lib/upkeeper/runtime_foundation.bash
+    source lib/upkeeper/codex_io.bash
+    upkeeper_issue_workflow_post_comment
+  )
+
+  cmp -s "$expected_file" "$posted_file" || fail "issue workflow comment relay did not post the extracted final-message body"
+  grep -Fq "issue.workflow_comment.extracted stage=comment number=125" "$temp_dir/Upkeeper.log" || fail "issue workflow comment relay did not log final-message extraction"
+  grep -Fq "issue.workflow_comment.posted stage=comment number=125" "$temp_dir/Upkeeper.log" || fail "issue workflow comment relay did not log success"
+
+  draft_file="$temp_dir/review.md"
+  posted_file="$temp_dir/posted-review.md"
+  last_message_file="$temp_dir/last-message-review.txt"
+  expected_file="$temp_dir/expected-review.md"
+  : >"$draft_file"
+  : >"$temp_dir/Upkeeper.log"
+  cat >"$last_message_file" <<'EOF'
+Review draft follows.
+UPKEEPER_ISSUE_COMMENT_DRAFT_START
+ChimneySweep review: revise
+
+Decision: revise. Rotation still needs the same no-follow safety boundary.
+UPKEEPER_ISSUE_COMMENT_DRAFT_END
+UPKEEPER_STATUS: WORK_DONE
+EOF
+  cat >"$expected_file" <<'EOF'
+ChimneySweep review: revise
+
+Decision: revise. Rotation still needs the same no-follow safety boundary.
+EOF
+
+  (
+    cd "$ROOT_DIR"
+    PATH="$temp_dir/bin:$PATH"
+    LOG_FILE="$temp_dir/Upkeeper.log"
+    CODEX_TERMINAL_VERBOSITY=silent
+    CYCLE_ID="validation-issue-workflow-review-relay"
+    CYCLE_RUN_HASH="validationhashreviewrelay"
+    CODEX_ISSUE_WORKFLOW_STAGE=review
+    CODEX_ISSUE_FIX_NUMBER=125
+    RUN_ISSUE_WORKFLOW_COMMENT_FILE="$draft_file"
+    RUN_LAST_MESSAGE_FILE="$last_message_file"
+    UPKEEPER_TEST_POSTED_FILE="$posted_file"
+    export UPKEEPER_TEST_POSTED_FILE
+    source lib/upkeeper/fallback_artifacts.bash
+    source lib/upkeeper/runtime_foundation.bash
+    source lib/upkeeper/codex_io.bash
+    upkeeper_issue_workflow_post_comment
+  )
+
+  cmp -s "$expected_file" "$posted_file" || fail "issue workflow review relay did not accept inline review decision prefix"
+  grep -Fq "issue.workflow_comment.extracted stage=review number=125" "$temp_dir/Upkeeper.log" || fail "issue workflow review relay did not log final-message extraction"
+  grep -Fq "issue.workflow_comment.posted stage=review number=125" "$temp_dir/Upkeeper.log" || fail "issue workflow review relay did not log success"
+
+  rm -r "$temp_dir"
+}
+
+check_issue_workflow_backend_mode_contract() {
+  local temp_dir
+  local -a backend_mode_args=()
+
+  log "checking issue workflow backend mode contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-issue-workflow-mode.XXXXXX)"
+
+  (
+    cd "$ROOT_DIR"
+    RUN_TMP_DIR="$temp_dir/run"
+    CODEX_ISSUE_WORKFLOW_STAGE=comment
+    CODEX_MODE_ARGS=(--sandbox workspace-write)
+    mkdir -p "$RUN_TMP_DIR"
+    source lib/upkeeper/codex_io.bash
+    mapfile -d '' -t backend_mode_args < <(upkeeper_backend_mode_args_for_current_stage)
+
+    [[ "${#backend_mode_args[@]}" -eq 2 ]] || fail "comment stage backend mode did not produce two args"
+    [[ "${backend_mode_args[0]}" == "--sandbox" ]] || fail "comment stage backend mode missing --sandbox"
+    [[ "${backend_mode_args[1]}" == "read-only" ]] || fail "comment stage backend mode was not read-only"
+
+    CODEX_ISSUE_WORKFLOW_STAGE=apply
+    mapfile -d '' -t backend_mode_args < <(upkeeper_backend_mode_args_for_current_stage)
+    [[ "${#backend_mode_args[@]}" -eq 2 ]] || fail "apply stage backend mode did not preserve configured mode"
+    [[ "${backend_mode_args[0]}" == "--sandbox" ]] || fail "apply stage backend mode lost configured sandbox option"
+    [[ "${backend_mode_args[1]}" == "workspace-write" ]] || fail "apply stage backend mode lost configured workspace-write value"
+  )
+
+  rm -r "$temp_dir"
+}
+
+check_genie_protocol_backend_boundary() {
+  local temp_dir prompt_file transcript_file rc
+
+  log "checking Genie Protocol backend boundary"
+  temp_dir="$(mktemp -d /tmp/upkeeper-genie-boundary.XXXXXX)"
+  prompt_file="$temp_dir/prompt.txt"
+  transcript_file="$temp_dir/transcript.log"
+  mkdir -p "$temp_dir/host-bin"
+
+  cat >"$temp_dir/host-bin/gh" <<'EOF'
+#!/usr/bin/env bash
+printf 'host gh should not be reachable\n' >&2
+exit 0
+EOF
+  chmod +x "$temp_dir/host-bin/gh"
+
+cat >"$temp_dir/fake-backend" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+out_dir="${UPKEEPER_GENIE_TEST_OUTPUT_DIR:?}"
+
+for name in GITHUB_TOKEN GH_TOKEN GITHUB_PAT GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN CODEX_GITHUB_PERSONAL_ACCESS_TOKEN GITHUB_API_URL GITHUB_GRAPHQL_URL; do
+  if [[ -n "${!name:-}" ]]; then
+    printf 'leaked %s\n' "$name" >&2
+    exit 10
+  fi
+done
+
+case "${GH_CONFIG_DIR:-}" in
+  */genie-gh-config) ;;
+  *)
+    printf 'GH_CONFIG_DIR was not brokered: %s\n' "${GH_CONFIG_DIR:-unset}" >&2
+    exit 11
+    ;;
+esac
+
+for command_name in gh curl wget hub; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    printf 'missing blocker command: %s\n' "$command_name" >&2
+    exit 20
+  fi
+  set +e
+  "$command_name" --version >"$out_dir/$command_name.out" 2>&1
+  command_rc=$?
+  set -e
+  if [[ "$command_rc" -ne 126 ]]; then
+    printf 'command was not blocked: %s rc=%s\n' "$command_name" "$command_rc" >&2
+    cat "$out_dir/$command_name.out" >&2
+    exit 21
+  fi
+  grep -Fq "Genie Protocol" "$out_dir/$command_name.out" || {
+    printf 'blocker message missing for %s\n' "$command_name" >&2
+    cat "$out_dir/$command_name.out" >&2
+    exit 22
+  }
+done
+
+if [[ -x /usr/bin/gh ]]; then
+  set +e
+  /usr/bin/gh auth status >/tmp/upkeeper-genie-gh-auth-status.out 2>&1
+  absolute_gh_rc=$?
+  set -e
+  if [[ "$absolute_gh_rc" -eq 0 ]]; then
+    printf 'absolute gh retained authenticated GitHub state\n' >&2
+    exit 30
+  fi
+fi
+
+printf 'GENIE_BOUNDARY_OK\n'
+EOF
+  chmod +x "$temp_dir/fake-backend"
+  printf 'test prompt\n' >"$prompt_file"
+
+  set +e
+  (
+    cd "$ROOT_DIR"
+    PATH="$temp_dir/host-bin:$PATH"
+    LOG_FILE="$temp_dir/Upkeeper.log"
+    CODEX_TERMINAL_VERBOSITY=full
+    CYCLE_ID="validation-genie"
+    CYCLE_RUN_HASH="validationhashgenie"
+    RUN_TMP_DIR=""
+    RUN_GENIE_BIN_DIR=""
+    RUN_GENIE_GH_CONFIG_DIR=""
+    GITHUB_TOKEN="should-not-leak"
+    GH_TOKEN="should-not-leak"
+    GITHUB_PAT="should-not-leak"
+    GH_ENTERPRISE_TOKEN="should-not-leak"
+    GITHUB_ENTERPRISE_TOKEN="should-not-leak"
+    CODEX_GITHUB_PERSONAL_ACCESS_TOKEN="should-not-leak"
+    GITHUB_API_URL="https://api.github.com"
+    GITHUB_GRAPHQL_URL="https://api.github.com/graphql"
+    UPKEEPER_GENIE_TEST_OUTPUT_DIR="$temp_dir"
+    export GITHUB_TOKEN GH_TOKEN GITHUB_PAT GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
+    export CODEX_GITHUB_PERSONAL_ACCESS_TOKEN GITHUB_API_URL GITHUB_GRAPHQL_URL
+    export UPKEEPER_GENIE_TEST_OUTPUT_DIR
+    source lib/upkeeper/fallback_artifacts.bash
+    source lib/upkeeper/runtime_foundation.bash
+    source lib/upkeeper/codex_io.bash
+    run_codex_exec_capture "genie-validation" "$transcript_file" "$prompt_file" "$temp_dir/fake-backend"
+  )
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 0 ]] || fail "Genie Protocol backend boundary fixture exited $rc"
+  grep -Fq "GENIE_BOUNDARY_OK" "$transcript_file" || fail "Genie Protocol boundary fixture did not complete"
+  grep -Fq "genie_protocol.ready broker=wrapper github_direct=blocked" "$temp_dir/Upkeeper.log" || fail "Genie Protocol boundary readiness was not logged"
 
   rm -r "$temp_dir"
 }
@@ -1833,6 +2600,26 @@ EOF
   selected_file="$(printf '%s' "$summary" | jq -r '.selected_file')"
   [[ "$selected_file" == "/tmp/root/templates/README.md" ]] || fail "review summary baseline line contaminated selected file: $selected_file"
 
+  cat >"$temp_dir/last-message.txt" <<'EOF'
+REVIEWED_AND_FIXED
+
+Findings:
+- The selected target was omitted from the final message.
+
+Changed:
+- Preserved wrapper evidence instead of reporting unknown.
+
+Verification:
+- quick validator fixture
+
+UPKEEPER_STATUS: WORK_DONE
+EOF
+
+  CODEX_TERMINAL_VERBOSITY=silent CODEX_PROMPT_PASS=default \
+    bash -lc 'cd "$1"; source ./Upkeeper; LOG_FILE="$2"; RUN_SELECTED_REVIEW_PATH="lib/upkeeper/session_store_preflight.bash"; log_review_report_summary "$3" WORK_DONE 0' bash "$ROOT_DIR" "$temp_dir/Upkeeper.log" "$temp_dir/last-message.txt"
+  grep -Fq "review.summary" "$temp_dir/Upkeeper.log" || fail "review summary fallback did not write a summary log"
+  grep -Fq "selected_file=lib/upkeeper/session_store_preflight.bash" "$temp_dir/Upkeeper.log" || fail "review summary fallback did not use wrapper-selected target"
+
   CODEX_TERMINAL_VERBOSITY=basic \
     bash -lc 'cd "$1"; source ./Upkeeper; terminal_emit_review_finale REVIEWED_AND_FIXED lib/upkeeper/example.bash "parser accepted malformed JSON as absent" "added strict rejection" "bash -n passed"' bash "$ROOT_DIR" \
       >"$temp_dir/finale-basic.out" 2>"$temp_dir/finale-basic.err"
@@ -2216,10 +3003,16 @@ check_module_map
 check_prompt_template
 check_help_and_diff
 check_gitignore_contract
+check_force_added_gitignored_target_selection
+check_symlink_target_selection_guard
+check_validation_environment_isolation
 check_codex_mode_validation
 check_cycle_start_log_contract
+check_log_path_symlink_guard
 check_disk_preflight_log_contract
 check_arg0_tmp_cleanup_contract
+check_automation_obligation_framework
+check_session_store_preflight_contract
 check_bwrap_tmp_preflight_contract
 check_wrapper_health_log_quoting
 check_operator_guide_bootstrap_race
@@ -2228,6 +3021,9 @@ check_quota_fallback_exit_contract
 check_review_module_flags
 check_config_file_support
 check_file_manifest_selection
+check_issue_workflow_comment_relay
+check_issue_workflow_backend_mode_contract
+check_genie_protocol_backend_boundary
 check_tool_failure_queue
 check_lattice_contract
 check_public_docs_policy

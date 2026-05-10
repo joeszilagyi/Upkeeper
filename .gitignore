@@ -7,5 +7,6 @@ Thumbs.db
 
 # Upkeeper local run artifacts.
 Upkeeper.log
+Upkeeper.log.*.zip
 runtime/
 /out

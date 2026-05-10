@@ -112,11 +112,17 @@ FLAMEON_DRY_RUN=1 ./FlameOn
 `FlameOn` is intentionally thin. It resolves to
 `./Upkeeper --model-override=5.5_xhigh --max-cover --bug-report-only`, sets
 `CODEX_TERMINAL_VERBOSITY` to `silent`, `basic`, or `debug1`, and keeps the
-same quota, startup, fallback, failure-queue, evidence, and local safety checks
-as normal Upkeeper runs. In bug-report-only mode, Codex must not edit or touch
-tracked source; it investigates, runs deterministic checks, and files or fully
-reports confirmed bugs. `-backup_queue` and `--backup-queue` switch that one
-cycle to `runtime/unaddressed-tool-failures-backup`.
+same startup, fallback, failure-queue, evidence, and local safety checks as
+normal Upkeeper runs. The automation launcher path is intentionally full burn:
+Lattice is required, encrypted pre-contact backup is required, and Codex is
+pinned to `--sandbox workspace-write` before launch. Quota thresholds are set to
+spend-to-zero (`CODEX_5H_STOP_PERCENT=0` and `CODEX_WEEK_STOP_PERCENT=0`), and
+wrapper quota guardrail stops plus persisted quota cooldown markers are bypassed
+for the launcher run. In bug-report-only mode, Codex must not edit or touch
+tracked source; it investigates, runs deterministic checks, and files issues or
+fully reports confirmed bugs. `-backup_queue` and `--backup-queue` switch that
+one cycle to
+`runtime/unaddressed-tool-failures-backup`.
 
 For a scripted issue-fix cycle, use `ChimneySweep`:
 
@@ -131,8 +137,43 @@ prints `high five yay` and exits 25. Otherwise it keeps security-class issues
 ahead of data-integrity issues, keeps working that class until it is clear, and
 then ranks the remaining queue by containment title/tag signals, severity, and
 least-recently-touched age. The selected issue is passed to Upkeeper as
-`--fix-issue=NUMBER`, so Upkeeper does not re-rank and accidentally repair a
-different issue after the scripted handoff.
+`--fix-issue=NUMBER`, with `--prompt-pass=all` and all P24-P29 review modules.
+By default, `ChimneySweep` runs three separate backend instantiations:
+`comment`, `review`, then `apply`. The comment stage leaves a proposed
+resolution comment on the selected issue without changing tracked source, the
+review stage independently reviews that proposal and leaves a decision comment,
+and the apply stage works the bug. This keeps issue selection scripted while
+still exercising the full repair side end to end.
+
+Upkeeper runs those backend instantiations under the Genie Protocol: the wrapper
+fetches issue bodies/comments before launch, Codex receives only that issue
+packet, and GitHub side effects stay wrapper-owned. The comment and review
+stages also force backend Codex into a read-only repo sandbox and require the
+proposed issue comment to be emitted in a final-message draft block that the
+wrapper extracts after validation. Backend Codex launches do not inherit GitHub
+token variables, use an empty per-run `gh` config directory, and have direct
+`gh`, `curl`, `wget`, and `hub` commands shadowed by blocker stubs.
+
+Live `FlameOn` and `ChimneySweep` runs require an encrypted pre-contact backup
+configuration. Set `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` and install
+`age`; dry-run remains available without those prerequisites.
+
+One-time local setup:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y age
+
+mkdir -p "$HOME/.config/age"
+chmod 700 "$HOME/.config/age"
+age-keygen -o "$HOME/.config/age/upkeeper.txt"
+chmod 600 "$HOME/.config/age/upkeeper.txt"
+export UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT="$(age-keygen -y "$HOME/.config/age/upkeeper.txt")"
+```
+
+The exported age recipient is public. Keep the private identity file out of
+prompts, logs, committed config, and backend-visible environments; it is needed
+only for manual restore.
 
 Bash completion for `Upkeeper`, `FlameOn`, and `ChimneySweep` is available as
 an opt-in shell helper:
@@ -156,8 +197,8 @@ binary to exercise launch/capture failure classification without spending quota.
 
 GitHub Actions runs the no-quota CI path in
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on pushes and pull
-requests. The workflow installs required tools including `jq`, then runs shell
-syntax checks, `tests/*.bash`, `tools/check_public_docs.sh --quick`, and
+requests. The workflow installs required tools including `jq` and `age`, then
+runs shell syntax checks, `tests/*.bash`, `tools/check_public_docs.sh --quick`, and
 `tools/validate_upkeeper.sh --quick`. It does not launch real Codex backend
 work and does not upload runtime artifacts by default.
 
@@ -500,7 +541,11 @@ without fixing them. It is also accepted as `--file-bug-only` or
 `--report-bug-only`. This mode explicitly overrides the normal clean-review
 touch requirement; if Codex changes tracked source anyway, the wrapper compares
 the source mutation fingerprint from before and after the run and fails the
-cycle as `BUG_REPORT_ONLY_MUTATION_VIOLATION`.
+cycle as a source mutation guard violation. ChimneySweep's comment and review
+issue-workflow stages use the same tracked-source mutation guard and are
+launched with a read-only backend sandbox. Their issue-comment text is carried
+back in a final-message draft block and posted by the wrapper only after the
+guard passes.
 
 Use `--fix-next-issue` when Upkeeper itself should pick a GitHub issue to fix
 before launching Codex. It selects the oldest open issue in priority order:
@@ -511,7 +556,12 @@ issue title/body when a repo-local path is present, then injects the issue body
 as evidence for a focused repair task. The alias `--fix-oldest-bug` is accepted
 for the same mode. Use `--fix-issue=NUMBER` when a deterministic caller such as
 `ChimneySweep` has already selected the issue and Upkeeper should only lock and
-repair that one issue.
+repair that one issue. `--issue-workflow-stage=comment|review|apply` is the
+stage contract used by `ChimneySweep`; comment and review stages are
+source-read-only and apply is allowed to patch. GitHub I/O remains
+wrapper-brokered for every stage: the backend reads wrapper-fetched evidence and
+writes local artifacts, while the wrapper posts comments or other issue updates
+after validation.
 
 For an explicit one-cycle Upkeeper self-review with all built-in P1-P23 passes,
 use equals-form operator flags:

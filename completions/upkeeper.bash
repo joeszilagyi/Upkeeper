@@ -54,7 +54,7 @@ _upkeeper_complete() {
     --ignore-failure-queue --bypass-failure-queue --backup-queue -backup_queue
     --prompt-pass= --max-cover
     --bug-report-only --file-bug-only --report-bug-only
-    --fix-next-issue --fix-oldest-bug --fix-issue=
+    --fix-next-issue --fix-oldest-bug --fix-issue= --issue-workflow-stage=
   "
 
   case "$prev" in
@@ -103,6 +103,10 @@ _upkeeper_complete() {
     --fix-issue=*)
       return 0
       ;;
+    --issue-workflow-stage=*)
+      _upkeeper_complete_csv_value "$cur" "comment review apply"
+      return 0
+      ;;
     --*)
       mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
       return 0
@@ -129,7 +133,13 @@ _chimneysweep_complete() {
   local cur opts
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
-  opts="--help -h --silent --basic --debug1 --dry-run --json"
+  opts="--help -h --silent --basic --debug1 --workflow= --dry-run --json"
+  case "$cur" in
+    --workflow=*)
+      _upkeeper_complete_csv_value "$cur" "comment-review-apply comment-review comment review apply staged"
+      return 0
+      ;;
+  esac
   mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
 }
 

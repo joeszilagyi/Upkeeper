@@ -69,6 +69,11 @@ aux_quota_allows_run() {
 
   log_line "INFO" "$phase_label.quota target_model=$target_model snapshot_selection=$selection snapshot_current=$snapshot_current snapshot_stale_after_reset=$stale_after_reset primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired primary_bucket_current=$primary_bucket_current secondary_bucket_current=$secondary_bucket_current matching_snapshot_count=$matching_count expected_quota_identity=$expected_quota_identity quota_identity_status=$quota_identity_status limit_id=$limit_id limit_name=$(shell_quote "$limit_name") source=$source snapshot_model_hint=$model_hint event_timestamp=$ts primary_used=${primary_used}% primary_left=${primary_left}% projected_primary_delta_used=${projected_primary_delta}% projected_primary_left=${primary_projected_left}% primary_decision=$primary_guardrail_decision secondary_used=${secondary_used}% secondary_left=${secondary_left}% projected_secondary_delta_used=${projected_secondary_delta}% projected_secondary_left=${secondary_projected_left}% secondary_decision=$secondary_guardrail_decision projection_basis=$projected_basis left_thresholds=(${five_hour_threshold}%/${week_threshold}%) weekly_base_threshold=${CODEX_WEEK_STOP_PERCENT}% weekly_buffer=${week_buffer}%"
 
+  if [[ "${CODEX_QUOTA_GUARDRAIL_BYPASS:-0}" == "1" ]]; then
+    log_line "WARN" "$phase_label.quota_bypass target_model=$target_model primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision quota_identity_status=$quota_identity_status"
+    return 0
+  fi
+
   if [[ "$selection" != "exact_model" ]]; then
     log_line "WARN" "$phase_label.skip reason=quota_snapshot_not_exact target_model=$target_model snapshot_selection=$selection snapshot_model_hint=$model_hint source=$source"
     return 1

@@ -6,6 +6,49 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-10: v1.2.10 changes:
+		1. Hardened target selection so paths matching Git ignore rules are rejected even when they have been force-added to Git.
+		2. Applied the same `git check-ignore --no-index` contract to explicit `--target-file` validation, normal enumerate/manifest selection, manifest generation, and Lattice/max-cover candidate diagnostics.
+		3. Added deterministic quick validation with a temp repo containing a force-added ignored executable to prove explicit, automatic, manifest, and Lattice selection paths exclude it.
+		4. Hardened target selection so tracked symlinks are rejected before stat, read, hash, prompt selection, manifest generation, or Lattice/max-cover candidate reporting can follow them outside the repository.
+		5. Added deterministic quick validation with a temp repo containing a tracked symlink to an outside sentinel file to prove explicit, automatic, manifest, and Lattice selection paths fail closed.
+		6. Hardened the Codex session-store write preflight so `$CODEX_HOME/sessions` must be a real user-owned directory; owned session directories with weak inherited permissions are repaired to `0700` before Upkeeper probes them.
+		7. Replaced the predictable session-store marker file with an unpredictable `mktemp -d` probe directory and child probe file, preventing a preexisting marker symlink from being followed or truncated.
+		8. Added quick validation proving normal session-store probes leave no residue, predictable marker symlinks are not followed, symlinked session stores fail closed before probing, and owned weak-mode session stores are repaired before probing.
+		9. Made compact `review.summary` and `review.fix_details` logging fall back to the wrapper-selected target when the final model message omits a selected file, preventing live issue-workflow evidence from degrading to `selected_file=unknown`.
+		10. Added the shared automation obligation framework: every Upkeeper cycle can write a durable run record under `runtime/upkeeper-automation-ledger`, and non-zero cycle exits create unresolved obligations under `runtime/upkeeper-obligations`.
+		11. Made FlameOn and ChimneySweep identify themselves through the shared automation framework so future derivative launchers can supply identity and policy without inventing separate state formats.
+		12. Made FlameOn and ChimneySweep reconcile open automation obligations before their normal bug-finding or GitHub issue-selection policies, handing the selected obligation to Upkeeper as a locked target plus wrapper-generated prompt file.
+		13. Added successful obligation-cycle resolution: when an obligation-selected non-dry-run cycle exits cleanly, Upkeeper moves the selected obligation from `open` to `resolved` with resolver cycle evidence.
+
+2026-05-09: v1.2.9 changes:
+	1. Made `ChimneySweep` default to a staged issue workflow: comment, review, then apply, with a separate Upkeeper/Codex instantiation for each stage.
+	2. Added `--issue-workflow-stage=comment|review|apply` for scripted issue-fix handoffs. comment and review stages are tracked-source read-only and instruct Codex to leave `ChimneySweep proposal:` / `ChimneySweep review:` issue comments; apply is the implementation stage.
+	3. Added `--workflow=comment-review-apply|comment-review|comment|review|apply` to ChimneySweep so every stage combination can be dry-run or live-tested against the same deterministic issue ranking.
+	4. Generalized the bug-report-only source mutation check into a source mutation guard reused by issue comment/review stages.
+	5. Rendered staged issue-comment commands with the resolved issue number instead of relying on wrapper-local shell variables inside Codex tool commands.
+	6. Made the local tool-failure queue resolve same-run failures after a later successful rerun, even when the model correctly ends BLOCKED for a separate reporting or coverage reason.
+	7. Added the Genie Protocol boundary for backend Codex launches: Upkeeper scrubs GitHub token environment variables, points `gh` at an empty per-run config directory, and shadows direct `gh`, `curl`, `wget`, and `hub` calls with blocker commands.
+	8. Moved staged issue comments to a wrapper relay: comment/review models emit a final-message draft block, and the wrapper extracts and posts it to GitHub only after the source-read-only guard passes.
+	9. Rejected `CODEX_MODE` values that request `danger-full-access` or `--dangerously-bypass-approvals-and-sandbox`, because those modes are incompatible with the Genie Protocol backend containment contract.
+	10. Forced comment/review issue-workflow backend launches into `--sandbox read-only`, with no backend-writable draft directory, so those stages can inspect source but cannot modify tracked source or local draft artifacts.
+	11. Allowed staged review comments to put their decision on the first line, such as `ChimneySweep review: revise`, while still requiring the final-message draft block and wrapper-owned GitHub relay.
+
+2026-05-09: v1.2.8 changes:
+	1. Made the repo-root `FlameOn` and `ChimneySweep` automation launchers full-burn by default: Lattice is required, pre-contact backup is required, encrypted backup is required, and `CODEX_MODE` is pinned to `--sandbox workspace-write`.
+	2. Made `ChimneySweep` hand locked issues to Upkeeper with `--prompt-pass=all` and all P24-P29 review modules so repair automation exercises the full review surface against the scripted target.
+	3. Extended launcher dry-run output and tests so the fail-closed evidence, vault, and containment defaults are visible before backend launch.
+	4. Added `age` to CI and dependency/workflow documentation as the live full-burn launcher dependency, including local recipient setup and private-identity handling guidance.
+	5. Made full-burn launchers spend-to-zero by forcing five-hour and weekly quota stop floors and buffers to `0`, bypassing wrapper quota guardrail stops, and bypassing persisted quota-cooldown markers from earlier guarded runs.
+	6. Isolated validator postmortem state and launcher-only full-burn environment knobs so live quota-cooldown, guardrail-bypass, and encrypted-backup settings cannot block no-quota quick checks.
+	7. Left plain `./Upkeeper` compatibility defaults unchanged; the full-burn contract applies to the automation launchers intended for dogfooding and scheduled stress.
+
+2026-05-09: v1.2.7 changes:
+	1. Hardened live wrapper log preparation so symlink, non-regular, hard-linked, or wrong-owner `Upkeeper.log` paths fail closed before the first wrapper log append and before Codex launch.
+	2. Routed wrapper-owned log appends through a no-follow append helper that creates new logs as user-owned `0600` regular files and rejects symlink log parent directories.
+	3. Added deterministic quick validation proving a default symlinked-client `Upkeeper.log` is rejected without modifying the symlink target, and documented the new security behavior.
+	4. Ignored rotated `Upkeeper.log.*.zip` archives so local log rotation evidence remains out of source control.
+
 2026-05-09: v1.2.6 changes:
 	1. Added the repo-root `ChimneySweep` launcher as a separate issue-fix automation path from `FlameOn`.
 	2. Made `ChimneySweep` list and rank open GitHub issues deterministically before any backend Codex process can start; clean actionable queues print `high five yay` and exit 25.

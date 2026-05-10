@@ -1,17 +1,11 @@
 ensure_log_writable_or_exit() {
   local phase="${1:-startup}"
-  local marker line last_line
+  local marker line
 
   ensure_log_parent
   marker="upkeeper-log-probe-$CYCLE_ID-$CYCLE_RUN_HASH-$$"
   line="$(timestamp_now) [INFO] cycle=$CYCLE_ID run_hash=$CYCLE_RUN_HASH log.write_preflight phase=$phase marker=$marker"
-  if ! printf '%s\n' "$line" >>"$LOG_FILE" 2>/dev/null; then
-    printf '%s [ERROR] cycle=%s run_hash=%s log.write_preflight_failed phase=%s path=%s reason=append_failed\n' "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$phase" "$LOG_FILE" >&2
-    exit 3
-  fi
-  last_line="$(tail -n 1 "$LOG_FILE" 2>/dev/null || true)"
-  if [[ "$last_line" != "$line" ]]; then
-    printf '%s [ERROR] cycle=%s run_hash=%s log.write_preflight_failed phase=%s path=%s reason=verify_failed\n' "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$phase" "$LOG_FILE" >&2
+  if ! append_log_line_secure "$line" "write_preflight"; then
     exit 3
   fi
 }

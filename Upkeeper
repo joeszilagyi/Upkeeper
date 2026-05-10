@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.6
+## Version: v1.2.10
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -107,7 +107,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.6"
+UPKEEPER_VERSION="v1.2.10"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -129,6 +129,7 @@ UPKEEPER_MAX_COVER="${UPKEEPER_MAX_COVER:-0}"
 UPKEEPER_BUG_REPORT_ONLY="${UPKEEPER_BUG_REPORT_ONLY:-0}"
 UPKEEPER_FIX_NEXT_ISSUE="${UPKEEPER_FIX_NEXT_ISSUE:-0}"
 UPKEEPER_FIX_ISSUE="${UPKEEPER_FIX_ISSUE:-}"
+UPKEEPER_ISSUE_WORKFLOW_STAGE="${UPKEEPER_ISSUE_WORKFLOW_STAGE:-}"
 UPKEEPER_ISSUE_PRIORITY_LABELS="${UPKEEPER_ISSUE_PRIORITY_LABELS:-security,data-integrity,bug}"
 UPKEEPER_ISSUE_SKIP_LABELS="${UPKEEPER_ISSUE_SKIP_LABELS:-in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr}"
 UPKEEPER_LATTICE_ENABLED="${UPKEEPER_LATTICE_ENABLED:-1}"
@@ -198,6 +199,7 @@ CODEX_MAX_COVER_MODE="${CODEX_MAX_COVER_MODE:-$UPKEEPER_MAX_COVER}"
 CODEX_BUG_REPORT_ONLY="${CODEX_BUG_REPORT_ONLY:-$UPKEEPER_BUG_REPORT_ONLY}"
 CODEX_ISSUE_FIX_NEXT="${CODEX_ISSUE_FIX_NEXT:-$UPKEEPER_FIX_NEXT_ISSUE}"
 CODEX_ISSUE_FIX_REQUESTED_NUMBER="${CODEX_ISSUE_FIX_REQUESTED_NUMBER:-$UPKEEPER_FIX_ISSUE}"
+CODEX_ISSUE_WORKFLOW_STAGE="${CODEX_ISSUE_WORKFLOW_STAGE:-$UPKEEPER_ISSUE_WORKFLOW_STAGE}"
 CODEX_ISSUE_PRIORITY_LABELS="${CODEX_ISSUE_PRIORITY_LABELS:-$UPKEEPER_ISSUE_PRIORITY_LABELS}"
 CODEX_ISSUE_SKIP_LABELS="${CODEX_ISSUE_SKIP_LABELS:-$UPKEEPER_ISSUE_SKIP_LABELS}"
 CODEX_SESSION_SCAN_LIMIT="${CODEX_SESSION_SCAN_LIMIT:-200}"
@@ -206,6 +208,8 @@ CODEX_SPARK_5H_STOP_PERCENT="${CODEX_SPARK_5H_STOP_PERCENT:-0}"
 CODEX_WEEK_STOP_PERCENT="${CODEX_WEEK_STOP_PERCENT:-15}"
 CODEX_WEEK_STOP_BUFFER_PERCENT="${CODEX_WEEK_STOP_BUFFER_PERCENT:-0}"
 CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT="${CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT:-5}"
+CODEX_QUOTA_GUARDRAIL_BYPASS="${CODEX_QUOTA_GUARDRAIL_BYPASS:-0}"
+CODEX_QUOTA_COOLDOWN_BYPASS="${CODEX_QUOTA_COOLDOWN_BYPASS:-0}"
 CODEX_LOG_ROTATE_AFTER_HOURS="${CODEX_LOG_ROTATE_AFTER_HOURS:-72}"
 CODEX_LOG_ROTATE_KEEP_HOURS="${CODEX_LOG_ROTATE_KEEP_HOURS:-144}"
 CODEX_PROCESS_ARGS_MAX_CHARS="${CODEX_PROCESS_ARGS_MAX_CHARS:-600}"
@@ -238,6 +242,16 @@ CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="${CODEX_STARTUP_ANOMALY_GATE_STATE_DIR:-$R
 CODEX_TOOL_FAILURE_QUEUE_ENABLED="${CODEX_TOOL_FAILURE_QUEUE_ENABLED:-1}"
 CODEX_TOOL_FAILURE_QUEUE_DIR="${CODEX_TOOL_FAILURE_QUEUE_DIR:-$ROOT_DIR/runtime/unaddressed-tool-failures}"
 CODEX_TOOL_FAILURE_QUEUE_BYPASS="0"
+UPKEEPER_AUTOMATION_LEDGER_ENABLED="${UPKEEPER_AUTOMATION_LEDGER_ENABLED:-1}"
+UPKEEPER_AUTOMATION_LEDGER_DIR="${UPKEEPER_AUTOMATION_LEDGER_DIR:-$ROOT_DIR/runtime/upkeeper-automation-ledger}"
+UPKEEPER_OBLIGATION_DIR="${UPKEEPER_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
+UPKEEPER_AUTOMATION_LAUNCHER="${UPKEEPER_AUTOMATION_LAUNCHER:-$SCRIPT_NAME}"
+UPKEEPER_AUTOMATION_VARIANT="${UPKEEPER_AUTOMATION_VARIANT:-standard}"
+UPKEEPER_AUTOMATION_POLICY="${UPKEEPER_AUTOMATION_POLICY:-one-cycle}"
+UPKEEPER_AUTOMATION_WORKFLOW="${UPKEEPER_AUTOMATION_WORKFLOW:-}"
+UPKEEPER_AUTOMATION_STAGE="${UPKEEPER_AUTOMATION_STAGE:-}"
+UPKEEPER_AUTOMATION_OBLIGATION_ID="${UPKEEPER_AUTOMATION_OBLIGATION_ID:-}"
+UPKEEPER_AUTOMATION_OBLIGATION_PATH="${UPKEEPER_AUTOMATION_OBLIGATION_PATH:-}"
 CODEX_ACTIVE_LOCK_DIR="${CODEX_ACTIVE_LOCK_DIR:-$ROOT_DIR/runtime/upkeeper-active.lock}"
 CODEX_WRAPPER_HEALTH_STATE_DIR="${CODEX_WRAPPER_HEALTH_STATE_DIR:-$CODEX_HOME_DIR/upkeeper/active-wrapper-runs}"
 CODEX_WRAPPER_HEALTH_ARCHIVE_DIR="${CODEX_WRAPPER_HEALTH_ARCHIVE_DIR:-$CODEX_HOME_DIR/upkeeper/retired-wrapper-runs}"
@@ -299,6 +313,10 @@ RUN_PRECONTACT_BACKUP_SHA256=""
 RUN_PRECONTACT_BACKUP_MODE=""
 RUN_PRECONTACT_BACKUP_ENCRYPTED=""
 RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND=""
+RUN_ISSUE_WORKFLOW_COMMENT_FILE=""
+RUN_GENIE_BIN_DIR=""
+RUN_GENIE_GH_CONFIG_DIR=""
+RUN_AUTOMATION_RECORD_FILE=""
 ACTIVE_LOCK_ACQUIRED="0"
 WRAPPER_HEALTH_STATE_FILE=""
 WRAPPER_HEALTH_STATE_FINALIZED="0"
@@ -314,6 +332,7 @@ CODEX_ISSUE_FIX_SELECTED_LABEL=""
 CODEX_ISSUE_FIX_CREATED_AT=""
 CODEX_ISSUE_FIX_TARGET_FILE=""
 CODEX_ISSUE_FIX_BODY=""
+CODEX_ISSUE_FIX_COMMENTS_JSON="[]"
 
 source_upkeeper_module() {
   local module="$1"
@@ -343,9 +362,11 @@ UPKEEPER_MODULES=(
   "operator_guide.bash"
   "cycle_cleanup_signals.bash"
   "runtime_format_json.bash"
+  "automation_obligations.bash"
   "lattice.bash"
   "transcript_output.bash"
   "tool_failure_queue.bash"
+  "launcher_full_burn.bash"
   "codex_io.bash"
 
   # Startup validation, quota, and target-selection inputs.
@@ -435,7 +456,8 @@ main() {
   local loop_parent_start_fingerprint
   loop_parent_start_fingerprint="$(process_start_fingerprint "$loop_parent_pid")"
 
-  log_line "INFO" "cycle.start execution_origin=$(shell_quote "$CODEX_EXECUTION_ORIGIN") script=$(shell_quote "$SELF_INVOKE_PATH") implementation=$(shell_quote "$SELF_PATH") cwd=$(shell_quote "$ROOT_DIR") pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$(shell_quote "$direct_parent_comm") parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$(shell_quote "$loop_parent_comm") loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override config_loaded=$UPKEEPER_CONFIG_LOADED config_file=$(shell_quote "$UPKEEPER_CONFIG_SOURCE") model=$(shell_quote "$CODEX_MODEL") effort=$(shell_quote "$CODEX_REASONING_EFFORT") mode=$(shell_quote "$CODEX_MODE_STRING") model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}") model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") target_root=$(shell_quote "${CODEX_TARGET_ROOT:-none}") target_depth=$(shell_quote "${CODEX_TARGET_MAX_DEPTH:-none}") selection_source=$(shell_quote "$CODEX_SELECTION_SOURCE") selection_order=$(shell_quote "$CODEX_SELECTION_ORDER") max_cover=$CODEX_MAX_COVER_MODE bug_report_only=$(truthy_as_int "${CODEX_BUG_REPORT_ONLY:-0}") issue_fix_next=$(truthy_as_int "${CODEX_ISSUE_FIX_NEXT:-0}") issue_priority_labels=$(shell_quote "${CODEX_ISSUE_PRIORITY_LABELS:-none}") manifest_mode=$(shell_quote "$CODEX_FILE_MANIFEST_MODE") manifest_path=$(shell_quote "$CODEX_FILE_MANIFEST_PATH") include_globs=$(shell_quote "${CODEX_SELECTION_INCLUDE_GLOBS:-none}") exclude_globs=$(shell_quote "${CODEX_SELECTION_EXCLUDE_GLOBS:-none}") selection_review_modules=$(shell_quote "${CODEX_SELECTION_REVIEW_MODULES:-none}") prompt_pass=$(shell_quote "${CODEX_PROMPT_PASS:-default}") review_modules=$(review_modules_csv) attempt_role=$(shell_quote "$CODEX_ATTEMPT_ROLE") fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=$(shell_quote "${CODEX_PRIMARY_MODEL_CONTEXT:-none}") fallback_trigger=$(shell_quote "${CODEX_FALLBACK_TRIGGER:-none}") screen_fallback_child_id=$(shell_quote "${CODEX_SCREEN_FALLBACK_CHILD_ID:-none}") code_home=$(shell_quote "$CODEX_HOME_DIR") dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
+  log_line "INFO" "cycle.start execution_origin=$(shell_quote "$CODEX_EXECUTION_ORIGIN") script=$(shell_quote "$SELF_INVOKE_PATH") implementation=$(shell_quote "$SELF_PATH") cwd=$(shell_quote "$ROOT_DIR") pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$(shell_quote "$direct_parent_comm") parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$(shell_quote "$loop_parent_comm") loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override config_loaded=$UPKEEPER_CONFIG_LOADED config_file=$(shell_quote "$UPKEEPER_CONFIG_SOURCE") model=$(shell_quote "$CODEX_MODEL") effort=$(shell_quote "$CODEX_REASONING_EFFORT") mode=$(shell_quote "$CODEX_MODE_STRING") model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}") model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") target_root=$(shell_quote "${CODEX_TARGET_ROOT:-none}") target_depth=$(shell_quote "${CODEX_TARGET_MAX_DEPTH:-none}") selection_source=$(shell_quote "$CODEX_SELECTION_SOURCE") selection_order=$(shell_quote "$CODEX_SELECTION_ORDER") max_cover=$CODEX_MAX_COVER_MODE bug_report_only=$(truthy_as_int "${CODEX_BUG_REPORT_ONLY:-0}") issue_fix_next=$(truthy_as_int "${CODEX_ISSUE_FIX_NEXT:-0}") issue_workflow_stage=$(shell_quote "${CODEX_ISSUE_WORKFLOW_STAGE:-none}") issue_priority_labels=$(shell_quote "${CODEX_ISSUE_PRIORITY_LABELS:-none}") manifest_mode=$(shell_quote "$CODEX_FILE_MANIFEST_MODE") manifest_path=$(shell_quote "$CODEX_FILE_MANIFEST_PATH") include_globs=$(shell_quote "${CODEX_SELECTION_INCLUDE_GLOBS:-none}") exclude_globs=$(shell_quote "${CODEX_SELECTION_EXCLUDE_GLOBS:-none}") selection_review_modules=$(shell_quote "${CODEX_SELECTION_REVIEW_MODULES:-none}") prompt_pass=$(shell_quote "${CODEX_PROMPT_PASS:-default}") review_modules=$(review_modules_csv) attempt_role=$(shell_quote "$CODEX_ATTEMPT_ROLE") fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=$(shell_quote "${CODEX_PRIMARY_MODEL_CONTEXT:-none}") fallback_trigger=$(shell_quote "${CODEX_FALLBACK_TRIGGER:-none}") screen_fallback_child_id=$(shell_quote "${CODEX_SCREEN_FALLBACK_CHILD_ID:-none}") automation_launcher=$(shell_quote "${UPKEEPER_AUTOMATION_LAUNCHER:-$SCRIPT_NAME}") automation_variant=$(shell_quote "${UPKEEPER_AUTOMATION_VARIANT:-standard}") automation_policy=$(shell_quote "${UPKEEPER_AUTOMATION_POLICY:-one-cycle}") automation_workflow=$(shell_quote "${UPKEEPER_AUTOMATION_WORKFLOW:-none}") code_home=$(shell_quote "$CODEX_HOME_DIR") dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
+  automation_record_cycle_start || log_line "WARN" "automation.run_record.start_failed path=$(shell_quote "${RUN_AUTOMATION_RECORD_FILE:-unknown}")"
   resolve_issue_fix_next_or_exit
   lattice_init_and_doctor_or_exit
   lattice_record_cycle_start
@@ -568,6 +590,11 @@ main() {
     log_line "WARN" "quota.guardrails target_model=$CODEX_MODEL deferred until an exact model snapshot exists"
   fi
 
+  if [[ "$should_stop" -eq 1 && "${CODEX_QUOTA_GUARDRAIL_BYPASS:-0}" == "1" ]]; then
+    log_line "WARN" "quota.guardrails bypassed=1 phase=before_run target_model=$CODEX_MODEL reason=$(shell_quote "$stop_reason") primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision identity_decision=$quota_identity_guardrail_decision"
+    should_stop=0
+  fi
+
   if [[ "$should_stop" -eq 1 ]]; then
     write_primary_quota_blocked_marker "$stop_reason"
     if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
@@ -593,7 +620,10 @@ main() {
 
   local compiled_prompt_file
   local last_message_file
-  local bug_report_only_worktree_before=""
+  local source_mutation_guard_before=""
+  local source_mutation_guard_mode=""
+  local -a backend_mode_args=()
+  local backend_mode_summary=""
   ensure_run_tmp_dir
   compiled_prompt_file="$(run_mktemp compiled-prompt)"
   last_message_file="$(run_mktemp last-message)"
@@ -611,12 +641,13 @@ main() {
     finish_cycle 0 DRY_RUN INFO "codex_exec_started=0"
   fi
 
-  if upkeeper_bug_report_only_enabled; then
-    if bug_report_only_worktree_before="$(upkeeper_source_mutation_fingerprint)"; then
-      log_line "INFO" "bug_report_only.baseline source_fingerprint=$bug_report_only_worktree_before"
+  if upkeeper_source_mutation_guard_enabled; then
+    source_mutation_guard_mode="$(upkeeper_source_mutation_guard_mode)"
+    if source_mutation_guard_before="$(upkeeper_source_mutation_fingerprint)"; then
+      log_line "INFO" "source_mutation_guard.baseline mode=$source_mutation_guard_mode source_fingerprint=$source_mutation_guard_before"
     else
-      log_line "WARN" "bug_report_only.baseline source_fingerprint=unavailable"
-      bug_report_only_worktree_before=""
+      log_line "WARN" "source_mutation_guard.baseline mode=$source_mutation_guard_mode source_fingerprint=unavailable"
+      source_mutation_guard_before=""
     fi
   fi
 
@@ -624,6 +655,14 @@ main() {
   ensure_codex_arg0_tmp_clean_or_exit "before_run" "0"
   ensure_codex_bwrap_tmp_writable_or_exit "before_run" "0"
   RUN_TRANSCRIPT_FILE="$(new_transcript_file primary)"
+  if ! mapfile -d '' -t backend_mode_args < <(upkeeper_backend_mode_args_for_current_stage); then
+    finish_cycle 7 BACKEND_MODE_UNAVAILABLE ERROR "codex_exec_started=0 stage=$(shell_quote "${CODEX_ISSUE_WORKFLOW_STAGE:-none}")"
+  fi
+  printf -v backend_mode_summary '%q ' "${backend_mode_args[@]}"
+  backend_mode_summary="${backend_mode_summary% }"
+  if upkeeper_issue_workflow_read_only_enabled; then
+    log_line "INFO" "genie_protocol.backend_mode stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") source=issue_workflow_read_only mode=$(shell_quote "$backend_mode_summary") comment_transport=last_message_block"
+  fi
   log_line "INFO" "run.start execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=${PROMPT_FILE:-inline/default} compiled_prompt=$compiled_prompt_file transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE")"
   RUN_CODEX_STARTED_EPOCH="$(date '+%s')"
   terminal_emit_progress "starting Codex review for ${RUN_SELECTED_REVIEW_PATH:-unknown} (model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT pass=${CODEX_PROMPT_PASS:-default}; transcript=$RUN_TRANSCRIPT_FILE)"
@@ -632,7 +671,7 @@ main() {
   set +e
   run_codex_exec_capture "primary" "$RUN_TRANSCRIPT_FILE" "$compiled_prompt_file" \
     codex exec \
-    "${CODEX_MODE_ARGS[@]}" \
+    "${backend_mode_args[@]}" \
     -C "$ROOT_DIR" \
     -m "$CODEX_MODEL" \
     -c "model_reasoning_effort="$CODEX_REASONING_EFFORT"" \
@@ -794,6 +833,36 @@ main() {
       log_line "WARN" "status_marker.recovered_from_blocker_request marker=$status_marker reason=$status_marker_blocker_reason codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
     fi
   fi
+  if upkeeper_source_mutation_guard_enabled && [[ -n "$source_mutation_guard_before" ]]; then
+    local source_mutation_guard_after
+    if source_mutation_guard_after="$(upkeeper_source_mutation_fingerprint)"; then
+      if [[ "$source_mutation_guard_after" != "$source_mutation_guard_before" ]]; then
+        local source_mutation_guard_reason="SOURCE_MUTATION_GUARD_VIOLATION"
+        if [[ "$source_mutation_guard_mode" == "bug_report_only" ]]; then
+          source_mutation_guard_reason="BUG_REPORT_ONLY_MUTATION_VIOLATION"
+        fi
+        log_line "ERROR" "source_mutation_guard.violation mode=$source_mutation_guard_mode before=$source_mutation_guard_before after=$source_mutation_guard_after codex_exit=$codex_exit status_marker=${status_marker:-missing}"
+        finish_cycle 3 "$source_mutation_guard_reason" ERROR "mode=$source_mutation_guard_mode codex_exit=$codex_exit status_marker=${status_marker:-missing}"
+      fi
+      log_line "INFO" "source_mutation_guard.source_unchanged mode=$source_mutation_guard_mode source_fingerprint=$source_mutation_guard_after"
+    else
+      log_line "WARN" "source_mutation_guard.source_unchanged mode=$source_mutation_guard_mode source_fingerprint=unavailable"
+    fi
+  fi
+
+  if upkeeper_issue_workflow_comment_stage_enabled; then
+    if upkeeper_issue_workflow_post_comment; then
+      if [[ "${status_marker:-}" == "BLOCKED" ]]; then
+        status_marker="WORK_DONE"
+        status_marker_source="issue_workflow_comment_relay"
+        log_line "INFO" "issue.workflow_comment.status_recovered marker=$status_marker stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE")"
+      fi
+    else
+      status_marker="BLOCKED"
+      status_marker_source="issue_workflow_comment_failed"
+    fi
+  fi
+
   primary_failure_classification="none"
   log_line "INFO" "cycle.summary execution_origin=$CODEX_EXECUTION_ORIGIN model=$CODEX_MODEL observed_primary_delta=$observed_primary_delta observed_secondary_delta=$observed_secondary_delta observed_delta_status=$observed_delta_status status_marker=${status_marker:-missing} status_marker_source=$status_marker_source session_end_state=$session_end_state agent_messages=$primary_session_agent_message_count tool_calls=$primary_session_tool_call_count tool_results=$primary_session_tool_result_count task_complete_last_agent_message=$primary_session_task_complete_last_agent_message codex_exit=$codex_exit"
   log_review_report_summary "$last_message_file" "${status_marker:-missing}" "$codex_exit"
@@ -801,19 +870,6 @@ main() {
   enforce_startup_anomaly_changed_paths
   record_startup_anomaly_gate_review "$last_message_file" "${status_marker:-missing}" "$codex_exit"
   tool_failure_queue_finalize_run "${RUN_SELECTED_REVIEW_PATH:-}" "${RUN_TRANSCRIPT_FILE:-}" "$codex_exit" "${status_marker:-missing}"
-
-  if upkeeper_bug_report_only_enabled && [[ -n "$bug_report_only_worktree_before" ]]; then
-    local bug_report_only_worktree_after
-    if bug_report_only_worktree_after="$(upkeeper_source_mutation_fingerprint)"; then
-      if [[ "$bug_report_only_worktree_after" != "$bug_report_only_worktree_before" ]]; then
-        log_line "ERROR" "bug_report_only.mutation_violation before=$bug_report_only_worktree_before after=$bug_report_only_worktree_after codex_exit=$codex_exit status_marker=${status_marker:-missing}"
-        finish_cycle 3 BUG_REPORT_ONLY_MUTATION_VIOLATION ERROR "codex_exit=$codex_exit status_marker=${status_marker:-missing}"
-      fi
-      log_line "INFO" "bug_report_only.source_unchanged source_fingerprint=$bug_report_only_worktree_after"
-    else
-      log_line "WARN" "bug_report_only.source_unchanged source_fingerprint=unavailable"
-    fi
-  fi
 
   if [[ "$after_selection" == "exact_model" ]]; then
     if [[ "$after_primary_guardrail_decision" == "stop" ]]; then
@@ -832,6 +888,11 @@ main() {
     elif [[ "$after_primary_guardrail_decision" == "defer" || "$after_secondary_guardrail_decision" == "defer" ]]; then
       log_line "WARN" "quota.guardrails phase=after_run target_model=$CODEX_MODEL partial_decision primary_decision=$after_primary_guardrail_decision secondary_decision=$after_secondary_guardrail_decision primary_bucket_current=${after_primary_bucket_current:-unknown} secondary_bucket_current=${after_secondary_bucket_current:-unknown} primary_reset_expired=${after_primary_reset_expired:-unknown} secondary_reset_expired=${after_secondary_reset_expired:-unknown}"
     fi
+  fi
+
+  if [[ "$post_run_should_stop" -eq 1 && "${CODEX_QUOTA_GUARDRAIL_BYPASS:-0}" == "1" ]]; then
+    log_line "WARN" "quota.guardrails bypassed=1 phase=after_run target_model=$CODEX_MODEL reason=$(shell_quote "$post_run_stop_reason") primary_decision=$after_primary_guardrail_decision secondary_decision=$after_secondary_guardrail_decision codex_exit=$codex_exit status_marker=${status_marker:-missing}"
+    post_run_should_stop=0
   fi
 
   if [[ "$post_run_should_stop" -eq 1 ]]; then

@@ -13,6 +13,8 @@ upkeeper_launcher_apply_automation_identity "ChimneySweep" "issue-repair" "own-b
 
 CHIMNEYSWEEP_VERBOSITY="${CHIMNEYSWEEP_VERBOSITY:-basic}"
 CHIMNEYSWEEP_MODEL_OVERRIDE="${CHIMNEYSWEEP_MODEL_OVERRIDE:-5.5_xhigh}"
+CHIMNEYSWEEP_REQUESTED_MODEL=""
+CHIMNEYSWEEP_REQUESTED_REASONING_EFFORT=""
 CHIMNEYSWEEP_SKIP_LABELS="${CHIMNEYSWEEP_SKIP_LABELS:-in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr}"
 CHIMNEYSWEEP_CLEAN_EXIT_CODE="${CHIMNEYSWEEP_CLEAN_EXIT_CODE:-25}"
 CHIMNEYSWEEP_WORKFLOW="${CHIMNEYSWEEP_WORKFLOW:-comment-review-apply}"
@@ -21,7 +23,7 @@ CHIMNEYSWEEP_JSON="0"
 
 usage() {
   cat <<EOF
-Usage: ${0##*/} [--silent|--basic|--debug1] [--workflow=comment-review-apply|comment-review|comment|review|apply] [--dry-run] [--json] [--help]
+Usage: ${0##*/} [--silent|--basic|--debug1] [--model-override=SPEC] [--model MODEL] [--reasoning-effort EFFORT] [--workflow=comment-review-apply|comment-review|comment|review|apply] [--dry-run] [--json] [--help]
 
 Script one issue-fix Upkeeper cycle:
   - reconcile open Upkeeper automation obligations before GitHub issue ranking
@@ -43,6 +45,12 @@ Flags:
   --silent        Set CODEX_TERMINAL_VERBOSITY=silent
   --basic         Set CODEX_TERMINAL_VERBOSITY=basic (default)
   --debug1        Set CODEX_TERMINAL_VERBOSITY=debug1
+  --model-override=SPEC
+                  Upkeeper model override, such as 5.5_xhigh or
+                  5.3-codex-spark_xhigh
+  --model MODEL   Model shortcut converted to a model override
+  --reasoning-effort EFFORT
+                  Reasoning effort for --model (default: xhigh)
   --workflow=...  Stage workflow: comment-review-apply (default), comment-review,
                   comment, review, or apply
   --dry-run       Print the selected issue and resolved Upkeeper command
@@ -79,6 +87,54 @@ while [[ $# -gt 0 ]]; do
     --debug1)
       CHIMNEYSWEEP_VERBOSITY="debug1"
       shift
+      ;;
+    --model-override=*)
+      CHIMNEYSWEEP_MODEL_OVERRIDE="${1#--model-override=}"
+      [[ -n "$CHIMNEYSWEEP_MODEL_OVERRIDE" ]] || {
+        printf 'ChimneySweep: --model-override requires a value\n' >&2
+        exit 64
+      }
+      shift
+      ;;
+    --model-override)
+      [[ $# -ge 2 && -n "${2:-}" ]] || {
+        printf 'ChimneySweep: --model-override requires a value\n' >&2
+        exit 64
+      }
+      CHIMNEYSWEEP_MODEL_OVERRIDE="$2"
+      shift 2
+      ;;
+    --model=*)
+      CHIMNEYSWEEP_REQUESTED_MODEL="${1#--model=}"
+      [[ -n "$CHIMNEYSWEEP_REQUESTED_MODEL" ]] || {
+        printf 'ChimneySweep: --model requires a value\n' >&2
+        exit 64
+      }
+      shift
+      ;;
+    --model)
+      [[ $# -ge 2 && -n "${2:-}" ]] || {
+        printf 'ChimneySweep: --model requires a value\n' >&2
+        exit 64
+      }
+      CHIMNEYSWEEP_REQUESTED_MODEL="$2"
+      shift 2
+      ;;
+    --reasoning-effort=*)
+      CHIMNEYSWEEP_REQUESTED_REASONING_EFFORT="${1#--reasoning-effort=}"
+      [[ -n "$CHIMNEYSWEEP_REQUESTED_REASONING_EFFORT" ]] || {
+        printf 'ChimneySweep: --reasoning-effort requires a value\n' >&2
+        exit 64
+      }
+      shift
+      ;;
+    --reasoning-effort)
+      [[ $# -ge 2 && -n "${2:-}" ]] || {
+        printf 'ChimneySweep: --reasoning-effort requires a value\n' >&2
+        exit 64
+      }
+      CHIMNEYSWEEP_REQUESTED_REASONING_EFFORT="$2"
+      shift 2
       ;;
     --dry-run)
       CHIMNEYSWEEP_DRY_RUN="1"
@@ -133,6 +189,17 @@ case "$CHIMNEYSWEEP_WORKFLOW" in
 esac
 UPKEEPER_AUTOMATION_WORKFLOW="$CHIMNEYSWEEP_WORKFLOW"
 export UPKEEPER_AUTOMATION_WORKFLOW
+
+if [[ -n "$CHIMNEYSWEEP_REQUESTED_MODEL" ]]; then
+  if ! CHIMNEYSWEEP_MODEL_OVERRIDE="$(upkeeper_launcher_model_override_from_model_effort "$CHIMNEYSWEEP_REQUESTED_MODEL" "${CHIMNEYSWEEP_REQUESTED_REASONING_EFFORT:-xhigh}")"; then
+    printf 'ChimneySweep: unsupported model/effort pair: %s %s (supported: gpt-5.5 xhigh, gpt-5.3-codex-spark xhigh)\n' \
+      "$CHIMNEYSWEEP_REQUESTED_MODEL" "${CHIMNEYSWEEP_REQUESTED_REASONING_EFFORT:-xhigh}" >&2
+    exit 64
+  fi
+elif [[ -n "$CHIMNEYSWEEP_REQUESTED_REASONING_EFFORT" ]]; then
+  printf 'ChimneySweep: --reasoning-effort requires --model\n' >&2
+  exit 64
+fi
 
 if [[ ! -x "$UPKEEPER_CMD" ]]; then
   printf 'ChimneySweep: Upkeeper command is not executable: %s\n' "$UPKEEPER_CMD" >&2

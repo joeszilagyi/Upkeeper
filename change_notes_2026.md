@@ -20,6 +20,9 @@ Version numbering note:
 		11. Made FlameOn and ChimneySweep identify themselves through the shared automation framework so future derivative launchers can supply identity and policy without inventing separate state formats.
 		12. Made FlameOn and ChimneySweep reconcile open automation obligations before their normal bug-finding or GitHub issue-selection policies, handing the selected obligation to Upkeeper as a locked target plus wrapper-generated prompt file.
 		13. Added successful obligation-cycle resolution: when an obligation-selected non-dry-run cycle exits cleanly, Upkeeper moves the selected obligation from `open` to `resolved` with resolver cycle evidence.
+		14. Added `5.3-codex-spark_xhigh` as a supported Upkeeper model override alongside `5.5_xhigh` so launcher dogfooding can intentionally use the Spark quota bucket after reset.
+		15. Added `--model-override=...` plus `--model ... --reasoning-effort ...` shortcuts to FlameOn and ChimneySweep, with dry-run and completion coverage.
+		16. Added `tools/validate_upkeeper.sh --smoke` for fast local edit-loop validation and `--profile` for per-check timing without reducing quick/full validation coverage.
 
 2026-05-09: v1.2.9 changes:
 	1. Made `ChimneySweep` default to a staged issue workflow: comment, review, then apply, with a separate Upkeeper/Codex instantiation for each stage.

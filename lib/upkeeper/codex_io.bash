@@ -246,13 +246,18 @@ apply_model_override() {
   local spec="$1"
 
   case "$spec" in
-    5.5_xhigh)
+    5.5_xhigh|gpt-5.5_xhigh)
       CODEX_MODEL="gpt-5.5"
       CODEX_REASONING_EFFORT="xhigh"
       CODEX_MODEL_OVERRIDE_APPLIED="1"
       ;;
+    5.3-codex-spark_xhigh|gpt-5.3-codex-spark_xhigh|spark_xhigh)
+      CODEX_MODEL="gpt-5.3-codex-spark"
+      CODEX_REASONING_EFFORT="xhigh"
+      CODEX_MODEL_OVERRIDE_APPLIED="1"
+      ;;
     *)
-      die "unknown model override: $spec (supported: 5.5_xhigh)"
+      die "unknown model override: $spec (supported: 5.5_xhigh, 5.3-codex-spark_xhigh)"
       ;;
   esac
 }
@@ -1004,7 +1009,7 @@ parse_args() {
         shift
         ;;
       --model-override)
-        die "use --model-override=5.5_xhigh (spaced form is intentionally unsupported)"
+        die "use --model-override=5.5_xhigh or --model-override=5.3-codex-spark_xhigh (spaced form is intentionally unsupported)"
         ;;
       --target-file=*)
         CODEX_TARGET_FILE="${1#--target-file=}"

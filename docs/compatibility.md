@@ -46,6 +46,9 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--bug-report-only`, `--file-bug-only`, `--report-bug-only`,
   `--fix-next-issue`, `--fix-oldest-bug`, `--fix-issue=...`, and
   `--issue-workflow-stage=comment|review|apply`.
+- Upkeeper model override shorthands include `5.5_xhigh` and
+  `5.3-codex-spark_xhigh`. FlameOn and ChimneySweep pass those through and also
+  accept `--model ... --reasoning-effort ...` shortcuts for supported pairs.
 - `FlameOn` remains a thin max-cover launcher and defaults to
   `--bug-report-only`; it should investigate and file/report bugs rather than
   patch tracked source during burn cycles. Its launcher path is full burn by
@@ -148,7 +151,8 @@ Future changes should preserve this operator-visible surface as far as possible:
   prompt contract is to report `BLOCKED`; replacement selection remains a
   wrapper-only behavior for a later cycle.
 - Validation entrypoints remain available:
-  `tools/validate_upkeeper.sh --deps`, `--quick`, and `--full`.
+  `tools/validate_upkeeper.sh --deps`, `--smoke`, `--quick`, `--full`, and the
+  additive `--profile` timing flag.
 - The GitHub Actions no-quota CI workflow remains available at
   `.github/workflows/ci.yml` for pushes and pull requests.
 - The local stress-corpus entrypoint remains available:

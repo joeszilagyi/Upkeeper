@@ -115,6 +115,8 @@ test_chimneysweep_help_documents_fix_contract() {
   grep -Fq "exit 25" <<<"$help" || fail "help missing clean exit code"
   grep -Fq -- "--dry-run" <<<"$help" || fail "help missing dry-run flag"
   grep -Fq -- "--workflow=" <<<"$help" || fail "help missing workflow flag"
+  grep -Fq -- "--model-override=SPEC" <<<"$help" || fail "help missing model override flag"
+  grep -Fq -- "--model MODEL" <<<"$help" || fail "help missing model shortcut flag"
   grep -Fq "comment -> review -> apply" <<<"$help" || fail "help missing staged workflow"
   grep -Fq "full pass/module coverage" <<<"$help" || fail "help missing full burn contract"
   grep -Fq "Lattice required" <<<"$help" || fail "help missing required Lattice contract"
@@ -164,6 +166,16 @@ test_chimneysweep_security_class_wins() {
   grep -Fq "UPKEEPER_AUTOMATION_VARIANT=issue-repair" <<<"$output" || fail "security scenario missing ChimneySweep automation variant"
   grep -Fq "UPKEEPER_AUTOMATION_POLICY=own-bug-queue" <<<"$output" || fail "security scenario missing ChimneySweep automation policy"
   grep -Fq "UPKEEPER_AUTOMATION_WORKFLOW=comment-review-apply" <<<"$output" || fail "security scenario missing ChimneySweep automation workflow"
+}
+
+test_chimneysweep_model_override_supports_spark() {
+  local output
+
+  output="$(GH_SCENARIO=security CHIMNEYSWEEP_MODEL_OVERRIDE=5.3-codex-spark_xhigh run_chimneysweep --dry-run 2>&1)"
+  grep -Fq -- "--model-override=5.3-codex-spark_xhigh" <<<"$output" || fail "ChimneySweep env Spark override was not passed through"
+
+  output="$(GH_SCENARIO=security run_chimneysweep --dry-run --model gpt-5.3-codex-spark --reasoning-effort xhigh 2>&1)"
+  grep -Fq -- "--model-override=5.3-codex-spark_xhigh" <<<"$output" || fail "ChimneySweep model shortcut did not resolve Spark override"
 }
 
 test_chimneysweep_reconciles_obligations_before_github_queue() {
@@ -241,12 +253,23 @@ test_chimneysweep_completion_loads() {
     printf '%s\n' "${COMPREPLY[@]}"
   )"
   grep -Fxq -- "--workflow=" <<<"$workflow_output" || fail "ChimneySweep completion did not suggest --workflow"
+
+  workflow_output="$(
+    source "$ROOT_DIR/completions/upkeeper.bash"
+    complete -p ./ChimneySweep >/dev/null
+    COMP_WORDS=(./ChimneySweep --model-override=)
+    COMP_CWORD=1
+    _chimneysweep_complete
+    printf '%s\n' "${COMPREPLY[@]}"
+  )"
+  grep -Fxq -- "--model-override=5.3-codex-spark_xhigh" <<<"$workflow_output" || fail "ChimneySweep completion did not suggest Spark model override"
 }
 
 test_chimneysweep_help_documents_fix_contract
 test_chimneysweep_clean_queue_exits_25
 test_chimneysweep_skipped_queue_counts_clean
 test_chimneysweep_security_class_wins
+test_chimneysweep_model_override_supports_spark
 test_chimneysweep_reconciles_obligations_before_github_queue
 test_chimneysweep_data_integrity_after_security_clear
 test_chimneysweep_general_queue_prefers_containment_signal

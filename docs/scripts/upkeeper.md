@@ -12,7 +12,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
+Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: v1.2.10
@@ -334,9 +334,10 @@ Prompt behavior:
     Review module flags are one-cycle guidance only and do not persist to later
     loop iterations. They are not enabled by --prompt-pass=all unless requested.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5
-    with xhigh reasoning effort. It is a CLI-only operator override and does
-    not persist to later loop iterations. Use the equals form; spaced form is
-    rejected.
+    with xhigh reasoning effort. --model-override=5.3-codex-spark_xhigh runs
+    it once as gpt-5.3-codex-spark with xhigh reasoning effort. These are
+    CLI-only operator overrides and do not persist to later loop iterations.
+    Use the equals form; spaced form is rejected.
   - --target-file=PATH pins this invoked cycle to one source-safe readable text
     file and bypasses timestamp selection, selection filters, and the local
     failure queue. Explicit pins may target tracked or non-ignored untracked
@@ -570,6 +571,10 @@ Use `CHIMNEYSWEEP_DRY_RUN=1 ./ChimneySweep` or `./ChimneySweep --dry-run` to
 print the resolved command without launching Codex. Its terminal verbosity flags
 match FlameOn: `--silent`, `--basic`, and `--debug1`; `--workflow=...` selects
 `comment-review-apply`, `comment-review`, `comment`, `review`, or `apply`.
+Both FlameOn and ChimneySweep accept `--model-override=5.5_xhigh`,
+`--model-override=5.3-codex-spark_xhigh`, or the shortcut form
+`--model gpt-5.3-codex-spark --reasoning-effort xhigh`; the selected override
+is passed to every backend Upkeeper invocation.
 Live ChimneySweep runs
 use the same full-burn launcher defaults as FlameOn: Lattice required,
 encrypted pre-contact backup required, quota guardrail stops bypassed, cooldown
@@ -669,10 +674,14 @@ prompts, backup log lines, or Lattice preselect evidence.
   root `change_notes_YYYY.md`; version bumps should keep that file current.
 - The central checkout has a tracked validation harness at
   `tools/validate_upkeeper.sh`. Use `--deps` for runtime/tool dependency
-  status, `--quick` for syntax/version/module-map checks, and `--full` before
-  release or after touching module order, prompt packaging, symlink behavior, or
-  failure-path guardrails. Full validation uses dry-runs plus a local fake
-  `codex` binary; it does not launch real backend work.
+  status, `--smoke` for the fast local edit loop, `--quick` for the broad
+  deterministic integration gate, and `--full` before release or after touching
+  module order, prompt packaging, symlink behavior, or failure-path guardrails.
+  Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
+  heavier config and review-module dry-run fixtures stay in quick mode. Add
+  `--profile` to validation runs to print per-check elapsed timings without
+  changing coverage. Full validation uses dry-runs plus a local fake `codex`
+  binary; it does not launch real backend work.
   GitHub Actions runs the no-quota CI path in `.github/workflows/ci.yml` on
   pushes and pull requests. It installs required tools including `jq` and `age`,
   then runs shell syntax, `tests/*.bash`, public docs, and

@@ -3,6 +3,90 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Launcher Model Override Expansion
+
+Status: completed
+
+Goal:
+Make the shared Upkeeper model override contract cover the Spark quota bucket
+used for dogfood runs, and let FlameOn/ChimneySweep accept direct model flags
+instead of requiring operators to remember launcher-specific environment
+variables.
+
+Constraints:
+- Preserve existing `5.5_xhigh` behavior.
+- Keep launchers on named Upkeeper override specs so every staged backend
+  invocation receives the same locked model/effort pair.
+- Keep unsupported model/effort pairs fail-closed before backend launch.
+- Keep validation local and deterministic.
+
+Files likely touched:
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/launcher_full_burn.bash`
+- `FlameOn`
+- `ChimneySweep`
+- `completions/upkeeper.bash`
+- `tests/flameon_test.bash`
+- `tests/chimneysweep_test.bash`
+- `tools/validate_upkeeper.sh`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added `5.3-codex-spark_xhigh` as a supported shared Upkeeper model override.
+- Added model/effort shortcut parsing to FlameOn and ChimneySweep.
+- Updated Bash completion, launcher tests, help text, operator docs,
+  compatibility notes, and release notes for the new override surface.
+
+## Local Validation Speed Layer
+
+Status: completed
+
+Goal:
+Add a local-only speed layer that shortens edit-loop feedback without removing
+any existing quick/full validation coverage.
+
+Constraints:
+- Keep `--quick` and `--full` behavior intact as the broad deterministic gates.
+- Do not launch real backend Codex work.
+- Make timings visible so future optimization work is evidence-driven.
+- Keep docs and compatibility notes aligned with the new validation surface.
+
+Files likely touched:
+- `tools/validate_upkeeper.sh`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/dependencies.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `tools/validate_upkeeper.sh --smoke --profile`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added `tools/validate_upkeeper.sh --smoke` as the fast local edit-loop gate.
+- Added `--profile` timing output for validation checks without changing
+  coverage.
+- Kept review-module, config-file, manifest, issue-workflow, Lattice, and
+  failure-path fixtures in `--quick`/`--full`.
+- Updated README, operator docs, dependency docs, compatibility notes, and
+  release notes for the new validation workflow.
+
 ## Automation Obligation Framework
 
 Status: completed

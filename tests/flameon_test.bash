@@ -16,6 +16,8 @@ test_flameon_help_documents_burn_contract() {
   help="$("$ROOT_DIR/FlameOn" --help)"
   grep -Fq "Usage: FlameOn" <<<"$help" || fail "FlameOn help missing usage"
   grep -Fq "gpt-5.5 xhigh" <<<"$help" || fail "FlameOn help missing model/effort contract"
+  grep -Fq -- "--model-override=SPEC" <<<"$help" || fail "FlameOn help missing model override flag"
+  grep -Fq -- "--model MODEL" <<<"$help" || fail "FlameOn help missing model shortcut flag"
   grep -Fq "all P1-P23 passes plus P24-P29" <<<"$help" || fail "FlameOn help missing all-pass contract"
   grep -Fq "Lattice max-cover target ranking" <<<"$help" || fail "FlameOn help missing Lattice selection contract"
   grep -Fq -- "-backup_queue" <<<"$help" || fail "FlameOn help missing backup queue flag"
@@ -41,6 +43,16 @@ test_flameon_dry_run_resolves_upkeeper_args() {
   grep -Fq "UPKEEPER_AUTOMATION_LAUNCHER=FlameOn" <<<"$output" || fail "dry-run missing FlameOn automation identity"
   grep -Fq "UPKEEPER_AUTOMATION_VARIANT=bug-finding" <<<"$output" || fail "dry-run missing FlameOn automation variant"
   grep -Fq "UPKEEPER_AUTOMATION_POLICY=max-cover-bug-report" <<<"$output" || fail "dry-run missing FlameOn automation policy"
+}
+
+test_flameon_model_shortcut_resolves_spark_override() {
+  local output
+
+  output="$(UPKEEPER_OBLIGATION_DIR="$TEST_TMP_ROOT/empty-obligations" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --model gpt-5.3-codex-spark --reasoning-effort xhigh)"
+  grep -Fq -- "--model-override=5.3-codex-spark_xhigh" <<<"$output" || fail "FlameOn model shortcut did not resolve Spark override"
+
+  output="$(UPKEEPER_OBLIGATION_DIR="$TEST_TMP_ROOT/empty-obligations" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --model-override=5.3-codex-spark_xhigh)"
+  grep -Fq -- "--model-override=5.3-codex-spark_xhigh" <<<"$output" || fail "FlameOn explicit Spark override was not preserved"
 }
 
 write_open_obligation() {
@@ -105,6 +117,9 @@ test_upkeeper_max_cover_flags_parse_before_version() {
   output="$("$ROOT_DIR/Upkeeper" --max-cover --backup-queue --version)"
   [[ "$output" == "Upkeeper $version" ]] || fail "Upkeeper max-cover flags broke --version: $output"
 
+  output="$("$ROOT_DIR/Upkeeper" --model-override=5.3-codex-spark_xhigh --version)"
+  [[ "$output" == "Upkeeper $version" ]] || fail "Upkeeper Spark model override broke --version: $output"
+
   output="$("$ROOT_DIR/Upkeeper" -backup_queue --version)"
   [[ "$output" == "Upkeeper $version" ]] || fail "Upkeeper legacy backup queue flag broke --version: $output"
 }
@@ -122,6 +137,16 @@ test_completion_script_loads_flameon_and_upkeeper() {
     printf '%s\n' "${COMPREPLY[@]}"
   )"
   grep -Fxq -- "--debug1" <<<"$output" || fail "FlameOn completion did not suggest --debug1"
+
+  output="$(
+    source "$ROOT_DIR/completions/upkeeper.bash"
+    complete -p ./FlameOn >/dev/null
+    COMP_WORDS=(./FlameOn --model-override=)
+    COMP_CWORD=1
+    _flameon_complete
+    printf '%s\n' "${COMPREPLY[@]}"
+  )"
+  grep -Fxq -- "--model-override=5.3-codex-spark_xhigh" <<<"$output" || fail "FlameOn completion did not suggest Spark model override"
 
   output="$(
     source "$ROOT_DIR/completions/upkeeper.bash"
@@ -144,6 +169,7 @@ test_completion_script_loads_flameon_and_upkeeper() {
 
 test_flameon_help_documents_burn_contract
 test_flameon_dry_run_resolves_upkeeper_args
+test_flameon_model_shortcut_resolves_spark_override
 test_flameon_dry_run_reconciles_obligations_first
 test_flameon_rejects_unsupported_inputs
 test_upkeeper_max_cover_flags_parse_before_version

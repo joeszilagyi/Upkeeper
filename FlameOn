@@ -12,11 +12,13 @@ upkeeper_launcher_apply_automation_identity "FlameOn" "bug-finding" "max-cover-b
 
 FLAMEON_VERBOSITY="${FLAMEON_VERBOSITY:-basic}"
 FLAMEON_MODEL_OVERRIDE="${FLAMEON_MODEL_OVERRIDE:-5.5_xhigh}"
+FLAMEON_REQUESTED_MODEL=""
+FLAMEON_REQUESTED_REASONING_EFFORT=""
 FLAMEON_BACKUP_QUEUE="0"
 
 usage() {
   cat <<EOF
-Usage: ${0##*/} [--silent|--basic|--debug1] [-backup_queue|--backup-queue] [--help]
+Usage: ${0##*/} [--silent|--basic|--debug1] [--model-override=SPEC] [--model MODEL] [--reasoning-effort EFFORT] [-backup_queue|--backup-queue] [--help]
 
 Run one quota-respecting Upkeeper max-cover cycle:
   - reconcile open Upkeeper automation obligations before normal burn selection
@@ -31,6 +33,12 @@ Flags:
   --silent        Set CODEX_TERMINAL_VERBOSITY=silent
   --basic         Set CODEX_TERMINAL_VERBOSITY=basic (default)
   --debug1        Set CODEX_TERMINAL_VERBOSITY=debug1
+  --model-override=SPEC
+                  Upkeeper model override, such as 5.5_xhigh or
+                  5.3-codex-spark_xhigh
+  --model MODEL   Model shortcut converted to a model override
+  --reasoning-effort EFFORT
+                  Reasoning effort for --model (default: xhigh)
   -backup_queue   Use the backup local failure queue for this cycle
   --backup-queue  Same as -backup_queue
   --help          Show this help
@@ -63,6 +71,54 @@ while [[ $# -gt 0 ]]; do
       FLAMEON_VERBOSITY="debug1"
       shift
       ;;
+    --model-override=*)
+      FLAMEON_MODEL_OVERRIDE="${1#--model-override=}"
+      [[ -n "$FLAMEON_MODEL_OVERRIDE" ]] || {
+        printf 'FlameOn: --model-override requires a value\n' >&2
+        exit 64
+      }
+      shift
+      ;;
+    --model-override)
+      [[ $# -ge 2 && -n "${2:-}" ]] || {
+        printf 'FlameOn: --model-override requires a value\n' >&2
+        exit 64
+      }
+      FLAMEON_MODEL_OVERRIDE="$2"
+      shift 2
+      ;;
+    --model=*)
+      FLAMEON_REQUESTED_MODEL="${1#--model=}"
+      [[ -n "$FLAMEON_REQUESTED_MODEL" ]] || {
+        printf 'FlameOn: --model requires a value\n' >&2
+        exit 64
+      }
+      shift
+      ;;
+    --model)
+      [[ $# -ge 2 && -n "${2:-}" ]] || {
+        printf 'FlameOn: --model requires a value\n' >&2
+        exit 64
+      }
+      FLAMEON_REQUESTED_MODEL="$2"
+      shift 2
+      ;;
+    --reasoning-effort=*)
+      FLAMEON_REQUESTED_REASONING_EFFORT="${1#--reasoning-effort=}"
+      [[ -n "$FLAMEON_REQUESTED_REASONING_EFFORT" ]] || {
+        printf 'FlameOn: --reasoning-effort requires a value\n' >&2
+        exit 64
+      }
+      shift
+      ;;
+    --reasoning-effort)
+      [[ $# -ge 2 && -n "${2:-}" ]] || {
+        printf 'FlameOn: --reasoning-effort requires a value\n' >&2
+        exit 64
+      }
+      FLAMEON_REQUESTED_REASONING_EFFORT="$2"
+      shift 2
+      ;;
     -backup_queue|--backup-queue)
       FLAMEON_BACKUP_QUEUE="1"
       shift
@@ -83,6 +139,17 @@ case "$FLAMEON_VERBOSITY" in
     exit 64
     ;;
 esac
+
+if [[ -n "$FLAMEON_REQUESTED_MODEL" ]]; then
+  if ! FLAMEON_MODEL_OVERRIDE="$(upkeeper_launcher_model_override_from_model_effort "$FLAMEON_REQUESTED_MODEL" "${FLAMEON_REQUESTED_REASONING_EFFORT:-xhigh}")"; then
+    printf 'FlameOn: unsupported model/effort pair: %s %s (supported: gpt-5.5 xhigh, gpt-5.3-codex-spark xhigh)\n' \
+      "$FLAMEON_REQUESTED_MODEL" "${FLAMEON_REQUESTED_REASONING_EFFORT:-xhigh}" >&2
+    exit 64
+  fi
+elif [[ -n "$FLAMEON_REQUESTED_REASONING_EFFORT" ]]; then
+  printf 'FlameOn: --reasoning-effort requires --model\n' >&2
+  exit 64
+fi
 
 if [[ ! -x "$UPKEEPER_CMD" ]]; then
   printf 'FlameOn: Upkeeper command is not executable: %s\n' "$UPKEEPER_CMD" >&2

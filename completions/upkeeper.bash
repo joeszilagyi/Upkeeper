@@ -81,7 +81,7 @@ _upkeeper_complete() {
       return 0
       ;;
     --model-override=*)
-      _upkeeper_complete_csv_value "$cur" "5.5_xhigh"
+      _upkeeper_complete_csv_value "$cur" "5.5_xhigh 5.3-codex-spark_xhigh spark_xhigh"
       return 0
       ;;
     --selection-source=*)
@@ -122,19 +122,57 @@ _upkeeper_complete() {
 }
 
 _flameon_complete() {
-  local cur opts
+  local cur prev opts
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
-  opts="--help -h --silent --basic --debug1 -backup_queue --backup-queue"
+  prev=""
+  if (( COMP_CWORD > 0 )); then
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+  fi
+  opts="--help -h --silent --basic --debug1 --model-override= --model --reasoning-effort -backup_queue --backup-queue"
+  case "$prev" in
+    --model)
+      mapfile -t COMPREPLY < <(compgen -W "gpt-5.5 gpt-5.3-codex-spark" -- "$cur")
+      return 0
+      ;;
+    --reasoning-effort)
+      mapfile -t COMPREPLY < <(compgen -W "xhigh" -- "$cur")
+      return 0
+      ;;
+  esac
+  case "$cur" in
+    --model-override=*)
+      _upkeeper_complete_csv_value "$cur" "5.5_xhigh 5.3-codex-spark_xhigh spark_xhigh"
+      return 0
+      ;;
+  esac
   mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
 }
 
 _chimneysweep_complete() {
-  local cur opts
+  local cur prev opts
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
-  opts="--help -h --silent --basic --debug1 --workflow= --dry-run --json"
+  prev=""
+  if (( COMP_CWORD > 0 )); then
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+  fi
+  opts="--help -h --silent --basic --debug1 --model-override= --model --reasoning-effort --workflow= --dry-run --json"
+  case "$prev" in
+    --model)
+      mapfile -t COMPREPLY < <(compgen -W "gpt-5.5 gpt-5.3-codex-spark" -- "$cur")
+      return 0
+      ;;
+    --reasoning-effort)
+      mapfile -t COMPREPLY < <(compgen -W "xhigh" -- "$cur")
+      return 0
+      ;;
+  esac
   case "$cur" in
+    --model-override=*)
+      _upkeeper_complete_csv_value "$cur" "5.5_xhigh 5.3-codex-spark_xhigh spark_xhigh"
+      return 0
+      ;;
     --workflow=*)
       _upkeeper_complete_csv_value "$cur" "comment-review-apply comment-review comment review apply staged"
       return 0

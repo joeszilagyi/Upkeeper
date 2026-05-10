@@ -629,6 +629,8 @@ check_validation_environment_isolation() {
   [[ "$UPKEEPER_PRECONTACT_BACKUP_MODE" == "auto" ]] || fail "validation inherited UPKEEPER_PRECONTACT_BACKUP_MODE=$UPKEEPER_PRECONTACT_BACKUP_MODE"
   [[ "$UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED" == "0" ]] || fail "validation inherited UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=$UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED"
   [[ -z "$UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT" ]] || fail "validation inherited UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT"
+  [[ "$UPKEEPER_AUTOMATION_LEDGER_DIR" == "$VALIDATION_TMP_ROOT/automation-ledger" ]] || fail "validation automation ledger is not isolated: $UPKEEPER_AUTOMATION_LEDGER_DIR"
+  [[ "$UPKEEPER_OBLIGATION_DIR" == "$VALIDATION_TMP_ROOT/automation-obligations" ]] || fail "validation obligation root is not isolated: $UPKEEPER_OBLIGATION_DIR"
 }
 
 check_codex_mode_validation() {

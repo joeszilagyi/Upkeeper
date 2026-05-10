@@ -42,6 +42,7 @@ jobs:
         run: |
           bash -n Upkeeper
           bash -n FlameOn
+          bash -n ChimneySweep
           bash -n Upkeeper.conf
           bash -n configurations/default.conf
           bash -n completions/*.bash

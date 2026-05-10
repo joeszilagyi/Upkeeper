@@ -43,6 +43,9 @@ On each cycle it:
 - provides `FlameOn`, a thin one-command launcher for the highest local
   max-cover smoke/burn cycle that defaults to filing/reporting bugs instead of
   patching source while preserving Upkeeper quota guardrails
+- provides `ChimneySweep`, a separate issue-fix launcher that scripts GitHub
+  issue triage before launch, exits 25 with "high five yay" when the queue is
+  clean, and hands one locked issue to Upkeeper for repair
 - can select the oldest open GitHub bug by priority label order
   `security > data-integrity > bug` for focused issue-repair cycles
 - runs Codex once with the configured model and reasoning effort
@@ -115,8 +118,24 @@ tracked source; it investigates, runs deterministic checks, and files or fully
 reports confirmed bugs. `-backup_queue` and `--backup-queue` switch that one
 cycle to `runtime/unaddressed-tool-failures-backup`.
 
-Bash completion for both `Upkeeper` and `FlameOn` is available as an opt-in
-shell helper:
+For a scripted issue-fix cycle, use `ChimneySweep`:
+
+```sh
+CHIMNEYSWEEP_DRY_RUN=1 ./ChimneySweep
+./ChimneySweep --basic
+```
+
+`ChimneySweep` is intentionally separate from `FlameOn`. It lists open GitHub
+issues before any backend Codex process can start. A clean actionable queue
+prints `high five yay` and exits 25. Otherwise it keeps security-class issues
+ahead of data-integrity issues, keeps working that class until it is clear, and
+then ranks the remaining queue by containment title/tag signals, severity, and
+least-recently-touched age. The selected issue is passed to Upkeeper as
+`--fix-issue=NUMBER`, so Upkeeper does not re-rank and accidentally repair a
+different issue after the scripted handoff.
+
+Bash completion for `Upkeeper`, `FlameOn`, and `ChimneySweep` is available as
+an opt-in shell helper:
 
 ```sh
 source completions/upkeeper.bash
@@ -490,7 +509,9 @@ as `in-progress`, `blocked`, `duplicate`, `wontfix`, `invalid`, `needs-info`,
 `done`, `merged`, or `has-pr`. It infers a starting `--target-file` from the
 issue title/body when a repo-local path is present, then injects the issue body
 as evidence for a focused repair task. The alias `--fix-oldest-bug` is accepted
-for the same mode.
+for the same mode. Use `--fix-issue=NUMBER` when a deterministic caller such as
+`ChimneySweep` has already selected the issue and Upkeeper should only lock and
+repair that one issue.
 
 For an explicit one-cycle Upkeeper self-review with all built-in P1-P23 passes,
 use equals-form operator flags:
@@ -675,6 +696,7 @@ test loop does not spend cycles on known low-value or generated material.
 |-- Upkeeper
 |-- Upkeeper.conf
 |-- FlameOn
+|-- ChimneySweep
 |-- LICENSE
 |-- PLANS.md
 |-- .editorconfig

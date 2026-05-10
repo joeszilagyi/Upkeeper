@@ -3,6 +3,63 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## ChimneySweep Issue-Fix Launcher
+
+Status: completed
+
+Goal:
+Add a repo-root `ChimneySweep` launcher that is allowed to diverge from
+`FlameOn`: `FlameOn` remains the high-coverage bug-finding burn tool, while
+`ChimneySweep` is the scripted issue-fix queue runner.
+
+Constraints:
+- All GitHub issue listing, classification, and ranking happens in deterministic
+  shell/Python before any backend Codex process can start.
+- A clean open-issue queue exits successfully-for-automation with code 25.
+- Security-class issues always outrank data-integrity issues; data-integrity
+  issues outrank the general issue queue. Repeated scheduled runs should keep
+  working the current highest-priority class until that class is resolved.
+- The selected issue is locked before launch and passed to Upkeeper explicitly;
+  Upkeeper must not reselect a different issue after `ChimneySweep` has ranked
+  the queue.
+- Keep normal Upkeeper quota, startup, target-selection, pre-contact backup,
+  fallback, postmortem, and evidence handling for the actual model run.
+- Do not run real backend Codex validation locally.
+
+Files likely touched:
+- `ChimneySweep`
+- `Upkeeper`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `lib/upkeeper/help_selection.bash`
+- `completions/upkeeper.bash`
+- `tests/chimneysweep_test.bash`
+- `tests/flameon_test.bash`
+- `tools/validate_upkeeper.sh`
+- `tools/check_public_docs.sh`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper FlameOn ChimneySweep lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf completions/*.bash`
+- `bash tests/chimneysweep_test.bash`
+- `bash tests/flameon_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added `ChimneySweep` with deterministic GitHub issue ranking, clean-queue
+  exit code 25, dry-run output, and Bash completion.
+- Added Upkeeper `--fix-issue=NUMBER` / `UPKEEPER_FIX_ISSUE` so deterministic
+  launchers can lock one issue before normal Upkeeper model launch.
+- Kept `FlameOn` as the bug-finding burn launcher and documented the divergence
+  between FlameOn and ChimneySweep.
+- Updated tests, validation, public docs, compatibility notes, CI syntax checks,
+  and v1.2.6 release notes.
+
 ## Pre-Contact Selected-Target Backups
 
 Status: completed

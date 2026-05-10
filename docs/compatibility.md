@@ -24,6 +24,9 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Root `Upkeeper` remains the executable entrypoint.
 - Root `FlameOn` remains a thin convenience launcher over `Upkeeper` max-cover
   mode rather than a second implementation path.
+- Root `ChimneySweep` remains a separate issue-fix launcher with its own
+  deterministic GitHub queue-ranking path before it hands one locked issue to
+  Upkeeper.
 - Symlinked clients can continue invoking a local `./Upkeeper.sh` that points to
   the central root `Upkeeper` file.
 - The root entrypoint resolves paired modules, prompt files, and documentation
@@ -41,10 +44,14 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--selection-review-modules=...`, `--ignore-failure-queue`,
   `--backup-queue`, `-backup_queue`, `--prompt-pass=all`, `--max-cover`,
   `--bug-report-only`, `--file-bug-only`, `--report-bug-only`,
-  `--fix-next-issue`, and `--fix-oldest-bug`.
+  `--fix-next-issue`, `--fix-oldest-bug`, and `--fix-issue=...`.
 - `FlameOn` remains a thin max-cover launcher and defaults to
   `--bug-report-only`; it should investigate and file/report bugs rather than
   patch tracked source during burn cycles.
+- `ChimneySweep` owns pre-model issue ranking for repair automation: clean
+  actionable queues exit 25, security issues outrank data-integrity issues,
+  data-integrity issues outrank the general queue, and the selected issue is
+  handed to Upkeeper with `--fix-issue=NUMBER`.
 - `.upkeeperignore` remains the repo-local target-selection firewall. It blocks
   normal rotation, Lattice/max-cover candidates, failure-queue eligibility,
   manifest entries, and explicit `--target-file` pins for matching paths without
@@ -94,9 +101,10 @@ Future changes should preserve this operator-visible surface as far as possible:
 - `--bug-report-only` is a no-fix mode. It must not edit or touch tracked
   source, and the wrapper must fail the cycle if the source mutation
   fingerprint changes during a non-dry-run bug-report-only cycle.
-- `--fix-next-issue` and `--fix-oldest-bug` may require the GitHub CLI for
-  pre-launch issue selection, but normal Upkeeper and bug-report-only cycles do
-  not make `gh` a hard runtime dependency.
+- `--fix-next-issue`, `--fix-oldest-bug`, `--fix-issue=...`, and
+  `ChimneySweep` may require the GitHub CLI for pre-launch issue selection or
+  loading, but normal Upkeeper and bug-report-only cycles do not make `gh` a
+  hard runtime dependency.
 - Explicit targets still win. Startup anomaly gates still win. The local
   failure queue still wins before normal timestamp rotation.
 - Codex must not receive authority to choose an unbacked replacement target. If

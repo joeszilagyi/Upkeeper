@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Scripted issue-fix launcher. Unlike FlameOn, this owns pre-model issue
+# ranking and then hands one locked issue to Upkeeper.
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+UPKEEPER_CMD="${UPKEEPER_CMD:-$ROOT_DIR/Upkeeper}"
+CHIMNEYSWEEP_VERBOSITY="${CHIMNEYSWEEP_VERBOSITY:-basic}"
+CHIMNEYSWEEP_MODEL_OVERRIDE="${CHIMNEYSWEEP_MODEL_OVERRIDE:-5.5_xhigh}"
+CHIMNEYSWEEP_SKIP_LABELS="${CHIMNEYSWEEP_SKIP_LABELS:-in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr}"
+CHIMNEYSWEEP_CLEAN_EXIT_CODE="${CHIMNEYSWEEP_CLEAN_EXIT_CODE:-25}"
+CHIMNEYSWEEP_DRY_RUN="${CHIMNEYSWEEP_DRY_RUN:-0}"
+CHIMNEYSWEEP_JSON="0"
+
+usage() {
+  cat <<EOF
+Usage: ${0##*/} [--silent|--basic|--debug1] [--dry-run] [--json] [--help]
+
+Script one issue-fix Upkeeper cycle:
+  - list open GitHub issues before any backend Codex process can start
+  - if the actionable open queue is clean, print "high five yay" and exit 25
+  - prefer security-class issues, then data-integrity-class issues
+  - within security/data-integrity, choose the least recently touched issue
+  - after those classes are clear, rank the remaining queue by containment
+    title/tag signals, severity words, then longest untouched
+  - hand the selected issue to Upkeeper as --fix-issue=NUMBER
+  - keep normal Upkeeper quota, backup, fallback, and evidence handling
+
+Flags:
+  --silent        Set CODEX_TERMINAL_VERBOSITY=silent
+  --basic         Set CODEX_TERMINAL_VERBOSITY=basic (default)
+  --debug1        Set CODEX_TERMINAL_VERBOSITY=debug1
+  --dry-run       Print the selected issue and resolved Upkeeper command
+  --json          Print the scripted selection JSON before launching
+  --help          Show this help
+
+Environment:
+  UPKEEPER_CMD                  Upkeeper command path (default: ./Upkeeper)
+  CHIMNEYSWEEP_MODEL_OVERRIDE   Upkeeper model override (default: 5.5_xhigh)
+  CHIMNEYSWEEP_VERBOSITY        Default verbosity when no flag is given
+  CHIMNEYSWEEP_SKIP_LABELS      Comma-separated labels to skip
+  CHIMNEYSWEEP_CLEAN_EXIT_CODE  Clean queue exit code (default: 25)
+  CHIMNEYSWEEP_DRY_RUN          Set to 1 to print the resolved command
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    --silent)
+      CHIMNEYSWEEP_VERBOSITY="silent"
+      shift
+      ;;
+    --basic)
+      CHIMNEYSWEEP_VERBOSITY="basic"
+      shift
+      ;;
+    --debug1)
+      CHIMNEYSWEEP_VERBOSITY="debug1"
+      shift
+      ;;
+    --dry-run)
+      CHIMNEYSWEEP_DRY_RUN="1"
+      shift
+      ;;
+    --json)
+      CHIMNEYSWEEP_JSON="1"
+      shift
+      ;;
+    *)
+      printf 'ChimneySweep: unknown argument: %s\n' "$1" >&2
+      usage >&2
+      exit 64
+      ;;
+  esac
+done
+
+case "$CHIMNEYSWEEP_VERBOSITY" in
+  silent|basic|debug1)
+    ;;
+  *)
+    printf 'ChimneySweep: unsupported verbosity: %s\n' "$CHIMNEYSWEEP_VERBOSITY" >&2
+    exit 64
+    ;;
+esac
+
+case "$CHIMNEYSWEEP_CLEAN_EXIT_CODE" in
+  ''|*[!0-9]*)
+    printf 'ChimneySweep: clean exit code must be numeric: %s\n' "$CHIMNEYSWEEP_CLEAN_EXIT_CODE" >&2
+    exit 64
+    ;;
+esac
+
+if ! command -v gh >/dev/null 2>&1; then
+  printf 'ChimneySweep: required command missing: gh\n' >&2
+  exit 127
+fi
+
+if [[ ! -x "$UPKEEPER_CMD" ]]; then
+  printf 'ChimneySweep: Upkeeper command is not executable: %s\n' "$UPKEEPER_CMD" >&2
+  exit 127
+fi
+
+selection_json="$(
+  python3 - "$CHIMNEYSWEEP_SKIP_LABELS" <<'PY'
+import json
+import re
+import subprocess
+import sys
+
+skip_labels = {item.strip().lower() for item in sys.argv[1].split(",") if item.strip()}
+
+
+def gh_json(args):
+    cp = subprocess.run(["gh", *args], text=True, capture_output=True, check=False)
+    if cp.returncode != 0:
+        print(json.dumps({"status": "gh_error", "stderr": cp.stderr.strip()}))
+        raise SystemExit(0)
+    try:
+        return json.loads(cp.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        print(json.dumps({"status": "gh_json_error", "error": str(exc)}))
+        raise SystemExit(0)
+
+
+def labels(issue):
+    return [str(label.get("name", "")).strip().lower() for label in issue.get("labels", []) if label.get("name")]
+
+
+def title(issue):
+    return str(issue.get("title", ""))
+
+
+def issue_class(issue):
+    names = set(labels(issue))
+    lower_title = title(issue).lower()
+    if names & {"security", "sec", "vulnerability"} or re.search(r"\b(sec|security|vulnerab|cve)\b", lower_title):
+        return "security"
+    if "data-integrity" in names or "data integrity" in lower_title or "integrity" in lower_title:
+        return "data-integrity"
+    if "bug" in names or re.match(r"^(critical|high|medium-high|medium|low|bug)[: ]", lower_title):
+        return "bug"
+    return "other"
+
+
+def severity_rank(issue):
+    lower_title = title(issue).lower()
+    names = set(labels(issue))
+    haystack = " ".join([lower_title, *names])
+    if "critical" in haystack:
+        return 0
+    if re.search(r"\bhigh\b", haystack):
+        return 1
+    if "medium-high" in haystack or "medium high" in haystack:
+        return 2
+    if re.search(r"\bmedium\b", haystack):
+        return 3
+    if re.search(r"\blow\b", haystack):
+        return 4
+    if lower_title.startswith("need:") or "need" in names:
+        return 6
+    return 5
+
+
+def containment_rank(issue):
+    lower_title = title(issue).lower()
+    names = " ".join(labels(issue))
+    haystack = f"{lower_title} {names}"
+    containment_words = (
+        "containment",
+        "security",
+        "data protection",
+        "llm isolation",
+        "runtime",
+        "transcript",
+        "backup",
+        "restore",
+        "lattice",
+        "integrity",
+        "prompt",
+        "sandbox",
+        "secret",
+    )
+    return 0 if any(word in haystack for word in containment_words) else 1
+
+
+def updated(issue):
+    return str(issue.get("updatedAt") or issue.get("createdAt") or "")
+
+
+def created(issue):
+    return str(issue.get("createdAt") or "")
+
+
+def number(issue):
+    try:
+        return int(issue.get("number", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+issues = gh_json(
+    [
+        "issue",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        "1000",
+        "--json",
+        "number,title,url,labels,createdAt,updatedAt,comments",
+    ]
+)
+
+if not isinstance(issues, list):
+    print(json.dumps({"status": "gh_json_error", "error": "issue list did not return a list"}))
+    raise SystemExit(0)
+
+candidates = [issue for issue in issues if not (set(labels(issue)) & skip_labels)]
+
+if not candidates:
+    print(json.dumps({"status": "clean", "open_count": len(issues), "candidate_count": 0}))
+    raise SystemExit(0)
+
+classes = {item: [] for item in ("security", "data-integrity", "bug", "other")}
+for issue in candidates:
+    classes[issue_class(issue)].append(issue)
+
+if classes["security"]:
+    selected = sorted(classes["security"], key=lambda issue: (updated(issue), created(issue), number(issue)))[0]
+    basis = "security class first; least recently touched"
+elif classes["data-integrity"]:
+    selected = sorted(classes["data-integrity"], key=lambda issue: (updated(issue), created(issue), number(issue)))[0]
+    basis = "data-integrity class after security clear; least recently touched"
+else:
+    selected = sorted(
+        classes["bug"] + classes["other"],
+        key=lambda issue: (
+            containment_rank(issue),
+            severity_rank(issue),
+            updated(issue),
+            created(issue),
+            title(issue).lower(),
+            number(issue),
+        ),
+    )[0]
+    basis = "general queue ranked by containment signal, severity, then least recently touched"
+
+print(
+    json.dumps(
+        {
+            "status": "ok",
+            "number": str(selected.get("number", "")),
+            "title": title(selected),
+            "url": str(selected.get("url", "")),
+            "labels": ",".join(label.get("name", "") for label in selected.get("labels", []) if label.get("name")),
+            "class": issue_class(selected),
+            "selection_basis": basis,
+            "created_at": created(selected),
+            "updated_at": updated(selected),
+            "open_count": len(issues),
+            "candidate_count": len(candidates),
+        }
+    )
+)
+PY
+)"
+
+selection_status="$(
+  python3 - "$selection_json" <<'PY'
+import json
+import sys
+print(json.loads(sys.argv[1]).get("status", "unknown"))
+PY
+)"
+
+if [[ "$CHIMNEYSWEEP_JSON" == "1" ]]; then
+  printf '%s\n' "$selection_json"
+fi
+
+case "$selection_status" in
+  clean)
+    printf 'ChimneySweep: open issue queue clean; high five yay\n'
+    exit "$CHIMNEYSWEEP_CLEAN_EXIT_CODE"
+    ;;
+  ok)
+    ;;
+  gh_error|gh_json_error)
+    printf 'ChimneySweep: issue listing failed: %s\n' "$selection_json" >&2
+    exit 3
+    ;;
+  *)
+    printf 'ChimneySweep: issue selection failed: %s\n' "$selection_json" >&2
+    exit 3
+    ;;
+esac
+
+issue_number="$(
+  python3 - "$selection_json" <<'PY'
+import json
+import sys
+print(json.loads(sys.argv[1]).get("number", ""))
+PY
+)"
+
+[[ -n "$issue_number" ]] || {
+  printf 'ChimneySweep: selected issue was missing a number: %s\n' "$selection_json" >&2
+  exit 3
+}
+
+args=(
+  "--model-override=$CHIMNEYSWEEP_MODEL_OVERRIDE"
+  "--fix-issue=$issue_number"
+)
+
+printf 'ChimneySweep: selected issue #%s for repair\n' "$issue_number" >&2
+python3 - "$selection_json" <<'PY' >&2
+import json
+import sys
+data = json.loads(sys.argv[1])
+print(f"ChimneySweep: class={data.get('class', 'unknown')} updated_at={data.get('updated_at', 'unknown')} basis={data.get('selection_basis', 'unknown')}")
+print(f"ChimneySweep: title={data.get('title', '')}")
+PY
+
+if [[ "$CHIMNEYSWEEP_DRY_RUN" == "1" ]]; then
+  printf 'CODEX_TERMINAL_VERBOSITY=%q ' "$CHIMNEYSWEEP_VERBOSITY"
+  printf '%q' "$UPKEEPER_CMD"
+  printf ' %q' "${args[@]}"
+  printf '\n'
+  exit 0
+fi
+
+CODEX_TERMINAL_VERBOSITY="$CHIMNEYSWEEP_VERBOSITY" exec "$UPKEEPER_CMD" "${args[@]}"

@@ -10,6 +10,8 @@ Version numbering note:
 	1. Made `--prompt-pass=all` fail closed when final pass-result coverage is incomplete or unavailable.
 	2. Counted real `UPKEEPER_PASS_RESULT` lines, including common Markdown-decorated forms, for machine pass-coverage enforcement.
 	3. Added local quick validation for decorated pass-result parsing and all-pass coverage blocking.
+	4. Fixed fallback postmortem completion so successful `run_postmortem_sequence` paths return the fallback child exit code instead of forcing `7`, preventing synthetic `FALLBACK_CHAIN_EXIT` outcomes during normal recovery.
+	5. Documented the binding unattended-run trust contract: machine health outranks workload, no prior automation failure should escape oversight, and a healthy empty queue should exit quickly without backend work.
 
 2026-05-10: v1.2.10 changes:
 		1. Hardened target selection so paths matching Git ignore rules are rejected even when they have been force-added to Git.

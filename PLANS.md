@@ -3,6 +3,79 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## No-Op Trust Contract
+
+Status: completed
+
+Goal:
+Document the binding unattended-run contract: machine health outranks workload,
+no prior automation failure may escape oversight, and the perfect healthy run is
+a correct fast no-op that exits without backend work when nothing remains to
+repair.
+
+Constraints:
+- Keep this as a documentation and decision-contract change only.
+- Do not weaken the existing obligation-first launcher behavior.
+- Make the AGENTS guidance explicit enough that future design arguments with the
+  maintainer treat the contract as a hard constraint.
+- Keep public docs understandable without private chat context.
+
+Files likely touched:
+- `AGENTS.md`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added the trust/no-op contract to `AGENTS.md`.
+- Documented the operator-facing contract in README, compatibility notes, and
+  the Upkeeper operator guide.
+- Added 2026 release-note coverage for the contract.
+
+## Fallback Postmortem Exit Propagation
+
+Status: completed
+
+Goal:
+Prevent successful fallback/postmortem recovery from being reported as a
+synthetic `FALLBACK_CHAIN_EXIT` failure solely because `run_postmortem_sequence`
+forced a non-zero return after successful report and hardening phases.
+
+Constraints:
+- Preserve non-zero returns for missing postmortem markers, quota/environment
+  skips, and failed report or hardening phases.
+- Preserve fallback child exit propagation as the final recovery outcome.
+- Keep validation local and deterministic.
+
+Files likely touched:
+- `lib/upkeeper/postmortem_sequence.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Made successful postmortem sequences return the fallback child exit instead of
+  forcing `7`.
+- Added quick validation for successful report-plus-hardening marker flow.
+- Updated operator docs, compatibility notes, and release notes for the outcome
+  propagation contract.
+
 ## Prompt Pass Coverage Enforcement
 
 Status: completed

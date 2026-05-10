@@ -65,6 +65,32 @@ The wrapper is intentionally local. It is not a hosted service, CI replacement,
 or repository policy engine. It gives an operator a repeatable loop with better
 guardrails and better evidence than manually relaunching Codex from memory.
 
+## Trust Contract
+
+The perfect unattended run is the one that correctly ends quickly because there
+is nothing left to improve. In a healthy empty state, Upkeeper and its focused
+launchers should prove local automation health, unresolved obligations, and the
+actionable work queue are clean, print a plain reason, and exit without
+launching backend Codex or running broad validation. Treat a clean no-op path
+that takes more than about 10 seconds as pressure to simplify the scripted
+checks.
+
+The north star is the same discipline as the oxygen-mask rule on a flight:
+secure the system that does the helping before it tries to help anything else.
+Upkeeper should not work a fresh project bug while its own automation layer is
+known to be unhealthy.
+
+Machine health always outranks workload. If an earlier automated cycle left an
+unresolved obligation, stale control-plane failure, or broken launcher state,
+the next unattended launcher run repairs or preserves that obligation before it
+starts fresh GitHub issue work. This is intentional: the automation should not
+pretend the bug queue is healthy while the machinery that works it is not.
+
+Operator output should be readable without cross-referencing logs or alternate
+mode names. A launcher that pauses new issue work to repair itself should say
+that directly, identify the automation failure, and show the mapped repair
+target file.
+
 ## When To Use It
 
 Upkeeper fits repos that have a steady backlog of low-to-medium-risk care work:

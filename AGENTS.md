@@ -137,6 +137,36 @@ Upkeeper is expected to stress test both itself and client repositories.
 - If the failure is only stale local wrapper state in a client checkout, fix the
   local symlink or ignored local artifact; do not add tracked client churn.
 
+## Trust And No-Op Contract
+
+- The ideal unattended run is a correct no-op: Upkeeper or a focused launcher
+  proves automation health is clean, proves no actionable work remains, prints a
+  plain terminal reason, and exits quickly without launching backend Codex.
+  Treat a healthy empty run taking more than about 10 seconds as design pressure
+  to simplify or cache scripted checks, not as acceptable background noise.
+- Machine health outranks workload. Unresolved automation obligations, stale
+  run failures, control-plane corruption, or broken launcher state must be
+  reconciled before new GitHub issue work or fresh bug-hunting work begins.
+  Do not argue for skipping, demoting, or bypassing those obligations merely to
+  keep the visible bug queue moving.
+- No failure should escape oversight. If a prior automated cycle failed, the
+  next unattended launcher run should either repair that failure, keep it as a
+  visible obligation, or fail closed with enough local evidence for the next run.
+- Preserve a cheap scripted fast path. Clean queue checks, obligation
+  enumeration, and local health checks should stay deterministic and pre-model.
+  Do not put broad validation, live backend calls, or expensive scans on the
+  clean no-op path unless the user explicitly changes this contract.
+- Operator output must explain what is happening in ordinary admin language:
+  whether the run is repairing a prior automation failure, deferring new issue
+  work, mapping that failure to a target file, or exiting because nothing is
+  left to improve. Avoid mode jargon that requires cross-referencing logs or
+  alternate launch paths to understand the current action.
+- When debating architecture with the maintainer, treat this contract as a hard
+  constraint. Prefer one shared Upkeeper health model with focused modes or thin
+  launchers over diverging tools that can make different decisions about
+  obligations, no-op exits, GitHub boundaries, backups, Lattice, quota, or
+  containment.
+
 ## Cleanup Discipline
 
 - Treat client `Upkeeper.log`, `runtime/`, and local copied wrappers as evidence

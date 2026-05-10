@@ -81,7 +81,10 @@ Future changes should preserve this operator-visible surface as far as possible:
   shadows direct `gh`, `curl`, `wget`, and `hub` commands for backend launches.
   The comment/review stages also override the backend mode to
   `--sandbox read-only`; their issue-comment text returns through a final-message
-  draft block that the wrapper extracts and posts after validation.
+  draft block that the wrapper extracts and posts after validation. Those
+  wrapper-posted staged comments are prefixed `Upkeeper ChimneySweep proposal:`
+  and `Upkeeper ChimneySweep review:` so operators can distinguish wrapper
+  actions from human comments.
 - `CODEX_MODE` remains configurable for supported Codex sandbox modes, but
   Upkeeper rejects `danger-full-access` and
   `--dangerously-bypass-approvals-and-sandbox` because those modes bypass the

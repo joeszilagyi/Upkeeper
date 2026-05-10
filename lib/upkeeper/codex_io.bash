@@ -453,10 +453,10 @@ upkeeper_issue_workflow_comment_stage_enabled() {
 upkeeper_issue_workflow_comment_prefix() {
   case "${CODEX_ISSUE_WORKFLOW_STAGE:-}" in
     comment)
-      printf 'ChimneySweep proposal:'
+      printf 'Upkeeper ChimneySweep proposal:'
       ;;
     review)
-      printf 'ChimneySweep review:'
+      printf 'Upkeeper ChimneySweep review:'
       ;;
     *)
       return 1

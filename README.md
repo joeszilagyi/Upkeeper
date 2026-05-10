@@ -225,11 +225,12 @@ then ranks the remaining queue by containment title/tag signals, severity, and
 least-recently-touched age. The selected issue is passed to Upkeeper as
 `--fix-issue=NUMBER`, with `--prompt-pass=all` and all P24-P29 review modules.
 By default, `ChimneySweep` runs three separate backend instantiations:
-`comment`, `review`, then `apply`. The comment stage leaves a proposed
-resolution comment on the selected issue without changing tracked source, the
-review stage independently reviews that proposal and leaves a decision comment,
-and the apply stage works the bug. This keeps issue selection scripted while
-still exercising the full repair side end to end.
+`comment`, `review`, then `apply`. The comment stage leaves an
+`Upkeeper ChimneySweep proposal:` comment on the selected issue without
+changing tracked source, the review stage independently reviews that proposal
+and leaves an `Upkeeper ChimneySweep review:` decision comment, and the apply
+stage works the bug. This keeps issue selection scripted while still
+exercising the full repair side end to end.
 
 Upkeeper runs those backend instantiations under the Genie Protocol: the wrapper
 fetches issue bodies/comments before launch, Codex receives only that issue

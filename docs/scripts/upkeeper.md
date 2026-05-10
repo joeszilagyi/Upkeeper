@@ -578,7 +578,9 @@ Those stages use the Genie Protocol boundary: the wrapper fetches issue
 evidence before launch, backend Codex receives that packet only, direct
 `gh`/GitHub command access is blocked in the backend environment, comment/review
 issue text returns through a final-message draft block, and the wrapper performs
-issue comments or other GitHub side effects after validation.
+issue comments or other GitHub side effects after validation. Wrapper-posted
+stage comments are visibly prefixed as `Upkeeper ChimneySweep proposal:` and
+`Upkeeper ChimneySweep review:` so they are distinguishable from human comments.
 
 Use `CHIMNEYSWEEP_DRY_RUN=1 ./ChimneySweep` or `./ChimneySweep --dry-run` to
 print the resolved command without launching Codex. Its terminal verbosity flags

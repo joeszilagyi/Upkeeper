@@ -13,6 +13,7 @@ Version numbering note:
 	4. Fixed fallback postmortem completion so successful `run_postmortem_sequence` paths return the fallback child exit code instead of forcing `7`, preventing synthetic `FALLBACK_CHAIN_EXIT` outcomes during normal recovery.
 	5. Documented the binding unattended-run trust contract: machine health outranks workload, no prior automation failure should escape oversight, and a healthy empty queue should exit quickly without backend work.
 	6. Cut docs-only iteration cost by limiting CI push runs to `main` and routing docs-only CI validation through `tools/validate_upkeeper.sh --smoke` instead of `--quick`.
+	7. Prefixed wrapper-posted ChimneySweep staged issue comments as `Upkeeper ChimneySweep proposal:` and `Upkeeper ChimneySweep review:` so public GitHub actions are visibly distinguishable from human comments.
 
 2026-05-10: v1.2.10 changes:
 		1. Hardened target selection so paths matching Git ignore rules are rejected even when they have been force-added to Git.

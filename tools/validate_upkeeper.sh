@@ -1927,14 +1927,14 @@ EOF
   cat >"$last_message_file" <<'EOF'
 Issue comment draft follows.
 UPKEEPER_ISSUE_COMMENT_DRAFT_START
-ChimneySweep proposal:
+Upkeeper ChimneySweep proposal:
 
 Relay-posted body.
 UPKEEPER_ISSUE_COMMENT_DRAFT_END
 UPKEEPER_STATUS: WORK_DONE
 EOF
   cat >"$expected_file" <<'EOF'
-ChimneySweep proposal:
+Upkeeper ChimneySweep proposal:
 
 Relay-posted body.
 EOF
@@ -1971,14 +1971,14 @@ EOF
   cat >"$last_message_file" <<'EOF'
 Review draft follows.
 UPKEEPER_ISSUE_COMMENT_DRAFT_START
-ChimneySweep review: revise
+Upkeeper ChimneySweep review: revise
 
 Decision: revise. Rotation still needs the same no-follow safety boundary.
 UPKEEPER_ISSUE_COMMENT_DRAFT_END
 UPKEEPER_STATUS: WORK_DONE
 EOF
   cat >"$expected_file" <<'EOF'
-ChimneySweep review: revise
+Upkeeper ChimneySweep review: revise
 
 Decision: revise. Rotation still needs the same no-follow safety boundary.
 EOF

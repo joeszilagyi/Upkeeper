@@ -29,14 +29,22 @@ symlinked-client startup, missing-module failure, missing prompt-template
 failure, and empty-transcript failure.
 
 GitHub Actions runs the no-quota CI path from `.github/workflows/ci.yml` on
-pushes and pull requests. That workflow starts on `ubuntu-latest`, installs
-required tools including `jq` and `age`, and runs:
+pull requests and on pushes to `main`. That workflow starts on
+`ubuntu-latest`, installs required tools including `jq` and `age`, and for
+broader changes runs:
 
 ```sh
 bash -n Upkeeper Upkeeper.conf configurations/default.conf lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh
 for test_script in tests/*.bash; do bash "$test_script"; done
 tools/check_public_docs.sh --quick
 tools/validate_upkeeper.sh --quick
+```
+
+For docs-only changes, the workflow takes the cheaper path:
+
+```sh
+tools/check_public_docs.sh --quick
+tools/validate_upkeeper.sh --smoke
 ```
 
 The CI workflow does not run real Codex backend work and does not upload runtime

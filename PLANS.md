@@ -3,6 +3,46 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Docs-Only Validation Fast Path
+
+Status: completed
+
+Goal:
+Cut the end-to-end cost of docs-only changes such as the README airlock update
+by avoiding duplicate CI runs and by keeping docs-only validation on the smoke
+path instead of the broader quick integration path.
+
+Constraints:
+- Preserve `--quick` as the broad deterministic gate for runtime and mixed
+  changes.
+- Keep docs-only CI no-quota and local-first.
+- Avoid duplicate branch-push and pull-request CI for the same PR iteration.
+- Keep public docs and validation guidance aligned with the cheaper docs-only
+  path.
+
+Files likely touched:
+- `.github/workflows/ci.yml`
+- `AGENTS.md`
+- `README.md`
+- `docs/dependencies.md`
+- `docs/scripts/upkeeper.md`
+- `tools/check_public_docs.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Limited CI `push` runs to `main` so PR branches no longer pay for duplicate
+  branch-push and pull-request workflows.
+- Added a docs-only CI classifier that runs `tools/validate_upkeeper.sh --smoke`
+  instead of `--quick`.
+- Updated AGENTS and public docs so docs-only local validation uses the smoke
+  path.
+
 ## No-Op Trust Contract
 
 Status: completed

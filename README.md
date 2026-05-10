@@ -17,6 +17,53 @@ release notes, prompts, comments, logs, and docs are expected to explain the
 tool from tracked source, not from private chat history. P26 exists to enforce
 that standard.
 
+## The Short Version
+
+Upkeeper is a launch script and local control plane that runs a carefully gated,
+local-first sequence before any outside LLM backend is invoked. It checks the
+repo, prior automation failures, quota state, selected target, backup state,
+issue evidence, logs, and local ledgers first. Only then does it release a
+backend LLM into a narrow task airlock.
+
+The wrapper owns the operator tools and side effects. It talks to Git, GitHub,
+quota/session files, backups, logs, Lattice, and the backend LLM. The backend
+LLM receives the wrapper-built task packet, selected target context, and the
+configured sandbox. In issue workflows, the LLM does not talk to GitHub with its
+own credentials or tools; Upkeeper fetches issue evidence before launch and
+posts comments or other GitHub side effects after validation.
+
+In Upkeeper terms, the airlock is the middleware boundary between the local
+control plane and the backend LLM: only selected context, allowed commands,
+sandbox rules, evidence paths, and the validated return channel belong there.
+The local operator-controlled side is the Good Place. The external backend,
+provider, internet, and model side is the Neutral Place. The boundary is about
+authority, evidence, and trust, not moral labels.
+
+You can use the whole loop or only part of it: find bugs, file bugs, triage the
+queue, leave a proposed fix, review that proposal, apply the fix, or run until
+there is nothing left to improve. The best run is a correct fast no-op.
+
+```text
+operator
+   |
+   v
+Upkeeper local gates
+   |-- automation health and obligations
+   |-- repo selection, backup, quota, logs, Lattice
+   |-- GitHub issue fetch/post handled by wrapper
+   |
+   v
+LLM airlock
+   |-- bounded task packet
+   |-- selected target context
+   |-- configured sandbox
+   |
+   v
+validated outcome
+   |-- report, issue comment, patch, or clean no-op
+   |-- evidence recorded locally
+```
+
 ## What It Does
 
 `Upkeeper` runs one guarded Codex backend cycle per invocation.

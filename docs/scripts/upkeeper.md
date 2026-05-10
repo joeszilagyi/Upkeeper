@@ -655,9 +655,11 @@ prompts, backup log lines, or Lattice preselect evidence.
   auditable from machine logs, not only from prose. The parser accepts common
   Markdown line prefixes such as bullets and bold/code emphasis around `P<N>`.
 - Final responses may include additive `UPKEEPER_PASS_RESULT` lines for every
-  P* pass actually applied or explicitly found not applicable. Missing lines do
-  not fail a cycle; malformed lines are rejected evidence for Lattice instead
-  of clean pass results.
+  P* pass actually applied or explicitly found not applicable. For
+  `--prompt-pass=all`, incomplete or unavailable pass-result coverage now
+  blocks the cycle after parsing. Outside all-pass runs, missing lines remain
+  additive-only. Malformed lines are rejected evidence for Lattice instead of
+  clean pass results.
 - Review prompts avoid legacy editor-specific persistence instructions and keep
   only the Codex-relevant mtime/content verification contract, reducing prompt
   tokens without weakening the review workflow.

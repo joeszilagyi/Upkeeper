@@ -129,8 +129,10 @@ Future changes should preserve this operator-visible surface as far as possible:
   `UPKEEPER_LOG_REVIEW` remain unchanged.
 - Review outcomes recognized in final prose include `REVIEWED_AND_FIXED`,
   `REVIEWED_AND_REPORTED`, `REVIEWED_CLEAN`, and `STOPPED_ON_BLOCKER`.
-- Missing `UPKEEPER_PASS_RESULT` markers do not fail a cycle. Malformed
-  pass-result markers are recorded as rejected evidence, not clean pass results.
+- Missing `UPKEEPER_PASS_RESULT` markers remain additive-only for normal runs.
+  When `--prompt-pass=all` is active, incomplete or unavailable pass-result
+  coverage now forces the cycle to `BLOCKED`. Malformed pass-result markers are
+  recorded as rejected evidence, not clean pass results.
 - Default target selection remains current-compatible. Live source-safe
   eligibility stays authoritative; Lattice does not replace current eligibility
   with stale database rows.

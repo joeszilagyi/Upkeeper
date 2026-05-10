@@ -850,6 +850,17 @@ main() {
     fi
   fi
 
+  if [[ "${CODEX_PROMPT_PASS:-}" == "all" ]]; then
+    if ! prompt_pass_coverage_gate "$last_message_file" 0; then
+      local pass_coverage_gate_rc=$?
+      if [[ "$pass_coverage_gate_rc" -eq 2 || "$pass_coverage_gate_rc" -eq 3 ]]; then
+        status_marker="BLOCKED"
+        status_marker_source="prompt_pass_coverage"
+        log_line "WARN" "status_marker.overridden_for_prompt_pass_coverage marker=$status_marker codex_exit=$codex_exit coverage_gate_rc=$pass_coverage_gate_rc"
+      fi
+    fi
+  fi
+
   if upkeeper_issue_workflow_comment_stage_enabled; then
     if upkeeper_issue_workflow_post_comment; then
       if [[ "${status_marker:-}" == "BLOCKED" ]]; then

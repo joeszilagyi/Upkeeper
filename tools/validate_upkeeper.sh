@@ -2347,7 +2347,7 @@ check_postmortem_sequence_marker_contract() {
   log "checking postmortem sequence marker contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-postmortem-sequence.XXXXXX)"
 
-  for case_name in report_missing_marker hardening_missing_marker; do
+  for case_name in report_missing_marker hardening_missing_marker report_and_hardening_success; do
     case_dir="$temp_dir/$case_name"
     mkdir -p "$case_dir/tmp"
 
@@ -2397,6 +2397,17 @@ check_postmortem_sequence_marker_contract() {
               printf "report fixture omitted required marker\n" >"$last_message_path"
               return 0
               ;;
+            postmortem.report:report_and_hardening_success)
+              {
+                printf "# Upkeeper Postmortem\n"
+                printf "## Incident Summary\n"
+                printf "Report fixture with complete markers.\n"
+                printf "## Action Plan\n"
+                printf "No outstanding action items.\n"
+              } >"$POSTMORTEM_REPORT_PATH"
+              printf "CODEX_POSTMORTEM_STATUS: REPORT_WRITTEN\n" >"$last_message_path"
+              return 0
+              ;;
             postmortem.report:hardening_missing_marker)
               {
                 printf "# Upkeeper Postmortem\n"
@@ -2410,6 +2421,10 @@ check_postmortem_sequence_marker_contract() {
               printf "hardening fixture omitted required marker\n" >"$last_message_path"
               return 0
               ;;
+            postmortem.hardening:report_and_hardening_success)
+              printf "CODEX_POSTMORTEM_STATUS: HARDENING_DONE\n" >"$last_message_path"
+              return 0
+              ;;
           esac
 
           printf "unexpected auxiliary phase: %s for %s\n" "$phase_label" "$case_name" >&2
@@ -2419,7 +2434,6 @@ check_postmortem_sequence_marker_contract() {
         set +e
         run_postmortem_sequence "failure" "marker contract" "0" >"$case_dir/sequence.out" 2>"$case_dir/sequence.err"
         rc=$?
-        set -e
 
         printf "%s\n" "$rc" >"$case_dir/rc.txt"
         printf "%s\n" "$POSTMORTEM_SEQUENCE_STATUS" >"$case_dir/status.txt"
@@ -2429,7 +2443,11 @@ check_postmortem_sequence_marker_contract() {
     fi
 
     rc="$(tr -d '[:space:]' <"$case_dir/rc.txt")"
-    [[ "$rc" == "8" ]] || fail "$case_name exited $rc, expected 8"
+    if [[ "$case_name" == "report_and_hardening_success" ]]; then
+      [[ "$rc" == "0" ]] || fail "$case_name exited $rc, expected 0"
+    else
+      [[ "$rc" == "8" ]] || fail "$case_name exited $rc, expected 8"
+    fi
 
     case "$case_name" in
       report_missing_marker)
@@ -2439,6 +2457,10 @@ check_postmortem_sequence_marker_contract() {
       hardening_missing_marker)
         expected_status="hardening_failed"
         expected_log="postmortem.hardening failed exit_code=0 marker=missing expected_marker=HARDENING_DONE"
+        ;;
+      report_and_hardening_success)
+        expected_status="complete"
+        expected_log="postmortem.report.finish exit_code=0 marker=REPORT_WRITTEN"
         ;;
       *)
         fail "unknown marker contract case: $case_name"

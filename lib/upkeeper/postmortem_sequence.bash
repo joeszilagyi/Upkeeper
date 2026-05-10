@@ -419,5 +419,5 @@ EOF
   write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
   emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
   rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
-  return 7
+  return "$child_exit"
 }

@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.10
+Version: v1.2.11
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -63,8 +63,8 @@ Loop stop semantics:
     CODEX_FALLBACK_SCREEN_CONTINUOUS=1 and raise CODEX_FALLBACK_SCREEN_MAX_CHILDREN
     to opt into bounded multi-child fallback
   - by default, a fallback event also triggers a scripted post-mortem report pass
-    plus one final hardening pass, then the wrapper exits non-zero so you can
-    manually relaunch the loop after reviewing the incident summary
+    plus one final hardening pass, then the wrapper propagates the fallback
+    child outcome unless the post-mortem/report/hardening path itself fails
   - post-mortem report completion logs `postmortem.report.finish` with the
     report child exit, parsed marker, report path, and file existence state
   - auxiliary post-mortem and hardening Codex calls use their own exact-model
@@ -194,6 +194,14 @@ Important:
     Those launchers reconcile open obligations before normal bug-finding or
     issue-queue selection, handing the oldest/highest-priority obligation back
     to Upkeeper as a locked repair target.
+  - The perfect run is a correct fast no-op: when automation health, unresolved
+    obligations, and the actionable queue are all clean, Upkeeper or a launcher
+    should print a plain reason and exit without launching backend Codex or
+    broad validation. Treat a healthy empty run taking more than about 10
+    seconds as an operator-ergonomics bug.
+  - Machine health outranks new workload. If a prior automated run failed, the
+    next unattended launcher run repairs or preserves that obligation before it
+    starts fresh GitHub issue work or bug-hunting work.
   - Before the first wrapper log write, Upkeeper rejects unsafe log paths:
     symlink log files, non-regular log files, hard-linked log files, log files
     not owned by the current user, and symlink log parent directories fail
@@ -561,6 +569,11 @@ review modules enabled. Its default workflow runs separate comment, review, and
 apply stages with `--issue-workflow-stage=comment|review|apply`, so the first
 two stages are source read-only and run backend Codex in a read-only repository
 sandbox, while the final stage owns implementation.
+Before ranking GitHub issues, ChimneySweep reconciles unresolved Upkeeper
+automation obligations. If an obligation exists, ChimneySweep is repairing the
+automation system first, not skipping the issue queue accidentally. It should
+make that plain in terminal output by naming the prior automation failure and
+the mapped repair target file.
 Those stages use the Genie Protocol boundary: the wrapper fetches issue
 evidence before launch, backend Codex receives that packet only, direct
 `gh`/GitHub command access is blocked in the backend environment, comment/review

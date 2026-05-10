@@ -65,6 +65,15 @@ Future changes should preserve this operator-visible surface as far as possible:
   stage works the bug. Each stage requests all prompt passes and all P24-P29
   review modules for the locked issue target, and uses the same full-burn
   launcher protections and quota-bypass behavior as FlameOn.
+- The clean no-op path is a first-class contract. When automation health,
+  unresolved obligations, and the actionable work queue are all clean, Upkeeper
+  and focused launchers should exit quickly, plainly, and without backend Codex
+  work or broad validation. A healthy empty run taking more than about 10
+  seconds is treated as a performance and ergonomics bug.
+- Machine health outranks new workload. Unresolved automation obligations and
+  stale control-plane failures block fresh GitHub issue work or bug-hunting
+  runs until they are repaired, resolved, or preserved as explicit obligations
+  for the next run.
 - Backend Codex issue workflows use the Genie Protocol boundary. The wrapper
   owns GitHub reads and writes, passes only wrapper-fetched issue evidence plus
   local artifact paths into the model, strips GitHub token variables from the
@@ -98,6 +107,8 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Published loop exit meanings remain stable, especially successful work,
   intentional no-backend-task stop, fallback/postmortem failures, active locks,
   empty transcripts, local environment failures, and parent-stop guardrails.
+  A successful fallback child with a successful postmortem sequence may complete
+  cleanly; postmortem failures still propagate as recovery failures.
 - `Upkeeper.log` keeps cycle/run evidence in parseable timestamped lines with
   `cycle=...`, `run_hash=...`, event names, and key-value fields.
 - Unsafe log paths fail closed before Codex launch: symlink log files,

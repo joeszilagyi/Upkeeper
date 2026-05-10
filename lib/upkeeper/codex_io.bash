@@ -6,6 +6,32 @@
 # Operator-facing flag changes must stay aligned with docs/scripts/upkeeper.md
 # and lib/upkeeper/help_selection.bash.
 
+GENIE_PROTOCOL_BLOCKED_COMMANDS=(gh curl wget hub)
+
+prepare_genie_protocol_env() {
+  local command_name stub_path
+
+  ensure_run_tmp_dir
+  RUN_GENIE_BIN_DIR="$RUN_TMP_DIR/genie-bin"
+  RUN_GENIE_GH_CONFIG_DIR="$RUN_TMP_DIR/genie-gh-config"
+  mkdir -p -- "$RUN_GENIE_BIN_DIR" "$RUN_GENIE_GH_CONFIG_DIR"
+  chmod 700 "$RUN_GENIE_BIN_DIR" "$RUN_GENIE_GH_CONFIG_DIR" 2>/dev/null || true
+
+  for command_name in "${GENIE_PROTOCOL_BLOCKED_COMMANDS[@]}"; do
+    stub_path="$RUN_GENIE_BIN_DIR/$command_name"
+    if [[ ! -e "$stub_path" ]]; then
+      cat >"$stub_path" <<'EOF'
+#!/usr/bin/env bash
+printf 'Upkeeper Genie Protocol: direct %s access is blocked for backend Codex; use wrapper-provided issue packets and local draft artifacts.\n' "${0##*/}" >&2
+exit 126
+EOF
+      chmod 700 "$stub_path"
+    fi
+  done
+
+  log_line "INFO" "genie_protocol.ready broker=wrapper github_direct=blocked bin_dir=$(shell_quote "$RUN_GENIE_BIN_DIR") gh_config_dir=$(shell_quote "$RUN_GENIE_GH_CONFIG_DIR") commands=$(IFS=,; printf '%s' "${GENIE_PROTOCOL_BLOCKED_COMMANDS[*]}")" >/dev/null
+}
+
 run_codex_exec_capture() {
   local label="$1"
   local transcript_file="$2"
@@ -14,15 +40,32 @@ run_codex_exec_capture() {
   local tee_rc=0
   local filter_rc=0
   local -a pipe_status
+  local -a genie_env
   shift 3
 
+  prepare_genie_protocol_env
+  genie_env=(
+    env
+    -u GITHUB_TOKEN
+    -u GH_TOKEN
+    -u GITHUB_PAT
+    -u GH_ENTERPRISE_TOKEN
+    -u GITHUB_ENTERPRISE_TOKEN
+    -u CODEX_GITHUB_PERSONAL_ACCESS_TOKEN
+    -u GITHUB_API_URL
+    -u GITHUB_GRAPHQL_URL
+    PATH="$RUN_GENIE_BIN_DIR:$PATH"
+    GH_CONFIG_DIR="$RUN_GENIE_GH_CONFIG_DIR"
+    GIT_TERMINAL_PROMPT=0
+  )
+
   if terminal_wants_full_output; then
-    "$@" <"$stdin_file" 2>&1 | tee "$transcript_file"
+    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 | tee "$transcript_file"
     pipe_status=("${PIPESTATUS[@]}")
     codex_rc="${pipe_status[0]}"
     tee_rc="${pipe_status[1]}"
   else
-    "$@" <"$stdin_file" 2>&1 | tee "$transcript_file" | codex_live_output_filter "$label"
+    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 | tee "$transcript_file" | codex_live_output_filter "$label"
     pipe_status=("${PIPESTATUS[@]}")
     codex_rc="${pipe_status[0]}"
     tee_rc="${pipe_status[1]}"
@@ -344,6 +387,225 @@ upkeeper_issue_fix_next_enabled() {
   config_truthy "${CODEX_ISSUE_FIX_NEXT:-0}" || [[ -n "${CODEX_ISSUE_FIX_REQUESTED_NUMBER:-}" ]]
 }
 
+set_issue_workflow_stage_or_die() {
+  local stage="$1"
+
+  case "$stage" in
+    ""|comment|review|apply)
+      CODEX_ISSUE_WORKFLOW_STAGE="$stage"
+      ;;
+    *)
+      die "unknown issue workflow stage: $stage (supported: comment, review, apply)"
+      ;;
+  esac
+}
+
+upkeeper_issue_workflow_read_only_enabled() {
+  case "${CODEX_ISSUE_WORKFLOW_STAGE:-}" in
+    comment|review)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+upkeeper_backend_mode_args_for_current_stage() {
+  if upkeeper_issue_workflow_read_only_enabled; then
+    printf '%s\0' --sandbox read-only
+    return 0
+  fi
+
+  printf '%s\0' "${CODEX_MODE_ARGS[@]}"
+}
+
+upkeeper_source_mutation_guard_enabled() {
+  upkeeper_bug_report_only_enabled || upkeeper_issue_workflow_read_only_enabled
+}
+
+upkeeper_source_mutation_guard_mode() {
+  if upkeeper_issue_workflow_read_only_enabled; then
+    printf 'issue_%s' "$CODEX_ISSUE_WORKFLOW_STAGE"
+  elif upkeeper_bug_report_only_enabled; then
+    printf 'bug_report_only'
+  else
+    printf 'none'
+  fi
+}
+
+upkeeper_issue_workflow_comment_stage_enabled() {
+  case "${CODEX_ISSUE_WORKFLOW_STAGE:-}" in
+    comment|review)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+upkeeper_issue_workflow_comment_prefix() {
+  case "${CODEX_ISSUE_WORKFLOW_STAGE:-}" in
+    comment)
+      printf 'ChimneySweep proposal:'
+      ;;
+    review)
+      printf 'ChimneySweep review:'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+upkeeper_issue_workflow_extract_comment_from_last_message() {
+  local last_message_file="$1"
+  local draft_file="$2"
+  local prefix="$3"
+
+  [[ -r "$last_message_file" ]] || return 1
+  [[ -n "$draft_file" ]] || return 1
+
+  python3 - "$last_message_file" "$draft_file" "$prefix" <<'PY'
+import os
+import pathlib
+import sys
+
+last_message = pathlib.Path(sys.argv[1])
+draft_path = pathlib.Path(sys.argv[2])
+prefix = sys.argv[3]
+start = "UPKEEPER_ISSUE_COMMENT_DRAFT_START"
+end = "UPKEEPER_ISSUE_COMMENT_DRAFT_END"
+
+try:
+    lines = last_message.read_text(encoding="utf-8", errors="replace").splitlines()
+except OSError as exc:
+    print(f"read_error:{exc}", file=sys.stderr)
+    sys.exit(1)
+
+blocks = []
+current = None
+for line in lines:
+    if line == start:
+        if current is not None:
+            print("nested_start", file=sys.stderr)
+            sys.exit(1)
+        current = []
+        continue
+    if line == end:
+        if current is None:
+            print("end_without_start", file=sys.stderr)
+            sys.exit(1)
+        blocks.append(current)
+        current = None
+        continue
+    if current is not None:
+        current.append(line)
+
+if current is not None:
+    print("missing_end", file=sys.stderr)
+    sys.exit(1)
+if len(blocks) != 1:
+    print(f"wrong_block_count:{len(blocks)}", file=sys.stderr)
+    sys.exit(1)
+
+body_lines = blocks[0]
+while body_lines and body_lines[-1] == "":
+    body_lines.pop()
+body = "\n".join(body_lines).rstrip() + "\n"
+
+if not body.strip():
+    print("empty_body", file=sys.stderr)
+    sys.exit(1)
+first_line = body.splitlines()[0]
+if first_line != prefix and not first_line.startswith(prefix + " "):
+    print("wrong_prefix", file=sys.stderr)
+    sys.exit(1)
+if len(body.encode("utf-8", errors="replace")) > 65536:
+    print("body_too_large", file=sys.stderr)
+    sys.exit(1)
+if "\0" in body:
+    print("nul_byte", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    draft_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(draft_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(body)
+    os.chmod(str(draft_path), 0o600)
+except OSError as exc:
+    print(f"write_error:{exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+upkeeper_issue_workflow_materialize_comment_draft() {
+  local stage="${CODEX_ISSUE_WORKFLOW_STAGE:-}"
+  local draft_file="${RUN_ISSUE_WORKFLOW_COMMENT_FILE:-}"
+  local prefix output rc
+
+  [[ -n "$draft_file" ]] || return 1
+  if [[ -s "$draft_file" ]]; then
+    return 0
+  fi
+
+  prefix="$(upkeeper_issue_workflow_comment_prefix)" || return 1
+  if [[ -z "${RUN_LAST_MESSAGE_FILE:-}" || ! -r "$RUN_LAST_MESSAGE_FILE" ]]; then
+    log_line "ERROR" "issue.workflow_comment.unavailable stage=$(shell_quote "$stage") number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}") path=$(shell_quote "$draft_file") reason=missing_last_message"
+    return 1
+  fi
+
+  set +e
+  output="$(upkeeper_issue_workflow_extract_comment_from_last_message "$RUN_LAST_MESSAGE_FILE" "$draft_file" "$prefix" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    log_line "ERROR" "issue.workflow_comment.unavailable stage=$(shell_quote "$stage") number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}") path=$(shell_quote "$draft_file") reason=extract_failed detail=$(shell_quote "$output")"
+    return 1
+  fi
+
+  log_line "INFO" "issue.workflow_comment.extracted stage=$(shell_quote "$stage") number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}") path=$(shell_quote "$draft_file") source=last_message_block"
+  return 0
+}
+
+upkeeper_issue_workflow_post_comment() {
+  local stage="${CODEX_ISSUE_WORKFLOW_STAGE:-}"
+  local draft_file="${RUN_ISSUE_WORKFLOW_COMMENT_FILE:-}"
+  local prefix first_line output rc
+
+  upkeeper_issue_workflow_comment_stage_enabled || return 0
+
+  if [[ -z "${CODEX_ISSUE_FIX_NUMBER:-}" || -z "$draft_file" ]]; then
+    log_line "ERROR" "issue.workflow_comment.unavailable stage=$(shell_quote "$stage") number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}") reason=missing_context"
+    return 1
+  fi
+  if ! upkeeper_issue_workflow_materialize_comment_draft; then
+    log_line "ERROR" "issue.workflow_comment.unavailable stage=$(shell_quote "$stage") number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") path=$(shell_quote "$draft_file") reason=missing_or_empty_draft"
+    return 1
+  fi
+
+  prefix="$(upkeeper_issue_workflow_comment_prefix)" || return 1
+  IFS= read -r first_line <"$draft_file" || first_line=""
+  if [[ "$first_line" != "$prefix" && "$first_line" != "$prefix "* ]]; then
+    log_line "ERROR" "issue.workflow_comment.unavailable stage=$(shell_quote "$stage") number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") path=$(shell_quote "$draft_file") reason=wrong_prefix expected=$(shell_quote "$prefix")"
+    return 1
+  fi
+
+  set +e
+  output="$(gh issue comment "$CODEX_ISSUE_FIX_NUMBER" --body-file "$draft_file" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    log_line "ERROR" "issue.workflow_comment.post_failed stage=$(shell_quote "$stage") number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") path=$(shell_quote "$draft_file") exit=$rc detail=$(shell_quote "$output")"
+    return 1
+  fi
+
+  log_line "INFO" "issue.workflow_comment.posted stage=$(shell_quote "$stage") number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") path=$(shell_quote "$draft_file")"
+  return 0
+}
+
 upkeeper_source_mutation_fingerprint() {
   {
     printf 'tracked-diff\n'
@@ -368,12 +630,22 @@ append_csv_value() {
 }
 
 validate_codex_mode_args_or_exit() {
+  local mode_arg
+
   CODEX_MODE_ARGS=()
   read -r -a CODEX_MODE_ARGS <<<"$CODEX_MODE_STRING"
   if [[ "${CODEX_MODE_ARGS[0]:-}" != --* || "${CODEX_MODE_ARGS[0]:-}" == ---* ]]; then
     printf 'Upkeeper: invalid CODEX_MODE first token %q; expected a Codex option beginning with --\n' "${CODEX_MODE_ARGS[0]:-}" >&2
     exit 2
   fi
+  for mode_arg in "${CODEX_MODE_ARGS[@]}"; do
+    case "$mode_arg" in
+      danger-full-access|--dangerously-bypass-approvals-and-sandbox)
+        printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "$mode_arg" >&2
+        exit 2
+        ;;
+    esac
+  done
 }
 
 set_prompt_pass_or_die() {
@@ -410,6 +682,10 @@ apply_configured_cli_defaults() {
 
   if [[ -n "${CODEX_PROMPT_PASS:-}" ]]; then
     set_prompt_pass_or_die "$CODEX_PROMPT_PASS"
+  fi
+
+  if [[ -n "${CODEX_ISSUE_WORKFLOW_STAGE:-}" ]]; then
+    set_issue_workflow_stage_or_die "$CODEX_ISSUE_WORKFLOW_STAGE"
   fi
 
   if config_truthy "${UPKEEPER_MAX_COVER:-0}"; then
@@ -522,11 +798,16 @@ def candidate_paths(text):
                 yield normalized
 
 
-def emit_selected(issue, selected_label, body=None):
+def emit_selected(issue, selected_label, body=None, comments=None):
     number = str(issue.get("number", ""))
     if body is None:
-        body_data = gh_json(["issue", "view", number, "--json", "body"])
+        body_data = gh_json(["issue", "view", number, "--json", "body,comments"])
         body = str(body_data.get("body", ""))
+        comments = body_data.get("comments", []) if comments is None else comments
+    if comments is None:
+        comments = issue.get("comments", [])
+    if not isinstance(comments, list):
+        comments = []
     combined = "\n".join([str(issue.get("title", "")), body])
     target = next(candidate_paths(combined), "")
     label_names = [str(label.get("name", "")) for label in issue.get("labels", []) if label.get("name")]
@@ -542,6 +823,7 @@ def emit_selected(issue, selected_label, body=None):
                 "created_at": str(issue.get("createdAt", "")),
                 "target_file": target,
                 "body": body,
+                "comments": comments,
             }
         )
     )
@@ -554,14 +836,14 @@ if requested_number:
             "view",
             requested_number,
             "--json",
-            "number,title,url,labels,createdAt,body,state",
+            "number,title,url,labels,createdAt,body,state,comments",
         ]
     )
     state = str(issue.get("state", "")).lower()
     if state and state != "open":
         print(json.dumps({"status": "not_open", "number": requested_number, "state": state}))
         raise SystemExit(0)
-    emit_selected(issue, "explicit", str(issue.get("body", "")))
+    emit_selected(issue, "explicit", str(issue.get("body", "")), issue.get("comments", []))
     raise SystemExit(0)
 
 
@@ -621,6 +903,7 @@ PY
   CODEX_ISSUE_FIX_CREATED_AT="$(jq -r '.created_at // ""' <<<"$issue_json")"
   CODEX_ISSUE_FIX_TARGET_FILE="$(jq -r '.target_file // ""' <<<"$issue_json")"
   CODEX_ISSUE_FIX_BODY="$(jq -r '.body // ""' <<<"$issue_json")"
+  CODEX_ISSUE_FIX_COMMENTS_JSON="$(jq -c '.comments // []' <<<"$issue_json")"
 
   target_from_issue="$CODEX_ISSUE_FIX_TARGET_FILE"
   if [[ -z "${CODEX_TARGET_FILE:-}" ]]; then
@@ -827,6 +1110,13 @@ parse_args() {
         CODEX_BUG_REPORT_ONLY="0"
         shift
         ;;
+      --issue-workflow-stage=*)
+        set_issue_workflow_stage_or_die "${1#--issue-workflow-stage=}"
+        shift
+        ;;
+      --issue-workflow-stage)
+        die "use --issue-workflow-stage=comment, --issue-workflow-stage=review, or --issue-workflow-stage=apply (spaced form is intentionally unsupported)"
+        ;;
       --fix-issue=*)
         CODEX_ISSUE_FIX_REQUESTED_NUMBER="${1#--fix-issue=}"
         [[ "$CODEX_ISSUE_FIX_REQUESTED_NUMBER" =~ ^[0-9]+$ ]] || die "--fix-issue requires a numeric issue number"
@@ -863,7 +1153,7 @@ parse_args() {
 require_commands() {
   local missing=0
   local cmd
-  for cmd in awk cat chmod cut date df find git grep jq ln mkdir mktemp mv ps python3 rm rmdir sed sort tail tee tr wc; do
+  for cmd in awk cat chmod cut date df env find git grep jq ln mkdir mktemp mv ps python3 rm rmdir sed sort tail tee tr wc; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       log_line "ERROR" "required command missing: $cmd"
       missing=1

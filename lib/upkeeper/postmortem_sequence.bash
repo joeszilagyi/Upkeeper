@@ -227,7 +227,10 @@ emit_postmortem_summary() {
       printf '%s\n' "$marker_block" | sed 's/^/  /'
     fi
     printf 'POSTMORTEM_SUMMARY_END\n'
-  } | tee -a "$LOG_FILE"
+  } | while IFS= read -r summary_line; do
+    printf '%s\n' "$summary_line"
+    append_log_line_secure "$summary_line" "postmortem_summary" || exit $?
+  done
 }
 
 run_postmortem_sequence() {

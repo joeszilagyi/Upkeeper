@@ -248,11 +248,12 @@ if failures:
         "addressed_by_later_success": addressed_by_later_success,
     }
     write_json_atomic(marker_path, data)
-    if status_marker == "WORK_DONE" and addressed_by_later_success and not bug_report_only:
-        resolved_path = resolve_marker(marker_path, "work_done_after_detected_failure")
+    if addressed_by_later_success and not bug_report_only:
+        reason = "work_done_after_detected_failure" if status_marker == "WORK_DONE" else "later_success_after_detected_failure"
+        resolved_path = resolve_marker(marker_path, reason)
         print(f"action=resolved_same_run marker_id={field(marker_id)} marker_path={field(str(resolved_path))} target_path={field(target_path)} failures={len(failures)} addressed_by_later_success=1")
     else:
-        print(f"action=open marker_id={field(marker_id)} marker_path={field(str(marker_path))} target_path={field(target_path)} failures={len(failures)} addressed_by_later_success=0 kind={field(first['kind'])} exit_line={field(first['exit_line'])}")
+        print(f"action=open marker_id={field(marker_id)} marker_path={field(str(marker_path))} target_path={field(target_path)} failures={len(failures)} addressed_by_later_success={1 if addressed_by_later_success else 0} kind={field(first['kind'])} exit_line={field(first['exit_line'])}")
     raise SystemExit(0)
 
 if status_marker == "WORK_DONE" and selected_marker_path.exists() and bug_report_only:

@@ -11,8 +11,10 @@ emit_codex_transcript_summary() {
   python3 - "$label" "$transcript_file" "$codex_exit" "$signal_lines" "$error_tail_lines" "$LOG_FILE" "$CYCLE_ID" "$CYCLE_RUN_HASH" <<'PY'
 from datetime import datetime, timezone
 from pathlib import Path
+import errno
 import os
 import re
+import stat
 import sys
 
 label, path_raw, exit_raw, signal_raw, tail_raw, log_raw, cycle_id, run_hash = sys.argv[1:9]
@@ -244,10 +246,68 @@ summary = (
 log_lines = [f'{ts()} [INFO] cycle={cycle_id} run_hash={run_hash} {summary}']
 for item in signals[-signal_limit:]:
     log_lines.append(f'{ts()} [INFO] cycle={cycle_id} run_hash={run_hash} codex.transcript.signal label={label} text={field_value(item)}')
+
+def append_log_lines_secure(path: Path, items: list[str]) -> None:
+    path_raw = os.fspath(path)
+    parent = os.path.dirname(path_raw) or "."
+    name = os.path.basename(path_raw)
+    uid = os.getuid()
+    if not name or name in {".", ".."}:
+        raise OSError("invalid log filename")
+
+    parent_stat = os.lstat(parent)
+    if stat.S_ISLNK(parent_stat.st_mode) or not stat.S_ISDIR(parent_stat.st_mode):
+        raise OSError("unsafe log parent")
+
+    try:
+        path_stat = os.lstat(path_raw)
+    except FileNotFoundError:
+        path_stat = None
+    if path_stat is not None:
+        if stat.S_ISLNK(path_stat.st_mode) or not stat.S_ISREG(path_stat.st_mode):
+            raise OSError("unsafe log file type")
+        if path_stat.st_uid != uid:
+            raise OSError("unsafe log owner")
+        if path_stat.st_nlink != 1:
+            raise OSError("unsafe log hardlink count")
+
+    dir_flags = os.O_RDONLY
+    for attr in ("O_DIRECTORY", "O_CLOEXEC", "O_NOFOLLOW"):
+        dir_flags |= getattr(os, attr, 0)
+    parent_fd = os.open(parent, dir_flags)
+    file_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+    for attr in ("O_CLOEXEC", "O_NONBLOCK", "O_NOFOLLOW"):
+        file_flags |= getattr(os, attr, 0)
+    try:
+        try:
+            fd = os.open(name, file_flags, 0o600, dir_fd=parent_fd)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise OSError("unsafe log symlink") from exc
+            raise
+        try:
+            opened_stat = os.fstat(fd)
+            if not stat.S_ISREG(opened_stat.st_mode):
+                raise OSError("unsafe log file type")
+            if opened_stat.st_uid != uid:
+                raise OSError("unsafe log owner")
+            if opened_stat.st_nlink != 1:
+                raise OSError("unsafe log hardlink count")
+            os.fchmod(fd, 0o600)
+            for item in items:
+                data = (item + "\n").encode("utf-8", errors="surrogateescape")
+                while data:
+                    written = os.write(fd, data)
+                    if written <= 0:
+                        raise OSError("log write returned zero bytes")
+                    data = data[written:]
+        finally:
+            os.close(fd)
+    finally:
+        os.close(parent_fd)
+
 try:
-    with log_path.open('a', encoding='utf-8') as handle:
-        for item in log_lines:
-            handle.write(item + '\n')
+    append_log_lines_secure(log_path, log_lines)
 except OSError:
     pass
 if not silent_terminal and (diagnostic_terminal or exit_raw not in {'0', ''}):

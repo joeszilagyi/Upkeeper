@@ -62,7 +62,7 @@ PY
 
 rotate_wrapper_log_if_needed() {
   local rotate_after_hours keep_hours rotate_after_seconds now_epoch oldest_epoch
-  local archive_path archive_timestamp
+  local archive_path archive_timestamp rotation_line
 
   prune_wrapper_log_archives
 
@@ -91,13 +91,16 @@ rotate_wrapper_log_if_needed() {
   archive_timestamp="$(date '+%Y%m%dT%H%M%S%z')"
   archive_path="$LOG_FILE.$archive_timestamp.zip"
   if zip -qjm "$archive_path" "$LOG_FILE" >/dev/null 2>&1; then
-    : >"$LOG_FILE"
-    printf '%s [INFO] cycle=%s run_hash=%s log.rotate live=%s archive=%s rotate_after_hours=%s keep_hours=%s oldest_entry_epoch=%s\n' \
-      "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$LOG_FILE" "$archive_path" "$rotate_after_hours" "$keep_hours" "$oldest_epoch" | tee -a "$LOG_FILE"
+    rotation_line="$(printf '%s [INFO] cycle=%s run_hash=%s log.rotate live=%s archive=%s rotate_after_hours=%s keep_hours=%s oldest_entry_epoch=%s' \
+      "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$LOG_FILE" "$archive_path" "$rotate_after_hours" "$keep_hours" "$oldest_epoch")"
+    append_log_line_secure "$rotation_line" "log_rotate"
+    printf '%s\n' "$rotation_line"
   else
     rm -f "$archive_path"
-    printf '%s [WARN] cycle=%s run_hash=%s log.rotate_failed live=%s attempted_archive=%s reason=zip_failed\n' \
-      "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$LOG_FILE" "$archive_path" | tee -a "$LOG_FILE"
+    rotation_line="$(printf '%s [WARN] cycle=%s run_hash=%s log.rotate_failed live=%s attempted_archive=%s reason=zip_failed' \
+      "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$LOG_FILE" "$archive_path")"
+    append_log_line_secure "$rotation_line" "log_rotate_failed"
+    printf '%s\n' "$rotation_line"
   fi
 
   prune_wrapper_log_archives

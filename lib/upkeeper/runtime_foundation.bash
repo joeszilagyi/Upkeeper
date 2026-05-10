@@ -180,20 +180,161 @@ terminal_emit_log_line() {
   esac
 }
 
+append_log_line_secure() {
+  local line="$1"
+  local phase="${2:-append}"
+  local detail rc
+
+  if detail="$(
+    python3 - "$LOG_FILE" 3<<<"$line" <<'PY' 2>&1
+import errno
+import os
+import stat
+import sys
+
+path_raw = sys.argv[1]
+
+try:
+    line = os.fdopen(3, "r", encoding="utf-8", errors="surrogateescape").read()
+except OSError as exc:
+    print(f"line_read_failed errno={exc.errno}")
+    raise SystemExit(1)
+if not line.endswith("\n"):
+    line += "\n"
+
+parent = os.path.dirname(path_raw) or "."
+name = os.path.basename(path_raw)
+uid = os.getuid()
+
+
+def fail(reason: str) -> None:
+    print(reason)
+    raise SystemExit(1)
+
+
+def mode_text(mode: int) -> str:
+    return oct(stat.S_IMODE(mode))
+
+
+if not name or name in {".", ".."}:
+    fail("invalid_log_filename")
+
+try:
+    parent_stat = os.lstat(parent)
+except FileNotFoundError:
+    fail("log_parent_missing")
+except OSError as exc:
+    fail(f"log_parent_stat_failed errno={exc.errno}")
+
+if stat.S_ISLNK(parent_stat.st_mode):
+    fail("log_parent_symlink")
+if not stat.S_ISDIR(parent_stat.st_mode):
+    fail(f"log_parent_not_directory mode={mode_text(parent_stat.st_mode)}")
+
+try:
+    path_stat = os.lstat(path_raw)
+except FileNotFoundError:
+    path_stat = None
+except OSError as exc:
+    fail(f"log_file_stat_failed errno={exc.errno}")
+
+if path_stat is not None:
+    if stat.S_ISLNK(path_stat.st_mode):
+        fail("symlink_log_file")
+    if not stat.S_ISREG(path_stat.st_mode):
+        fail(f"non_regular_log_file mode={mode_text(path_stat.st_mode)}")
+    if path_stat.st_uid != uid:
+        fail(f"wrong_log_owner uid={path_stat.st_uid} expected_uid={uid}")
+    if path_stat.st_nlink != 1:
+        fail(f"hardlinked_log_file links={path_stat.st_nlink}")
+
+dir_flags = os.O_RDONLY
+for attr in ("O_DIRECTORY", "O_CLOEXEC", "O_NOFOLLOW"):
+    dir_flags |= getattr(os, attr, 0)
+
+try:
+    parent_fd = os.open(parent, dir_flags)
+except OSError as exc:
+    if exc.errno == errno.ELOOP:
+        fail("log_parent_symlink")
+    fail(f"log_parent_open_failed errno={exc.errno}")
+
+file_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+for attr in ("O_CLOEXEC", "O_NONBLOCK", "O_NOFOLLOW"):
+    file_flags |= getattr(os, attr, 0)
+
+try:
+    try:
+        fd = os.open(name, file_flags, 0o600, dir_fd=parent_fd)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            fail("symlink_log_file")
+        fail(f"log_file_open_failed errno={exc.errno}")
+
+    try:
+        opened_stat = os.fstat(fd)
+        if not stat.S_ISREG(opened_stat.st_mode):
+            fail(f"non_regular_log_file mode={mode_text(opened_stat.st_mode)}")
+        if opened_stat.st_uid != uid:
+            fail(f"wrong_log_owner uid={opened_stat.st_uid} expected_uid={uid}")
+        if opened_stat.st_nlink != 1:
+            fail(f"hardlinked_log_file links={opened_stat.st_nlink}")
+        try:
+            os.fchmod(fd, 0o600)
+        except OSError as exc:
+            fail(f"log_file_chmod_failed errno={exc.errno}")
+
+        data = line.encode("utf-8", errors="surrogateescape")
+        while data:
+            try:
+                written = os.write(fd, data)
+            except OSError as exc:
+                fail(f"log_file_write_failed errno={exc.errno}")
+            if written <= 0:
+                fail("log_file_write_failed bytes=0")
+            data = data[written:]
+    finally:
+        os.close(fd)
+finally:
+    os.close(parent_fd)
+PY
+  )"; then
+    return 0
+  else
+    rc=$?
+  fi
+  detail="${detail//$'\n'/; }"
+  [[ -n "$detail" ]] || detail="unknown"
+  printf '%s [ERROR] cycle=%s run_hash=%s log.write_failed phase=%s path=%s reason=%s\n' "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$phase" "$LOG_FILE" "$detail" >&2
+  return "$rc"
+}
+
 log_line() {
   local level="$1"
   shift
   local ts line
   ts="$(timestamp_now)"
   line="$(printf '%s [%s] cycle=%s run_hash=%s %s' "$ts" "$level" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$*")"
-  printf '%s\n' "$line" >>"$LOG_FILE"
+  append_log_line_secure "$line" "log_line"
   terminal_emit_log_line "$level" "$line"
 }
 
 ensure_log_parent() {
   if [[ -n "$LOG_FILE_DIR" && "$LOG_FILE_DIR" != "." ]]; then
+    if [[ -L "$LOG_FILE_DIR" ]]; then
+      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=symlink_parent\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
+      exit 3
+    fi
+    if [[ -e "$LOG_FILE_DIR" && ! -d "$LOG_FILE_DIR" ]]; then
+      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=not_directory\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
+      exit 3
+    fi
     if ! mkdir -p -- "$LOG_FILE_DIR"; then
       printf '%s [ERROR] cycle=%s log.parent_failed path=%s\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
+      exit 3
+    fi
+    if [[ -L "$LOG_FILE_DIR" ]]; then
+      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=symlink_parent\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
       exit 3
     fi
   fi

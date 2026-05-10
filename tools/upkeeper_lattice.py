@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import fnmatch
 import hashlib
 import json
@@ -988,7 +989,7 @@ def git_path_ignored(root: Path, path: Path) -> bool:
         return False
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "check-ignore", "-q", "--", rel],
+            ["git", "-C", str(root), "check-ignore", "-q", "--no-index", "--", rel],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -1070,6 +1071,95 @@ def git_path_tracked(root: Path, path: Path) -> bool:
         return result.returncode == 0
     except FileNotFoundError:
         return False
+
+
+def git_ignored_paths(root: Path, paths: list[str]) -> set[str]:
+    if not paths:
+        return set()
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-z", "--no-index", "--stdin"],
+            input=("\0".join(paths) + "\0").encode("utf-8", "surrogateescape"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return set()
+    if result.returncode not in (0, 1):
+        return set()
+    return set(path for path in result.stdout.decode("utf-8", "surrogateescape").split("\0") if path)
+
+
+def source_safe_parts(rel_path: str) -> list[str] | None:
+    rel_path = normalize_rel_path(rel_path)
+    if not rel_path or rel_path == "." or rel_path.startswith("../") or Path(rel_path).is_absolute():
+        return None
+    parts = rel_path.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return None
+    return parts
+
+
+def source_safe_real_path(root: Path, rel_path: str) -> Path | None:
+    try:
+        real = (root / rel_path).resolve(strict=True)
+        real.relative_to(root.resolve())
+        return real
+    except (OSError, ValueError):
+        return None
+
+
+def read_sample_no_follow(root: Path, parts: list[str], sample_size: int = 4096) -> bytes | None:
+    open_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    dir_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
+    nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
+    dir_fd = -1
+    file_fd = -1
+    try:
+        dir_fd = os.open(str(root.resolve()), dir_flags)
+        for part in parts[:-1]:
+            next_fd = os.open(part, dir_flags | nofollow_flag, dir_fd=dir_fd)
+            os.close(dir_fd)
+            dir_fd = next_fd
+        file_fd = os.open(parts[-1], open_flags | nofollow_flag, dir_fd=dir_fd)
+        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+            return None
+        return os.read(file_fd, sample_size)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            return None
+        return None
+    finally:
+        for fd in (file_fd, dir_fd):
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+
+def source_safe_file_stat(root: Path, rel_path: str, *, require_text: bool = False) -> tuple[os.stat_result | None, str]:
+    rel_path = normalize_rel_path(rel_path)
+    parts = source_safe_parts(rel_path)
+    if parts is None:
+        return None, "outside_repo"
+    path = root / rel_path
+    try:
+        st = path.lstat()
+    except OSError:
+        return None, "missing_at_stat"
+    if stat.S_ISLNK(st.st_mode):
+        return None, "symlink"
+    if source_safe_real_path(root, rel_path) is None:
+        return None, "outside_repo"
+    if not stat.S_ISREG(st.st_mode):
+        return None, "not_regular_file"
+    if require_text:
+        sample = read_sample_no_follow(root, parts)
+        if sample is None or b"\0" in sample:
+            return None, "binary_or_unreadable"
+    return st, ""
 
 
 def db_side_paths(db_path: Path, journal_mode: str) -> list[Path]:
@@ -1680,19 +1770,19 @@ def record_file_event(
 
 def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
     rel_path = normalize_rel_path(rel_path)
-    path = root / rel_path
     meta: dict[str, Any] = {"path": rel_path}
-    try:
-        st = path.stat()
+    st, safety_reason = source_safe_file_stat(root, rel_path)
+    if st is not None:
         meta["mtime_epoch"] = int(st.st_mtime)
         meta["size_bytes"] = int(st.st_size)
         meta["executable"] = 1 if st.st_mode & 0o111 else 0
         meta["is_regular"] = 1 if stat.S_ISREG(st.st_mode) else 0
-    except OSError:
+    else:
         meta.update({"mtime_epoch": None, "size_bytes": None, "executable": None, "is_regular": 0})
+    meta["source_safety_reason"] = safety_reason
     status = git_output(root, ["status", "--porcelain=v1", "--", rel_path], "")
     meta["git_status"] = status[:2].replace(" ", "_") if status else "clean"
-    meta["worktree_hash"] = git_output(root, ["hash-object", "--", rel_path], "missing")
+    meta["worktree_hash"] = git_output(root, ["hash-object", "--", rel_path], "missing") if st is not None else "unavailable"
     meta["head_blob"] = git_output(root, ["rev-parse", f"HEAD:{rel_path}"], "none")
     if meta["head_blob"] == "none":
         meta["content_state"] = "untracked"
@@ -1700,7 +1790,7 @@ def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
         meta["content_state"] = "matches_head"
     else:
         meta["content_state"] = "differs_from_head"
-    meta["ignored"] = 1 if git_path_ignored(root, path) else 0
+    meta["ignored"] = 1 if git_path_ignored(root, root / rel_path) else 0
     meta["test_path"] = 1 if is_test_path(rel_path) else 0
     meta["generated"] = 0
     return meta
@@ -1804,16 +1894,10 @@ def is_test_path(path: str) -> bool:
     return any(part in TEST_DIRS for part in parts) or name.startswith("test_") or name.endswith("_test.py")
 
 
-def is_text_file(path: Path) -> bool:
-    try:
-        return b"\0" not in path.read_bytes()[:4096]
-    except OSError:
-        return False
-
-
 def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper_ignore_file: str | None = None) -> list[dict[str, Any]]:
     upkeeperignore_patterns = load_upkeeperignore_patterns(root, upkeeper_ignore_file)
-    if inside_git_repo(root):
+    inside_git = inside_git_repo(root)
+    if inside_git:
         if candidate_scope == "current-tracked":
             raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"])
         else:
@@ -1827,6 +1911,7 @@ def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper
                 rel = repo_rel_path(root, Path(dirpath) / filename)
                 if rel:
                     paths.append(rel)
+    git_ignored = git_ignored_paths(root, paths) if inside_git else set()
     rows = []
     for rel in paths:
         reason = ""
@@ -1838,17 +1923,13 @@ def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper
             reason = "excluded_prefix"
         elif upkeeper_path_ignored(rel, upkeeperignore_patterns):
             reason = "upkeeperignore"
+        elif rel in git_ignored:
+            reason = "gitignore"
         else:
-            try:
-                st = p.stat()
-            except OSError:
-                reason = "missing_at_stat"
-            else:
-                if not stat.S_ISREG(st.st_mode):
-                    reason = "not_regular_file"
-                elif candidate_scope == "current-tracked":
-                    if not is_text_file(p):
-                        reason = "binary_or_unreadable"
+            st, reason = source_safe_file_stat(root, rel)
+            if not reason and st is not None:
+                if candidate_scope == "current-tracked":
+                    _, reason = source_safe_file_stat(root, rel, require_text=True)
                 else:
                     if is_test_path(rel):
                         reason = "test_path"
@@ -1856,9 +1937,12 @@ def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper
                     ext = p.suffix.lower()
                     candidate = name in BUILD_NAMES or ext in SCRIPT_EXTS
                     if not candidate and st.st_mode & 0o111:
-                        candidate = is_text_file(p)
-                        if not candidate:
+                        _, text_reason = source_safe_file_stat(root, rel, require_text=True)
+                        candidate = not text_reason
+                        if text_reason:
                             reason = "executable_not_text"
+                    if candidate and not reason:
+                        _, reason = source_safe_file_stat(root, rel, require_text=True)
                     if not candidate and not reason:
                         reason = "unsupported_extension"
         if reason:

@@ -81,10 +81,19 @@ def inside_git_repo() -> bool:
 
 def root_relative(path: Path) -> str:
     try:
-        rel = path.resolve().relative_to(root)
-    except (OSError, ValueError):
+        rel = path.relative_to(root)
+    except ValueError:
         return ""
     return rel.as_posix()
+
+
+def real_path_within_root(path: Path) -> Path | None:
+    try:
+        real = path.resolve(strict=True)
+        real.relative_to(root)
+        return real
+    except (OSError, ValueError):
+        return None
 
 
 def load_upkeeperignore_patterns() -> list[tuple[bool, str]]:
@@ -146,6 +155,24 @@ def git_paths() -> list[str]:
     return sorted(path for path in raw.decode("utf-8", "surrogateescape").split("\0") if path)
 
 
+def git_ignored_paths(paths: list[str]) -> set[str]:
+    if not paths:
+        return set()
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-z", "--no-index", "--stdin"],
+            input=("\0".join(paths) + "\0").encode("utf-8", "surrogateescape"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return set()
+    if result.returncode not in (0, 1):
+        return set()
+    return set(path for path in result.stdout.decode("utf-8", "surrogateescape").split("\0") if path)
+
+
 def local_paths() -> list[str]:
     paths: list[str] = []
     excluded_dirs = {".git", "runtime"}
@@ -161,14 +188,19 @@ def local_paths() -> list[str]:
 def file_entry(rel_path: str) -> dict[str, object] | None:
     path = root / rel_path
     try:
-        st = path.stat()
+        st = path.lstat()
     except OSError:
+        return None
+    if stat.S_ISLNK(st.st_mode):
+        return None
+    real = real_path_within_root(path)
+    if real is None:
         return None
     if not stat.S_ISREG(st.st_mode):
         return None
     return {
         "rel_path": rel_path,
-        "abs_path": str(path.resolve()),
+        "abs_path": str(real),
         "mtime": int(st.st_mtime),
         "mtime_ns": int(st.st_mtime_ns),
         "size": int(st.st_size),
@@ -179,7 +211,12 @@ def file_entry(rel_path: str) -> dict[str, object] | None:
 def build_payload() -> tuple[dict[str, object], str]:
     source = "git" if inside_git_repo() else "find"
     raw_paths = git_paths() if source == "git" else local_paths()
-    entries = [entry for rel in raw_paths if not upkeeper_path_ignored(rel) and (entry := file_entry(rel)) is not None]
+    git_ignored = git_ignored_paths(raw_paths) if source == "git" else set()
+    entries = [
+        entry
+        for rel in raw_paths
+        if rel not in git_ignored and not upkeeper_path_ignored(rel) and (entry := file_entry(rel)) is not None
+    ]
     entries.sort(key=lambda item: (int(item["mtime_ns"]), str(item["rel_path"])))
 
     fingerprint_input = "\n".join(

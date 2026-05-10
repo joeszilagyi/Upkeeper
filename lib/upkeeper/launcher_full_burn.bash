@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+
+# Shared fail-closed defaults for repo-root automation launchers. Plain
+# ./Upkeeper keeps the central config compatibility surface; the repo-root
+# automation launchers force this full-burn profile before backend launch.
+
+UPKEEPER_LAUNCHER_FULL_BURN_ACTIVE="${UPKEEPER_LAUNCHER_FULL_BURN_ACTIVE:-0}"
+
+upkeeper_launcher_apply_automation_identity() {
+  local launcher_name="$1"
+  local variant="$2"
+  local policy="$3"
+
+  UPKEEPER_AUTOMATION_LAUNCHER="$launcher_name"
+  UPKEEPER_AUTOMATION_VARIANT="$variant"
+  UPKEEPER_AUTOMATION_POLICY="$policy"
+  export UPKEEPER_AUTOMATION_LAUNCHER
+  export UPKEEPER_AUTOMATION_VARIANT
+  export UPKEEPER_AUTOMATION_POLICY
+}
+
+upkeeper_launcher_apply_full_burn_defaults() {
+  UPKEEPER_LAUNCHER_FULL_BURN_ACTIVE="1"
+  export UPKEEPER_LAUNCHER_FULL_BURN_ACTIVE
+
+  CODEX_MODE="--sandbox workspace-write"
+  export CODEX_MODE
+
+  CODEX_FALLBACK_MODE="$CODEX_MODE"
+  CODEX_POSTMORTEM_MODE="$CODEX_FALLBACK_MODE"
+  export CODEX_FALLBACK_MODE CODEX_POSTMORTEM_MODE
+
+  CODEX_5H_STOP_PERCENT="0"
+  CODEX_SPARK_5H_STOP_PERCENT="0"
+  CODEX_WEEK_STOP_PERCENT="0"
+  CODEX_WEEK_STOP_BUFFER_PERCENT="0"
+  CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT="0"
+  CODEX_QUOTA_GUARDRAIL_BYPASS="1"
+  CODEX_QUOTA_COOLDOWN_BYPASS="1"
+  export CODEX_5H_STOP_PERCENT
+  export CODEX_SPARK_5H_STOP_PERCENT
+  export CODEX_WEEK_STOP_PERCENT
+  export CODEX_WEEK_STOP_BUFFER_PERCENT
+  export CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT
+  export CODEX_QUOTA_GUARDRAIL_BYPASS
+  export CODEX_QUOTA_COOLDOWN_BYPASS
+
+  UPKEEPER_LATTICE_ENABLED="1"
+  UPKEEPER_LATTICE_REQUIRED="1"
+  export UPKEEPER_LATTICE_ENABLED UPKEEPER_LATTICE_REQUIRED
+
+  UPKEEPER_PRECONTACT_BACKUP_ENABLED="1"
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRED="1"
+  UPKEEPER_PRECONTACT_BACKUP_MODE="age"
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED="1"
+  UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS="1"
+  export UPKEEPER_PRECONTACT_BACKUP_ENABLED
+  export UPKEEPER_PRECONTACT_BACKUP_REQUIRED
+  export UPKEEPER_PRECONTACT_BACKUP_MODE
+  export UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED
+  export UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS
+}
+
+upkeeper_launcher_print_full_burn_env_prefix() {
+  local name
+
+  if [[ "${UPKEEPER_LAUNCHER_FULL_BURN_ACTIVE:-0}" != "1" ]]; then
+    return 0
+  fi
+
+  for name in \
+    CODEX_MODE \
+    CODEX_FALLBACK_MODE \
+    CODEX_POSTMORTEM_MODE \
+    CODEX_5H_STOP_PERCENT \
+    CODEX_SPARK_5H_STOP_PERCENT \
+    CODEX_WEEK_STOP_PERCENT \
+    CODEX_WEEK_STOP_BUFFER_PERCENT \
+    CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT \
+    CODEX_QUOTA_GUARDRAIL_BYPASS \
+    CODEX_QUOTA_COOLDOWN_BYPASS \
+    UPKEEPER_LATTICE_ENABLED \
+    UPKEEPER_LATTICE_REQUIRED \
+    UPKEEPER_PRECONTACT_BACKUP_ENABLED \
+    UPKEEPER_PRECONTACT_BACKUP_REQUIRED \
+    UPKEEPER_PRECONTACT_BACKUP_MODE \
+    UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED \
+    UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS \
+    UPKEEPER_AUTOMATION_LAUNCHER \
+    UPKEEPER_AUTOMATION_VARIANT \
+    UPKEEPER_AUTOMATION_POLICY \
+    UPKEEPER_AUTOMATION_WORKFLOW \
+    UPKEEPER_AUTOMATION_OBLIGATION_ID \
+    UPKEEPER_AUTOMATION_OBLIGATION_PATH; do
+    [[ -n "${!name:-}" ]] || continue
+    printf '%s=%q ' "$name" "${!name:-}"
+  done
+}
+
+upkeeper_launcher_report_full_burn() {
+  local launcher_name="$1"
+
+  if [[ "${UPKEEPER_LAUNCHER_FULL_BURN_ACTIVE:-0}" != "1" ]]; then
+    return 0
+  fi
+
+  printf '%s: full burn enabled: lattice=required backup=encrypted-required quota=guardrail-bypass sandbox=%s\n' \
+    "$launcher_name" "$CODEX_MODE" >&2
+  if [[ -z "${UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT:-}" ]]; then
+    printf '%s: full burn note: set UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT and install age before encrypted backup can pass\n' \
+      "$launcher_name" >&2
+  fi
+}

@@ -5,6 +5,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 UPKEEPER_CMD="${UPKEEPER_CMD:-$ROOT_DIR/Upkeeper}"
+source "$ROOT_DIR/lib/upkeeper/launcher_full_burn.bash"
+source "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+upkeeper_launcher_apply_full_burn_defaults
+upkeeper_launcher_apply_automation_identity "FlameOn" "bug-finding" "max-cover-bug-report"
+
 FLAMEON_VERBOSITY="${FLAMEON_VERBOSITY:-basic}"
 FLAMEON_MODEL_OVERRIDE="${FLAMEON_MODEL_OVERRIDE:-5.5_xhigh}"
 FLAMEON_BACKUP_QUEUE="0"
@@ -14,11 +19,13 @@ usage() {
 Usage: ${0##*/} [--silent|--basic|--debug1] [-backup_queue|--backup-queue] [--help]
 
 Run one quota-respecting Upkeeper max-cover cycle:
+  - reconcile open Upkeeper automation obligations before normal burn selection
   - gpt-5.5 xhigh via Upkeeper's model override
   - all P1-P23 passes plus P24-P29 review modules
   - Lattice max-cover target ranking
   - bug-report-only investigation and issue filing instead of source fixing
-  - normal Upkeeper quota, startup, fallback, and evidence handling
+  - fail-closed launcher full burn: Lattice required, encrypted pre-contact
+    backup required, and workspace-write containment pinned before launch
 
 Flags:
   --silent        Set CODEX_TERMINAL_VERBOSITY=silent
@@ -33,6 +40,8 @@ Environment:
   FLAMEON_MODEL_OVERRIDE   Upkeeper model override (default: 5.5_xhigh)
   FLAMEON_VERBOSITY        Default verbosity when no flag is given
   FLAMEON_DRY_RUN          Set to 1 to print the resolved command
+  UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT
+                           Required for live encrypted backup full burn
 EOF
 }
 
@@ -80,6 +89,54 @@ if [[ ! -x "$UPKEEPER_CMD" ]]; then
   exit 127
 fi
 
+obligation_json="$(automation_select_open_obligation_json)"
+obligation_status="$(automation_json_field "$obligation_json" status)"
+if [[ "$obligation_status" == "ok" ]]; then
+  obligation_id="$(automation_json_field "$obligation_json" id)"
+  obligation_path="$(automation_json_field "$obligation_json" path)"
+  obligation_target="$(automation_json_field "$obligation_json" target_file)"
+  obligation_kind="$(automation_json_field "$obligation_json" kind)"
+  obligation_summary="$(automation_json_field "$obligation_json" summary)"
+  obligation_prompt_file="$(automation_prepare_obligation_prompt_file "$obligation_json")" || {
+    printf 'FlameOn: failed to prepare automation obligation prompt\n' >&2
+    exit 3
+  }
+  UPKEEPER_AUTOMATION_WORKFLOW="obligation-repair"
+  UPKEEPER_AUTOMATION_OBLIGATION_ID="$obligation_id"
+  UPKEEPER_AUTOMATION_OBLIGATION_PATH="$obligation_path"
+  export UPKEEPER_AUTOMATION_WORKFLOW
+  export UPKEEPER_AUTOMATION_OBLIGATION_ID
+  export UPKEEPER_AUTOMATION_OBLIGATION_PATH
+
+  args=(
+    "--model-override=$FLAMEON_MODEL_OVERRIDE"
+    "--prompt-pass=all"
+    "--review-modules=p24,p25,p26,p27,p28,p29"
+    "--target-file=$obligation_target"
+    "--prompt-file"
+    "$obligation_prompt_file"
+  )
+
+  if [[ "$FLAMEON_BACKUP_QUEUE" == "1" ]]; then
+    args+=("--backup-queue")
+  fi
+
+  printf 'FlameOn: selected automation obligation %s for repair\n' "$obligation_id" >&2
+  printf 'FlameOn: obligation kind=%s target=%s summary=%s\n' "$obligation_kind" "$obligation_target" "$obligation_summary" >&2
+
+  if [[ "${FLAMEON_DRY_RUN:-0}" == "1" ]]; then
+    upkeeper_launcher_print_full_burn_env_prefix
+    printf 'CODEX_TERMINAL_VERBOSITY=%q ' "$FLAMEON_VERBOSITY"
+    printf '%q' "$UPKEEPER_CMD"
+    printf ' %q' "${args[@]}"
+    printf '\n'
+    exit 0
+  fi
+
+  upkeeper_launcher_report_full_burn "FlameOn"
+  CODEX_TERMINAL_VERBOSITY="$FLAMEON_VERBOSITY" exec "$UPKEEPER_CMD" "${args[@]}"
+fi
+
 args=(
   "--model-override=$FLAMEON_MODEL_OVERRIDE"
   "--max-cover"
@@ -91,6 +148,7 @@ if [[ "$FLAMEON_BACKUP_QUEUE" == "1" ]]; then
 fi
 
 if [[ "${FLAMEON_DRY_RUN:-0}" == "1" ]]; then
+  upkeeper_launcher_print_full_burn_env_prefix
   printf 'CODEX_TERMINAL_VERBOSITY=%q ' "$FLAMEON_VERBOSITY"
   printf '%q' "$UPKEEPER_CMD"
   printf ' %q' "${args[@]}"
@@ -98,4 +156,5 @@ if [[ "${FLAMEON_DRY_RUN:-0}" == "1" ]]; then
   exit 0
 fi
 
+upkeeper_launcher_report_full_burn "FlameOn"
 CODEX_TERMINAL_VERBOSITY="$FLAMEON_VERBOSITY" exec "$UPKEEPER_CMD" "${args[@]}"

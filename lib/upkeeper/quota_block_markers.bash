@@ -180,6 +180,10 @@ enforce_primary_quota_block_marker() {
   if [[ "$CODEX_ATTEMPT_ROLE" != "primary" || "$CODEX_FALLBACK_CHAIN_ACTIVE" == "1" ]]; then
     return 0
   fi
+  if [[ "${CODEX_QUOTA_COOLDOWN_BYPASS:-0}" == "1" ]]; then
+    log_line "WARN" "quota.cooldown bypassed target_model=$CODEX_MODEL reason=quota_cooldown_bypass"
+    return 0
+  fi
 
   local marker_path blocked_until_epoch blocked_until blocked_bucket reason source_cycle recommended_action
   local marker_path_q reason_q blocked_until_q

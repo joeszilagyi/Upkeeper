@@ -594,6 +594,7 @@ test_wrapper_required_policy() {
       CODEX_FALLBACK_ENABLED=0 \
       CODEX_FALLBACK_SCREEN_ENABLED=0 \
       CODEX_POSTMORTEM_ENABLED=0 \
+      UPKEEPER_PRECONTACT_BACKUP_ROOT="$TEST_TMP_ROOT/precontact-vault" \
       UPKEEPER_LATTICE_DB="$repo/tracked.sqlite3" \
       UPKEEPER_LATTICE_REQUIRED=0 \
       UPKEEPER_DRY_RUN=1 \
@@ -624,6 +625,7 @@ test_wrapper_required_policy() {
       CODEX_FALLBACK_ENABLED=0 \
       CODEX_FALLBACK_SCREEN_ENABLED=0 \
       CODEX_POSTMORTEM_ENABLED=0 \
+      UPKEEPER_PRECONTACT_BACKUP_ROOT="$TEST_TMP_ROOT/precontact-vault" \
       UPKEEPER_LATTICE_DB="$repo/tracked.sqlite3" \
       UPKEEPER_LATTICE_REQUIRED=1 \
       UPKEEPER_DRY_RUN=1 \

@@ -44,14 +44,36 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--selection-review-modules=...`, `--ignore-failure-queue`,
   `--backup-queue`, `-backup_queue`, `--prompt-pass=all`, `--max-cover`,
   `--bug-report-only`, `--file-bug-only`, `--report-bug-only`,
-  `--fix-next-issue`, `--fix-oldest-bug`, and `--fix-issue=...`.
+  `--fix-next-issue`, `--fix-oldest-bug`, `--fix-issue=...`, and
+  `--issue-workflow-stage=comment|review|apply`.
 - `FlameOn` remains a thin max-cover launcher and defaults to
   `--bug-report-only`; it should investigate and file/report bugs rather than
-  patch tracked source during burn cycles.
+  patch tracked source during burn cycles. Its launcher path is full burn by
+  default: Lattice is required, encrypted pre-contact backup is required, and
+  the Codex sandbox mode is pinned before launch. Quota stop floors are set to
+  zero, wrapper quota guardrail stops are bypassed, and persisted quota cooldown
+  markers are bypassed for those launcher runs.
 - `ChimneySweep` owns pre-model issue ranking for repair automation: clean
   actionable queues exit 25, security issues outrank data-integrity issues,
   data-integrity issues outrank the general queue, and the selected issue is
-  handed to Upkeeper with `--fix-issue=NUMBER`.
+  handed to Upkeeper with `--fix-issue=NUMBER`. Its default workflow is
+  comment, review, then apply across separate Upkeeper instantiations. The
+  comment/review stages are source read-only and leave issue comments; the apply
+  stage works the bug. Each stage requests all prompt passes and all P24-P29
+  review modules for the locked issue target, and uses the same full-burn
+  launcher protections and quota-bypass behavior as FlameOn.
+- Backend Codex issue workflows use the Genie Protocol boundary. The wrapper
+  owns GitHub reads and writes, passes only wrapper-fetched issue evidence plus
+  local artifact paths into the model, strips GitHub token variables from the
+  backend environment, points `gh` at an empty per-run config directory, and
+  shadows direct `gh`, `curl`, `wget`, and `hub` commands for backend launches.
+  The comment/review stages also override the backend mode to
+  `--sandbox read-only`; their issue-comment text returns through a final-message
+  draft block that the wrapper extracts and posts after validation.
+- `CODEX_MODE` remains configurable for supported Codex sandbox modes, but
+  Upkeeper rejects `danger-full-access` and
+  `--dangerously-bypass-approvals-and-sandbox` because those modes bypass the
+  backend containment contract.
 - `.upkeeperignore` remains the repo-local target-selection firewall. It blocks
   normal rotation, Lattice/max-cover candidates, failure-queue eligibility,
   manifest entries, and explicit `--target-file` pins for matching paths without
@@ -75,13 +97,27 @@ Future changes should preserve this operator-visible surface as far as possible:
   empty transcripts, local environment failures, and parent-stop guardrails.
 - `Upkeeper.log` keeps cycle/run evidence in parseable timestamped lines with
   `cycle=...`, `run_hash=...`, event names, and key-value fields.
+- Unsafe log paths fail closed before Codex launch: symlink log files,
+  non-regular log files, hard-linked log files, log files not owned by the
+  current user, and symlink log parent directories are rejected instead of
+  being appended to.
+- Unsafe `$CODEX_HOME/sessions` paths fail closed before Codex launch:
+  symlinked, non-directory, and wrong-owner session stores are rejected before
+  Upkeeper writes a probe file. Owned session stores with weak inherited
+  permissions are repaired to `0700` and rechecked before probing; stores that
+  remain group/other writable after repair are rejected.
 - Review summaries continue to log outcome, selected file, findings, changes,
   verification, Codex exit, and final status-marker evidence when available.
 - Runtime artifacts stay under documented local paths such as `runtime/`,
   `runtime/upkeeper-transcripts`, `runtime/journals/upkeeper-postmortems`,
   `runtime/upkeeper-file-manifest.json`, and
-  `runtime/unaddressed-tool-failures`. Backup failure-queue runs use
-  `runtime/unaddressed-tool-failures-backup`.
+  `runtime/unaddressed-tool-failures`. Automation run records and unresolved
+  obligations use the shared Upkeeper-owned framework under
+  `runtime/upkeeper-automation-ledger` and `runtime/upkeeper-obligations`, even
+  when the cycle was launched by FlameOn, ChimneySweep, or a future derivative
+  launcher. FlameOn and ChimneySweep reconcile open obligations before their
+  normal bug-finding or GitHub issue-selection policies. Backup failure-queue
+  runs use `runtime/unaddressed-tool-failures-backup`.
 - Upkeeper Lattice is additive local runtime evidence at
   `runtime/upkeeper-lattice/lattice.sqlite3`. Runtime artifacts under
   `runtime/upkeeper-lattice/`, including SQLite side files, backups, exports,
@@ -101,10 +137,10 @@ Future changes should preserve this operator-visible surface as far as possible:
 - `--bug-report-only` is a no-fix mode. It must not edit or touch tracked
   source, and the wrapper must fail the cycle if the source mutation
   fingerprint changes during a non-dry-run bug-report-only cycle.
-- `--fix-next-issue`, `--fix-oldest-bug`, `--fix-issue=...`, and
-  `ChimneySweep` may require the GitHub CLI for pre-launch issue selection or
-  loading, but normal Upkeeper and bug-report-only cycles do not make `gh` a
-  hard runtime dependency.
+- `--fix-next-issue`, `--fix-oldest-bug`, `--fix-issue=...`,
+  `--issue-workflow-stage=...`, and `ChimneySweep` may require the GitHub CLI
+  for pre-launch issue selection or loading, but normal Upkeeper and
+  bug-report-only cycles do not make `gh` a hard runtime dependency.
 - Explicit targets still win. Startup anomaly gates still win. The local
   failure queue still wins before normal timestamp rotation.
 - Codex must not receive authority to choose an unbacked replacement target. If
@@ -137,6 +173,9 @@ Future changes should preserve this operator-visible surface as far as possible:
   inside the repo, including docs, prompts, config, tests, and scripts, while
   automatic rotation remains limited to script/tool candidates. Selected targets
   must not be symlinks in this pre-contact backup slice.
+- Source-safe target selection rejects symlink paths before reading or statting
+  them. This applies to explicit targets, direct enumeration, manifest entries,
+  and Lattice/max-cover candidate diagnostics.
 - Selection filters such as target root, depth, include/exclude globs, random
   order, and review-module approximations narrow which file Upkeeper chooses.
   They do not silently enable extra review modules or change the single-selected-

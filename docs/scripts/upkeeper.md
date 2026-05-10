@@ -12,10 +12,10 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER]
+Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.6
+Version: v1.2.10
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -30,9 +30,9 @@ Each invocation:
      starting a new Codex run, unless fallback handoff is enabled.
   5. After selecting a review target and before compiling its prompt authority,
      creates the configured selected-target pre-contact backup.
-  6. Before launching Codex, verifies that $CODEX_HOME/sessions is writable,
-     stale Codex arg0 temp shims can be cleaned or quarantined, and Codex's
-     shared bubblewrap temp registry is writable.
+  6. Before launching Codex, verifies that $CODEX_HOME/sessions is a private,
+     user-owned writable directory, stale Codex arg0 temp shims can be cleaned
+     or quarantined, and Codex's shared bubblewrap temp registry is writable.
   7. Otherwise it runs exactly one codex exec cycle and exits.
   8. If the primary model fails, blocks, or exhausts its bucket, it can hand off
      to one stronger fallback cycle in the same outer-loop iteration.
@@ -72,8 +72,11 @@ Loop stop semantics:
     current bucket can make a decision or a current bucket is projected below
     threshold
   - live primary and auxiliary Codex calls also preflight the local session store;
-    a read-only $CODEX_HOME/sessions is classified as a local environment
-    failure before starting recursive fallback or post-mortem Codex work
+    an owned $CODEX_HOME/sessions directory with weak inherited permissions is
+    repaired to 0700 before probing, while a read-only, symlinked, wrong-owner,
+    non-directory, or still group/other-writable session store is classified as
+    a local environment failure before starting recursive fallback or
+    post-mortem Codex work
   - live primary, fallback, and auxiliary Codex calls also preflight Codex's
     shared bubblewrap temp registry; a stale root-owned registry is classified
     as a local environment failure before launching another Codex process
@@ -182,6 +185,19 @@ Important:
     Review cycles also write compact review.summary lines, and
     review.fix_details lines when the final response reports fixes, so later
     commits can recover what changed and why.
+  - Every cycle also writes a shared automation run record under:
+      runtime/upkeeper-automation-ledger
+    Non-zero cycle exits create unresolved automation obligations under:
+      runtime/upkeeper-obligations
+    FlameOn, ChimneySweep, and future derivative launchers use the same
+    Upkeeper-owned record format and only supply launcher identity and policy.
+    Those launchers reconcile open obligations before normal bug-finding or
+    issue-queue selection, handing the oldest/highest-priority obligation back
+    to Upkeeper as a locked repair target.
+  - Before the first wrapper log write, Upkeeper rejects unsafe log paths:
+    symlink log files, non-regular log files, hard-linked log files, log files
+    not owned by the current user, and symlink log parent directories fail
+    closed before Codex launch.
   - The default prompt makes the primary agent inspect this cycle's own log:
       Upkeeper.log
     before its final marker. If the log review exposes a concrete wrapper or
@@ -366,6 +382,12 @@ Prompt behavior:
   - --fix-issue=NUMBER skips Upkeeper's issue ranking and locks this cycle to
     the named open GitHub issue. This is the handoff used by scripted fix
     launchers such as ChimneySweep after they have already ranked the queue.
+  - --issue-workflow-stage=comment|review|apply adds a ChimneySweep stage
+    contract to an issue-fix cycle. comment and review are source read-only
+    stages that leave issue comments; apply is the implementation stage.
+    The read-only stages force backend Codex into a read-only repository
+    sandbox and carry issue-comment text back in a final-message draft block
+    that the wrapper extracts and posts after validation.
 
 Environment overrides:
   UPKEEPER_CONFIG_FILE          Default: Upkeeper.conf
@@ -391,8 +413,18 @@ Environment overrides:
   UPKEEPER_BUG_REPORT_ONLY     Default: 0
   UPKEEPER_FIX_NEXT_ISSUE      Default: 0
   UPKEEPER_FIX_ISSUE           Default: empty
+  UPKEEPER_ISSUE_WORKFLOW_STAGE Default: empty
   UPKEEPER_ISSUE_PRIORITY_LABELS Default: security,data-integrity,bug
   UPKEEPER_ISSUE_SKIP_LABELS   Default: in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr
+  UPKEEPER_AUTOMATION_LEDGER_ENABLED Default: 1
+  UPKEEPER_AUTOMATION_LEDGER_DIR Default: runtime/upkeeper-automation-ledger
+  UPKEEPER_OBLIGATION_DIR       Default: runtime/upkeeper-obligations
+  UPKEEPER_AUTOMATION_LAUNCHER  Default: current entrypoint name
+  UPKEEPER_AUTOMATION_VARIANT   Default: standard
+  UPKEEPER_AUTOMATION_POLICY    Default: one-cycle
+  UPKEEPER_AUTOMATION_WORKFLOW  Default: empty
+  UPKEEPER_AUTOMATION_OBLIGATION_ID Default: empty
+  UPKEEPER_AUTOMATION_OBLIGATION_PATH Default: empty
   UPKEEPER_LATTICE_ENABLED     Default: 1
   UPKEEPER_LATTICE_REQUIRED    Default: 0
   UPKEEPER_LATTICE_DB          Default: runtime/upkeeper-lattice/lattice.sqlite3
@@ -436,6 +468,8 @@ Environment overrides:
   CODEX_WEEK_STOP_PERCENT       Default: 15
   CODEX_WEEK_STOP_BUFFER_PERCENT Default: 0
   CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT Default: 5
+  CODEX_QUOTA_GUARDRAIL_BYPASS Default: 0
+  CODEX_QUOTA_COOLDOWN_BYPASS   Default: 0
   CODEX_LOG_ROTATE_AFTER_HOURS  Default: 72
   CODEX_LOG_ROTATE_KEEP_HOURS   Default: 144
   CODEX_PROCESS_ARGS_MAX_CHARS  Default: 600
@@ -491,15 +525,21 @@ Exit codes:
 
 `./FlameOn` is a repo-root convenience launcher for one high-coverage
 smoke/burn cycle without typing the long Upkeeper flag set. It invokes
-`./Upkeeper --model-override=5.5_xhigh --max-cover --bug-report-only`,
-preserves normal quota and startup guardrails, and only exposes terminal
-verbosity flags `--silent`, `--basic`, and `--debug1`. Its default cycle files
-or fully reports confirmed bugs instead of patching tracked source.
+`./Upkeeper --model-override=5.5_xhigh --max-cover --bug-report-only` and
+enables full-burn launcher defaults before backend launch: Lattice is required,
+pre-contact backup is required, encrypted backup is required, and the Codex
+sandbox mode is pinned to `--sandbox workspace-write`. The launcher also sets
+quota stop floors and weekly buffers to `0`, bypasses wrapper quota guardrail
+stops, and bypasses persisted quota cooldown markers from older guarded runs, so
+scheduled burn runs can spend the selected model bucket down to the provider
+floor. Its default cycle files issues or fully reports confirmed bugs instead of
+patching tracked source.
 
 Use `FLAMEON_DRY_RUN=1 ./FlameOn` to print the resolved command without
 launching Codex. Use `./FlameOn -backup_queue` or `./FlameOn --backup-queue`
 when that cycle should read and write the backup local failure queue instead of
-the default queue.
+the default queue. Live FlameOn runs require `age` plus
+`UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT`.
 
 Optional Bash completion is available with:
 
@@ -515,12 +555,43 @@ process can start. If the actionable queue is clean, it prints `high five yay`
 and exits 25. Otherwise it prefers security-class issues, then data-integrity
 issues, then the remaining queue ranked by containment title/tag signals,
 severity, and least-recently-touched age. The selected issue is handed to
-Upkeeper as `--fix-issue=NUMBER`, so Upkeeper repairs that locked issue instead
-of reselecting.
+Upkeeper as `--fix-issue=NUMBER`, with `--prompt-pass=all` and all P24-P29
+review modules enabled. Its default workflow runs separate comment, review, and
+apply stages with `--issue-workflow-stage=comment|review|apply`, so the first
+two stages are source read-only and run backend Codex in a read-only repository
+sandbox, while the final stage owns implementation.
+Those stages use the Genie Protocol boundary: the wrapper fetches issue
+evidence before launch, backend Codex receives that packet only, direct
+`gh`/GitHub command access is blocked in the backend environment, comment/review
+issue text returns through a final-message draft block, and the wrapper performs
+issue comments or other GitHub side effects after validation.
 
 Use `CHIMNEYSWEEP_DRY_RUN=1 ./ChimneySweep` or `./ChimneySweep --dry-run` to
 print the resolved command without launching Codex. Its terminal verbosity flags
-match FlameOn: `--silent`, `--basic`, and `--debug1`.
+match FlameOn: `--silent`, `--basic`, and `--debug1`; `--workflow=...` selects
+`comment-review-apply`, `comment-review`, `comment`, `review`, or `apply`.
+Live ChimneySweep runs
+use the same full-burn launcher defaults as FlameOn: Lattice required,
+encrypted pre-contact backup required, quota guardrail stops bypassed, cooldown
+markers bypassed, quota stop floors set to `0`, and `--sandbox workspace-write`
+pinned. Set `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` before running it live.
+
+One-time setup for live full-burn launchers:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y age
+
+mkdir -p "$HOME/.config/age"
+chmod 700 "$HOME/.config/age"
+age-keygen -o "$HOME/.config/age/upkeeper.txt"
+chmod 600 "$HOME/.config/age/upkeeper.txt"
+export UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT="$(age-keygen -y "$HOME/.config/age/upkeeper.txt")"
+```
+
+`UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` is public. Keep the private identity
+file out of prompts, logs, committed config, and backend-visible environments;
+use it only when manually restoring encrypted backup payloads.
 
 ## Pre-Contact Backup Examples
 
@@ -568,7 +639,8 @@ prompts, backup log lines, or Lattice preselect evidence.
 - `CODEX_MODE` defaults to `--sandbox workspace-write`. Set `CODEX_MODE` only
   when testing a newer Codex sandbox flag or temporarily matching an older local
   Codex install. Startup rejects malformed mode strings whose first token is
-  missing, lacks `--`, or uses a triple-hyphen token such as `---sandbox`.
+  missing, lacks `--`, uses a triple-hyphen token such as `---sandbox`, requests
+  `danger-full-access`, or requests `--dangerously-bypass-approvals-and-sandbox`.
 - Before/after quota reset epochs may jitter by a second between otherwise
   current exact-model snapshots. Upkeeper treats small reset-epoch jitter as the
   same quota window and logs `quota.reset_jitter` at INFO instead of emitting a
@@ -602,7 +674,8 @@ prompts, backup log lines, or Lattice preselect evidence.
   failure-path guardrails. Full validation uses dry-runs plus a local fake
   `codex` binary; it does not launch real backend work.
   GitHub Actions runs the no-quota CI path in `.github/workflows/ci.yml` on
-  pushes and pull requests: shell syntax, `tests/*.bash`, public docs, and
+  pushes and pull requests. It installs required tools including `jq` and `age`,
+  then runs shell syntax, `tests/*.bash`, public docs, and
   `tools/validate_upkeeper.sh --quick`.
   Sample-repo stress coverage is available without backend quota with
   `tools/stress_upkeeper_corpus.sh --local`; full validation runs that local

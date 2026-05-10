@@ -32,6 +32,7 @@ finish_cycle() {
   elif [[ -n "${RUN_CODEX_STARTED_EPOCH:-}" ]]; then
     codex_exec_started="1"
   fi
+  automation_record_cycle_finish "$exit_code" "$reason" "$level" "$status_marker" "$codex_exit" "$codex_exec_started" "${RUN_SELECTED_REVIEW_PATH:-}" || true
   lattice_record_cycle_finish "$exit_code" "$reason" "$level" "$status_marker" "$codex_exit" "$codex_exec_started" "${RUN_SELECTED_REVIEW_PATH:-}" || true
   log_line "$level" "$message"
   finalize_wrapper_health_state "exited"

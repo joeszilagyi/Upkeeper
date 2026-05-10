@@ -3,6 +3,254 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Automation Obligation Framework
+
+Status: completed
+
+Goal:
+Add one shared Upkeeper-owned automation accounting framework so root Upkeeper,
+FlameOn, ChimneySweep, and future derivatives all write the same durable run
+ledger and unresolved-obligation records. Focused launchers should supply
+identity and policy only; they should not own separate state formats.
+
+Constraints:
+- Keep the framework local and deterministic under ignored `runtime/` state.
+- Do not require GitHub, Lattice, or backend Codex to record run/obligation
+  evidence.
+- Preserve existing launcher behavior while adding shared identity fields.
+- Make non-zero cycle exits create durable obligations with enough target and
+  launcher context for later reconciliation work.
+- Keep validation no-quota and local.
+
+Files likely touched:
+- `Upkeeper`
+- `FlameOn`
+- `ChimneySweep`
+- `lib/upkeeper/automation_obligations.bash`
+- `lib/upkeeper/cycle_cleanup_signals.bash`
+- `lib/upkeeper/launcher_full_burn.bash`
+- `lib/upkeeper/help_selection.bash`
+- `lib/upkeeper/README.md`
+- `tools/validate_upkeeper.sh`
+- `tests/flameon_test.bash`
+- `tests/chimneysweep_test.bash`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `docs/security.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added `lib/upkeeper/automation_obligations.bash` as the shared local
+  automation run and obligation record owner.
+- Wired Upkeeper cycle start/finish to write durable run records and create
+  unresolved obligations for non-zero cycle exits.
+- Added shared launcher identity/policy fields so FlameOn and ChimneySweep use
+  the same framework instead of separate state formats.
+- Made FlameOn and ChimneySweep reconcile open obligations before normal
+  bug-finding or GitHub issue selection, passing the selected obligation to
+  Upkeeper as a locked target plus wrapper-generated prompt file.
+- Added successful selected-obligation resolution so a clean non-dry-run cycle
+  moves the obligation from `open` to `resolved`.
+- Extended quick validation with a local fixture that proves run records are
+  finalized, a blocked ChimneySweep-style cycle opens one obligation, the
+  selector/prompt-file handoff works, and a clean selected-obligation cycle
+  resolves it.
+- Updated help, operator docs, compatibility notes, security notes, module
+  ownership docs, tests, and 2026 change notes.
+
+## Run-Set System Catch-Up
+
+Status: completed
+
+Goal:
+Fix system issues exposed by the live ChimneySweep run set after issue 128:
+owned `$CODEX_HOME/sessions` directories with weak inherited permissions should
+be repaired before probing instead of stranding all later runs, and review
+summary logs should preserve the wrapper-selected target when the model final
+message omits it.
+
+Constraints:
+- Preserve the session preflight stdout contract: `ok` or one compact failure
+  reason.
+- Keep rejecting symlinked, non-directory, and wrong-owner session stores before
+  any write probe.
+- Do not let the review-summary parser invent a selected file from unrelated
+  final-message prose; only use the wrapper's locked target as fallback when the
+  parsed selected file is absent.
+- Keep validation local and deterministic; do not run backend Codex validation.
+
+Files likely touched:
+- `lib/upkeeper/session_store_preflight.bash`
+- `lib/upkeeper/report_analysis.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/security.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Repaired owned weak-mode `$CODEX_HOME/sessions` directories to `0700` through
+  an `O_NOFOLLOW` directory descriptor before the write probe runs.
+- Kept symlink, non-directory, wrong-owner, and still-unsafe session stores as
+  pre-backend local-environment failures.
+- Made review-summary logging fall back to `RUN_SELECTED_REVIEW_PATH` when the
+  final model message has an outcome but omits the selected file.
+- Added quick validation for owned session-store permission repair and selected
+  file fallback logging.
+- Updated operator docs, compatibility notes, security notes, and 2026 change
+  notes.
+
+## Issue 128 Session Store Probe Hardening
+
+Status: completed
+
+Goal:
+Fail closed before probing `$CODEX_HOME/sessions` when the session store path is
+unsafe, and replace the predictable truncating probe file with an unpredictable
+private probe directory.
+
+Constraints:
+- Start from the issue-inferred selected file,
+  `lib/upkeeper/session_store_preflight.bash`.
+- Preserve the current caller contract: `codex_session_store_write_check` prints
+  `ok` or one compact failure reason on stdout.
+- Reject a final sessions path that is a symlink, not a directory, not owned by
+  the current user, or group/other writable before creating probe files.
+- Keep validation deterministic and local; do not run backend Codex validation.
+
+Files likely touched:
+- `lib/upkeeper/session_store_preflight.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/security.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added a session-store safety check that rejects symlink, non-directory,
+  wrong-owner, and group/other-writable `$CODEX_HOME/sessions` paths before the
+  write probe.
+- Replaced the predictable truncating marker file with an unpredictable
+  `mktemp -d` probe directory and child probe file.
+- Added quick validation proving the normal probe cleans up, a preexisting
+  predictable marker symlink is not followed or removed, and unsafe session
+  directories fail before probing.
+- Updated operator docs, compatibility, security notes, and 2026 change notes.
+
+## Issue 127 Symlink Target Escape Hardening
+
+Status: completed
+
+Goal:
+Fail closed when explicit targets, automatic selection, manifest generation, or
+Lattice candidate diagnostics encounter repo paths that are symlinks, especially
+symlinks pointing outside the repository.
+
+Constraints:
+- Start from the issue-inferred selected file, `lib/upkeeper/help_selection.bash`.
+- Keep the source-safe target boundary deterministic and local before Codex
+  launch; do not use backend Codex validation.
+- Reject symlinks before stat, read, hash, prompt selection, or candidate
+  reporting can follow them.
+- Use no-follow sample reads and repo-root containment checks for selected
+  source files.
+- Preserve existing operator-visible status markers, log keys, and selection
+  precedence.
+
+Files likely touched:
+- `lib/upkeeper/help_selection.bash`
+- `lib/upkeeper/file_manifest.bash`
+- `tools/upkeeper_lattice.py`
+- `tools/validate_upkeeper.sh`
+- `docs/security.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `tools/stress_upkeeper_corpus.sh --local`
+- `git diff --check`
+
+Completed in this patch:
+- Added no-follow source-safe file helpers for selected target validation and
+  automatic candidate filtering in `lib/upkeeper/help_selection.bash`.
+- Rejected symlink paths during manifest generation in
+  `lib/upkeeper/file_manifest.bash`.
+- Made Lattice current candidate diagnostics report symlinks as excluded instead
+  of treating followed targets as eligible.
+- Added quick validation covering explicit, enumerate, manifest, and Lattice
+  behavior for a tracked symlink that points outside the repo.
+- Updated security, compatibility, and release-note documentation for the
+  tightened source-safe boundary.
+
+## Force-Added Git-Ignored Target Guardrail
+
+Status: completed
+
+Goal:
+Reject paths that match Git ignore rules from Upkeeper explicit target selection,
+normal script/tool rotation, manifest generation, and Lattice/max-cover
+candidates even when those paths were force-added to Git.
+
+Constraints:
+- Preserve the documented source-safe target boundary for both explicit
+  `--target-file` and automatic selection.
+- Keep the fix deterministic and local; do not use backend Codex validation.
+- Apply the same `git check-ignore --no-index` semantics at every directly
+  related source/candidate surface.
+- Add a temp-repo regression check for a force-added ignored executable.
+
+Files likely touched:
+- `lib/upkeeper/help_selection.bash`
+- `lib/upkeeper/file_manifest.bash`
+- `tools/upkeeper_lattice.py`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Switched Git ignore checks for selected targets to `git check-ignore
+  --no-index` so force-added ignored paths are treated as ignored.
+- Filtered Git-ignored paths out of normal selection, manifest generation, and
+  Lattice/max-cover candidate diagnostics.
+- Added quick validation with a force-added ignored executable fixture covering
+  explicit, enumerate, manifest, and Lattice paths.
+
 ## ChimneySweep Issue-Fix Launcher
 
 Status: completed
@@ -59,6 +307,220 @@ Completed in this patch:
   between FlameOn and ChimneySweep.
 - Updated tests, validation, public docs, compatibility notes, CI syntax checks,
   and v1.2.6 release notes.
+
+## Log Path Symlink Hardening
+
+Status: completed
+
+Goal:
+Reject unsafe `Upkeeper.log` paths before the first wrapper log write so a
+contaminated checkout cannot redirect log appends through symlinks or other
+non-regular files.
+
+Constraints:
+- Keep the guard in the runtime/logging owner loaded by root `Upkeeper`.
+- Fail closed before `cycle.start` if the log path is a symlink, non-regular
+  file, hard-linked file, or not owned by the current user.
+- Preserve explicit `CODEX_LOG_FILE` behavior for normal regular user-owned log
+  files.
+- Use deterministic dry-run validation only; do not launch real backend Codex.
+- Update operator-visible docs, compatibility notes, and 2026 change notes with
+  the security behavior.
+
+Files likely touched:
+- `Upkeeper`
+- `.gitignore`
+- `lib/upkeeper/runtime_foundation.bash`
+- `lib/upkeeper/progress_logging.bash`
+- `lib/upkeeper/log_rotation.bash`
+- `lib/upkeeper/transcript_output.bash`
+- `lib/upkeeper/postmortem_sequence.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `docs/security.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added a no-follow log append guard that rejects symlink, non-regular,
+  hard-linked, wrong-owner, and symlink-parent log paths before writing.
+- Updated startup log write preflight, normal `log_line` output, log-rotation
+  notices, transcript summaries, and postmortem summaries to use guarded appends.
+- Added quick validation for a symlinked-client `Upkeeper.log` attack fixture
+  and kept the lattice wrapper test independent of operator home writability.
+- Ignored rotated `Upkeeper.log.*.zip` evidence archives so log rotation cannot
+  leave commit-visible local artifacts.
+- Bumped Upkeeper to v1.2.7 and updated help, operator docs, compatibility,
+  security docs, and 2026 change notes.
+
+## Launcher Full-Burn Defaults
+
+Status: completed
+
+Goal:
+Make the repo-root automation launchers stress the complete Upkeeper safety and
+review surface by default, while keeping plain `./Upkeeper` as the compatibility
+entrypoint.
+
+Constraints:
+- Apply the stronger defaults to both `FlameOn` and `ChimneySweep`.
+- Do not add an opt-out flag; these launchers are the dogfood/stress paths.
+- Require Lattice and encrypted pre-contact backup before backend launch.
+- Pin the Codex sandbox mode for launcher runs.
+- Spend quota down to the provider floor for these launcher runs by forcing
+  quota stop floors and buffers to zero, bypassing wrapper quota guardrail
+  stops, and bypassing stale cooldown markers.
+- Keep `ChimneySweep` issue selection deterministic and pre-model, with the
+  selected issue target still locked by `--fix-issue=NUMBER`.
+- Request full prompt pass coverage plus P24-P29 modules for `ChimneySweep`
+  repair runs without letting target selection drift away from the locked issue.
+- Do not launch real backend Codex validation while making the patch.
+
+Files likely touched:
+- `FlameOn`
+- `ChimneySweep`
+- `lib/upkeeper/launcher_full_burn.bash`
+- `tests/flameon_test.bash`
+- `tests/chimneysweep_test.bash`
+- `tools/validate_upkeeper.sh`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `docs/dependencies.md`
+- `.github/workflows/ci.yml`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/flameon_test.bash`
+- `bash tests/chimneysweep_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added the shared `launcher_full_burn.bash` helper and loaded it through the
+  explicit module map.
+- Made `FlameOn` and `ChimneySweep` force required Lattice, required encrypted
+  age pre-contact backup, and `--sandbox workspace-write` before backend launch.
+- Made `ChimneySweep` request `--prompt-pass=all` plus all P24-P29 review
+  modules for the issue it locks before launch.
+- Extended dry-run output, focused tests, quick validation, README, operator
+  docs, security docs, compatibility notes, and v1.2.8 release notes.
+- Documented `age` as the live full-burn launcher dependency, added it to CI,
+  and recorded the local public-recipient setup flow.
+- Made full-burn launcher quota behavior spend-to-zero for both five-hour and
+  weekly buckets, including bypass of wrapper quota guardrail stops and existing
+  quota-cooldown markers.
+- Kept local validation fixtures on plain Upkeeper defaults even when the
+  validator itself is launched from a full-burn environment.
+
+## ChimneySweep Staged Issue Workflow
+
+Status: completed
+
+Goal:
+Exercise issue repair end to end while keeping deterministic queue selection
+outside the model: comment first, review that comment with a fresh model, then
+apply the fix in a third model instantiation.
+
+Constraints:
+- Keep issue selection scripted and pre-model.
+- Keep comment/review stages read-only against tracked source.
+- Let the apply stage actually work the bug and patch source.
+- Keep full-burn launcher defaults on every stage.
+- Preserve a one-stage apply workflow for compatibility and focused debugging.
+
+Files likely touched:
+- `ChimneySweep`
+- `Upkeeper`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `lib/upkeeper/help_selection.bash`
+- `completions/upkeeper.bash`
+- `tests/chimneysweep_test.bash`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `docs/security.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper FlameOn ChimneySweep lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf completions/*.bash`
+- `bash tests/chimneysweep_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added `--issue-workflow-stage=comment|review|apply` to Upkeeper issue-fix
+  cycles.
+- Made comment and review stages leave issue comments and fail if tracked source
+  mutates.
+- Made ChimneySweep default to `comment-review-apply` and added workflow options
+  for all stage subsets.
+- Extended completion, tests, docs, compatibility notes, security notes, and
+  v1.2.9 release notes.
+
+## Genie Protocol GitHub Boundary
+
+Status: completed
+
+Goal:
+Keep backend Codex out of direct GitHub I/O while preserving the full
+ChimneySweep comment, review, and apply workflow.
+
+Constraints:
+- The wrapper may fetch issue state, comments, labels, and later post issue
+  comments or other GitHub side effects.
+- Backend Codex gets wrapper-fetched issue evidence and local artifact paths
+  only.
+- Backend Codex must not inherit GitHub token environment variables.
+- Backend Codex must not have a normal `gh` command path or a normal `gh`
+  config directory.
+- The boundary must have deterministic validation that tries to break out before
+  any real LLM launch.
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `tools/validate_upkeeper.sh`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `docs/security.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/codex_io.bash lib/upkeeper/prompt_compile.bash tools/validate_upkeeper.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added the Genie Protocol backend launch environment in `codex_io.bash`.
+- Scrubbed GitHub token/API environment variables from backend Codex child
+  processes.
+- Added per-run blocker stubs for `gh`, `curl`, `wget`, and `hub`, plus an empty
+  per-run `GH_CONFIG_DIR`.
+- Forced comment/review issue-workflow backend launches into
+  `--sandbox read-only` and moved issue-comment handoff to a final-message draft
+  block extracted by the wrapper after validation.
+- Kept wrapper-owned `gh issue comment --body-file` relay outside that backend
+  child environment.
+- Added a validation fixture that injects fake host GitHub tools and token
+  variables, then proves the backend command sees only the brokered blockers.
+- Updated prompts, docs, compatibility notes, security notes, and v1.2.9 release
+  notes.
 
 ## Pre-Contact Selected-Target Backups
 

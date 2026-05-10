@@ -378,9 +378,12 @@ present = set()
 for raw_line in text.splitlines():
     line = raw_line.strip()
     line = re.sub(r"^(?:[-*+]\s*|\d+[.)]\s*)+", "", line)
-    line = line.strip()
-    line = re.sub(r"^[>`*_~\s]+", "", line)
-    match = re.match(r"^P([1-9]|1[0-9]|2[0-3])\b(?:[`*_~\s])*[:.-](?:[`*_~\s])+", line, re.IGNORECASE)
+    line = line.strip("`*_~> \t")
+    match = re.match(
+        r"^UPKEEPER_PASS_RESULT:\s+pass=P([1-9]|1[0-9]|2[0-3])\b",
+        line,
+        re.IGNORECASE,
+    )
     if match:
         present.add(int(match.group(1)))
 
@@ -399,6 +402,38 @@ print(
     )
 )
 PY
+}
+
+prompt_pass_coverage_gate() {
+  local last_message_file="$1"
+  local pass_coverage_json pass_coverage_status pass_coverage_expected pass_coverage_present pass_coverage_missing
+  local coverage_status coverage_expected coverage_present coverage_missing
+  local should_log="${2:-1}"
+
+  [[ "${CODEX_PROMPT_PASS:-}" == "all" ]] || return 1
+
+  if pass_coverage_json="$(review_pass_coverage_json "$last_message_file")"; then
+    eval "$(review_pass_coverage_assignments "$pass_coverage_json" coverage)"
+    pass_coverage_status="$coverage_status"
+    pass_coverage_expected="$coverage_expected"
+    pass_coverage_present="$coverage_present"
+    pass_coverage_missing="$coverage_missing"
+    if [[ "$pass_coverage_status" == "complete" ]]; then
+      if [[ "$should_log" == "1" ]]; then
+        log_line "INFO" "review.pass_coverage prompt_pass=all status=$pass_coverage_status expected=$pass_coverage_expected present=$pass_coverage_present missing=$(shell_quote "$pass_coverage_missing")"
+      fi
+      return 0
+    fi
+    if [[ "$should_log" == "1" ]]; then
+      log_line "WARN" "review.pass_coverage prompt_pass=all status=$pass_coverage_status expected=$pass_coverage_expected present=$pass_coverage_present missing=$(shell_quote "$pass_coverage_missing")"
+    fi
+    return 2
+  fi
+
+  if [[ "$should_log" == "1" ]]; then
+    log_line "WARN" "review.pass_coverage prompt_pass=all status=unavailable expected=23 present=unknown missing=unknown"
+  fi
+  return 3
 }
 
 log_review_report_summary() {
@@ -442,22 +477,7 @@ log_review_report_summary() {
     fi
   fi
 
-  if [[ "${CODEX_PROMPT_PASS:-}" == "all" ]]; then
-    if pass_coverage_json="$(review_pass_coverage_json "$last_message_file")"; then
-      eval "$(review_pass_coverage_assignments "$pass_coverage_json" coverage)"
-      pass_coverage_status="$coverage_status"
-      pass_coverage_expected="$coverage_expected"
-      pass_coverage_present="$coverage_present"
-      pass_coverage_missing="$coverage_missing"
-      if [[ "$pass_coverage_status" == "complete" ]]; then
-        log_line "INFO" "review.pass_coverage prompt_pass=all status=$pass_coverage_status expected=$pass_coverage_expected present=$pass_coverage_present missing=$(shell_quote "$pass_coverage_missing")"
-      else
-        log_line "WARN" "review.pass_coverage prompt_pass=all status=$pass_coverage_status expected=$pass_coverage_expected present=$pass_coverage_present missing=$(shell_quote "$pass_coverage_missing")"
-      fi
-    else
-      log_line "WARN" "review.pass_coverage prompt_pass=all status=unavailable expected=23 present=unknown missing=unknown"
-    fi
-  fi
+  prompt_pass_coverage_gate "$last_message_file" 1 || true
 }
 
 terminal_emit_review_finale() {

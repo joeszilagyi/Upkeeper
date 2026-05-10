@@ -657,9 +657,11 @@ repo, Codex may apply the smallest safe self-repair immediately and report it as
 a log self-repair.
 
 The prompt also asks for additive `UPKEEPER_PASS_RESULT` lines for each P* pass
-that was actually applied or explicitly found not applicable. Missing lines do
-not fail a cycle; malformed lines are preserved as rejected Lattice evidence
-instead of being treated as clean pass results.
+that was actually applied or explicitly found not applicable. For
+`--prompt-pass=all`, missing or incomplete pass-result coverage now blocks the
+cycle after the final response is parsed. Outside all-pass runs, missing lines
+remain additive-only. Malformed lines are preserved as rejected Lattice
+evidence instead of being treated as clean pass results.
 
 At script startup, Upkeeper also scans the recent live log for prior cycles that
 started without a terminal `cycle.exit` or `run.finish`, writes

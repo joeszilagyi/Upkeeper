@@ -3,6 +3,53 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Prompt Pass Coverage Enforcement
+
+Status: completed
+
+Goal:
+Fail closed when an `--prompt-pass=all` run finishes without parseable pass
+coverage evidence, so automation obligations and launcher loops do not treat a
+coverage-blind final report as clean.
+
+Constraints:
+- Preserve additive `UPKEEPER_PASS_RESULT` behavior for normal runs.
+- Keep malformed pass-result lines as rejected Lattice evidence instead of
+  silently counting them as clean coverage.
+- Accept common Markdown decoration around `UPKEEPER_PASS_RESULT` lines so the
+  parser matches real model output.
+- Keep validation local and deterministic; do not run backend Codex validation.
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/report_analysis.bash`
+- `tools/validate_upkeeper.sh`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `docs/lattice.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Made `review_pass_coverage_json` count real `UPKEEPER_PASS_RESULT` lines,
+  including common Markdown-decorated forms.
+- Added a shared prompt-pass coverage gate that logs expected/present/missing
+  counts and fails closed for incomplete or unavailable all-pass evidence.
+- Made `Upkeeper` override a reported clean status to `BLOCKED` when
+  `--prompt-pass=all` coverage is missing or incomplete.
+- Added quick validation for decorated pass-result parsing and the fail-closed
+  all-pass enforcement path.
+- Updated public docs, compatibility notes, Lattice notes, and 2026 change
+  notes for the new enforcement contract.
+
 ## Launcher Model Override Expansion
 
 Status: completed

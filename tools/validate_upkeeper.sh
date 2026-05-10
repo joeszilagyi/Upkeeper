@@ -2577,7 +2577,7 @@ EOF
 }
 
 check_review_summary_parser() {
-  local temp_dir summary selected_file outcome
+  local temp_dir summary selected_file outcome coverage_json coverage_status coverage_present coverage_missing
 
   log "checking review summary parser"
   temp_dir="$(mktemp -d /tmp/upkeeper-review-summary.XXXXXX)"
@@ -2681,6 +2681,52 @@ EOF
     bash -lc 'cd "$1"; source ./Upkeeper; terminal_emit_review_finale REVIEWED_AND_FIXED lib/upkeeper/example.bash "finding" "change" "verification"' bash "$ROOT_DIR" \
       >"$temp_dir/finale-silent.out" 2>"$temp_dir/finale-silent.err"
   [[ ! -s "$temp_dir/finale-silent.err" ]] || fail "silent finale wrote terminal output"
+
+  cat >"$temp_dir/pass-results.txt" <<'EOF'
+`UPKEEPER_PASS_RESULT: pass=P1 file=Upkeeper applicable=1 outcome=clean changed=0 regression=0`
+- `UPKEEPER_PASS_RESULT: pass=P2 file=Upkeeper applicable=1 outcome=clean changed=0 regression=0`
+UPKEEPER_PASS_RESULT: pass=P3 file=Upkeeper applicable=1 outcome=clean changed=0 regression=0
+EOF
+
+  coverage_json="$(bash -lc 'cd "$1"; source ./Upkeeper; review_pass_coverage_json "$2"' bash "$ROOT_DIR" "$temp_dir/pass-results.txt")"
+  coverage_status="$(printf '%s' "$coverage_json" | jq -r '.status')"
+  coverage_present="$(printf '%s' "$coverage_json" | jq -r '.present')"
+  coverage_missing="$(printf '%s' "$coverage_json" | jq -r '.missing')"
+  [[ "$coverage_status" == "incomplete" ]] || fail "pass coverage parser status was $coverage_status"
+  [[ "$coverage_present" == "3" ]] || fail "pass coverage parser present count was $coverage_present"
+  [[ "$coverage_missing" == P4,* ]] || fail "pass coverage parser missing list was $coverage_missing"
+
+  CODEX_TERMINAL_VERBOSITY=silent CODEX_PROMPT_PASS=all \
+    bash -lc 'cd "$1"; source ./Upkeeper; LOG_FILE="$2"; prompt_pass_coverage_gate "$3" 1 || [[ "$?" -eq 2 ]]' bash "$ROOT_DIR" "$temp_dir/pass-coverage.log" "$temp_dir/pass-results.txt"
+  grep -Fq "review.pass_coverage prompt_pass=all status=incomplete expected=23 present=3" "$temp_dir/pass-coverage.log" || fail "pass coverage gate did not log decorated marker coverage"
+
+  rm -r "$temp_dir"
+}
+
+check_prompt_pass_coverage_enforcement() {
+  local temp_dir
+
+  log "checking prompt-pass coverage enforcement"
+  temp_dir="$(mktemp -d /tmp/upkeeper-pass-coverage.XXXXXX)"
+  cat >"$temp_dir/last-message.txt" <<'EOF'
+REVIEWED_CLEAN
+
+No code changes were required.
+
+UPKEEPER_LOG_REVIEW: CHECKED cycle=validation anomalies=none
+UPKEEPER_STATUS: WORK_DONE
+EOF
+
+  CODEX_TERMINAL_VERBOSITY=silent CODEX_PROMPT_PASS=all \
+    bash -lc 'cd "$1"; source ./Upkeeper; LOG_FILE="$2"; \
+      status_marker="WORK_DONE"; status_marker_source="exact"; codex_exit=0; \
+      prompt_pass_coverage_gate "$3" 0 || rc=$?; \
+      if [[ "${rc:-0}" -eq 2 || "${rc:-0}" -eq 3 ]]; then \
+        status_marker="BLOCKED"; status_marker_source="prompt_pass_coverage"; \
+      fi; \
+      printf "%s\t%s\n" "$status_marker" "$status_marker_source"' bash "$ROOT_DIR" "$temp_dir/pass-enforcement.log" "$temp_dir/last-message.txt" \
+      >"$temp_dir/pass-enforcement.out"
+  grep -Fxq $'BLOCKED\tprompt_pass_coverage' "$temp_dir/pass-enforcement.out" || fail "prompt-pass coverage enforcement did not force BLOCKED"
 
   rm -r "$temp_dir"
 }
@@ -3088,6 +3134,7 @@ run_check file_manifest_selection check_file_manifest_selection
 run_check issue_workflow_comment_relay check_issue_workflow_comment_relay
 run_check issue_workflow_backend_mode_contract check_issue_workflow_backend_mode_contract
 run_check genie_protocol_backend_boundary check_genie_protocol_backend_boundary
+run_check prompt_pass_coverage_enforcement check_prompt_pass_coverage_enforcement
 run_check tool_failure_queue check_tool_failure_queue
 run_check lattice_contract check_lattice_contract
 run_check fallback_artifact_helpers check_fallback_artifact_helpers

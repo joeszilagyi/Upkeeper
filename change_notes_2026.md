@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-10: v1.2.11 changes:
+	1. Made `--prompt-pass=all` fail closed when final pass-result coverage is incomplete or unavailable.
+	2. Counted real `UPKEEPER_PASS_RESULT` lines, including common Markdown-decorated forms, for machine pass-coverage enforcement.
+	3. Added local quick validation for decorated pass-result parsing and all-pass coverage blocking.
+
 2026-05-10: v1.2.10 changes:
 		1. Hardened target selection so paths matching Git ignore rules are rejected even when they have been force-added to Git.
 		2. Applied the same `git check-ignore --no-index` contract to explicit `--target-file` validation, normal enumerate/manifest selection, manifest generation, and Lattice/max-cover candidate diagnostics.

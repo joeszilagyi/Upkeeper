@@ -212,10 +212,12 @@ UPKEEPER_PASS_RESULT: pass=P24 file=lib/upkeeper/example.bash applicable=1 outco
 UPKEEPER_PASS_RESULT: pass=P25 file=lib/upkeeper/example.bash applicable=0 outcome=not_applicable changed=0 regression=0 reason=no_matching_surface
 ```
 
-`UPKEEPER_STATUS` and `UPKEEPER_LOG_REVIEW` are unchanged. Missing
-`UPKEEPER_PASS_RESULT` lines do not fail a cycle; Lattice records planned passes
-as `unknown` when it has enough planning context. Malformed lines are preserved
-as rejected evidence and are never treated as clean results. Marker-looking text
+`UPKEEPER_STATUS` and `UPKEEPER_LOG_REVIEW` are unchanged. In normal runs,
+missing `UPKEEPER_PASS_RESULT` lines remain additive-only and Lattice records
+planned passes as `unknown` when it has enough planning context. When
+`--prompt-pass=all` is active, incomplete or unavailable pass-result coverage
+forces the cycle to `BLOCKED` before cleanup. Malformed lines are preserved as
+rejected evidence and are never treated as clean results. Marker-looking text
 inside Markdown code fences is ignored. Duplicate keys, missing `pass`, missing
 `file`, and invalid pass codes are rejected. Future pass codes matching
 `P[0-9A-Za-z_.-]+`, such as `P999`, do not need schema changes.

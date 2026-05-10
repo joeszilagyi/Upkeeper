@@ -51,7 +51,7 @@ or public documentation policy changes:
 
 ```sh
 tools/check_public_docs.sh --quick
-tools/validate_upkeeper.sh --quick
+tools/validate_upkeeper.sh --smoke
 git diff --check
 ```
 

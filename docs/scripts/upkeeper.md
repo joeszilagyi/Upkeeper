@@ -698,9 +698,11 @@ prompts, backup log lines, or Lattice preselect evidence.
   changing coverage. Full validation uses dry-runs plus a local fake `codex`
   binary; it does not launch real backend work.
   GitHub Actions runs the no-quota CI path in `.github/workflows/ci.yml` on
-  pushes and pull requests. It installs required tools including `jq` and `age`,
-  then runs shell syntax, `tests/*.bash`, public docs, and
-  `tools/validate_upkeeper.sh --quick`.
+  pull requests and on pushes to `main`. It installs required tools including
+  `jq` and `age`, classifies the change scope, and then runs either the
+  docs-only path (`tools/check_public_docs.sh --quick` plus
+  `tools/validate_upkeeper.sh --smoke`) or the broader shell/tests/docs/quick
+  validation path.
   Sample-repo stress coverage is available without backend quota with
   `tools/stress_upkeeper_corpus.sh --local`; full validation runs that local
   corpus after the central wrapper checks.

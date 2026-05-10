@@ -17,6 +17,18 @@ release notes, prompts, comments, logs, and docs are expected to explain the
 tool from tracked source, not from private chat history. P26 exists to enforce
 that standard.
 
+> "Starfleet code requires a second backup?"
+>
+> "In case the first backup fails."
+>
+> "What are the chances that both a primary system and its backup would fail at
+> the same time?"
+>
+> "It's very unlikely, but in a crunch I wouldn't like to be caught without a
+> second backup."
+>
+> -- Gilora and O'Brien, "Destiny"
+
 ## The Short Version
 
 Upkeeper is a launch script and local control plane that runs a carefully gated,
@@ -284,11 +296,18 @@ with `UPKEEPER_DRY_RUN=1` for startup checks, then uses a local fake `codex`
 binary to exercise launch/capture failure classification without spending quota.
 
 GitHub Actions runs the no-quota CI path in
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) on pushes and pull
-requests. The workflow installs required tools including `jq` and `age`, then
-runs shell syntax checks, `tests/*.bash`, `tools/check_public_docs.sh --quick`, and
-`tools/validate_upkeeper.sh --quick`. It does not launch real Codex backend
-work and does not upload runtime artifacts by default.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) on pull requests and on
+pushes to `main`. The workflow installs required tools including `jq` and
+`age`, classifies the change scope, and then takes one of two paths:
+
+- docs-only changes: `tools/check_public_docs.sh --quick` plus
+  `tools/validate_upkeeper.sh --smoke`
+- broader changes: shell syntax checks, `tests/*.bash`,
+  `tools/check_public_docs.sh --quick`, and
+  `tools/validate_upkeeper.sh --quick`
+
+It does not launch real Codex backend work and does not upload runtime
+artifacts by default.
 
 Runtime/tool dependencies are tracked in [`docs/dependencies.md`](docs/dependencies.md).
 GitHub's dependency graph should stay enabled, but it is expected to show no

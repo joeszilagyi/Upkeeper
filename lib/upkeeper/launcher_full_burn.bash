@@ -19,6 +19,23 @@ upkeeper_launcher_apply_automation_identity() {
   export UPKEEPER_AUTOMATION_POLICY
 }
 
+upkeeper_launcher_model_override_from_model_effort() {
+  local model="$1"
+  local effort="${2:-xhigh}"
+
+  case "$model:$effort" in
+    gpt-5.5:xhigh|5.5:xhigh)
+      printf '5.5_xhigh'
+      ;;
+    gpt-5.3-codex-spark:xhigh|5.3-codex-spark:xhigh|spark:xhigh)
+      printf '5.3-codex-spark_xhigh'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 upkeeper_launcher_apply_full_burn_defaults() {
   UPKEEPER_LAUNCHER_FULL_BURN_ACTIVE="1"
   export UPKEEPER_LAUNCHER_FULL_BURN_ACTIVE

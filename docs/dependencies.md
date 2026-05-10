@@ -17,10 +17,12 @@ Upkeeper's real dependency surface here and validate it locally with:
 
 ```sh
 tools/validate_upkeeper.sh --deps
+tools/validate_upkeeper.sh --smoke
 tools/validate_upkeeper.sh --full
 ```
 
-`--deps` reports command availability. `--full` runs the release guardrails with
+`--deps` reports command availability. `--smoke` runs the fast local edit-loop
+checks without backend work. `--full` runs the release guardrails with
 `UPKEEPER_DRY_RUN=1` for startup checks and a local fake `codex` binary for
 launch/capture failure classification, including central startup,
 symlinked-client startup, missing-module failure, missing prompt-template

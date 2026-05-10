@@ -6,6 +6,7 @@ TOOLS_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 ROOT_DIR="$(cd -- "$TOOLS_DIR/.." && pwd)"
 
 MODE="quick"
+VALIDATION_PROFILE="0"
 
 WRAPPER_REQUIRED_COMMANDS=(
   awk
@@ -55,15 +56,21 @@ WRAPPER_OPTIONAL_COMMANDS=(
 
 usage() {
   cat <<'USAGE'
-Usage: tools/validate_upkeeper.sh [--quick|--full|--deps]
+Usage: tools/validate_upkeeper.sh [--smoke|--quick|--full|--deps] [--profile]
 
 Validate the central Upkeeper checkout.
 
 Modes:
   --deps    Report runtime/tool dependency status.
+  --smoke   Run the fast local edit-loop checks: syntax, version, module map,
+            prompt templates, help/docs/diff, parser helpers, and launcher
+            argument contracts.
   --quick   Run syntax, version, module-map, prompt-template, help, and diff checks.
   --full    Run quick checks plus safe dry-runs, symlink behavior, the local
             stress corpus, and failure paths.
+
+Flags:
+  --profile Print elapsed time for each validation check.
 
 No mode launches a real Codex backend task. Full mode uses UPKEEPER_DRY_RUN=1
 plus a local fake codex binary for launch/capture failure checks.
@@ -79,8 +86,39 @@ fail() {
   exit 1
 }
 
+validation_now_us() {
+  local now="${EPOCHREALTIME:-}"
+  if [[ -n "$now" ]]; then
+    printf '%s\n' "${now/./}"
+    return 0
+  fi
+  date +%s%6N
+}
+
+run_check() {
+  local name="$1"
+  shift
+  local start_us end_us elapsed_us
+
+  if [[ "$VALIDATION_PROFILE" == "1" ]]; then
+    start_us="$(validation_now_us)"
+  fi
+
+  "$@"
+
+  if [[ "$VALIDATION_PROFILE" == "1" ]]; then
+    end_us="$(validation_now_us)"
+    elapsed_us=$((end_us - start_us))
+    printf 'validate_upkeeper: timing check=%s elapsed=%d.%03ds\n' \
+      "$name" "$((elapsed_us / 1000000))" "$(((elapsed_us % 1000000) / 1000))"
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --smoke)
+      MODE="smoke"
+      ;;
     --quick)
       MODE="quick"
       ;;
@@ -89,6 +127,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --deps)
       MODE="deps"
+      ;;
+    --profile)
+      VALIDATION_PROFILE="1"
       ;;
     --help|-h)
       usage
@@ -347,10 +388,11 @@ check_prompt_template() {
 }
 
 check_help_and_diff() {
-  local help
+  local help validation_help
 
   log "checking help and whitespace"
   help="$(./Upkeeper --help)"
+  validation_help="$(tools/validate_upkeeper.sh --help)"
   grep -Fq -- "--review-module=p24" <<<"$help" || fail "help missing --review-module=p24"
   grep -Fq -- "--review-module=p25" <<<"$help" || fail "help missing --review-module=p25"
   grep -Fq -- "--review-module=p26" <<<"$help" || fail "help missing --review-module=p26"
@@ -382,6 +424,9 @@ check_help_and_diff() {
   grep -Fq -- "--fix-next-issue" <<<"$help" || fail "help missing --fix-next-issue"
   grep -Fq -- "--fix-issue=NUMBER" <<<"$help" || fail "help missing --fix-issue"
   grep -Fq -- "--issue-workflow-stage=comment|review|apply" <<<"$help" || fail "help missing issue workflow stage"
+  grep -Fq -- "5.3-codex-spark_xhigh" <<<"$help" || fail "help missing Spark model override"
+  grep -Fq -- "--smoke" <<<"$validation_help" || fail "validator help missing --smoke"
+  grep -Fq -- "--profile" <<<"$validation_help" || fail "validator help missing --profile"
   grep -Fq -- "UPKEEPER_MAX_COVER" <<<"$help" || fail "help missing UPKEEPER_MAX_COVER"
   grep -Fq -- "UPKEEPER_BUG_REPORT_ONLY" <<<"$help" || fail "help missing UPKEEPER_BUG_REPORT_ONLY"
   grep -Fq -- "UPKEEPER_FIX_NEXT_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_NEXT_ISSUE"
@@ -399,6 +444,8 @@ check_help_and_diff() {
   grep -Fq -- "CODEX_WEEK_STOP_PERCENT=0" <<<"$flameon_cmd" || fail "FlameOn dry-run missing spend-to-zero quota full-burn default"
   grep -Fq -- "CODEX_QUOTA_GUARDRAIL_BYPASS=1" <<<"$flameon_cmd" || fail "FlameOn dry-run missing quota guardrail bypass"
   grep -Fq -- "CODEX_QUOTA_COOLDOWN_BYPASS=1" <<<"$flameon_cmd" || fail "FlameOn dry-run missing quota cooldown bypass"
+  flameon_cmd="$(FLAMEON_DRY_RUN=1 ./FlameOn --model gpt-5.3-codex-spark --reasoning-effort xhigh)"
+  grep -Fq -- "--model-override=5.3-codex-spark_xhigh" <<<"$flameon_cmd" || fail "FlameOn dry-run missing Spark shortcut override"
   git diff --check
   git diff --cached --check
 }
@@ -2999,54 +3046,60 @@ if [[ "$MODE" == "deps" ]]; then
   exit 0
 fi
 
-check_syntax
-check_version_consistency
-check_module_map
-check_prompt_template
-check_help_and_diff
-check_gitignore_contract
-check_force_added_gitignored_target_selection
-check_symlink_target_selection_guard
-check_validation_environment_isolation
-check_codex_mode_validation
-check_cycle_start_log_contract
-check_log_path_symlink_guard
-check_disk_preflight_log_contract
-check_arg0_tmp_cleanup_contract
-check_automation_obligation_framework
-check_session_store_preflight_contract
-check_bwrap_tmp_preflight_contract
-check_wrapper_health_log_quoting
-check_operator_guide_bootstrap_race
-check_active_lock_incomplete_guard
-check_quota_fallback_exit_contract
-check_review_module_flags
-check_config_file_support
-check_file_manifest_selection
-check_issue_workflow_comment_relay
-check_issue_workflow_backend_mode_contract
-check_genie_protocol_backend_boundary
-check_tool_failure_queue
-check_lattice_contract
-check_public_docs_policy
-check_fallback_artifact_helpers
-check_runtime_format_json_helpers
-check_startup_anomaly_state_parser_contract
-check_postmortem_context_marker_classification
-check_postmortem_sequence_marker_contract
-check_live_output_filter_pipe
-check_review_summary_parser
-check_status_session_jsonl_contract
-check_process_control_guards
-check_startup_anomaly_gate_allowlist
+run_check syntax check_syntax
+run_check version_consistency check_version_consistency
+run_check module_map check_module_map
+run_check prompt_template check_prompt_template
+run_check help_and_diff check_help_and_diff
+run_check validation_environment_isolation check_validation_environment_isolation
+run_check codex_mode_validation check_codex_mode_validation
+run_check public_docs_policy check_public_docs_policy
+run_check runtime_format_json_helpers check_runtime_format_json_helpers
+run_check startup_anomaly_state_parser_contract check_startup_anomaly_state_parser_contract
+run_check postmortem_context_marker_classification check_postmortem_context_marker_classification
+run_check postmortem_sequence_marker_contract check_postmortem_sequence_marker_contract
+run_check live_output_filter_pipe check_live_output_filter_pipe
+run_check review_summary_parser check_review_summary_parser
+run_check status_session_jsonl_contract check_status_session_jsonl_contract
+run_check process_control_guards check_process_control_guards
+
+if [[ "$MODE" == "smoke" ]]; then
+  log "$MODE validation passed"
+  exit 0
+fi
+
+run_check review_module_flags check_review_module_flags
+run_check config_file_support check_config_file_support
+run_check gitignore_contract check_gitignore_contract
+run_check force_added_gitignored_target_selection check_force_added_gitignored_target_selection
+run_check symlink_target_selection_guard check_symlink_target_selection_guard
+run_check cycle_start_log_contract check_cycle_start_log_contract
+run_check log_path_symlink_guard check_log_path_symlink_guard
+run_check disk_preflight_log_contract check_disk_preflight_log_contract
+run_check arg0_tmp_cleanup_contract check_arg0_tmp_cleanup_contract
+run_check automation_obligation_framework check_automation_obligation_framework
+run_check session_store_preflight_contract check_session_store_preflight_contract
+run_check bwrap_tmp_preflight_contract check_bwrap_tmp_preflight_contract
+run_check wrapper_health_log_quoting check_wrapper_health_log_quoting
+run_check operator_guide_bootstrap_race check_operator_guide_bootstrap_race
+run_check active_lock_incomplete_guard check_active_lock_incomplete_guard
+run_check quota_fallback_exit_contract check_quota_fallback_exit_contract
+run_check file_manifest_selection check_file_manifest_selection
+run_check issue_workflow_comment_relay check_issue_workflow_comment_relay
+run_check issue_workflow_backend_mode_contract check_issue_workflow_backend_mode_contract
+run_check genie_protocol_backend_boundary check_genie_protocol_backend_boundary
+run_check tool_failure_queue check_tool_failure_queue
+run_check lattice_contract check_lattice_contract
+run_check fallback_artifact_helpers check_fallback_artifact_helpers
+run_check startup_anomaly_gate_allowlist check_startup_anomaly_gate_allowlist
 
 if [[ "$MODE" == "full" ]]; then
-  check_central_dry_runs
-  check_symlinked_client
-  check_missing_module_failure
-  check_missing_prompt_failure
-  check_empty_transcript_failure
-  check_stress_corpus_harness
+  run_check central_dry_runs check_central_dry_runs
+  run_check symlinked_client check_symlinked_client
+  run_check missing_module_failure check_missing_module_failure
+  run_check missing_prompt_failure check_missing_prompt_failure
+  run_check empty_transcript_failure check_empty_transcript_failure
+  run_check stress_corpus_harness check_stress_corpus_harness
 fi
 
 log "$MODE validation passed"

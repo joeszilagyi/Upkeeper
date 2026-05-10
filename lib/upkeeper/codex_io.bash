@@ -341,7 +341,7 @@ upkeeper_bug_report_only_enabled() {
 }
 
 upkeeper_issue_fix_next_enabled() {
-  config_truthy "${CODEX_ISSUE_FIX_NEXT:-0}"
+  config_truthy "${CODEX_ISSUE_FIX_NEXT:-0}" || [[ -n "${CODEX_ISSUE_FIX_REQUESTED_NUMBER:-}" ]]
 }
 
 upkeeper_source_mutation_fingerprint() {
@@ -430,18 +430,21 @@ apply_configured_cli_defaults() {
 }
 
 resolve_issue_fix_next_or_exit() {
-  local issue_json status target_from_issue
+  local issue_event issue_json requested_number status target_from_issue
 
   upkeeper_issue_fix_next_enabled || return 0
+  requested_number="${CODEX_ISSUE_FIX_REQUESTED_NUMBER:-}"
+  issue_event="issue.fix_next"
+  [[ -n "$requested_number" ]] && issue_event="issue.fix_issue"
 
   if ! command -v gh >/dev/null 2>&1; then
-    log_line "ERROR" "issue.fix_next unavailable reason=gh_missing"
+    log_line "ERROR" "$issue_event unavailable reason=gh_missing"
     finish_cycle 3 ISSUE_FIX_GH_MISSING ERROR "codex_exec_started=0"
   fi
 
   set +e
   issue_json="$(
-    python3 - "$ROOT_DIR" "${CODEX_ISSUE_PRIORITY_LABELS:-security,data-integrity,bug}" "${CODEX_ISSUE_SKIP_LABELS:-}" <<'PY'
+    python3 - "$ROOT_DIR" "${CODEX_ISSUE_PRIORITY_LABELS:-security,data-integrity,bug}" "${CODEX_ISSUE_SKIP_LABELS:-}" "$requested_number" <<'PY'
 import json
 import os
 import re
@@ -452,6 +455,7 @@ from pathlib import Path
 root = Path(sys.argv[1]).resolve()
 priority_labels = [item.strip() for item in sys.argv[2].split(",") if item.strip()]
 skip_labels = {item.strip().lower() for item in sys.argv[3].split(",") if item.strip()}
+requested_number = sys.argv[4].strip()
 
 
 def gh_json(args):
@@ -518,6 +522,49 @@ def candidate_paths(text):
                 yield normalized
 
 
+def emit_selected(issue, selected_label, body=None):
+    number = str(issue.get("number", ""))
+    if body is None:
+        body_data = gh_json(["issue", "view", number, "--json", "body"])
+        body = str(body_data.get("body", ""))
+    combined = "\n".join([str(issue.get("title", "")), body])
+    target = next(candidate_paths(combined), "")
+    label_names = [str(label.get("name", "")) for label in issue.get("labels", []) if label.get("name")]
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "number": number,
+                "title": str(issue.get("title", "")),
+                "url": str(issue.get("url", "")),
+                "labels": ",".join(label_names),
+                "selected_label": selected_label,
+                "created_at": str(issue.get("createdAt", "")),
+                "target_file": target,
+                "body": body,
+            }
+        )
+    )
+
+
+if requested_number:
+    issue = gh_json(
+        [
+            "issue",
+            "view",
+            requested_number,
+            "--json",
+            "number,title,url,labels,createdAt,body,state",
+        ]
+    )
+    state = str(issue.get("state", "")).lower()
+    if state and state != "open":
+        print(json.dumps({"status": "not_open", "number": requested_number, "state": state}))
+        raise SystemExit(0)
+    emit_selected(issue, "explicit", str(issue.get("body", "")))
+    raise SystemExit(0)
+
+
 for priority_label in priority_labels:
     issues = gh_json(
         [
@@ -538,27 +585,7 @@ for priority_label in priority_labels:
         continue
     candidates.sort(key=lambda issue: (str(issue.get("createdAt", "")), int(issue.get("number", 0))))
     selected = candidates[0]
-    number = str(selected.get("number", ""))
-    body_data = gh_json(["issue", "view", number, "--json", "body"])
-    body = str(body_data.get("body", ""))
-    combined = "\n".join([str(selected.get("title", "")), body])
-    target = next(candidate_paths(combined), "")
-    label_names = [str(label.get("name", "")) for label in selected.get("labels", []) if label.get("name")]
-    print(
-        json.dumps(
-            {
-                "status": "ok",
-                "number": number,
-                "title": str(selected.get("title", "")),
-                "url": str(selected.get("url", "")),
-                "labels": ",".join(label_names),
-                "selected_label": priority_label,
-                "created_at": str(selected.get("createdAt", "")),
-                "target_file": target,
-                "body": body,
-            }
-        )
-    )
+    emit_selected(selected, priority_label)
     raise SystemExit(0)
 
 print(json.dumps({"status": "none"}))
@@ -568,7 +595,7 @@ PY
   set -e
 
   if [[ "$issue_rc" -ne 0 ]]; then
-    log_line "ERROR" "issue.fix_next select_failed rc=$issue_rc detail=$(shell_quote "$issue_json")"
+    log_line "ERROR" "$issue_event select_failed rc=$issue_rc detail=$(shell_quote "$issue_json")"
     finish_cycle 3 ISSUE_FIX_SELECTION_FAILED ERROR "codex_exec_started=0"
   fi
 
@@ -577,11 +604,11 @@ PY
     ok)
       ;;
     none)
-      log_line "INFO" "issue.fix_next none priority_labels=$(shell_quote "${CODEX_ISSUE_PRIORITY_LABELS:-none}") skip_labels=$(shell_quote "${CODEX_ISSUE_SKIP_LABELS:-none}")"
+      log_line "INFO" "$issue_event none priority_labels=$(shell_quote "${CODEX_ISSUE_PRIORITY_LABELS:-none}") skip_labels=$(shell_quote "${CODEX_ISSUE_SKIP_LABELS:-none}")"
       finish_cycle 5 NO_ISSUE_FIX_TARGET INFO "codex_exec_started=0"
       ;;
     *)
-      log_line "ERROR" "issue.fix_next select_failed status=$(shell_quote "$status") detail=$(shell_quote "$issue_json")"
+      log_line "ERROR" "$issue_event select_failed status=$(shell_quote "$status") detail=$(shell_quote "$issue_json")"
       finish_cycle 3 ISSUE_FIX_SELECTION_FAILED ERROR "codex_exec_started=0"
       ;;
   esac
@@ -604,7 +631,7 @@ PY
     fi
   fi
 
-  log_line "INFO" "issue.fix_next selected number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") selected_label=$(shell_quote "$CODEX_ISSUE_FIX_SELECTED_LABEL") labels=$(shell_quote "$CODEX_ISSUE_FIX_LABELS") created_at=$(shell_quote "$CODEX_ISSUE_FIX_CREATED_AT") target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") inferred_target=$(shell_quote "${CODEX_ISSUE_FIX_TARGET_FILE:-none}") url=$(shell_quote "$CODEX_ISSUE_FIX_URL") title=$(shell_quote "$CODEX_ISSUE_FIX_TITLE")"
+  log_line "INFO" "$issue_event selected number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") selected_label=$(shell_quote "$CODEX_ISSUE_FIX_SELECTED_LABEL") labels=$(shell_quote "$CODEX_ISSUE_FIX_LABELS") created_at=$(shell_quote "$CODEX_ISSUE_FIX_CREATED_AT") target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") inferred_target=$(shell_quote "${CODEX_ISSUE_FIX_TARGET_FILE:-none}") url=$(shell_quote "$CODEX_ISSUE_FIX_URL") title=$(shell_quote "$CODEX_ISSUE_FIX_TITLE")"
 }
 
 parse_args() {
@@ -791,12 +818,24 @@ parse_args() {
       --bug-report-only|--file-bug-only|--report-bug-only)
         CODEX_BUG_REPORT_ONLY="1"
         CODEX_ISSUE_FIX_NEXT="0"
+        CODEX_ISSUE_FIX_REQUESTED_NUMBER=""
         shift
         ;;
       --fix-next-issue|--fix-oldest-bug)
         CODEX_ISSUE_FIX_NEXT="1"
+        CODEX_ISSUE_FIX_REQUESTED_NUMBER=""
         CODEX_BUG_REPORT_ONLY="0"
         shift
+        ;;
+      --fix-issue=*)
+        CODEX_ISSUE_FIX_REQUESTED_NUMBER="${1#--fix-issue=}"
+        [[ "$CODEX_ISSUE_FIX_REQUESTED_NUMBER" =~ ^[0-9]+$ ]] || die "--fix-issue requires a numeric issue number"
+        CODEX_ISSUE_FIX_NEXT="1"
+        CODEX_BUG_REPORT_ONLY="0"
+        shift
+        ;;
+      --fix-issue)
+        die "use --fix-issue=NUMBER (spaced form is intentionally unsupported)"
         ;;
       --backup-queue|-backup_queue)
         CODEX_TOOL_FAILURE_QUEUE_DIR="$ROOT_DIR/runtime/unaddressed-tool-failures-backup"

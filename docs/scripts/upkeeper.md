@@ -12,10 +12,10 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue]
+Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.5
+Version: v1.2.6
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -363,6 +363,9 @@ Prompt behavior:
     the oldest open non-skipped GitHub issue by priority label order
     security > data-integrity > bug, infer a starting file from the issue body
     when possible, and run the cycle as a focused repair task.
+  - --fix-issue=NUMBER skips Upkeeper's issue ranking and locks this cycle to
+    the named open GitHub issue. This is the handoff used by scripted fix
+    launchers such as ChimneySweep after they have already ranked the queue.
 
 Environment overrides:
   UPKEEPER_CONFIG_FILE          Default: Upkeeper.conf
@@ -387,6 +390,7 @@ Environment overrides:
   UPKEEPER_MAX_COVER           Default: 0
   UPKEEPER_BUG_REPORT_ONLY     Default: 0
   UPKEEPER_FIX_NEXT_ISSUE      Default: 0
+  UPKEEPER_FIX_ISSUE           Default: empty
   UPKEEPER_ISSUE_PRIORITY_LABELS Default: security,data-integrity,bug
   UPKEEPER_ISSUE_SKIP_LABELS   Default: in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr
   UPKEEPER_LATTICE_ENABLED     Default: 1
@@ -502,6 +506,21 @@ Optional Bash completion is available with:
 ```sh
 source completions/upkeeper.bash
 ```
+
+## ChimneySweep Launcher
+
+`./ChimneySweep` is a repo-root issue-fix launcher with its own scripted
+pre-launch queue ranking. It lists open GitHub issues before any backend Codex
+process can start. If the actionable queue is clean, it prints `high five yay`
+and exits 25. Otherwise it prefers security-class issues, then data-integrity
+issues, then the remaining queue ranked by containment title/tag signals,
+severity, and least-recently-touched age. The selected issue is handed to
+Upkeeper as `--fix-issue=NUMBER`, so Upkeeper repairs that locked issue instead
+of reselecting.
+
+Use `CHIMNEYSWEEP_DRY_RUN=1 ./ChimneySweep` or `./ChimneySweep --dry-run` to
+print the resolved command without launching Codex. Its terminal verbosity flags
+match FlameOn: `--silent`, `--basic`, and `--debug1`.
 
 ## Pre-Contact Backup Examples
 

@@ -51,6 +51,7 @@ mapfile -t public_text_files < <(
     'templates/*.md' \
     Upkeeper \
     FlameOn \
+    ChimneySweep \
     'completions/*.bash' \
     'lib/upkeeper/*.bash' \
     'tools/*.sh' \
@@ -117,6 +118,7 @@ grep -Fq "tools/validate_upkeeper.sh --quick" .github/workflows/ci.yml || fail "
 grep -Fq "tools/check_public_docs.sh --quick" .github/workflows/ci.yml || fail "CI workflow does not run public docs check"
 grep -Fq "tests/*.bash" .github/workflows/ci.yml || fail "CI workflow does not run unit tests"
 grep -Fq "bash -n FlameOn" .github/workflows/ci.yml || fail "CI workflow does not syntax-check FlameOn"
+grep -Fq "bash -n ChimneySweep" .github/workflows/ci.yml || fail "CI workflow does not syntax-check ChimneySweep"
 grep -Fq "tools/stress_upkeeper_corpus.sh --local" README.md || fail "README does not document the local stress corpus command"
 grep -Fq "tools/stress_upkeeper_corpus.sh --local" docs/stress-corpus.md || fail "stress corpus docs do not document the implemented command"
 grep -Fq "p26-public-documentation-review.md" prompts/README.md || fail "prompt index does not list P26"
@@ -138,6 +140,7 @@ grep -Fq -- "--max-cover" <<<"$help_text" || fail "help missing --max-cover"
 grep -Fq -- "--bug-report-only" <<<"$help_text" || fail "help missing --bug-report-only"
 grep -Fq -- "--fix-next-issue" <<<"$help_text" || fail "help missing --fix-next-issue"
 grep -Fq "FlameOn" README.md || fail "README does not document FlameOn"
+grep -Fq "ChimneySweep" README.md || fail "README does not document ChimneySweep"
 grep -Fq "bug-report-only" README.md || fail "README does not document bug-report-only mode"
 grep -Fq "fix-next-issue" README.md || fail "README does not document issue-fix mode"
 grep -Fq "completions/upkeeper.bash" README.md || fail "README does not document Bash completions"

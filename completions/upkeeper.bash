@@ -54,7 +54,7 @@ _upkeeper_complete() {
     --ignore-failure-queue --bypass-failure-queue --backup-queue -backup_queue
     --prompt-pass= --max-cover
     --bug-report-only --file-bug-only --report-bug-only
-    --fix-next-issue --fix-oldest-bug
+    --fix-next-issue --fix-oldest-bug --fix-issue=
   "
 
   case "$prev" in
@@ -100,6 +100,9 @@ _upkeeper_complete() {
       _upkeeper_complete_csv_value "$cur" "0 1 2 3 4 5 10"
       return 0
       ;;
+    --fix-issue=*)
+      return 0
+      ;;
     --*)
       mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
       return 0
@@ -122,5 +125,14 @@ _flameon_complete() {
   mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
 }
 
+_chimneysweep_complete() {
+  local cur opts
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  opts="--help -h --silent --basic --debug1 --dry-run --json"
+  mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
+}
+
 complete -F _upkeeper_complete Upkeeper ./Upkeeper Upkeeper.sh ./Upkeeper.sh
 complete -F _flameon_complete FlameOn ./FlameOn
+complete -F _chimneysweep_complete ChimneySweep ./ChimneySweep

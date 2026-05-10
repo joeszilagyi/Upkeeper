@@ -6,6 +6,13 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-09: v1.2.6 changes:
+	1. Added the repo-root `ChimneySweep` launcher as a separate issue-fix automation path from `FlameOn`.
+	2. Made `ChimneySweep` list and rank open GitHub issues deterministically before any backend Codex process can start; clean actionable queues print `high five yay` and exit 25.
+	3. Ranked `ChimneySweep` issue repair by security class first, data-integrity class second, then the general queue by containment title/tag signals, severity, and least-recently-touched age.
+	4. Added `--fix-issue=NUMBER` and `UPKEEPER_FIX_ISSUE` so scripted callers can hand Upkeeper one locked issue without letting Upkeeper reselect a different issue.
+	5. Updated Bash completion, validation, docs, compatibility notes, CI syntax checks, and local tests for the new launcher and explicit issue handoff.
+
 2026-05-09: v1.2.5 changes:
 	1. Added selected-target pre-contact backups before the compiled prompt grants Codex authority over the shell-selected target.
 	2. Added plain local backup mode as a recovery aid and age public-recipient encrypted mode for encrypted backup artifacts without requiring a private identity during backup creation.

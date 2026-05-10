@@ -2,7 +2,7 @@
 # operator guide; once the guide exists, the Markdown becomes the living document.
 show_help() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue]
+Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: $UPKEEPER_VERSION
@@ -349,6 +349,9 @@ Prompt behavior:
     the oldest open non-skipped GitHub issue by priority label order
     security > data-integrity > bug, infer a starting file from the issue body
     when possible, and run the cycle as a focused repair task.
+  - --fix-issue=NUMBER skips Upkeeper's issue ranking and locks this cycle to
+    the named open GitHub issue. This is the handoff used by scripted fix
+    launchers such as ChimneySweep after they have already ranked the queue.
 
 Environment overrides:
   UPKEEPER_CONFIG_FILE          Default: $UPKEEPER_CONFIG_DEFAULT_FILE
@@ -373,6 +376,7 @@ Environment overrides:
   UPKEEPER_MAX_COVER           Default: 0
   UPKEEPER_BUG_REPORT_ONLY     Default: 0
   UPKEEPER_FIX_NEXT_ISSUE      Default: 0
+  UPKEEPER_FIX_ISSUE           Default: empty
   UPKEEPER_ISSUE_PRIORITY_LABELS Default: security,data-integrity,bug
   UPKEEPER_ISSUE_SKIP_LABELS   Default: in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr
   UPKEEPER_LATTICE_ENABLED     Default: 1

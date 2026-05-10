@@ -178,6 +178,7 @@ check_syntax() {
   log "checking Bash syntax"
   bash -n Upkeeper
   bash -n FlameOn
+  bash -n ChimneySweep
   bash -n Upkeeper.conf
   bash -n configurations/default.conf
   bash -n completions/*.bash
@@ -249,6 +250,7 @@ check_prompt_template() {
   [[ -s docs/lattice.md ]] || fail "Lattice documentation is missing or empty"
   [[ -x tools/upkeeper_precontact_restore.sh ]] || fail "pre-contact restore helper is missing or not executable"
   [[ -x FlameOn ]] || fail "FlameOn launcher is missing or not executable"
+  [[ -x ChimneySweep ]] || fail "ChimneySweep launcher is missing or not executable"
   [[ -s completions/upkeeper.bash ]] || fail "Bash completion helper is missing or empty"
   [[ -s .upkeeperignore ]] || fail ".upkeeperignore is missing or empty"
   [[ -s Upkeeper.conf ]] || fail "root Upkeeper.conf is missing or empty"
@@ -292,9 +294,11 @@ check_prompt_template() {
   grep -Fq "UPKEEPER_IGNORE_FILE" configurations/default.conf || fail "default profile missing .upkeeperignore default"
   grep -Fq "UPKEEPER_BUG_REPORT_ONLY" Upkeeper.conf || fail "root config missing bug-report-only default"
   grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" Upkeeper.conf || fail "root config missing issue-fix default"
+  grep -Fq "UPKEEPER_FIX_ISSUE" Upkeeper.conf || fail "root config missing explicit issue-fix default"
   grep -Fq "UPKEEPER_PRECONTACT_BACKUP_ENABLED" Upkeeper.conf || fail "root config missing pre-contact backup defaults"
   grep -Fq "UPKEEPER_BUG_REPORT_ONLY" configurations/default.conf || fail "default profile missing bug-report-only default"
   grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" configurations/default.conf || fail "default profile missing issue-fix default"
+  grep -Fq "UPKEEPER_FIX_ISSUE" configurations/default.conf || fail "default profile missing explicit issue-fix default"
   grep -Fq "UPKEEPER_PRECONTACT_BACKUP_ENABLED" configurations/default.conf || fail "default profile missing pre-contact backup defaults"
   grep -Fq "local SQLite evidence ledger" docs/lattice.md || fail "Lattice docs missing local SQLite summary"
   grep -Fq "source-safe live eligibility remains authoritative" docs/lattice.md || fail "Lattice docs missing live eligibility boundary"
@@ -351,9 +355,11 @@ check_help_and_diff() {
   grep -Fq -- "--max-cover" <<<"$help" || fail "help missing --max-cover"
   grep -Fq -- "--bug-report-only" <<<"$help" || fail "help missing --bug-report-only"
   grep -Fq -- "--fix-next-issue" <<<"$help" || fail "help missing --fix-next-issue"
+  grep -Fq -- "--fix-issue=NUMBER" <<<"$help" || fail "help missing --fix-issue"
   grep -Fq -- "UPKEEPER_MAX_COVER" <<<"$help" || fail "help missing UPKEEPER_MAX_COVER"
   grep -Fq -- "UPKEEPER_BUG_REPORT_ONLY" <<<"$help" || fail "help missing UPKEEPER_BUG_REPORT_ONLY"
   grep -Fq -- "UPKEEPER_FIX_NEXT_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_NEXT_ISSUE"
+  grep -Fq -- "UPKEEPER_FIX_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_ISSUE"
   grep -Fq -- "UPKEEPER_PRECONTACT_BACKUP_ENABLED" <<<"$help" || fail "help missing UPKEEPER_PRECONTACT_BACKUP_ENABLED"
   grep -Fq -- "pre-contact backup" <<<"$help" || fail "help missing pre-contact backup summary"
   local flameon_cmd
@@ -1113,6 +1119,11 @@ if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
 {"body":"Repro points at `lib/upkeeper/codex_io.bash:1` and should infer that repo-local file."}
 JSON
       ;;
+    912)
+      cat <<'JSON'
+{"number":912,"title":"Explicit issue points at `lib/upkeeper/help_selection.bash`","url":"https://example.invalid/issues/912","createdAt":"2026-05-03T00:00:00Z","state":"OPEN","labels":[{"name":"bug"}],"body":"Fix `lib/upkeeper/help_selection.bash:1` for the explicit handoff."}
+JSON
+      ;;
     *)
       printf '{"body":""}\n'
       ;;
@@ -1131,6 +1142,14 @@ EOF
   grep -Fq "target_file=lib/upkeeper/codex_io.bash" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue did not infer the repo-local target file"
   grep -Fq "review.preselect path=lib/upkeeper/codex_io.bash" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue did not pin the inferred target"
   grep -Fq "issue.fix_prompt appended number=910" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue prompt addendum was not appended"
+
+  PATH="$temp_dir/bin:$PATH" run_manifest_dry_run "$temp_dir/fix-explicit-issue.log" \
+    --fix-issue=912
+  grep -Fq "issue.fix_issue selected number=912" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not lock the explicit issue"
+  grep -Fq "selected_label=explicit" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not mark explicit selection"
+  grep -Fq "target_file=lib/upkeeper/help_selection.bash" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not infer the explicit issue target"
+  grep -Fq "review.preselect path=lib/upkeeper/help_selection.bash" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not pin the explicit inferred target"
+  grep -Fq "issue.fix_prompt appended number=912" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue prompt addendum was not appended"
 
   mkdir -p runtime
   printf 'runtime explicit target fixture\n' >runtime/upkeeper-explicit-target-fixture.txt

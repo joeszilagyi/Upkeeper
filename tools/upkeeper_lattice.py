@@ -1713,6 +1713,68 @@ def ensure_file(
     return file_id
 
 
+def ensure_file_historical_only(
+    conn: sqlite3.Connection,
+    repo_id: int,
+    path: str,
+    *,
+    canonical_path: str | None = None,
+    source_id: int | None = None,
+) -> int:
+    now = epoch_now()
+    path = normalize_rel_path(path)
+    canonical = normalize_rel_path(canonical_path or path)
+    if not path:
+        raise ValueError("empty path")
+    # Never rely on current_path for historical imports: current snapshots may have
+    # already created a different lineage for a path before full git history replay.
+    # Match by canonical path first, then by historical file-path aliases.
+    row = None
+    if not row:
+        row = conn.execute(
+            "select file_id from files where repo_id=? and canonical_path=?",
+            (repo_id, canonical),
+        ).fetchone()
+    if not row:
+        row = conn.execute(
+            """
+            select f.file_id
+            from file_paths p
+            join files f on f.file_id=p.file_id
+            where f.repo_id=? and p.path=?
+            order by f.last_seen_epoch desc, f.file_id
+            limit 1
+            """,
+            (repo_id, path),
+        ).fetchone()
+    if row:
+        file_id = int(row["file_id"])
+        conn.execute(
+            "update files set last_seen_epoch=? where file_id=?",
+            (now, file_id),
+        )
+    else:
+        cur = conn.execute(
+            """
+            insert into files(repo_id, canonical_path, first_seen_epoch, last_seen_epoch, current_path, current_state)
+            values (?, ?, ?, ?, ?, 'unknown')
+            """,
+            (repo_id, canonical, now, now, path),
+        )
+        file_id = int(cur.lastrowid)
+    conn.execute(
+        """
+        insert into file_paths(file_id, path, first_seen_epoch, last_seen_epoch, source_id)
+        values (?, ?, ?, ?, ?)
+        on conflict(file_id, path) do update set
+          last_seen_epoch=excluded.last_seen_epoch,
+          source_id=coalesce(excluded.source_id, file_paths.source_id)
+        """,
+        (file_id, path, now, now, source_id),
+    )
+    return file_id
+
+
 def file_id_for_path(conn: sqlite3.Connection, repo_id: int, path: str) -> int | None:
     path = normalize_rel_path(path)
     if not path:
@@ -2059,8 +2121,10 @@ def insert_file_snapshot(
     meta = live_file_metadata(root, rel_path)
     if file_id is None and rel_path:
         file_id = ensure_file(conn, repo_id, rel_path, source_id=source_id)
-        cur = conn.execute(
-            """
+    if not file_id:
+        raise ValueError("file_id required for snapshot")
+    cur = conn.execute(
+        """
         insert into file_snapshots(
           file_id, repo_id, path, observed_epoch, source_id, git_status, content_state,
           head_blob, worktree_hash, mtime_epoch, mtime_ns, size_bytes, executable, ignored, generated, test_path
@@ -3109,7 +3173,6 @@ def create_artifact_ref(
     source_id: int | None,
     artifact_kind: str,
     path: str,
-    *,
     dedupe_identity: bool = False,
     details: Any = None,
 ) -> None:
@@ -3768,6 +3831,7 @@ def command_import_git(args: argparse.Namespace) -> int:
         shas = [line.strip() for line in revs.splitlines() if line.strip()]
         if args.limit:
             shas = shas[-int(args.limit) :]
+        head_sha = git_output(root, ["rev-parse", "--verify", "HEAD"], "")
         for sha in shas:
             rows_seen += 1
             try:
@@ -3853,7 +3917,16 @@ def command_import_git(args: argparse.Namespace) -> int:
                         continue
                 canonical = old_path if status_code.startswith("R") and old_path else path
                 state = "deleted" if status_code.startswith("D") else ("renamed" if status_code.startswith("R") else "active")
-                file_id = ensure_file(conn, repo_id, path, canonical_path=canonical, state=state, source_id=commit_source_id)
+                if sha == head_sha:
+                    file_id = ensure_file(conn, repo_id, path, canonical_path=canonical, state=state, source_id=commit_source_id)
+                else:
+                    file_id = ensure_file_historical_only(
+                        conn,
+                        repo_id,
+                        path,
+                        canonical_path=canonical,
+                        source_id=commit_source_id,
+                    )
                 file_changes_seen += 1
                 cur = conn.execute(
                     """
@@ -4547,10 +4620,6 @@ def command_backup(args: argparse.Namespace) -> int:
         output=args.output,
         allow_overwrite=args.overwrite,
     )
-    repo_id = ensure_repository(conn, root)
-    with conn:
-        source_id = ensure_source_record(conn, repo_id, "artifact", source_path=str(backup_path), raw_ref="backup")
-        create_artifact_ref(conn, repo_id, cycle_pk=None, source_id=source_id, artifact_kind="backup", path=str(backup_path))
     conn.close()
     print_json({"status": "ok", "backup_path": str(backup_path)})
     return EXIT_SUCCESS
@@ -5294,22 +5363,28 @@ def command_prune(args: argparse.Namespace) -> int:
                 if not args.dry_run:
                     conn.execute(sql, (cutoff,))
         if args.transient_artifacts:
-            rows = [
-                dict(row)
-                for row in conn.execute(
-                    """
-                    select artifact_id, path from artifact_refs
-                    where retained=1 and artifact_kind in ('transcript','compiled_prompt','last_message')
-                    """
-                )
-            ]
+            sql = """
+                select artifact_id, path from artifact_refs
+                where repo_id=? and retained=1 and artifact_kind in ('transcript','compiled_prompt','last_message')
+            """
+            sql_params: list[Any] = [repo_id]
+            if cutoff:
+                sql += " and observed_epoch < ?"
+                sql_params.append(cutoff)
+            rows = [dict(row) for row in conn.execute(sql, sql_params)]
             actions.append({"action": "transient_artifacts_unretain", "rows": len(rows)})
             if not args.dry_run:
-                conn.execute(
-                    """
+                update_sql = """
                     update artifact_refs set retained=0
-                    where retained=1 and artifact_kind in ('transcript','compiled_prompt','last_message')
-                    """
+                    where repo_id=? and retained=1 and artifact_kind in ('transcript','compiled_prompt','last_message')
+                """
+                update_params: list[Any] = [repo_id]
+                if cutoff:
+                    update_sql += " and observed_epoch < ?"
+                    update_params.append(cutoff)
+                conn.execute(
+                    update_sql,
+                    update_params,
                 )
         record_file_event(conn, repo_id, "operator_annotation", source_id=source_id, details={"prune_actions": actions, "dry_run": args.dry_run})
         if args.vacuum and not args.dry_run:

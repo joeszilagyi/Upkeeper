@@ -105,10 +105,17 @@ REDACTABLE_PATH_KEYS = {
     "working_tree_path",
     "source_path",
     "target_path",
+    "selected_path",
     "recovery_path",
     "input_path",
     "output_path",
     "detail_path",
+    "remote_url",
+    "source_kind",
+    "alias_value",
+    "source_uri",
+    "repo_alias_id",
+    "artifact_kind",
 }
 
 
@@ -917,8 +924,36 @@ def epoch_now() -> int:
     return int(time.time())
 
 
+def safe_output_text(raw: str) -> str:
+    return raw.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
+def sanitize_json_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: sanitize_json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [sanitize_json_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [sanitize_json_value(item) for item in value]
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "backslashreplace")
+    if isinstance(value, str):
+        return safe_output_text(value)
+    return value
+
+
+def decode_git_output(raw: bytes) -> str:
+    return raw.decode("utf-8", "backslashreplace")
+
+
 def json_dumps(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+    return json.dumps(
+        sanitize_json_value(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -930,7 +965,7 @@ def sha256_text(text: str) -> str:
 
 
 def print_json(value: Any) -> None:
-    print(json.dumps(value, sort_keys=True, indent=2))
+    print(json.dumps(sanitize_json_value(value), sort_keys=True, indent=2))
 
 
 def fail(message: str, code: int) -> None:
@@ -938,13 +973,21 @@ def fail(message: str, code: int) -> None:
     raise SystemExit(code)
 
 
-def run_git(root: Path, args: list[str], *, text: bool = True, check: bool = True) -> Any:
+def run_git(
+    root: Path,
+    args: list[str],
+    *,
+    text: bool = True,
+    check: bool = True,
+    errors: str = "backslashreplace",
+) -> Any:
     try:
         return subprocess.run(
             ["git", "-C", str(root), *args],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=text,
+            errors=errors if text else None,
             check=check,
         )
     except FileNotFoundError:
@@ -955,12 +998,24 @@ def run_git(root: Path, args: list[str], *, text: bool = True, check: bool = Tru
         return None
 
 
-def git_output(root: Path, args: list[str], default: str = "") -> str:
+def git_output(root: Path, args: list[str], default: str = "", strip: bool = True) -> str:
     try:
         result = run_git(root, args, text=True, check=True)
-        return result.stdout.strip()
+        return result.stdout.strip() if strip else result.stdout
     except (subprocess.CalledProcessError, SystemExit):
         return default
+
+
+def git_porcelain_status_for_path(root: Path, rel_path: str) -> str:
+    try:
+        raw = subprocess.check_output(
+            ["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--", rel_path],
+            stderr=subprocess.PIPE,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+    decoded = decode_git_output(raw)
+    return decoded[:2]
 
 
 def inside_git_repo(root: Path) -> bool:
@@ -974,23 +1029,42 @@ def default_root() -> Path:
 def default_db_path(root: Path) -> Path:
     raw = os.environ.get("UPKEEPER_LATTICE_DB")
     if raw:
-        return Path(raw).expanduser().resolve() if Path(raw).is_absolute() else (root / raw).resolve()
-    return (root / "runtime/upkeeper-lattice/lattice.sqlite3").resolve()
+        path = Path(raw).expanduser()
+        return path.absolute() if path.is_absolute() else (root / path).absolute()
+    return (root / "runtime/upkeeper-lattice/lattice.sqlite3").absolute()
 
 
 def normalize_db_path(raw: str | None, root: Path) -> Path:
     if raw:
         path = Path(raw).expanduser()
-        return path.resolve() if path.is_absolute() else (root / path).resolve()
+        return path.absolute() if path.is_absolute() else (root / path).absolute()
     return default_db_path(root)
 
 
 def path_under(path: Path, parent: Path) -> bool:
     try:
-        path.resolve().relative_to(parent.resolve())
-        return True
+        path_abs = path.absolute()
+        parent_abs = parent.absolute()
+        return os.path.commonpath([str(path_abs), str(parent_abs)]) == str(parent_abs)
     except ValueError:
         return False
+
+
+def has_forbidden_symlink(path: Path, base: Path) -> bool:
+    try:
+        rel = path.absolute().relative_to(base.absolute())
+    except ValueError:
+        return False
+    cursor = base.absolute()
+    for part in rel.parts:
+        cursor = cursor / part
+        try:
+            st = cursor.lstat()
+        except OSError:
+            break
+        if stat.S_ISLNK(st.st_mode):
+            return True
+    return False
 
 
 def validate_lattice_output_path(
@@ -1003,8 +1077,8 @@ def validate_lattice_output_path(
     allow_outside_runtime: bool = False,
 ) -> Path:
     output = Path(raw_output).expanduser()
-    output = output.resolve() if output.is_absolute() else (Path.cwd() / output).resolve()
-    runtime_root = (root / "runtime").resolve()
+    output = output.absolute() if output.is_absolute() else (Path.cwd() / output).absolute()
+    runtime_root = (root / "runtime").absolute()
     if not path_under(output, runtime_root) and not allow_outside_runtime:
         fail(f"unsafe output path outside runtime: {output}", EXIT_USAGE)
     if db_path:
@@ -1124,7 +1198,7 @@ def git_ignored_paths(root: Path, paths: list[str]) -> set[str]:
     try:
         result = subprocess.run(
             ["git", "-C", str(root), "check-ignore", "-z", "--no-index", "--stdin"],
-            input=("\0".join(paths) + "\0").encode("utf-8", "surrogateescape"),
+            input=("\0".join(paths) + "\0").encode("utf-8", "backslashreplace"),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -1133,7 +1207,7 @@ def git_ignored_paths(root: Path, paths: list[str]) -> set[str]:
         return set()
     if result.returncode not in (0, 1):
         return set()
-    return set(path for path in result.stdout.decode("utf-8", "surrogateescape").split("\0") if path)
+    return set(path for path in decode_git_output(result.stdout).split("\0") if path)
 
 
 def source_safe_parts(rel_path: str) -> list[str] | None:
@@ -1216,20 +1290,22 @@ def db_side_paths(db_path: Path, journal_mode: str) -> list[Path]:
 
 
 def path_safety(root: Path, db_path: Path, journal_mode: str) -> dict[str, Any]:
-    runtime_root = (root / "runtime").resolve()
+    root_abs = root.absolute()
+    runtime_root = (root / "runtime").absolute()
     paths = db_side_paths(db_path, journal_mode)
     statuses = []
     unsafe = False
     for path in paths:
         under_runtime = path_under(path, runtime_root)
-        under_root = path_under(path, root)
+        under_root = path_under(path, root_abs)
+        has_symlink = has_forbidden_symlink(path, root_abs)
         tracked = git_path_tracked(root, path) if under_root else False
         ignored = git_path_ignored(root, path) if under_root else False
         explicit_ok = under_runtime or ignored
         item_unsafe = (
             True
             if not under_root
-            else (tracked or (not explicit_ok))
+            else (has_symlink or tracked or (not explicit_ok))
         )
         unsafe = unsafe or item_unsafe
         statuses.append(
@@ -1238,6 +1314,7 @@ def path_safety(root: Path, db_path: Path, journal_mode: str) -> dict[str, Any]:
                 "under_runtime": under_runtime,
                 "git_tracked": tracked,
                 "git_ignored": ignored,
+                "has_symlink": has_symlink,
                 "safe": not item_unsafe,
             }
         )
@@ -1911,7 +1988,16 @@ def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
     else:
         meta.update({"mtime_epoch": None, "size_bytes": None, "executable": None, "is_regular": 0})
     meta["source_safety_reason"] = safety_reason
-    status = git_output(root, ["status", "--porcelain=v1", "--", rel_path], "")
+    if safety_reason == "symlink":
+        meta["git_status"] = "symlink"
+        meta["worktree_hash"] = "unavailable"
+        meta["head_blob"] = "none"
+        meta["content_state"] = "symlink"
+        meta["ignored"] = 1 if git_path_ignored(root, root / rel_path) else 0
+        meta["test_path"] = 1 if is_test_path(rel_path) else 0
+        meta["generated"] = 0
+        return meta
+    status = git_porcelain_status_for_path(root, rel_path)
     meta["git_status"] = status[:2].replace(" ", "_") if status else "clean"
     meta["worktree_hash"] = git_output(root, ["hash-object", "--", rel_path], "missing") if st is not None else "unavailable"
     meta["head_blob"] = git_output(root, ["rev-parse", f"HEAD:{rel_path}"], "none")
@@ -2020,9 +2106,18 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def has_redacted_path_token(payload: dict[str, Any]) -> bool:
-    for key, value in payload.items():
-        if key in REDACTABLE_PATH_KEYS and isinstance(value, str) and value.startswith(REDACTED_PATH_PREFIX):
-            return True
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if isinstance(value, dict) and has_redacted_path_token(value):
+                return True
+            if isinstance(value, list) and has_redacted_path_token(value):
+                return True
+            if key in REDACTABLE_PATH_KEYS and isinstance(value, str) and value.startswith(REDACTED_PATH_PREFIX):
+                return True
+    elif isinstance(payload, list):
+        for value in payload:
+            if has_redacted_path_token(value):
+                return True
     return False
 
 
@@ -2040,7 +2135,7 @@ def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper
             raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"])
         else:
             raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "-z"])
-        paths = [p for p in raw.decode("utf-8", "surrogateescape").split("\0") if p]
+        paths = [p for p in decode_git_output(raw).split("\0") if p]
     else:
         paths = []
         for dirpath, dirnames, filenames in os.walk(root):
@@ -2108,7 +2203,7 @@ def current_scope_paths(conn: sqlite3.Connection, root: Path, repo_id: int, scop
         if not inside_git_repo(root):
             return []
         raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"])
-        return sorted(p for p in raw.decode("utf-8", "surrogateescape").split("\0") if p)
+        return sorted(p for p in decode_git_output(raw).split("\0") if p)
     if scope == "deleted":
         return [
             str(row["current_path"])
@@ -2140,26 +2235,29 @@ def current_scope_paths(conn: sqlite3.Connection, root: Path, repo_id: int, scop
 
 
 def format_rows(rows: list[dict[str, Any]], fmt: str) -> None:
-    if fmt == "json":
-        print_json(rows)
-    elif fmt == "jsonl":
-        for row in rows:
-            print(json_dumps(row))
-    elif fmt == "tsv":
-        if not rows:
-            return
-        keys = list(rows[0].keys())
-        print("\t".join(keys))
-        for row in rows:
-            print("\t".join("" if row.get(k) is None else str(row.get(k)) for k in keys))
-    else:
-        if not rows:
-            return
-        keys = list(rows[0].keys())
-        widths = {key: max(len(key), *(len(str(row.get(key, ""))) for row in rows)) for key in keys}
-        print("  ".join(key.ljust(widths[key]) for key in keys))
-        for row in rows:
-            print("  ".join(str(row.get(key, "") if row.get(key) is not None else "").ljust(widths[key]) for key in keys))
+    try:
+        if fmt == "json":
+            print_json(rows)
+        elif fmt == "jsonl":
+            for row in rows:
+                print(json_dumps(row))
+        elif fmt == "tsv":
+            if not rows:
+                return
+            keys = list(rows[0].keys())
+            print("\t".join(keys))
+            for row in rows:
+                print("\t".join("" if row.get(k) is None else str(row.get(k)) for k in keys))
+        else:
+            if not rows:
+                return
+            keys = list(rows[0].keys())
+            widths = {key: max(len(key), *(len(str(row.get(key, ""))) for row in rows)) for key in keys}
+            print("  ".join(key.ljust(widths[key]) for key in keys))
+            for row in rows:
+                print("  ".join(str(row.get(key, "") if row.get(key) is not None else "").ljust(widths[key]) for key in keys))
+    except BrokenPipeError:
+        raise SystemExit(EXIT_SUCCESS)
 
 
 def command_init(args: argparse.Namespace) -> int:
@@ -2201,6 +2299,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     result["checks"]["parent_exists"] = db_path.parent.exists()
     result["checks"]["parent_mode"] = oct(stat.S_IMODE(db_path.parent.stat().st_mode)) if db_path.parent.exists() else "missing"
     result["checks"]["db_exists"] = db_path.exists()
+    if not db_path.exists():
+        result["status"] = "db_unavailable"
+        return result, EXIT_DB_UNAVAILABLE
     if not db_path.parent.exists():
         result["status"] = "db_unavailable"
         return result, EXIT_DB_UNAVAILABLE
@@ -2368,7 +2469,7 @@ def record_worktree_snapshot(
         raw = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--untracked-files=all"])
     except (OSError, subprocess.CalledProcessError):
         raw = b""
-    parts = raw.decode("utf-8", "surrogateescape").split("\0") if raw else []
+    parts = decode_git_output(raw).split("\0") if raw else []
     entries: list[tuple[str, str, str | None]] = []
     i = 0
     tracked = 0
@@ -2503,7 +2604,7 @@ def changed_paths_from_head(
         )
     except (OSError, subprocess.CalledProcessError):
         return set()
-    paths = raw.decode("utf-8", "surrogateescape").split("\0")
+    paths = decode_git_output(raw).split("\0")
     return {path for path in paths if path}
 
 
@@ -2755,7 +2856,7 @@ def parse_review_summary_file(path: Path) -> dict[str, str]:
     except OSError:
         return {}
     outcome = ""
-    for match in re.finditer(r"\b(REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", text):
+    for match in re.finditer(r"\b(REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", text):
         outcome = match.group(1)
         break
     selected_file = ""
@@ -2767,12 +2868,18 @@ def parse_review_summary_file(path: Path) -> dict[str, str]:
             continue
         md = re.search(r"\]\(([^)]+)\)", line)
         bt = re.search(r"`([^`]+)`", line)
+        candidate: str = ""
         if md:
-            selected_file = md.group(1).strip("<>").split(":", 1)[0]
+            candidate = md.group(1).strip("<>")
         elif bt:
-            selected_file = bt.group(1)
+            candidate = bt.group(1)
         elif ":" in line:
-            selected_file = line.split(":", 1)[1].strip()
+            candidate = line.split(":", 1)[1].strip()
+        if candidate:
+            if re.match(r"^[A-Za-z][A-Za-z0-9+\-.]*://", candidate):
+                selected_file = ""
+            else:
+                selected_file = candidate
         if selected_file:
             break
     return {"review_outcome": outcome, "selected_file": selected_file}
@@ -3549,7 +3656,7 @@ def command_import_git(args: argparse.Namespace) -> int:
                 )
             except subprocess.CalledProcessError:
                 continue
-            parts = raw.decode("utf-8", "surrogateescape").split("\0")
+            parts = decode_git_output(raw).split("\0")
             if len(parts) < 8:
                 continue
             commit_sha, an, ae, at, cn, ce, ct, subject = parts[:8]
@@ -3909,20 +4016,40 @@ def export_table_rows(
 
 
 def redact_payload(payload: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    redacted = dict(payload)
-    if args.redact_raw:
-        for key in ("raw_text", "details_json", "parsed_json"):
-            if key in redacted and redacted[key] is not None:
-                redacted[key] = "<redacted>"
-    if args.redact_paths:
-        for key in ("root_path", "first_seen_root_path", "current_root_path", "working_tree_path", "source_path", "path", "old_path", "current_path", "canonical_path", "output_path"):
-            if key in redacted and redacted[key] is not None:
-                redacted[key] = "path-sha256:" + sha256_text(str(redacted[key]))
-    if args.redact_contributors:
-        for key in ("name", "email", "github_login"):
-            if key in redacted and redacted[key] is not None:
-                redacted[key] = "<redacted>"
-    return redacted
+    if not isinstance(payload, dict):
+        return payload
+
+    def _redact(raw: Any) -> Any:
+        if isinstance(raw, dict):
+            out: dict[str, Any] = {}
+            for key, value in raw.items():
+                if key in ("raw_text", "details_json", "parsed_json") and args.redact_raw:
+                    if isinstance(value, str):
+                        parsed = None
+                        try:
+                            parsed = json.loads(value)
+                        except (TypeError, json.JSONDecodeError):
+                            parsed = None
+                        if parsed is not None:
+                            out[key] = json_dumps(_redact(parsed))
+                        else:
+                            out[key] = "<redacted>"
+                    else:
+                        out[key] = "<redacted>"
+                    continue
+                if args.redact_paths and key in REDACTABLE_PATH_KEYS and isinstance(value, str):
+                    out[key] = REDACTED_PATH_PREFIX + sha256_text(value)
+                    continue
+                if args.redact_contributors and key in {"name", "email", "github_login"} and isinstance(value, str):
+                    out[key] = "<redacted>"
+                    continue
+                out[key] = _redact(value)
+            return out
+        if isinstance(raw, list):
+            return [_redact(item) for item in raw]
+        return raw
+
+    return _redact(payload)
 
 
 def command_export_jsonl(args: argparse.Namespace) -> int:
@@ -3992,6 +4119,12 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
 def command_import_jsonl(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     input_path = Path(args.path)
+    if not input_path.exists():
+        print_json({"status": "unavailable", "reason": "missing_input", "path": str(input_path)})
+        return EXIT_USAGE
+    if not input_path.is_file():
+        print_json({"status": "unavailable", "reason": "input_unreadable", "path": str(input_path)})
+        return EXIT_USAGE
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     rows_seen = rows_written = conflicts = duplicates = 0
@@ -4000,7 +4133,12 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
         repo_id = ensure_repository(conn, root)
         import_id = start_import(conn, repo_id, "lattice_import", {"path": str(input_path)})
         source_id = ensure_source_record(conn, repo_id, "lattice_import", source_path=str(input_path), raw_ref="jsonl")
-        for raw in input_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            input_lines = input_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            print_json({"status": "unavailable", "reason": "input_unreadable", "path": str(input_path)})
+            return EXIT_USAGE
+        for raw in input_lines:
             if not raw:
                 continue
             rows_seen += 1
@@ -4077,7 +4215,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     continue
                 existing_payload = {key: existing[key] for key in columns}
                 existing_hash = sha256_text(json_dumps(existing_payload))
-                if existing_hash == payload_hash or sha256_text(json_dumps(filtered)) == payload_hash:
+                if existing_hash == payload_hash:
                     duplicates += 1
                     continue
                 conflicts += 1
@@ -4310,6 +4448,7 @@ def recover_artifact_refs(
 def command_recover(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
+    preexisting_db = db_path.exists()
     conn = connect_checked(
         root,
         db_path,
@@ -4321,7 +4460,7 @@ def command_recover(args: argparse.Namespace) -> int:
     init_schema(conn, root)
     sources = []
     backup_path = None
-    if args.backup_first and db_path.exists():
+    if args.backup_first and preexisting_db:
         backup_path = create_backup(conn, root, db_path)
         sources.append(f"backup:{backup_path}")
     with conn:
@@ -5082,7 +5221,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=command_backup)
 
     p = sub.add_parser("recover")
-    p.add_argument("--backup-first", action="store_true", default=True)
+    p.add_argument("--backup-first", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--max-conflicts", type=int, default=999999)
     p.add_argument("--limit", type=int)
     p.set_defaults(func=command_recover)

@@ -140,7 +140,9 @@ Important:
   - The large default review prompt lives at `prompts/default-review.md` beside
     the resolved central Upkeeper file. Symlinked clients share that central
     prompt and central review modules; local prompt files are only needed for
-    explicit `--prompt-file` overrides.
+    explicit `--prompt-file` overrides. Unattended launcher runs only allow
+    `--prompt-file` from `UPKEEPER_PROMPT_TRUST_ROOT` unless
+    `UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE=1`.
   - The default active config file is `Upkeeper.conf` beside the resolved
     central Upkeeper file. The central checkout also tracks
     `configurations/default.conf` as a basic profile template. Use
@@ -152,7 +154,8 @@ Important:
     snippets. Config files may set `CODEX_*` runtime knobs and `UPKEEPER_*` flag
     defaults such as
     `UPKEEPER_TARGET_FILE`, `UPKEEPER_REVIEW_MODULES`, `UPKEEPER_PROMPT_FILE`,
-    `UPKEEPER_PROMPT`, `UPKEEPER_PROMPT_PASS`, `UPKEEPER_MODEL_OVERRIDE`,
+    `UPKEEPER_PROMPT`, `UPKEEPER_PROMPT_PASS`, `UPKEEPER_PROMPT_TRUST_ROOT`,
+    `UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE`, `UPKEEPER_MODEL_OVERRIDE`,
     `UPKEEPER_IGNORE_FAILURE_QUEUE`, `UPKEEPER_MAX_COVER`,
     `UPKEEPER_BUG_REPORT_ONLY`, and `UPKEEPER_FIX_NEXT_ISSUE`. They may also
     set pre-contact backup defaults such as `UPKEEPER_PRECONTACT_BACKUP_MODE`,
@@ -304,6 +307,8 @@ Prompt behavior:
     UPKEEPER_STATUS marker contract.
   - --prompt-file FILE appends extra task guidance from FILE; an empty value is
     rejected so the wrapper does not silently fall back to the default prompt.
+    In unattended launcher mode, FILE must be under `UPKEEPER_PROMPT_TRUST_ROOT`
+    unless `UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE=1`.
     Standalone add-on prompts include
     `prompts/p23-data-contract-negative-fixture-audit.md` for explicit
     data-contract review and `prompts/p24-de-llm-ing-viability-review.md` for
@@ -405,6 +410,8 @@ Environment overrides:
   UPKEEPER_REVIEW_MODULES       Default: empty
   UPKEEPER_PROMPT_FILE          Default: empty
   UPKEEPER_PROMPT               Default: empty
+  UPKEEPER_PROMPT_TRUST_ROOT    Default: prompts
+  UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE Default: 0
   UPKEEPER_PROMPT_PASS          Default: empty
   UPKEEPER_MODEL_OVERRIDE       Default: empty
   UPKEEPER_IGNORE_FAILURE_QUEUE Default: 0

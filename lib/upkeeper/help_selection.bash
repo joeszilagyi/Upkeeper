@@ -160,7 +160,8 @@ Important:
     Relative config paths are resolved from the invocation repository root.
     Config files may set CODEX_* runtime knobs and UPKEEPER_* flag defaults such
     as UPKEEPER_TARGET_FILE, UPKEEPER_REVIEW_MODULES, UPKEEPER_PROMPT_FILE,
-    UPKEEPER_PROMPT, UPKEEPER_PROMPT_PASS, UPKEEPER_MODEL_OVERRIDE,
+    UPKEEPER_PROMPT, UPKEEPER_PROMPT_PASS, UPKEEPER_PROMPT_TRUST_ROOT,
+    UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE, UPKEEPER_MODEL_OVERRIDE,
     UPKEEPER_IGNORE_FAILURE_QUEUE, UPKEEPER_BUG_REPORT_ONLY, and
     UPKEEPER_FIX_NEXT_ISSUE. They may also set pre-contact backup defaults such
     as UPKEEPER_PRECONTACT_BACKUP_MODE, UPKEEPER_PRECONTACT_BACKUP_ROOT, and
@@ -300,6 +301,8 @@ Prompt behavior:
     cycle. Use the equals form; spaced form is rejected.
   - --no-config disables the default config for this invoked cycle.
   - --prompt-file FILE appends extra task guidance from FILE.
+    In unattended launcher mode, FILE must stay under
+    UPKEEPER_PROMPT_TRUST_ROOT unless UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE=1.
   - --prompt TEXT appends extra task guidance inline.
   - --review-module=p24 appends the central P24 de-LLM-ing viability review
     module for this invoked cycle.
@@ -380,6 +383,8 @@ Environment overrides:
   UPKEEPER_REVIEW_MODULES       Default: empty
   UPKEEPER_PROMPT_FILE          Default: empty
   UPKEEPER_PROMPT               Default: empty
+  UPKEEPER_PROMPT_TRUST_ROOT    Default: prompts
+  UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE Default: 0
   UPKEEPER_PROMPT_PASS          Default: empty
   UPKEEPER_MODEL_OVERRIDE       Default: empty
   UPKEEPER_IGNORE_FAILURE_QUEUE Default: 0

@@ -1259,11 +1259,29 @@ require_commands() {
 }
 
 resolve_prompt_file() {
+  local prompt_trust_root="${UPKEEPER_PROMPT_TRUST_ROOT:-$ROOT_DIR/prompts}"
+  local allow_external_prompt="${UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE:-0}"
+
   if [[ -n "$PROMPT_FILE" && -n "$INLINE_PROMPT" ]]; then
     die "use either --prompt-file or --prompt, not both"
   fi
   if [[ -n "$PROMPT_FILE" ]]; then
     PROMPT_FILE="$(resolve_path "$PROMPT_FILE")"
+    if [[ "$UPKEEPER_AUTOMATION_LAUNCHER" != "$SCRIPT_NAME" ]]; then
+      prompt_trust_root="$(resolve_path "$prompt_trust_root")"
+      [[ -d "$prompt_trust_root" ]] || die "prompt trust root is not a directory: $prompt_trust_root"
+      case "$PROMPT_FILE" in
+        "$prompt_trust_root"|"$prompt_trust_root"/*)
+          ;;
+        *)
+          if [[ "$allow_external_prompt" == "1" ]]; then
+            log_line "WARN" "prompt_file_external_allowed execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=$(shell_quote "$PROMPT_FILE") trust_root=$(shell_quote "$prompt_trust_root") automation_launcher=$(shell_quote "${UPKEEPER_AUTOMATION_LAUNCHER:-$SCRIPT_NAME}")"
+          else
+            die "prompt file outside trust root; set UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE=1 to override: $PROMPT_FILE"
+          fi
+          ;;
+      esac
+    fi
     [[ -f "$PROMPT_FILE" ]] || die "prompt file not found: $PROMPT_FILE"
     [[ -r "$PROMPT_FILE" ]] || die "prompt file not readable: $PROMPT_FILE"
   fi

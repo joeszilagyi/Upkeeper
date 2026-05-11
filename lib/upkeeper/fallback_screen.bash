@@ -138,6 +138,21 @@ write_state_datetime() {
   date '+%Y-%m-%dT%H:%M:%S%z' > "\$(state_file "\$name")"
 }
 
+fallback_parent_process_start() {
+  local pid="\$1"
+  local stat_text after_comm
+  if [[ -r "/proc/\$pid/stat" ]]; then
+    IFS= read -r stat_text <"/proc/\$pid/stat" || true
+    after_comm="\${stat_text##*) }"
+    set -- \$after_comm
+    if [[ \$# -ge 20 && -n "\${20:-}" ]]; then
+      printf 'proc_start_ticks=%s' "\${20}"
+      return 0
+    fi
+  fi
+  printf 'proc_start_ticks=unknown'
+}
+
 cd "\$ROOT_DIR"
 continuous=$continuous_q
 max_children=$max_children_q
@@ -217,11 +232,16 @@ while true; do
   write_state_datetime 'heartbeat.txt'
   start_child_heartbeat
   set +e
+  fallback_parent_pid="\$\$"
+  fallback_parent_start="\$(fallback_parent_process_start "\$fallback_parent_pid")"
   CODEX_MODEL=$model_q \
   CODEX_REASONING_EFFORT=$effort_q \
   CODEX_MODE=$mode_q \
   CODEX_FALLBACK_ENABLED=0 \
   CODEX_FALLBACK_CHAIN_ACTIVE=1 \
+  CODEX_FALLBACK_PARENT_PID="\$fallback_parent_pid" \
+  CODEX_FALLBACK_PARENT_START="\$fallback_parent_start" \
+  CODEX_FALLBACK_CHAIN_TOKEN_FD=9 \
   CODEX_FALLBACK_SCREEN_CONTINUOUS=$continuous_q \
   CODEX_FALLBACK_SCREEN_MAX_CHILDREN=$max_children_q \
   CODEX_FALLBACK_SCREEN_MAX_SECONDS=$max_seconds_q \
@@ -290,7 +310,8 @@ EOF
   launch_started_at="$(timestamp_now)"
   log_line "INFO" "fallback.screen.launch execution_origin=screen trigger=$trigger session_name=$session_name command=screen_-dmS launch_started_at=$launch_started_at"
   set +e
-  CODEX_FALLBACK_CHAIN_TOKEN="$fallback_chain_token" \
+  CODEX_FALLBACK_CHAIN_TOKEN_FD=9 \
+  9<<<"$fallback_chain_token" \
   screen -dmS "$session_name" bash "$runner_script"
   launch_rc=$?
   set -e

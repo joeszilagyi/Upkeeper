@@ -108,6 +108,6 @@ source "$UPKEEPER_MODULE_DIR/transcript_artifacts.bash"
 # shellcheck source=/dev/null
 source "$UPKEEPER_MODULE_DIR/precontact_backup.bash"
 
-if ! precontact_backup_restore_by_id "$BACKUP_ID" "$ROOT_DIR" "$IDENTITY_PATH" "$RESTORE_TO" "0"; then
+if ! precontact_backup_restore_by_id "$BACKUP_ID" "$ROOT_DIR" "$IDENTITY_PATH" "$RESTORE_TO"; then
   fail "${PRECONTACT_BACKUP_LAST_REASON:-restore_failed}"
 fi

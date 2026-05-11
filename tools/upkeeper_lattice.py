@@ -22,6 +22,7 @@ from typing import Any, Iterable
 
 
 SCHEMA_VERSION = 1
+SCHEMA_ROW_VERSION = 1
 
 EXIT_SUCCESS = 0
 EXIT_NO_MATCH = 1
@@ -93,6 +94,22 @@ BUILD_NAMES = {
     "makefile",
 }
 TEST_DIRS = {"__tests__", "test", "tests"}
+REDACTED_PATH_PREFIX = "path-sha256:"
+REDACTABLE_PATH_KEYS = {
+    "path",
+    "old_path",
+    "canonical_path",
+    "current_path",
+    "first_seen_root_path",
+    "current_root_path",
+    "working_tree_path",
+    "source_path",
+    "target_path",
+    "recovery_path",
+    "input_path",
+    "output_path",
+    "detail_path",
+}
 
 
 REQUIRED_TABLES = [
@@ -976,6 +993,33 @@ def path_under(path: Path, parent: Path) -> bool:
         return False
 
 
+def validate_lattice_output_path(
+    root: Path,
+    raw_output: str | Path,
+    *,
+    allow_existing: bool = False,
+    journal_mode: str = "delete",
+    db_path: Path | None = None,
+) -> Path:
+    output = Path(raw_output).expanduser()
+    output = output.resolve() if output.is_absolute() else (Path.cwd() / output).resolve()
+    runtime_root = (root / "runtime").resolve()
+    if not path_under(output, runtime_root):
+        fail(f"unsafe output path outside runtime: {output}", EXIT_USAGE)
+    if db_path:
+        for side_path in db_side_paths(db_path, journal_mode):
+            if output == side_path:
+                fail(f"unsafe output path collides with database sidecar path: {output}", EXIT_USAGE)
+    if output.exists():
+        if output.is_dir():
+            fail(f"output path is a directory: {output}", EXIT_USAGE)
+        if not allow_existing:
+            fail(f"output path already exists without overwrite: {output}", EXIT_USAGE)
+    if path_under(output, root) and git_path_tracked(root, output):
+        fail(f"output path cannot be tracked by git: {output}", EXIT_USAGE)
+    return output
+
+
 def repo_rel_path(root: Path, path: Path) -> str:
     try:
         return path.resolve().relative_to(root.resolve()).as_posix()
@@ -1230,6 +1274,18 @@ def connect(db_path: Path, journal_mode: str, *, create_parent: bool = False) ->
         conn.close()
         fail(f"cannot set SQLite journal mode {requested}: {exc}", EXIT_DB_UNAVAILABLE)
     return conn
+
+
+def connect_checked(
+    root: Path,
+    db_path: Path,
+    journal_mode: str,
+    *,
+    allow_unsafe_db: bool,
+    create_parent: bool = False,
+) -> sqlite3.Connection:
+    check_path_safe(root, db_path, journal_mode, allow_unsafe_db)
+    return connect(db_path, journal_mode, create_parent=create_parent)
 
 
 def table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
@@ -1563,11 +1619,49 @@ def normalize_rel_path(path: str) -> str:
     path = path.strip()
     if not path:
         return ""
+    if re.match(r"^[A-Za-z]:[\\/]", path):
+        return ""
     path = path.replace("\\", "/")
     path = re.sub(r"^\./+", "", path)
-    while "//" in path:
-        path = path.replace("//", "/")
-    return path
+    parts: list[str] = []
+    for part in path.split("/"):
+        if not part or part == ".":
+            continue
+        if part == "..":
+            return ""
+        parts.append(part)
+    return "/".join(parts)
+
+
+def normalize_change_note_ref(path: str) -> str:
+    path = path.strip()
+    if not path:
+        return ""
+    if any(ch in path for ch in "\x00\r\n\t"):
+        return ""
+    if any(ch in path for ch in ["`", "'", '"']):
+        return ""
+    if path.startswith(("/", "\\")):
+        return ""
+    if path.startswith("~" + "/") or path.startswith("~" + "\\"):
+        return ""
+    if re.search(r"^[A-Za-z][A-Za-z0-9+\-.]*://", path):
+        return ""
+    if re.match(r"^[A-Za-z]:[\\/]", path):
+        return ""
+    if path.startswith(("../", "..\\")) or path == "..":
+        return ""
+    canonical = path.replace("\\", "/")
+    if canonical.startswith("./") or canonical.startswith("~") or "//" in canonical:
+        return ""
+    normalized = normalize_rel_path(canonical)
+    if not normalized or normalized != canonical:
+        return ""
+    if "//" in normalized:
+        return ""
+    if re.search(r"(?:^|/)\.(?:/|$)", normalized):
+        return ""
+    return normalized
 
 
 def ensure_cycle(
@@ -1881,11 +1975,18 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
             try:
                 obj = json.loads(raw)
             except json.JSONDecodeError:
-                rows.append({"path": raw, "candidate_state": "excluded", "exclusion_reason": "malformed_candidate_json"})
+                rows.append({"path": "", "candidate_state": "excluded", "exclusion_reason": "malformed_candidate_json"})
                 continue
             if isinstance(obj, dict):
                 rows.append(obj)
     return rows
+
+
+def has_redacted_path_token(payload: dict[str, Any]) -> bool:
+    for key, value in payload.items():
+        if key in REDACTABLE_PATH_KEYS and isinstance(value, str) and value.startswith(REDACTED_PATH_PREFIX):
+            return True
+    return False
 
 
 def is_test_path(path: str) -> bool:
@@ -2028,8 +2129,7 @@ def command_init(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
     journal_mode = args.journal_mode
-    check_path_safe(root, db_path, journal_mode, args.allow_unsafe_db)
-    conn = connect(db_path, journal_mode, create_parent=True)
+    conn = connect_checked(root, db_path, journal_mode, allow_unsafe_db=args.allow_unsafe_db, create_parent=True)
     try:
         init_schema(conn, root)
         chmod_private(db_path)
@@ -2060,7 +2160,7 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     if not db_path.parent.exists():
         result["status"] = "db_unavailable"
         return result, EXIT_DB_UNAVAILABLE
-    conn = connect(db_path, journal_mode)
+    conn = connect_checked(root, db_path, journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     try:
         result["checks"]["db_readable"] = True
         try:
@@ -2111,7 +2211,7 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if args.backup:
-            backup_path = create_backup(conn, db_path, output=args.backup_output)
+            backup_path = create_backup(conn, root, db_path, output=args.backup_output, allow_overwrite=True)
             result["checks"]["backup_path"] = str(backup_path)
             result["checks"]["backup_created"] = backup_path.exists()
     finally:
@@ -2174,7 +2274,7 @@ def record_cycle_link_from_env(conn: sqlite3.Connection, repo_id: int, cycle_pk:
 def command_record_cycle_start(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
-    conn = connect(db_path, args.journal_mode)
+    conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
@@ -2378,7 +2478,7 @@ def record_worktree_delta_events(
 
 def command_record_worktree_snapshot(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    conn = connect(normalize_db_path(args.db, root), args.journal_mode)
+    conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
@@ -2393,7 +2493,7 @@ def command_record_worktree_snapshot(args: argparse.Namespace) -> int:
 
 def command_record_preselect(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    conn = connect(normalize_db_path(args.db, root), args.journal_mode)
+    conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     selection = parse_key_value_file(Path(args.selection_file)) if args.selection_file else parse_key_value_text(sys.stdin.read())
     candidate_rows = load_jsonl(Path(args.candidate_file)) if args.candidate_file else []
@@ -2755,14 +2855,30 @@ def create_artifact_ref(
     if not path:
         return
     p = Path(path)
-    exists = p.exists()
+    try:
+        entry = p.lstat()
+    except OSError:
+        entry = None
+    exists = entry is not None and stat.S_ISREG(entry.st_mode)
     size = None
     digest = None
-    if exists and p.is_file():
+    if exists:
         try:
-            data = p.read_bytes()
-            size = len(data)
-            digest = sha256_bytes(data)
+            if hasattr(os, "O_NOFOLLOW"):
+                fd = os.open(str(p), os.O_RDONLY | os.O_NOFOLLOW)
+            else:
+                fd = os.open(str(p), os.O_RDONLY)
+            try:
+                data = os.read(fd, 1024 * 1024)
+                chunks = [data]
+                while data:
+                    data = os.read(fd, 1024 * 1024)
+                    chunks.append(data)
+                payload = b"".join(chunks)
+                size = len(payload)
+                digest = sha256_bytes(payload)
+            finally:
+                os.close(fd)
         except OSError:
             pass
     conn.execute(
@@ -2790,7 +2906,7 @@ def create_artifact_ref(
 
 def command_record_cycle_finish(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    conn = connect(normalize_db_path(args.db, root), args.journal_mode)
+    conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
@@ -3084,7 +3200,7 @@ def record_one_pass_result(
 
 def command_record_pass_result(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    conn = connect(normalize_db_path(args.db, root), args.journal_mode)
+    conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     recorded = 0
     rejected_count = 0
@@ -3298,7 +3414,7 @@ def command_import_git(args: argparse.Namespace) -> int:
     if not inside_git_repo(root):
         print_json({"status": "unavailable", "reason": "no_git_repository"})
         return EXIT_GIT_UNAVAILABLE
-    conn = connect(normalize_db_path(args.db, root), args.journal_mode)
+    conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     rows_seen = 0
     commits_written = 0
@@ -3550,7 +3666,7 @@ def parse_upkeeper_log_line(line: str) -> dict[str, Any] | None:
 def command_import_upkeeper_log(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     log_path = Path(args.path or root / "Upkeeper.log")
-    conn = connect(normalize_db_path(args.db, root), args.journal_mode)
+    conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     rows_seen = rows_written = 0
     with conn:
@@ -3621,7 +3737,7 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
 def command_import_change_notes(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     paths = [Path(p) for p in args.paths] if args.paths else sorted(root.glob("change_notes_*.md"))
-    conn = connect(normalize_db_path(args.db, root), args.journal_mode)
+    conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     rows_seen = rows_written = 0
     with conn:
@@ -3660,10 +3776,13 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                 )
                 entry_id = int(cur.lastrowid)
                 for ref in re.findall(r"`([^`]+\.[A-Za-z0-9]+)`", text):
-                    if "/" not in ref and ref not in {"Upkeeper", "README.md", "AGENTS.md"}:
+                    normalized_ref = normalize_change_note_ref(ref)
+                    if not normalized_ref:
+                        continue
+                    if "/" not in normalized_ref and normalized_ref not in {"Upkeeper", "README.md", "AGENTS.md"}:
                         continue
                     try:
-                        file_id = ensure_file(conn, repo_id, ref, source_id=source_id)
+                        file_id = ensure_file(conn, repo_id, normalized_ref, source_id=source_id)
                     except ValueError:
                         continue
                     conn.execute(
@@ -3679,12 +3798,18 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
-def export_table_rows(conn: sqlite3.Connection, table: str) -> Iterable[dict[str, Any]]:
+def export_table_rows(
+    conn: sqlite3.Connection,
+    table: str,
+    repo_id: int | None = None,
+) -> Iterable[dict[str, Any]]:
     columns = table_columns(conn, table)
     if not columns:
         return []
     pk = table_primary_key(conn, table)
     order = pk or columns[0]
+    if repo_id is not None and "repo_id" in columns:
+        return (dict(row) for row in conn.execute(f"select * from {table} where repo_id=? order by {order}", (repo_id,)))
     return (dict(row) for row in conn.execute(f"select * from {table} order by {order}"))
 
 
@@ -3708,12 +3833,19 @@ def redact_payload(payload: dict[str, Any], args: argparse.Namespace) -> dict[st
 def command_export_jsonl(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
-    conn = connect(db_path, args.journal_mode)
+    conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     repo_id = ensure_repository(conn, root)
-    output = Path(args.output) if args.output else db_path.parent / "exports" / f"lattice-export-{epoch_now()}.jsonl"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    chmod_private(output.parent, is_dir=True)
+    output = validate_lattice_output_path(
+        root,
+        args.output if args.output else db_path.parent / "exports" / f"lattice-export-{epoch_now()}.jsonl",
+        allow_existing=args.overwrite,
+        journal_mode=args.journal_mode,
+        db_path=db_path,
+    )
+    if not output.parent.exists():
+        output.parent.mkdir(parents=True, exist_ok=True)
+        chmod_private(output.parent, is_dir=True)
     started = epoch_now()
     row_count = 0
     with conn, tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(output.parent), delete=False) as handle:
@@ -3721,7 +3853,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
         for table in REQUIRED_TABLES:
             if table.startswith("file_") and table.endswith("_rollups"):
                 continue
-            for payload in export_table_rows(conn, table):
+            for payload in export_table_rows(conn, table, repo_id=repo_id):
                 payload = redact_payload(payload, args)
                 pk = table_primary_key(conn, table)
                 logical = f"{table}:{payload.get(pk) if pk else sha256_text(json_dumps(payload))}"
@@ -3729,7 +3861,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
                 row = {
                     "schema_version": SCHEMA_VERSION,
                     "row_type": table,
-                    "row_version": 1,
+                    "row_version": SCHEMA_ROW_VERSION,
                     "logical_key": logical,
                     "source_identity": {
                         "db_path_hash": sha256_text(str(db_path)),
@@ -3764,9 +3896,10 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
 def command_import_jsonl(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     input_path = Path(args.path)
-    conn = connect(normalize_db_path(args.db, root), args.journal_mode)
+    conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     rows_seen = rows_written = conflicts = duplicates = 0
+    refresh_pass_rollups = False
     with conn:
         repo_id = ensure_repository(conn, root)
         import_id = start_import(conn, repo_id, "lattice_import", {"path": str(input_path)})
@@ -3785,6 +3918,35 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             payload = row.get("payload")
             logical_key = str(row.get("logical_key", ""))
             payload_hash = str(row.get("payload_sha256", ""))
+            schema_version = row.get("schema_version")
+            row_version = row.get("row_version")
+            try:
+                if int(schema_version) != SCHEMA_VERSION:
+                    raise ValueError
+            except (TypeError, ValueError):
+                conflicts += 1
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "schema_mismatch")
+                continue
+            try:
+                if int(row_version) != SCHEMA_ROW_VERSION:
+                    raise ValueError
+            except (TypeError, ValueError):
+                conflicts += 1
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "row_version_mismatch")
+                continue
+            if not isinstance(payload, dict):
+                conflicts += 1
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "unsupported_row")
+                continue
+            if has_redacted_path_token(payload):
+                conflicts += 1
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "redacted_path_payload")
+                continue
+            payload_hash = sha256_text(json_dumps(payload))
+            if str(row.get("payload_sha256", "")) != payload_hash:
+                conflicts += 1
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "payload_hash_mismatch")
+                continue
             if table == "lattice_unavailable" and isinstance(payload, dict):
                 ensure_source_record(
                     conn,
@@ -3799,7 +3961,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 )
                 rows_written += 1
                 continue
-            if table not in REQUIRED_TABLES or not isinstance(payload, dict):
+            if table not in REQUIRED_TABLES:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "unsupported_row")
                 continue
@@ -3807,6 +3969,8 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             pk = table_primary_key(conn, table)
             filtered = {k: v for k, v in payload.items() if k in columns}
             if not filtered:
+                conflicts += 1
+                record_import_conflict(conn, import_id, repo_id, table, logical_key, "", payload_hash, "empty_filtered_payload")
                 continue
             existing = None
             if pk and filtered.get(pk) is not None:
@@ -3834,6 +3998,9 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             except sqlite3.IntegrityError as exc:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", payload_hash, f"integrity_error:{exc}")
+            else:
+                if table == "file_pass_runs":
+                    refresh_pass_rollups = True
         finish_import(
             conn,
             import_id,
@@ -3843,6 +4010,8 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             conflicts,
             {"duplicates": duplicates},
         )
+        if refresh_pass_rollups:
+            refresh_rollups(conn, repo_id)
         record_file_event(conn, repo_id, "import_reconciled", source_id=source_id, details={"path": str(input_path), "conflicts": conflicts})
     status = "conflicts" if conflicts else "ok"
     print_json({"status": status, "rows_seen": rows_seen, "rows_written": rows_written, "duplicates": duplicates, "conflicts": conflicts})
@@ -3864,22 +4033,46 @@ def record_import_conflict(
     conn.execute(
         """
         insert into lattice_import_conflicts(import_id, repo_id, row_type, logical_key, existing_hash, incoming_hash, resolution, details_json)
-        values (?, ?, ?, ?, ?, ?, 'kept_existing', ?)
+        values (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (import_id, repo_id, row_type, logical_key, existing_hash or None, incoming_hash or None, json_dumps({"resolution": resolution})),
+        (
+            import_id,
+            repo_id,
+            row_type,
+            logical_key,
+            existing_hash or None,
+            incoming_hash or None,
+            resolution,
+            json_dumps({"resolution": resolution}),
+        ),
     )
 
 
-def create_backup(conn: sqlite3.Connection, db_path: Path, output: str | None = None) -> Path:
+def create_backup(
+    conn: sqlite3.Connection,
+    root: Path,
+    db_path: Path,
+    output: str | None = None,
+    *,
+    allow_overwrite: bool = False,
+) -> Path:
     if output:
-        backup_path = Path(output)
+        backup_path = validate_lattice_output_path(
+            root,
+            output,
+            allow_existing=allow_overwrite,
+            journal_mode=conn.execute("PRAGMA journal_mode").fetchone()[0].strip().lower(),
+            db_path=db_path,
+        )
     else:
         backup_dir = db_path.parent / "backups"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        chmod_private(backup_dir, is_dir=True)
+        if not backup_dir.exists():
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            chmod_private(backup_dir, is_dir=True)
         backup_path = backup_dir / f"lattice-backup-{epoch_now()}.sqlite3"
-    backup_path.parent.mkdir(parents=True, exist_ok=True)
-    chmod_private(backup_path.parent, is_dir=True)
+    if not backup_path.parent.exists():
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        chmod_private(backup_path.parent, is_dir=True)
     backup_conn = sqlite3.connect(str(backup_path))
     try:
         conn.backup(backup_conn)
@@ -3892,9 +4085,15 @@ def create_backup(conn: sqlite3.Connection, db_path: Path, output: str | None = 
 def command_backup(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
-    conn = connect(db_path, args.journal_mode)
+    conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
-    backup_path = create_backup(conn, db_path, output=args.output)
+    backup_path = create_backup(
+        conn,
+        root,
+        db_path,
+        output=args.output,
+        allow_overwrite=args.overwrite,
+    )
     repo_id = ensure_repository(conn, root)
     with conn:
         source_id = ensure_source_record(conn, repo_id, "artifact", source_path=str(backup_path), raw_ref="backup")
@@ -3915,10 +4114,27 @@ def record_recovery_artifact_tree(
 ) -> int:
     if not root_path.exists():
         return 0
+    try:
+        root_entry = root_path.lstat()
+    except OSError:
+        return 0
+    if root_entry and stat.S_ISLNK(root_entry.st_mode):
+        return 0
     if root_path.is_file():
         files = [root_path]
     else:
-        files = [p for p in sorted(root_path.rglob("*")) if p.is_file()]
+        files = []
+        for dirpath, dirnames, filenames in os.walk(root_path, followlinks=False):
+            dirnames[:] = [name for name in dirnames if not os.path.islink(os.path.join(dirpath, name))]
+            for name in filenames:
+                path = Path(dirpath) / name
+                try:
+                    entry = path.lstat()
+                except OSError:
+                    continue
+                if stat.S_ISREG(entry.st_mode) and not os.path.islink(path):
+                    files.append(path)
+        files.sort()
     count = 0
     for path in files[:limit]:
         create_artifact_ref(
@@ -3934,8 +4150,31 @@ def record_recovery_artifact_tree(
     return count
 
 
-def recover_artifact_refs(root: Path, db_path: Path, journal_mode: str) -> list[str]:
-    conn = connect(db_path, journal_mode)
+def safe_recovery_root(root: Path, raw: Path) -> Path | None:
+    runtime_root = (root / "runtime").resolve()
+    try:
+        normalized = raw.resolve()
+    except OSError:
+        return None
+    if not path_under(normalized, runtime_root):
+        return None
+    try:
+        entry = normalized.lstat()
+    except OSError:
+        return None
+    if not stat.S_ISDIR(entry.st_mode):
+        return None
+    return normalized
+
+
+def recover_artifact_refs(
+    root: Path,
+    db_path: Path,
+    journal_mode: str,
+    *,
+    allow_unsafe_db: bool,
+) -> list[str]:
+    conn = connect_checked(root, db_path, journal_mode, allow_unsafe_db=allow_unsafe_db)
     ensure_schema(conn)
     recorded: list[str] = []
     with conn:
@@ -3949,7 +4188,9 @@ def recover_artifact_refs(root: Path, db_path: Path, journal_mode: str) -> list[
         for env_name in ("CODEX_WRAPPER_HEALTH_STATE_DIR", "CODEX_WRAPPER_HEALTH_ARCHIVE_DIR"):
             configured = os.environ.get(env_name)
             if configured:
-                artifact_roots.append(("wrapper_health_state", Path(configured)))
+                candidate = safe_recovery_root(root, Path(configured))
+                if candidate:
+                    artifact_roots.append(("wrapper_health_state", candidate))
         for artifact_kind, artifact_root in artifact_roots:
             count = record_recovery_artifact_tree(conn, repo_id, source_id, artifact_kind, artifact_root)
             if count:
@@ -3971,12 +4212,12 @@ def recover_artifact_refs(root: Path, db_path: Path, journal_mode: str) -> list[
 def command_recover(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
-    conn = connect(db_path, args.journal_mode, create_parent=True)
+    conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db, create_parent=True)
     init_schema(conn, root)
     sources = []
     backup_path = None
     if args.backup_first and db_path.exists():
-        backup_path = create_backup(conn, db_path)
+        backup_path = create_backup(conn, root, db_path)
         sources.append(f"backup:{backup_path}")
     with conn:
         repo_id = ensure_repository(conn, root)
@@ -4016,14 +4257,15 @@ def command_recover(args: argparse.Namespace) -> int:
         sources.append(str(recovery_jsonl))
     for marker_root in [root / "runtime/unaddressed-tool-failures/open", root / "runtime/unaddressed-tool-failures/resolved"]:
         if marker_root.exists():
-            import_failure_markers(root, db_path, args.journal_mode, marker_root)
+            import_failure_markers(root, db_path, args.journal_mode, marker_root, allow_unsafe_db=args.allow_unsafe_db)
             sources.append(str(marker_root))
-    sources.extend(recover_artifact_refs(root, db_path, args.journal_mode))
+    sources.extend(recover_artifact_refs(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db))
     if not sources:
         status = "incomplete"
     recovery_dir = db_path.parent / "recovery"
-    recovery_dir.mkdir(parents=True, exist_ok=True)
-    chmod_private(recovery_dir, is_dir=True)
+    if not recovery_dir.exists():
+        recovery_dir.mkdir(parents=True, exist_ok=True)
+        chmod_private(recovery_dir, is_dir=True)
     report_path = recovery_dir / f"recovery-{epoch_now()}.json"
     report = {"status": status, "sources": sources}
     report_path.write_text(json_dumps(report) + "\n", encoding="utf-8")
@@ -4032,8 +4274,10 @@ def command_recover(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS if status == "ok" else EXIT_RECOVERY_INCOMPLETE
 
 
-def import_failure_markers(root: Path, db_path: Path, journal_mode: str, marker_root: Path) -> None:
-    conn = connect(db_path, journal_mode)
+def import_failure_markers(
+    root: Path, db_path: Path, journal_mode: str, marker_root: Path, *, allow_unsafe_db: bool
+) -> None:
+    conn = connect_checked(root, db_path, journal_mode, allow_unsafe_db=allow_unsafe_db)
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
@@ -4480,7 +4724,7 @@ def query_explain_selection(conn: sqlite3.Connection, root: Path, repo_id: int, 
 
 def command_query(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    conn = connect(normalize_db_path(args.db, root), args.journal_mode)
+    conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
@@ -4511,7 +4755,7 @@ def command_query(args: argparse.Namespace) -> int:
 
 def command_mark_regression(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    conn = connect(normalize_db_path(args.db, root), args.journal_mode)
+    conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
@@ -4551,7 +4795,7 @@ def command_mark_regression(args: argparse.Namespace) -> int:
 
 def command_prune(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    conn = connect(normalize_db_path(args.db, root), args.journal_mode)
+    conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     cutoff = epoch_now() - int(args.older_than_days or 0) * 86400 if args.older_than_days else None
     actions: list[dict[str, Any]] = []
@@ -4716,6 +4960,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("export-jsonl")
     p.add_argument("--output")
+    p.add_argument("--overwrite", action="store_true")
     p.add_argument("--redact-raw", action="store_true")
     p.add_argument("--redact-paths", action="store_true")
     p.add_argument("--redact-contributors", action="store_true")
@@ -4728,6 +4973,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("backup")
     p.add_argument("--output")
+    p.add_argument("--overwrite", action="store_true")
     p.set_defaults(func=command_backup)
 
     p = sub.add_parser("recover")

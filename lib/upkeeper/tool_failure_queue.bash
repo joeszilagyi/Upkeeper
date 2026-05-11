@@ -64,6 +64,11 @@ def short(value: str, limit: int = 500) -> str:
     return value
 
 
+def failure_signature(kind: str, command: str, exit_line: str) -> str:
+    payload = f"{kind}\0{command}\0{exit_line}"
+    return hashlib.sha256(payload.encode("utf-8", "surrogateescape")).hexdigest()
+
+
 def field(value: str) -> str:
     return short(str(value)).replace(" ", "\\ ")
 
@@ -220,9 +225,40 @@ now = int(time.time())
 failures, addressed_by_later_success = transcript_failure_state(transcript_path)
 
 if failures:
-    existing = read_json(marker_path)
+    if marker_path.exists():
+        existing = read_json(marker_path)
+    elif selected_marker_path and selected_marker_path.exists():
+        existing = read_json(selected_marker_path)
+    else:
+        existing = {}
     first = failures[0]
-    failure_count = int(existing.get("failure_count", 0) or 0) + len(failures)
+    existing_signatures = existing.get("failure_signatures", [])
+    if not isinstance(existing_signatures, list):
+        existing_signatures = []
+    existing_signatures = [str(item) for item in existing_signatures if isinstance(item, str)]
+
+    existing_signature_lookup = set(existing_signatures)
+    unique_failures = []
+    for item in failures:
+        signature = failure_signature(item["kind"], item["command"], item["exit_line"])
+        item["signature"] = signature
+        if signature not in existing_signature_lookup:
+            unique_failures.append(item)
+            existing_signature_lookup.add(signature)
+
+    first_failure = existing.get("first_failure_kind")
+    first_failure_command = existing.get("first_failure_command")
+    first_failure_exit_line = existing.get("first_failure_exit_line")
+    if not (first_failure and first_failure_command and first_failure_exit_line):
+        first_failure = first["kind"]
+        first_failure_command = first["command"]
+        first_failure_exit_line = first["exit_line"]
+
+    last_failure = failures[-1]
+    failure_count = int(existing.get("failure_count", 0) or 0) + len(unique_failures)
+    signatures = existing_signatures.copy()
+    for item in unique_failures:
+        signatures.append(item["signature"])
     data = {
         "version": 1,
         "status": "open",
@@ -238,12 +274,13 @@ if failures:
         "last_codex_exit": codex_exit,
         "last_status_marker": status_marker,
         "failure_count": failure_count,
-        "first_failure_kind": existing.get("first_failure_kind", first["kind"]),
-        "first_failure_command": existing.get("first_failure_command", first["command"]),
-        "first_failure_exit_line": existing.get("first_failure_exit_line", first["exit_line"]),
-        "last_failure_kind": first["kind"],
-        "last_failure_command": first["command"],
-        "last_failure_exit_line": first["exit_line"],
+        "failure_signatures": signatures,
+        "first_failure_kind": first_failure,
+        "first_failure_command": first_failure_command,
+        "first_failure_exit_line": first_failure_exit_line,
+        "last_failure_kind": last_failure["kind"],
+        "last_failure_command": last_failure["command"],
+        "last_failure_exit_line": last_failure["exit_line"],
         "failure_samples": failures[:5],
         "addressed_by_later_success": addressed_by_later_success,
     }

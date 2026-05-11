@@ -736,6 +736,8 @@ def repo_relative_parts(path: str) -> list[str] | None:
     normalized = os.path.normpath(path).replace(os.sep, "/")
     if not normalized or normalized == "." or normalized.startswith("../") or os.path.isabs(normalized):
         return None
+    if "\0" in normalized or any(ord(char) < 32 for char in normalized):
+        return None
     parts = normalized.split("/")
     if any(part in ("", ".", "..") for part in parts):
         return None
@@ -849,7 +851,18 @@ def root_relative(path: str) -> str:
 def normalized_repo_target(path: str) -> str:
     if not path:
         return ""
-    expanded = os.path.expanduser(path)
+    expanded = path.strip()
+    if not expanded:
+        return ""
+    if any(ord(char) < 32 for char in expanded) or "\0" in expanded:
+        return ""
+    expanded = expanded.strip().strip("`'\"()[]{}<>.,;")
+    expanded = re.sub(r"(?::L?\d+(?:-L?\d+)?)$", "", expanded, flags=re.IGNORECASE)
+    expanded = re.sub(r"#L?\d+(?:-L?\d+)?$", "", expanded, flags=re.IGNORECASE)
+    expanded = expanded.strip().strip("`'\"()[]{}<>.,;")
+    if not expanded:
+        return ""
+    expanded = os.path.expanduser(expanded)
     if os.path.isabs(expanded):
         rel_path = root_relative(expanded)
     else:

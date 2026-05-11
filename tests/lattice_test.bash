@@ -151,6 +151,7 @@ test_lattice_cli_contracts() {
 
   lattice init >$TEST_TMP_ROOT/lattice-init-1.json
   lattice init >$TEST_TMP_ROOT/lattice-init-2.json
+  cp "$DB" "$TEST_TMP_ROOT/lattice-import-base.sqlite3"
   lattice doctor >$TEST_TMP_ROOT/lattice-doctor.json
   python3 - $TEST_TMP_ROOT/lattice-doctor.json <<'PY' || fail "doctor JSON did not pass"
 import json, sys
@@ -439,6 +440,22 @@ PY
 EOF
   lattice import-change-notes "$TEST_TMP_ROOT/change_notes_2026.md" >$TEST_TMP_ROOT/lattice-notes.json
   assert_sql_value "1" "select count(*) from change_log_entries where version='vtest'"
+  cat >"$TEST_TMP_ROOT/change_notes_2026_malicious.md" <<'EOF'
+# 2026 Change Notes
+
+2026-05-09: vtest changes:
+	1. Added `https://example.com/space name.sh`.
+	2. Added `../outside.py`.
+	3. Added `/abs-path.sh`.
+	4. Added `foo//bar.txt`.
+	5. Added `./dot-prefix.sh`.
+EOF
+  lattice import-change-notes "$TEST_TMP_ROOT/change_notes_2026_malicious.md" >$TEST_TMP_ROOT/lattice-malicious-notes.json
+  assert_sql_value "0" "select count(*) from change_log_file_refs where path='https://example.com/space name.sh'"
+  assert_sql_value "0" "select count(*) from change_log_file_refs where path='../outside.py'"
+  assert_sql_value "0" "select count(*) from change_log_file_refs where path='/abs-path.sh'"
+  assert_sql_value "0" "select count(*) from change_log_file_refs where path='foo//bar.txt'"
+  assert_sql_value "0" "select count(*) from change_log_file_refs where path='./dot-prefix.sh'"
 
   cat >"$TEST_TMP_ROOT/Upkeeper.log" <<'EOF'
 2026-05-08T00:00:00-0700 [INFO] cycle=log-cycle run_hash=loghash cycle.start mode=--sandbox\ workspace-write model=gpt-5.5 dry_run=1
@@ -496,6 +513,56 @@ assert path.exists() and path.stat().st_size > 0, path
 PY
 
   lattice export-jsonl --output "$TEST_TMP_ROOT/export.jsonl" >$TEST_TMP_ROOT/lattice-export.json
+  cp "$TEST_TMP_ROOT/lattice-import-base.sqlite3" "$TEST_TMP_ROOT/lattice-import-rollup.sqlite3"
+  lattice --root "$REPO" --db "$TEST_TMP_ROOT/lattice-import-rollup.sqlite3" import-jsonl "$TEST_TMP_ROOT/export.jsonl" >$TEST_TMP_ROOT/lattice-import-rollup.json
+  python3 "$DB" "$TEST_TMP_ROOT/lattice-import-rollup.sqlite3" <<'PY' || fail "import-jsonl did not rebuild file_pass_rollups"
+import sqlite3
+import sys
+
+src_db, dst_db = sys.argv[1], sys.argv[2]
+src = sqlite3.connect(src_db)
+dst = sqlite3.connect(dst_db)
+src.execute("PRAGMA foreign_keys=ON")
+dst.execute("PRAGMA foreign_keys=ON")
+
+src_rows = src.execute(
+    """
+    select count(*)
+    from file_pass_runs r
+    join files f on f.file_id = r.file_id
+    join repositories repo on repo.repo_id = f.repo_id
+    where (f.current_path = 'space name.sh' or f.canonical_path = 'space name.sh')
+    """
+).fetchone()[0]
+if src_rows <= 0:
+    raise AssertionError(f"source DB has no file_pass_runs for space name.sh, got {src_rows}")
+
+dst_rows = dst.execute(
+    """
+    select count(*)
+    from file_pass_runs r
+    join files f on f.file_id = r.file_id
+    join repositories repo on repo.repo_id = f.repo_id
+    where (f.current_path = 'space name.sh' or f.canonical_path = 'space name.sh')
+    """
+).fetchone()[0]
+if dst_rows != src_rows:
+    raise AssertionError(f"imported file_pass_runs for space name.sh should match, source={src_rows} dst={dst_rows}")
+
+rollup = dst.execute(
+    """
+    select rp.planned_count
+    from files f
+    join file_pass_rollups rp on rp.file_id = f.file_id
+    where (f.current_path = 'space name.sh' or f.canonical_path = 'space name.sh')
+    """
+).fetchone()
+if rollup is None:
+    raise AssertionError("imported DB is missing file_pass_rollups for space name.sh")
+if rollup[0] < 1:
+    raise AssertionError(f"expected positive planned_count after import, got {rollup[0]}")
+PY
+
   lattice import-jsonl "$TEST_TMP_ROOT/export.jsonl" >$TEST_TMP_ROOT/lattice-import-repeat-1.json
   lattice import-jsonl "$TEST_TMP_ROOT/export.jsonl" >$TEST_TMP_ROOT/lattice-import-repeat-2.json
   python3 - $TEST_TMP_ROOT/lattice-import-repeat-2.json <<'PY' || fail "repeated JSONL import was not idempotent"
@@ -526,6 +593,137 @@ PY
   set -e
   [[ "$conflict_rc" -eq 8 ]] || fail "conflicting JSONL import exited $conflict_rc, expected 8"
   assert_sql_value "1" "select count(*) from lattice_import_conflicts"
+
+  set +e
+  lattice import-jsonl "$TEST_TMP_ROOT/export.jsonl" --max-conflicts=0 >"$TEST_TMP_ROOT/malformed-jsonl.out" 2>"$TEST_TMP_ROOT/malformed-jsonl.err"
+  local malformed_jsonl_rc=$?
+  set -e
+  [[ "$malformed_jsonl_rc" -eq 0 ]] || fail "valid export should still import successfully, got $malformed_jsonl_rc"
+
+  printf 'not-jsonl\n' >"$TEST_TMP_ROOT/malformed.jsonl"
+  set +e
+  lattice import-jsonl "$TEST_TMP_ROOT/malformed.jsonl" >"$TEST_TMP_ROOT/malformed-import.out" 2>"$TEST_TMP_ROOT/malformed-import.err"
+  local malformed_import_rc=$?
+  set -e
+  [[ "$malformed_import_rc" -eq 8 ]] || fail "malformed JSONL import exited $malformed_import_rc, expected 8"
+  python3 - "$TEST_TMP_ROOT/malformed-import.out" <<'PY' || fail "malformed JSONL import should report conflicts"
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["status"] == "conflicts", data
+assert data["conflicts"] > 0, data
+PY
+
+  python3 - "$DB" "$TEST_TMP_ROOT/injected.jsonl" <<'PY'
+import json
+import sqlite3
+import sys
+import time
+
+db_path, out = sys.argv[1:3]
+conn = sqlite3.connect(db_path)
+repo_id = conn.execute("select repo_id from repositories order by repo_id asc limit 1").fetchone()[0]
+base = int(time.time())
+payload = {
+  "repo_id": repo_id,
+  "canonical_path": "security-danger.txt",
+  "current_path": "security-danger.txt",
+  "current_state": "active",
+  "first_seen_epoch": base,
+  "last_seen_epoch": base,
+}
+row = {
+    "schema_version": 1,
+    "row_type": "files",
+    "row_version": 2,
+    "logical_key": "files:security-danger.txt",
+    "source_identity": {"db_path_hash": "integration"},
+    "repo_identity": {"repo_id": repo_id, "root_path": "/tmp"},
+    "payload": payload,
+    "payload_sha256": "",
+    "exported_epoch": base,
+}
+row["payload_sha256"] = __import__("hashlib").sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+with open(out, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
+PY
+  set +e
+  lattice import-jsonl "$TEST_TMP_ROOT/injected.jsonl" >"$TEST_TMP_ROOT/injected-row-version.out" 2>"$TEST_TMP_ROOT/injected-row-version.err"
+  local row_version_rc=$?
+  set -e
+  [[ "$row_version_rc" -eq 8 ]] || fail "row-version mismatch JSONL import exited $row_version_rc, expected 8"
+
+  python3 - "$DB" "$TEST_TMP_ROOT/injected-redacted.jsonl" <<'PY'
+import hashlib
+import json
+import sqlite3
+import sys
+import time
+
+db_path, out = sys.argv[1:3]
+conn = sqlite3.connect(db_path)
+repo_id = conn.execute("select repo_id from repositories order by repo_id asc limit 1").fetchone()[0]
+base = int(time.time())
+payload = {
+  "repo_id": repo_id,
+  "canonical_path": "path-sha256:deadbeefdeadbeefdeadbeef",
+  "current_path": "path-sha256:deadbeefdeadbeefdeadbeef",
+  "current_state": "active",
+  "first_seen_epoch": base,
+}
+row = {
+  "schema_version": 1,
+  "row_type": "files",
+  "row_version": 1,
+  "logical_key": "files:security-danger.txt",
+  "source_identity": {"db_path_hash": "integration"},
+  "repo_identity": {"repo_id": repo_id, "root_path": "/tmp"},
+  "payload": payload,
+  "payload_sha256": "",
+  "exported_epoch": base,
+}
+row["payload_sha256"] = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+with open(out, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
+PY
+  set +e
+  lattice import-jsonl "$TEST_TMP_ROOT/injected-redacted.jsonl" >"$TEST_TMP_ROOT/injected-redacted.out" 2>"$TEST_TMP_ROOT/injected-redacted.err"
+  local redacted_rc=$?
+  set -e
+  [[ "$redacted_rc" -eq 8 ]] || fail "redacted path JSONL import exited $redacted_rc, expected 8"
+
+  python3 - "$DB" "$TEST_TMP_ROOT/cross-repo.sql" <<'PY'
+import sqlite3
+import sys
+import time
+
+conn = sqlite3.connect(sys.argv[1])
+now = int(time.time())
+cur = conn.execute(
+    "insert into repositories(root_path, created_epoch, last_seen_epoch) values(?, ?, ?)",
+    ("/tmp/lattice-cross", now, now),
+)
+other_repo_id = int(cur.lastrowid)
+conn.execute(
+    "insert into files(repo_id, canonical_path, current_path, current_state, first_seen_epoch, last_seen_epoch) values(?, ?, ?, ?, ?, ?)",
+    (other_repo_id, "foreign_repo_file.txt", "foreign_repo_file.txt", "active", now, now),
+)
+conn.commit()
+PY
+  lattice export-jsonl --output "$TEST_TMP_ROOT/restricted-export.jsonl" >$TEST_TMP_ROOT/export-repo-scoped.out
+  python3 - "$TEST_TMP_ROOT/restricted-export.jsonl" <<'PY' || fail "cross-repo rows leaked during export"
+import json, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    row = json.loads(line)
+    payload = row.get("payload", {})
+    if row.get("row_type") == "files" and payload.get("canonical_path") == "foreign_repo_file.txt":
+        raise AssertionError("cross-repo file row leaked into export")
+PY
+
+  set +e
+  lattice export-jsonl --output "$DB" >"$TEST_TMP_ROOT/export-collision.out" 2>"$TEST_TMP_ROOT/export-collision.err"
+  local collision_rc=$?
+  set -e
+  [[ "$collision_rc" -ne 0 ]] || fail "export to db path should fail"
 }
 
 test_no_git_import_and_recovery() {

@@ -1750,7 +1750,31 @@ EOF
   marker_path="$(find "$temp_dir/failures/open" -type f -name '*.json' | head -n 1)"
   grep -Fq '"target_path": "lib/upkeeper/codex_io.bash"' "$marker_path" || fail "tool failure marker target missing"
   grep -Fq '"last_failure_kind": "validation"' "$marker_path" || fail "tool failure marker kind missing"
+  marker_id="$(python3 - <<'PY'
+import hashlib
+print(hashlib.sha1(b"lib/upkeeper/codex_io.bash").hexdigest()[:24])
+PY
+)"
+  [[ "$(jq -r '.failure_count // 0' "$marker_path")" == "1" ]] || fail "tool failure queue did not initialize one failure"
   grep -Fq "tool_failure_queue.open" "$temp_dir/Upkeeper.log" || fail "tool failure queue open event not logged"
+
+  (
+    cd "$ROOT_DIR"
+    LOG_FILE="$temp_dir/open_replay.log"
+    CODEX_TERMINAL_VERBOSITY=silent
+    CODEX_TOOL_FAILURE_QUEUE_ENABLED=1
+    CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures"
+    CODEX_TOOL_FAILURE_QUEUE_BYPASS=0
+    CYCLE_ID="validation-open-replay"
+    CYCLE_RUN_HASH="validationhashopen2"
+    RUN_SELECTED_FAILURE_MARKER_PATH=""
+    source lib/upkeeper/fallback_artifacts.bash
+    source lib/upkeeper/runtime_foundation.bash
+    source lib/upkeeper/tool_failure_queue.bash
+    tool_failure_queue_finalize_run "lib/upkeeper/codex_io.bash" "$transcript" 0 "BLOCKED"
+  )
+  marker_path_replay="$(printf '%s' "$temp_dir/failures/open/%s.json" "$marker_id")"
+  [[ "$(jq -r '.failure_count // 0' "$marker_path_replay")" == "1" ]] || fail "tool failure queue inflated failure_count on transcript replay"
 
   (
     cd "$ROOT_DIR"
@@ -2614,7 +2638,7 @@ Implemented:
 Verification passed:
 - `tools/validate_upkeeper.sh --quick`
 
-UPKEEPER_LOG_REVIEW: CHECKED cycle=validation anomalies=none
+UPKEEPER_LOG_REVIEW: CHECKED cycle=validation anomalies=none log_sha256=0000000000000000000000000000000000000000000000000000000000000000
 UPKEEPER_STATUS: WORK_DONE
 EOF
 
@@ -2735,7 +2759,7 @@ REVIEWED_CLEAN
 
 No code changes were required.
 
-UPKEEPER_LOG_REVIEW: CHECKED cycle=validation anomalies=none
+UPKEEPER_LOG_REVIEW: CHECKED cycle=validation anomalies=none log_sha256=0000000000000000000000000000000000000000000000000000000000000000
 UPKEEPER_STATUS: WORK_DONE
 EOF
 

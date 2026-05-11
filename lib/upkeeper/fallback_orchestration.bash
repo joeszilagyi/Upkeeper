@@ -58,17 +58,20 @@ run_fallback_cycle() {
       if upkeeper_bug_report_only_enabled; then
         child_args+=("--bug-report-only")
       fi
-      set +e
+    set +e
       CODEX_MODEL="$CODEX_FALLBACK_MODEL" \
       CODEX_REASONING_EFFORT="$CODEX_FALLBACK_REASONING_EFFORT" \
       CODEX_MODE="$CODEX_FALLBACK_MODE" \
       CODEX_FALLBACK_ENABLED=0 \
       CODEX_FALLBACK_CHAIN_ACTIVE=1 \
+      CODEX_FALLBACK_PARENT_PID="$$" \
+      CODEX_FALLBACK_PARENT_START="$(process_start_fingerprint "$$")" \
       CODEX_ATTEMPT_ROLE=fallback \
       CODEX_PRIMARY_MODEL_CONTEXT="$source_model" \
       CODEX_FALLBACK_TRIGGER="$trigger" \
       CODEX_PARENT_CYCLE_ID="$CYCLE_ID" \
-      CODEX_FALLBACK_CHAIN_TOKEN="$fallback_chain_token" \
+      CODEX_FALLBACK_CHAIN_TOKEN_FD=9 \
+      9<<<"$fallback_chain_token" \
       CODEX_POSTMORTEM_ENABLED=0 \
       CODEX_DISABLE_PARENT_STOP=1 \
       CODEX_GUARDRAIL_STOP_EXIT_CODE=9 \

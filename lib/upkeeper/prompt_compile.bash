@@ -330,8 +330,10 @@ compile_prompt() {
     printf -- '- If this is a symlinked client repo and the defect belongs to central Upkeeper behavior, do not patch a copied client wrapper; report the central fix needed unless the central Upkeeper checkout is the current repo.\n'
     printf -- '- If a suspicious line was expected negative-test output, say so briefly. If a one-off shell command failed, rerun the corrected check or state why it is irrelevant before final status.\n'
     printf -- '- Include exactly one machine-readable acknowledgment line before the final UPKEEPER_STATUS marker.\n'
-    printf -- '- If no anomalies were found, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle=%s anomalies=none`\n' "$CYCLE_ID"
-    printf -- '- If anomalies were found or expected anomaly signals were present, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle=%s anomalies=listed`\n' "$CYCLE_ID"
+    printf -- '- Compute the line as `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=(none|listed) log_sha256=<64-hex>` over this cycle''s raw wrapper-log lines only.\n'
+    printf -- '- If no anomalies were found, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle=%s anomalies=none log_sha256=<64 hex digest>`\n' "$CYCLE_ID"
+    printf -- '- If anomalies were found or expected anomaly signals were present, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle=%s anomalies=listed log_sha256=<64 hex digest>`\n' "$CYCLE_ID"
+    printf -- '- Recommended compute command (for digest): `rg "cycle=%s " "%s" | sha256sum`\n' "$CYCLE_ID" "$LOG_FILE"
     printf -- '- Do not write the placeholder text `anomalies=none|listed`; choose one concrete value.\n'
     printf -- '- Put the machine-readable acknowledgment on its own raw line with no Markdown, punctuation, or trailing text. The wrapper parses that line directly.\n'
     printf -- '- You may also include a short human-readable current-cycle log review summary on separate lines.\n'

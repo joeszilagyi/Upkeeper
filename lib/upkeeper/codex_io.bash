@@ -638,12 +638,16 @@ validate_codex_mode_args_or_exit() {
   local mode_arg
 
   CODEX_MODE_ARGS=()
-  read -r -a CODEX_MODE_ARGS <<<"$CODEX_MODE_STRING"
-  if [[ "${CODEX_MODE_ARGS[0]:-}" != --* || "${CODEX_MODE_ARGS[0]:-}" == ---* ]]; then
-    printf 'Upkeeper: invalid CODEX_MODE first token %q; expected a Codex option beginning with --\n' "${CODEX_MODE_ARGS[0]:-}" >&2
+  if [[ -z "${CODEX_MODE_STRING:-}" ]]; then
+    printf 'Upkeeper: invalid CODEX_MODE first token %q; expected a Codex option beginning with --\n' "${CODEX_MODE_STRING:-}" >&2
     exit 2
   fi
+  read -r -a CODEX_MODE_ARGS <<<"$CODEX_MODE_STRING"
   for mode_arg in "${CODEX_MODE_ARGS[@]}"; do
+    if [[ "$mode_arg" != --* || "$mode_arg" == ---* ]]; then
+      printf 'Upkeeper: invalid CODEX_MODE token %q; expected a Codex option beginning with --\n' "$mode_arg" >&2
+      exit 2
+    fi
     case "$mode_arg" in
       danger-full-access|--dangerously-bypass-approvals-and-sandbox)
         printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "$mode_arg" >&2
@@ -731,6 +735,7 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 root = Path(sys.argv[1]).resolve()
@@ -760,30 +765,58 @@ def skip_issue(issue):
     return bool(names & skip_labels)
 
 
+def parse_issue_timestamp(value):
+    value_text = str(value or "").strip()
+    if not value_text:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if value_text.endswith("Z"):
+        value_text = f"{value_text[:-1]}+00:00"
+    try:
+        return datetime.fromisoformat(value_text).astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
 def normalize_candidate(raw):
+    if not isinstance(raw, str):
+        return ""
     candidate = raw.strip().strip("`'\"()[]{}<>.,;")
     if not candidate:
         return ""
-    candidate = re.sub(r"(?::L?\d+(?:-L?\d+)?)$", "", candidate)
-    candidate = re.sub(r"#L?\d+(?:-L?\d+)?$", "", candidate)
-    candidate = candidate.strip().strip("`'\"()[]{}<>.,;")
-    if not candidate:
+    if any(ord(char) < 32 for char in candidate):
         return ""
+    candidate = re.sub(r"(?::L?\d+(?:-L?\d+)?)$", "", candidate, flags=re.IGNORECASE)
+    candidate = re.sub(r"#L?\d+(?:-L?\d+)?$", "", candidate, flags=re.IGNORECASE)
+    candidate = candidate.strip().strip("`'\"()[]{}<>.,;")
+    if not candidate or any(ord(char) < 32 for char in candidate):
+        return ""
+
+    if "\0" in candidate:
+        return ""
+
     path = Path(os.path.expanduser(candidate))
+    path_parts = path.as_posix().split("/")
+    if any(part in ("", ".", "..") for part in path_parts):
+        return ""
     if path.is_absolute():
         try:
-            rel = path.resolve().relative_to(root)
-        except (OSError, ValueError):
+            abs_path = path.resolve()
+        except OSError:
             return ""
     else:
-        rel = Path(candidate)
+        abs_path = Path(root / path).resolve()
+
+    if not abs_path.is_file():
+        return ""
+
+    try:
+        rel = abs_path.relative_to(root)
+    except ValueError:
+        return ""
     rel_text = str(rel).replace(os.sep, "/")
     if rel_text in {"", "."} or rel_text.startswith("../") or "/../" in f"/{rel_text}/":
         return ""
-    abs_path = root / rel_text
-    if abs_path.is_file():
-        return rel_text
-    return ""
+    return rel_text
 
 
 def candidate_paths(text):
@@ -813,7 +846,20 @@ def emit_selected(issue, selected_label, body=None, comments=None):
         comments = issue.get("comments", [])
     if not isinstance(comments, list):
         comments = []
-    combined = "\n".join([str(issue.get("title", "")), body])
+    comment_texts = []
+    for comment in comments:
+        if isinstance(comment, str):
+            comment_texts.append(comment)
+            continue
+        if isinstance(comment, dict):
+            body_text = comment.get("body")
+            if isinstance(body_text, str):
+                comment_texts.append(body_text)
+            else:
+                url = comment.get("url")
+                if isinstance(url, str):
+                    comment_texts.append(url)
+    combined = "\n".join([str(issue.get("title", "")), str(body), *comment_texts])
     target = next(candidate_paths(combined), "")
     label_names = [str(label.get("name", "")) for label in issue.get("labels", []) if label.get("name")]
     print(
@@ -835,6 +881,10 @@ def emit_selected(issue, selected_label, body=None, comments=None):
 
 
 if requested_number:
+    if not requested_number.isdigit():
+        print(json.dumps({"status": "invalid_issue_number", "number": requested_number}))
+        raise SystemExit(0)
+
     issue = gh_json(
         [
             "issue",
@@ -870,7 +920,7 @@ for priority_label in priority_labels:
     candidates = [issue for issue in issues if not skip_issue(issue)]
     if not candidates:
         continue
-    candidates.sort(key=lambda issue: (str(issue.get("createdAt", "")), int(issue.get("number", 0))))
+    candidates.sort(key=lambda issue: (parse_issue_timestamp(issue.get("createdAt", "")), int(issue.get("number", 0))))
     selected = candidates[0]
     emit_selected(selected, priority_label)
     raise SystemExit(0)
@@ -893,6 +943,10 @@ PY
     none)
       log_line "INFO" "$issue_event none priority_labels=$(shell_quote "${CODEX_ISSUE_PRIORITY_LABELS:-none}") skip_labels=$(shell_quote "${CODEX_ISSUE_SKIP_LABELS:-none}")"
       finish_cycle 5 NO_ISSUE_FIX_TARGET INFO "codex_exec_started=0"
+      ;;
+    invalid_issue_number)
+      log_line "ERROR" "$issue_event select_failed status=invalid_issue_number detail=$(shell_quote "$issue_json")"
+      finish_cycle 3 ISSUE_FIX_SELECTION_FAILED ERROR "codex_exec_started=0"
       ;;
     *)
       log_line "ERROR" "$issue_event select_failed status=$(shell_quote "$status") detail=$(shell_quote "$issue_json")"

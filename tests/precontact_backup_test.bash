@@ -361,15 +361,21 @@ test_plain_restore_and_unsafe_id() {
   backup_id="$RUN_PRECONTACT_BACKUP_ID"
 
   printf 'mutated\n' >"$repo/dir/space file.sh"
-  precontact_backup_restore_by_id "$backup_id" "$repo" "" "" "0"
+  precontact_backup_restore_by_id "$backup_id" "$repo" "" ""
   restored_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
   [[ "$restored_sha" == "$original_sha" ]] || fail "plain restore did not restore original bytes"
 
-  if precontact_backup_restore_by_id "../bad" "$repo" "" "" "0"; then
+  if precontact_backup_restore_by_id "../bad" "$repo" "" ""; then
     fail "unsafe backup id was accepted"
   fi
   [[ "$PRECONTACT_BACKUP_LAST_REASON" == "unsafe_backup_id" ]] ||
     fail "unsafe backup id failed as $PRECONTACT_BACKUP_LAST_REASON"
+
+  if precontact_backup_restore_by_id "$backup_id" "$repo" "" "/absolute/path"; then
+    fail "absolute restore destination was accepted"
+  fi
+  [[ "$PRECONTACT_BACKUP_LAST_REASON" == "unsafe_restore_destination" ]] ||
+    fail "absolute restore destination failed as $PRECONTACT_BACKUP_LAST_REASON"
 }
 
 test_plain_required_backup_succeeds

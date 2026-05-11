@@ -1063,6 +1063,20 @@ if row is None:
     raise AssertionError("target substitution event missing for review parser mismatch")
 if row[0] != "reviewed/with:colon/path.sh":
     raise AssertionError(f"target_substituted path mismatch: {row[0]}")
+
+row = conn.execute(
+    "select selected_path from cycles where cycle_pk=?",
+    (cycle_pk,),
+).fetchone()
+if row is None or row[0] != "reviewed/with:colon/path.sh":
+    raise AssertionError(f"cycle selected_path did not follow substitution: {None if row is None else row[0]}")
+
+row = conn.execute(
+    "select f.canonical_path from cycles c join files f on f.file_id=c.selected_file_id where c.cycle_pk=?",
+    (cycle_pk,),
+).fetchone()
+if row is None or row[0] != "reviewed/with:colon/path.sh":
+    raise AssertionError(f"cycle selected_file_id mismatch: {None if row is None else row[0]}")
 PY
 
   python3 - "$DB" <<'PY'

@@ -3198,26 +3198,44 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
         selected_path = normalize_rel_path(args.selected_path or "")
         selected_file_id = ensure_file(conn, repo_id, selected_path, source_id=source_id) if selected_path else None
+        cycle_selected_path = selected_path
+        cycle_selected_file_id = selected_file_id
         if reported_selected and selected_path and reported_selected != selected_path:
             replacement_id = ensure_file(conn, repo_id, reported_selected, source_id=source_id)
+            cycle_selected_path = reported_selected
+            cycle_selected_file_id = replacement_id
             record_file_event(
                 conn,
                 repo_id,
                 "target_substituted",
-                file_id=replacement_id,
+                file_id=cycle_selected_file_id,
                 cycle_pk=cycle_pk,
                 source_id=source_id,
-                path=reported_selected,
+                path=cycle_selected_path,
                 confidence="reported",
                 details={"preselected_path": selected_path, "reported_selected_path": reported_selected},
+            )
+        elif reported_selected and not selected_path:
+            cycle_selected_path = reported_selected
+            cycle_selected_file_id = ensure_file(conn, repo_id, reported_selected, source_id=source_id)
+            record_file_event(
+                conn,
+                repo_id,
+                "target_substituted",
+                file_id=cycle_selected_file_id,
+                cycle_pk=cycle_pk,
+                source_id=source_id,
+                path=cycle_selected_path,
+                confidence="reported",
+                details={"reported_selected_path": reported_selected},
             )
         conn.execute(
             """
             update cycles set
               end_epoch=?, status_marker=?, review_outcome=?, codex_exit=?, wrapper_exit=?,
               finish_reason=?, finish_level=?, codex_exec_started=?, dry_run=?,
-              selected_file_id=coalesce(?, selected_file_id),
-              selected_path=coalesce(?, selected_path)
+              selected_file_id=?,
+              selected_path=?
             where cycle_pk=?
             """,
             (
@@ -3230,8 +3248,8 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 args.finish_level,
                 args.codex_exec_started,
                 parse_bool_int(str(args.dry_run)),
-                selected_file_id,
-                selected_path or None,
+                cycle_selected_file_id,
+                cycle_selected_path or None,
                 cycle_pk,
             ),
         )
@@ -3244,25 +3262,32 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
             source_id=source_id,
             after_snapshot_id=snapshot_id,
         )
-        if selected_path:
-            after_snapshot_id = insert_file_snapshot(conn, root, repo_id, selected_path, file_id=selected_file_id, source_id=source_id)
+        if cycle_selected_path:
+            after_snapshot_id = insert_file_snapshot(
+                conn,
+                root,
+                repo_id,
+                cycle_selected_path,
+                file_id=cycle_selected_file_id,
+                source_id=source_id,
+            )
             record_file_event(
                 conn,
                 repo_id,
                 "snapshot_after",
-                file_id=selected_file_id,
+                file_id=cycle_selected_file_id,
                 cycle_pk=cycle_pk,
                 source_id=source_id,
-                path=selected_path,
+                path=cycle_selected_path,
                 details={"snapshot_id": after_snapshot_id},
             )
             record_selected_file_delta(
                 conn,
                 repo_id=repo_id,
                 cycle_pk=cycle_pk,
-                file_id=selected_file_id,
+                file_id=cycle_selected_file_id,
                 source_id=source_id,
-                path=selected_path,
+                path=cycle_selected_path,
                 after_snapshot_id=after_snapshot_id,
                 review_outcome=review_outcome,
             )

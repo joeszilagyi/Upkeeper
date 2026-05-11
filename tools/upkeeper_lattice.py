@@ -1815,6 +1815,8 @@ def ensure_cycle(
         for key, value in fields.items():
             if key not in table_columns(conn, "cycles"):
                 continue
+            if not has_meaningful_value(value):
+                continue
             assignments.append(f"{key}=?")
             values.append(value)
         if source_id is not None:
@@ -1827,7 +1829,7 @@ def ensure_cycle(
     columns = ["repo_id", "cycle_id", "run_hash", "start_epoch", "source_id"]
     values = [repo_id, cycle_id, run_hash, start_epoch, source_id]
     for key, value in fields.items():
-        if key in table_columns(conn, "cycles") and key not in columns:
+        if key in table_columns(conn, "cycles") and key not in columns and has_meaningful_value(value):
             columns.append(key)
             values.append(value)
     placeholders = ",".join("?" for _ in columns)
@@ -1956,6 +1958,14 @@ def parse_bool_int(raw: str | None) -> int | None:
     if raw in {"0", "false", "no", "off"}:
         return 0
     return None
+
+
+def has_meaningful_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip() != ""
+    return True
 
 
 def record_file_event(
@@ -2450,7 +2460,9 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
         parsed = vars(args).copy()
         parsed.pop("func", None)
         source_id = ensure_source_record(conn, repo_id, "wrapper_observed", raw_ref="cycle_start", parsed=parsed)
-        worktree_dirty = 1 if int(args.dirty_path_count or 0) > 0 else 0
+        worktree_dirty = None
+        if args.dirty_path_count is not None:
+            worktree_dirty = 1 if int(args.dirty_path_count or 0) > 0 else 0
         cycle_pk = ensure_cycle(
             conn,
             repo_id,
@@ -2468,7 +2480,7 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
             head_tree_sha=args.head_tree_sha or repo_git_info(root)["head_tree_sha"],
             upstream_ref=args.upstream_ref,
             worktree_dirty=worktree_dirty,
-            dry_run=parse_bool_int(str(args.dry_run)),
+            dry_run=parse_bool_int(str(args.dry_run)) if args.dry_run is not None else None,
         )
         record_cycle_link_from_env(conn, repo_id, cycle_pk, args, source_id)
         record_worktree_snapshot(conn, root, repo_id, cycle_pk, "before_codex", source_id=source_id)
@@ -3236,30 +3248,34 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 confidence="reported",
                 details={"reported_selected_path": reported_selected},
             )
-        conn.execute(
-            """
-            update cycles set
-              end_epoch=?, status_marker=?, review_outcome=?, codex_exit=?, wrapper_exit=?,
-              finish_reason=?, finish_level=?, codex_exec_started=?, dry_run=?,
-              selected_file_id=?,
-              selected_path=?
-            where cycle_pk=?
-            """,
-            (
-                args.end_epoch or epoch_now(),
-                args.status_marker or None,
-                review_outcome,
-                args.codex_exit,
-                args.wrapper_exit,
-                args.finish_reason,
-                args.finish_level,
-                args.codex_exec_started,
-                parse_bool_int(str(args.dry_run)),
-                cycle_selected_file_id,
-                cycle_selected_path or None,
-                cycle_pk,
-            ),
-        )
+        updates: list[tuple[str, Any]] = [("end_epoch", args.end_epoch or epoch_now())]
+        if args.status_marker:
+            updates.append(("status_marker", args.status_marker))
+        if review_outcome:
+            updates.append(("review_outcome", review_outcome))
+        if args.codex_exit is not None:
+            updates.append(("codex_exit", args.codex_exit))
+        if args.wrapper_exit is not None:
+            updates.append(("wrapper_exit", args.wrapper_exit))
+        if args.finish_reason:
+            updates.append(("finish_reason", args.finish_reason))
+        if args.finish_level:
+            updates.append(("finish_level", args.finish_level))
+        if args.codex_exec_started is not None:
+            updates.append(("codex_exec_started", args.codex_exec_started))
+        if args.dry_run is not None:
+            updates.append(("dry_run", parse_bool_int(str(args.dry_run))))
+        if cycle_selected_file_id is not None:
+            updates.append(("selected_file_id", cycle_selected_file_id))
+        if cycle_selected_path:
+            updates.append(("selected_path", cycle_selected_path))
+
+        if updates:
+            set_clause = ", ".join(f"{key}=?" for key, _ in updates)
+            conn.execute(
+                f"update cycles set {set_clause} where cycle_pk=?",
+                [value for _, value in updates] + [cycle_pk],
+            )
         snapshot_id = record_worktree_snapshot(conn, root, repo_id, cycle_pk, args.snapshot_kind, source_id=source_id)
         record_worktree_delta_events(
             conn,
@@ -3387,6 +3403,7 @@ def record_one_pass_result(
     outcome: str,
     changed: int | None,
     regression: int | None,
+    planned: int | None = None,
     raw_line: str = "",
     confidence: str = "reported",
     attributes: dict[str, Any] | None = None,
@@ -3394,12 +3411,13 @@ def record_one_pass_result(
     pass_id = ensure_pass(conn, pass_code)
     file_id = ensure_file(conn, repo_id, path, source_id=source_id)
     attempted = 1 if outcome not in {"planned", "unknown"} else 0
+    resolved_planned = 1 if (planned is not None and bool(planned)) or (planned is None and outcome == "planned") else 0
     cur = conn.execute(
         """
         insert into file_pass_runs(
           repo_id, file_id, cycle_pk, pass_id, pass_code, planned, applicable,
           attempted, outcome, changed, regression, confidence, source_id, raw_line, created_epoch
-        ) values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             repo_id,
@@ -3407,6 +3425,7 @@ def record_one_pass_result(
             cycle_pk,
             pass_id,
             normalize_pass_code(pass_code),
+            resolved_planned,
             applicable,
             attempted,
             outcome,
@@ -3568,6 +3587,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     changed=changed,
                     regression=regression,
                     raw_line=item.get("raw_line", ""),
+                    planned=0,
                     attributes=attrs,
                 )
                 seen.add((pass_code, path))
@@ -3589,6 +3609,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 changed=parse_bool_int(args.changed),
                 regression=parse_bool_int(args.regression),
                 raw_line=args.raw_line or "",
+                planned=0,
                 attributes=attrs,
             )
             seen.add((pass_code, path))
@@ -3607,11 +3628,12 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 pass_code=pass_code,
                 path=target_path,
                 applicable=None,
-                outcome="unknown",
+                outcome="planned",
                 changed=None,
                 regression=None,
                 raw_line="",
                 confidence="missing_marker",
+                planned=1,
             )
             recorded += 1
         refresh_rollups(conn, repo_id)
@@ -4031,15 +4053,29 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                         (file_id, selected_path or None, parsed.get("basis"), cycle_pk),
                     )
                 elif event == "cycle.summary":
-                    conn.execute(
-                        "update cycles set status_marker=?, codex_exit=? where cycle_pk=?",
-                        (parsed.get("status_marker"), int(parsed["codex_exit"]) if str(parsed.get("codex_exit", "")).lstrip("-").isdigit() else None, cycle_pk),
-                    )
+                    updates: dict[str, Any] = {}
+                    if "status_marker" in parsed and str(parsed.get("status_marker", "")).strip() != "":
+                        updates["status_marker"] = parsed.get("status_marker")
+                    if "codex_exit" in parsed and str(parsed.get("codex_exit", "")).lstrip("-").isdigit():
+                        updates["codex_exit"] = int(parsed["codex_exit"])
+                    if updates:
+                        conn.execute(
+                            f"update cycles set {', '.join(f'{key}=?' for key in updates)} where cycle_pk=?",
+                            list(updates.values()) + [cycle_pk],
+                        )
                 elif event == "cycle.exit":
-                    conn.execute(
-                        "update cycles set wrapper_exit=?, finish_reason=? where cycle_pk=?",
-                        (int(parsed["exit_code"]) if str(parsed.get("exit_code", "")).lstrip("-").isdigit() else None, parsed.get("reason"), cycle_pk),
-                    )
+                    updates: dict[str, Any] = {}
+                    if "exit_code" in parsed and str(parsed.get("exit_code", "")).lstrip("-").isdigit():
+                        updates["wrapper_exit"] = int(parsed["exit_code"])
+                    if "reason" in parsed and str(parsed.get("reason", "")).strip() != "":
+                        updates["finish_reason"] = parsed.get("reason")
+                    if "codex_exec_started" in parsed and str(parsed.get("codex_exec_started", "")).strip() != "":
+                        updates["codex_exec_started"] = parse_bool_int(str(parsed.get("codex_exec_started")))
+                    if updates:
+                        conn.execute(
+                            f"update cycles set {', '.join(f'{key}=?' for key in updates)} where cycle_pk=?",
+                            list(updates.values()) + [cycle_pk],
+                        )
             rows_written += 1
         finish_import(conn, import_id, "ok", rows_seen, rows_written, 0, {"path": str(log_path)})
     print_json({"status": "ok", "rows_seen": rows_seen, "rows_written": rows_written})
@@ -5303,17 +5339,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("record-cycle-start")
     add_cycle_args(p)
-    p.add_argument("--execution-origin", default="")
-    p.add_argument("--model", default="")
-    p.add_argument("--effort", default="")
-    p.add_argument("--mode", default="")
-    p.add_argument("--config-file", default="")
-    p.add_argument("--branch-name", default="")
-    p.add_argument("--head-sha", default="")
-    p.add_argument("--head-tree-sha", default="")
-    p.add_argument("--upstream-ref", default="")
-    p.add_argument("--dirty-path-count", default="0")
-    p.add_argument("--dry-run", default="0")
+    p.add_argument("--execution-origin", default=None)
+    p.add_argument("--model", default=None)
+    p.add_argument("--effort", default=None)
+    p.add_argument("--mode", default=None)
+    p.add_argument("--config-file", default=None)
+    p.add_argument("--branch-name", default=None)
+    p.add_argument("--head-sha", default=None)
+    p.add_argument("--head-tree-sha", default=None)
+    p.add_argument("--upstream-ref", default=None)
+    p.add_argument("--dirty-path-count", default=None)
+    p.add_argument("--dry-run", default=None)
     p.add_argument("--start-epoch", type=int)
     p.add_argument("--parent-cycle-id", default="")
     p.add_argument("--child-cycle-id", default="")
@@ -5331,20 +5367,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("record-cycle-finish")
     add_cycle_args(p)
-    p.add_argument("--status-marker", default="")
-    p.add_argument("--review-outcome", default="")
-    p.add_argument("--review-selected-path", default="")
+    p.add_argument("--status-marker", default=None)
+    p.add_argument("--review-outcome", default=None)
+    p.add_argument("--review-selected-path", default=None)
     p.add_argument("--codex-exit", type=int)
     p.add_argument("--wrapper-exit", type=int)
-    p.add_argument("--finish-reason", default="")
-    p.add_argument("--finish-level", default="")
-    p.add_argument("--codex-exec-started", type=int, default=0)
-    p.add_argument("--dry-run", default="0")
-    p.add_argument("--selected-path", default="")
-    p.add_argument("--last-message-file", default="")
-    p.add_argument("--transcript-path", default="")
-    p.add_argument("--compiled-prompt-path", default="")
-    p.add_argument("--log-path", default="")
+    p.add_argument("--finish-reason", default=None)
+    p.add_argument("--finish-level", default=None)
+    p.add_argument("--codex-exec-started", type=int, default=None)
+    p.add_argument("--dry-run", default=None)
+    p.add_argument("--selected-path", default=None)
+    p.add_argument("--last-message-file", default=None)
+    p.add_argument("--transcript-path", default=None)
+    p.add_argument("--compiled-prompt-path", default=None)
+    p.add_argument("--log-path", default=None)
     p.add_argument("--snapshot-kind", default="after_codex")
     p.add_argument("--end-epoch", type=int)
     p.set_defaults(func=command_record_cycle_finish)

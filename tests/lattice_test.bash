@@ -1340,6 +1340,149 @@ if not row or int(row[0]) < 1:
 PY
 }
 
+test_sparse_lifecycle_replay_preserves_metadata() {
+  local repo rc
+
+  repo="$TEST_TMP_ROOT/lattice-sparse-lifecycle"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/sparse-lifecycle-init.out"
+
+  lattice record-cycle-start \
+    --cycle-id cycle-sparse \
+    --run-hash hash-sparse \
+    --execution-origin primary \
+    --model gpt-5.5 \
+    --effort xhigh \
+    --mode '--sandbox workspace-write' \
+    --config-file Upkeeper.conf \
+    --dirty-path-count 0 \
+    --dry-run 1 >"$TEST_TMP_ROOT/sparse-lifecycle-start.out"
+  lattice record-cycle-finish \
+    --cycle-id cycle-sparse \
+    --run-hash hash-sparse \
+    --wrapper-exit 9 \
+    --codex-exit 9 \
+    --status-marker PREVIOUS_STATUS \
+    --finish-reason PREVIOUS_FINISH \
+    --finish-level INFO \
+    --codex-exec-started 1 \
+    --review-outcome REVIEWED_AND_REPORTED \
+    --dry-run 1 \
+    --selected-path README.md >"$TEST_TMP_ROOT/sparse-lifecycle-finish.out"
+
+  lattice record-cycle-start \
+    --cycle-id cycle-sparse \
+    --run-hash hash-sparse >"$TEST_TMP_ROOT/sparse-lifecycle-restart.out"
+  lattice record-cycle-finish \
+    --cycle-id cycle-sparse \
+    --run-hash hash-sparse >"$TEST_TMP_ROOT/sparse-lifecycle-replay.out"
+
+  cat >"$TEST_TMP_ROOT/sparse-lifecycle.log" <<'EOF'
+2026-05-08T00:00:00-0700 [INFO] cycle=cycle-sparse run_hash=hash-sparse cycle.start
+2026-05-08T00:00:01-0700 [INFO] cycle=cycle-sparse run_hash=hash-sparse cycle.summary
+2026-05-08T00:00:02-0700 [INFO] cycle=cycle-sparse run_hash=hash-sparse cycle.exit
+EOF
+  lattice import-upkeeper-log --path "$TEST_TMP_ROOT/sparse-lifecycle.log" >"$TEST_TMP_ROOT/sparse-lifecycle-import.out" || fail "sparse log import failed"
+
+  python3 - "$DB" <<'PY' || fail "sparse cycle replay cleared terminal metadata"
+import sqlite3
+import sys
+
+db_path = sys.argv[1]
+conn = sqlite3.connect(db_path)
+row = conn.execute(
+    "select status_marker, review_outcome, codex_exit, wrapper_exit, finish_reason, finish_level, codex_exec_started, dry_run, selected_path "
+    "from cycles where cycle_id='cycle-sparse' and run_hash='hash-sparse'"
+).fetchone()
+if row is None:
+    raise AssertionError("cycle-sparse row missing after replay")
+expected = (
+    "PREVIOUS_STATUS",
+    "REVIEWED_AND_REPORTED",
+    9,
+    9,
+    "PREVIOUS_FINISH",
+    "INFO",
+    1,
+    1,
+    "README.md",
+)
+if tuple(row) != expected:
+    raise AssertionError(f"terminal metadata changed by sparse replay: {row}")
+PY
+}
+
+test_planned_pass_semantics_do_not_mark_all_runs_as_planned() {
+  local repo
+
+  repo="$TEST_TMP_ROOT/lattice-planned-semantics"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/planned-semantics-init.out"
+
+  lattice record-cycle-start \
+    --cycle-id cycle-planning \
+    --run-hash hash-planning \
+    --execution-origin primary \
+    --model gpt-5.5 \
+    --effort xhigh \
+    --mode '--sandbox workspace-write' \
+    --config-file Upkeeper.conf \
+    --dirty-path-count 0 \
+    --dry-run 1 >"$TEST_TMP_ROOT/planned-semantics-start.out"
+  lattice record-pass-result \
+    --cycle-id cycle-planning \
+    --run-hash hash-planning \
+    --pass P23 \
+    --file README.md \
+    --applicable 1 \
+    --outcome clean \
+    --changed 0 \
+    --regression 0 >"$TEST_TMP_ROOT/planned-actual-pass.out"
+  lattice record-pass-result \
+    --cycle-id cycle-planning \
+    --run-hash hash-planning \
+    --path README.md \
+    --planned-passes P24 >"$TEST_TMP_ROOT/planned-missing-marker.out"
+
+  python3 - "$DB" <<'PY' || fail "planned pass semantics did not preserve completed-attempt intent"
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+row = conn.execute(
+    "select planned, attempted, outcome, changed from file_pass_runs where pass_code='P24' and outcome='planned' and file_id=(select file_id from files where canonical_path='README.md' limit 1)"
+).fetchone()
+if row is None:
+    raise AssertionError("missing planned P24 run")
+planned, attempted, _, _ = row
+if int(planned or 0) != 1:
+    raise AssertionError(f"planned marker run missing planned=1: {(planned, attempted)}")
+if int(attempted or 0) != 0:
+    raise AssertionError(f"planned marker run unexpectedly attempted: {(planned, attempted)}")
+
+row = conn.execute(
+    "select planned, attempted from file_pass_runs where pass_code='P23' and outcome='clean' and file_id=(select file_id from files where canonical_path='README.md' limit 1)"
+).fetchone()
+if row is None:
+    raise AssertionError("missing explicit P23 clean run")
+planned, attempted = row
+if int(planned or 0) != 0:
+    raise AssertionError(f"explicit clean run incorrectly marked planned: {(planned, attempted)}")
+if int(attempted or 0) != 1:
+    raise AssertionError(f"explicit clean run attempted flag incorrect: {(planned, attempted)}")
+
+row = conn.execute(
+    "select unknown_count from file_pass_rollups where file_id=(select file_id from files where canonical_path='README.md' limit 1)"
+).fetchone()
+if row is None:
+    raise AssertionError("missing file_pass_rollups row for README.md")
+if int(row[0]) != 0:
+    raise AssertionError(f"planned marker inflated unknown_count: {row[0]}")
+PY
+}
+
 test_lattice_cli_contracts
 test_no_git_import_and_recovery
 test_missing_selection_path_stays_missing
@@ -1352,4 +1495,6 @@ test_export_backup_output_collision
 test_recover_no_backup_first_toggle
 test_review_parser_and_redaction
 test_clean_touch_uses_mtime_ns
+test_sparse_lifecycle_replay_preserves_metadata
+test_planned_pass_semantics_do_not_mark_all_runs_as_planned
 printf 'ok - lattice\n'

@@ -57,6 +57,33 @@ test_run_aux_codex_exec_rejects_triple_dash_mode() {
     fail "blocked marker missing"
 }
 
+test_run_aux_codex_exec_rejects_invalid_mode_token() {
+  local prompt_file last_message rc
+
+  prompt_file="$TEST_TMP_ROOT/prompt-invalid-token.txt"
+  last_message="$TEST_TMP_ROOT/last-message-invalid-token.txt"
+  : >"$prompt_file"
+
+  CODEX_HOME_DIR="$TEST_TMP_ROOT/codex-home"
+  CODEX_ARG0_TMP_ROOT="$TEST_TMP_ROOT/arg0"
+  CODEX_ARG0_TMP_QUARANTINE_ROOT="$TEST_TMP_ROOT/arg0-quarantine"
+  CODEX_BWRAP_TMP_ROOT="$TEST_TMP_ROOT/bwrap"
+  UPKEEPER_DRY_RUN=1
+
+  set +e
+  run_aux_codex_exec "postmortem.report" "gpt-test" "low" "--sandbox workspace-write danger-full-access" "$prompt_file" "$last_message"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 87 ]] || fail "expected invalid aux mode token exit 87, got $rc"
+  grep -qx 'reason: Codex auxiliary mode is invalid' "$last_message" ||
+    fail "invalid aux mode token marker reason missing"
+  grep -Fq 'detail: invalid auxiliary mode token --dangerously-bypass-approvals-and-sandbox; expected a sandboxed mode' "$last_message" ||
+    fail "invalid aux mode token marker detail missing"
+  grep -qx 'CODEX_POSTMORTEM_STATUS: BLOCKED' "$last_message" ||
+    fail "blocked marker missing"
+}
+
 test_run_aux_codex_exec_dry_run_accepts_normal_mode() {
   local prompt_file last_message rc
 
@@ -94,6 +121,7 @@ test_run_aux_codex_exec_dry_run_accepts_empty_mode() {
 }
 
 test_run_aux_codex_exec_rejects_triple_dash_mode
+test_run_aux_codex_exec_rejects_invalid_mode_token
 test_run_aux_codex_exec_dry_run_accepts_normal_mode
 test_run_aux_codex_exec_dry_run_accepts_empty_mode
 printf 'ok - aux_codex\n'

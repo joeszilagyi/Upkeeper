@@ -158,17 +158,35 @@ run_aux_codex_exec() {
   local first_mode_token first_mode_token_q
 
   local -a aux_mode_args=()
-  read -r -a aux_mode_args <<<"$mode_string"
   first_mode_token="${aux_mode_args[0]:-}"
+  if [[ -n "${mode_string:-}" ]]; then
+    read -r -a aux_mode_args <<<"$mode_string"
+    first_mode_token="${aux_mode_args[0]:-}"
+    if [[ "$first_mode_token" != --* ]]; then
+      first_mode_token_q="$(shell_quote "$first_mode_token")"
+      write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "invalid first mode token $first_mode_token_q; expected a Codex option beginning with --" "Codex auxiliary mode is invalid"
+      log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=invalid_aux_mode first_token=$first_mode_token_q mode=$(shell_quote "$mode_string")"
+      return 87
+    fi
+    for mode_arg in "${aux_mode_args[@]}"; do
+      if [[ "$mode_arg" != --* || "$mode_arg" == ---* ]]; then
+        first_mode_token_q="$(shell_quote "$mode_arg")"
+        write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "invalid auxiliary mode token $first_mode_token_q; expected a Codex option beginning with --" "Codex auxiliary mode is invalid"
+        log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=invalid_aux_mode first_token=$first_mode_token_q mode=$(shell_quote "$mode_string")"
+        return 87
+      fi
+      case "$mode_arg" in
+        danger-full-access|--dangerously-bypass-approvals-and-sandbox)
+          first_mode_token_q="$(shell_quote "$mode_arg")"
+          write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "invalid auxiliary mode token $first_mode_token_q; expected a sandboxed mode" "Codex auxiliary mode is invalid"
+          log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=invalid_aux_mode first_token=$first_mode_token_q mode=$(shell_quote "$mode_string")"
+          return 87
+          ;;
+      esac
+    done
+  fi
 
   log_line "INFO" "$phase_label.start model=$model effort=$effort mode=$mode_string prompt=$prompt_file output=$last_message_file"
-
-  if [[ "$first_mode_token" == ---* ]]; then
-    first_mode_token_q="$(shell_quote "$first_mode_token")"
-    write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "invalid first mode token $first_mode_token_q; expected a Codex option beginning with --" "Codex auxiliary mode is invalid"
-    log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=invalid_aux_mode first_token=$first_mode_token_q mode=$(shell_quote "$mode_string")"
-    return 87
-  fi
 
   if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
     log_line "INFO" "$phase_label.skip dry_run=1 model=$model"

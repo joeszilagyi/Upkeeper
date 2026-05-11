@@ -22,9 +22,9 @@ Each invocation:
   2. Logs current 5-hour and weekly used/left percentages for the current target model bucket.
   3. Projects one more run from recent observed deltas.
   4. If the projected next run would leave at or below:
-       - 5% left in a normal current-model 5-hour window,
+       - 0% left in a normal current-model 5-hour window,
        - 0% left in a Spark Codex 5-hour window, or
-       - 15% left in the current weekly/main window,
+       - 0% left in the current weekly/main window,
          plus any model-specific weekly safety buffer
      then it terminates the parent shell running the loop and exits without
      starting a new Codex run, unless fallback handoff is enabled.
@@ -172,7 +172,7 @@ Important:
     treated as usable quota metadata instead of a conflict.
   - Spark Codex is allowed to drain its current-model 5-hour bucket to
     0% left; weekly/main capacity still stops at
-    15% left plus any model-specific weekly safety
+    0% left plus any model-specific weekly safety
     buffer.
   - For pre-run quota stops on an already-dirty worktree, the wrapper skips the
     normal backend fallback child and records the incident instead of spending a
@@ -442,8 +442,8 @@ Environment overrides:
   UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE Default: delete
   UPKEEPER_PRECONTACT_BACKUP_ENABLED Default: 1
   UPKEEPER_PRECONTACT_BACKUP_REQUIRED Default: 1
-  UPKEEPER_PRECONTACT_BACKUP_MODE Default: auto
-  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED Default: 0
+  UPKEEPER_PRECONTACT_BACKUP_MODE Default: age
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED Default: 1
   UPKEEPER_PRECONTACT_BACKUP_ROOT Default: ${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/precontact-vault
   UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE Default: 20
   UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT Default: empty
@@ -774,8 +774,8 @@ prompts, backup log lines, or Lattice preselect evidence.
   `previous_run.anomaly`, `disk.preflight`, and `--MARK--` lines are primary
   evidence for follow-up self-repair.
 - If a startup anomaly gate is active and the final response omits the required
-  raw-line `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=none` or
-  `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=listed`
+  raw-line `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=none log_sha256=<64-hex>` or
+  `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=listed log_sha256=<64-hex>`
   acknowledgment, the wrapper logs `startup_anomaly.gate_unresolved`; the next
   startup scan treats that marker and the runtime gate state file as another
   anomaly and forces the next cycle back onto the Upkeeper suite. Agents must

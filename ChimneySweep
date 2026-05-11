@@ -265,6 +265,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 
 skip_labels = {item.strip().lower() for item in sys.argv[1].split(",") if item.strip()}
 
@@ -299,6 +300,18 @@ def issue_class(issue):
     if "bug" in names or re.match(r"^(critical|high|medium-high|medium|low|bug)[: ]", lower_title):
         return "bug"
     return "other"
+
+
+def normalize_issue_timestamp(raw):
+    value = str(raw or "").strip()
+    if not value:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if value.endswith("Z"):
+        value = f"{value[:-1]}+00:00"
+    try:
+        return datetime.fromisoformat(value).astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 
 def severity_rank(issue):
@@ -343,11 +356,11 @@ def containment_rank(issue):
 
 
 def updated(issue):
-    return str(issue.get("updatedAt") or issue.get("createdAt") or "")
+    return normalize_issue_timestamp(issue.get("updatedAt") or issue.get("createdAt"))
 
 
 def created(issue):
-    return str(issue.get("createdAt") or "")
+    return normalize_issue_timestamp(issue.get("createdAt"))
 
 
 def number(issue):
@@ -414,8 +427,8 @@ print(
             "labels": ",".join(label.get("name", "") for label in selected.get("labels", []) if label.get("name")),
             "class": issue_class(selected),
             "selection_basis": basis,
-            "created_at": created(selected),
-            "updated_at": updated(selected),
+            "created_at": created(selected).isoformat(),
+            "updated_at": updated(selected).isoformat(),
             "open_count": len(issues),
             "candidate_count": len(candidates),
         }

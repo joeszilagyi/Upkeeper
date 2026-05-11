@@ -43,6 +43,18 @@ process_start_fingerprint() {
   printf 'proc_start_ticks=unknown'
 }
 
+generate_fallback_chain_token() {
+  local token
+  if [[ -r /dev/urandom ]]; then
+    token="$(od -An -N 24 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+    if [[ "${#token}" -eq 48 ]]; then
+      printf '%s' "$token"
+      return 0
+    fi
+  fi
+  printf '%s' "fallback-${CYCLE_ID:-unknown}-$$-$(date '+%s%N' 2>/dev/null || date '+%s')"
+}
+
 terminal_mode() {
   local raw="${CODEX_TERMINAL_VERBOSITY:-basic}"
   raw="${raw,,}"
@@ -220,18 +232,6 @@ if not name or name in {".", ".."}:
     fail("invalid_log_filename")
 
 try:
-    parent_stat = os.lstat(parent)
-except FileNotFoundError:
-    fail("log_parent_missing")
-except OSError as exc:
-    fail(f"log_parent_stat_failed errno={exc.errno}")
-
-if stat.S_ISLNK(parent_stat.st_mode):
-    fail("log_parent_symlink")
-if not stat.S_ISDIR(parent_stat.st_mode):
-    fail(f"log_parent_not_directory mode={mode_text(parent_stat.st_mode)}")
-
-try:
     path_stat = os.lstat(path_raw)
 except FileNotFoundError:
     path_stat = None
@@ -252,11 +252,39 @@ dir_flags = os.O_RDONLY
 for attr in ("O_DIRECTORY", "O_CLOEXEC", "O_NOFOLLOW"):
     dir_flags |= getattr(os, attr, 0)
 
+
+def open_log_parent(raw_parent):
+    if raw_parent in ("", "."):
+        return os.open(".", dir_flags)
+
+    if os.path.isabs(raw_parent):
+        fd = os.open(os.path.sep, dir_flags)
+        parts = raw_parent.lstrip(os.path.sep).split(os.path.sep)
+    else:
+        fd = os.open(".", dir_flags)
+        parts = raw_parent.split(os.path.sep)
+
+    for part in parts:
+        if not part or part == ".":
+            continue
+        try:
+            next_fd = os.open(part, dir_flags, dir_fd=fd)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                fail("log_parent_symlink")
+            if exc.errno == errno.ENOENT:
+                fail("log_parent_missing")
+            if exc.errno == errno.ENOTDIR:
+                fail("log_parent_not_directory")
+            fail(f"log_parent_open_failed errno={exc.errno}")
+        os.close(fd)
+        fd = next_fd
+
+    return fd
+
 try:
-    parent_fd = os.open(parent, dir_flags)
+    parent_fd = open_log_parent(parent)
 except OSError as exc:
-    if exc.errno == errno.ELOOP:
-        fail("log_parent_symlink")
     fail(f"log_parent_open_failed errno={exc.errno}")
 
 file_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND

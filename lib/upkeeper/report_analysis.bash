@@ -532,24 +532,74 @@ terminal_emit_review_finale() {
 current_cycle_log_review_present() {
   local last_message_file="$1"
   [[ -f "$last_message_file" ]] || return 1
-  python3 - "$last_message_file" "$CYCLE_ID" <<'PY'
+  python3 - "$last_message_file" "$CYCLE_ID" "$LOG_FILE" "$STARTUP_ANOMALY_REASONS" <<'PY'
 import re
 import sys
+import hashlib
+
 
 try:
     text = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read()
+    log_path = sys.argv[3]
+    current_cycle = sys.argv[2]
+    reasons = sys.argv[4]
 except OSError:
     raise SystemExit(1)
-current_cycle = sys.argv[2]
 
-for raw_line in text.splitlines():
-    line = raw_line.strip()
+anomalies_expectation = "none"
+if reasons and reasons != "unknown":
+    anomalies_expectation = "listed"
+
+cycle_lines = []
+try:
+    with open(log_path, "r", encoding="utf-8", errors="replace") as log_file:
+        for line in log_file:
+            if re.search(rf"\bcycle={re.escape(current_cycle)}\b", line):
+                cycle_lines.append(line)
+except OSError:
+    raise SystemExit(1)
+if not cycle_lines:
+    raise SystemExit(1)
+
+cycle_log_sha = hashlib.sha256("".join(cycle_lines).encode("utf-8", "surrogateescape")).hexdigest()
+
+in_code_fence = False
+marker_index = -1
+status_index = -1
+match = None
+pattern = re.compile(r"^UPKEEPER_LOG_REVIEW: CHECKED cycle=([^\s`]+) anomalies=(none|listed) log_sha256=([0-9a-f]{64})$")
+
+for index, raw_line in enumerate(text.splitlines(), start=1):
+    line = raw_line.rstrip("\r\n").strip()
+    if line.startswith("```"):
+        in_code_fence = not in_code_fence
+        continue
+    if in_code_fence:
+        continue
+    if line.startswith("UPKEEPER_STATUS:"):
+        status_index = index
+        continue
     if not line.startswith("UPKEEPER_LOG_REVIEW: CHECKED"):
         continue
-    cycle_match = re.search(r"(?:^|\s)cycle=([^ \t`]+)", line)
-    anomalies_match = re.search(r"(?:^|\s)anomalies=(none|listed)[.;,]?(?:\s|$)", line)
-    if cycle_match and cycle_match.group(1) == current_cycle and anomalies_match:
-        raise SystemExit(0)
+    candidate = pattern.fullmatch(line)
+    if not candidate:
+        raise SystemExit(1)
+    if marker_index != -1:
+        raise SystemExit(1)
+    marker_index = index
+    match = candidate
+
+if marker_index == -1 or not match:
+    raise SystemExit(1)
+if status_index != -1 and marker_index > status_index:
+    raise SystemExit(1)
+
+if (
+    match.group(1) == current_cycle
+    and match.group(2) == anomalies_expectation
+    and match.group(3) == cycle_log_sha
+):
+    raise SystemExit(0)
 
 raise SystemExit(1)
 PY
@@ -564,6 +614,11 @@ record_startup_anomaly_gate_review() {
   if [[ "$STARTUP_ANOMALY_GATE_CHANGED_PATH_VIOLATION" == "1" ]]; then
     log_line "WARN" "startup_anomaly.gate_unresolved reason=changed_path_violation reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
     if ! write_startup_anomaly_gate_state "unresolved" "changed_path_violation"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
+  elif startup_anomaly_gate_has_unresolved_state "$STARTUP_ANOMALY_REASONS"; then
+    log_line "WARN" "startup_anomaly.gate_unresolved reason=unresolved_startup_anomaly_state reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    if ! write_startup_anomaly_gate_state "unresolved" "unresolved_startup_anomaly_state"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
   elif current_cycle_log_review_present "$last_message_file"; then

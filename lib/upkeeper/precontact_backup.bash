@@ -195,6 +195,7 @@ PY
 
 precontact_backup_validate_root() {
   local raw_root="${UPKEEPER_PRECONTACT_BACKUP_ROOT:-}"
+  local repo_root="${1:-}"
   local resolved_root resolved_repo
 
   PRECONTACT_BACKUP_RESOLVED_ROOT=""
@@ -202,12 +203,16 @@ precontact_backup_validate_root() {
     precontact_backup_set_reason "backup_root_empty"
     return 1
   fi
+  if [[ -z "$repo_root" ]]; then
+    precontact_backup_set_reason "repo_root_required"
+    return 1
+  fi
 
   if ! resolved_root="$(precontact_backup_realpath "$raw_root")"; then
     precontact_backup_set_reason "backup_root_unresolvable"
     return 1
   fi
-  if ! resolved_repo="$(precontact_backup_realpath "$ROOT_DIR")"; then
+  if ! resolved_repo="$(precontact_backup_realpath "$repo_root")"; then
     precontact_backup_set_reason "repo_root_unresolvable"
     return 1
   fi
@@ -642,6 +647,11 @@ precontact_backup_selected_target_or_exit() {
   RUN_PRECONTACT_BACKUP_ENCRYPTED=""
   RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND=""
 
+  if ! precontact_backup_validate_target "$rel_path"; then
+    precontact_backup_fail_or_continue "$rel_path" "${PRECONTACT_BACKUP_LAST_REASON:-target_validation_failed}" 0
+    return 0
+  fi
+
   if ! precontact_backup_resolve_mode; then
     precontact_backup_fail_or_continue "$rel_path" "${PRECONTACT_BACKUP_LAST_REASON:-mode_unavailable}" 1
     return 0
@@ -651,12 +661,7 @@ precontact_backup_selected_target_or_exit() {
     log_line "INFO" "precontact_backup.skip reason=disabled required=$(precontact_backup_required && printf 1 || printf 0)"
     return 0
   fi
-
-  if ! precontact_backup_validate_target "$rel_path"; then
-    precontact_backup_fail_or_continue "$rel_path" "${PRECONTACT_BACKUP_LAST_REASON:-target_validation_failed}" 0
-    return 0
-  fi
-  if ! precontact_backup_validate_root; then
+  if ! precontact_backup_validate_root "$ROOT_DIR"; then
     precontact_backup_fail_or_continue "$rel_path" "${PRECONTACT_BACKUP_LAST_REASON:-backup_root_invalid}" 0
     return 0
   fi
@@ -775,21 +780,17 @@ precontact_backup_validate_restore_destination() {
   local repo_root="$1"
   local rel_path="$2"
   local override_path="$3"
-  local allow_absolute="${4:-0}"
 
-  python3 - "$repo_root" "$rel_path" "$override_path" "$allow_absolute" <<'PY'
+  python3 - "$repo_root" "$rel_path" "$override_path" <<'PY'
 from pathlib import Path
 import sys
 
-repo_root, rel_path, override_path, allow_absolute = sys.argv[1:5]
+repo_root, rel_path, override_path = sys.argv[1:4]
 root = Path(repo_root).resolve()
 candidate_text = override_path or rel_path
 candidate = Path(candidate_text)
 if candidate.is_absolute():
-    if allow_absolute != "1":
-        raise SystemExit(2)
-    print(candidate.resolve(strict=False))
-    raise SystemExit(0)
+    raise SystemExit(2)
 parts = candidate.parts
 if not parts or any(part in {"", ".", ".."} for part in parts):
     raise SystemExit(2)
@@ -823,7 +824,6 @@ precontact_backup_restore_by_id() {
   local repo_root="$2"
   local identity_path="${3:-${UPKEEPER_PRECONTACT_BACKUP_AGE_IDENTITY:-}}"
   local restore_to="${4:-}"
-  local allow_absolute="${5:-0}"
   local vault_root sidecars sidecar_count sidecar rel_path content_sha encrypted mode
   local target_abs target_dir tmp_restore artifact payload_tmp restored_sha
 
@@ -836,7 +836,7 @@ precontact_backup_restore_by_id() {
     return 1
   fi
 
-  if ! precontact_backup_validate_root; then
+  if ! precontact_backup_validate_root "$repo_root"; then
     return 1
   fi
   vault_root="$PRECONTACT_BACKUP_RESOLVED_ROOT"
@@ -863,7 +863,7 @@ precontact_backup_restore_by_id() {
   fi
   mode="$(precontact_backup_json_field "$sidecar" "mode")" || mode=""
 
-  if ! target_abs="$(precontact_backup_validate_restore_destination "$repo_root" "$rel_path" "$restore_to" "$allow_absolute")"; then
+  if ! target_abs="$(precontact_backup_validate_restore_destination "$repo_root" "$rel_path" "$restore_to")"; then
     precontact_backup_set_reason "unsafe_restore_destination"
     return 1
   fi

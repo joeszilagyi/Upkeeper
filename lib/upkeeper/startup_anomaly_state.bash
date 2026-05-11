@@ -128,7 +128,7 @@ def normalized_epoch(value, fallback):
     return fallback_epoch, str(fallback_epoch)
 
 
-for path in root.glob("*.state"):
+  for path in root.glob("*.state"):
     fields = {}
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -150,10 +150,53 @@ for path in root.glob("*.state"):
     items.append((created_sort, created, state_file, cycle, run_hash, reason))
 
 for _, created, state_file, cycle, run_hash, reason in sorted(items, reverse=True)[:10]:
-    print(
-        f"previous_cycle={cycle} previous_run_hash={run_hash} "
-        f"reason=startup_anomaly_gate_unresolved_state created_epoch={created} "
-        f"state_file={state_file} state_reason={reason}"
+        print(
+            f"previous_cycle={cycle} previous_run_hash={run_hash} "
+            f"reason=startup_anomaly_gate_unresolved_state created_epoch={created} "
+            f"state_file={state_file} state_reason={reason}"
     )
+PY
+}
+
+startup_anomaly_gate_has_unresolved_state() {
+  local state_dir="$CODEX_STARTUP_ANOMALY_GATE_STATE_DIR"
+  local reasons_csv="$1"
+  local reasons_py
+
+  [[ -d "$state_dir" ]] || return 1
+  [[ -n "$reasons_csv" ]] || reasons_csv="unknown"
+
+  reasons_py="$(printf '%s' "$reasons_csv")"
+  python3 - "$state_dir" "$reasons_py" <<'PY'
+import sys
+from pathlib import Path
+
+
+root = Path(sys.argv[1])
+raw_reasons = (sys.argv[2] or "").strip()
+target_reasons = {token for token in raw_reasons.split(",") if token}
+
+for path in root.glob("*.state"):
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        continue
+    fields = {}
+    for line in lines:
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        fields[key.strip()] = value.strip()
+    if fields.get("status") != "unresolved":
+        continue
+    if not target_reasons:
+        print("1")
+        raise SystemExit(0)
+    reasons = {token for token in str(fields.get("reason", "")).split(",") if token}
+    if reasons.intersection(target_reasons):
+        print("1")
+        raise SystemExit(0)
+
+print("0")
 PY
 }

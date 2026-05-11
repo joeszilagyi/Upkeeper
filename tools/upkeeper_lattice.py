@@ -2728,7 +2728,14 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         )
         cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
         selected_path = normalize_rel_path(selection.get("path", ""))
-        selected_file_id = ensure_file(conn, repo_id, selected_path, source_id=source_id) if selected_path else None
+        selected_file_state = "active"
+        if selected_path:
+            _, selected_file_safety = source_safe_file_stat(root, selected_path)
+            if selected_file_safety:
+                selected_file_state = "missing"
+        selected_file_id = (
+            ensure_file(conn, repo_id, selected_path, state=selected_file_state, source_id=source_id) if selected_path else None
+        )
         mode = selection.get("selection_mode", "unknown")
         gate = selector_priority_gate(mode)
         selected_rank = None

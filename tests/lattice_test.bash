@@ -784,6 +784,27 @@ PY
   assert_sql_value "$quota_count_before" "select count(*) from artifact_refs where artifact_kind='quota_block_marker'"
 }
 
+test_missing_selection_path_stays_missing() {
+  local repo DB
+
+  repo="$TEST_TMP_ROOT/lattice-missing-selection"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/missing-selection-init.out"
+
+  cat >"$TEST_TMP_ROOT/missing-selection.env" <<'EOF'
+path=missing-target.txt
+selection_mode=oldest-mtime
+selection_basis=missing fixture
+EOF
+  lattice record-preselect \
+    --cycle-id cycle-missing \
+    --run-hash hash-missing \
+    --selection-file "$TEST_TMP_ROOT/missing-selection.env" >"$TEST_TMP_ROOT/missing-selection-preselect.out"
+
+  assert_sql_value "missing" "select current_state from files where canonical_path='missing-target.txt'"
+}
+
 test_wrapper_required_policy() {
   local repo rc
 
@@ -1270,6 +1291,7 @@ PY
 
 test_lattice_cli_contracts
 test_no_git_import_and_recovery
+test_missing_selection_path_stays_missing
 test_wrapper_required_policy
 test_unsafe_lattice_db_path_is_rejected_by_default
 test_default_runtime_symlink_db_path_is_rejected

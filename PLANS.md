@@ -3,6 +3,51 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Security Hardening Batch: Fallback Chain Token
+
+Status: in_progress
+
+Goal:
+Bind fallback handoff inheritance to an unguessable child token plus parent lock
+identity so nested fallback cycles cannot be forged through env-only metadata.
+
+Constraints:
+- Keep fallback behavior compatible for normal handoff cases.
+- Preserve the same fallback-stop and screen-fallback invocation paths.
+- Keep token generation local to runtime and avoid command-line persistence.
+
+Files likely touched:
+- `lib/upkeeper/runtime_foundation.bash`
+- `lib/upkeeper/active_lock.bash`
+- `lib/upkeeper/fallback_orchestration.bash`
+- `lib/upkeeper/fallback_screen.bash`
+
+Validation:
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Security Hardening Batch: Lattice DB Safety
+
+Status: in_progress
+
+Goal:
+Close remaining high-severity Lattice filesystem-safety gaps by hardening DB path
+checking consistently before SQLite open across wrapper command surfaces.
+
+Constraints:
+- Preserve `--allow-unsafe-db` escape-hatch semantics.
+- Keep behavior deterministic and fail-closed by default for unsafe DB paths.
+- Keep ordinary command and recovery code paths aligned under the same safety policy.
+- Minimize behavior changes to Lattice path-safety scope.
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `PLANS.md`
+
+Validation:
+- `tools/validate_upkeeper.sh --quick` (or equivalent targeted local checks)
+- `git diff --check`
+
 ## Docs-Only Validation Fast Path
 
 Status: completed

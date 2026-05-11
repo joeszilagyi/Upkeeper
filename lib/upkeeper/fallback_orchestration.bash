@@ -10,6 +10,8 @@ run_fallback_cycle() {
   local child_exit=0
   local source_model="$CODEX_MODEL"
   local bwrap_tmp_detail bwrap_tmp_detail_q
+  local fallback_chain_token
+  fallback_chain_token="$(generate_fallback_chain_token)"
 
   if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
     bwrap_tmp_detail="ok"
@@ -66,6 +68,7 @@ run_fallback_cycle() {
       CODEX_PRIMARY_MODEL_CONTEXT="$source_model" \
       CODEX_FALLBACK_TRIGGER="$trigger" \
       CODEX_PARENT_CYCLE_ID="$CYCLE_ID" \
+      CODEX_FALLBACK_CHAIN_TOKEN="$fallback_chain_token" \
       CODEX_POSTMORTEM_ENABLED=0 \
       CODEX_DISABLE_PARENT_STOP=1 \
       CODEX_GUARDRAIL_STOP_EXIT_CODE=9 \

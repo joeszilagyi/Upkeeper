@@ -46,6 +46,7 @@ launch_screen_fallback_loop() {
   local loop_parent_pid_q loop_parent_comm_q loop_parent_args_q primary_model_q prompt_file_q inline_prompt_q
   local continuous_q max_children_q max_seconds_q
   local review_module review_module_q
+  local fallback_chain_token
 
   screen_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen"
   session_name="upkeeper-${CYCLE_ID//[^A-Za-z0-9]/_}"
@@ -84,6 +85,7 @@ launch_screen_fallback_loop() {
   printf -v loop_parent_comm_q '%q' "$loop_parent_comm"
   printf -v loop_parent_args_q '%q' "$loop_parent_args"
   printf -v primary_model_q '%q' "$CODEX_MODEL"
+  fallback_chain_token="$(generate_fallback_chain_token)"
 
   if [[ -n "$PROMPT_FILE" ]]; then
     printf -v prompt_file_q '%q' "$PROMPT_FILE"
@@ -288,6 +290,7 @@ EOF
   launch_started_at="$(timestamp_now)"
   log_line "INFO" "fallback.screen.launch execution_origin=screen trigger=$trigger session_name=$session_name command=screen_-dmS launch_started_at=$launch_started_at"
   set +e
+  CODEX_FALLBACK_CHAIN_TOKEN="$fallback_chain_token" \
   screen -dmS "$session_name" bash "$runner_script"
   launch_rc=$?
   set -e

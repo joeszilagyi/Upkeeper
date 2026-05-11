@@ -58,7 +58,7 @@ release_active_lock() {
 }
 
 acquire_active_lock_or_exit() {
-  local lock_age_seconds lock_parent owner_pid owner_start owner_boot owner_cycle owner_run_hash state_file state_tmp
+  local lock_age_seconds lock_parent owner_pid owner_start owner_boot owner_cycle owner_run_hash owner_token fallback_inherit_fail state_file state_tmp
   local incomplete_lock_grace_seconds="30"
   if [[ -z "$CODEX_ACTIVE_LOCK_DIR" || "$CODEX_ACTIVE_LOCK_DIR" == "/" ]]; then
     log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=unsafe_lock_path"
@@ -78,8 +78,27 @@ acquire_active_lock_or_exit() {
     owner_boot="$(active_lock_field boot_id || true)"
     owner_cycle="$(active_lock_field cycle_id || true)"
     owner_run_hash="$(active_lock_field run_hash || true)"
+    owner_token="$(active_lock_field fallback_chain_token || true)"
     if process_fingerprint_alive "$owner_pid" "$owner_start" "$owner_boot"; then
-      if [[ "${CODEX_FALLBACK_CHAIN_ACTIVE:-0}" == "1" && "${CODEX_ATTEMPT_ROLE:-}" == "fallback" && -n "${CODEX_PARENT_CYCLE_ID:-}" && "$owner_cycle" == "$CODEX_PARENT_CYCLE_ID" ]]; then
+      if [[ "${CODEX_FALLBACK_CHAIN_ACTIVE:-0}" == "1" && "${CODEX_ATTEMPT_ROLE:-}" == "fallback" ]]; then
+        fallback_inherit_fail=""
+        if [[ -z "${CODEX_PARENT_CYCLE_ID:-}" ]]; then
+          fallback_inherit_fail="missing_parent_cycle"
+        elif [[ -z "${CODEX_FALLBACK_CHAIN_TOKEN:-}" ]]; then
+          fallback_inherit_fail="missing_fallback_chain_token"
+        elif [[ -z "$owner_token" ]]; then
+          fallback_inherit_fail="missing_state_fallback_chain_token"
+        elif [[ "$owner_cycle" != "$CODEX_PARENT_CYCLE_ID" ]]; then
+          fallback_inherit_fail="parent_cycle_mismatch"
+        elif [[ "$owner_token" != "${CODEX_FALLBACK_CHAIN_TOKEN:-}" ]]; then
+          fallback_inherit_fail="fallback_chain_token_mismatch"
+        fi
+
+        if [[ -n "$fallback_inherit_fail" ]]; then
+          log_line "WARN" "active_lock.fallback_inherit_rejected path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} reason=$fallback_inherit_fail child_cycle=$CYCLE_ID"
+          log_line "WARN" "active_lock.held path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=exit reason=$fallback_inherit_fail"
+          finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} requested_parent_cycle=${CODEX_PARENT_CYCLE_ID:-unknown} reason=$fallback_inherit_fail"
+        fi
         log_line "INFO" "active_lock.inherited path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} child_cycle=$CYCLE_ID"
         ACTIVE_LOCK_ACQUIRED="0"
         return 0
@@ -118,6 +137,7 @@ acquire_active_lock_or_exit() {
     printf 'boot_id=%s\n' "$(system_boot_id)"
     printf 'root_dir=%s\n' "$ROOT_DIR"
     printf 'self_path=%s\n' "$SELF_PATH"
+    printf 'fallback_chain_token=%s\n' "${CODEX_FALLBACK_CHAIN_TOKEN:-}"
     printf 'created_epoch=%s\n' "$(date '+%s')"
   } >"$state_tmp"; then
     rm -f -- "$state_tmp" 2>/dev/null || true

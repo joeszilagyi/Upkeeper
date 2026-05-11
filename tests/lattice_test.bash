@@ -1185,6 +1185,57 @@ if not found_event_paths:
 PY
 }
 
+test_clean_touch_uses_mtime_ns() {
+  local repo rc
+
+  repo="$TEST_TMP_ROOT/lattice-clean-touch-ns"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/clean-touch-init.out"
+
+  lattice record-cycle-start \
+    --cycle-id cycle-touch-ns \
+    --run-hash run-touch-ns \
+    --execution-origin primary \
+    --model gpt-5.5 \
+    --effort xhigh \
+    --mode '--sandbox workspace-write' \
+    --config-file Upkeeper.conf \
+    --dirty-path-count 0 \
+    --dry-run 1 >"$TEST_TMP_ROOT/clean-touch-start.out"
+
+  python3 - "$repo/README.md" <<'PY'
+import os
+import sys
+
+path = sys.argv[1]
+stat = os.stat(path)
+os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 250_000_000))
+PY
+
+  lattice record-cycle-finish \
+    --cycle-id cycle-touch-ns \
+    --run-hash run-touch-ns \
+    --wrapper-exit 0 \
+    --finish-reason CLEAN_FINISH \
+    --finish-level INFO \
+    --codex-exec-started 0 \
+    --selected-path "README.md" \
+    --review-outcome REVIEWED_CLEAN >"$TEST_TMP_ROOT/clean-touch-finish.out"
+
+  python3 - "$DB" <<'PY' || fail "clean touch was not detected when only mtime_ns changed"
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+row = conn.execute(
+    "select count(*) from file_events where event_kind='touched_clean' and path='README.md'"
+).fetchone()
+if not row or int(row[0]) < 1:
+    raise AssertionError("expected touched_clean event for same-second mtime_ns change")
+PY
+}
+
 test_lattice_cli_contracts
 test_no_git_import_and_recovery
 test_wrapper_required_policy
@@ -1195,4 +1246,5 @@ test_lattice_jsonl_input_guardrails
 test_export_backup_output_collision
 test_recover_no_backup_first_toggle
 test_review_parser_and_redaction
+test_clean_touch_uses_mtime_ns
 printf 'ok - lattice\n'

@@ -400,6 +400,7 @@ CREATE_TABLE_SQL = [
       head_blob text,
       worktree_hash text,
       mtime_epoch integer,
+      mtime_ns integer,
       size_bytes integer,
       executable integer,
       ignored integer,
@@ -1439,6 +1440,18 @@ def dedupe_git_file_changes(conn: sqlite3.Connection) -> int:
     return duplicate_groups
 
 
+def ensure_file_snapshot_mtime_ns_column(conn: sqlite3.Connection) -> None:
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(file_snapshots)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "mtime_ns" not in columns:
+        try:
+            conn.execute("alter table file_snapshots add column mtime_ns integer")
+        except sqlite3.Error:
+            pass
+
+
 def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
     now = epoch_now()
     with conn:
@@ -1447,6 +1460,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
         deduped_git_change_groups = dedupe_git_file_changes(conn)
         for sql in CREATE_INDEX_SQL:
             conn.execute(sql)
+        ensure_file_snapshot_mtime_ns_column(conn)
         conn.execute("PRAGMA user_version=1")
         conn.execute(
             "insert or replace into schema_meta(key, value) values (?, ?)",
@@ -1982,11 +1996,20 @@ def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
     st, safety_reason = source_safe_file_stat(root, rel_path)
     if st is not None:
         meta["mtime_epoch"] = int(st.st_mtime)
+        meta["mtime_ns"] = int(st.st_mtime_ns)
         meta["size_bytes"] = int(st.st_size)
         meta["executable"] = 1 if st.st_mode & 0o111 else 0
         meta["is_regular"] = 1 if stat.S_ISREG(st.st_mode) else 0
     else:
-        meta.update({"mtime_epoch": None, "size_bytes": None, "executable": None, "is_regular": 0})
+        meta.update(
+            {
+                "mtime_epoch": None,
+                "mtime_ns": None,
+                "size_bytes": None,
+                "executable": None,
+                "is_regular": 0,
+            }
+        )
     meta["source_safety_reason"] = safety_reason
     if safety_reason == "symlink":
         meta["git_status"] = "symlink"
@@ -2026,12 +2049,12 @@ def insert_file_snapshot(
     meta = live_file_metadata(root, rel_path)
     if file_id is None and rel_path:
         file_id = ensure_file(conn, repo_id, rel_path, source_id=source_id)
-    cur = conn.execute(
-        """
+        cur = conn.execute(
+            """
         insert into file_snapshots(
           file_id, repo_id, path, observed_epoch, source_id, git_status, content_state,
-          head_blob, worktree_hash, mtime_epoch, size_bytes, executable, ignored, generated, test_path
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          head_blob, worktree_hash, mtime_epoch, mtime_ns, size_bytes, executable, ignored, generated, test_path
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             file_id,
@@ -2044,6 +2067,7 @@ def insert_file_snapshot(
             meta.get("head_blob"),
             meta.get("worktree_hash"),
             meta.get("mtime_epoch"),
+            meta.get("mtime_ns"),
             meta.get("size_bytes"),
             meta.get("executable"),
             meta.get("ignored"),
@@ -2987,6 +3011,8 @@ def record_selected_file_delta(
     after_hash = after["worktree_hash"]
     before_mtime = before["mtime_epoch"]
     after_mtime = after["mtime_epoch"]
+    before_mtime_ns = before["mtime_ns"]
+    after_mtime_ns = after["mtime_ns"]
     details = {
         "before_snapshot_id": before["snapshot_id"],
         "after_snapshot_id": after["snapshot_id"],
@@ -2994,6 +3020,8 @@ def record_selected_file_delta(
         "after_worktree_hash": after_hash,
         "before_mtime_epoch": before_mtime,
         "after_mtime_epoch": after_mtime,
+        "before_mtime_ns": before_mtime_ns,
+        "after_mtime_ns": after_mtime_ns,
     }
 
     if before_hash and after_hash and before_hash != after_hash:
@@ -3024,6 +3052,17 @@ def record_selected_file_delta(
             conn,
             repo_id,
             "clean_without_touch_evidence",
+            file_id=file_id,
+            cycle_pk=cycle_pk,
+            source_id=source_id,
+            path=path,
+            details=details,
+        )
+    elif before_mtime_ns is not None and after_mtime_ns is not None and int(before_mtime_ns) != int(after_mtime_ns):
+        record_file_event(
+            conn,
+            repo_id,
+            "touched_clean",
             file_id=file_id,
             cycle_pk=cycle_pk,
             source_id=source_id,

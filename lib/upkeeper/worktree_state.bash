@@ -32,6 +32,21 @@ def git(args):
     return subprocess.check_output(["git", "-C", str(root), *args], stderr=subprocess.DEVNULL)
 
 
+def git_text(args):
+    try:
+        return (
+            subprocess.check_output(
+                ["git", "-C", str(root), *args],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode("utf-8", "replace")
+            .strip()
+            or "unknown"
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
 def worktree_hash(rel_path):
     path = root / rel_path
     try:
@@ -48,7 +63,14 @@ def worktree_hash(rel_path):
 
 raw = git(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
 parts = raw.decode("utf-8", "surrogateescape").split("\0")
-items = {}
+items = {
+    "__meta__": {
+        "head": git_text(["rev-parse", "--verify", "HEAD"]),
+        "branch": git_text(["symbolic-ref", "--short", "-q", "HEAD"]),
+        "index_tree": git_text(["write-tree"]),
+        "status_lines": str(len(raw)),
+    }
+}
 i = 0
 while i < len(parts):
     entry = parts[i]
@@ -130,8 +152,20 @@ def allowed(path):
         or any(path.startswith(prefix) for prefix in allowed_prefixes)
     )
 
+before_meta = before.get("__meta__", {})
+after_meta = after.get("__meta__", {})
+for key in sorted(set(before_meta) | set(after_meta)):
+    if before_meta.get(key) == after_meta.get(key):
+        continue
+    print(
+        f"control_state_changed key={key!r} "
+        f"before={before_meta.get(key, 'missing')!r} after={after_meta.get(key, 'missing')!r}"
+    )
+
 
 for path in sorted(set(before) | set(after)):
+    if path == "__meta__":
+        continue
     if allowed(path):
         continue
     if before.get(path) == after.get(path):

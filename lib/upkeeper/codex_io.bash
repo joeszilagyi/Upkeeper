@@ -619,6 +619,18 @@ upkeeper_source_mutation_fingerprint() {
     git diff --cached --no-ext-diff --binary --
     printf '\nstatus\n'
     git status --porcelain=v1 --untracked-files=all
+    printf '\nHEAD\n'
+    if ! git rev-parse --verify HEAD 2>/dev/null; then
+      printf 'unknown'
+    fi
+    printf '\nbranch\n'
+    if ! git symbolic-ref --short -q HEAD 2>/dev/null; then
+      printf 'detached_or_missing'
+    fi
+    printf '\nindex-tree\n'
+    if ! git write-tree 2>/dev/null; then
+      printf 'unknown'
+    fi
   } 2>/dev/null | git hash-object --stdin
 }
 

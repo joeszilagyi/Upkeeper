@@ -533,16 +533,15 @@ current_cycle_log_review_present() {
   local last_message_file="$1"
   [[ -f "$last_message_file" ]] || return 1
   python3 - "$last_message_file" "$CYCLE_ID" "$LOG_FILE" "$STARTUP_ANOMALY_REASONS" <<'PY'
+import hashlib
 import re
 import sys
-import hashlib
-
 
 try:
-    text = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read()
-    log_path = sys.argv[3]
     current_cycle = sys.argv[2]
+    log_path = sys.argv[3]
     reasons = sys.argv[4]
+    text = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read()
 except OSError:
     raise SystemExit(1)
 
@@ -550,18 +549,36 @@ anomalies_expectation = "none"
 if reasons and reasons != "unknown":
     anomalies_expectation = "listed"
 
-cycle_lines = []
+cycle_pattern = re.compile(r"\bcycle={}\b".format(re.escape(current_cycle)))
+cycle_log_lines = []
+cycle_start_seen = False
+cycle_exit_seen = False
+run_start_seen = False
+run_finish_seen = False
+
 try:
     with open(log_path, "r", encoding="utf-8", errors="replace") as log_file:
         for line in log_file:
-            if re.search(rf"\bcycle={re.escape(current_cycle)}\b", line):
-                cycle_lines.append(line)
+            if not cycle_pattern.search(line):
+                continue
+            cycle_log_lines.append(line)
+            if "cycle.start" in line:
+                cycle_start_seen = True
+            if "cycle.exit" in line:
+                cycle_exit_seen = True
+            if "run.start" in line:
+                run_start_seen = True
+            if "run.finish" in line:
+                run_finish_seen = True
 except OSError:
     raise SystemExit(1)
-if not cycle_lines:
+
+if not cycle_log_lines:
+    raise SystemExit(1)
+if not (cycle_start_seen and cycle_exit_seen and run_start_seen and run_finish_seen):
     raise SystemExit(1)
 
-cycle_log_sha = hashlib.sha256("".join(cycle_lines).encode("utf-8", "surrogateescape")).hexdigest()
+cycle_log_sha = hashlib.sha256("".join(cycle_log_lines).encode("utf-8", "surrogateescape")).hexdigest()
 
 in_code_fence = False
 marker_index = -1
@@ -576,14 +593,15 @@ for index, raw_line in enumerate(text.splitlines(), start=1):
         continue
     if in_code_fence:
         continue
-    if line.startswith("UPKEEPER_STATUS:"):
-        if re.search(rf"\bcycle={re.escape(current_cycle)}\b", line):
-            status_index = index
+    if line.startswith("UPKEEPER_STATUS:") and cycle_pattern.search(line):
+        status_index = index
         continue
     if not line.startswith("UPKEEPER_LOG_REVIEW: CHECKED"):
         continue
     candidate = pattern.fullmatch(line)
     if not candidate:
+        raise SystemExit(1)
+    if candidate.group(1) != current_cycle:
         raise SystemExit(1)
     if marker_index != -1:
         raise SystemExit(1)
@@ -606,6 +624,50 @@ raise SystemExit(1)
 PY
 }
 
+startup_anomaly_cycle_review_evidence_present() {
+  local log_path="$1"
+  local current_cycle="$2"
+  [[ -f "$log_path" ]] || return 1
+
+  python3 - "$log_path" "$current_cycle" <<'PY'
+import re
+import sys
+
+log_path = sys.argv[1]
+current_cycle = sys.argv[2]
+cycle_pattern = re.compile(r"\bcycle={}\b".format(re.escape(current_cycle)))
+cycle_line_seen = False
+cycle_start_seen = False
+cycle_exit_seen = False
+run_start_seen = False
+run_finish_seen = False
+
+try:
+    with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not cycle_pattern.search(line):
+                continue
+            cycle_line_seen = True
+            if "cycle.start" in line:
+                cycle_start_seen = True
+            if "cycle.exit" in line:
+                cycle_exit_seen = True
+            if "run.start" in line:
+                run_start_seen = True
+            if "run.finish" in line:
+                run_finish_seen = True
+except OSError:
+    raise SystemExit(1)
+
+if not cycle_line_seen:
+    raise SystemExit(1)
+if not (cycle_start_seen and cycle_exit_seen and run_start_seen and run_finish_seen):
+    raise SystemExit(1)
+
+raise SystemExit(0)
+PY
+}
+
 record_startup_anomaly_gate_review() {
   local last_message_file="$1"
   local status_marker_value="${2:-missing}"
@@ -622,15 +684,27 @@ record_startup_anomaly_gate_review() {
     if ! write_startup_anomaly_gate_state "unresolved" "unresolved_startup_anomaly_state"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
-  elif current_cycle_log_review_present "$last_message_file"; then
+  elif [[ "$codex_exit_value" != "0" ]]; then
+    log_line "WARN" "startup_anomaly.gate_unresolved reason=nonzero_codex_exit reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    if ! write_startup_anomaly_gate_state "unresolved" "nonzero_codex_exit"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
+  elif startup_anomaly_cycle_review_evidence_present "$LOG_FILE" "$CYCLE_ID" && current_cycle_log_review_present "$last_message_file"; then
     STARTUP_ANOMALY_GATE_RESOLVED="1"
     if ! write_startup_anomaly_gate_state "resolved" "log_review_ack_checked"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
     mark_startup_anomaly_gate_states_resolved
     log_line "INFO" "startup_anomaly.gate_resolved status=checked reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value"
+  elif startup_anomaly_cycle_review_evidence_present "$LOG_FILE" "$CYCLE_ID"; then
+    STARTUP_ANOMALY_GATE_RESOLVED="1"
+    if ! write_startup_anomaly_gate_state "resolved" "log_review_evidence_only"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
+    mark_startup_anomaly_gate_states_resolved
+    log_line "INFO" "startup_anomaly.gate_resolved status=review_evidence_only reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value"
   else
-    log_line "WARN" "startup_anomaly.gate_unresolved reason=missing_current_cycle_log_review_ack reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    log_line "WARN" "startup_anomaly.gate_unresolved reason=missing_current_cycle_log_review_evidence reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
     if ! write_startup_anomaly_gate_state "unresolved" "missing_current_cycle_log_review_ack"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi

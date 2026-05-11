@@ -711,6 +711,53 @@ conn.execute(
     "insert into files(repo_id, canonical_path, current_path, current_state, first_seen_epoch, last_seen_epoch) values(?, ?, ?, ?, ?, ?)",
     (other_repo_id, "foreign_repo_file.txt", "foreign_repo_file.txt", "active", now, now),
 )
+foreign_file_id = conn.execute(
+    "select file_id from files where repo_id=? and canonical_path=?",
+    (other_repo_id, "foreign_repo_file.txt"),
+).fetchone()[0]
+conn.execute(
+    "insert into file_paths(file_id, path, first_seen_epoch, last_seen_epoch) values (?, ?, ?, ?)",
+    (foreign_file_id, "foreign_repo_file.txt", now, now),
+)
+cur = conn.execute(
+    "insert into worktree_snapshots(repo_id, cycle_pk, snapshot_kind, observed_epoch, source_id) values (?, ?, ?, ?, ?)",
+    (other_repo_id, None, "before_codex", now, None),
+)
+foreign_snapshot_id = int(cur.lastrowid)
+conn.execute(
+    "insert into worktree_snapshot_paths(worktree_snapshot_id, file_id, path, status, old_path, head_blob, worktree_hash, size_bytes, mtime_epoch) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    (foreign_snapshot_id, foreign_file_id, "foreign_repo_file.txt", "clean", None, None, None, 0, now),
+)
+foreign_selection_run_id = int(
+    conn.execute(
+        "insert into selection_runs(repo_id, selector_version, source_safe_boundary_version, mode_requested, mode_effective, priority_gate, generated_epoch, selected_file_id, selected_path) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            other_repo_id,
+            "help_selection.bash/v1",
+            "default-review/v1",
+            "oldest-mtime",
+            "oldest-mtime",
+            "selected",
+            now,
+            foreign_file_id,
+            "foreign_repo_file.txt",
+        ),
+    ).lastrowid
+)
+conn.execute(
+    "insert into selection_candidates(selection_run_id, file_id, path, candidate_state, rank, git_status, content_state) values (?, ?, ?, ?, ?, ?, ?)",
+    (foreign_selection_run_id, foreign_file_id, "foreign_repo_file.txt", "excluded", 1, "untracked", "missing"),
+)
+foreign_entry_id = int(
+    conn.execute(
+        "insert into change_log_entries(repo_id, version, entry_date, item_number, source_path, source_line, text) values (?, ?, ?, ?, ?, ?, ?)",
+        (other_repo_id, "0.1.0", "2026-01-01", 1, "docs/README.md", 1, "foreign entry"),
+    ).lastrowid
+)
+conn.execute(
+    "insert into change_log_file_refs(change_log_entry_id, file_id, path, confidence) values (?, ?, ?, ?)",
+    (foreign_entry_id, foreign_file_id, "foreign_repo_file.txt", "explicit_path"),
+)
 conn.commit()
 PY
   lattice export-jsonl --output "$TEST_TMP_ROOT/restricted-export.jsonl" >$TEST_TMP_ROOT/export-repo-scoped.out
@@ -719,6 +766,10 @@ import json, sys
 for line in open(sys.argv[1], encoding="utf-8"):
     row = json.loads(line)
     payload = row.get("payload", {})
+    row_type = row.get("row_type")
+    if row_type in {"file_paths", "worktree_snapshot_paths", "selection_candidates", "change_log_file_refs", "file_pass_rollups", "file_fragility_rollups", "file_git_churn_rollups", "file_selection_rollups", "file_failure_rollups"}:
+        if payload.get("path") == "foreign_repo_file.txt" or payload.get("canonical_path") == "foreign_repo_file.txt":
+            raise AssertionError(f"cross-repo row leaked into export: {row_type}")
     if row.get("row_type") == "files" and payload.get("canonical_path") == "foreign_repo_file.txt":
         raise AssertionError("cross-repo file row leaked into export")
 PY

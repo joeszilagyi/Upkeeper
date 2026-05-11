@@ -4120,8 +4120,79 @@ def export_table_rows(
         return []
     pk = table_primary_key(conn, table)
     order = pk or columns[0]
-    if repo_id is not None and "repo_id" in columns:
+    if repo_id is None:
+        return (dict(row) for row in conn.execute(f"select * from {table} order by {order}"))
+    if "repo_id" in columns:
         return (dict(row) for row in conn.execute(f"select * from {table} where repo_id=? order by {order}", (repo_id,)))
+    if table == "file_paths":
+        query = """
+            select file_paths.*
+            from file_paths
+            join files on files.file_id=file_paths.file_id
+            where files.repo_id=?
+            order by file_paths.file_path_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "worktree_snapshot_paths":
+        query = """
+            select worktree_snapshot_paths.*
+            from worktree_snapshot_paths
+            join worktree_snapshots on worktree_snapshots.worktree_snapshot_id=worktree_snapshot_paths.worktree_snapshot_id
+            where worktree_snapshots.repo_id=?
+            order by worktree_snapshot_paths.worktree_snapshot_path_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "selection_candidates":
+        query = """
+            select selection_candidates.*
+            from selection_candidates
+            join selection_runs on selection_runs.selection_run_id=selection_candidates.selection_run_id
+            where selection_runs.repo_id=?
+            order by selection_candidates.selection_candidate_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "pass_run_attributes":
+        query = """
+            select pass_run_attributes.*
+            from pass_run_attributes
+            join file_pass_runs on file_pass_runs.file_pass_run_id=pass_run_attributes.file_pass_run_id
+            where file_pass_runs.repo_id=?
+            order by pass_run_attributes.attribute_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "regression_causes":
+        query = """
+            select regression_causes.*
+            from regression_causes
+            join regression_events on regression_events.regression_id=regression_causes.regression_id
+            where regression_events.repo_id=?
+            order by regression_causes.regression_cause_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "change_log_file_refs":
+        query = """
+            select change_log_file_refs.*
+            from change_log_file_refs
+            join change_log_entries on change_log_entries.change_log_entry_id=change_log_file_refs.change_log_entry_id
+            where change_log_entries.repo_id=?
+            order by change_log_file_refs.change_log_file_ref_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table in {
+        "file_pass_rollups",
+        "file_fragility_rollups",
+        "file_git_churn_rollups",
+        "file_selection_rollups",
+        "file_failure_rollups",
+    }:
+        query = f"""
+            select {table}.*
+            from {table}
+            join files on files.file_id={table}.file_id
+            where files.repo_id=?
+            order by {table}.file_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
     return (dict(row) for row in conn.execute(f"select * from {table} order by {order}"))
 
 

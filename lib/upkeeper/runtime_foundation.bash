@@ -349,20 +349,42 @@ log_line() {
 
 ensure_log_parent() {
   if [[ -n "$LOG_FILE_DIR" && "$LOG_FILE_DIR" != "." ]]; then
-    if [[ -L "$LOG_FILE_DIR" ]]; then
-      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=symlink_parent\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
-      exit 3
-    fi
-    if [[ -e "$LOG_FILE_DIR" && ! -d "$LOG_FILE_DIR" ]]; then
-      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=not_directory\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
-      exit 3
-    fi
     if ! mkdir -p -- "$LOG_FILE_DIR"; then
       printf '%s [ERROR] cycle=%s log.parent_failed path=%s\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
       exit 3
     fi
+
     if [[ -L "$LOG_FILE_DIR" ]]; then
       printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=symlink_parent\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
+      exit 3
+    fi
+    if [[ ! -d "$LOG_FILE_DIR" ]]; then
+      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=not_directory\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
+      exit 3
+    fi
+
+    log_parent_uid="$(stat -Lc '%u' -- "$LOG_FILE_DIR" 2>/dev/null || printf '')"
+    log_parent_nlink="$(stat -Lc '%h' -- "$LOG_FILE_DIR" 2>/dev/null || printf '')"
+    log_parent_mode="$(stat -Lc '%a' -- "$LOG_FILE_DIR" 2>/dev/null || printf '')"
+    if [[ -z "$log_parent_uid" || -z "$log_parent_nlink" || -z "$log_parent_mode" ]]; then
+      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=stat_failed\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
+      exit 3
+    fi
+
+    if [[ "$log_parent_uid" != "$(id -u)" ]]; then
+      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=wrong_owner expected=%s actual=%s\n' \
+        "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" "$(id -u)" "$log_parent_uid" >&2
+      exit 3
+    fi
+
+    if [[ "$log_parent_nlink" != "1" ]]; then
+      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=hardlinked_parent links=%s\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" "$log_parent_nlink" >&2
+      exit 3
+    fi
+
+    if (( (8#$log_parent_mode & 8#022) != 0 )); then
+      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=unsafe_permissions mode=%s\n' \
+        "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" "$log_parent_mode" >&2
       exit 3
     fi
   fi

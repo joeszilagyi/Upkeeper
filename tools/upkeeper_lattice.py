@@ -1252,7 +1252,32 @@ def chmod_private(path: Path, is_dir: bool = False) -> None:
         pass
 
 
-def connect(db_path: Path, journal_mode: str, *, create_parent: bool = False) -> sqlite3.Connection:
+def connect(
+    db_path: Path,
+    journal_mode: str,
+    *,
+    create_parent: bool = False,
+    create_if_missing: bool = False,
+) -> sqlite3.Connection:
+    try:
+        existing = db_path.lstat()
+    except FileNotFoundError:
+        existing = None
+    except OSError as exc:
+        fail(f"DB path not stat-able: {db_path} ({exc})", EXIT_DB_UNAVAILABLE)
+
+    if existing is not None:
+        if stat.S_ISLNK(existing.st_mode):
+            fail(f"DB path is a symlink: {db_path}", EXIT_DB_UNAVAILABLE)
+        if not stat.S_ISREG(existing.st_mode):
+            fail(f"DB path is not regular: {db_path}", EXIT_DB_UNAVAILABLE)
+        if existing.st_uid != os.geteuid():
+            fail(f"DB path owner mismatch: {db_path} expected_uid={os.geteuid()} actual_uid={existing.st_uid}", EXIT_DB_UNAVAILABLE)
+        if getattr(existing, "st_nlink", 1) != 1:
+            fail(f"DB path has multiple links: {db_path} nlink={existing.st_nlink}", EXIT_DB_UNAVAILABLE)
+    elif not create_if_missing:
+        fail(f"DB path missing: {db_path}", EXIT_DB_UNAVAILABLE)
+
     if create_parent:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         chmod_private(db_path.parent, is_dir=True)
@@ -1283,9 +1308,15 @@ def connect_checked(
     *,
     allow_unsafe_db: bool,
     create_parent: bool = False,
+    create_if_missing: bool = False,
 ) -> sqlite3.Connection:
     check_path_safe(root, db_path, journal_mode, allow_unsafe_db)
-    return connect(db_path, journal_mode, create_parent=create_parent)
+    return connect(
+        db_path,
+        journal_mode,
+        create_parent=create_parent,
+        create_if_missing=create_if_missing,
+    )
 
 
 def table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
@@ -2129,7 +2160,14 @@ def command_init(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
     journal_mode = args.journal_mode
-    conn = connect_checked(root, db_path, journal_mode, allow_unsafe_db=args.allow_unsafe_db, create_parent=True)
+    conn = connect_checked(
+        root,
+        db_path,
+        journal_mode,
+        allow_unsafe_db=args.allow_unsafe_db,
+        create_parent=True,
+        create_if_missing=True,
+    )
     try:
         init_schema(conn, root)
         chmod_private(db_path)
@@ -4124,7 +4162,8 @@ def create_backup(
     if not backup_path.parent.exists():
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         chmod_private(backup_path.parent, is_dir=True)
-    backup_conn = sqlite3.connect(str(backup_path))
+    backup_journal_mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0] or "delete").strip().lower()
+    backup_conn = connect(backup_path, backup_journal_mode, create_if_missing=True)
     try:
         conn.backup(backup_conn)
     finally:
@@ -4263,7 +4302,14 @@ def recover_artifact_refs(
 def command_recover(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
-    conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db, create_parent=True)
+    conn = connect_checked(
+        root,
+        db_path,
+        args.journal_mode,
+        allow_unsafe_db=args.allow_unsafe_db,
+        create_parent=True,
+        create_if_missing=True,
+    )
     init_schema(conn, root)
     sources = []
     backup_path = None

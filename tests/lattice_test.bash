@@ -761,9 +761,27 @@ EOF
   grep -Fq '"status": "ok"' "$TEST_TMP_ROOT/recover.out" ||
     fail "recover did not report ok from local fixtures"
   DB="$recover_db"
+  local startup_count_before transcript_count_before quota_count_before
+  read -r startup_count_before transcript_count_before quota_count_before < <(
+python3 - "$DB" <<'PY'
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+counts = []
+for kind in ("startup_anomaly_state", "transcript", "quota_block_marker"):
+    row = conn.execute("select count(*) from artifact_refs where artifact_kind=?", (kind,)).fetchone()
+    counts.append(str(row[0] if row else 0))
+print(" ".join(counts))
+PY
+)
   assert_sql_min "1" "select count(*) from artifact_refs where artifact_kind='startup_anomaly_state'"
   assert_sql_min "1" "select count(*) from artifact_refs where artifact_kind='transcript'"
   assert_sql_min "1" "select count(*) from artifact_refs where artifact_kind='quota_block_marker'"
+  "$LATTICE_TOOL" --root "$recover_repo" --db "$recover_db" recover >"$TEST_TMP_ROOT/recover-repeat.out"
+  assert_sql_value "$startup_count_before" "select count(*) from artifact_refs where artifact_kind='startup_anomaly_state'"
+  assert_sql_value "$transcript_count_before" "select count(*) from artifact_refs where artifact_kind='transcript'"
+  assert_sql_value "$quota_count_before" "select count(*) from artifact_refs where artifact_kind='quota_block_marker'"
 }
 
 test_wrapper_required_policy() {

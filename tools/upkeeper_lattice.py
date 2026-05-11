@@ -3090,6 +3090,8 @@ def create_artifact_ref(
     source_id: int | None,
     artifact_kind: str,
     path: str,
+    *,
+    dedupe_identity: bool = False,
     details: Any = None,
 ) -> None:
     if not path:
@@ -3121,6 +3123,43 @@ def create_artifact_ref(
                 os.close(fd)
         except OSError:
             pass
+    observed_epoch = epoch_now()
+    if dedupe_identity:
+        existing = conn.execute(
+            """
+            select artifact_id
+            from artifact_refs
+            where repo_id = ? and artifact_kind = ? and path = ? and coalesce(sha256, '') = coalesce(?, '')
+            """,
+            (repo_id, artifact_kind, path, digest),
+        ).fetchone()
+        if existing is not None:
+            conn.execute(
+                """
+                update artifact_refs
+                set
+                  cycle_pk = coalesce(?, cycle_pk),
+                  source_id = coalesce(?, source_id),
+                  exists_at_record_time = ?,
+                  size_bytes = ?,
+                  observed_epoch = ?,
+                  retained = ?,
+                  details_json = coalesce(?, details_json)
+                where artifact_id = ?
+                """,
+                (
+                    cycle_pk,
+                    source_id,
+                    1 if exists else 0,
+                    size,
+                    observed_epoch,
+                    1 if exists else 0,
+                    json_dumps(details) if details is not None else None,
+                    existing["artifact_id"],
+                ),
+            )
+            return
+
     conn.execute(
         """
         insert into artifact_refs(
@@ -3137,7 +3176,7 @@ def create_artifact_ref(
             1 if exists else 0,
             size,
             digest,
-            epoch_now(),
+            observed_epoch,
             1 if exists else 0,
             json_dumps(details) if details is not None else None,
         ),
@@ -4419,6 +4458,7 @@ def record_recovery_artifact_tree(
             source_id=source_id,
             artifact_kind=artifact_kind,
             path=str(path),
+            dedupe_identity=True,
             details={"recovery_scan_root": str(root_path)},
         )
         count += 1

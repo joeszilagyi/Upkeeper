@@ -1251,7 +1251,7 @@ for manifest_mtime, path in paths:
             continue
         stat_result = text_stat
     if is_candidate:
-        mtime = manifest_mtime if selection_source_used == "manifest" else stat_result.st_mtime
+        mtime = stat_result.st_mtime
         candidates.append((mtime, path))
 
 if startup_anomaly_gate == "1" and startup_force_upkeeper == "1":

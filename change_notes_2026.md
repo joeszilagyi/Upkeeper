@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-11: v1.2.12 changes:
+	1. Hardened startup-anomaly gate resolution to use wrapper-derived current-cycle log evidence (`cycle.start`, `run.start`, `run.finish`, `cycle.exit`) before resolving gate state.
+	2. Removed the model self-attestation-only startup gate resolution path so unresolved or unverifiable gates now stay closed and force a follow-up self-review cycle.
+	3. Expanded source mutation fingerprinting to include refs and recent reflogs, so committed history mutations and ref updates now count as source changes.
+	4. Switched manifest-based candidate ranking to live filesystem mtimes for ordering, preventing model-writable manifest data from steering selection.
+
 2026-05-10: v1.2.11 changes:
 	1. Made `--prompt-pass=all` fail closed when final pass-result coverage is incomplete or unavailable.
 	2. Counted real `UPKEEPER_PASS_RESULT` lines, including common Markdown-decorated forms, for machine pass-coverage enforcement.

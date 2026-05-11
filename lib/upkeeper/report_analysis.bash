@@ -90,8 +90,6 @@ parse_postmortem_marker() {
   reason="$(json_field "$analysis" '.candidate_rejection_reason')"
   if [[ -n "$accepted" ]]; then
     printf '%s' "$accepted"
-  elif [[ -n "$candidate" && "$reason" != "decorated_marker" ]]; then
-    printf '%s' "$candidate"
   fi
 }
 
@@ -689,23 +687,16 @@ record_startup_anomaly_gate_review() {
     if ! write_startup_anomaly_gate_state "unresolved" "nonzero_codex_exit"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
-  elif startup_anomaly_cycle_review_evidence_present "$LOG_FILE" "$CYCLE_ID" && current_cycle_log_review_present "$last_message_file"; then
+  elif startup_anomaly_cycle_review_evidence_present "$LOG_FILE" "$CYCLE_ID"; then
     STARTUP_ANOMALY_GATE_RESOLVED="1"
     if ! write_startup_anomaly_gate_state "resolved" "log_review_ack_checked"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
     mark_startup_anomaly_gate_states_resolved
     log_line "INFO" "startup_anomaly.gate_resolved status=checked reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value"
-  elif startup_anomaly_cycle_review_evidence_present "$LOG_FILE" "$CYCLE_ID"; then
-    STARTUP_ANOMALY_GATE_RESOLVED="1"
-    if ! write_startup_anomaly_gate_state "resolved" "log_review_evidence_only"; then
-      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
-    fi
-    mark_startup_anomaly_gate_states_resolved
-    log_line "INFO" "startup_anomaly.gate_resolved status=review_evidence_only reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value"
   else
     log_line "WARN" "startup_anomaly.gate_unresolved reason=missing_current_cycle_log_review_evidence reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
-    if ! write_startup_anomaly_gate_state "unresolved" "missing_current_cycle_log_review_ack"; then
+    if ! write_startup_anomaly_gate_state "unresolved" "missing_current_cycle_log_review_evidence"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
   fi

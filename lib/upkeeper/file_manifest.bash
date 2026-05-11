@@ -150,6 +150,18 @@ def upkeeper_path_ignored(path: str) -> bool:
     return ignored
 
 
+def compute_files_fingerprint(source: str, files: list[dict[str, object]]) -> str:
+    parts: list[str] = []
+    for entry in files:
+        try:
+            parts.append(
+                f"{entry['rel_path']}\t{entry['mtime_ns']}\t{entry['size']}\t{entry['mode']}"
+            )
+        except KeyError:
+            continue
+    return hashlib.sha256((f"{source}\n" + "\n".join(sorted(parts))).encode("utf-8", "surrogateescape")).hexdigest()
+
+
 def git_paths() -> list[str]:
     raw = git(["ls-files", "-co", "--exclude-standard", "-z"])
     return sorted(path for path in raw.decode("utf-8", "surrogateescape").split("\0") if path)
@@ -219,11 +231,7 @@ def build_payload() -> tuple[dict[str, object], str]:
     ]
     entries.sort(key=lambda item: (int(item["mtime_ns"]), str(item["rel_path"])))
 
-    fingerprint_input = "\n".join(
-        f"{entry['rel_path']}\t{entry['mtime_ns']}\t{entry['size']}\t{entry['mode']}"
-        for entry in entries
-    )
-    fingerprint = hashlib.sha256(f"{source}\n{fingerprint_input}".encode("utf-8", "surrogateescape")).hexdigest()
+    fingerprint = compute_files_fingerprint(source, entries)
 
     git_head = "none"
     git_status_hash = "none"
@@ -248,6 +256,8 @@ def build_payload() -> tuple[dict[str, object], str]:
         "git_status_hash": git_status_hash,
         "files": entries,
     }
+
+    payload["files_fingerprint"] = fingerprint
     return payload, source
 
 
@@ -263,6 +273,34 @@ def existing_payload() -> dict[str, object] | None:
         return None
     if not isinstance(payload.get("files"), list):
         return None
+
+    existing_files = payload.get("files") or []
+    if isinstance(existing_files, list):
+        try:
+            # Verify that existing payload entries still hash back to their own
+            # fingerprint. This protects against model- or attacker-written
+            # manifest tampering while preserving legacy file layout.
+            payload_source = str(payload.get("source", "git"))
+            payload_entries = [
+                {
+                    "rel_path": entry.get("rel_path"),
+                    "mtime_ns": entry.get("mtime_ns"),
+                    "size": entry.get("size"),
+                    "mode": entry.get("mode"),
+                }
+                for entry in existing_files
+                if isinstance(entry, dict)
+                and isinstance(entry.get("rel_path"), str)
+                and isinstance(entry.get("mtime_ns"), (int, float))
+                and isinstance(entry.get("size"), (int, float))
+                and isinstance(entry.get("mode"), str)
+            ]
+            computed = compute_files_fingerprint(payload_source, payload_entries)
+            payload_files_fingerprint = payload.get("files_fingerprint")
+            if isinstance(payload_files_fingerprint, str) and payload_files_fingerprint != computed:
+                return None
+        except Exception:
+            return None
     return payload
 
 
@@ -291,6 +329,8 @@ if mode == "refresh":
     reason = "forced_refresh"
 elif existing is None:
     reason = "missing_or_invalid"
+elif existing.get("files_fingerprint") != current_payload["files_fingerprint"]:
+    reason = "files_fingerprint_changed"
 elif existing.get("fingerprint") != current_payload["fingerprint"]:
     reason = "fingerprint_changed"
 elif max_age_seconds and now - int(existing.get("generated_epoch", 0) or 0) > max_age_seconds:

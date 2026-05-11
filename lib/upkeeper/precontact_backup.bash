@@ -297,30 +297,29 @@ PY
 
 precontact_backup_write_metadata() {
   local output_path="$1"
-  local backup_id="$2"
-  local repo_key="$3"
-  local repo_root_hash="$4"
-  local rel_path="$5"
-  local path_sha="$6"
-  local content_sha="$7"
-  local cycle_id="$8"
-  local cycle_run_hash="$9"
-  local created_utc="${10}"
-  local size_bytes="${11}"
-  local mode="${12}"
-  local mtime="${13}"
-  local selected_git_status="${14}"
-  local selected_worktree_hash="${15}"
-  local selection_basis="${16}"
-  local backup_mode="${17}"
-  local encrypted="${18}"
-  local protected_from_backend="${19}"
-  local derivation_sha="${20}"
-  local selected_content_state="${21}"
-  local selected_head_blob="${22}"
+  local repo_key="$2"
+  local repo_root_hash="$3"
+  local rel_path="$4"
+  local path_sha="$5"
+  local content_sha="$6"
+  local cycle_id="$7"
+  local cycle_run_hash="$8"
+  local created_utc="${9}"
+  local size_bytes="${10}"
+  local mode="${11}"
+  local mtime="${12}"
+  local selected_git_status="${13}"
+  local selected_worktree_hash="${14}"
+  local selection_basis="${15}"
+  local backup_mode="${16}"
+  local encrypted="${17}"
+  local protected_from_backend="${18}"
+  local derivation_sha="${19}"
+  local selected_content_state="${20}"
+  local selected_head_blob="${21}"
 
   python3 - "$output_path" \
-    "$backup_id" "$repo_key" "$repo_root_hash" "$rel_path" "$path_sha" \
+    "$repo_key" "$repo_root_hash" "$rel_path" "$path_sha" \
     "$content_sha" "$cycle_id" "$cycle_run_hash" "$created_utc" \
     "$size_bytes" "$mode" "$mtime" "$selected_git_status" \
     "$selected_worktree_hash" "$selection_basis" "$backup_mode" \
@@ -331,7 +330,6 @@ import sys
 
 (
     output_path,
-    backup_id,
     repo_key,
     repo_root_hash,
     rel_path,
@@ -373,7 +371,6 @@ elif not protected_from_backend:
 
 metadata = {
     "schema_version": 1,
-    "backup_id": backup_id,
     "backup_id_derivation_sha256": derivation_sha,
     "repo_key": repo_key,
     "repo_root_sha256": repo_root_hash,
@@ -590,9 +587,9 @@ for sidecar in sidecars:
             data = json.load(handle)
     except (OSError, json.JSONDecodeError):
         continue
-    backup_id = data.get("backup_id")
-    if not backup_id or sidecar.name != f"{backup_id}.json":
+    if sidecar.suffix != ".json":
         continue
+    backup_id = sidecar.stem
     rows.append((data.get("created_utc", ""), backup_id, sidecar))
 
 deleted = 0
@@ -724,7 +721,7 @@ PY
     precontact_backup_fail_or_continue "$rel_path" "metadata_temp_failed" 0
     return 0
   fi
-  if ! precontact_backup_write_metadata "$metadata_file" "$backup_id" "$repo_key" "$repo_sha" \
+  if ! precontact_backup_write_metadata "$metadata_file" "$repo_key" "$repo_sha" \
     "$rel_path" "$path_sha" "$content_sha" "$CYCLE_ID" "$CYCLE_RUN_HASH" \
     "$created_utc" "$size_bytes" "$mode_text" "$mtime_text" "$selected_git_status" \
     "$selected_worktree_hash" "$selection_basis" "$resolved_mode" "$encrypted" \

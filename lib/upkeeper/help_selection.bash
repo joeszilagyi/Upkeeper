@@ -258,8 +258,8 @@ Prompt behavior:
     UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT is set and age is available;
     otherwise it uses plain local mode unless encrypted backup is required.
     Plain mode is a recovery aid, not a same-user security boundary. Backup
-    logs and prompts include only backup_id, target, sha256, mode, encrypted,
-    protected_from_backend, and path_redacted=1; the vault path is not
+    logs and prompts include mode, encrypted, protected_from_backend, and
+    path_redacted=1; the vault path is not
     prompt-visible. Restore a plain backup by id with:
       tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID
   - A repo-root .upkeeperignore, or the file named by UPKEEPER_IGNORE_FILE,
@@ -1518,7 +1518,7 @@ append_preselected_review_target() {
     printf -- '- Use git_status/content_state/head_blob/worktree_hash above as the pre-run baseline for this file.\n'
     printf -- '- If content_state differs_from_head or git_status is not clean, that dirty content existed before this review; do not reset it or block solely because git diff versus HEAD is non-empty.\n'
     if [[ -n "${RUN_PRECONTACT_BACKUP_ID:-}" ]]; then
-      printf -- '- Pre-contact backup was created by the wrapper before this prompt was compiled: backup_id=%s sha256=%s mode=%s encrypted=%s protected_from_backend=%s.\n' "$RUN_PRECONTACT_BACKUP_ID" "$RUN_PRECONTACT_BACKUP_SHA256" "$RUN_PRECONTACT_BACKUP_MODE" "$RUN_PRECONTACT_BACKUP_ENCRYPTED" "$RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND"
+      printf -- '- Pre-contact backup was created by the wrapper before this prompt was compiled: mode=%s encrypted=%s protected_from_backend=%s.\n' "$RUN_PRECONTACT_BACKUP_MODE" "$RUN_PRECONTACT_BACKUP_ENCRYPTED" "$RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND"
       printf -- '- Do not attempt to access, inspect, prune, restore, modify, or discover backup artifacts. Vault paths are intentionally not prompt-visible.\n'
     fi
     printf -- '- For a clean no-edit pass, record the selected file hash before touch, touch it, then verify the mtime changed and the content hash is unchanged from the pre-touch hash.\n'

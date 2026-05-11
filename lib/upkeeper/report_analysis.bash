@@ -577,7 +577,8 @@ for index, raw_line in enumerate(text.splitlines(), start=1):
     if in_code_fence:
         continue
     if line.startswith("UPKEEPER_STATUS:"):
-        status_index = index
+        if re.search(rf"\bcycle={re.escape(current_cycle)}\b", line):
+            status_index = index
         continue
     if not line.startswith("UPKEEPER_LOG_REVIEW: CHECKED"):
         continue

@@ -2428,10 +2428,46 @@ def worktree_snapshot_path_map(conn: sqlite3.Connection, snapshot_id: int | None
     return {str(row["path"]): row for row in rows}
 
 
+def worktree_snapshot(conn: sqlite3.Connection, snapshot_id: int | None) -> sqlite3.Row | None:
+    if snapshot_id is None:
+        return None
+    return conn.execute(
+        """
+        select *
+          from worktree_snapshots
+         where worktree_snapshot_id=?
+        """,
+        (snapshot_id,),
+    ).fetchone()
+
+
+def changed_paths_from_head(
+    root: Path,
+    before_head: str | None,
+    after_head: str | None,
+) -> set[str]:
+    if not before_head or not after_head:
+        return set()
+    if before_head == "none" or after_head == "none":
+        return set()
+    if before_head == after_head:
+        return set()
+    try:
+        raw = subprocess.check_output(
+            ["git", "-C", str(root), "diff", "--name-only", "-z", before_head, after_head],
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return set()
+    paths = raw.decode("utf-8", "surrogateescape").split("\0")
+    return {path for path in paths if path}
+
+
 def record_worktree_delta_events(
     conn: sqlite3.Connection,
     *,
     repo_id: int,
+    root: Path,
     cycle_pk: int | None,
     source_id: int | None,
     after_snapshot_id: int,
@@ -2442,10 +2478,19 @@ def record_worktree_delta_events(
         cycle_pk=cycle_pk,
         snapshot_kind="before_codex",
     )
+    before_snapshot = worktree_snapshot(conn, before_snapshot_id)
+    after_snapshot = worktree_snapshot(conn, after_snapshot_id)
     before_paths = worktree_snapshot_path_map(conn, before_snapshot_id)
     after_paths = worktree_snapshot_path_map(conn, after_snapshot_id)
+    commit_changed_paths = changed_paths_from_head(
+        root,
+        before_snapshot["git_head_sha"] if before_snapshot else None,
+        after_snapshot["git_head_sha"] if after_snapshot else None,
+    ) if before_snapshot is not None and after_snapshot is not None else set()
 
     all_paths = sorted(set(before_paths) | set(after_paths))
+    all_paths.extend(sorted(commit_changed_paths - set(all_paths)))
+
     for path in all_paths:
         before = before_paths.get(path)
         after = after_paths.get(path)
@@ -2456,6 +2501,8 @@ def record_worktree_delta_events(
         if before and after and before_status == after_status and before_hash == after_hash:
             continue
         file_id = after["file_id"] if after else before["file_id"] if before else None
+        if file_id is None:
+            file_id = ensure_file(conn, repo_id, path, source_id=source_id)
         record_file_event(
             conn,
             repo_id,
@@ -2472,6 +2519,9 @@ def record_worktree_delta_events(
                 "after_status": after_status,
                 "before_worktree_hash": before_hash,
                 "after_worktree_hash": after_hash,
+                "before_worktree_head_sha": before_snapshot["git_head_sha"] if before_snapshot else None,
+                "after_worktree_head_sha": after_snapshot["git_head_sha"] if after_snapshot else None,
+                "head_delta_source": "git diff" if path in commit_changed_paths else None,
             },
         )
 
@@ -2960,6 +3010,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         record_worktree_delta_events(
             conn,
             repo_id=repo_id,
+            root=root,
             cycle_pk=cycle_pk,
             source_id=source_id,
             after_snapshot_id=snapshot_id,

@@ -147,7 +147,7 @@ test_plain_required_backup_succeeds() {
 
   expected_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
   [[ "$(precontact_backup_sha256_file "$bak_file")" == "$expected_sha" ]] || fail "plain backup sha mismatch"
-  backup_id="$(jq -r '.backup_id' "$json_file")"
+  backup_id="$(basename -- "$json_file" .json)"
   derivation_prefix="$(jq -r '.backup_id_derivation_sha256[0:32]' "$json_file")"
   [[ "$backup_id" == *"$derivation_prefix"* ]] || fail "backup id does not derive from recorded derivation sha"
   jq -e \
@@ -312,10 +312,11 @@ EOF
   [[ -n "$RUN_PRECONTACT_BACKUP_ID" ]] || fail "prompt path did not create backup"
   ! grep -Fq "$UPKEEPER_PRECONTACT_BACKUP_ROOT" "$compiled" || fail "compiled prompt leaked vault root"
   ! grep -Fq "$UPKEEPER_PRECONTACT_BACKUP_ROOT" "$LOG_FILE" || fail "log leaked vault root"
-  grep -Fq "backup_id=$RUN_PRECONTACT_BACKUP_ID" "$compiled" || fail "compiled prompt missing backup id"
-  grep -Fq "sha256=$RUN_PRECONTACT_BACKUP_SHA256" "$compiled" || fail "compiled prompt missing content sha"
   grep -Fq "report BLOCKED" "$compiled" || fail "compiled prompt missing BLOCKED rule"
   grep -Fq "Replacement target selection is wrapper-only" "$compiled" || fail "compiled prompt missing wrapper-only replacement rule"
+  grep -Fq "Pre-contact backup was created by the wrapper before this prompt was compiled" "$compiled" || fail "compiled prompt missing backup notice"
+  ! grep -Fq "backup_id=$RUN_PRECONTACT_BACKUP_ID" "$compiled" || fail "compiled prompt leaked backup id"
+  ! grep -Fq "sha256=$RUN_PRECONTACT_BACKUP_SHA256" "$compiled" || fail "compiled prompt leaked backup content hash"
   ! grep -Fq "use the same source-safe selection boundary for the replacement" "$compiled" ||
     fail "compiled prompt still grants model replacement authority"
 }

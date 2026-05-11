@@ -83,14 +83,34 @@ postmortem_marker_analysis_json() {
 
 parse_postmortem_marker() {
   local last_message_file="$1"
-  local analysis accepted candidate reason
-  analysis="$(postmortem_marker_analysis_json "$last_message_file")"
-  accepted="$(json_field "$analysis" '.accepted_marker')"
-  candidate="$(json_field "$analysis" '.candidate_marker')"
-  reason="$(json_field "$analysis" '.candidate_rejection_reason')"
-  if [[ -n "$accepted" ]]; then
-    printf '%s' "$accepted"
-  fi
+  local marker
+  marker="$(python3 - "$last_message_file" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+if not path or not path.strip():
+    sys.exit(0)
+
+allowed = {"REPORT_WRITTEN", "HARDENING_DONE", "BLOCKED"}
+pattern = re.compile(r"^\s*CODEX_POSTMORTEM_STATUS:\s*([A-Z_]+)\s*$")
+try:
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        for raw_line in handle:
+            match = pattern.match(raw_line.rstrip("\r\n"))
+            if not match:
+                continue
+            status = match.group(1)
+            if status in allowed:
+                print(status)
+                sys.exit(0)
+except OSError:
+    pass
+
+sys.exit(0)
+PY
+)"
+  [[ -n "$marker" ]] && printf '%s' "$marker"
 }
 
 review_report_summary_json() {

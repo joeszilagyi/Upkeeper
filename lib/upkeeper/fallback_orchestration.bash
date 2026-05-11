@@ -51,6 +51,8 @@ run_fallback_cycle() {
       done
       if [[ -n "$CODEX_TARGET_FILE" ]]; then
         child_args+=("--target-file=$CODEX_TARGET_FILE")
+      elif [[ -n "$RUN_SELECTED_REVIEW_PATH" ]]; then
+        child_args+=("--target-file=$RUN_SELECTED_REVIEW_PATH")
       fi
       if [[ -n "$CODEX_PROMPT_PASS" ]]; then
         child_args+=("--prompt-pass=$CODEX_PROMPT_PASS")

@@ -631,6 +631,14 @@ upkeeper_source_mutation_fingerprint() {
     if ! git write-tree 2>/dev/null; then
       printf 'unknown'
     fi
+    printf '\nrefs\n'
+    if ! git for-each-ref --sort=refname --format='%(refname) %(objectname)' refs/heads refs/remotes 2>/dev/null; then
+      printf 'unknown'
+    fi
+    printf '\nreflogs\n'
+    if ! git reflog --date=unix --pretty=format:'%H|%gD|%s' --all 2>/dev/null | head -n 80; then
+      printf 'unknown'
+    fi
   } 2>/dev/null | git hash-object --stdin
 }
 
@@ -648,6 +656,7 @@ append_csv_value() {
 
 validate_codex_mode_args_or_exit() {
   local mode_arg
+  local expect_sandbox_value=0
 
   CODEX_MODE_ARGS=()
   if [[ -z "${CODEX_MODE_STRING:-}" ]]; then
@@ -656,6 +665,11 @@ validate_codex_mode_args_or_exit() {
   fi
   read -r -a CODEX_MODE_ARGS <<<"$CODEX_MODE_STRING"
   for mode_arg in "${CODEX_MODE_ARGS[@]}"; do
+    if (( expect_sandbox_value )); then
+      expect_sandbox_value=0
+      continue
+    fi
+
     if [[ "$mode_arg" != --* || "$mode_arg" == ---* ]]; then
       printf 'Upkeeper: invalid CODEX_MODE token %q; expected a Codex option beginning with --\n' "$mode_arg" >&2
       exit 2
@@ -665,8 +679,16 @@ validate_codex_mode_args_or_exit() {
         printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "$mode_arg" >&2
         exit 2
         ;;
+      --sandbox)
+        expect_sandbox_value=1
+        ;;
     esac
   done
+
+  if (( expect_sandbox_value )); then
+    printf 'Upkeeper: invalid CODEX_MODE token --sandbox; expected a sandbox mode argument\n' >&2
+    exit 2
+  fi
 }
 
 set_prompt_pass_or_die() {
@@ -978,10 +1000,11 @@ PY
 
   target_from_issue="$CODEX_ISSUE_FIX_TARGET_FILE"
   if [[ -z "${CODEX_TARGET_FILE:-}" ]]; then
-    if [[ -n "$target_from_issue" ]]; then
+    if [[ "$CODEX_ISSUE_FIX_SELECTED_LABEL" == "explicit" && -n "$target_from_issue" ]]; then
       CODEX_TARGET_FILE="$target_from_issue"
-    else
-      CODEX_TARGET_FILE="Upkeeper"
+      log_line "INFO" "issue_fix.target file_selected_from_explicit_issue number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") target_file=$(shell_quote "$CODEX_TARGET_FILE")"
+    elif [[ -n "$target_from_issue" ]]; then
+      log_line "WARN" "issue_fix.target ignored reason=untrusted_inferred_source selected_label=$(shell_quote "$CODEX_ISSUE_FIX_SELECTED_LABEL") inferred_file=$(shell_quote "$target_from_issue")"
     fi
   fi
 

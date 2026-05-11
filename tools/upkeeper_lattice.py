@@ -1000,11 +1000,12 @@ def validate_lattice_output_path(
     allow_existing: bool = False,
     journal_mode: str = "delete",
     db_path: Path | None = None,
+    allow_outside_runtime: bool = False,
 ) -> Path:
     output = Path(raw_output).expanduser()
     output = output.resolve() if output.is_absolute() else (Path.cwd() / output).resolve()
     runtime_root = (root / "runtime").resolve()
-    if not path_under(output, runtime_root):
+    if not path_under(output, runtime_root) and not allow_outside_runtime:
         fail(f"unsafe output path outside runtime: {output}", EXIT_USAGE)
     if db_path:
         for side_path in db_side_paths(db_path, journal_mode):
@@ -1221,10 +1222,15 @@ def path_safety(root: Path, db_path: Path, journal_mode: str) -> dict[str, Any]:
     unsafe = False
     for path in paths:
         under_runtime = path_under(path, runtime_root)
-        tracked = git_path_tracked(root, path) if path_under(path, root) else False
-        ignored = git_path_ignored(root, path) if path_under(path, root) else False
+        under_root = path_under(path, root)
+        tracked = git_path_tracked(root, path) if under_root else False
+        ignored = git_path_ignored(root, path) if under_root else False
         explicit_ok = under_runtime or ignored
-        item_unsafe = tracked or (path_under(path, root) and not explicit_ok)
+        item_unsafe = (
+            True
+            if not under_root
+            else (tracked or (not explicit_ok))
+        )
         unsafe = unsafe or item_unsafe
         statuses.append(
             {
@@ -3931,6 +3937,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
         allow_existing=args.overwrite,
         journal_mode=args.journal_mode,
         db_path=db_path,
+        allow_outside_runtime=args.output is not None,
     )
     if not output.parent.exists():
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -4152,6 +4159,7 @@ def create_backup(
             allow_existing=allow_overwrite,
             journal_mode=conn.execute("PRAGMA journal_mode").fetchone()[0].strip().lower(),
             db_path=db_path,
+            allow_outside_runtime=True,
         )
     else:
         backup_dir = db_path.parent / "backups"

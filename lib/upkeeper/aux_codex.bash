@@ -156,34 +156,68 @@ run_aux_codex_exec() {
   local last_message_file="$6"
   local session_store_detail session_store_detail_q arg0_tmp_detail arg0_tmp_detail_q bwrap_tmp_detail bwrap_tmp_detail_q
   local first_mode_token first_mode_token_q
+  local expect_sandbox_value=0
 
   local -a aux_mode_args=()
   first_mode_token="${aux_mode_args[0]:-}"
   if [[ -n "${mode_string:-}" ]]; then
     read -r -a aux_mode_args <<<"$mode_string"
     first_mode_token="${aux_mode_args[0]:-}"
-    if [[ "$first_mode_token" != --* ]]; then
+    if [[ "$first_mode_token" != --* || "$first_mode_token" == ---* ]]; then
       first_mode_token_q="$(shell_quote "$first_mode_token")"
       write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "invalid first mode token $first_mode_token_q; expected a Codex option beginning with --" "Codex auxiliary mode is invalid"
       log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=invalid_aux_mode first_token=$first_mode_token_q mode=$(shell_quote "$mode_string")"
       return 87
     fi
     for mode_arg in "${aux_mode_args[@]}"; do
+      if (( expect_sandbox_value )); then
+        expect_sandbox_value=0
+        if [[ "$mode_arg" != workspace-write && "$mode_arg" != read-only ]]; then
+          if [[ "$mode_arg" == danger-full-access || "$mode_arg" == --dangerously-bypass-approvals-and-sandbox ]]; then
+            first_mode_token_q="$(shell_quote --dangerously-bypass-approvals-and-sandbox)"
+            write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "invalid auxiliary mode token $first_mode_token_q; expected a sandboxed mode" "Codex auxiliary mode is invalid"
+            log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=invalid_aux_mode first_token=$first_mode_token_q mode=$(shell_quote "$mode_string")"
+            return 87
+          fi
+
+          first_mode_token_q="$(shell_quote "$mode_arg")"
+          write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "invalid auxiliary mode token $first_mode_token_q; expected a sandbox mode argument" "Codex auxiliary mode is invalid"
+          log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=invalid_aux_mode first_token=$first_mode_token_q mode=$(shell_quote "$mode_string")"
+          return 87
+        fi
+        continue
+      fi
+
       if [[ "$mode_arg" != --* || "$mode_arg" == ---* ]]; then
+        if [[ "$mode_arg" == danger-full-access || "$mode_arg" == --dangerously-bypass-approvals-and-sandbox ]]; then
+          first_mode_token_q="$(shell_quote --dangerously-bypass-approvals-and-sandbox)"
+          write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "invalid auxiliary mode token $first_mode_token_q; expected a sandboxed mode" "Codex auxiliary mode is invalid"
+          log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=invalid_aux_mode first_token=$first_mode_token_q mode=$(shell_quote "$mode_string")"
+          return 87
+        fi
         first_mode_token_q="$(shell_quote "$mode_arg")"
         write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "invalid auxiliary mode token $first_mode_token_q; expected a Codex option beginning with --" "Codex auxiliary mode is invalid"
         log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=invalid_aux_mode first_token=$first_mode_token_q mode=$(shell_quote "$mode_string")"
         return 87
       fi
-      case "$mode_arg" in
+        case "$mode_arg" in
+        --sandbox)
+          expect_sandbox_value=1
+          ;;
         danger-full-access|--dangerously-bypass-approvals-and-sandbox)
-          first_mode_token_q="$(shell_quote "$mode_arg")"
+          first_mode_token_q="$(shell_quote --dangerously-bypass-approvals-and-sandbox)"
           write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "invalid auxiliary mode token $first_mode_token_q; expected a sandboxed mode" "Codex auxiliary mode is invalid"
           log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=invalid_aux_mode first_token=$first_mode_token_q mode=$(shell_quote "$mode_string")"
           return 87
           ;;
       esac
     done
+
+    if (( expect_sandbox_value )); then
+      write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "invalid auxiliary mode token $(shell_quote --sandbox); expected a sandbox mode argument" "Codex auxiliary mode is invalid"
+      log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=invalid_aux_mode first_token=$(shell_quote --sandbox) mode=$(shell_quote "$mode_string")"
+      return 87
+    fi
   fi
 
   log_line "INFO" "$phase_label.start model=$model effort=$effort mode=$mode_string prompt=$prompt_file output=$last_message_file"

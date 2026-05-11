@@ -145,10 +145,11 @@ finally:
     os.close(fd)
 
 PY
-    printf 'probe_write_failed:%s' "$(tr '\n' ' ' <"$err_file")"
-    rm -f -- "$probe_file"
-    rm -f -- "$err_file"
-    return 1
+then
+  printf 'probe_write_failed:%s' "$(tr '\n' ' ' <"$err_file")"
+  rm -f -- "$probe_file"
+  rm -f -- "$err_file"
+  return 1
   fi
 
   if ! rm -f -- "$probe_file" 2>"$err_file"; then

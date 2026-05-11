@@ -926,6 +926,11 @@ precontact_backup_restore_by_id() {
       precontact_backup_set_reason "age_identity_required"
       return 1
     }
+    [[ -r "$identity_path" ]] || {
+      rm -f -- "$tmp_restore"
+      precontact_backup_set_reason "age_identity_unreadable"
+      return 1
+    }
     if ! payload_tmp="$(run_mktemp precontact-restore-payload)"; then
       rm -f -- "$tmp_restore"
       precontact_backup_set_reason "restore_payload_temp_failed"

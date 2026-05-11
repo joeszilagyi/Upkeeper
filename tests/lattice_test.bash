@@ -838,7 +838,25 @@ test_wrapper_required_policy() {
     fail "REQUIRED=1 failure did not record codex_exec_started=0"
 }
 
+test_unsafe_lattice_db_path_is_rejected_by_default() {
+  local repo outside_db rc
+
+  repo="$TEST_TMP_ROOT/lattice-unsafe-db"
+  outside_db="$TEST_TMP_ROOT/lattice-outside.sqlite3"
+  make_repo "$repo"
+
+  set +e
+  "$LATTICE_TOOL" --root "$repo" --db "$outside_db" init >"$TEST_TMP_ROOT/lattice-outside-db.out" 2>"$TEST_TMP_ROOT/lattice-outside-db.err"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 4 ]] || fail "lattice init with outside DB path exited $rc, expected 4"
+  [[ -f "$outside_db" ]] && fail "lattice init created an unsafe outside root db"
+  grep -Fq '"status": "unsafe_db_path"' "$TEST_TMP_ROOT/lattice-outside-db.out" "$TEST_TMP_ROOT/lattice-outside-db.err" ||
+    fail "lattice did not emit unsafe_db_path status"
+}
+
 test_lattice_cli_contracts
 test_no_git_import_and_recovery
 test_wrapper_required_policy
+test_unsafe_lattice_db_path_is_rejected_by_default
 printf 'ok - lattice\n'

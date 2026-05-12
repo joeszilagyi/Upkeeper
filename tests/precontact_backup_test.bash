@@ -132,7 +132,7 @@ json_path_count() {
 
 test_plain_required_backup_succeeds() {
   local repo="$TEST_TMP_ROOT/plain repo"
-  local selection_file json_file bak_file expected_sha derivation_prefix backup_id
+  local selection_file json_file bak_file expected_sha derivation_prefix backup_id expected_path_hash
   make_repo "$repo"
   reset_env "$repo" plain
   selection_file="$TEST_TMP_ROOT/plain-selection.env"
@@ -147,10 +147,13 @@ test_plain_required_backup_succeeds() {
   [[ -s "$bak_file" ]] || fail "plain backup artifact missing"
 
   expected_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
+  expected_path_hash="$(precontact_backup_sha256_text "dir/space file.sh")"
   [[ "$(precontact_backup_sha256_file "$bak_file")" == "$expected_sha" ]] || fail "plain backup sha mismatch"
   backup_id="$(basename -- "$json_file" .json)"
   derivation_prefix="$(jq -r '.backup_id_derivation_sha256[0:32]' "$json_file")"
   [[ "$backup_id" == *"$derivation_prefix"* ]] || fail "backup id does not derive from recorded derivation sha"
+  grep -Fq "precontact_backup.created target_hash=$expected_path_hash" "$LOG_FILE" || fail "created log did not record target hash"
+  ! grep -Fq "target=dir/space file.sh" "$LOG_FILE" || fail "created log leaked selected relative path"
   jq -e \
     --arg rel "dir/space file.sh" \
     --arg sha "$expected_sha" \
@@ -236,7 +239,7 @@ test_age_restore_uses_payload_metadata() {
   local fake_bin="$TEST_TMP_ROOT/fake-age-bin"
   local selection_file json_file age_file restored_sha original_sha sidecar
   local identity_file="$TEST_TMP_ROOT/age-identity.key"
-  local old_path
+  local old_path expected_path_hash
   local record
   make_repo "$repo"
   reset_env "$repo" age_restore
@@ -301,11 +304,14 @@ SH
   [[ -s "$sidecar" ]] || fail "age restore test missing age sidecar"
 
   original_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
+  expected_path_hash="$(precontact_backup_sha256_text "dir/space file.sh")"
   printf 'mutated\n' >"$repo/dir/space file.sh"
   precontact_backup_restore_by_id "$RUN_PRECONTACT_BACKUP_ID" "$repo" "$identity_file" ""
   restored_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
   PATH="$old_path"
   [[ "$restored_sha" == "$original_sha" ]] || fail "age restore did not restore original bytes"
+  grep -Fq "precontact_backup.restore target_hash=$expected_path_hash" "$LOG_FILE" || fail "restore log did not record target hash"
+  ! grep -Fq "precontact_backup.restore target=dir/space file.sh" "$LOG_FILE" || fail "restore log leaked selected relative path"
 
   jq -e 'has("selected_relative_path") | not' "$sidecar" >/dev/null ||
     fail "age sidecar leaked detailed restore metadata"

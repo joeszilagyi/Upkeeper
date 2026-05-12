@@ -705,6 +705,7 @@ precontact_backup_fail_or_continue() {
   local rel_path="$1"
   local reason="$2"
   local unavailable="${3:-0}"
+  local target_hash=""
 
   if [[ "$unavailable" == "1" ]]; then
     log_line "ERROR" "precontact_backup.unavailable reason=$(shell_quote "$reason") required=$(precontact_backup_required && printf 1 || printf 0)"
@@ -712,9 +713,10 @@ precontact_backup_fail_or_continue() {
       finish_cycle 7 PRECONTACT_BACKUP_UNAVAILABLE ERROR "codex_exec_started=0 reason=$(shell_quote "$reason")"
     fi
   else
-    log_line "ERROR" "precontact_backup.failed target=$(shell_quote "$rel_path") reason=$(shell_quote "$reason")"
+    target_hash="$(precontact_backup_sha256_text "$rel_path")"
+    log_line "ERROR" "precontact_backup.failed target_hash=$target_hash reason=$(shell_quote "$reason") path_redacted=1"
     if precontact_backup_required; then
-      finish_cycle 7 PRECONTACT_BACKUP_FAILED ERROR "codex_exec_started=0 target=$(shell_quote "$rel_path") reason=$(shell_quote "$reason")"
+      finish_cycle 7 PRECONTACT_BACKUP_FAILED ERROR "codex_exec_started=0 target_hash=$target_hash reason=$(shell_quote "$reason") path_redacted=1"
     fi
   fi
   return 0
@@ -863,7 +865,7 @@ PY
     RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND="unknown"
   fi
 
-  log_line "INFO" "precontact_backup.created target=$(shell_quote "$rel_path") backup_status=created mode=$resolved_mode encrypted=$RUN_PRECONTACT_BACKUP_ENCRYPTED protected_from_backend=$RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND path_redacted=1"
+  log_line "INFO" "precontact_backup.created target_hash=$path_sha backup_status=created mode=$resolved_mode encrypted=$RUN_PRECONTACT_BACKUP_ENCRYPTED protected_from_backend=$RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND path_redacted=1"
   precontact_backup_prune_for_path "$path_dir"
 }
 
@@ -1083,7 +1085,7 @@ precontact_backup_restore_by_id() {
     precontact_backup_set_reason "restore_rename_failed"
     return 1
   fi
-  precontact_backup_restore_log "INFO" "precontact_backup.restore target=$(shell_quote "$rel_path") path_redacted=1"
+  precontact_backup_restore_log "INFO" "precontact_backup.restore target_hash=$(precontact_backup_sha256_text "$rel_path") path_redacted=1"
 }
 
 precontact_backup_restore_cleanup_tmp() {

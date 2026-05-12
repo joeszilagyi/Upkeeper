@@ -3,6 +3,41 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Private Artifact Umask At Entry
+
+Status: completed
+
+Goal:
+Set a private process umask before config loading or runtime artifact creation
+so filesystem sinks default to owner-only permissions even on permissive host
+umask settings.
+
+Constraints:
+- Apply the change at the main `Upkeeper` entrypoint before other executable
+  statements that may create files or directories.
+- Keep the fix broad and low-risk; do not refactor every individual artifact
+  sink in the same patch.
+- Add deterministic local validation that fails if the entrypoint loses the
+  private umask contract.
+
+Files likely touched:
+- `Upkeeper`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+Completed in this patch:
+- Set `umask 077` at the top of the `Upkeeper` entrypoint before config loading
+  and runtime state preparation.
+- Added quick validation that locks the early-entry private-umask contract in
+  source so permissive-host regressions fail locally.
+
 ## Target-Isolated Write Boundary For Preselected Cycles
 
 Status: completed

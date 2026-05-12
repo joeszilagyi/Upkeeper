@@ -238,6 +238,24 @@ check_dependencies() {
   [[ "$missing_launcher_required" -eq 0 ]] || fail "one or more full-burn launcher dependencies are missing"
 }
 
+check_private_artifact_umask_contract() {
+  log "checking private artifact umask contract"
+  python3 - "$ROOT_DIR/Upkeeper" <<'PY' || fail "Upkeeper does not set umask 077 before other executable statements"
+from pathlib import Path
+import sys
+
+lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+for line in lines:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        continue
+    if stripped == "set -euo pipefail":
+        continue
+    raise SystemExit(0 if stripped == "umask 077" else 1)
+raise SystemExit(1)
+PY
+}
+
 check_syntax() {
   local module
 
@@ -3247,6 +3265,7 @@ run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
 run_check codex_mode_validation check_codex_mode_validation
 run_check public_docs_policy check_public_docs_policy
+run_check private_artifact_umask_contract check_private_artifact_umask_contract
 run_check runtime_format_json_helpers check_runtime_format_json_helpers
 run_check startup_anomaly_state_parser_contract check_startup_anomaly_state_parser_contract
 run_check postmortem_context_marker_classification check_postmortem_context_marker_classification

@@ -16,6 +16,8 @@ set -euo pipefail
 ## things worse, and preserve enough evidence that the next operator or agent
 ## can see what happened without replaying the incident.
 
+umask 077
+
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 ROOT_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 SCRIPT_NAME="$(basename -- "$SCRIPT_SOURCE")"

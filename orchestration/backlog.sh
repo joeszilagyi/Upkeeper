@@ -15,6 +15,7 @@ BACKLOG_CODEX_MODEL="${BACKLOG_CODEX_MODEL:-gpt-5.4}"
 BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-high}"
 BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
 BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-900}"
+BACKLOG_PER_BUG_VALIDATION_MODE="${BACKLOG_PER_BUG_VALIDATION_MODE:-light}"
 
 log() {
   printf 'backlog: %s\n' "$*" >&2
@@ -220,15 +221,38 @@ has_worktree_changes() {
   [[ -n "$(git status --short)" ]]
 }
 
-run_local_validation() {
+run_per_bug_validation() {
+  local validation_start
+
   [[ "${BACKLOG_SKIP_LOCAL_VALIDATION:-0}" == "1" ]] && return 0
 
+  validation_start="$SECONDS"
+  log "per-bug validation: bash syntax"
   bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh
+  log "per-bug validation: diff whitespace"
+  git diff --check
+  log "per-bug validation: complete in $((SECONDS - validation_start))s"
+}
+
+run_batch_validation() {
+  local validation_start
+
+  [[ "${BACKLOG_SKIP_LOCAL_VALIDATION:-0}" == "1" ]] && return 0
+
+  validation_start="$SECONDS"
+  log "batch validation: bash syntax"
+  bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh
+  log "batch validation: unit tests"
   for test_script in tests/*.bash; do
     bash "$test_script"
   done
+  log "batch validation: docs quick checks"
+  tools/check_public_docs.sh --quick
+  log "batch validation: diff whitespace"
   git diff --check
+  log "batch validation: quick validator"
   tools/validate_upkeeper.sh --quick
+  log "batch validation: complete in $((SECONDS - validation_start))s"
 }
 
 commit_and_push_changes() {
@@ -237,8 +261,22 @@ commit_and_push_changes() {
 
   cleanup_ephemeral_artifacts
   has_worktree_changes || return 1
-  run_local_validation
+  case "$BACKLOG_PER_BUG_VALIDATION_MODE" in
+    none)
+      log "per-bug validation: skipped by BACKLOG_PER_BUG_VALIDATION_MODE=none"
+      ;;
+    light)
+      run_per_bug_validation
+      ;;
+    full)
+      run_batch_validation
+      ;;
+    *)
+      fail "unsupported BACKLOG_PER_BUG_VALIDATION_MODE: $BACKLOG_PER_BUG_VALIDATION_MODE"
+      ;;
+  esac
   cleanup_ephemeral_artifacts
+  log "staging tracked changes"
   git add --all
   git diff --cached --check
   if [[ -n "$issue_number" ]]; then
@@ -246,14 +284,18 @@ commit_and_push_changes() {
   else
     message="Apply backlog Upkeeper pass"
   fi
+  log "committing: $message"
   git commit -m "$message"
+  log "pushing branch updates"
   git push
   return 0
 }
 
 wait_for_pr_checks() {
   local pr_number="$1"
+  log "waiting for PR #$pr_number checks"
   if timeout "$BACKLOG_PR_CHECK_TIMEOUT_SECONDS" gh pr checks "$pr_number" --watch; then
+    log "PR #$pr_number checks passed"
     return 0
   fi
 
@@ -269,6 +311,7 @@ merge_and_clean() {
   local pr_number="$1"
   local branch="$2"
 
+  run_batch_validation
   wait_for_pr_checks "$pr_number" || {
     local status="$?"
     [[ "$status" -eq 2 ]] && return 2
@@ -315,14 +358,6 @@ main() {
     exit 0
   fi
 
-  if [[ "$count" -gt 0 ]]; then
-    wait_for_pr_checks "$pr_number" || {
-      local status="$?"
-      [[ "$status" -eq 2 ]] && exit 0
-      exit "$status"
-    }
-  fi
-
   issue_info="$(selected_issue "$pr_number")"
   issue_number="$(awk -F '\t' '{print $1}' <<<"$issue_info")"
 
@@ -332,11 +367,6 @@ main() {
     if [[ -n "$issue_number" ]]; then
       append_pr_fix_line "$pr_number" "$issue_number"
     fi
-    wait_for_pr_checks "$pr_number" || {
-      local status="$?"
-      [[ "$status" -eq 2 ]] && exit 0
-      exit "$status"
-    }
   else
     log "Upkeeper produced no tracked changes"
   fi

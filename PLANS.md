@@ -1609,6 +1609,33 @@ Rollout notes:
 - eligible stored obligation targets should keep their existing `--target-file`
 - poisoned runtime/.git-style obligation targets should remap to the launcher control-plane file instead of reopening the same loop
 
+## Backlog Wrench Batch Throughput Rebalance
+
+Status: in progress
+
+Goal:
+- make `orchestration/backlog.sh` chew through backlog issues faster by moving heavy validation and CI waiting from every single bug to the batch boundary
+- preserve clean-trunk quality by keeping the strong validation and PR merge gate before the batch merges
+
+Constraints:
+- keep one shared backlog PR / branch model
+- keep per-bug runs cheap enough to stack fixes instead of serializing on GitHub CI
+- preserve operator-visible progress logging so long local validation windows do not look like silent hangs
+- keep the current `#319` dirty-state fingerprint fix on the backlog branch while changing the wrench behavior around it
+
+Files likely touched:
+- `PLANS.md`
+- `orchestration/backlog.sh`
+- `change_notes_2026.md`
+- `lib/upkeeper/codex_io.bash`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
 ## Allowlisted CODEX_MODE Tuple Parsing
 
 Status: completed

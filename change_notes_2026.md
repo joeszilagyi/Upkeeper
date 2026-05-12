@@ -615,3 +615,5 @@ Reconstructed pre-1.0 history:
 - Existing open backlog PRs with recorded fixes now wait only up to a bounded interval for GitHub checks to settle before the next loop iteration, instead of hanging indefinitely on stale aggregate check states.
 - A clean backlog branch now gates the next issue on the current PR checks completing, so the loop does not spend model cycles starting a new fix while the previous fix is still waiting on CI.
 - Issue text that clearly describes bug-report-only dirty-state fingerprinting now pins directly to `lib/upkeeper/codex_io.bash` so those issue runs do not burn a full selected-file cycle on an unrelated rotation target.
+- The backlog launcher now logs each local validation phase plus the commit/push/check-wait transitions so long post-fix validation windows read as active progress instead of a silent apparent hang.
+- The backlog launcher now defaults to light per-bug validation (`bash -n` plus `git diff --check`) and defers the full unit-test, docs, quick-validator, and PR-check gate to the batch-merge boundary, so an open backlog PR can stack fixes faster instead of serializing on full validation and CI after every issue.

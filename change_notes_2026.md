@@ -6,6 +6,10 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-12: private artifact umask at entry:
+	1. Upkeeper now sets `umask 077` at process entry before config loading or runtime artifact creation, so logs, transcripts, queue markers, postmortem files, locks, and similar local state default to owner-only permissions even on permissive host umask settings.
+	2. Added quick validation that fails if the entrypoint loses this early private-umask contract.
+
 2026-05-11: bug-report-only draft-gating changes:
 	1. Changed `--bug-report-only` from a soft “file an issue if possible” prompt into a wrapper-owned local draft workflow, with issue-ready bug reports now expected through a final-message draft block that Upkeeper saves under runtime-local bug-report drafts.
 	2. Added a bug-report-only `gh` gate inside the Genie Protocol broker so backend Codex can still use read-only GitHub inspection, but `gh issue create` stays blocked unless `UPKEEPER_ALLOW_GH_ISSUE_WRITE=1`.

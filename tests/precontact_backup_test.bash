@@ -514,6 +514,34 @@ test_plain_restore_and_unsafe_id() {
     fail "absolute restore destination failed as $PRECONTACT_BACKUP_LAST_REASON"
 }
 
+test_restore_temp_stays_private_until_rename() {
+  local repo="$TEST_TMP_ROOT/restore-mode repo"
+  local selection_file backup_id tmp_mode final_mode
+  make_repo "$repo"
+  reset_env "$repo" restore-mode
+  selection_file="$TEST_TMP_ROOT/restore-mode-selection.env"
+  write_selection_file "dir/space file.sh" "$selection_file"
+  chmod 644 "$repo/dir/space file.sh"
+  precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
+  backup_id="$RUN_PRECONTACT_BACKUP_ID"
+
+  printf 'mutated\n' >"$repo/dir/space file.sh"
+  mv() {
+    local source_path="$1"
+    if [[ "$source_path" == "--" ]]; then
+      source_path="${2:-}"
+    fi
+    tmp_mode="$(stat -Lc '%a' -- "$source_path" 2>/dev/null || printf 'missing')"
+    command mv "$@"
+  }
+  precontact_backup_restore_by_id "$backup_id" "$repo" "" ""
+  unset -f mv
+
+  final_mode="$(stat -Lc '%a' -- "$repo/dir/space file.sh" 2>/dev/null || printf 'missing')"
+  [[ "$tmp_mode" == "600" ]] || fail "restore temp mode was $tmp_mode, expected 600 before rename"
+  [[ "$final_mode" == "644" ]] || fail "restored target mode was $final_mode, expected 644 after rename"
+}
+
 test_plain_restore_temporary_directory_cleaned_on_failure() {
   local repo="$TEST_TMP_ROOT/restore-cleanup repo"
   local selection_file backup_id old_tmpdir old_run_tmp rc tmp_count tmp_root
@@ -561,6 +589,7 @@ test_precontact_backup_validate_root_secure_private_dir
 test_prompt_redaction_and_replacement_rule
 test_retention_prunes_only_same_path
 test_plain_restore_and_unsafe_id
+test_restore_temp_stays_private_until_rename
 test_plain_restore_temporary_directory_cleaned_on_failure
 test_age_restore_uses_payload_metadata
 

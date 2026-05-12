@@ -1103,12 +1103,12 @@ precontact_backup_restore_by_id() {
     precontact_backup_set_reason "restore_hash_mismatch"
     return 1
   fi
-  if [[ "$mode" =~ ^[0-7]{3,4}$ ]]; then
-    chmod "$mode" "$tmp_restore" 2>/dev/null || true
-  fi
   if ! mv -- "$tmp_restore" "$target_abs"; then
     precontact_backup_set_reason "restore_rename_failed"
     return 1
+  fi
+  if [[ "$mode" =~ ^[0-7]{3,4}$ ]]; then
+    chmod "$mode" "$target_abs" 2>/dev/null || true
   fi
   precontact_backup_restore_log "INFO" "precontact_backup.restore target_hash=$(precontact_backup_sha256_text "$rel_path") path_redacted=1"
 }

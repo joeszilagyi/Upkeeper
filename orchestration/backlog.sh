@@ -36,6 +36,22 @@ require_clean_worktree() {
   [[ -z "$status" ]] || fail "working tree is not clean; finish or stash local changes before running backlog.sh"
 }
 
+backlog_state_root() {
+  printf '%s\n' "${BACKLOG_STATE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog}"
+}
+
+backlog_branch_key() {
+  git rev-parse --abbrev-ref HEAD | tr '/:' '__'
+}
+
+deferred_issue_file() {
+  local state_root
+  state_root="$(backlog_state_root)"
+  mkdir -p "$state_root"
+  chmod 700 "$state_root" 2>/dev/null || true
+  printf '%s/deferred-issues.%s.txt\n' "$state_root" "$(backlog_branch_key)"
+}
+
 cleanup_ephemeral_artifacts() {
   find "$ROOT_DIR" -type d -name '__pycache__' -prune -exec rm -rf -- {} + 2>/dev/null || true
   find "$ROOT_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true
@@ -92,6 +108,32 @@ fixed_issue_numbers() {
   pr_body "$pr_number" | rg -o '^Fixes #[0-9]+' -r '$0' | sed 's/^Fixes #//' || true
 }
 
+deferred_issue_numbers() {
+  local deferred_file
+
+  deferred_file="$(deferred_issue_file)"
+  [[ -f "$deferred_file" ]] || return 0
+  sed -n '/^[0-9][0-9]*$/p' "$deferred_file"
+}
+
+defer_issue() {
+  local issue_number="$1"
+  local deferred_file
+
+  [[ -n "$issue_number" ]] || return 0
+  deferred_file="$(deferred_issue_file)"
+  touch "$deferred_file"
+  chmod 600 "$deferred_file" 2>/dev/null || true
+  grep -Fxq "$issue_number" "$deferred_file" || printf '%s\n' "$issue_number" >>"$deferred_file"
+}
+
+clear_deferred_issues() {
+  local deferred_file
+
+  deferred_file="$(deferred_issue_file)"
+  [[ -f "$deferred_file" ]] && rm -f "$deferred_file"
+}
+
 fix_count() {
   local pr_number="$1"
   fixed_issue_numbers "$pr_number" | sed '/^$/d' | wc -l | tr -d ' '
@@ -115,12 +157,15 @@ append_pr_fix_line() {
 selected_issue() {
   local pr_number="$1"
   local fixed_csv
+  local deferred_csv
 
   fixed_csv="$(fixed_issue_numbers "$pr_number" | paste -sd, -)"
+  deferred_csv="$(deferred_issue_numbers | paste -sd, -)"
   gh issue list --state open --limit "$BACKLOG_ISSUE_LIMIT" --json number,title,createdAt,labels \
     | jq -r \
       --arg excluded "$BACKLOG_EXCLUDED_LABELS" \
-      --arg fixed ",$fixed_csv," '
+      --arg fixed ",$fixed_csv," \
+      --arg deferred ",$deferred_csv," '
         def label_names: [.labels[]?.name | ascii_downcase];
         def excluded_labels: ($excluded | split(",") | map(ascii_downcase | gsub("^ +| +$"; "")) | map(select(length > 0)));
         def label_matches($label; $needle):
@@ -137,7 +182,7 @@ selected_issue() {
         def excluded_by_label:
           label_names as $labels
           | any(excluded_labels[]; . as $needle | any($labels[]; label_matches(.; $needle)));
-        map(select((.number | tostring) as $number | (excluded_by_label | not) and (excluded_by_title | not) and (($fixed | contains("," + $number + ",")) | not)))
+        map(select((.number | tostring) as $number | (excluded_by_label | not) and (excluded_by_title | not) and (($fixed | contains("," + $number + ",")) | not) and (($deferred | contains("," + $number + ",")) | not)))
         | sort_by(.createdAt)
         | reverse
         | .[0]
@@ -170,6 +215,7 @@ run_upkeeper_for_one_target() {
   local state_root
   local target_hint=""
   local upkeeper_args=()
+  local upkeeper_status=0
 
   export CODEX_MODEL="$BACKLOG_CODEX_MODEL"
   export CODEX_REASONING_EFFORT="$BACKLOG_CODEX_REASONING_EFFORT"
@@ -213,7 +259,13 @@ run_upkeeper_for_one_target() {
     fi
     upkeeper_args+=(--fix-issue="$issue_number")
     log "running Upkeeper for issue #$issue_number with $CODEX_MODEL/$CODEX_REASONING_EFFORT target=${target_hint:-wrapper-inferred}"
-    ./Upkeeper "${upkeeper_args[@]}"
+    if ! ./Upkeeper "${upkeeper_args[@]}"; then
+      upkeeper_status="$?"
+      if [[ "$upkeeper_status" -eq 2 ]]; then
+        return 2
+      fi
+      return "$upkeeper_status"
+    fi
   else
     log "no eligible issue found; running normal newest-file Upkeeper pass with $CODEX_MODEL/$CODEX_REASONING_EFFORT"
     ./Upkeeper --selection-order=newest
@@ -260,6 +312,7 @@ run_batch_validation() {
 
 commit_and_push_changes() {
   local issue_number="${1:-}"
+  local commit_message="${2:-}"
   local message
 
   cleanup_ephemeral_artifacts
@@ -282,7 +335,9 @@ commit_and_push_changes() {
   log "staging tracked changes"
   git add --all
   git diff --cached --check
-  if [[ -n "$issue_number" ]]; then
+  if [[ -n "$commit_message" ]]; then
+    message="$commit_message"
+  elif [[ -n "$issue_number" ]]; then
     message="Fix backlog issue #$issue_number"
   else
     message="Apply backlog Upkeeper pass"
@@ -324,6 +379,7 @@ merge_and_clean() {
   git checkout main >/dev/null
   git pull --ff-only origin main
   git fetch --prune origin
+  clear_deferred_issues
   if git show-ref --verify --quiet "refs/heads/$branch"; then
     git branch -d "$branch" >/dev/null || true
   fi
@@ -332,7 +388,7 @@ merge_and_clean() {
 }
 
 main() {
-  local pr_info pr_number branch issue_info issue_number count
+  local pr_info pr_number branch issue_info issue_number count run_status
 
   require_command git
   require_command gh
@@ -364,7 +420,23 @@ main() {
   issue_info="$(selected_issue "$pr_number")"
   issue_number="$(awk -F '\t' '{print $1}' <<<"$issue_info")"
 
-  run_upkeeper_for_one_target "$issue_number"
+  run_status=0
+  if ! run_upkeeper_for_one_target "$issue_number"; then
+    run_status="$?"
+  fi
+
+  if [[ "$run_status" -eq 2 ]]; then
+    if has_worktree_changes; then
+      if commit_and_push_changes "" "Preserve partial backlog work for issue #$issue_number"; then
+        log "preserved partial work for blocked issue #$issue_number"
+      fi
+    fi
+    defer_issue "$issue_number"
+    log "deferred blocked issue #$issue_number for this backlog branch"
+    exit 0
+  elif [[ "$run_status" -ne 0 ]]; then
+    exit "$run_status"
+  fi
 
   if commit_and_push_changes "$issue_number"; then
     if [[ -n "$issue_number" ]]; then

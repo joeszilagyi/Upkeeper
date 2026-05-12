@@ -1327,3 +1327,32 @@ Validation:
 - `git diff --check`
 - `tools/check_public_docs.sh --quick`
 - `tools/validate_upkeeper.sh --quick`
+
+## ChimneySweep Obligation Target Remap And Reopen Suppression
+
+Status: completed
+
+Goal:
+- stop ChimneySweep obligation-repair loops when an open obligation points `--target-file` at an ineligible runtime fixture or other control-plane evidence path
+- suppress duplicate open-obligation records when the selected obligation immediately fails again with the same poisoned explicit target
+
+Constraints:
+- keep normal obligation repair locked to a deterministic repo-local control-plane target
+- preserve existing eligible obligation target behavior
+- avoid introducing a second broad target-selection policy; only guard the poisoned explicit-target replay path
+
+Files likely touched:
+- `ChimneySweep`
+- `lib/upkeeper/automation_obligations.bash`
+- `tests/chimneysweep_test.bash`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+Rollout notes:
+- eligible stored obligation targets should keep their existing `--target-file`
+- poisoned runtime/.git-style obligation targets should remap to the launcher control-plane file instead of reopening the same loop

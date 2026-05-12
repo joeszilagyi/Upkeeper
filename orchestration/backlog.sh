@@ -13,6 +13,7 @@ BACKLOG_ISSUE_LIMIT="${BACKLOG_ISSUE_LIMIT:-200}"
 BACKLOG_EXCLUDED_LABELS="${BACKLOG_EXCLUDED_LABELS:-feature,features,enhancement,research,r&d,r-and-d,documentation,docs,in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr}"
 BACKLOG_CODEX_MODEL="${BACKLOG_CODEX_MODEL:-gpt-5.4}"
 BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-high}"
+BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
 
 log() {
   printf 'backlog: %s\n' "$*" >&2
@@ -138,9 +139,24 @@ selected_issue() {
     | sed -n '1p'
 }
 
+target_hint_for_issue() {
+  local issue_number="$1"
+  local issue_text
+
+  [[ -n "$issue_number" ]] || return 0
+  issue_text="$(gh issue view "$issue_number" --json title,body --jq '((.title // "") + "\n" + (.body // "")) | ascii_downcase')"
+  case "$issue_text" in
+    *lattice*|*pass_result*|*pass-result*)
+      [[ -f tools/upkeeper_lattice.py ]] && printf '%s\n' "tools/upkeeper_lattice.py"
+      ;;
+  esac
+}
+
 run_upkeeper_for_one_target() {
   local issue_number="${1:-}"
   local state_root
+  local target_hint=""
+  local upkeeper_args=()
 
   export CODEX_MODEL="$BACKLOG_CODEX_MODEL"
   export CODEX_REASONING_EFFORT="$BACKLOG_CODEX_REASONING_EFFORT"
@@ -161,21 +177,29 @@ run_upkeeper_for_one_target() {
     "$state_root/transcripts" \
     "$state_root/postmortems" \
     "$state_root/bug-report-drafts" \
-    "$state_root/lattice" \
-    "$state_root/precontact-vault"
-  chmod 700 "$state_root" "$state_root/logs" "$state_root/tmp" "$state_root/transcripts" "$state_root/postmortems" "$state_root/bug-report-drafts" "$state_root/lattice" "$state_root/precontact-vault" 2>/dev/null || true
+    "$state_root/precontact-vault" \
+    "$ROOT_DIR/runtime/upkeeper-backlog-lattice"
+  chmod 700 "$state_root" "$state_root/logs" "$state_root/tmp" "$state_root/transcripts" "$state_root/postmortems" "$state_root/bug-report-drafts" "$state_root/precontact-vault" "$ROOT_DIR/runtime/upkeeper-backlog-lattice" 2>/dev/null || true
 
   export TMPDIR="${BACKLOG_TMPDIR:-$state_root/tmp}"
   export CODEX_LOG_FILE="${BACKLOG_CODEX_LOG_FILE:-$state_root/logs/Upkeeper.log}"
   export CODEX_TRANSCRIPT_DIR="${BACKLOG_CODEX_TRANSCRIPT_DIR:-$state_root/transcripts}"
   export CODEX_POSTMORTEM_DIR="${BACKLOG_CODEX_POSTMORTEM_DIR:-$state_root/postmortems}"
   export UPKEEPER_BUG_REPORT_DRAFT_DIR="${BACKLOG_BUG_REPORT_DRAFT_DIR:-$state_root/bug-report-drafts}"
-  export UPKEEPER_LATTICE_DB="${BACKLOG_LATTICE_DB:-$state_root/lattice/lattice.sqlite3}"
+  export UPKEEPER_LATTICE_DB="${BACKLOG_LATTICE_DB:-$ROOT_DIR/runtime/upkeeper-backlog-lattice/lattice.sqlite3}"
   export UPKEEPER_PRECONTACT_BACKUP_ROOT="${BACKLOG_PRECONTACT_BACKUP_ROOT:-$state_root/precontact-vault}"
 
   if [[ -n "$issue_number" ]]; then
-    log "running Upkeeper for issue #$issue_number with $CODEX_MODEL/$CODEX_REASONING_EFFORT"
-    ./Upkeeper --fix-issue="$issue_number"
+    if [[ "$BACKLOG_IGNORE_FAILURE_QUEUE" == "1" ]]; then
+      upkeeper_args+=(--ignore-failure-queue)
+    fi
+    target_hint="$(target_hint_for_issue "$issue_number")"
+    if [[ -n "$target_hint" ]]; then
+      upkeeper_args+=(--target-file="$target_hint")
+    fi
+    upkeeper_args+=(--fix-issue="$issue_number")
+    log "running Upkeeper for issue #$issue_number with $CODEX_MODEL/$CODEX_REASONING_EFFORT target=${target_hint:-wrapper-inferred}"
+    ./Upkeeper "${upkeeper_args[@]}"
   else
     log "no eligible issue found; running normal newest-file Upkeeper pass with $CODEX_MODEL/$CODEX_REASONING_EFFORT"
     ./Upkeeper --selection-order=newest

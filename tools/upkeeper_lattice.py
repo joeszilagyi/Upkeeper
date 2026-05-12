@@ -97,6 +97,8 @@ BUILD_NAMES = {
 TEST_DIRS = {"__tests__", "test", "tests"}
 REDACTED_PATH_PREFIX = "path-sha256:"
 PASS_RESULT_PATH_HMAC_PREFIX = "path-hmac-sha256:"
+METADATA_HMAC_PREFIX = "meta-hmac-sha256:"
+UPKEEPER_VERBOSE_METADATA_ENV = "UPKEEPER_VERBOSE_METADATA"
 REDACTABLE_PATH_KEYS = {
     "path",
     "old_path",
@@ -137,6 +139,51 @@ UPKEEPER_LOG_CYCLE_START_SAFE_KEYS = {"execution_origin", "dirty_paths", "dry_ru
 UPKEEPER_LOG_REVIEW_PRESELECT_SAFE_KEYS = {"basis"}
 UPKEEPER_LOG_SUMMARY_SAFE_KEYS = {"status_marker", "codex_exit"}
 UPKEEPER_LOG_EXIT_SAFE_KEYS = {"exit_code", "codex_exec_started"}
+CYCLE_START_SAFE_KEYS = {
+    "timestamp",
+    "level",
+    "event",
+    "cycle",
+    "cycle_id",
+    "run_hash",
+    "execution_origin",
+    "dirty_paths",
+    "dirty_path_count",
+    "dry_run",
+    "start_epoch",
+}
+CYCLE_START_PATH_KEYS = {
+    "script",
+    "script_path",
+    "implementation",
+    "implementation_path",
+    "cwd",
+    "config",
+    "config_file",
+    "manifest",
+    "manifest_path",
+    "target_file",
+    "target_root",
+    "codex_home",
+}
+CYCLE_START_HASH_KEY_FRAGMENTS = (
+    "path",
+    "cwd",
+    "root",
+    "glob",
+    "label",
+    "review_module",
+    "review_modules",
+    "manifest",
+    "fallback",
+    "parent",
+    "child",
+    "pid",
+    "process",
+    "boot",
+    "uptime",
+    "target",
+)
 PASS_RESULT_ALLOWED_KEYS = {
     "pass",
     "file",
@@ -1000,6 +1047,10 @@ def current_lattice_raw_storage() -> str:
     return raw if raw else "limited"
 
 
+def verbose_metadata_enabled() -> bool:
+    return parse_bool_int(os.environ.get(UPKEEPER_VERBOSE_METADATA_ENV, "")) == 1
+
+
 def pass_result_debug_storage_enabled() -> bool:
     return current_lattice_raw_storage() in PASS_RESULT_DEBUG_STORAGE_VALUES
 
@@ -1020,6 +1071,70 @@ def pass_result_path_hmac(root: Path, path: str) -> str:
         return ""
     digest = hmac.digest(pass_result_hmac_key(root), normalized.encode("utf-8", "surrogateescape"), "sha256").hex()
     return PASS_RESULT_PATH_HMAC_PREFIX + digest
+
+
+def metadata_value_hmac(root: Path, key: str, value: str) -> str:
+    material = f"{key}\0{value}"
+    digest = hmac.digest(pass_result_hmac_key(root), material.encode("utf-8", "surrogateescape"), "sha256").hex()
+    return METADATA_HMAC_PREFIX + digest
+
+
+def normalized_metadata_key(key: str) -> str:
+    return key.strip().lower().replace("-", "_")
+
+
+def cycle_start_key_is_path_like(key: str) -> bool:
+    return key in CYCLE_START_PATH_KEYS or "path" in key
+
+
+def cycle_start_key_should_hash(key: str) -> bool:
+    if cycle_start_key_is_path_like(key):
+        return True
+    return any(fragment in key for fragment in CYCLE_START_HASH_KEY_FRAGMENTS)
+
+
+def sanitize_cycle_start_fields(root: Path, fields: dict[str, Any]) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {}
+    verbose = verbose_metadata_enabled()
+    for key, value in fields.items():
+        if key == "func" or not has_meaningful_value(value):
+            continue
+        normalized_key = normalized_metadata_key(key)
+        if normalized_key in CYCLE_START_SAFE_KEYS:
+            sanitized[key] = value
+            continue
+        if verbose:
+            sanitized[key] = value
+            continue
+        if cycle_start_key_should_hash(normalized_key):
+            if cycle_start_key_is_path_like(normalized_key):
+                hashed = pass_result_path_hmac(root, str(value))
+            else:
+                hashed = metadata_value_hmac(root, normalized_key, str(value))
+            if hashed:
+                sanitized[f"{key}_hmac"] = hashed
+    return sanitized
+
+
+def render_upkeeper_log_line(fields: dict[str, Any]) -> str:
+    body_parts: list[str] = []
+    event = str(fields.get("event", "")).strip()
+    if event:
+        body_parts.append(event)
+    for key, value in fields.items():
+        if key in {"timestamp", "level", "event"} or not has_meaningful_value(value):
+            continue
+        body_parts.append(f"{key}={shlex.quote(str(value))}")
+    line_parts: list[str] = []
+    timestamp = str(fields.get("timestamp", "")).strip()
+    level = str(fields.get("level", "")).strip()
+    if timestamp:
+        line_parts.append(timestamp)
+    if level:
+        line_parts.append(f"[{level}]")
+    if body_parts:
+        line_parts.append(" ".join(body_parts))
+    return " ".join(line_parts).strip()
 
 
 def print_json(value: Any) -> None:
@@ -2741,12 +2856,13 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
-        parsed = vars(args).copy()
-        parsed.pop("func", None)
+        parsed = sanitize_cycle_start_fields(root, vars(args).copy())
         source_id = ensure_source_record(conn, repo_id, "wrapper_observed", raw_ref="cycle_start", parsed=parsed)
         worktree_dirty = None
         if args.dirty_path_count is not None:
             worktree_dirty = 1 if int(args.dirty_path_count or 0) > 0 else 0
+        verbose = verbose_metadata_enabled()
+        config_value = args.config_file if verbose or not has_meaningful_value(args.config_file) else pass_result_path_hmac(root, str(args.config_file))
         cycle_pk = ensure_cycle(
             conn,
             repo_id,
@@ -2755,14 +2871,14 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
             source_id=source_id,
             start_epoch=args.start_epoch or epoch_now(),
             execution_origin=args.execution_origin,
-            model=args.model,
-            effort=args.effort,
-            mode=args.mode,
-            config_file=args.config_file,
-            branch_name=args.branch_name or repo_git_info(root)["branch_name"],
-            head_sha=args.head_sha or repo_git_info(root)["head_sha"],
-            head_tree_sha=args.head_tree_sha or repo_git_info(root)["head_tree_sha"],
-            upstream_ref=args.upstream_ref,
+            model=args.model if verbose else None,
+            effort=args.effort if verbose else None,
+            mode=args.mode if verbose else None,
+            config_file=config_value,
+            branch_name=(args.branch_name or repo_git_info(root)["branch_name"]) if verbose else None,
+            head_sha=(args.head_sha or repo_git_info(root)["head_sha"]) if verbose else None,
+            head_tree_sha=(args.head_tree_sha or repo_git_info(root)["head_tree_sha"]) if verbose else None,
+            upstream_ref=args.upstream_ref if verbose else None,
             worktree_dirty=worktree_dirty,
             dry_run=parse_bool_int(str(args.dry_run)) if args.dry_run is not None else None,
         )
@@ -4489,13 +4605,16 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
             if not parsed:
                 continue
             safe_parsed = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_SOURCE_SAFE_KEYS)
+            stored_raw_line = raw_line if args.raw else None
+            if stored_raw_line is not None and str(parsed.get("event", "")) == "cycle.start" and not verbose_metadata_enabled():
+                stored_raw_line = render_upkeeper_log_line(sanitize_cycle_start_fields(root, parsed))
             source_id = ensure_source_record(
                 conn,
                 repo_id,
                 "upkeeper_log",
                 source_path=str(log_path),
                 raw_ref=parsed.get("event", ""),
-                raw_text=raw_line if args.raw else None,
+                raw_text=stored_raw_line,
                 parsed=safe_parsed,
                 parse_status="parsed",
             )

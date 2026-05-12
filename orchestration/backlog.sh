@@ -153,6 +153,9 @@ target_hint_for_issue() {
   [[ -n "$issue_number" ]] || return 0
   issue_text="$(gh issue view "$issue_number" --json title,body --jq '((.title // "") + "\n" + (.body // "")) | ascii_downcase')"
   case "$issue_text" in
+    *cycle.start*|*record-cycle-start*|*verbose\ metadata*|*operator\ and\ config\ metadata*|*config\ file*|*issue\ labels*|*include/exclude\ globs*|*manifest\ path*)
+      [[ -f Upkeeper ]] && printf '%s\n' "Upkeeper"
+      ;;
     *lattice*|*pass_result*|*pass-result*)
       [[ -f tools/upkeeper_lattice.py ]] && printf '%s\n' "tools/upkeeper_lattice.py"
       ;;

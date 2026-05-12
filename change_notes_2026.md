@@ -600,3 +600,8 @@ Reconstructed pre-1.0 history:
 2026-05-11: restore temp-file mode stays private until rename:
 - Plain and age restore flows now keep the randomized temporary restore file on its private `mktemp` mode until after the final rename, instead of chmodding the temp path to the restored file mode first.
 - The restored destination still receives its recorded mode after rename, but the temporary filename no longer becomes briefly readable at a permissive mode before the move completes.
+
+2026-05-12: issue-fix private issue packet gate:
+- Issue-fix mode now withholds private GitHub issue title/body/comment text from model prompts by default, while preserving wrapper-side issue selection and inferred-target extraction before Codex starts.
+- Selected-issue runtime logs now record only stable issue title/URL hashes plus the explicit model-exposure gate state instead of emitting raw private issue metadata.
+- Operators can still opt into private issue prompt exposure explicitly with `UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL=1` when a responsible fix requires the original issue prose.

@@ -394,7 +394,10 @@ Prompt behavior:
   - --fix-next-issue, also accepted as --fix-oldest-bug, asks Upkeeper to pick
     the oldest open non-skipped GitHub issue by priority label order
     security > data-integrity > bug, infer a starting file from the issue body
-    when possible, and run the cycle as a focused repair task.
+    when possible, and run the cycle as a focused repair task. By default the
+    wrapper withholds private issue title/body/comment text from the model; set
+    `UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL=1` only when that exposure is
+    explicitly required.
   - --fix-issue=NUMBER skips Upkeeper's issue ranking and locks this cycle to
     the named open GitHub issue. This is the handoff used by scripted fix
     launchers such as ChimneySweep after they have already ranked the queue.
@@ -434,6 +437,7 @@ Environment overrides:
   UPKEEPER_FIX_NEXT_ISSUE      Default: 0
   UPKEEPER_FIX_ISSUE           Default: empty
   UPKEEPER_ISSUE_WORKFLOW_STAGE Default: empty
+  UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL Default: 0
   UPKEEPER_ISSUE_PRIORITY_LABELS Default: security,data-integrity,bug
   UPKEEPER_ISSUE_SKIP_LABELS   Default: in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr
   UPKEEPER_AUTOMATION_LEDGER_ENABLED Default: 1

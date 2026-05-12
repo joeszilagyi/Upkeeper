@@ -1634,6 +1634,37 @@ Validation:
 - `git diff --check`
 - `tools/validate_upkeeper.sh --quick`
 
+## Issue-Fix Private Issue Packet Gate
+
+Status: completed
+
+Goal:
+- stop issue-fix mode from sending raw private GitHub issue title/body/comment text into model prompts and durable artifacts by default
+- preserve deterministic wrapper-side issue selection and inferred-target extraction before Codex starts
+
+Constraints:
+- keep `--fix-next-issue`, `--fix-issue`, and issue-workflow stage selection behavior intact
+- preserve an explicit escape hatch for operators who intentionally want the private issue packet exposed to the model
+- keep operator docs/config surface aligned with the new default gate
+
+Files likely touched:
+- `PLANS.md`
+- `Upkeeper.conf`
+- `change_notes_2026.md`
+- `configurations/default.conf`
+- `docs/scripts/upkeeper.md`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `tests/bug_fix_batch_271_266_265_test.bash`
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+
 ## Postmortem Evidence Redaction And Private Storage
 
 Status: completed

@@ -42,6 +42,7 @@ payload
   CODEX_ISSUE_FIX_TARGET_FILE="targets/app.sh"
   CODEX_ISSUE_FIX_BODY="$attack_body"
   CODEX_ISSUE_FIX_COMMENTS_JSON="[]"
+  UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="1"
 
   upkeeper_issue_fix_next_enabled() {
     return 0
@@ -53,6 +54,71 @@ payload
 
   grep -Fq '```text' "$compiled" || fail "issue prompt did not include expected issue-body wrapper"
   ! grep -Fq '```SENSITIVE_SECRET' "$compiled" || fail "issue body fence delimiter escaped text remained unprotected"
+  unset UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL
+}
+
+test_issue_fix_prompt_withholds_private_issue_packet_by_default() {
+  local compiled="$TEST_TMP_ROOT/issue-private-default.prompt"
+
+  : >"$compiled"
+  RUN_TMP_DIR="$TEST_TMP_ROOT/run tmp"
+  CODEX_ISSUE_FIX_NUMBER="321"
+  CODEX_ISSUE_FIX_URL="https://example.test/private/321"
+  CODEX_ISSUE_FIX_SELECTED_LABEL="security"
+  CODEX_ISSUE_FIX_LABELS="security,bug"
+  CODEX_ISSUE_FIX_TITLE="Leaked title SECRET_TITLE"
+  CODEX_ISSUE_FIX_CREATED_AT="2026-05-02T00:00:00Z"
+  CODEX_ISSUE_FIX_TARGET_FILE="lib/upkeeper/codex_io.bash"
+  CODEX_ISSUE_FIX_BODY="private body SECRET_BODY"
+  CODEX_ISSUE_FIX_COMMENTS_JSON='[{"author":{"login":"alice"},"createdAt":"2026-05-02T00:01:00Z","body":"comment SECRET_COMMENT"}]'
+  unset UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL || true
+
+  upkeeper_issue_fix_next_enabled() {
+    return 0
+  }
+
+  source "$PROJECT_ROOT/lib/upkeeper/prompt_compile.bash"
+
+  append_issue_fix_prompt "$compiled"
+
+  grep -Fq 'issue_url=withheld' "$compiled" || fail "default issue-fix prompt did not withhold the issue URL"
+  grep -Fq 'issue_title=withheld' "$compiled" || fail "default issue-fix prompt did not withhold the issue title"
+  grep -Fq 'private_issue_packet_to_model=0' "$compiled" || fail "default issue-fix prompt did not declare the private packet withheld"
+  grep -Fq 'UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL=1' "$compiled" || fail "default issue-fix prompt did not describe the explicit opt-in"
+  ! grep -Fq 'SECRET_TITLE' "$compiled" || fail "default issue-fix prompt leaked the issue title"
+  ! grep -Fq 'SECRET_BODY' "$compiled" || fail "default issue-fix prompt leaked the issue body"
+  ! grep -Fq 'SECRET_COMMENT' "$compiled" || fail "default issue-fix prompt leaked issue comments"
+}
+
+test_issue_fix_prompt_allows_private_issue_packet_when_enabled() {
+  local compiled="$TEST_TMP_ROOT/issue-private-optin.prompt"
+
+  : >"$compiled"
+  RUN_TMP_DIR="$TEST_TMP_ROOT/run tmp"
+  CODEX_ISSUE_FIX_NUMBER="322"
+  CODEX_ISSUE_FIX_URL="https://example.test/private/322"
+  CODEX_ISSUE_FIX_SELECTED_LABEL="explicit"
+  CODEX_ISSUE_FIX_LABELS="bug"
+  CODEX_ISSUE_FIX_TITLE="Private title SECRET_TITLE_2"
+  CODEX_ISSUE_FIX_CREATED_AT="2026-05-02T00:00:00Z"
+  CODEX_ISSUE_FIX_TARGET_FILE="targets/app.sh"
+  CODEX_ISSUE_FIX_BODY="private body SECRET_BODY_2"
+  CODEX_ISSUE_FIX_COMMENTS_JSON='[{"author":{"login":"bob"},"createdAt":"2026-05-02T00:01:00Z","body":"comment SECRET_COMMENT_2"}]'
+  UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="1"
+
+  upkeeper_issue_fix_next_enabled() {
+    return 0
+  }
+
+  source "$PROJECT_ROOT/lib/upkeeper/prompt_compile.bash"
+
+  append_issue_fix_prompt "$compiled"
+
+  grep -Fq 'issue_url=https://example.test/private/322' "$compiled" || fail "opt-in issue-fix prompt did not include the issue URL"
+  grep -Fq 'issue_title=Private title SECRET_TITLE_2' "$compiled" || fail "opt-in issue-fix prompt did not include the issue title"
+  grep -Fq 'SECRET_BODY_2' "$compiled" || fail "opt-in issue-fix prompt did not include the issue body"
+  grep -Fq 'SECRET_COMMENT_2' "$compiled" || fail "opt-in issue-fix prompt did not include issue comments"
+  unset UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL
 }
 
 test_postmortem_marker_parser_is_exact_only() {
@@ -152,6 +218,8 @@ SH
 }
 
 test_issue_body_fence_delimiters_are_sanitized
+test_issue_fix_prompt_withholds_private_issue_packet_by_default
+test_issue_fix_prompt_allows_private_issue_packet_when_enabled
 test_postmortem_marker_parser_is_exact_only
 test_fallback_inherits_selected_target_file
 

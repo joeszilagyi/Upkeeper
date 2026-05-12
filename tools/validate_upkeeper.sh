@@ -256,6 +256,22 @@ raise SystemExit(1)
 PY
 }
 
+check_issue_fix_private_packet_contract() {
+  log "checking issue-fix private packet contract"
+  grep -Fq 'UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL' "$ROOT_DIR/Upkeeper.conf" || fail "Upkeeper.conf does not expose the private issue packet gate"
+  grep -Fq 'UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL' "$ROOT_DIR/configurations/default.conf" || fail "default config does not expose the private issue packet gate"
+  grep -Fq 'UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL' "$ROOT_DIR/docs/scripts/upkeeper.md" || fail "operator docs do not describe the private issue packet gate"
+  grep -Fq 'issue_url=withheld' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash" || fail "issue-fix prompt no longer withholds private issue metadata by default"
+  grep -Fq 'UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL=1' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash" || fail "issue-fix prompt does not describe the explicit private-packet opt-in"
+  grep -Fq 'issue_packet_to_model=' "$ROOT_DIR/lib/upkeeper/codex_io.bash" || fail "issue-fix selection log does not declare private-packet model exposure"
+  grep -Fq 'title_hash=' "$ROOT_DIR/lib/upkeeper/codex_io.bash" || fail "issue-fix selection log does not hash the issue title"
+  grep -Fq 'url_hash=' "$ROOT_DIR/lib/upkeeper/codex_io.bash" || fail "issue-fix selection log does not hash the issue URL"
+  if grep -Fq 'url=$(shell_quote "$CODEX_ISSUE_FIX_URL") title=$(shell_quote "$CODEX_ISSUE_FIX_TITLE")' "$ROOT_DIR/lib/upkeeper/codex_io.bash"; then
+    fail "issue-fix selection log still emits raw issue URL/title text"
+  fi
+  bash tests/bug_fix_batch_271_266_265_test.bash
+}
+
 check_syntax() {
   local module
 
@@ -3270,6 +3286,7 @@ run_check syntax check_syntax
 run_check version_consistency check_version_consistency
 run_check module_map check_module_map
 run_check prompt_template check_prompt_template
+run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contract
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation

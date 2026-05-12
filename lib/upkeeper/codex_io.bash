@@ -12,6 +12,20 @@ upkeeper_bug_report_issue_write_allowed() {
   config_truthy "${UPKEEPER_ALLOW_GH_ISSUE_WRITE:-0}"
 }
 
+upkeeper_issue_fix_private_issue_body_to_model_allowed() {
+  config_truthy "${UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL:-0}"
+}
+
+issue_fix_log_hash() {
+  local value="${1:-}"
+  python3 - "$value" <<'PY' 2>/dev/null || printf 'unknown'
+import hashlib
+import sys
+
+print(hashlib.sha256(sys.argv[1].encode("utf-8", "surrogateescape")).hexdigest()[:24])
+PY
+}
+
 prepare_bug_report_draft_artifact() {
   local draft_root="${UPKEEPER_BUG_REPORT_DRAFT_DIR:-${ROOT_DIR:-$PWD}/runtime/upkeeper-bug-report-drafts}"
 
@@ -996,7 +1010,7 @@ apply_configured_cli_defaults() {
 }
 
 resolve_issue_fix_next_or_exit() {
-  local issue_event issue_json requested_number status target_from_issue
+  local issue_event issue_json requested_number status target_from_issue title_hash url_hash
 
   upkeeper_issue_fix_next_enabled || return 0
   requested_number="${CODEX_ISSUE_FIX_REQUESTED_NUMBER:-}"
@@ -1244,6 +1258,15 @@ PY
   CODEX_ISSUE_FIX_TARGET_FILE="$(jq -r '.target_file // ""' <<<"$issue_json")"
   CODEX_ISSUE_FIX_BODY="$(jq -r '.body // ""' <<<"$issue_json")"
   CODEX_ISSUE_FIX_COMMENTS_JSON="$(jq -c '.comments // []' <<<"$issue_json")"
+  title_hash="$(issue_fix_log_hash "${CODEX_ISSUE_FIX_TITLE:-}")"
+  url_hash="$(issue_fix_log_hash "${CODEX_ISSUE_FIX_URL:-}")"
+
+  if ! upkeeper_issue_fix_private_issue_body_to_model_allowed; then
+    CODEX_ISSUE_FIX_TITLE=""
+    CODEX_ISSUE_FIX_URL=""
+    CODEX_ISSUE_FIX_BODY=""
+    CODEX_ISSUE_FIX_COMMENTS_JSON="[]"
+  fi
 
   target_from_issue="$CODEX_ISSUE_FIX_TARGET_FILE"
   if [[ -z "${CODEX_TARGET_FILE:-}" ]]; then
@@ -1255,7 +1278,7 @@ PY
     fi
   fi
 
-  log_line "INFO" "$issue_event selected number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") selected_label=$(shell_quote "$CODEX_ISSUE_FIX_SELECTED_LABEL") labels=$(shell_quote "$CODEX_ISSUE_FIX_LABELS") created_at=$(shell_quote "$CODEX_ISSUE_FIX_CREATED_AT") target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") inferred_target=$(shell_quote "${CODEX_ISSUE_FIX_TARGET_FILE:-none}") url=$(shell_quote "$CODEX_ISSUE_FIX_URL") title=$(shell_quote "$CODEX_ISSUE_FIX_TITLE")"
+  log_line "INFO" "$issue_event selected number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") selected_label=$(shell_quote "$CODEX_ISSUE_FIX_SELECTED_LABEL") labels=$(shell_quote "$CODEX_ISSUE_FIX_LABELS") created_at=$(shell_quote "$CODEX_ISSUE_FIX_CREATED_AT") target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") inferred_target=$(shell_quote "${CODEX_ISSUE_FIX_TARGET_FILE:-none}") issue_packet_to_model=$(truthy_as_int "${UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL:-0}") url_hash=$(shell_quote "$url_hash") title_hash=$(shell_quote "$title_hash")"
 }
 
 parse_args() {

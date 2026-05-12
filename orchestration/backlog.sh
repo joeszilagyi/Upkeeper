@@ -14,6 +14,7 @@ BACKLOG_EXCLUDED_LABELS="${BACKLOG_EXCLUDED_LABELS:-feature,features,enhancement
 BACKLOG_CODEX_MODEL="${BACKLOG_CODEX_MODEL:-gpt-5.4}"
 BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-high}"
 BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
+BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-900}"
 
 log() {
   printf 'backlog: %s\n' "$*" >&2
@@ -32,6 +33,11 @@ require_clean_worktree() {
   local status
   status="$(git status --short)"
   [[ -z "$status" ]] || fail "working tree is not clean; finish or stash local changes before running backlog.sh"
+}
+
+cleanup_ephemeral_artifacts() {
+  find "$ROOT_DIR" -type d -name '__pycache__' -prune -exec rm -rf -- {} + 2>/dev/null || true
+  find "$ROOT_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true
 }
 
 current_backlog_pr() {
@@ -169,6 +175,7 @@ run_upkeeper_for_one_target() {
   export CODEX_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-0}"
   export CODEX_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-0}"
   export UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="${BACKLOG_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL:-1}"
+  export PYTHONDONTWRITEBYTECODE=1
 
   state_root="${BACKLOG_STATE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog}"
   mkdir -p \
@@ -218,7 +225,6 @@ run_local_validation() {
     bash "$test_script"
   done
   git diff --check
-  git diff --cached --check
   tools/validate_upkeeper.sh --quick
 }
 
@@ -226,9 +232,12 @@ commit_and_push_changes() {
   local issue_number="${1:-}"
   local message
 
-  git add --all
+  cleanup_ephemeral_artifacts
   has_worktree_changes || return 1
   run_local_validation
+  cleanup_ephemeral_artifacts
+  git add --all
+  git diff --cached --check
   if [[ -n "$issue_number" ]]; then
     message="Fix backlog issue #$issue_number"
   else
@@ -241,14 +250,27 @@ commit_and_push_changes() {
 
 wait_for_pr_checks() {
   local pr_number="$1"
-  gh pr checks "$pr_number" --watch
+  if timeout "$BACKLOG_PR_CHECK_TIMEOUT_SECONDS" gh pr checks "$pr_number" --watch; then
+    return 0
+  fi
+
+  if [[ "$?" -eq 124 ]]; then
+    log "PR #$pr_number checks still pending after ${BACKLOG_PR_CHECK_TIMEOUT_SECONDS}s; retry on the next backlog iteration"
+    return 2
+  fi
+
+  return 1
 }
 
 merge_and_clean() {
   local pr_number="$1"
   local branch="$2"
 
-  wait_for_pr_checks "$pr_number"
+  wait_for_pr_checks "$pr_number" || {
+    local status="$?"
+    [[ "$status" -eq 2 ]] && return 2
+    return "$status"
+  }
   CODEX_ALLOW_PR_MERGE="$pr_number" gh pr merge "$pr_number" --merge --delete-branch
   git checkout main >/dev/null
   git pull --ff-only origin main
@@ -282,8 +304,20 @@ main() {
   count="$(fix_count "$pr_number")"
   if [[ "$count" -ge "$BACKLOG_BATCH_LIMIT" ]]; then
     log "PR #$pr_number has $count recorded fixes; merging batch"
-    merge_and_clean "$pr_number" "$branch"
+    merge_and_clean "$pr_number" "$branch" || {
+      local status="$?"
+      [[ "$status" -eq 2 ]] && exit 0
+      exit "$status"
+    }
     exit 0
+  fi
+
+  if [[ "$count" -gt 0 ]]; then
+    wait_for_pr_checks "$pr_number" || {
+      local status="$?"
+      [[ "$status" -eq 2 ]] && exit 0
+      exit "$status"
+    }
   fi
 
   issue_info="$(selected_issue "$pr_number")"
@@ -295,7 +329,11 @@ main() {
     if [[ -n "$issue_number" ]]; then
       append_pr_fix_line "$pr_number" "$issue_number"
     fi
-    wait_for_pr_checks "$pr_number"
+    wait_for_pr_checks "$pr_number" || {
+      local status="$?"
+      [[ "$status" -eq 2 ]] && exit 0
+      exit "$status"
+    }
   else
     log "Upkeeper produced no tracked changes"
   fi
@@ -303,7 +341,11 @@ main() {
   count="$(fix_count "$pr_number")"
   if [[ "$count" -ge "$BACKLOG_BATCH_LIMIT" ]]; then
     log "PR #$pr_number reached $count fixes; merging batch"
-    merge_and_clean "$pr_number" "$branch"
+    merge_and_clean "$pr_number" "$branch" || {
+      local status="$?"
+      [[ "$status" -eq 2 ]] && exit 0
+      exit "$status"
+    }
   else
     log "PR #$pr_number now has $count/$BACKLOG_BATCH_LIMIT recorded fixes"
   fi

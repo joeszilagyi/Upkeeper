@@ -7,6 +7,7 @@ import argparse
 import errno
 import fnmatch
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -95,6 +96,7 @@ BUILD_NAMES = {
 }
 TEST_DIRS = {"__tests__", "test", "tests"}
 REDACTED_PATH_PREFIX = "path-sha256:"
+PASS_RESULT_PATH_HMAC_PREFIX = "path-hmac-sha256:"
 REDACTABLE_PATH_KEYS = {
     "path",
     "old_path",
@@ -117,6 +119,15 @@ REDACTABLE_PATH_KEYS = {
     "repo_alias_id",
     "artifact_kind",
 }
+PASS_RESULT_ALLOWED_KEYS = {
+    "pass",
+    "file",
+    "applicable",
+    "outcome",
+    "changed",
+    "regression",
+}
+PASS_RESULT_DEBUG_STORAGE_VALUES = {"debug", "full"}
 
 
 REQUIRED_TABLES = [
@@ -964,6 +975,33 @@ def sha256_bytes(data: bytes) -> str:
 
 def sha256_text(text: str) -> str:
     return sha256_bytes(text.encode("utf-8", "surrogateescape"))
+
+
+def current_lattice_raw_storage() -> str:
+    raw = os.environ.get("UPKEEPER_LATTICE_RAW_STORAGE", "limited").strip().lower()
+    return raw if raw else "limited"
+
+
+def pass_result_debug_storage_enabled() -> bool:
+    return current_lattice_raw_storage() in PASS_RESULT_DEBUG_STORAGE_VALUES
+
+
+def pass_result_hmac_key(root: Path) -> bytes:
+    override = os.environ.get("UPKEEPER_LATTICE_REDACTION_KEY", "")
+    if override:
+        return override.encode("utf-8", "surrogateescape")
+    root = root.resolve()
+    info = repo_git_info(root)
+    material = f"{root}|{info['git_common_dir']}|{info['remote_url']}|upkeeper-pass-result"
+    return hashlib.sha256(material.encode("utf-8", "surrogateescape")).digest()
+
+
+def pass_result_path_hmac(root: Path, path: str) -> str:
+    normalized = normalize_rel_path(path)
+    if not normalized:
+        return ""
+    digest = hmac.digest(pass_result_hmac_key(root), normalized.encode("utf-8", "surrogateescape"), "sha256").hex()
+    return PASS_RESULT_PATH_HMAC_PREFIX + digest
 
 
 def print_json(value: Any) -> None:
@@ -3598,6 +3636,50 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def pass_result_rejection_kind(reason: str) -> str:
+    if reason.startswith("shell_parse:"):
+        return "shell_parse"
+    if reason.startswith("duplicate_key:"):
+        return "duplicate_key"
+    if reason.startswith("unexpected_key:"):
+        return "unexpected_key"
+    if reason == "missing_pass_or_file":
+        return "missing_required"
+    return reason
+
+
+def maybe_normalize_pass_code(raw: Any) -> str:
+    text = str(raw or "").strip()
+    return normalize_pass_code(text) if re.fullmatch(r"P[0-9A-Za-z_.-]+", text) else ""
+
+
+def sanitize_rejected_pass_result(
+    root: Path,
+    item: dict[str, Any],
+    *,
+    selected_path: str = "",
+    preserve_raw: bool = False,
+) -> dict[str, Any]:
+    fields = item.get("fields", {})
+    if not isinstance(fields, dict):
+        fields = {}
+    rejected_path = normalize_rel_path(str(fields.get("file", ""))) if fields.get("file") else ""
+    payload: dict[str, Any] = {
+        "line_number": int(item.get("line_number", 0) or 0),
+        "rejection_kind": pass_result_rejection_kind(str(item.get("reason", "rejected"))),
+    }
+    normalized_pass = maybe_normalize_pass_code(fields.get("pass"))
+    if normalized_pass:
+        payload["pass"] = normalized_pass
+    if rejected_path:
+        payload["path_hmac"] = pass_result_path_hmac(root, rejected_path)
+    if selected_path:
+        payload["selected_path_hmac"] = pass_result_path_hmac(root, selected_path)
+    if preserve_raw and item.get("reason"):
+        payload["reason"] = str(item["reason"])
+    return payload
+
+
 def parse_pass_result_lines(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
@@ -3639,6 +3721,17 @@ def parse_pass_result_lines(path: Path) -> tuple[list[dict[str, Any]], list[dict
             continue
         if duplicate:
             rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": f"duplicate_key:{duplicate}", "fields": fields})
+            continue
+        extras = sorted(key for key in fields if key not in PASS_RESULT_ALLOWED_KEYS)
+        if extras:
+            rejected.append(
+                {
+                    "raw_line": raw_line,
+                    "line_number": line_number,
+                    "reason": f"unexpected_key:{extras[0]}",
+                    "fields": fields,
+                }
+            )
             continue
         if not fields.get("pass") or not fields.get("file"):
             rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "missing_pass_or_file", "fields": fields})
@@ -3801,6 +3894,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
     ensure_schema(conn)
     recorded = 0
     rejected_count = 0
+    preserve_raw = pass_result_debug_storage_enabled()
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -3818,14 +3912,16 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
         planned.extend(args.planned_pass or [])
         seen: set[tuple[str, str]] = set()
         rejected_pairs: set[tuple[str, str]] = set()
+        trusted_selected_path = normalize_rel_path(args.selected_path or "")
         if args.from_file:
             accepted, rejected = parse_pass_result_lines(Path(args.from_file))
-            rejected_count = len(rejected)
             for item in rejected:
                 fields = item.get("fields", {})
                 if isinstance(fields, dict):
-                    rejected_pass = normalize_pass_code(str(fields.get("pass", ""))) if fields.get("pass") else ""
-                    rejected_path = normalize_rel_path(str(fields.get("file", ""))) if fields.get("file") else ""
+                    rejected_pass = maybe_normalize_pass_code(fields.get("pass"))
+                    rejected_path = trusted_selected_path or (
+                        normalize_rel_path(str(fields.get("file", ""))) if fields.get("file") else ""
+                    )
                     if rejected_pass and rejected_path:
                         rejected_pairs.add((rejected_pass, rejected_path))
                 ensure_source_record(
@@ -3834,19 +3930,46 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     "transcript",
                     source_path=args.from_file,
                     raw_ref=f"pass_result_rejected:{item.get('line_number')}",
-                    raw_text=item.get("raw_line", ""),
-                    parsed=item,
+                    raw_text=item.get("raw_line", "") if preserve_raw else None,
+                    parsed=sanitize_rejected_pass_result(
+                        root,
+                        item,
+                        selected_path=trusted_selected_path,
+                        preserve_raw=preserve_raw,
+                    ),
                     parse_status="rejected",
                     fact_confidence="rejected",
                 )
+                rejected_count += 1
             for item in accepted:
                 pass_code = normalize_pass_code(item["pass"])
-                path = normalize_rel_path(item["file"])
+                reported_path = normalize_rel_path(item["file"])
+                if trusted_selected_path and reported_path != trusted_selected_path:
+                    rejected_pairs.add((pass_code, trusted_selected_path))
+                    ensure_source_record(
+                        conn,
+                        repo_id,
+                        "transcript",
+                        source_path=args.from_file,
+                        raw_ref=f"pass_result_rejected:{item.get('line_number')}",
+                        raw_text=item.get("raw_line", "") if preserve_raw else None,
+                        parsed={
+                            "line_number": int(item.get("line_number", 0) or 0),
+                            "pass": pass_code,
+                            "rejection_kind": "selected_path_mismatch",
+                            "path_hmac": pass_result_path_hmac(root, reported_path),
+                            "selected_path_hmac": pass_result_path_hmac(root, trusted_selected_path),
+                        },
+                        parse_status="rejected",
+                        fact_confidence="rejected",
+                    )
+                    rejected_count += 1
+                    continue
+                path = trusted_selected_path or reported_path
                 applicable = parse_bool_int(item.get("applicable"))
                 changed = parse_bool_int(item.get("changed"))
                 regression = parse_bool_int(item.get("regression"))
                 outcome = item.get("outcome", "unknown")
-                attrs = {k: v for k, v in item.items() if k not in {"pass", "file", "applicable", "outcome", "changed", "regression", "raw_line", "line_number"}}
                 record_one_pass_result(
                     conn,
                     root,
@@ -3859,9 +3982,11 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     outcome=outcome,
                     changed=changed,
                     regression=regression,
-                    raw_line=item.get("raw_line", ""),
+                    raw_line=item.get("raw_line", "") if preserve_raw else "",
                     planned=0,
-                    attributes=attrs,
+                    attributes={
+                        "upkeeper.pass_result:path_hmac": pass_result_path_hmac(root, path),
+                    },
                 )
                 seen.add((pass_code, path))
                 recorded += 1
@@ -3881,7 +4006,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 outcome=args.outcome,
                 changed=parse_bool_int(args.changed),
                 regression=parse_bool_int(args.regression),
-                raw_line=args.raw_line or "",
+                raw_line=args.raw_line if preserve_raw else "",
                 planned=0,
                 attributes=attrs,
             )

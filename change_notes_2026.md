@@ -609,3 +609,8 @@ Reconstructed pre-1.0 history:
 2026-05-12: backlog orchestration wrench:
 - Added `orchestration/backlog.sh`, a deliberately small operator launcher that opens or reuses a `[backlog]` PR, targets the newest open non-feature/non-research issue, runs one Upkeeper repair pass with `gpt-5.4` high reasoning, pushes the result, waits for PR checks, and merges the batch after 10 recorded fixes.
 - The launcher keeps the five-hour quota stop threshold at zero for this workflow while preserving a 10% weekly quota stop threshold, and falls back to a normal newest-file Upkeeper pass when no eligible issue is open.
+
+2026-05-12: backlog wrench post-fix efficiency hardening:
+- `orchestration/backlog.sh` now scrubs Python bytecode cache artifacts before the commit path and disables bytecode generation during backlog runs so one-file issue fixes do not stall on transient `__pycache__` junk.
+- Existing open backlog PRs with recorded fixes now wait only up to a bounded interval for GitHub checks to settle before the next loop iteration, instead of hanging indefinitely on stale aggregate check states.
+- A clean backlog branch now gates the next issue on the current PR checks completing, so the loop does not spend model cycles starting a new fix while the previous fix is still waiting on CI.

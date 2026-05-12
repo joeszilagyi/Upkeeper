@@ -105,10 +105,17 @@ REDACTABLE_PATH_KEYS = {
     "working_tree_path",
     "source_path",
     "target_path",
+    "selected_path",
     "recovery_path",
     "input_path",
     "output_path",
     "detail_path",
+    "remote_url",
+    "source_kind",
+    "alias_value",
+    "source_uri",
+    "repo_alias_id",
+    "artifact_kind",
 }
 
 
@@ -393,6 +400,7 @@ CREATE_TABLE_SQL = [
       head_blob text,
       worktree_hash text,
       mtime_epoch integer,
+      mtime_ns integer,
       size_bytes integer,
       executable integer,
       ignored integer,
@@ -427,7 +435,8 @@ CREATE_TABLE_SQL = [
       head_blob text,
       worktree_hash text,
       size_bytes integer,
-      mtime_epoch integer
+      mtime_epoch integer,
+      mtime_ns integer
     )
     """,
     """
@@ -917,8 +926,36 @@ def epoch_now() -> int:
     return int(time.time())
 
 
+def safe_output_text(raw: str) -> str:
+    return raw.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
+def sanitize_json_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: sanitize_json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [sanitize_json_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [sanitize_json_value(item) for item in value]
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "backslashreplace")
+    if isinstance(value, str):
+        return safe_output_text(value)
+    return value
+
+
+def decode_git_output(raw: bytes) -> str:
+    return raw.decode("utf-8", "backslashreplace")
+
+
 def json_dumps(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+    return json.dumps(
+        sanitize_json_value(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -930,7 +967,7 @@ def sha256_text(text: str) -> str:
 
 
 def print_json(value: Any) -> None:
-    print(json.dumps(value, sort_keys=True, indent=2))
+    print(json.dumps(sanitize_json_value(value), sort_keys=True, indent=2))
 
 
 def fail(message: str, code: int) -> None:
@@ -938,13 +975,21 @@ def fail(message: str, code: int) -> None:
     raise SystemExit(code)
 
 
-def run_git(root: Path, args: list[str], *, text: bool = True, check: bool = True) -> Any:
+def run_git(
+    root: Path,
+    args: list[str],
+    *,
+    text: bool = True,
+    check: bool = True,
+    errors: str = "backslashreplace",
+) -> Any:
     try:
         return subprocess.run(
             ["git", "-C", str(root), *args],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=text,
+            errors=errors if text else None,
             check=check,
         )
     except FileNotFoundError:
@@ -955,12 +1000,24 @@ def run_git(root: Path, args: list[str], *, text: bool = True, check: bool = Tru
         return None
 
 
-def git_output(root: Path, args: list[str], default: str = "") -> str:
+def git_output(root: Path, args: list[str], default: str = "", strip: bool = True) -> str:
     try:
         result = run_git(root, args, text=True, check=True)
-        return result.stdout.strip()
+        return result.stdout.strip() if strip else result.stdout
     except (subprocess.CalledProcessError, SystemExit):
         return default
+
+
+def git_porcelain_status_for_path(root: Path, rel_path: str) -> str:
+    try:
+        raw = subprocess.check_output(
+            ["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--", rel_path],
+            stderr=subprocess.PIPE,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+    decoded = decode_git_output(raw)
+    return decoded[:2]
 
 
 def inside_git_repo(root: Path) -> bool:
@@ -974,23 +1031,42 @@ def default_root() -> Path:
 def default_db_path(root: Path) -> Path:
     raw = os.environ.get("UPKEEPER_LATTICE_DB")
     if raw:
-        return Path(raw).expanduser().resolve() if Path(raw).is_absolute() else (root / raw).resolve()
-    return (root / "runtime/upkeeper-lattice/lattice.sqlite3").resolve()
+        path = Path(raw).expanduser()
+        return path.absolute() if path.is_absolute() else (root / path).absolute()
+    return (root / "runtime/upkeeper-lattice/lattice.sqlite3").absolute()
 
 
 def normalize_db_path(raw: str | None, root: Path) -> Path:
     if raw:
         path = Path(raw).expanduser()
-        return path.resolve() if path.is_absolute() else (root / path).resolve()
+        return path.absolute() if path.is_absolute() else (root / path).absolute()
     return default_db_path(root)
 
 
 def path_under(path: Path, parent: Path) -> bool:
     try:
-        path.resolve().relative_to(parent.resolve())
-        return True
+        path_abs = path.absolute()
+        parent_abs = parent.absolute()
+        return os.path.commonpath([str(path_abs), str(parent_abs)]) == str(parent_abs)
     except ValueError:
         return False
+
+
+def has_forbidden_symlink(path: Path, base: Path) -> bool:
+    try:
+        rel = path.absolute().relative_to(base.absolute())
+    except ValueError:
+        return False
+    cursor = base.absolute()
+    for part in rel.parts:
+        cursor = cursor / part
+        try:
+            st = cursor.lstat()
+        except OSError:
+            break
+        if stat.S_ISLNK(st.st_mode):
+            return True
+    return False
 
 
 def validate_lattice_output_path(
@@ -1000,11 +1076,12 @@ def validate_lattice_output_path(
     allow_existing: bool = False,
     journal_mode: str = "delete",
     db_path: Path | None = None,
+    allow_outside_runtime: bool = False,
 ) -> Path:
     output = Path(raw_output).expanduser()
-    output = output.resolve() if output.is_absolute() else (Path.cwd() / output).resolve()
-    runtime_root = (root / "runtime").resolve()
-    if not path_under(output, runtime_root):
+    output = output.absolute() if output.is_absolute() else (Path.cwd() / output).absolute()
+    runtime_root = (root / "runtime").absolute()
+    if not path_under(output, runtime_root) and not allow_outside_runtime:
         fail(f"unsafe output path outside runtime: {output}", EXIT_USAGE)
     if db_path:
         for side_path in db_side_paths(db_path, journal_mode):
@@ -1123,7 +1200,7 @@ def git_ignored_paths(root: Path, paths: list[str]) -> set[str]:
     try:
         result = subprocess.run(
             ["git", "-C", str(root), "check-ignore", "-z", "--no-index", "--stdin"],
-            input=("\0".join(paths) + "\0").encode("utf-8", "surrogateescape"),
+            input=("\0".join(paths) + "\0").encode("utf-8", "backslashreplace"),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -1132,7 +1209,7 @@ def git_ignored_paths(root: Path, paths: list[str]) -> set[str]:
         return set()
     if result.returncode not in (0, 1):
         return set()
-    return set(path for path in result.stdout.decode("utf-8", "surrogateescape").split("\0") if path)
+    return set(path for path in decode_git_output(result.stdout).split("\0") if path)
 
 
 def source_safe_parts(rel_path: str) -> list[str] | None:
@@ -1215,16 +1292,23 @@ def db_side_paths(db_path: Path, journal_mode: str) -> list[Path]:
 
 
 def path_safety(root: Path, db_path: Path, journal_mode: str) -> dict[str, Any]:
-    runtime_root = (root / "runtime").resolve()
+    root_abs = root.absolute()
+    runtime_root = (root / "runtime").absolute()
     paths = db_side_paths(db_path, journal_mode)
     statuses = []
     unsafe = False
     for path in paths:
         under_runtime = path_under(path, runtime_root)
-        tracked = git_path_tracked(root, path) if path_under(path, root) else False
-        ignored = git_path_ignored(root, path) if path_under(path, root) else False
+        under_root = path_under(path, root_abs)
+        has_symlink = has_forbidden_symlink(path, root_abs)
+        tracked = git_path_tracked(root, path) if under_root else False
+        ignored = git_path_ignored(root, path) if under_root else False
         explicit_ok = under_runtime or ignored
-        item_unsafe = tracked or (path_under(path, root) and not explicit_ok)
+        item_unsafe = (
+            True
+            if not under_root
+            else (has_symlink or tracked or (not explicit_ok))
+        )
         unsafe = unsafe or item_unsafe
         statuses.append(
             {
@@ -1232,6 +1316,7 @@ def path_safety(root: Path, db_path: Path, journal_mode: str) -> dict[str, Any]:
                 "under_runtime": under_runtime,
                 "git_tracked": tracked,
                 "git_ignored": ignored,
+                "has_symlink": has_symlink,
                 "safe": not item_unsafe,
             }
         )
@@ -1252,7 +1337,32 @@ def chmod_private(path: Path, is_dir: bool = False) -> None:
         pass
 
 
-def connect(db_path: Path, journal_mode: str, *, create_parent: bool = False) -> sqlite3.Connection:
+def connect(
+    db_path: Path,
+    journal_mode: str,
+    *,
+    create_parent: bool = False,
+    create_if_missing: bool = False,
+) -> sqlite3.Connection:
+    try:
+        existing = db_path.lstat()
+    except FileNotFoundError:
+        existing = None
+    except OSError as exc:
+        fail(f"DB path not stat-able: {db_path} ({exc})", EXIT_DB_UNAVAILABLE)
+
+    if existing is not None:
+        if stat.S_ISLNK(existing.st_mode):
+            fail(f"DB path is a symlink: {db_path}", EXIT_DB_UNAVAILABLE)
+        if not stat.S_ISREG(existing.st_mode):
+            fail(f"DB path is not regular: {db_path}", EXIT_DB_UNAVAILABLE)
+        if existing.st_uid != os.geteuid():
+            fail(f"DB path owner mismatch: {db_path} expected_uid={os.geteuid()} actual_uid={existing.st_uid}", EXIT_DB_UNAVAILABLE)
+        if getattr(existing, "st_nlink", 1) != 1:
+            fail(f"DB path has multiple links: {db_path} nlink={existing.st_nlink}", EXIT_DB_UNAVAILABLE)
+    elif not create_if_missing:
+        fail(f"DB path missing: {db_path}", EXIT_DB_UNAVAILABLE)
+
     if create_parent:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         chmod_private(db_path.parent, is_dir=True)
@@ -1283,9 +1393,15 @@ def connect_checked(
     *,
     allow_unsafe_db: bool,
     create_parent: bool = False,
+    create_if_missing: bool = False,
 ) -> sqlite3.Connection:
     check_path_safe(root, db_path, journal_mode, allow_unsafe_db)
-    return connect(db_path, journal_mode, create_parent=create_parent)
+    return connect(
+        db_path,
+        journal_mode,
+        create_parent=create_parent,
+        create_if_missing=create_if_missing,
+    )
 
 
 def table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
@@ -1325,6 +1441,30 @@ def dedupe_git_file_changes(conn: sqlite3.Connection) -> int:
     return duplicate_groups
 
 
+def ensure_file_snapshot_mtime_ns_column(conn: sqlite3.Connection) -> None:
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(file_snapshots)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "mtime_ns" not in columns:
+        try:
+            conn.execute("alter table file_snapshots add column mtime_ns integer")
+        except sqlite3.Error:
+            pass
+
+
+def ensure_worktree_snapshot_path_mtime_ns_column(conn: sqlite3.Connection) -> None:
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(worktree_snapshot_paths)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "mtime_ns" not in columns:
+        try:
+            conn.execute("alter table worktree_snapshot_paths add column mtime_ns integer")
+        except sqlite3.Error:
+            pass
+
+
 def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
     now = epoch_now()
     with conn:
@@ -1333,6 +1473,8 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
         deduped_git_change_groups = dedupe_git_file_changes(conn)
         for sql in CREATE_INDEX_SQL:
             conn.execute(sql)
+        ensure_file_snapshot_mtime_ns_column(conn)
+        ensure_worktree_snapshot_path_mtime_ns_column(conn)
         conn.execute("PRAGMA user_version=1")
         conn.execute(
             "insert or replace into schema_meta(key, value) values (?, ?)",
@@ -1346,6 +1488,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
             "insert or replace into schema_meta(key, value) values (?, ?)",
             ("updated_epoch", str(now)),
         )
+        ensure_worktree_snapshot_path_mtime_ns_column(conn)
         conn.execute(
             """
             insert or ignore into schema_migrations(
@@ -1522,6 +1665,7 @@ def ensure_file(
     canonical_path: str | None = None,
     state: str = "active",
     source_id: int | None = None,
+    prefer_historical_match: bool = False,
 ) -> int:
     now = epoch_now()
     path = normalize_rel_path(path)
@@ -1529,7 +1673,7 @@ def ensure_file(
     if not path:
         raise ValueError("empty path")
     row = None
-    if canonical == path:
+    if not prefer_historical_match and canonical == path:
         row = conn.execute(
             """
             select file_id
@@ -1557,6 +1701,17 @@ def ensure_file(
             """,
             (repo_id, path),
         ).fetchone()
+    if not row and prefer_historical_match and canonical == path:
+        row = conn.execute(
+            """
+            select file_id
+            from files
+            where repo_id=? and current_path=?
+            order by case when canonical_path <> ? then 0 else 1 end, file_id
+            limit 1
+            """,
+            (repo_id, path, path),
+        ).fetchone()
     if row:
         file_id = int(row["file_id"])
         conn.execute(
@@ -1583,6 +1738,196 @@ def ensure_file(
         (file_id, path, now, now, source_id),
     )
     return file_id
+
+
+def ensure_file_historical_only(
+    conn: sqlite3.Connection,
+    repo_id: int,
+    path: str,
+    *,
+    canonical_path: str | None = None,
+    source_id: int | None = None,
+) -> int:
+    now = epoch_now()
+    path = normalize_rel_path(path)
+    canonical = normalize_rel_path(canonical_path or path)
+    if not path:
+        raise ValueError("empty path")
+    # Never rely on current_path for historical imports: current snapshots may have
+    # already created a different lineage for a path before full git history replay.
+    # Match by canonical path first, then by historical file-path aliases.
+    row = None
+    if not row:
+        row = conn.execute(
+            "select file_id from files where repo_id=? and canonical_path=?",
+            (repo_id, canonical),
+        ).fetchone()
+    if not row:
+        row = conn.execute(
+            """
+            select f.file_id
+            from file_paths p
+            join files f on f.file_id=p.file_id
+            where f.repo_id=? and p.path=?
+            order by f.last_seen_epoch desc, f.file_id
+            limit 1
+            """,
+            (repo_id, path),
+        ).fetchone()
+    if row:
+        file_id = int(row["file_id"])
+        conn.execute(
+            "update files set last_seen_epoch=? where file_id=?",
+            (now, file_id),
+        )
+    else:
+        cur = conn.execute(
+            """
+            insert into files(repo_id, canonical_path, first_seen_epoch, last_seen_epoch, current_path, current_state)
+            values (?, ?, ?, ?, ?, 'unknown')
+            """,
+            (repo_id, canonical, now, now, path),
+        )
+        file_id = int(cur.lastrowid)
+    conn.execute(
+        """
+        insert into file_paths(file_id, path, first_seen_epoch, last_seen_epoch, source_id)
+        values (?, ?, ?, ?, ?)
+        on conflict(file_id, path) do update set
+          last_seen_epoch=excluded.last_seen_epoch,
+          source_id=coalesce(excluded.source_id, file_paths.source_id)
+        """,
+        (file_id, path, now, now, source_id),
+    )
+    return file_id
+
+
+def merge_file_lineage(
+    conn: sqlite3.Connection,
+    source_file_id: int,
+    target_file_id: int,
+) -> int:
+    if source_file_id == target_file_id:
+        return target_file_id
+    source = conn.execute(
+        """
+        select file_id, canonical_path, current_path, current_state, first_seen_epoch, last_seen_epoch
+        from files
+        where file_id=?
+        """,
+        (source_file_id,),
+    ).fetchone()
+    target = conn.execute(
+        """
+        select file_id, canonical_path, current_path, current_state, first_seen_epoch, last_seen_epoch
+        from files
+        where file_id=?
+        """,
+        (target_file_id,),
+    ).fetchone()
+    if not source or not target:
+        return target_file_id
+
+    now = epoch_now()
+    merged_first_seen = min(
+        value
+        for value in (source["first_seen_epoch"], target["first_seen_epoch"])
+        if value is not None
+    )
+    merged_last_seen = max(
+        value
+        for value in (source["last_seen_epoch"], target["last_seen_epoch"], now)
+        if value is not None
+    )
+    merged_canonical = str(target["canonical_path"] or target["current_path"] or source["canonical_path"] or source["current_path"])
+    merged_current_path = str(target["current_path"] or source["current_path"] or merged_canonical)
+    merged_state = str(target["current_state"] or source["current_state"] or "unknown")
+    if merged_state == "unknown" and source["current_state"]:
+        merged_state = str(source["current_state"])
+
+    conn.execute(
+        """
+        update files
+        set canonical_path=?,
+            first_seen_epoch=?,
+            last_seen_epoch=?,
+            current_path=?,
+            current_state=?
+        where file_id=?
+        """,
+        (
+            merged_canonical,
+            merged_first_seen,
+            merged_last_seen,
+            merged_current_path,
+            merged_state,
+            target_file_id,
+        ),
+    )
+    conn.execute(
+        """
+        insert into file_paths(file_id, path, first_seen_epoch, last_seen_epoch, source_id)
+        select ?, path, first_seen_epoch, last_seen_epoch, source_id
+        from file_paths
+        where file_id=?
+        on conflict(file_id, path) do update set
+          first_seen_epoch=case
+            when file_paths.first_seen_epoch is null then excluded.first_seen_epoch
+            when excluded.first_seen_epoch is null then file_paths.first_seen_epoch
+            when excluded.first_seen_epoch < file_paths.first_seen_epoch then excluded.first_seen_epoch
+            else file_paths.first_seen_epoch
+          end,
+          last_seen_epoch=case
+            when file_paths.last_seen_epoch is null then excluded.last_seen_epoch
+            when excluded.last_seen_epoch is null then file_paths.last_seen_epoch
+            when excluded.last_seen_epoch > file_paths.last_seen_epoch then excluded.last_seen_epoch
+            else file_paths.last_seen_epoch
+          end,
+          source_id=coalesce(file_paths.source_id, excluded.source_id)
+        """,
+        (target_file_id, source_file_id),
+    )
+    for table, column in (
+        ("cycles", "selected_file_id"),
+        ("selection_runs", "selected_file_id"),
+        ("selection_candidates", "file_id"),
+        ("file_snapshots", "file_id"),
+        ("file_events", "file_id"),
+        ("git_file_changes", "file_id"),
+        ("tool_failures", "file_id"),
+        ("regression_events", "file_id"),
+        ("regression_causes", "cause_file_id"),
+        ("change_log_file_refs", "file_id"),
+        ("extension_facts", "file_id"),
+        ("operator_annotations", "file_id"),
+        ("file_pass_runs", "file_id"),
+        ("file_pass_rollups", "file_id"),
+        ("file_fragility_rollups", "file_id"),
+        ("file_git_churn_rollups", "file_id"),
+        ("file_selection_rollups", "file_id"),
+        ("file_failure_rollups", "file_id"),
+    ):
+        conn.execute(
+            f"update {table} set {column}=? where {column}=?",
+            (target_file_id, source_file_id),
+        )
+    conn.execute("delete from file_paths where file_id=?", (source_file_id,))
+    try:
+        conn.execute("delete from files where file_id=?", (source_file_id,))
+    except sqlite3.IntegrityError:
+        hidden_path = f"__merged__/file-{source_file_id}"
+        conn.execute(
+            """
+            update files
+            set canonical_path=?,
+                current_path=?,
+                current_state='merged',
+                last_seen_epoch=?
+            where file_id=?
+            """,
+            (hidden_path, hidden_path, now, source_file_id),
+        )
+    return target_file_id
 
 
 def file_id_for_path(conn: sqlite3.Connection, repo_id: int, path: str) -> int | None:
@@ -1687,6 +2032,8 @@ def ensure_cycle(
         for key, value in fields.items():
             if key not in table_columns(conn, "cycles"):
                 continue
+            if not has_meaningful_value(value):
+                continue
             assignments.append(f"{key}=?")
             values.append(value)
         if source_id is not None:
@@ -1699,7 +2046,7 @@ def ensure_cycle(
     columns = ["repo_id", "cycle_id", "run_hash", "start_epoch", "source_id"]
     values = [repo_id, cycle_id, run_hash, start_epoch, source_id]
     for key, value in fields.items():
-        if key in table_columns(conn, "cycles") and key not in columns:
+        if key in table_columns(conn, "cycles") and key not in columns and has_meaningful_value(value):
             columns.append(key)
             values.append(value)
     placeholders = ",".join("?" for _ in columns)
@@ -1830,6 +2177,23 @@ def parse_bool_int(raw: str | None) -> int | None:
     return None
 
 
+def parse_bool_flag(raw: str | None) -> bool:
+    if raw is None or raw is True:
+        return True
+    parsed = parse_bool_int(str(raw))
+    if parsed is None:
+        raise argparse.ArgumentTypeError(f"expected boolean value, got {raw!r}")
+    return bool(parsed)
+
+
+def has_meaningful_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip() != ""
+    return True
+
+
 def record_file_event(
     conn: sqlite3.Connection,
     repo_id: int,
@@ -1868,13 +2232,31 @@ def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
     st, safety_reason = source_safe_file_stat(root, rel_path)
     if st is not None:
         meta["mtime_epoch"] = int(st.st_mtime)
+        meta["mtime_ns"] = int(st.st_mtime_ns)
         meta["size_bytes"] = int(st.st_size)
         meta["executable"] = 1 if st.st_mode & 0o111 else 0
         meta["is_regular"] = 1 if stat.S_ISREG(st.st_mode) else 0
     else:
-        meta.update({"mtime_epoch": None, "size_bytes": None, "executable": None, "is_regular": 0})
+        meta.update(
+            {
+                "mtime_epoch": None,
+                "mtime_ns": None,
+                "size_bytes": None,
+                "executable": None,
+                "is_regular": 0,
+            }
+        )
     meta["source_safety_reason"] = safety_reason
-    status = git_output(root, ["status", "--porcelain=v1", "--", rel_path], "")
+    if safety_reason == "symlink":
+        meta["git_status"] = "symlink"
+        meta["worktree_hash"] = "unavailable"
+        meta["head_blob"] = "none"
+        meta["content_state"] = "symlink"
+        meta["ignored"] = 1 if git_path_ignored(root, root / rel_path) else 0
+        meta["test_path"] = 1 if is_test_path(rel_path) else 0
+        meta["generated"] = 0
+        return meta
+    status = git_porcelain_status_for_path(root, rel_path)
     meta["git_status"] = status[:2].replace(" ", "_") if status else "clean"
     meta["worktree_hash"] = git_output(root, ["hash-object", "--", rel_path], "missing") if st is not None else "unavailable"
     meta["head_blob"] = git_output(root, ["rev-parse", f"HEAD:{rel_path}"], "none")
@@ -1903,12 +2285,14 @@ def insert_file_snapshot(
     meta = live_file_metadata(root, rel_path)
     if file_id is None and rel_path:
         file_id = ensure_file(conn, repo_id, rel_path, source_id=source_id)
+    if not file_id:
+        raise ValueError("file_id required for snapshot")
     cur = conn.execute(
         """
         insert into file_snapshots(
           file_id, repo_id, path, observed_epoch, source_id, git_status, content_state,
-          head_blob, worktree_hash, mtime_epoch, size_bytes, executable, ignored, generated, test_path
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          head_blob, worktree_hash, mtime_epoch, mtime_ns, size_bytes, executable, ignored, generated, test_path
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             file_id,
@@ -1921,6 +2305,7 @@ def insert_file_snapshot(
             meta.get("head_blob"),
             meta.get("worktree_hash"),
             meta.get("mtime_epoch"),
+            meta.get("mtime_ns"),
             meta.get("size_bytes"),
             meta.get("executable"),
             meta.get("ignored"),
@@ -1983,9 +2368,18 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def has_redacted_path_token(payload: dict[str, Any]) -> bool:
-    for key, value in payload.items():
-        if key in REDACTABLE_PATH_KEYS and isinstance(value, str) and value.startswith(REDACTED_PATH_PREFIX):
-            return True
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if isinstance(value, dict) and has_redacted_path_token(value):
+                return True
+            if isinstance(value, list) and has_redacted_path_token(value):
+                return True
+            if key in REDACTABLE_PATH_KEYS and isinstance(value, str) and value.startswith(REDACTED_PATH_PREFIX):
+                return True
+    elif isinstance(payload, list):
+        for value in payload:
+            if has_redacted_path_token(value):
+                return True
     return False
 
 
@@ -2003,7 +2397,7 @@ def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper
             raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"])
         else:
             raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "-z"])
-        paths = [p for p in raw.decode("utf-8", "surrogateescape").split("\0") if p]
+        paths = [p for p in decode_git_output(raw).split("\0") if p]
     else:
         paths = []
         for dirpath, dirnames, filenames in os.walk(root):
@@ -2071,7 +2465,7 @@ def current_scope_paths(conn: sqlite3.Connection, root: Path, repo_id: int, scop
         if not inside_git_repo(root):
             return []
         raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"])
-        return sorted(p for p in raw.decode("utf-8", "surrogateescape").split("\0") if p)
+        return sorted(p for p in decode_git_output(raw).split("\0") if p)
     if scope == "deleted":
         return [
             str(row["current_path"])
@@ -2103,33 +2497,43 @@ def current_scope_paths(conn: sqlite3.Connection, root: Path, repo_id: int, scop
 
 
 def format_rows(rows: list[dict[str, Any]], fmt: str) -> None:
-    if fmt == "json":
-        print_json(rows)
-    elif fmt == "jsonl":
-        for row in rows:
-            print(json_dumps(row))
-    elif fmt == "tsv":
-        if not rows:
-            return
-        keys = list(rows[0].keys())
-        print("\t".join(keys))
-        for row in rows:
-            print("\t".join("" if row.get(k) is None else str(row.get(k)) for k in keys))
-    else:
-        if not rows:
-            return
-        keys = list(rows[0].keys())
-        widths = {key: max(len(key), *(len(str(row.get(key, ""))) for row in rows)) for key in keys}
-        print("  ".join(key.ljust(widths[key]) for key in keys))
-        for row in rows:
-            print("  ".join(str(row.get(key, "") if row.get(key) is not None else "").ljust(widths[key]) for key in keys))
+    try:
+        if fmt == "json":
+            print_json(rows)
+        elif fmt == "jsonl":
+            for row in rows:
+                print(json_dumps(row))
+        elif fmt == "tsv":
+            if not rows:
+                return
+            keys = list(rows[0].keys())
+            print("\t".join(keys))
+            for row in rows:
+                print("\t".join("" if row.get(k) is None else str(row.get(k)) for k in keys))
+        else:
+            if not rows:
+                return
+            keys = list(rows[0].keys())
+            widths = {key: max(len(key), *(len(str(row.get(key, ""))) for row in rows)) for key in keys}
+            print("  ".join(key.ljust(widths[key]) for key in keys))
+            for row in rows:
+                print("  ".join(str(row.get(key, "") if row.get(key) is not None else "").ljust(widths[key]) for key in keys))
+    except BrokenPipeError:
+        raise SystemExit(EXIT_SUCCESS)
 
 
 def command_init(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
     journal_mode = args.journal_mode
-    conn = connect_checked(root, db_path, journal_mode, allow_unsafe_db=args.allow_unsafe_db, create_parent=True)
+    conn = connect_checked(
+        root,
+        db_path,
+        journal_mode,
+        allow_unsafe_db=args.allow_unsafe_db,
+        create_parent=True,
+        create_if_missing=True,
+    )
     try:
         init_schema(conn, root)
         chmod_private(db_path)
@@ -2157,6 +2561,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     result["checks"]["parent_exists"] = db_path.parent.exists()
     result["checks"]["parent_mode"] = oct(stat.S_IMODE(db_path.parent.stat().st_mode)) if db_path.parent.exists() else "missing"
     result["checks"]["db_exists"] = db_path.exists()
+    if not db_path.exists():
+        result["status"] = "db_unavailable"
+        return result, EXIT_DB_UNAVAILABLE
     if not db_path.parent.exists():
         result["status"] = "db_unavailable"
         return result, EXIT_DB_UNAVAILABLE
@@ -2281,7 +2688,9 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
         parsed = vars(args).copy()
         parsed.pop("func", None)
         source_id = ensure_source_record(conn, repo_id, "wrapper_observed", raw_ref="cycle_start", parsed=parsed)
-        worktree_dirty = 1 if int(args.dirty_path_count or 0) > 0 else 0
+        worktree_dirty = None
+        if args.dirty_path_count is not None:
+            worktree_dirty = 1 if int(args.dirty_path_count or 0) > 0 else 0
         cycle_pk = ensure_cycle(
             conn,
             repo_id,
@@ -2299,7 +2708,7 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
             head_tree_sha=args.head_tree_sha or repo_git_info(root)["head_tree_sha"],
             upstream_ref=args.upstream_ref,
             worktree_dirty=worktree_dirty,
-            dry_run=parse_bool_int(str(args.dry_run)),
+            dry_run=parse_bool_int(str(args.dry_run)) if args.dry_run is not None else None,
         )
         record_cycle_link_from_env(conn, repo_id, cycle_pk, args, source_id)
         record_worktree_snapshot(conn, root, repo_id, cycle_pk, "before_codex", source_id=source_id)
@@ -2324,7 +2733,7 @@ def record_worktree_snapshot(
         raw = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--untracked-files=all"])
     except (OSError, subprocess.CalledProcessError):
         raw = b""
-    parts = raw.decode("utf-8", "surrogateescape").split("\0") if raw else []
+    parts = decode_git_output(raw).split("\0") if raw else []
     entries: list[tuple[str, str, str | None]] = []
     i = 0
     tracked = 0
@@ -2374,8 +2783,8 @@ def record_worktree_snapshot(
         conn.execute(
             """
             insert into worktree_snapshot_paths(
-              worktree_snapshot_id, file_id, path, status, old_path, head_blob, worktree_hash, size_bytes, mtime_epoch
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              worktree_snapshot_id, file_id, path, status, old_path, head_blob, worktree_hash, size_bytes, mtime_epoch, mtime_ns
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot_id,
@@ -2387,6 +2796,7 @@ def record_worktree_snapshot(
                 meta.get("worktree_hash"),
                 meta.get("size_bytes"),
                 meta.get("mtime_epoch"),
+                meta.get("mtime_ns"),
             ),
         )
     return snapshot_id
@@ -2414,6 +2824,35 @@ def latest_worktree_snapshot_id(
     return int(row["worktree_snapshot_id"]) if row else None
 
 
+def worktree_snapshot_path_row(
+    conn: sqlite3.Connection,
+    *,
+    repo_id: int,
+    cycle_pk: int | None,
+    path: str,
+    snapshot_kind: str,
+) -> sqlite3.Row | None:
+    snapshot_id = latest_worktree_snapshot_id(
+        conn,
+        repo_id=repo_id,
+        cycle_pk=cycle_pk,
+        snapshot_kind=snapshot_kind,
+    )
+    if snapshot_id is None:
+        return None
+    return conn.execute(
+        """
+        select p.*
+        from worktree_snapshot_paths p
+        join worktree_snapshots s on s.worktree_snapshot_id=p.worktree_snapshot_id
+        where s.repo_id=? and p.worktree_snapshot_id=? and p.path=?
+        order by p.worktree_snapshot_path_id desc
+        limit 1
+        """,
+        (repo_id, snapshot_id, path),
+    ).fetchone()
+
+
 def worktree_snapshot_path_map(conn: sqlite3.Connection, snapshot_id: int | None) -> dict[str, sqlite3.Row]:
     if snapshot_id is None:
         return {}
@@ -2428,10 +2867,46 @@ def worktree_snapshot_path_map(conn: sqlite3.Connection, snapshot_id: int | None
     return {str(row["path"]): row for row in rows}
 
 
+def worktree_snapshot(conn: sqlite3.Connection, snapshot_id: int | None) -> sqlite3.Row | None:
+    if snapshot_id is None:
+        return None
+    return conn.execute(
+        """
+        select *
+          from worktree_snapshots
+         where worktree_snapshot_id=?
+        """,
+        (snapshot_id,),
+    ).fetchone()
+
+
+def changed_paths_from_head(
+    root: Path,
+    before_head: str | None,
+    after_head: str | None,
+) -> set[str]:
+    if not before_head or not after_head:
+        return set()
+    if before_head == "none" or after_head == "none":
+        return set()
+    if before_head == after_head:
+        return set()
+    try:
+        raw = subprocess.check_output(
+            ["git", "-C", str(root), "diff", "--name-only", "-z", before_head, after_head],
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return set()
+    paths = decode_git_output(raw).split("\0")
+    return {path for path in paths if path}
+
+
 def record_worktree_delta_events(
     conn: sqlite3.Connection,
     *,
     repo_id: int,
+    root: Path,
     cycle_pk: int | None,
     source_id: int | None,
     after_snapshot_id: int,
@@ -2442,10 +2917,19 @@ def record_worktree_delta_events(
         cycle_pk=cycle_pk,
         snapshot_kind="before_codex",
     )
+    before_snapshot = worktree_snapshot(conn, before_snapshot_id)
+    after_snapshot = worktree_snapshot(conn, after_snapshot_id)
     before_paths = worktree_snapshot_path_map(conn, before_snapshot_id)
     after_paths = worktree_snapshot_path_map(conn, after_snapshot_id)
+    commit_changed_paths = changed_paths_from_head(
+        root,
+        before_snapshot["git_head_sha"] if before_snapshot else None,
+        after_snapshot["git_head_sha"] if after_snapshot else None,
+    ) if before_snapshot is not None and after_snapshot is not None else set()
 
     all_paths = sorted(set(before_paths) | set(after_paths))
+    all_paths.extend(sorted(commit_changed_paths - set(all_paths)))
+
     for path in all_paths:
         before = before_paths.get(path)
         after = after_paths.get(path)
@@ -2456,6 +2940,8 @@ def record_worktree_delta_events(
         if before and after and before_status == after_status and before_hash == after_hash:
             continue
         file_id = after["file_id"] if after else before["file_id"] if before else None
+        if file_id is None:
+            file_id = ensure_file(conn, repo_id, path, source_id=source_id)
         record_file_event(
             conn,
             repo_id,
@@ -2472,6 +2958,9 @@ def record_worktree_delta_events(
                 "after_status": after_status,
                 "before_worktree_hash": before_hash,
                 "after_worktree_hash": after_hash,
+                "before_worktree_head_sha": before_snapshot["git_head_sha"] if before_snapshot else None,
+                "after_worktree_head_sha": after_snapshot["git_head_sha"] if after_snapshot else None,
+                "head_delta_source": "git diff" if path in commit_changed_paths else None,
             },
         )
 
@@ -2509,7 +2998,14 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         )
         cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
         selected_path = normalize_rel_path(selection.get("path", ""))
-        selected_file_id = ensure_file(conn, repo_id, selected_path, source_id=source_id) if selected_path else None
+        selected_file_state = "active"
+        if selected_path:
+            _, selected_file_safety = source_safe_file_stat(root, selected_path)
+            if selected_file_safety:
+                selected_file_state = "missing"
+        selected_file_id = (
+            ensure_file(conn, repo_id, selected_path, state=selected_file_state, source_id=source_id) if selected_path else None
+        )
         mode = selection.get("selection_mode", "unknown")
         gate = selector_priority_gate(mode)
         selected_rank = None
@@ -2661,7 +3157,7 @@ def parse_review_summary_file(path: Path) -> dict[str, str]:
     except OSError:
         return {}
     outcome = ""
-    for match in re.finditer(r"\b(REVIEWED_AND_FIXED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", text):
+    for match in re.finditer(r"\b(REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", text):
         outcome = match.group(1)
         break
     selected_file = ""
@@ -2673,12 +3169,18 @@ def parse_review_summary_file(path: Path) -> dict[str, str]:
             continue
         md = re.search(r"\]\(([^)]+)\)", line)
         bt = re.search(r"`([^`]+)`", line)
+        candidate: str = ""
         if md:
-            selected_file = md.group(1).strip("<>").split(":", 1)[0]
+            candidate = md.group(1).strip("<>")
         elif bt:
-            selected_file = bt.group(1)
+            candidate = bt.group(1)
         elif ":" in line:
-            selected_file = line.split(":", 1)[1].strip()
+            candidate = line.split(":", 1)[1].strip()
+        if candidate:
+            if re.match(r"^[A-Za-z][A-Za-z0-9+\-.]*://", candidate):
+                selected_file = ""
+            else:
+                selected_file = candidate
         if selected_file:
             break
     return {"review_outcome": outcome, "selected_file": selected_file}
@@ -2764,6 +3266,14 @@ def record_selected_file_delta(
         file_id=file_id,
         event_kind="snapshot_before",
     )
+    if not before and path:
+        before = worktree_snapshot_path_row(
+            conn,
+            repo_id=repo_id,
+            cycle_pk=cycle_pk,
+            path=path,
+            snapshot_kind="before_codex",
+        )
     after = conn.execute(
         "select * from file_snapshots where snapshot_id=? and repo_id=?",
         (after_snapshot_id, repo_id),
@@ -2786,13 +3296,18 @@ def record_selected_file_delta(
     after_hash = after["worktree_hash"]
     before_mtime = before["mtime_epoch"]
     after_mtime = after["mtime_epoch"]
+    before_mtime_ns = before["mtime_ns"]
+    after_mtime_ns = after["mtime_ns"]
     details = {
-        "before_snapshot_id": before["snapshot_id"],
+        "before_snapshot_id": before["snapshot_id"] if "snapshot_id" in before.keys() else None,
+        "before_worktree_snapshot_id": before["worktree_snapshot_id"] if "worktree_snapshot_id" in before.keys() else None,
         "after_snapshot_id": after["snapshot_id"],
         "before_worktree_hash": before_hash,
         "after_worktree_hash": after_hash,
         "before_mtime_epoch": before_mtime,
         "after_mtime_epoch": after_mtime,
+        "before_mtime_ns": before_mtime_ns,
+        "after_mtime_ns": after_mtime_ns,
     }
 
     if before_hash and after_hash and before_hash != after_hash:
@@ -2829,6 +3344,17 @@ def record_selected_file_delta(
             path=path,
             details=details,
         )
+    elif before_mtime_ns is not None and after_mtime_ns is not None and int(before_mtime_ns) != int(after_mtime_ns):
+        record_file_event(
+            conn,
+            repo_id,
+            "touched_clean",
+            file_id=file_id,
+            cycle_pk=cycle_pk,
+            source_id=source_id,
+            path=path,
+            details=details,
+        )
     elif int(before_mtime) != int(after_mtime):
         record_file_event(
             conn,
@@ -2850,6 +3376,7 @@ def create_artifact_ref(
     source_id: int | None,
     artifact_kind: str,
     path: str,
+    dedupe_identity: bool = False,
     details: Any = None,
 ) -> None:
     if not path:
@@ -2881,6 +3408,43 @@ def create_artifact_ref(
                 os.close(fd)
         except OSError:
             pass
+    observed_epoch = epoch_now()
+    if dedupe_identity:
+        existing = conn.execute(
+            """
+            select artifact_id
+            from artifact_refs
+            where repo_id = ? and artifact_kind = ? and path = ? and coalesce(sha256, '') = coalesce(?, '')
+            """,
+            (repo_id, artifact_kind, path, digest),
+        ).fetchone()
+        if existing is not None:
+            conn.execute(
+                """
+                update artifact_refs
+                set
+                  cycle_pk = coalesce(?, cycle_pk),
+                  source_id = coalesce(?, source_id),
+                  exists_at_record_time = ?,
+                  size_bytes = ?,
+                  observed_epoch = ?,
+                  retained = ?,
+                  details_json = coalesce(?, details_json)
+                where artifact_id = ?
+                """,
+                (
+                    cycle_pk,
+                    source_id,
+                    1 if exists else 0,
+                    size,
+                    observed_epoch,
+                    1 if exists else 0,
+                    json_dumps(details) if details is not None else None,
+                    existing["artifact_id"],
+                ),
+            )
+            return
+
     conn.execute(
         """
         insert into artifact_refs(
@@ -2897,7 +3461,7 @@ def create_artifact_ref(
             1 if exists else 0,
             size,
             digest,
-            epoch_now(),
+            observed_epoch,
             1 if exists else 0,
             json_dumps(details) if details is not None else None,
         ),
@@ -2919,70 +3483,100 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
         selected_path = normalize_rel_path(args.selected_path or "")
         selected_file_id = ensure_file(conn, repo_id, selected_path, source_id=source_id) if selected_path else None
+        cycle_selected_path = selected_path
+        cycle_selected_file_id = selected_file_id
         if reported_selected and selected_path and reported_selected != selected_path:
             replacement_id = ensure_file(conn, repo_id, reported_selected, source_id=source_id)
+            cycle_selected_path = reported_selected
+            cycle_selected_file_id = replacement_id
             record_file_event(
                 conn,
                 repo_id,
                 "target_substituted",
-                file_id=replacement_id,
+                file_id=cycle_selected_file_id,
                 cycle_pk=cycle_pk,
                 source_id=source_id,
-                path=reported_selected,
+                path=cycle_selected_path,
                 confidence="reported",
                 details={"preselected_path": selected_path, "reported_selected_path": reported_selected},
             )
-        conn.execute(
-            """
-            update cycles set
-              end_epoch=?, status_marker=?, review_outcome=?, codex_exit=?, wrapper_exit=?,
-              finish_reason=?, finish_level=?, codex_exec_started=?, dry_run=?,
-              selected_file_id=coalesce(?, selected_file_id),
-              selected_path=coalesce(?, selected_path)
-            where cycle_pk=?
-            """,
-            (
-                args.end_epoch or epoch_now(),
-                args.status_marker or None,
-                review_outcome,
-                args.codex_exit,
-                args.wrapper_exit,
-                args.finish_reason,
-                args.finish_level,
-                args.codex_exec_started,
-                parse_bool_int(str(args.dry_run)),
-                selected_file_id,
-                selected_path or None,
-                cycle_pk,
-            ),
-        )
+        elif reported_selected and not selected_path:
+            cycle_selected_path = reported_selected
+            cycle_selected_file_id = ensure_file(conn, repo_id, reported_selected, source_id=source_id)
+            record_file_event(
+                conn,
+                repo_id,
+                "target_substituted",
+                file_id=cycle_selected_file_id,
+                cycle_pk=cycle_pk,
+                source_id=source_id,
+                path=cycle_selected_path,
+                confidence="reported",
+                details={"reported_selected_path": reported_selected},
+            )
+        updates: list[tuple[str, Any]] = [("end_epoch", args.end_epoch or epoch_now())]
+        if args.status_marker:
+            updates.append(("status_marker", args.status_marker))
+        if review_outcome:
+            updates.append(("review_outcome", review_outcome))
+        if args.codex_exit is not None:
+            updates.append(("codex_exit", args.codex_exit))
+        if args.wrapper_exit is not None:
+            updates.append(("wrapper_exit", args.wrapper_exit))
+        if args.finish_reason:
+            updates.append(("finish_reason", args.finish_reason))
+        if args.finish_level:
+            updates.append(("finish_level", args.finish_level))
+        if args.codex_exec_started is not None:
+            updates.append(("codex_exec_started", args.codex_exec_started))
+        if args.dry_run is not None:
+            updates.append(("dry_run", parse_bool_int(str(args.dry_run))))
+        if cycle_selected_file_id is not None:
+            updates.append(("selected_file_id", cycle_selected_file_id))
+        if cycle_selected_path:
+            updates.append(("selected_path", cycle_selected_path))
+
+        if updates:
+            set_clause = ", ".join(f"{key}=?" for key, _ in updates)
+            conn.execute(
+                f"update cycles set {set_clause} where cycle_pk=?",
+                [value for _, value in updates] + [cycle_pk],
+            )
         snapshot_id = record_worktree_snapshot(conn, root, repo_id, cycle_pk, args.snapshot_kind, source_id=source_id)
         record_worktree_delta_events(
             conn,
             repo_id=repo_id,
+            root=root,
             cycle_pk=cycle_pk,
             source_id=source_id,
             after_snapshot_id=snapshot_id,
         )
-        if selected_path:
-            after_snapshot_id = insert_file_snapshot(conn, root, repo_id, selected_path, file_id=selected_file_id, source_id=source_id)
+        if cycle_selected_path:
+            after_snapshot_id = insert_file_snapshot(
+                conn,
+                root,
+                repo_id,
+                cycle_selected_path,
+                file_id=cycle_selected_file_id,
+                source_id=source_id,
+            )
             record_file_event(
                 conn,
                 repo_id,
                 "snapshot_after",
-                file_id=selected_file_id,
+                file_id=cycle_selected_file_id,
                 cycle_pk=cycle_pk,
                 source_id=source_id,
-                path=selected_path,
+                path=cycle_selected_path,
                 details={"snapshot_id": after_snapshot_id},
             )
             record_selected_file_delta(
                 conn,
                 repo_id=repo_id,
                 cycle_pk=cycle_pk,
-                file_id=selected_file_id,
+                file_id=cycle_selected_file_id,
                 source_id=source_id,
-                path=selected_path,
+                path=cycle_selected_path,
                 after_snapshot_id=after_snapshot_id,
                 review_outcome=review_outcome,
             )
@@ -3041,10 +3635,10 @@ def parse_pass_result_lines(path: Path) -> tuple[list[dict[str, Any]], list[dict
                 break
             fields[key] = value
         if malformed:
-            rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "malformed_token"})
+            rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "malformed_token", "fields": fields})
             continue
         if duplicate:
-            rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": f"duplicate_key:{duplicate}"})
+            rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": f"duplicate_key:{duplicate}", "fields": fields})
             continue
         if not fields.get("pass") or not fields.get("file"):
             rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "missing_pass_or_file", "fields": fields})
@@ -3075,6 +3669,7 @@ def record_one_pass_result(
     outcome: str,
     changed: int | None,
     regression: int | None,
+    planned: int | None = None,
     raw_line: str = "",
     confidence: str = "reported",
     attributes: dict[str, Any] | None = None,
@@ -3082,12 +3677,13 @@ def record_one_pass_result(
     pass_id = ensure_pass(conn, pass_code)
     file_id = ensure_file(conn, repo_id, path, source_id=source_id)
     attempted = 1 if outcome not in {"planned", "unknown"} else 0
+    resolved_planned = 1 if (planned is not None and bool(planned)) or (planned is None and outcome == "planned") else 0
     cur = conn.execute(
         """
         insert into file_pass_runs(
           repo_id, file_id, cycle_pk, pass_id, pass_code, planned, applicable,
           attempted, outcome, changed, regression, confidence, source_id, raw_line, created_epoch
-        ) values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             repo_id,
@@ -3095,6 +3691,7 @@ def record_one_pass_result(
             cycle_pk,
             pass_id,
             normalize_pass_code(pass_code),
+            resolved_planned,
             applicable,
             attempted,
             outcome,
@@ -3220,10 +3817,17 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
         planned = split_csv(args.planned_passes)
         planned.extend(args.planned_pass or [])
         seen: set[tuple[str, str]] = set()
+        rejected_pairs: set[tuple[str, str]] = set()
         if args.from_file:
             accepted, rejected = parse_pass_result_lines(Path(args.from_file))
             rejected_count = len(rejected)
             for item in rejected:
+                fields = item.get("fields", {})
+                if isinstance(fields, dict):
+                    rejected_pass = normalize_pass_code(str(fields.get("pass", ""))) if fields.get("pass") else ""
+                    rejected_path = normalize_rel_path(str(fields.get("file", ""))) if fields.get("file") else ""
+                    if rejected_pass and rejected_path:
+                        rejected_pairs.add((rejected_pass, rejected_path))
                 ensure_source_record(
                     conn,
                     repo_id,
@@ -3256,6 +3860,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     changed=changed,
                     regression=regression,
                     raw_line=item.get("raw_line", ""),
+                    planned=0,
                     attributes=attrs,
                 )
                 seen.add((pass_code, path))
@@ -3277,6 +3882,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 changed=parse_bool_int(args.changed),
                 regression=parse_bool_int(args.regression),
                 raw_line=args.raw_line or "",
+                planned=0,
                 attributes=attrs,
             )
             seen.add((pass_code, path))
@@ -3286,6 +3892,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
             pass_code = normalize_pass_code(raw_pass)
             if not target_path or (pass_code, target_path) in seen:
                 continue
+            inferred_outcome = "unknown" if (pass_code, target_path) in rejected_pairs else "planned"
             record_one_pass_result(
                 conn,
                 root,
@@ -3295,11 +3902,12 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 pass_code=pass_code,
                 path=target_path,
                 applicable=None,
-                outcome="unknown",
+                outcome=inferred_outcome,
                 changed=None,
                 regression=None,
                 raw_line="",
                 confidence="missing_marker",
+                planned=1,
             )
             recorded += 1
         refresh_rollups(conn, repo_id)
@@ -3434,6 +4042,7 @@ def command_import_git(args: argparse.Namespace) -> int:
         shas = [line.strip() for line in revs.splitlines() if line.strip()]
         if args.limit:
             shas = shas[-int(args.limit) :]
+        head_sha = git_output(root, ["rev-parse", "--verify", "HEAD"], "")
         for sha in shas:
             rows_seen += 1
             try:
@@ -3454,7 +4063,7 @@ def command_import_git(args: argparse.Namespace) -> int:
                 )
             except subprocess.CalledProcessError:
                 continue
-            parts = raw.decode("utf-8", "surrogateescape").split("\0")
+            parts = decode_git_output(raw).split("\0")
             if len(parts) < 8:
                 continue
             commit_sha, an, ae, at, cn, ce, ct, subject = parts[:8]
@@ -3519,7 +4128,39 @@ def command_import_git(args: argparse.Namespace) -> int:
                         continue
                 canonical = old_path if status_code.startswith("R") and old_path else path
                 state = "deleted" if status_code.startswith("D") else ("renamed" if status_code.startswith("R") else "active")
-                file_id = ensure_file(conn, repo_id, path, canonical_path=canonical, state=state, source_id=commit_source_id)
+                if sha == head_sha:
+                    file_id = ensure_file(
+                        conn,
+                        repo_id,
+                        path,
+                        canonical_path=canonical,
+                        state=state,
+                        source_id=commit_source_id,
+                        prefer_historical_match=True,
+                    )
+                else:
+                    file_id = ensure_file_historical_only(
+                        conn,
+                        repo_id,
+                        path,
+                        canonical_path=canonical,
+                        source_id=commit_source_id,
+                    )
+                if status_code.startswith("R") and old_path:
+                    current_row = conn.execute(
+                        """
+                        select file_id
+                        from files
+                        where repo_id=? and current_path=?
+                        order by case when canonical_path <> ? then 0 else 1 end, file_id
+                        limit 1
+                        """,
+                        (repo_id, path, path),
+                    ).fetchone()
+                    if current_row:
+                        current_file_id = int(current_row["file_id"])
+                        if current_file_id != file_id:
+                            file_id = merge_file_lineage(conn, file_id, current_file_id)
                 file_changes_seen += 1
                 cur = conn.execute(
                     """
@@ -3612,14 +4253,30 @@ def command_import_git(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
-def start_import(conn: sqlite3.Connection, repo_id: int, import_kind: str, details: Any = None) -> int:
-    cur = conn.execute(
-        """
-        insert into lattice_imports(repo_id, import_kind, started_epoch, status, rows_seen, rows_written, conflicts, details_json)
-        values (?, ?, ?, 'started', 0, 0, 0, ?)
-        """,
-        (repo_id, import_kind, epoch_now(), json_dumps(details) if details is not None else None),
-    )
+def start_import(
+    conn: sqlite3.Connection,
+    repo_id: int,
+    import_kind: str,
+    details: Any = None,
+    *,
+    forced_id: int | None = None,
+) -> int:
+    if forced_id is None:
+        cur = conn.execute(
+            """
+            insert into lattice_imports(repo_id, import_kind, started_epoch, status, rows_seen, rows_written, conflicts, details_json)
+            values (?, ?, ?, 'started', 0, 0, 0, ?)
+            """,
+            (repo_id, import_kind, epoch_now(), json_dumps(details) if details is not None else None),
+        )
+    else:
+        cur = conn.execute(
+            """
+            insert into lattice_imports(import_id, repo_id, import_kind, started_epoch, status, rows_seen, rows_written, conflicts, details_json)
+            values (?, ?, ?, ?, 'started', 0, 0, 0, ?)
+            """,
+            (forced_id, repo_id, import_kind, epoch_now(), json_dumps(details) if details is not None else None),
+        )
     return int(cur.lastrowid)
 
 
@@ -3719,15 +4376,29 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                         (file_id, selected_path or None, parsed.get("basis"), cycle_pk),
                     )
                 elif event == "cycle.summary":
-                    conn.execute(
-                        "update cycles set status_marker=?, codex_exit=? where cycle_pk=?",
-                        (parsed.get("status_marker"), int(parsed["codex_exit"]) if str(parsed.get("codex_exit", "")).lstrip("-").isdigit() else None, cycle_pk),
-                    )
+                    updates: dict[str, Any] = {}
+                    if "status_marker" in parsed and str(parsed.get("status_marker", "")).strip() != "":
+                        updates["status_marker"] = parsed.get("status_marker")
+                    if "codex_exit" in parsed and str(parsed.get("codex_exit", "")).lstrip("-").isdigit():
+                        updates["codex_exit"] = int(parsed["codex_exit"])
+                    if updates:
+                        conn.execute(
+                            f"update cycles set {', '.join(f'{key}=?' for key in updates)} where cycle_pk=?",
+                            list(updates.values()) + [cycle_pk],
+                        )
                 elif event == "cycle.exit":
-                    conn.execute(
-                        "update cycles set wrapper_exit=?, finish_reason=? where cycle_pk=?",
-                        (int(parsed["exit_code"]) if str(parsed.get("exit_code", "")).lstrip("-").isdigit() else None, parsed.get("reason"), cycle_pk),
-                    )
+                    updates: dict[str, Any] = {}
+                    if "exit_code" in parsed and str(parsed.get("exit_code", "")).lstrip("-").isdigit():
+                        updates["wrapper_exit"] = int(parsed["exit_code"])
+                    if "reason" in parsed and str(parsed.get("reason", "")).strip() != "":
+                        updates["finish_reason"] = parsed.get("reason")
+                    if "codex_exec_started" in parsed and str(parsed.get("codex_exec_started", "")).strip() != "":
+                        updates["codex_exec_started"] = parse_bool_int(str(parsed.get("codex_exec_started")))
+                    if updates:
+                        conn.execute(
+                            f"update cycles set {', '.join(f'{key}=?' for key in updates)} where cycle_pk=?",
+                            list(updates.values()) + [cycle_pk],
+                        )
             rows_written += 1
         finish_import(conn, import_id, "ok", rows_seen, rows_written, 0, {"path": str(log_path)})
     print_json({"status": "ok", "rows_seen": rows_seen, "rows_written": rows_written})
@@ -3808,26 +4479,125 @@ def export_table_rows(
         return []
     pk = table_primary_key(conn, table)
     order = pk or columns[0]
-    if repo_id is not None and "repo_id" in columns:
+    if repo_id is None:
+        return (dict(row) for row in conn.execute(f"select * from {table} order by {order}"))
+    if "repo_id" in columns:
         return (dict(row) for row in conn.execute(f"select * from {table} where repo_id=? order by {order}", (repo_id,)))
+    if table == "file_paths":
+        query = """
+            select file_paths.*
+            from file_paths
+            join files on files.file_id=file_paths.file_id
+            where files.repo_id=?
+            order by file_paths.file_path_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "worktree_snapshot_paths":
+        query = """
+            select worktree_snapshot_paths.*
+            from worktree_snapshot_paths
+            join worktree_snapshots on worktree_snapshots.worktree_snapshot_id=worktree_snapshot_paths.worktree_snapshot_id
+            where worktree_snapshots.repo_id=?
+            order by worktree_snapshot_paths.worktree_snapshot_path_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "selection_candidates":
+        query = """
+            select selection_candidates.*
+            from selection_candidates
+            join selection_runs on selection_runs.selection_run_id=selection_candidates.selection_run_id
+            where selection_runs.repo_id=?
+            order by selection_candidates.selection_candidate_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "pass_run_attributes":
+        query = """
+            select pass_run_attributes.*
+            from pass_run_attributes
+            join file_pass_runs on file_pass_runs.file_pass_run_id=pass_run_attributes.file_pass_run_id
+            where file_pass_runs.repo_id=?
+            order by pass_run_attributes.attribute_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "regression_causes":
+        query = """
+            select regression_causes.*
+            from regression_causes
+            join regression_events on regression_events.regression_id=regression_causes.regression_id
+            where regression_events.repo_id=?
+            order by regression_causes.regression_cause_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "change_log_file_refs":
+        query = """
+            select change_log_file_refs.*
+            from change_log_file_refs
+            join change_log_entries on change_log_entries.change_log_entry_id=change_log_file_refs.change_log_entry_id
+            where change_log_entries.repo_id=?
+            order by change_log_file_refs.change_log_file_ref_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table in {
+        "file_pass_rollups",
+        "file_fragility_rollups",
+        "file_git_churn_rollups",
+        "file_selection_rollups",
+        "file_failure_rollups",
+    }:
+        query = f"""
+            select {table}.*
+            from {table}
+            join files on files.file_id={table}.file_id
+            where files.repo_id=?
+            order by {table}.file_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
     return (dict(row) for row in conn.execute(f"select * from {table} order by {order}"))
 
 
 def redact_payload(payload: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    redacted = dict(payload)
-    if args.redact_raw:
-        for key in ("raw_text", "details_json", "parsed_json"):
-            if key in redacted and redacted[key] is not None:
-                redacted[key] = "<redacted>"
-    if args.redact_paths:
-        for key in ("root_path", "first_seen_root_path", "current_root_path", "working_tree_path", "source_path", "path", "old_path", "current_path", "canonical_path", "output_path"):
-            if key in redacted and redacted[key] is not None:
-                redacted[key] = "path-sha256:" + sha256_text(str(redacted[key]))
-    if args.redact_contributors:
-        for key in ("name", "email", "github_login"):
-            if key in redacted and redacted[key] is not None:
-                redacted[key] = "<redacted>"
-    return redacted
+    if not isinstance(payload, dict):
+        return payload
+
+    def _redact(raw: Any) -> Any:
+        if isinstance(raw, dict):
+            out: dict[str, Any] = {}
+            for key, value in raw.items():
+                if key in ("raw_text", "details_json", "parsed_json") and args.redact_raw:
+                    if isinstance(value, str):
+                        parsed = None
+                        try:
+                            parsed = json.loads(value)
+                        except (TypeError, json.JSONDecodeError):
+                            parsed = None
+                        if parsed is not None:
+                            out[key] = json_dumps(_redact(parsed))
+                        else:
+                            out[key] = "<redacted>"
+                    else:
+                        out[key] = "<redacted>"
+                    continue
+                if args.redact_paths and key in REDACTABLE_PATH_KEYS and isinstance(value, str):
+                    out[key] = REDACTED_PATH_PREFIX + sha256_text(value)
+                    continue
+                if args.redact_contributors and key in {"name", "email", "github_login"} and isinstance(value, str):
+                    out[key] = "<redacted>"
+                    continue
+                out[key] = _redact(value)
+            return out
+        if isinstance(raw, list):
+            return [_redact(item) for item in raw]
+        return raw
+
+    return _redact(payload)
+
+
+def semantic_import_payload(table: str, payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    for key in ("source_id", "imported_epoch", "last_seen_epoch", "updated_epoch"):
+        if key in normalized:
+            normalized[key] = None
+    return normalized
 
 
 def command_export_jsonl(args: argparse.Namespace) -> int:
@@ -3842,6 +4612,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
         allow_existing=args.overwrite,
         journal_mode=args.journal_mode,
         db_path=db_path,
+        allow_outside_runtime=args.output is not None,
     )
     if not output.parent.exists():
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -3896,15 +4667,50 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
 def command_import_jsonl(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     input_path = Path(args.path)
+    if not input_path.exists():
+        print_json({"status": "unavailable", "reason": "missing_input", "path": str(input_path)})
+        return EXIT_USAGE
+    if not input_path.is_file():
+        print_json({"status": "unavailable", "reason": "input_unreadable", "path": str(input_path)})
+        return EXIT_USAGE
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     rows_seen = rows_written = conflicts = duplicates = 0
     refresh_pass_rollups = False
+    imported_import_max = 0
+    try:
+        input_lines = input_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        print_json({"status": "unavailable", "reason": "input_unreadable", "path": str(input_path)})
+        return EXIT_USAGE
+    for raw in input_lines:
+        if not raw:
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if row.get("row_type") != "lattice_imports":
+            continue
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        try:
+            imported_import_max = max(imported_import_max, int(payload.get("import_id") or 0))
+        except (TypeError, ValueError):
+            continue
     with conn:
         repo_id = ensure_repository(conn, root)
-        import_id = start_import(conn, repo_id, "lattice_import", {"path": str(input_path)})
-        source_id = ensure_source_record(conn, repo_id, "lattice_import", source_path=str(input_path), raw_ref="jsonl")
-        for raw in input_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        conn.execute("PRAGMA defer_foreign_keys=ON")
+        existing_import_max = int(conn.execute("select coalesce(max(import_id), 0) from lattice_imports").fetchone()[0] or 0)
+        import_id = start_import(
+            conn,
+            repo_id,
+            "lattice_import",
+            {"path": str(input_path)},
+            forced_id=max(existing_import_max, imported_import_max) + 1,
+        )
+        for raw in input_lines:
             if not raw:
                 continue
             rows_seen += 1
@@ -3942,11 +4748,12 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "redacted_path_payload")
                 continue
-            payload_hash = sha256_text(json_dumps(payload))
-            if str(row.get("payload_sha256", "")) != payload_hash:
+            raw_payload_hash = sha256_text(json_dumps(payload))
+            if str(row.get("payload_sha256", "")) != raw_payload_hash:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "payload_hash_mismatch")
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", raw_payload_hash, "payload_hash_mismatch")
                 continue
+            payload_hash = sha256_text(json_dumps(semantic_import_payload(str(table), payload)))
             if table == "lattice_unavailable" and isinstance(payload, dict):
                 ensure_source_record(
                     conn,
@@ -3979,9 +4786,9 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 if table in {"schema_meta", "schema_migrations"}:
                     duplicates += 1
                     continue
-                existing_payload = {key: existing[key] for key in columns}
+                existing_payload = semantic_import_payload(table, {key: existing[key] for key in columns})
                 existing_hash = sha256_text(json_dumps(existing_payload))
-                if existing_hash == payload_hash or sha256_text(json_dumps(filtered)) == payload_hash:
+                if existing_hash == payload_hash:
                     duplicates += 1
                     continue
                 conflicts += 1
@@ -4012,7 +4819,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
         )
         if refresh_pass_rollups:
             refresh_rollups(conn, repo_id)
-        record_file_event(conn, repo_id, "import_reconciled", source_id=source_id, details={"path": str(input_path), "conflicts": conflicts})
+        record_file_event(conn, repo_id, "import_reconciled", details={"path": str(input_path), "conflicts": conflicts})
     status = "conflicts" if conflicts else "ok"
     print_json({"status": status, "rows_seen": rows_seen, "rows_written": rows_written, "duplicates": duplicates, "conflicts": conflicts})
     if conflicts > args.max_conflicts:
@@ -4063,6 +4870,7 @@ def create_backup(
             allow_existing=allow_overwrite,
             journal_mode=conn.execute("PRAGMA journal_mode").fetchone()[0].strip().lower(),
             db_path=db_path,
+            allow_outside_runtime=True,
         )
     else:
         backup_dir = db_path.parent / "backups"
@@ -4073,7 +4881,8 @@ def create_backup(
     if not backup_path.parent.exists():
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         chmod_private(backup_path.parent, is_dir=True)
-    backup_conn = sqlite3.connect(str(backup_path))
+    backup_journal_mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0] or "delete").strip().lower()
+    backup_conn = connect(backup_path, backup_journal_mode, create_if_missing=True)
     try:
         conn.backup(backup_conn)
     finally:
@@ -4094,10 +4903,6 @@ def command_backup(args: argparse.Namespace) -> int:
         output=args.output,
         allow_overwrite=args.overwrite,
     )
-    repo_id = ensure_repository(conn, root)
-    with conn:
-        source_id = ensure_source_record(conn, repo_id, "artifact", source_path=str(backup_path), raw_ref="backup")
-        create_artifact_ref(conn, repo_id, cycle_pk=None, source_id=source_id, artifact_kind="backup", path=str(backup_path))
     conn.close()
     print_json({"status": "ok", "backup_path": str(backup_path)})
     return EXIT_SUCCESS
@@ -4144,6 +4949,7 @@ def record_recovery_artifact_tree(
             source_id=source_id,
             artifact_kind=artifact_kind,
             path=str(path),
+            dedupe_identity=True,
             details={"recovery_scan_root": str(root_path)},
         )
         count += 1
@@ -4212,11 +5018,19 @@ def recover_artifact_refs(
 def command_recover(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
-    conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db, create_parent=True)
+    preexisting_db = db_path.exists()
+    conn = connect_checked(
+        root,
+        db_path,
+        args.journal_mode,
+        allow_unsafe_db=args.allow_unsafe_db,
+        create_parent=True,
+        create_if_missing=True,
+    )
     init_schema(conn, root)
     sources = []
     backup_path = None
-    if args.backup_first and db_path.exists():
+    if args.backup_first and preexisting_db:
         backup_path = create_backup(conn, root, db_path)
         sources.append(f"backup:{backup_path}")
     with conn:
@@ -4832,22 +5646,28 @@ def command_prune(args: argparse.Namespace) -> int:
                 if not args.dry_run:
                     conn.execute(sql, (cutoff,))
         if args.transient_artifacts:
-            rows = [
-                dict(row)
-                for row in conn.execute(
-                    """
-                    select artifact_id, path from artifact_refs
-                    where retained=1 and artifact_kind in ('transcript','compiled_prompt','last_message')
-                    """
-                )
-            ]
+            sql = """
+                select artifact_id, path from artifact_refs
+                where repo_id=? and retained=1 and artifact_kind in ('transcript','compiled_prompt','last_message')
+            """
+            sql_params: list[Any] = [repo_id]
+            if cutoff:
+                sql += " and observed_epoch < ?"
+                sql_params.append(cutoff)
+            rows = [dict(row) for row in conn.execute(sql, sql_params)]
             actions.append({"action": "transient_artifacts_unretain", "rows": len(rows)})
             if not args.dry_run:
-                conn.execute(
-                    """
+                update_sql = """
                     update artifact_refs set retained=0
-                    where retained=1 and artifact_kind in ('transcript','compiled_prompt','last_message')
-                    """
+                    where repo_id=? and retained=1 and artifact_kind in ('transcript','compiled_prompt','last_message')
+                """
+                update_params: list[Any] = [repo_id]
+                if cutoff:
+                    update_sql += " and observed_epoch < ?"
+                    update_params.append(cutoff)
+                conn.execute(
+                    update_sql,
+                    update_params,
                 )
         record_file_event(conn, repo_id, "operator_annotation", source_id=source_id, details={"prune_actions": actions, "dry_run": args.dry_run})
         if args.vacuum and not args.dry_run:
@@ -4877,17 +5697,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("record-cycle-start")
     add_cycle_args(p)
-    p.add_argument("--execution-origin", default="")
-    p.add_argument("--model", default="")
-    p.add_argument("--effort", default="")
-    p.add_argument("--mode", default="")
-    p.add_argument("--config-file", default="")
-    p.add_argument("--branch-name", default="")
-    p.add_argument("--head-sha", default="")
-    p.add_argument("--head-tree-sha", default="")
-    p.add_argument("--upstream-ref", default="")
-    p.add_argument("--dirty-path-count", default="0")
-    p.add_argument("--dry-run", default="0")
+    p.add_argument("--execution-origin", default=None)
+    p.add_argument("--model", default=None)
+    p.add_argument("--effort", default=None)
+    p.add_argument("--mode", default=None)
+    p.add_argument("--config-file", default=None)
+    p.add_argument("--branch-name", default=None)
+    p.add_argument("--head-sha", default=None)
+    p.add_argument("--head-tree-sha", default=None)
+    p.add_argument("--upstream-ref", default=None)
+    p.add_argument("--dirty-path-count", default=None)
+    p.add_argument("--dry-run", default=None)
     p.add_argument("--start-epoch", type=int)
     p.add_argument("--parent-cycle-id", default="")
     p.add_argument("--child-cycle-id", default="")
@@ -4905,20 +5725,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("record-cycle-finish")
     add_cycle_args(p)
-    p.add_argument("--status-marker", default="")
-    p.add_argument("--review-outcome", default="")
-    p.add_argument("--review-selected-path", default="")
+    p.add_argument("--status-marker", default=None)
+    p.add_argument("--review-outcome", default=None)
+    p.add_argument("--review-selected-path", default=None)
     p.add_argument("--codex-exit", type=int)
     p.add_argument("--wrapper-exit", type=int)
-    p.add_argument("--finish-reason", default="")
-    p.add_argument("--finish-level", default="")
-    p.add_argument("--codex-exec-started", type=int, default=0)
-    p.add_argument("--dry-run", default="0")
-    p.add_argument("--selected-path", default="")
-    p.add_argument("--last-message-file", default="")
-    p.add_argument("--transcript-path", default="")
-    p.add_argument("--compiled-prompt-path", default="")
-    p.add_argument("--log-path", default="")
+    p.add_argument("--finish-reason", default=None)
+    p.add_argument("--finish-level", default=None)
+    p.add_argument("--codex-exec-started", type=int, default=None)
+    p.add_argument("--dry-run", default=None)
+    p.add_argument("--selected-path", default=None)
+    p.add_argument("--last-message-file", default=None)
+    p.add_argument("--transcript-path", default=None)
+    p.add_argument("--compiled-prompt-path", default=None)
+    p.add_argument("--log-path", default=None)
     p.add_argument("--snapshot-kind", default="after_codex")
     p.add_argument("--end-epoch", type=int)
     p.set_defaults(func=command_record_cycle_finish)
@@ -4932,6 +5752,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_cycle_args(p, required=False)
     p.add_argument("--pass", dest="pass_code")
     p.add_argument("--file", dest="path")
+    p.add_argument("--path", dest="path")
     p.add_argument("--applicable", default="")
     p.add_argument("--outcome", default="unknown", choices=sorted(ALLOWED_OUTCOMES))
     p.add_argument("--changed", default="")
@@ -4977,7 +5798,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=command_backup)
 
     p = sub.add_parser("recover")
-    p.add_argument("--backup-first", action="store_true", default=True)
+    p.add_argument("--backup-first", nargs="?", const=True, default=True, type=parse_bool_flag)
+    p.add_argument("--no-backup-first", dest="backup_first", action="store_false")
     p.add_argument("--max-conflicts", type=int, default=999999)
     p.add_argument("--limit", type=int)
     p.set_defaults(func=command_recover)

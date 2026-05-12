@@ -160,7 +160,8 @@ Important:
     Relative config paths are resolved from the invocation repository root.
     Config files may set CODEX_* runtime knobs and UPKEEPER_* flag defaults such
     as UPKEEPER_TARGET_FILE, UPKEEPER_REVIEW_MODULES, UPKEEPER_PROMPT_FILE,
-    UPKEEPER_PROMPT, UPKEEPER_PROMPT_PASS, UPKEEPER_MODEL_OVERRIDE,
+    UPKEEPER_PROMPT, UPKEEPER_PROMPT_PASS, UPKEEPER_PROMPT_TRUST_ROOT,
+    UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE, UPKEEPER_MODEL_OVERRIDE,
     UPKEEPER_IGNORE_FAILURE_QUEUE, UPKEEPER_BUG_REPORT_ONLY, and
     UPKEEPER_FIX_NEXT_ISSUE. They may also set pre-contact backup defaults such
     as UPKEEPER_PRECONTACT_BACKUP_MODE, UPKEEPER_PRECONTACT_BACKUP_ROOT, and
@@ -258,8 +259,8 @@ Prompt behavior:
     UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT is set and age is available;
     otherwise it uses plain local mode unless encrypted backup is required.
     Plain mode is a recovery aid, not a same-user security boundary. Backup
-    logs and prompts include only backup_id, target, sha256, mode, encrypted,
-    protected_from_backend, and path_redacted=1; the vault path is not
+    logs and prompts include mode, encrypted, protected_from_backend, and
+    path_redacted=1; the vault path is not
     prompt-visible. Restore a plain backup by id with:
       tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID
   - A repo-root .upkeeperignore, or the file named by UPKEEPER_IGNORE_FILE,
@@ -300,6 +301,8 @@ Prompt behavior:
     cycle. Use the equals form; spaced form is rejected.
   - --no-config disables the default config for this invoked cycle.
   - --prompt-file FILE appends extra task guidance from FILE.
+    In unattended launcher mode, FILE must stay under
+    UPKEEPER_PROMPT_TRUST_ROOT unless UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE=1.
   - --prompt TEXT appends extra task guidance inline.
   - --review-module=p24 appends the central P24 de-LLM-ing viability review
     module for this invoked cycle.
@@ -380,6 +383,8 @@ Environment overrides:
   UPKEEPER_REVIEW_MODULES       Default: empty
   UPKEEPER_PROMPT_FILE          Default: empty
   UPKEEPER_PROMPT               Default: empty
+  UPKEEPER_PROMPT_TRUST_ROOT    Default: prompts
+  UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE Default: 0
   UPKEEPER_PROMPT_PASS          Default: empty
   UPKEEPER_MODEL_OVERRIDE       Default: empty
   UPKEEPER_IGNORE_FAILURE_QUEUE Default: 0
@@ -587,6 +592,7 @@ import fnmatch
 import json
 import os
 import random
+import re
 import stat as statmod
 import subprocess
 import sys
@@ -1246,7 +1252,7 @@ for manifest_mtime, path in paths:
             continue
         stat_result = text_stat
     if is_candidate:
-        mtime = manifest_mtime if selection_source_used == "manifest" else stat_result.st_mtime
+        mtime = stat_result.st_mtime
         candidates.append((mtime, path))
 
 if startup_anomaly_gate == "1" and startup_force_upkeeper == "1":
@@ -1518,7 +1524,7 @@ append_preselected_review_target() {
     printf -- '- Use git_status/content_state/head_blob/worktree_hash above as the pre-run baseline for this file.\n'
     printf -- '- If content_state differs_from_head or git_status is not clean, that dirty content existed before this review; do not reset it or block solely because git diff versus HEAD is non-empty.\n'
     if [[ -n "${RUN_PRECONTACT_BACKUP_ID:-}" ]]; then
-      printf -- '- Pre-contact backup was created by the wrapper before this prompt was compiled: backup_id=%s sha256=%s mode=%s encrypted=%s protected_from_backend=%s.\n' "$RUN_PRECONTACT_BACKUP_ID" "$RUN_PRECONTACT_BACKUP_SHA256" "$RUN_PRECONTACT_BACKUP_MODE" "$RUN_PRECONTACT_BACKUP_ENCRYPTED" "$RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND"
+      printf -- '- Pre-contact backup was created by the wrapper before this prompt was compiled: mode=%s encrypted=%s protected_from_backend=%s.\n' "$RUN_PRECONTACT_BACKUP_MODE" "$RUN_PRECONTACT_BACKUP_ENCRYPTED" "$RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND"
       printf -- '- Do not attempt to access, inspect, prune, restore, modify, or discover backup artifacts. Vault paths are intentionally not prompt-visible.\n'
     fi
     printf -- '- For a clean no-edit pass, record the selected file hash before touch, touch it, then verify the mtime changed and the content hash is unchanged from the pre-touch hash.\n'

@@ -34,6 +34,16 @@ review_module_prompt_path() {
   esac
 }
 
+sanitize_issue_block_text() {
+  local value="$1"
+  python3 - "$value" <<'PY'
+import sys
+
+value = sys.argv[1] if len(sys.argv) > 1 else ""
+print(value.replace("```", "`\u200b``"))
+PY
+}
+
 append_default_review_prompt_or_exit() {
   local compiled_file="$1"
   local prompt_path
@@ -99,6 +109,7 @@ if len(body) > limit:
 print(body)
 PY
   )"
+  body_excerpt="$(sanitize_issue_block_text "$body_excerpt")"
   comments_excerpt="$(
     python3 - "${CODEX_ISSUE_FIX_COMMENTS_JSON:-[]}" <<'PY'
 import json
@@ -133,6 +144,7 @@ if len(text) > limit:
 print(text)
 PY
   )"
+  comments_excerpt="$(sanitize_issue_block_text "$comments_excerpt")"
 
   {
     printf '\nWRAPPER_ISSUE_FIX_TARGET\n'
@@ -326,7 +338,8 @@ compile_prompt() {
     printf -- '- Review only the current cycle lines. Do not inventory rotated archives or unrelated cycles.\n'
     printf -- '- Check for wrapper/prompt/logging defects, unexpected ERROR/WARN lines, parser misses, environment preflight surprises, previous_run.anomaly lines, disk.preflight warnings, missing or irregular --MARK-- continuity, and any command failure from your own tool output that still needs explanation or correction.\n'
     printf -- '- If `startup_anomaly.gate` or `WRAPPER_STARTUP_ANOMALIES` is active, do not touch unrelated non-Upkeeper-suite files; the gate must be checked or remediated first.\n'
-    printf -- '- If the log review exposes a concrete Upkeeper wrapper, prompt, or logging defect and this current repo owns a tracked `Upkeeper` file, apply the smallest safe self-repair now, run focused validation, and report it as a log self-repair. This is the only reason to patch `Upkeeper` when it was not the selected target.\n'
+    printf -- '- If the log review exposes a concrete Upkeeper wrapper/prompt/logging defect for the preselected file path, report it as a complete finding in your final response.\n'
+    printf -- '- Do not apply any unselected-file or unrequested file edits during log-review self-verification.\n'
     printf -- '- If this is a symlinked client repo and the defect belongs to central Upkeeper behavior, do not patch a copied client wrapper; report the central fix needed unless the central Upkeeper checkout is the current repo.\n'
     printf -- '- If a suspicious line was expected negative-test output, say so briefly. If a one-off shell command failed, rerun the corrected check or state why it is irrelevant before final status.\n'
     printf -- '- Include exactly one machine-readable acknowledgment line before the final UPKEEPER_STATUS marker.\n'

@@ -513,9 +513,13 @@ assert path.exists() and path.stat().st_size > 0, path
 PY
 
   lattice export-jsonl --output "$TEST_TMP_ROOT/export.jsonl" >$TEST_TMP_ROOT/lattice-export.json
-  cp "$TEST_TMP_ROOT/lattice-import-base.sqlite3" "$TEST_TMP_ROOT/lattice-import-rollup.sqlite3"
-  lattice --root "$REPO" --db "$TEST_TMP_ROOT/lattice-import-rollup.sqlite3" import-jsonl "$TEST_TMP_ROOT/export.jsonl" >$TEST_TMP_ROOT/lattice-import-rollup.json
-  python3 "$DB" "$TEST_TMP_ROOT/lattice-import-rollup.sqlite3" <<'PY' || fail "import-jsonl did not rebuild file_pass_rollups"
+  local lattice_import_rollup_db="$TEST_TMP_ROOT/lattice-import-rollup.sqlite3"
+  local original_db="$DB"
+  cp "$TEST_TMP_ROOT/lattice-import-base.sqlite3" "$lattice_import_rollup_db"
+  DB="$lattice_import_rollup_db"
+  UPKEEPER_LATTICE_ALLOW_UNSAFE_DB=1 \
+    lattice import-jsonl "$TEST_TMP_ROOT/export.jsonl" >"$TEST_TMP_ROOT/lattice-import-rollup.json"
+  python3 - "$original_db" "$lattice_import_rollup_db" <<'PY' || fail "import-jsonl did not rebuild file_pass_rollups"
 import sqlite3
 import sys
 
@@ -562,6 +566,7 @@ if rollup is None:
 if rollup[0] < 1:
     raise AssertionError(f"expected positive planned_count after import, got {rollup[0]}")
 PY
+  DB="$original_db"
 
   lattice import-jsonl "$TEST_TMP_ROOT/export.jsonl" >$TEST_TMP_ROOT/lattice-import-repeat-1.json
   lattice import-jsonl "$TEST_TMP_ROOT/export.jsonl" >$TEST_TMP_ROOT/lattice-import-repeat-2.json
@@ -707,6 +712,53 @@ conn.execute(
     "insert into files(repo_id, canonical_path, current_path, current_state, first_seen_epoch, last_seen_epoch) values(?, ?, ?, ?, ?, ?)",
     (other_repo_id, "foreign_repo_file.txt", "foreign_repo_file.txt", "active", now, now),
 )
+foreign_file_id = conn.execute(
+    "select file_id from files where repo_id=? and canonical_path=?",
+    (other_repo_id, "foreign_repo_file.txt"),
+).fetchone()[0]
+conn.execute(
+    "insert into file_paths(file_id, path, first_seen_epoch, last_seen_epoch) values (?, ?, ?, ?)",
+    (foreign_file_id, "foreign_repo_file.txt", now, now),
+)
+cur = conn.execute(
+    "insert into worktree_snapshots(repo_id, cycle_pk, snapshot_kind, observed_epoch, source_id) values (?, ?, ?, ?, ?)",
+    (other_repo_id, None, "before_codex", now, None),
+)
+foreign_snapshot_id = int(cur.lastrowid)
+conn.execute(
+    "insert into worktree_snapshot_paths(worktree_snapshot_id, file_id, path, status, old_path, head_blob, worktree_hash, size_bytes, mtime_epoch) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    (foreign_snapshot_id, foreign_file_id, "foreign_repo_file.txt", "clean", None, None, None, 0, now),
+)
+foreign_selection_run_id = int(
+    conn.execute(
+        "insert into selection_runs(repo_id, selector_version, source_safe_boundary_version, mode_requested, mode_effective, priority_gate, generated_epoch, selected_file_id, selected_path) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            other_repo_id,
+            "help_selection.bash/v1",
+            "default-review/v1",
+            "oldest-mtime",
+            "oldest-mtime",
+            "selected",
+            now,
+            foreign_file_id,
+            "foreign_repo_file.txt",
+        ),
+    ).lastrowid
+)
+conn.execute(
+    "insert into selection_candidates(selection_run_id, file_id, path, candidate_state, rank, git_status, content_state) values (?, ?, ?, ?, ?, ?, ?)",
+    (foreign_selection_run_id, foreign_file_id, "foreign_repo_file.txt", "excluded", 1, "untracked", "missing"),
+)
+foreign_entry_id = int(
+    conn.execute(
+        "insert into change_log_entries(repo_id, version, entry_date, item_number, source_path, source_line, text) values (?, ?, ?, ?, ?, ?, ?)",
+        (other_repo_id, "0.1.0", "2026-01-01", 1, "docs/README.md", 1, "foreign entry"),
+    ).lastrowid
+)
+conn.execute(
+    "insert into change_log_file_refs(change_log_entry_id, file_id, path, confidence) values (?, ?, ?, ?)",
+    (foreign_entry_id, foreign_file_id, "foreign_repo_file.txt", "explicit_path"),
+)
 conn.commit()
 PY
   lattice export-jsonl --output "$TEST_TMP_ROOT/restricted-export.jsonl" >$TEST_TMP_ROOT/export-repo-scoped.out
@@ -715,6 +767,10 @@ import json, sys
 for line in open(sys.argv[1], encoding="utf-8"):
     row = json.loads(line)
     payload = row.get("payload", {})
+    row_type = row.get("row_type")
+    if row_type in {"file_paths", "worktree_snapshot_paths", "selection_candidates", "change_log_file_refs", "file_pass_rollups", "file_fragility_rollups", "file_git_churn_rollups", "file_selection_rollups", "file_failure_rollups"}:
+        if payload.get("path") == "foreign_repo_file.txt" or payload.get("canonical_path") == "foreign_repo_file.txt":
+            raise AssertionError(f"cross-repo row leaked into export: {row_type}")
     if row.get("row_type") == "files" and payload.get("canonical_path") == "foreign_repo_file.txt":
         raise AssertionError("cross-repo file row leaked into export")
 PY
@@ -757,9 +813,49 @@ EOF
   grep -Fq '"status": "ok"' "$TEST_TMP_ROOT/recover.out" ||
     fail "recover did not report ok from local fixtures"
   DB="$recover_db"
+  local startup_count_before transcript_count_before quota_count_before
+  read -r startup_count_before transcript_count_before quota_count_before < <(
+python3 - "$DB" <<'PY'
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+counts = []
+for kind in ("startup_anomaly_state", "transcript", "quota_block_marker"):
+    row = conn.execute("select count(*) from artifact_refs where artifact_kind=?", (kind,)).fetchone()
+    counts.append(str(row[0] if row else 0))
+print(" ".join(counts))
+PY
+)
   assert_sql_min "1" "select count(*) from artifact_refs where artifact_kind='startup_anomaly_state'"
   assert_sql_min "1" "select count(*) from artifact_refs where artifact_kind='transcript'"
   assert_sql_min "1" "select count(*) from artifact_refs where artifact_kind='quota_block_marker'"
+  "$LATTICE_TOOL" --root "$recover_repo" --db "$recover_db" recover >"$TEST_TMP_ROOT/recover-repeat.out"
+  assert_sql_value "$startup_count_before" "select count(*) from artifact_refs where artifact_kind='startup_anomaly_state'"
+  assert_sql_value "$transcript_count_before" "select count(*) from artifact_refs where artifact_kind='transcript'"
+  assert_sql_value "$quota_count_before" "select count(*) from artifact_refs where artifact_kind='quota_block_marker'"
+}
+
+test_missing_selection_path_stays_missing() {
+  local repo DB
+
+  repo="$TEST_TMP_ROOT/lattice-missing-selection"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/missing-selection-init.out"
+
+  cat >"$TEST_TMP_ROOT/missing-selection.env" <<'EOF'
+path=missing-target.txt
+selection_mode=oldest-mtime
+selection_basis=missing fixture
+EOF
+  lattice record-preselect \
+    --cycle-id cycle-missing \
+    --run-hash hash-missing \
+    --selection-file "$TEST_TMP_ROOT/missing-selection.env" >"$TEST_TMP_ROOT/missing-selection-preselect.out"
+
+  assert_sql_value "missing" "select current_state from files where canonical_path='missing-target.txt'"
 }
 
 test_wrapper_required_policy() {
@@ -767,6 +863,7 @@ test_wrapper_required_policy() {
 
   repo="$TEST_TMP_ROOT/client"
   make_repo "$repo"
+  chmod 700 "$repo"
   ln -s "$ROOT_DIR/Upkeeper" "$repo/Upkeeper.sh"
   touch "$repo/tracked.sqlite3"
   (
@@ -838,7 +935,582 @@ test_wrapper_required_policy() {
     fail "REQUIRED=1 failure did not record codex_exec_started=0"
 }
 
+test_unsafe_lattice_db_path_is_rejected_by_default() {
+  local repo outside_db rc
+
+  repo="$TEST_TMP_ROOT/lattice-unsafe-db"
+  outside_db="$TEST_TMP_ROOT/lattice-outside.sqlite3"
+  make_repo "$repo"
+
+  set +e
+  "$LATTICE_TOOL" --root "$repo" --db "$outside_db" init >"$TEST_TMP_ROOT/lattice-outside-db.out" 2>"$TEST_TMP_ROOT/lattice-outside-db.err"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 4 ]] || fail "lattice init with outside DB path exited $rc, expected 4"
+  [[ -f "$outside_db" ]] && fail "lattice init created an unsafe outside root db"
+  grep -Fq '"status": "unsafe_db_path"' "$TEST_TMP_ROOT/lattice-outside-db.out" "$TEST_TMP_ROOT/lattice-outside-db.err" ||
+    fail "lattice did not emit unsafe_db_path status"
+}
+
+test_default_runtime_symlink_db_path_is_rejected() {
+  local repo rc
+
+  repo="$TEST_TMP_ROOT/lattice-unsafe-runtime-symlink"
+  make_repo "$repo"
+  mkdir -p "$TEST_TMP_ROOT/external-lattice-root"
+  mkdir -p "$repo/runtime"
+  rm -rf "$repo/runtime/upkeeper-lattice"
+  ln -s "$TEST_TMP_ROOT/external-lattice-root" "$repo/runtime/upkeeper-lattice"
+
+  set +e
+  "$LATTICE_TOOL" --root "$repo" init >"$TEST_TMP_ROOT/lattice-runtime-symlink.out" 2>"$TEST_TMP_ROOT/lattice-runtime-symlink.err"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 4 ]] || fail "lattice init with symlinked runtime DB path exited $rc, expected 4"
+  [[ ! -f "$TEST_TMP_ROOT/external-lattice-root/lattice.sqlite3" ]] || fail "lattice created DB through symlinked runtime path"
+  grep -Fq '"status": "unsafe_db_path"' "$TEST_TMP_ROOT/lattice-runtime-symlink.out" "$TEST_TMP_ROOT/lattice-runtime-symlink.err" ||
+    fail "lattice did not emit unsafe_db_path status for symlinked runtime db path"
+
+  set +e
+  "$LATTICE_TOOL" --root "$repo" record-pass-result --pass P1 --file README.md --outcome clean \
+    >"$TEST_TMP_ROOT/lattice-runtime-symlink-pass.out" 2>"$TEST_TMP_ROOT/lattice-runtime-symlink-pass.err"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 4 ]] || fail "ordinary command with symlinked default DB path exited $rc, expected 4"
+  [[ ! -f "$TEST_TMP_ROOT/external-lattice-root/lattice.sqlite3" ]] || fail "ordinary command created db through symlinked runtime path"
+}
+
+test_ordinary_command_does_not_create_missing_db() {
+  local repo rc
+
+  repo="$TEST_TMP_ROOT/lattice-missing-ordinary-db"
+  make_repo "$repo"
+
+  set +e
+  "$LATTICE_TOOL" --root "$repo" --db "$repo/source-tree.sqlite3" record-pass-result --pass P1 --file README.md --outcome clean \
+    >"$TEST_TMP_ROOT/missing-ordinary-db.out" 2>"$TEST_TMP_ROOT/missing-ordinary-db.err"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 4 ]] || fail "ordinary command with non-approved db path exited $rc, expected 4"
+  [[ ! -f "$repo/source-tree.sqlite3" ]] || fail "ordinary command created missing unsafe db file"
+}
+
+test_lattice_jsonl_input_guardrails() {
+  local repo rc
+
+  repo="$TEST_TMP_ROOT/lattice-import-jsonl-guard"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  mkdir -p "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/import-guard-init.out"
+
+  set +e
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" import-jsonl "$TEST_TMP_ROOT/missing-input.jsonl" \
+    >"$TEST_TMP_ROOT/import-missing-input.out" 2>"$TEST_TMP_ROOT/import-missing-input.err"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 2 ]] || fail "import-jsonl with missing input exited $rc, expected 2"
+  python3 - "$TEST_TMP_ROOT/import-missing-input.out" <<'PY' || fail "missing input import-jsonl did not emit missing_input"
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data.get("status") == "unavailable", data
+assert data.get("reason") == "missing_input", data
+PY
+
+  mkdir -p "$TEST_TMP_ROOT/import-jsonl-file"
+  set +e
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" import-jsonl "$TEST_TMP_ROOT/import-jsonl-file" \
+    >"$TEST_TMP_ROOT/import-unreadable-input.out" 2>"$TEST_TMP_ROOT/import-unreadable-input.err"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 2 ]] || fail "import-jsonl with unreadable input exited $rc, expected 2"
+  python3 - "$TEST_TMP_ROOT/import-unreadable-input.out" <<'PY' || fail "unreadable input did not emit input_unreadable"
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data.get("status") == "unavailable", data
+assert data.get("reason") == "input_unreadable", data
+PY
+}
+
+test_export_backup_output_collision() {
+  local repo rc
+
+  repo="$TEST_TMP_ROOT/lattice-output-collision"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  mkdir -p "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/output-collision-init.out"
+
+  set +e
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" export-jsonl --output "$DB" \
+    >"$TEST_TMP_ROOT/export-collision-live.out" 2>"$TEST_TMP_ROOT/export-collision-live.err"
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 ]] || fail "export to live DB should fail"
+  grep -Fq "unsafe output path collides" "$TEST_TMP_ROOT/export-collision-live.err" ||
+    fail "export to live DB did not report collision"
+
+  set +e
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" backup --output "$DB" \
+    >"$TEST_TMP_ROOT/backup-collision-live.out" 2>"$TEST_TMP_ROOT/backup-collision-live.err"
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 ]] || fail "backup to live DB should fail"
+  grep -Fq "unsafe output path collides" "$TEST_TMP_ROOT/backup-collision-live.err" ||
+    fail "backup to live DB did not report collision"
+}
+
+test_recover_no_backup_first_toggle() {
+  local repo rc
+
+  repo="$TEST_TMP_ROOT/lattice-recover-backup-toggle"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/recover-backup-toggle-init.out"
+
+  set +e
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" recover --backup-first 0 >"$TEST_TMP_ROOT/recover-no-backup.out" 2>"$TEST_TMP_ROOT/recover-no-backup.err"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 0 ]] || fail "recover --no-backup-first exited $rc, expected 0"
+  [[ ! -d "$repo/runtime/upkeeper-lattice/backups" ]] || fail "recover --no-backup-first unexpectedly created backup directory"
+}
+
+test_review_parser_and_redaction() {
+  local repo redaction_export_path
+
+  repo="$TEST_TMP_ROOT/lattice-review-parser-redaction"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  redaction_export_path="$TEST_TMP_ROOT/redaction-export.jsonl"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/review-init.out"
+  REPO="$repo"
+
+  cat >"$TEST_TMP_ROOT/review-summary.txt" <<'EOF'
+Some preamble text.
+Review target:
+selected file: reviewed/with:colon/path.sh
+REVIEWED_AND_REPORTED
+EOF
+
+  lattice record-cycle-start \
+    --cycle-id cycle-review \
+    --run-hash run-review \
+    --execution-origin primary \
+    --model gpt-5.5 \
+    --effort xhigh \
+    --mode '--sandbox workspace-write' \
+    --config-file Upkeeper.conf \
+    --dirty-path-count 0 \
+    --dry-run 1 >"$TEST_TMP_ROOT/review-start.json"
+  lattice record-cycle-finish \
+    --cycle-id cycle-review \
+    --run-hash run-review \
+    --wrapper-exit 0 \
+    --finish-reason REVIEW_FINISH \
+    --finish-level INFO \
+    --codex-exec-started 0 \
+    --dry-run 1 \
+    --selected-path "README.md" \
+    --last-message-file "$TEST_TMP_ROOT/review-summary.txt" >"$TEST_TMP_ROOT/review-finish.json"
+
+  python3 - "$DB" <<'PY' || fail "review summary parser did not preserve colon-bearing target"
+import sqlite3
+import sys
+
+db_path = sys.argv[1]
+conn = sqlite3.connect(db_path)
+row = conn.execute(
+    "select cycle_pk, review_outcome from cycles where cycle_id=? and run_hash=?",
+    ("cycle-review", "run-review"),
+).fetchone()
+if row is None:
+    raise AssertionError("review cycle not recorded")
+cycle_pk, review_outcome = row
+if review_outcome != "REVIEWED_AND_REPORTED":
+    raise AssertionError(f"review_outcome={review_outcome}")
+row = conn.execute(
+    "select path from file_events where cycle_pk=? and event_kind='target_substituted'",
+    (cycle_pk,),
+).fetchone()
+if row is None:
+    raise AssertionError("target substitution event missing for review parser mismatch")
+if row[0] != "reviewed/with:colon/path.sh":
+    raise AssertionError(f"target_substituted path mismatch: {row[0]}")
+
+row = conn.execute(
+    "select selected_path from cycles where cycle_pk=?",
+    (cycle_pk,),
+).fetchone()
+if row is None or row[0] != "reviewed/with:colon/path.sh":
+    raise AssertionError(f"cycle selected_path did not follow substitution: {None if row is None else row[0]}")
+
+row = conn.execute(
+    "select f.canonical_path from cycles c join files f on f.file_id=c.selected_file_id where c.cycle_pk=?",
+    (cycle_pk,),
+).fetchone()
+if row is None or row[0] != "reviewed/with:colon/path.sh":
+    raise AssertionError(f"cycle selected_file_id mismatch: {None if row is None else row[0]}")
+PY
+
+  python3 - "$DB" <<'PY'
+import json
+import sqlite3
+import sys
+import time
+
+db_path = sys.argv[1]
+conn = sqlite3.connect(db_path)
+repo_id = conn.execute("select repo_id from repositories order by repo_id asc limit 1").fetchone()[0]
+conn.execute("update repositories set remote_url=? where repo_id=?", ("https://example.internal/git/example.git", repo_id))
+now = int(time.time())
+parsed = {
+    "path": "record/source/path/with:colon.txt",
+    "details": {
+        "remote_url": "https://example.internal/secret-remote",
+        "output_path": "record/source/output:artifact.txt",
+    },
+}
+cur = conn.execute(
+    """
+    insert into source_records(
+      repo_id, source_kind, source_path, source_uri, source_epoch, imported_epoch, raw_ref, raw_text, parsed_json, parse_status, fact_confidence
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """,
+    (
+        repo_id,
+        "operator",
+        "/tmp/lattice-review-source.txt",
+        "file:///tmp/lattice-review-source.txt",
+        now,
+        now,
+        "redact-paths",
+        "raw/source/path/with:colon.txt",
+        json.dumps(parsed),
+        "parsed",
+        "observed",
+    ),
+)
+source_id = int(cur.lastrowid)
+conn.execute(
+    """
+    insert into file_events(
+      repo_id, cycle_pk, source_id, event_kind, event_epoch, path, confidence, details_json
+    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+    """,
+    (
+        repo_id,
+        None,
+        source_id,
+        "redacted_probe",
+        now,
+        "event/original/path/with:colon.txt",
+        "observed",
+        json.dumps({
+            "path": "details/original/path/with:colon.txt",
+            "remote_url": "https://example.internal/secret-event",
+            "output_path": "details/original/output:artifact.txt",
+        }),
+    ),
+)
+conn.commit()
+conn.close()
+PY
+
+  lattice export-jsonl --redact-paths --redact-raw --output "$redaction_export_path" >"$TEST_TMP_ROOT/redaction-export.out"
+  python3 - "$redaction_export_path" <<'PY' || fail "redaction export did not mask path/token fields"
+import json
+
+export_path = __import__("sys").argv[1]
+forbidden = [
+    "https://example.internal/git/example.git",
+    "record/source/path/with:colon.txt",
+    "record/source/output:artifact.txt",
+    "record/source/secret-remote",
+    "raw/source/path/with:colon.txt",
+    "event/original/path/with:colon.txt",
+    "details/original/path/with:colon.txt",
+    "details/original/output:artifact.txt",
+    "https://example.internal/secret-event",
+]
+raw = open(export_path, encoding="utf-8").read()
+for needle in forbidden:
+    if needle in raw:
+        raise AssertionError(f"forbidden token leaked to redacted export: {needle}")
+
+found_repo_remote = False
+found_review_cycle = False
+found_source_raw = False
+found_event_paths = False
+for line in raw.splitlines():
+    row = json.loads(line)
+    payload = row.get("payload", {})
+    if row.get("row_type") == "repositories":
+        remote = payload.get("remote_url") or ""
+        if remote == "https://example.internal/git/example.git":
+            raise AssertionError("repositories.remote_url was not redacted")
+        if remote.startswith("path-sha256:"):
+            found_repo_remote = True
+    if row.get("row_type") == "cycles" and payload.get("cycle_id") == "cycle-review":
+        selected_path = payload.get("selected_path")
+        if selected_path and not selected_path.startswith("path-sha256:"):
+            raise AssertionError(f"cycles.selected_path was not redacted: {selected_path}")
+        found_review_cycle = True
+    if row.get("row_type") == "source_records" and payload.get("raw_ref") == "redact-paths":
+        if payload.get("raw_text") != "<redacted>":
+            raise AssertionError(f"source_records.raw_text was not redacted: {payload.get('raw_text')}")
+        parsed = json.loads(payload.get("parsed_json") or "{}")
+        if not parsed.get("path", "").startswith("path-sha256:"):
+            raise AssertionError("parsed_json.path was not redacted")
+        details = parsed.get("details") or {}
+        if not details.get("output_path", "").startswith("path-sha256:"):
+            raise AssertionError("parsed_json.details.output_path was not redacted")
+        if not details.get("remote_url", "").startswith("path-sha256:"):
+            raise AssertionError("parsed_json.details.remote_url was not redacted")
+        found_source_raw = True
+    if row.get("row_type") == "file_events" and payload.get("event_kind") == "redacted_probe":
+        if not payload.get("path", "").startswith("path-sha256:"):
+            raise AssertionError("file_events.path was not redacted")
+        details = json.loads(payload.get("details_json") or "{}")
+        if not details.get("path", "").startswith("path-sha256:"):
+            raise AssertionError("file_events.details_json.path was not redacted")
+        if not details.get("remote_url", "").startswith("path-sha256:"):
+            raise AssertionError("file_events.details_json.remote_url was not redacted")
+        if not details.get("output_path", "").startswith("path-sha256:"):
+            raise AssertionError("file_events.details_json.output_path was not redacted")
+        found_event_paths = True
+
+if not found_repo_remote:
+    raise AssertionError("expected repositories row with redacted remote_url")
+if not found_review_cycle:
+    raise AssertionError("expected cycle-review row with redacted selected_path")
+if not found_source_raw:
+    raise AssertionError("expected source_records row with redacted raw/parsed fields")
+if not found_event_paths:
+    raise AssertionError("expected file_events row with redacted nested path fields")
+PY
+}
+
+test_clean_touch_uses_mtime_ns() {
+  local repo rc
+
+  repo="$TEST_TMP_ROOT/lattice-clean-touch-ns"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/clean-touch-init.out"
+
+  lattice record-cycle-start \
+    --cycle-id cycle-touch-ns \
+    --run-hash run-touch-ns \
+    --execution-origin primary \
+    --model gpt-5.5 \
+    --effort xhigh \
+    --mode '--sandbox workspace-write' \
+    --config-file Upkeeper.conf \
+    --dirty-path-count 0 \
+    --dry-run 1 >"$TEST_TMP_ROOT/clean-touch-start.out"
+  cat >"$TEST_TMP_ROOT/clean-touch-selection.env" <<'EOF'
+path=README.md
+selection_mode=oldest-mtime
+selection_basis=clean touch fixture
+EOF
+  lattice record-preselect \
+    --cycle-id cycle-touch-ns \
+    --run-hash run-touch-ns \
+    --selection-file "$TEST_TMP_ROOT/clean-touch-selection.env" >"$TEST_TMP_ROOT/clean-touch-preselect.out"
+
+  python3 - "$repo/README.md" <<'PY'
+import os
+import sys
+
+path = sys.argv[1]
+stat = os.stat(path)
+os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 250_000_000))
+PY
+
+  lattice record-cycle-finish \
+    --cycle-id cycle-touch-ns \
+    --run-hash run-touch-ns \
+    --wrapper-exit 0 \
+    --finish-reason CLEAN_FINISH \
+    --finish-level INFO \
+    --codex-exec-started 0 \
+    --selected-path "README.md" \
+    --review-outcome REVIEWED_CLEAN >"$TEST_TMP_ROOT/clean-touch-finish.out"
+
+  python3 - "$DB" <<'PY' || fail "clean touch was not detected when only mtime_ns changed"
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+row = conn.execute(
+    "select count(*) from file_events where event_kind='touched_clean' and path='README.md'"
+).fetchone()
+if not row or int(row[0]) < 1:
+    raise AssertionError("expected touched_clean event for same-second mtime_ns change")
+PY
+}
+
+test_sparse_lifecycle_replay_preserves_metadata() {
+  local repo rc
+
+  repo="$TEST_TMP_ROOT/lattice-sparse-lifecycle"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/sparse-lifecycle-init.out"
+
+  lattice record-cycle-start \
+    --cycle-id cycle-sparse \
+    --run-hash hash-sparse \
+    --execution-origin primary \
+    --model gpt-5.5 \
+    --effort xhigh \
+    --mode '--sandbox workspace-write' \
+    --config-file Upkeeper.conf \
+    --dirty-path-count 0 \
+    --dry-run 1 >"$TEST_TMP_ROOT/sparse-lifecycle-start.out"
+  lattice record-cycle-finish \
+    --cycle-id cycle-sparse \
+    --run-hash hash-sparse \
+    --wrapper-exit 9 \
+    --codex-exit 9 \
+    --status-marker PREVIOUS_STATUS \
+    --finish-reason PREVIOUS_FINISH \
+    --finish-level INFO \
+    --codex-exec-started 1 \
+    --review-outcome REVIEWED_AND_REPORTED \
+    --dry-run 1 \
+    --selected-path README.md >"$TEST_TMP_ROOT/sparse-lifecycle-finish.out"
+
+  lattice record-cycle-start \
+    --cycle-id cycle-sparse \
+    --run-hash hash-sparse >"$TEST_TMP_ROOT/sparse-lifecycle-restart.out"
+  lattice record-cycle-finish \
+    --cycle-id cycle-sparse \
+    --run-hash hash-sparse >"$TEST_TMP_ROOT/sparse-lifecycle-replay.out"
+
+  cat >"$TEST_TMP_ROOT/sparse-lifecycle.log" <<'EOF'
+2026-05-08T00:00:00-0700 [INFO] cycle=cycle-sparse run_hash=hash-sparse cycle.start
+2026-05-08T00:00:01-0700 [INFO] cycle=cycle-sparse run_hash=hash-sparse cycle.summary
+2026-05-08T00:00:02-0700 [INFO] cycle=cycle-sparse run_hash=hash-sparse cycle.exit
+EOF
+  lattice import-upkeeper-log --path "$TEST_TMP_ROOT/sparse-lifecycle.log" >"$TEST_TMP_ROOT/sparse-lifecycle-import.out" || fail "sparse log import failed"
+
+  python3 - "$DB" <<'PY' || fail "sparse cycle replay cleared terminal metadata"
+import sqlite3
+import sys
+
+db_path = sys.argv[1]
+conn = sqlite3.connect(db_path)
+row = conn.execute(
+    "select status_marker, review_outcome, codex_exit, wrapper_exit, finish_reason, finish_level, codex_exec_started, dry_run, selected_path "
+    "from cycles where cycle_id='cycle-sparse' and run_hash='hash-sparse'"
+).fetchone()
+if row is None:
+    raise AssertionError("cycle-sparse row missing after replay")
+expected = (
+    "PREVIOUS_STATUS",
+    "REVIEWED_AND_REPORTED",
+    9,
+    9,
+    "PREVIOUS_FINISH",
+    "INFO",
+    1,
+    1,
+    "README.md",
+)
+if tuple(row) != expected:
+    raise AssertionError(f"terminal metadata changed by sparse replay: {row}")
+PY
+}
+
+test_planned_pass_semantics_do_not_mark_all_runs_as_planned() {
+  local repo
+
+  repo="$TEST_TMP_ROOT/lattice-planned-semantics"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/planned-semantics-init.out"
+
+  lattice record-cycle-start \
+    --cycle-id cycle-planning \
+    --run-hash hash-planning \
+    --execution-origin primary \
+    --model gpt-5.5 \
+    --effort xhigh \
+    --mode '--sandbox workspace-write' \
+    --config-file Upkeeper.conf \
+    --dirty-path-count 0 \
+    --dry-run 1 >"$TEST_TMP_ROOT/planned-semantics-start.out"
+  lattice record-pass-result \
+    --cycle-id cycle-planning \
+    --run-hash hash-planning \
+    --pass P23 \
+    --file README.md \
+    --applicable 1 \
+    --outcome clean \
+    --changed 0 \
+    --regression 0 >"$TEST_TMP_ROOT/planned-actual-pass.out"
+  lattice record-pass-result \
+    --cycle-id cycle-planning \
+    --run-hash hash-planning \
+    --path README.md \
+    --planned-passes P24 >"$TEST_TMP_ROOT/planned-missing-marker.out"
+
+  python3 - "$DB" <<'PY' || fail "planned pass semantics did not preserve completed-attempt intent"
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+row = conn.execute(
+    "select planned, attempted, outcome, changed from file_pass_runs where pass_code='P24' and outcome='planned' and file_id=(select file_id from files where canonical_path='README.md' limit 1)"
+).fetchone()
+if row is None:
+    raise AssertionError("missing planned P24 run")
+planned, attempted, _, _ = row
+if int(planned or 0) != 1:
+    raise AssertionError(f"planned marker run missing planned=1: {(planned, attempted)}")
+if int(attempted or 0) != 0:
+    raise AssertionError(f"planned marker run unexpectedly attempted: {(planned, attempted)}")
+
+row = conn.execute(
+    "select planned, attempted from file_pass_runs where pass_code='P23' and outcome='clean' and file_id=(select file_id from files where canonical_path='README.md' limit 1)"
+).fetchone()
+if row is None:
+    raise AssertionError("missing explicit P23 clean run")
+planned, attempted = row
+if int(planned or 0) != 0:
+    raise AssertionError(f"explicit clean run incorrectly marked planned: {(planned, attempted)}")
+if int(attempted or 0) != 1:
+    raise AssertionError(f"explicit clean run attempted flag incorrect: {(planned, attempted)}")
+
+row = conn.execute(
+    "select unknown_count from file_pass_rollups where file_id=(select file_id from files where canonical_path='README.md' limit 1)"
+).fetchone()
+if row is None:
+    raise AssertionError("missing file_pass_rollups row for README.md")
+if int(row[0]) != 0:
+    raise AssertionError(f"planned marker inflated unknown_count: {row[0]}")
+PY
+}
+
 test_lattice_cli_contracts
 test_no_git_import_and_recovery
+test_missing_selection_path_stays_missing
 test_wrapper_required_policy
+test_unsafe_lattice_db_path_is_rejected_by_default
+test_default_runtime_symlink_db_path_is_rejected
+test_ordinary_command_does_not_create_missing_db
+test_lattice_jsonl_input_guardrails
+test_export_backup_output_collision
+test_recover_no_backup_first_toggle
+test_review_parser_and_redaction
+test_clean_touch_uses_mtime_ns
+test_sparse_lifecycle_replay_preserves_metadata
+test_planned_pass_semantics_do_not_mark_all_runs_as_planned
 printf 'ok - lattice\n'

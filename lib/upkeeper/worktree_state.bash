@@ -32,6 +32,21 @@ def git(args):
     return subprocess.check_output(["git", "-C", str(root), *args], stderr=subprocess.DEVNULL)
 
 
+def git_text(args):
+    try:
+        return (
+            subprocess.check_output(
+                ["git", "-C", str(root), *args],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode("utf-8", "replace")
+            .strip()
+            or "unknown"
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
 def worktree_hash(rel_path):
     path = root / rel_path
     try:
@@ -48,7 +63,14 @@ def worktree_hash(rel_path):
 
 raw = git(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
 parts = raw.decode("utf-8", "surrogateescape").split("\0")
-items = {}
+items = {
+    "__meta__": {
+        "head": git_text(["rev-parse", "--verify", "HEAD"]),
+        "branch": git_text(["symbolic-ref", "--short", "-q", "HEAD"]),
+        "index_tree": git_text(["write-tree"]),
+        "status_lines": str(len(raw)),
+    }
+}
 i = 0
 while i < len(parts):
     entry = parts[i]
@@ -130,8 +152,20 @@ def allowed(path):
         or any(path.startswith(prefix) for prefix in allowed_prefixes)
     )
 
+before_meta = before.get("__meta__", {})
+after_meta = after.get("__meta__", {})
+for key in sorted(set(before_meta) | set(after_meta)):
+    if before_meta.get(key) == after_meta.get(key):
+        continue
+    print(
+        f"control_state_changed key={key!r} "
+        f"before={before_meta.get(key, 'missing')!r} after={after_meta.get(key, 'missing')!r}"
+    )
+
 
 for path in sorted(set(before) | set(after)):
+    if path == "__meta__":
+        continue
     if allowed(path):
         continue
     if before.get(path) == after.get(path):
@@ -145,6 +179,71 @@ for path in sorted(set(before) | set(after)):
         f"after_hash={after_state.get('hash', 'unknown')}"
     )
 PY
+}
+
+selected_target_scope_violations() {
+  local before_file="$1"
+  local after_file="$2"
+  local selected_path="$3"
+
+  [[ -n "$before_file" && -f "$before_file" ]] || return 0
+  [[ -n "$after_file" && -f "$after_file" ]] || return 0
+
+  python3 - "$before_file" "$after_file" "$selected_path" <<'PY'
+import json
+import sys
+
+before_path, after_path, selected_path = sys.argv[1:4]
+
+if not selected_path:
+    raise SystemExit(0)
+
+try:
+    before = json.load(open(before_path, 'r', encoding='utf-8'))
+    after = json.load(open(after_path, 'r', encoding='utf-8'))
+except OSError:
+    raise SystemExit(0)
+
+if not isinstance(before, dict) or not isinstance(after, dict):
+    raise SystemExit(0)
+
+for path in sorted(set(before) | set(after)):
+    if path == "__meta__":
+        continue
+    if before.get(path) == after.get(path):
+        continue
+    if path != selected_path:
+        before_state = before.get(path, {"status": "clean", "hash": "clean"})
+        after_state = after.get(path, {"status": "clean", "hash": "clean"})
+        print(
+            f"changed_path={path!r} before_status={before_state.get('status', 'unknown')} "
+            f"before_hash={before_state.get('hash', 'unknown')} "
+            f"after_status={after_state.get('status', 'unknown')} "
+            f"after_hash={after_state.get('hash', 'unknown')}"
+        )
+PY
+}
+
+enforce_selected_target_scope() {
+  local before_file="$1"
+  local selected_path="$2"
+  local after_file violation_count=0 violation
+
+  [[ -n "$selected_path" ]] || return 0
+
+  after_file="$(run_mktemp selected-scope-after)"
+  write_git_status_snapshot_json "$after_file"
+  while IFS= read -r violation; do
+    [[ -n "$violation" ]] || continue
+    violation_count=$((violation_count + 1))
+    log_line "WARN" "selected_target_scope.violation selected_path=$(shell_quote "$selected_path") $violation"
+  done < <(selected_target_scope_violations "$before_file" "$after_file" "$selected_path")
+
+  if [[ "$violation_count" -gt 0 ]]; then
+    return 1
+  fi
+
+  return 0
 }
 
 enforce_startup_anomaly_changed_paths() {

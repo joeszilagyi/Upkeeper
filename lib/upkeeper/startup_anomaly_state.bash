@@ -128,7 +128,7 @@ def normalized_epoch(value, fallback):
     return fallback_epoch, str(fallback_epoch)
 
 
-  for path in root.glob("*.state"):
+for path in root.glob("*.state"):
     fields = {}
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -161,13 +161,13 @@ PY
 startup_anomaly_gate_has_unresolved_state() {
   local state_dir="$CODEX_STARTUP_ANOMALY_GATE_STATE_DIR"
   local reasons_csv="$1"
-  local reasons_py
+  local reasons_py output
 
   [[ -d "$state_dir" ]] || return 1
   [[ -n "$reasons_csv" ]] || reasons_csv="unknown"
 
   reasons_py="$(printf '%s' "$reasons_csv")"
-  python3 - "$state_dir" "$reasons_py" <<'PY'
+  output="$(python3 - "$state_dir" "$reasons_py" <<'PY'
 import sys
 from pathlib import Path
 
@@ -199,4 +199,10 @@ for path in root.glob("*.state"):
 
 print("0")
 PY
+)"
+
+  if [[ "$output" == "1" ]]; then
+    return 0
+  fi
+  return 1
 }

@@ -619,6 +619,26 @@ upkeeper_source_mutation_fingerprint() {
     git diff --cached --no-ext-diff --binary --
     printf '\nstatus\n'
     git status --porcelain=v1 --untracked-files=all
+    printf '\nHEAD\n'
+    if ! git rev-parse --verify HEAD 2>/dev/null; then
+      printf 'unknown'
+    fi
+    printf '\nbranch\n'
+    if ! git symbolic-ref --short -q HEAD 2>/dev/null; then
+      printf 'detached_or_missing'
+    fi
+    printf '\nindex-tree\n'
+    if ! git write-tree 2>/dev/null; then
+      printf 'unknown'
+    fi
+    printf '\nrefs\n'
+    if ! git for-each-ref --sort=refname --format='%(refname) %(objectname)' refs/heads refs/remotes 2>/dev/null; then
+      printf 'unknown'
+    fi
+    printf '\nreflogs\n'
+    if ! git reflog --date=unix --pretty=format:'%H|%gD|%s' --all 2>/dev/null | head -n 80; then
+      printf 'unknown'
+    fi
   } 2>/dev/null | git hash-object --stdin
 }
 
@@ -635,26 +655,62 @@ append_csv_value() {
 }
 
 validate_codex_mode_args_or_exit() {
+  local first_mode_token
   local mode_arg
+  local expect_sandbox_value=0
 
   CODEX_MODE_ARGS=()
-  if [[ -z "${CODEX_MODE_STRING:-}" ]]; then
+  read -r -a CODEX_MODE_ARGS <<<"${CODEX_MODE_STRING:-}"
+  if ((${#CODEX_MODE_ARGS[@]} == 0)); then
     printf 'Upkeeper: invalid CODEX_MODE first token %q; expected a Codex option beginning with --\n' "${CODEX_MODE_STRING:-}" >&2
     exit 2
   fi
-  read -r -a CODEX_MODE_ARGS <<<"$CODEX_MODE_STRING"
+  first_mode_token="${CODEX_MODE_ARGS[0]}"
+  if [[ "$first_mode_token" != --* || "$first_mode_token" == ---* ]]; then
+    if [[ "$first_mode_token" == danger-full-access || "$first_mode_token" == --dangerously-bypass-approvals-and-sandbox ]]; then
+      printf 'Upkeeper: invalid CODEX_MODE first token %q; Genie Protocol requires sandboxed backend Codex execution\n' "--dangerously-bypass-approvals-and-sandbox" >&2
+    else
+      printf 'Upkeeper: invalid CODEX_MODE first token %q; expected a Codex option beginning with --\n' "$first_mode_token" >&2
+    fi
+    exit 2
+  fi
   for mode_arg in "${CODEX_MODE_ARGS[@]}"; do
+    if (( expect_sandbox_value )); then
+      expect_sandbox_value=0
+      if [[ "$mode_arg" != workspace-write && "$mode_arg" != read-only ]]; then
+        if [[ "$mode_arg" == danger-full-access || "$mode_arg" == --dangerously-bypass-approvals-and-sandbox ]]; then
+          printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "--dangerously-bypass-approvals-and-sandbox" >&2
+          exit 2
+        fi
+        printf 'Upkeeper: invalid CODEX_MODE token %q; expected a sandbox mode argument\n' "$mode_arg" >&2
+        exit 2
+      fi
+      continue
+    fi
+
     if [[ "$mode_arg" != --* || "$mode_arg" == ---* ]]; then
+      if [[ "$mode_arg" == danger-full-access || "$mode_arg" == --dangerously-bypass-approvals-and-sandbox ]]; then
+        printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "--dangerously-bypass-approvals-and-sandbox" >&2
+        exit 2
+      fi
       printf 'Upkeeper: invalid CODEX_MODE token %q; expected a Codex option beginning with --\n' "$mode_arg" >&2
       exit 2
     fi
     case "$mode_arg" in
       danger-full-access|--dangerously-bypass-approvals-and-sandbox)
-        printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "$mode_arg" >&2
+        printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "--dangerously-bypass-approvals-and-sandbox" >&2
         exit 2
+        ;;
+      --sandbox)
+        expect_sandbox_value=1
         ;;
     esac
   done
+
+  if (( expect_sandbox_value )); then
+    printf 'Upkeeper: invalid CODEX_MODE token --sandbox; expected a sandbox mode argument\n' >&2
+    exit 2
+  fi
 }
 
 set_prompt_pass_or_die() {
@@ -968,8 +1024,11 @@ PY
   if [[ -z "${CODEX_TARGET_FILE:-}" ]]; then
     if [[ -n "$target_from_issue" ]]; then
       CODEX_TARGET_FILE="$target_from_issue"
-    else
-      CODEX_TARGET_FILE="Upkeeper"
+      if [[ "$CODEX_ISSUE_FIX_SELECTED_LABEL" == "explicit" ]]; then
+        log_line "INFO" "issue_fix.target file_selected_from_explicit_issue number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") target_file=$(shell_quote "$CODEX_TARGET_FILE")"
+      else
+        log_line "INFO" "issue_fix.target file_selected_from_inferred_issue number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") selected_label=$(shell_quote "$CODEX_ISSUE_FIX_SELECTED_LABEL") target_file=$(shell_quote "$CODEX_TARGET_FILE")"
+      fi
     fi
   fi
 
@@ -1247,11 +1306,29 @@ require_commands() {
 }
 
 resolve_prompt_file() {
+  local prompt_trust_root="${UPKEEPER_PROMPT_TRUST_ROOT:-$ROOT_DIR/prompts}"
+  local allow_external_prompt="${UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE:-0}"
+
   if [[ -n "$PROMPT_FILE" && -n "$INLINE_PROMPT" ]]; then
     die "use either --prompt-file or --prompt, not both"
   fi
   if [[ -n "$PROMPT_FILE" ]]; then
     PROMPT_FILE="$(resolve_path "$PROMPT_FILE")"
+    if [[ "$UPKEEPER_AUTOMATION_LAUNCHER" != "$SCRIPT_NAME" ]]; then
+      prompt_trust_root="$(resolve_path "$prompt_trust_root")"
+      [[ -d "$prompt_trust_root" ]] || die "prompt trust root is not a directory: $prompt_trust_root"
+      case "$PROMPT_FILE" in
+        "$prompt_trust_root"|"$prompt_trust_root"/*)
+          ;;
+        *)
+          if [[ "$allow_external_prompt" == "1" ]]; then
+            log_line "WARN" "prompt_file_external_allowed execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=$(shell_quote "$PROMPT_FILE") trust_root=$(shell_quote "$prompt_trust_root") automation_launcher=$(shell_quote "${UPKEEPER_AUTOMATION_LAUNCHER:-$SCRIPT_NAME}")"
+          else
+            die "prompt file outside trust root; set UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE=1 to override: $PROMPT_FILE"
+          fi
+          ;;
+      esac
+    fi
     [[ -f "$PROMPT_FILE" ]] || die "prompt file not found: $PROMPT_FILE"
     [[ -r "$PROMPT_FILE" ]] || die "prompt file not readable: $PROMPT_FILE"
   fi

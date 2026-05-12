@@ -85,7 +85,6 @@ PY
 
 codex_session_store_write_check() {
   local marker_dir="$CODEX_HOME_DIR/sessions"
-  local probe_dir=""
   local probe_file
   local safety_detail
   local err_file
@@ -119,29 +118,43 @@ codex_session_store_write_check() {
     return 1
   fi
 
-  if ! probe_dir="$(mktemp -d -- "$marker_dir/.upkeeper-write-test.XXXXXX" 2>"$err_file")"; then
-    printf 'probe_dir_failed:%s' "$(tr '\n' ' ' <"$err_file")"
+  if ! probe_file="$(mktemp -- "$marker_dir/.upkeeper-write-test.XXXXXX" 2>"$err_file")"; then
+    printf 'probe_file_failed:%s' "$(tr '\n' ' ' <"$err_file")"
     rm -f -- "$err_file"
     return 1
   fi
 
-  probe_file="$probe_dir/probe"
-  if ! ( : >"$probe_file" ) 2>"$err_file"; then
-    printf 'probe_write_failed:%s' "$(tr '\n' ' ' <"$err_file")"
-    rmdir -- "$probe_dir" >/dev/null 2>&1 || true
-    rm -f -- "$err_file"
-    return 1
+  if ! python3 - "$probe_file" 2>"$err_file" <<'PY'
+import os
+import sys
+
+path = sys.argv[1]
+flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+for attr in ("O_NOFOLLOW", "O_CLOEXEC"):
+    flags |= getattr(os, attr, 0)
+
+try:
+    fd = os.open(path, flags, 0o600)
+except OSError as exc:
+    print(f"probe_open_failed:{exc.errno}:{exc.strerror or exc}")
+    raise SystemExit(1)
+
+try:
+    os.write(fd, b"probe")
+finally:
+    os.close(fd)
+
+PY
+then
+  printf 'probe_write_failed:%s' "$(tr '\n' ' ' <"$err_file")"
+  rm -f -- "$probe_file"
+  rm -f -- "$err_file"
+  return 1
   fi
 
   if ! rm -f -- "$probe_file" 2>"$err_file"; then
     printf 'probe_file_cleanup_failed:%s' "$(tr '\n' ' ' <"$err_file")"
-    rmdir -- "$probe_dir" >/dev/null 2>&1 || true
-    rm -f -- "$err_file"
-    return 1
-  fi
-
-  if ! rmdir -- "$probe_dir" 2>"$err_file"; then
-    printf 'probe_dir_cleanup_failed:%s' "$(tr '\n' ' ' <"$err_file")"
+    rm -f -- "$probe_file"
     rm -f -- "$err_file"
     return 1
   fi

@@ -147,7 +147,7 @@ test_plain_required_backup_succeeds() {
 
   expected_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
   [[ "$(precontact_backup_sha256_file "$bak_file")" == "$expected_sha" ]] || fail "plain backup sha mismatch"
-  backup_id="$(jq -r '.backup_id' "$json_file")"
+  backup_id="$(basename -- "$json_file" .json)"
   derivation_prefix="$(jq -r '.backup_id_derivation_sha256[0:32]' "$json_file")"
   [[ "$backup_id" == *"$derivation_prefix"* ]] || fail "backup id does not derive from recorded derivation sha"
   jq -e \
@@ -228,6 +228,86 @@ SH
   ! grep -Fq "identity=" "$record" || fail "age backup requested an identity"
   jq -e '.backup_mode == "age" and .encrypted == true and .protected_from_backend == "unknown"' "$json_file" >/dev/null ||
     fail "age sidecar did not record encrypted unknown-protection state"
+}
+
+test_age_restore_uses_payload_metadata() {
+  local repo="$TEST_TMP_ROOT/age-restore repo"
+  local fake_bin="$TEST_TMP_ROOT/fake-age-bin"
+  local selection_file json_file age_file restored_sha original_sha sidecar
+  local identity_file="$TEST_TMP_ROOT/age-identity.key"
+  local old_path
+  local record
+  make_repo "$repo"
+  reset_env "$repo" age_restore
+  selection_file="$TEST_TMP_ROOT/age-restore-selection.env"
+  write_selection_file "dir/space file.sh" "$selection_file"
+  mkdir -p "$fake_bin"
+  cat >"$fake_bin/age" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+mode="encrypt"
+out=""
+input=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --encrypt)
+      mode="encrypt"
+      shift
+      ;;
+    --decrypt)
+      mode="decrypt"
+      shift
+      ;;
+    --recipient|-r)
+      shift 2
+      ;;
+    --identity|-i)
+      shift 2
+      ;;
+    --output|-o)
+      out="$2"
+      shift 2
+      ;;
+    *)
+      input="$1"
+      shift
+      ;;
+  esac
+done
+if [[ "$mode" == "encrypt" ]]; then
+  [[ -n "$out" ]] || exit 9
+  cat >"$out"
+else
+  [[ -n "$out" ]] || exit 9
+  [[ -n "$input" ]] || exit 9
+  cat "$input" >"$out"
+fi
+SH
+  printf 'restore-id\n' >"$identity_file"
+  chmod +x "$fake_bin/age"
+  old_path="$PATH"
+  PATH="$fake_bin:$PATH"
+  record="${record:-$TEST_TMP_ROOT/age-restore-record.txt}"
+  export FAKE_AGE_RECORD="$record"
+  UPKEEPER_PRECONTACT_BACKUP_MODE=age
+  UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT="age1testrecipient"
+  precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
+
+  json_file="$(find "$UPKEEPER_PRECONTACT_BACKUP_ROOT" -type f -name "${RUN_PRECONTACT_BACKUP_ID}.json" -print)"
+  age_file="$(find "$UPKEEPER_PRECONTACT_BACKUP_ROOT" -type f -name "${RUN_PRECONTACT_BACKUP_ID}.age" -print)"
+  sidecar="$json_file"
+  [[ -s "$age_file" ]] || fail "age restore test missing age artifact"
+  [[ -s "$sidecar" ]] || fail "age restore test missing age sidecar"
+
+  original_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
+  printf 'mutated\n' >"$repo/dir/space file.sh"
+  precontact_backup_restore_by_id "$RUN_PRECONTACT_BACKUP_ID" "$repo" "$identity_file" ""
+  restored_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
+  PATH="$old_path"
+  [[ "$restored_sha" == "$original_sha" ]] || fail "age restore did not restore original bytes"
+
+  jq -e 'has("selected_relative_path") | not' "$sidecar" >/dev/null ||
+    fail "age sidecar leaked detailed restore metadata"
 }
 
 test_required_encrypted_mode_fails_closed() {
@@ -312,10 +392,11 @@ EOF
   [[ -n "$RUN_PRECONTACT_BACKUP_ID" ]] || fail "prompt path did not create backup"
   ! grep -Fq "$UPKEEPER_PRECONTACT_BACKUP_ROOT" "$compiled" || fail "compiled prompt leaked vault root"
   ! grep -Fq "$UPKEEPER_PRECONTACT_BACKUP_ROOT" "$LOG_FILE" || fail "log leaked vault root"
-  grep -Fq "backup_id=$RUN_PRECONTACT_BACKUP_ID" "$compiled" || fail "compiled prompt missing backup id"
-  grep -Fq "sha256=$RUN_PRECONTACT_BACKUP_SHA256" "$compiled" || fail "compiled prompt missing content sha"
   grep -Fq "report BLOCKED" "$compiled" || fail "compiled prompt missing BLOCKED rule"
   grep -Fq "Replacement target selection is wrapper-only" "$compiled" || fail "compiled prompt missing wrapper-only replacement rule"
+  grep -Fq "Pre-contact backup was created by the wrapper before this prompt was compiled" "$compiled" || fail "compiled prompt missing backup notice"
+  ! grep -Fq "backup_id=$RUN_PRECONTACT_BACKUP_ID" "$compiled" || fail "compiled prompt leaked backup id"
+  ! grep -Fq "sha256=$RUN_PRECONTACT_BACKUP_SHA256" "$compiled" || fail "compiled prompt leaked backup content hash"
   ! grep -Fq "use the same source-safe selection boundary for the replacement" "$compiled" ||
     fail "compiled prompt still grants model replacement authority"
 }
@@ -385,5 +466,6 @@ test_unsafe_target_rejection
 test_prompt_redaction_and_replacement_rule
 test_retention_prunes_only_same_path
 test_plain_restore_and_unsafe_id
+test_age_restore_uses_payload_metadata
 
 printf 'precontact_backup_test: ok\n'

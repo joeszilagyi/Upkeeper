@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.12
+## Version: v1.2.13
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -136,7 +136,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.12"
+UPKEEPER_VERSION="v1.2.13"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -177,6 +177,7 @@ UPKEEPER_PRECONTACT_BACKUP_ROOT="${UPKEEPER_PRECONTACT_BACKUP_ROOT:-${XDG_STATE_
 UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE="${UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE:-20}"
 UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT="${UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT:-}"
 UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS="${UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS:-1}"
+UPKEEPER_VERBOSE_METADATA="${UPKEEPER_VERBOSE_METADATA:-0}"
 CODEX_OPERATOR_GUIDE_PATH="${CODEX_OPERATOR_GUIDE_PATH:-docs/scripts/upkeeper.md}"
 CODEX_OPERATOR_GUIDE_BOOTSTRAP="${CODEX_OPERATOR_GUIDE_BOOTSTRAP:-1}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -439,6 +440,140 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
 done
  unset upkeeper_module
 
+# `cycle.start` needs enough context for support without copying raw paths,
+# process metadata, and selection policy into every run record by default.
+upkeeper_verbose_metadata_enabled() {
+  config_truthy "${UPKEEPER_VERBOSE_METADATA:-0}"
+}
+
+cycle_start_metadata_hash() {
+  local value="${1:-}"
+
+  case "$value" in
+    "")
+      printf 'none'
+      ;;
+    none|unknown)
+      printf '%s' "$value"
+      ;;
+    *)
+      issue_fix_log_hash "$value"
+      ;;
+  esac
+}
+
+cycle_start_process_hash() {
+  local pid="$1"
+  local comm="$2"
+  local start_fingerprint="$3"
+
+  if [[ "$pid" == "unknown" && "$comm" == "unknown" && "$start_fingerprint" == "proc_start_ticks=unknown" ]]; then
+    printf 'unknown'
+    return 0
+  fi
+
+  cycle_start_metadata_hash "$pid|$comm|$start_fingerprint"
+}
+
+cycle_start_log_message() {
+  local direct_parent_pid="$1"
+  local direct_parent_comm="$2"
+  local direct_parent_start_fingerprint="$3"
+  local loop_parent_pid="$4"
+  local loop_parent_comm="$5"
+  local loop_parent_start_fingerprint="$6"
+  local loop_parent_override="$7"
+  local wrapper_start_fingerprint="$8"
+  local -a fields=()
+  local review_modules
+
+  review_modules="$(review_modules_csv)"
+  fields+=("cycle.start")
+  fields+=("verbose_metadata=$(truthy_as_int "${UPKEEPER_VERBOSE_METADATA:-0}")")
+  fields+=("execution_origin=$(shell_quote "$CODEX_EXECUTION_ORIGIN")")
+  fields+=("config_loaded=$UPKEEPER_CONFIG_LOADED")
+  fields+=("model=$(shell_quote "$CODEX_MODEL")")
+  fields+=("effort=$(shell_quote "$CODEX_REASONING_EFFORT")")
+  fields+=("bug_report_only=$(truthy_as_int "${CODEX_BUG_REPORT_ONLY:-0}")")
+  fields+=("issue_fix_next=$(truthy_as_int "${CODEX_ISSUE_FIX_NEXT:-0}")")
+  fields+=("issue_workflow_stage=$(shell_quote "${CODEX_ISSUE_WORKFLOW_STAGE:-none}")")
+  fields+=("manifest_mode=$(shell_quote "$CODEX_FILE_MANIFEST_MODE")")
+  fields+=("prompt_pass=$(shell_quote "${CODEX_PROMPT_PASS:-default}")")
+  fields+=("attempt_role=$(shell_quote "$CODEX_ATTEMPT_ROLE")")
+  fields+=("fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE")
+  fields+=("dry_run=$UPKEEPER_DRY_RUN")
+  fields+=("continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK")
+  fields+=("dirty_paths=$DIRTY_PATH_COUNT")
+  fields+=("tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT")
+  fields+=("untracked_paths=$UNTRACKED_PATH_COUNT")
+
+  if upkeeper_verbose_metadata_enabled; then
+    fields+=("script=$(shell_quote "$SELF_INVOKE_PATH")")
+    fields+=("implementation=$(shell_quote "$SELF_PATH")")
+    fields+=("cwd=$(shell_quote "$ROOT_DIR")")
+    fields+=("pid=$$")
+    fields+=("wrapper_start=$wrapper_start_fingerprint")
+    fields+=("ppid=$direct_parent_pid")
+    fields+=("parent_comm=$(shell_quote "$direct_parent_comm")")
+    fields+=("parent_start=$direct_parent_start_fingerprint")
+    fields+=("loop_parent_pid=$loop_parent_pid")
+    fields+=("loop_parent_comm=$(shell_quote "$loop_parent_comm")")
+    fields+=("loop_parent_start=$loop_parent_start_fingerprint")
+    fields+=("loop_parent_override=$loop_parent_override")
+    fields+=("config_file=$(shell_quote "$UPKEEPER_CONFIG_SOURCE")")
+    fields+=("mode=$(shell_quote "$CODEX_MODE_STRING")")
+    fields+=("model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}")")
+    fields+=("model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED")
+    fields+=("target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}")")
+    fields+=("target_root=$(shell_quote "${CODEX_TARGET_ROOT:-none}")")
+    fields+=("target_depth=$(shell_quote "${CODEX_TARGET_MAX_DEPTH:-none}")")
+    fields+=("selection_source=$(shell_quote "$CODEX_SELECTION_SOURCE")")
+    fields+=("selection_order=$(shell_quote "$CODEX_SELECTION_ORDER")")
+    fields+=("max_cover=$CODEX_MAX_COVER_MODE")
+    fields+=("issue_priority_labels=$(shell_quote "${CODEX_ISSUE_PRIORITY_LABELS:-none}")")
+    fields+=("manifest_path=$(shell_quote "$CODEX_FILE_MANIFEST_PATH")")
+    fields+=("include_globs=$(shell_quote "${CODEX_SELECTION_INCLUDE_GLOBS:-none}")")
+    fields+=("exclude_globs=$(shell_quote "${CODEX_SELECTION_EXCLUDE_GLOBS:-none}")")
+    fields+=("selection_review_modules=$(shell_quote "${CODEX_SELECTION_REVIEW_MODULES:-none}")")
+    fields+=("review_modules=$(shell_quote "$review_modules")")
+    fields+=("primary_model_context=$(shell_quote "${CODEX_PRIMARY_MODEL_CONTEXT:-none}")")
+    fields+=("fallback_trigger=$(shell_quote "${CODEX_FALLBACK_TRIGGER:-none}")")
+    fields+=("screen_fallback_child_id=$(shell_quote "${CODEX_SCREEN_FALLBACK_CHILD_ID:-none}")")
+    fields+=("automation_launcher=$(shell_quote "${UPKEEPER_AUTOMATION_LAUNCHER:-$SCRIPT_NAME}")")
+    fields+=("automation_variant=$(shell_quote "${UPKEEPER_AUTOMATION_VARIANT:-standard}")")
+    fields+=("automation_policy=$(shell_quote "${UPKEEPER_AUTOMATION_POLICY:-one-cycle}")")
+    fields+=("automation_workflow=$(shell_quote "${UPKEEPER_AUTOMATION_WORKFLOW:-none}")")
+    fields+=("code_home=$(shell_quote "$CODEX_HOME_DIR")")
+    fields+=("boot_id=$(system_boot_id)")
+    fields+=("uptime_seconds=$(system_uptime_seconds)")
+  else
+    fields+=("script_hash=$(shell_quote "$(cycle_start_metadata_hash "$SELF_INVOKE_PATH")")")
+    fields+=("implementation_hash=$(shell_quote "$(cycle_start_metadata_hash "$SELF_PATH")")")
+    fields+=("cwd_hash=$(shell_quote "$(cycle_start_metadata_hash "$ROOT_DIR")")")
+    fields+=("wrapper_process_hash=$(shell_quote "$(cycle_start_process_hash "$$" "$SCRIPT_NAME" "$wrapper_start_fingerprint")")")
+    fields+=("parent_process_hash=$(shell_quote "$(cycle_start_process_hash "$direct_parent_pid" "$direct_parent_comm" "$direct_parent_start_fingerprint")")")
+    fields+=("loop_parent_process_hash=$(shell_quote "$(cycle_start_process_hash "$loop_parent_pid" "$loop_parent_comm" "$loop_parent_start_fingerprint")")")
+    fields+=("config_file_hash=$(shell_quote "$(cycle_start_metadata_hash "$UPKEEPER_CONFIG_SOURCE")")")
+    fields+=("target_file_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_TARGET_FILE:-none}")")")
+    fields+=("target_root_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_TARGET_ROOT:-none}")")")
+    fields+=("issue_priority_labels_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_ISSUE_PRIORITY_LABELS:-none}")")")
+    fields+=("manifest_path_hash=$(shell_quote "$(cycle_start_metadata_hash "$CODEX_FILE_MANIFEST_PATH")")")
+    fields+=("include_globs_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_SELECTION_INCLUDE_GLOBS:-none}")")")
+    fields+=("exclude_globs_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_SELECTION_EXCLUDE_GLOBS:-none}")")")
+    fields+=("selection_review_modules_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_SELECTION_REVIEW_MODULES:-none}")")")
+    fields+=("review_modules_hash=$(shell_quote "$(cycle_start_metadata_hash "$review_modules")")")
+    fields+=("code_home_hash=$(shell_quote "$(cycle_start_metadata_hash "$CODEX_HOME_DIR")")")
+    fields+=("boot_id_hash=$(shell_quote "$(cycle_start_metadata_hash "$(system_boot_id)")")")
+  fi
+
+  local message="${fields[0]}"
+  local index
+  for ((index = 1; index < ${#fields[@]}; index++)); do
+    message+=" ${fields[index]}"
+  done
+  printf '%s' "$message"
+}
+
 prepare_fallback_chain_token() {
   local token_fd="${CODEX_FALLBACK_CHAIN_TOKEN_FD:-}"
 
@@ -512,7 +647,7 @@ main() {
   local loop_parent_start_fingerprint
   loop_parent_start_fingerprint="$(process_start_fingerprint "$loop_parent_pid")"
 
-  log_line "INFO" "cycle.start execution_origin=$(shell_quote "$CODEX_EXECUTION_ORIGIN") script=$(shell_quote "$SELF_INVOKE_PATH") implementation=$(shell_quote "$SELF_PATH") cwd=$(shell_quote "$ROOT_DIR") pid=$$ wrapper_start=$wrapper_start_fingerprint ppid=$direct_parent_pid parent_comm=$(shell_quote "$direct_parent_comm") parent_start=$direct_parent_start_fingerprint loop_parent_pid=$loop_parent_pid loop_parent_comm=$(shell_quote "$loop_parent_comm") loop_parent_start=$loop_parent_start_fingerprint loop_parent_override=$loop_parent_override config_loaded=$UPKEEPER_CONFIG_LOADED config_file=$(shell_quote "$UPKEEPER_CONFIG_SOURCE") model=$(shell_quote "$CODEX_MODEL") effort=$(shell_quote "$CODEX_REASONING_EFFORT") mode=$(shell_quote "$CODEX_MODE_STRING") model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}") model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") target_root=$(shell_quote "${CODEX_TARGET_ROOT:-none}") target_depth=$(shell_quote "${CODEX_TARGET_MAX_DEPTH:-none}") selection_source=$(shell_quote "$CODEX_SELECTION_SOURCE") selection_order=$(shell_quote "$CODEX_SELECTION_ORDER") max_cover=$CODEX_MAX_COVER_MODE bug_report_only=$(truthy_as_int "${CODEX_BUG_REPORT_ONLY:-0}") issue_fix_next=$(truthy_as_int "${CODEX_ISSUE_FIX_NEXT:-0}") issue_workflow_stage=$(shell_quote "${CODEX_ISSUE_WORKFLOW_STAGE:-none}") issue_priority_labels=$(shell_quote "${CODEX_ISSUE_PRIORITY_LABELS:-none}") manifest_mode=$(shell_quote "$CODEX_FILE_MANIFEST_MODE") manifest_path=$(shell_quote "$CODEX_FILE_MANIFEST_PATH") include_globs=$(shell_quote "${CODEX_SELECTION_INCLUDE_GLOBS:-none}") exclude_globs=$(shell_quote "${CODEX_SELECTION_EXCLUDE_GLOBS:-none}") selection_review_modules=$(shell_quote "${CODEX_SELECTION_REVIEW_MODULES:-none}") prompt_pass=$(shell_quote "${CODEX_PROMPT_PASS:-default}") review_modules=$(review_modules_csv) attempt_role=$(shell_quote "$CODEX_ATTEMPT_ROLE") fallback_chain_active=$CODEX_FALLBACK_CHAIN_ACTIVE primary_model_context=$(shell_quote "${CODEX_PRIMARY_MODEL_CONTEXT:-none}") fallback_trigger=$(shell_quote "${CODEX_FALLBACK_TRIGGER:-none}") screen_fallback_child_id=$(shell_quote "${CODEX_SCREEN_FALLBACK_CHILD_ID:-none}") automation_launcher=$(shell_quote "${UPKEEPER_AUTOMATION_LAUNCHER:-$SCRIPT_NAME}") automation_variant=$(shell_quote "${UPKEEPER_AUTOMATION_VARIANT:-standard}") automation_policy=$(shell_quote "${UPKEEPER_AUTOMATION_POLICY:-one-cycle}") automation_workflow=$(shell_quote "${UPKEEPER_AUTOMATION_WORKFLOW:-none}") code_home=$(shell_quote "$CODEX_HOME_DIR") dry_run=$UPKEEPER_DRY_RUN continue_on_no_backend_task=$CODEX_CONTINUE_ON_NO_BACKEND_TASK boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds) dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT"
+  log_line "INFO" "$(cycle_start_log_message "$direct_parent_pid" "$direct_parent_comm" "$direct_parent_start_fingerprint" "$loop_parent_pid" "$loop_parent_comm" "$loop_parent_start_fingerprint" "$loop_parent_override" "$wrapper_start_fingerprint")"
   automation_record_cycle_start || log_line "WARN" "automation.run_record.start_failed path=$(shell_quote "${RUN_AUTOMATION_RECORD_FILE:-unknown}")"
   resolve_issue_fix_next_or_exit
   lattice_init_and_doctor_or_exit

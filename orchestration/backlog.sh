@@ -140,6 +140,7 @@ selected_issue() {
 
 run_upkeeper_for_one_target() {
   local issue_number="${1:-}"
+  local state_root
 
   export CODEX_MODEL="$BACKLOG_CODEX_MODEL"
   export CODEX_REASONING_EFFORT="$BACKLOG_CODEX_REASONING_EFFORT"
@@ -152,6 +153,25 @@ run_upkeeper_for_one_target() {
   export CODEX_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-0}"
   export CODEX_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-0}"
   export UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="${BACKLOG_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL:-1}"
+
+  state_root="${BACKLOG_STATE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog}"
+  mkdir -p \
+    "$state_root/logs" \
+    "$state_root/tmp" \
+    "$state_root/transcripts" \
+    "$state_root/postmortems" \
+    "$state_root/bug-report-drafts" \
+    "$state_root/lattice" \
+    "$state_root/precontact-vault"
+  chmod 700 "$state_root" "$state_root/logs" "$state_root/tmp" "$state_root/transcripts" "$state_root/postmortems" "$state_root/bug-report-drafts" "$state_root/lattice" "$state_root/precontact-vault" 2>/dev/null || true
+
+  export TMPDIR="${BACKLOG_TMPDIR:-$state_root/tmp}"
+  export CODEX_LOG_FILE="${BACKLOG_CODEX_LOG_FILE:-$state_root/logs/Upkeeper.log}"
+  export CODEX_TRANSCRIPT_DIR="${BACKLOG_CODEX_TRANSCRIPT_DIR:-$state_root/transcripts}"
+  export CODEX_POSTMORTEM_DIR="${BACKLOG_CODEX_POSTMORTEM_DIR:-$state_root/postmortems}"
+  export UPKEEPER_BUG_REPORT_DRAFT_DIR="${BACKLOG_BUG_REPORT_DRAFT_DIR:-$state_root/bug-report-drafts}"
+  export UPKEEPER_LATTICE_DB="${BACKLOG_LATTICE_DB:-$state_root/lattice/lattice.sqlite3}"
+  export UPKEEPER_PRECONTACT_BACKUP_ROOT="${BACKLOG_PRECONTACT_BACKUP_ROOT:-$state_root/precontact-vault}"
 
   if [[ -n "$issue_number" ]]; then
     log "running Upkeeper for issue #$issue_number with $CODEX_MODEL/$CODEX_REASONING_EFFORT"

@@ -108,6 +108,27 @@ precontact_backup_selection_field() {
   ' "$selection_file" 2>/dev/null || true
 }
 
+precontact_backup_sensitive_target_path() {
+  local rel_path="$1"
+  local lowered
+
+  lowered="$(printf '%s' "$rel_path" | tr '[:upper:]' '[:lower:]')"
+  case "$lowered" in
+    .env|.env.*|*/.env|*/.env.*|*.env|*.env.*|\
+    .npmrc|*/.npmrc|\
+    .pypirc|*/.pypirc|\
+    .netrc|*/.netrc|\
+    .aws/credentials|*/.aws/credentials|\
+    .kube/config|*/.kube/config|\
+    kubeconfig|*/kubeconfig|\
+    id_rsa|*/id_rsa|id_dsa|*/id_dsa|id_ecdsa|*/id_ecdsa|id_ed25519|*/id_ed25519|\
+    *.pem|*.key|*.p12|*.pfx)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 precontact_backup_validate_target() {
   local rel_path="$1"
   local target_path resolved_target
@@ -149,6 +170,10 @@ precontact_backup_validate_target() {
       return 1
       ;;
   esac
+  if precontact_backup_sensitive_target_path "$rel_path"; then
+    precontact_backup_set_reason "sensitive_target_rejected"
+    return 1
+  fi
 
   target_path="$ROOT_DIR/$rel_path"
   if [[ -L "$target_path" ]]; then

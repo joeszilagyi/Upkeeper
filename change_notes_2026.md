@@ -584,3 +584,7 @@ Reconstructed pre-1.0 history:
 2026-05-11: pre-contact backup log path redaction:
 - Pre-contact backup create, failure, and restore log lines now use a stable `target_hash` instead of logging the raw selected relative path while claiming `path_redacted=1`.
 - Protected backup metadata and restore behavior are unchanged, but normal runtime logs no longer leak target names such as customer, incident, or secret-bearing file labels.
+
+2026-05-11: sensitive target denylist before prompt launch:
+- Upkeeper now fails closed on common secret-bearing target paths such as `.env*`, credential dotfiles, kubeconfig, SSH private key names, and private-key extensions before pre-contact backup, prompt compilation, or backend launch can treat them as ordinary review files.
+- The deny gate is built in and does not depend on `.upkeeperignore`, so tracked or otherwise eligible secret-like files no longer reach the normal backup-and-prompt flow by default.

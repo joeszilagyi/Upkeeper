@@ -563,3 +563,7 @@ Reconstructed pre-1.0 history:
 2026-05-11: ChimneySweep obligation repair loop containment:
 - ChimneySweep now remaps poisoned obligation `target_file` values such as `runtime/` fixtures back to a repo-local control-plane file instead of replaying an ineligible explicit target forever.
 - Obligation-repair cycles that immediately fail again with the same poisoned `TARGET_FILE_NOT_ELIGIBLE` explicit target now keep the original obligation open instead of multiplying duplicate open records.
+
+2026-05-11: allowlisted `CODEX_MODE` tuple parsing:
+- `CODEX_MODE` now accepts only the allowlisted sandbox tuples `--sandbox workspace-write` and `--sandbox read-only` in both the primary wrapper and auxiliary Codex path.
+- Extra trailing mode tokens are now rejected instead of being forwarded into backend Codex option parsing.

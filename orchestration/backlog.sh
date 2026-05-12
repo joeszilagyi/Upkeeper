@@ -57,6 +57,76 @@ cleanup_ephemeral_artifacts() {
   find "$ROOT_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true
 }
 
+prepare_backlog_runtime_env() {
+  local state_root
+
+  export CODEX_MODEL="$BACKLOG_CODEX_MODEL"
+  export CODEX_REASONING_EFFORT="$BACKLOG_CODEX_REASONING_EFFORT"
+  export CODEX_FALLBACK_ENABLED="${BACKLOG_CODEX_FALLBACK_ENABLED:-0}"
+  export CODEX_FALLBACK_SCREEN_ENABLED="${BACKLOG_CODEX_FALLBACK_SCREEN_ENABLED:-0}"
+  export CODEX_POSTMORTEM_ENABLED="${BACKLOG_CODEX_POSTMORTEM_ENABLED:-0}"
+  export CODEX_5H_STOP_PERCENT="${BACKLOG_5H_STOP_PERCENT:-0}"
+  export CODEX_WEEK_STOP_PERCENT="${BACKLOG_WEEK_STOP_PERCENT:-10}"
+  export CODEX_WEEK_STOP_BUFFER_PERCENT="${BACKLOG_WEEK_STOP_BUFFER_PERCENT:-0}"
+  export CODEX_SPARK_5H_STOP_PERCENT="${BACKLOG_SPARK_5H_STOP_PERCENT:-0}"
+  export CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT="${BACKLOG_SPARK_WEEK_STOP_BUFFER_PERCENT:-0}"
+  export CODEX_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-0}"
+  export CODEX_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-0}"
+  export UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="${BACKLOG_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL:-1}"
+  export PYTHONDONTWRITEBYTECODE=1
+
+  state_root="$(backlog_state_root)"
+  mkdir -p \
+    "$state_root/logs" \
+    "$state_root/tmp" \
+    "$state_root/transcripts" \
+    "$state_root/postmortems" \
+    "$state_root/bug-report-drafts" \
+    "$state_root/precontact-vault" \
+    "$ROOT_DIR/runtime/upkeeper-backlog-lattice"
+  chmod 700 "$state_root" "$state_root/logs" "$state_root/tmp" "$state_root/transcripts" "$state_root/postmortems" "$state_root/bug-report-drafts" "$state_root/precontact-vault" "$ROOT_DIR/runtime/upkeeper-backlog-lattice" 2>/dev/null || true
+
+  export TMPDIR="${BACKLOG_TMPDIR:-$state_root/tmp}"
+  export CODEX_LOG_FILE="${BACKLOG_CODEX_LOG_FILE:-$state_root/logs/Upkeeper.log}"
+  export CODEX_TRANSCRIPT_DIR="${BACKLOG_CODEX_TRANSCRIPT_DIR:-$state_root/transcripts}"
+  export CODEX_POSTMORTEM_DIR="${BACKLOG_CODEX_POSTMORTEM_DIR:-$state_root/postmortems}"
+  export UPKEEPER_BUG_REPORT_DRAFT_DIR="${BACKLOG_BUG_REPORT_DRAFT_DIR:-$state_root/bug-report-drafts}"
+  export UPKEEPER_LATTICE_DB="${BACKLOG_LATTICE_DB:-$ROOT_DIR/runtime/upkeeper-backlog-lattice/lattice.sqlite3}"
+  export UPKEEPER_PRECONTACT_BACKUP_ROOT="${BACKLOG_PRECONTACT_BACKUP_ROOT:-$state_root/precontact-vault}"
+  export CODEX_HOME_DIR="${CODEX_HOME_DIR:-${CODEX_HOME:-$HOME/.codex}}"
+  export CODEX_SESSION_SCAN_LIMIT="${CODEX_SESSION_SCAN_LIMIT:-200}"
+  export LOG_FILE="${LOG_FILE:-$CODEX_LOG_FILE}"
+}
+
+quota_preflight_allows_backlog_run() {
+  local quota_json primary_bucket_current secondary_bucket_current
+  local primary_projected_left secondary_projected_left
+  local primary_decision secondary_decision
+
+  prepare_backlog_runtime_env
+  source "$ROOT_DIR/lib/upkeeper/quota_state.bash"
+  source "$ROOT_DIR/lib/upkeeper/quota_guardrails.bash"
+
+  quota_json="$(quota_state_json "$CODEX_MODEL")" || return 0
+  [[ -n "$quota_json" ]] || return 0
+  if jq -e '.error? != null' >/dev/null 2>&1 <<<"$quota_json"; then
+    return 0
+  fi
+
+  primary_bucket_current="$(jq -r '.snapshot.primary_bucket_current // "false"' <<<"$quota_json")"
+  secondary_bucket_current="$(jq -r '.snapshot.secondary_bucket_current // "false"' <<<"$quota_json")"
+  primary_projected_left="$(jq -r '100 - ((.snapshot.primary_used_percent // 0) + (.projection.primary_delta // 0))' <<<"$quota_json")"
+  secondary_projected_left="$(jq -r '100 - ((.snapshot.secondary_used_percent // 0) + (.projection.secondary_delta // 0))' <<<"$quota_json")"
+  primary_decision="$(quota_bucket_decision "$primary_bucket_current" "$primary_projected_left" "$(quota_5h_stop_percent_for_model "$CODEX_MODEL")")"
+  secondary_decision="$(quota_bucket_decision "$secondary_bucket_current" "$secondary_projected_left" "$(quota_week_stop_percent_for_model "$CODEX_MODEL")")"
+
+  if [[ "$primary_decision" == "defer" || "$secondary_decision" == "defer" ]]; then
+    log "quota preflight: deferring backlog run this cycle (primary=$primary_decision secondary=$secondary_decision)"
+    return 3
+  fi
+  return 0
+}
+
 current_backlog_pr() {
   gh pr list --state open --json number,title,headRefName \
     --jq '.[] | select(.headRefName | startswith("'"$BACKLOG_BRANCH_PREFIX"'")) | [.number, .headRefName] | @tsv' \
@@ -212,42 +282,11 @@ target_hint_for_issue() {
 
 run_upkeeper_for_one_target() {
   local issue_number="${1:-}"
-  local state_root
   local target_hint=""
   local upkeeper_args=()
   local upkeeper_status=0
 
-  export CODEX_MODEL="$BACKLOG_CODEX_MODEL"
-  export CODEX_REASONING_EFFORT="$BACKLOG_CODEX_REASONING_EFFORT"
-  export CODEX_FALLBACK_ENABLED="${BACKLOG_CODEX_FALLBACK_ENABLED:-0}"
-  export CODEX_FALLBACK_SCREEN_ENABLED="${BACKLOG_CODEX_FALLBACK_SCREEN_ENABLED:-0}"
-  export CODEX_POSTMORTEM_ENABLED="${BACKLOG_CODEX_POSTMORTEM_ENABLED:-0}"
-  export CODEX_5H_STOP_PERCENT="${BACKLOG_5H_STOP_PERCENT:-0}"
-  export CODEX_WEEK_STOP_PERCENT="${BACKLOG_WEEK_STOP_PERCENT:-10}"
-  export CODEX_WEEK_STOP_BUFFER_PERCENT="${BACKLOG_WEEK_STOP_BUFFER_PERCENT:-0}"
-  export CODEX_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-0}"
-  export CODEX_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-0}"
-  export UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="${BACKLOG_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL:-1}"
-  export PYTHONDONTWRITEBYTECODE=1
-
-  state_root="${BACKLOG_STATE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog}"
-  mkdir -p \
-    "$state_root/logs" \
-    "$state_root/tmp" \
-    "$state_root/transcripts" \
-    "$state_root/postmortems" \
-    "$state_root/bug-report-drafts" \
-    "$state_root/precontact-vault" \
-    "$ROOT_DIR/runtime/upkeeper-backlog-lattice"
-  chmod 700 "$state_root" "$state_root/logs" "$state_root/tmp" "$state_root/transcripts" "$state_root/postmortems" "$state_root/bug-report-drafts" "$state_root/precontact-vault" "$ROOT_DIR/runtime/upkeeper-backlog-lattice" 2>/dev/null || true
-
-  export TMPDIR="${BACKLOG_TMPDIR:-$state_root/tmp}"
-  export CODEX_LOG_FILE="${BACKLOG_CODEX_LOG_FILE:-$state_root/logs/Upkeeper.log}"
-  export CODEX_TRANSCRIPT_DIR="${BACKLOG_CODEX_TRANSCRIPT_DIR:-$state_root/transcripts}"
-  export CODEX_POSTMORTEM_DIR="${BACKLOG_CODEX_POSTMORTEM_DIR:-$state_root/postmortems}"
-  export UPKEEPER_BUG_REPORT_DRAFT_DIR="${BACKLOG_BUG_REPORT_DRAFT_DIR:-$state_root/bug-report-drafts}"
-  export UPKEEPER_LATTICE_DB="${BACKLOG_LATTICE_DB:-$ROOT_DIR/runtime/upkeeper-backlog-lattice/lattice.sqlite3}"
-  export UPKEEPER_PRECONTACT_BACKUP_ROOT="${BACKLOG_PRECONTACT_BACKUP_ROOT:-$state_root/precontact-vault}"
+  prepare_backlog_runtime_env
 
   if [[ -n "$issue_number" ]]; then
     if [[ "$BACKLOG_IGNORE_FAILURE_QUEUE" == "1" ]]; then
@@ -416,6 +455,12 @@ main() {
       exit "$status"
     }
     exit 0
+  fi
+
+  if ! quota_preflight_allows_backlog_run; then
+    local quota_status="$?"
+    [[ "$quota_status" -eq 3 ]] && exit 0
+    exit "$quota_status"
   fi
 
   issue_info="$(selected_issue "$pr_number")"

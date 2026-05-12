@@ -849,9 +849,42 @@ check_cycle_start_log_contract() {
   set -e
 
   [[ "$rc" -eq 0 ]] || fail "cycle.start log contract dry-run exited $rc"
-  grep -Fq 'mode=--sandbox\ workspace-write' "$temp_dir/Upkeeper.log" || fail "cycle.start did not quote CODEX_MODE with spaces"
-  grep -Fq "code_home=$code_home_q" "$temp_dir/Upkeeper.log" || fail "cycle.start did not quote CODEX_HOME with spaces"
+  grep -Fq 'verbose_metadata=0' "$temp_dir/Upkeeper.log" || fail "cycle.start default path did not log verbose_metadata=0"
+  grep -Fq 'code_home_hash=' "$temp_dir/Upkeeper.log" || fail "cycle.start default path did not record code_home_hash"
+  if grep -Fq ' mode=--sandbox\ workspace-write' "$temp_dir/Upkeeper.log"; then
+    fail "cycle.start default path leaked raw CODEX_MODE"
+  fi
+  if grep -Fq " code_home=$code_home_q" "$temp_dir/Upkeeper.log"; then
+    fail "cycle.start default path leaked raw CODEX_HOME"
+  fi
   grep -Fq "reason=DRY_RUN" "$temp_dir/Upkeeper.log" || fail "cycle.start log contract dry-run did not finish cleanly"
+
+  : >"$temp_dir/Upkeeper.log"
+  set +e
+  CODEX_HOME="$temp_dir/codex home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    UPKEEPER_DRY_RUN=1 \
+    UPKEEPER_VERBOSE_METADATA=1 \
+    CODEX_MODE='--sandbox workspace-write' \
+    ./Upkeeper >"$temp_dir/out-verbose.txt" 2>"$temp_dir/err-verbose.txt"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 0 ]] || fail "cycle.start verbose log contract dry-run exited $rc"
+  grep -Fq 'verbose_metadata=1' "$temp_dir/Upkeeper.log" || fail "cycle.start verbose path did not log verbose_metadata=1"
+  grep -Fq 'mode=--sandbox\ workspace-write' "$temp_dir/Upkeeper.log" || fail "cycle.start verbose path did not quote CODEX_MODE with spaces"
+  grep -Fq "code_home=$code_home_q" "$temp_dir/Upkeeper.log" || fail "cycle.start verbose path did not quote CODEX_HOME with spaces"
   rm -r "$temp_dir"
 }
 
@@ -982,8 +1015,8 @@ check_disk_preflight_prompt_note_contract() {
   fi
 
   note_block="$(awk '/^NOTE_BEGIN$/,/^NOTE_END$/' <<<"$output")"
-  grep -Fq "- disk.preflight low_space label=existing_label free_percent=" <<<"$note_block" || fail "disk preflight prompt note did not retain the low-space label and percentage"
-  grep -Fq "- disk.preflight unavailable label=missing_label" <<<"$note_block" || fail "disk preflight prompt note did not retain the unavailable label"
+  grep -Fq -- "- disk.preflight low_space label=existing_label free_percent=" <<<"$note_block" || fail "disk preflight prompt note did not retain the existing_label low-space note"
+  grep -Fq -- "- disk.preflight low_space label=missing_label free_percent=" <<<"$note_block" || fail "disk preflight prompt note did not retain the missing_label low-space note"
   ! grep -Fq "$temp_dir" <<<"$note_block" || fail "disk preflight prompt note leaked a raw path"
   ! grep -Fq "mount=" <<<"$note_block" || fail "disk preflight prompt note leaked mount metadata"
   ! grep -Fq "path=" <<<"$note_block" || fail "disk preflight prompt note leaked path metadata"
@@ -1698,7 +1731,9 @@ check_file_manifest_selection() {
     run_manifest_dry_run "$temp_dir/docs-config-target.log"
   )
   grep -Fq "review.preselect path=docs/scripts/upkeeper.md" "$temp_dir/docs-config-target.log" || fail "configured explicit docs target was not accepted"
-  grep -Fq "review_modules=p26,p28" "$temp_dir/docs-config-target.log" || fail "configured review modules were not applied"
+  if grep -Eq '(^| )review_modules_hash=none( |$)' "$temp_dir/docs-config-target.log"; then
+    fail "configured review modules were not applied"
+  fi
   grep -Fq "prompt_pass=all" "$temp_dir/docs-config-target.log" || fail "configured prompt pass was not applied"
 
   run_manifest_dry_run "$temp_dir/docs-auto.log" \
@@ -1716,7 +1751,9 @@ check_file_manifest_selection() {
     --include-glob='*.md'
   grep -Fq "selection_mode=lattice_max_cover" "$temp_dir/max-cover.log" || fail "max-cover did not use Lattice max-cover selection"
   grep -Fq "prompt_pass=all" "$temp_dir/max-cover.log" || fail "max-cover did not force all prompt passes"
-  grep -Fq "review_modules=p24,p25,p26,p27,p28,p29" "$temp_dir/max-cover.log" || fail "max-cover did not append P24-P29"
+  if grep -Eq '(^| )review_modules_hash=none( |$)' "$temp_dir/max-cover.log"; then
+    fail "max-cover did not append P24-P29"
+  fi
   grep -Fq "max_cover=1" "$temp_dir/max-cover.log" || fail "max-cover was not recorded in cycle.start"
 
   run_manifest_dry_run "$temp_dir/bug-report-only.log" \

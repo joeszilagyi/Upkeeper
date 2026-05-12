@@ -259,8 +259,9 @@ run_upkeeper_for_one_target() {
     fi
     upkeeper_args+=(--fix-issue="$issue_number")
     log "running Upkeeper for issue #$issue_number with $CODEX_MODEL/$CODEX_REASONING_EFFORT target=${target_hint:-wrapper-inferred}"
-    if ! ./Upkeeper "${upkeeper_args[@]}"; then
-      upkeeper_status="$?"
+    ./Upkeeper "${upkeeper_args[@]}"
+    upkeeper_status="$?"
+    if [[ "$upkeeper_status" -ne 0 ]]; then
       if [[ "$upkeeper_status" -eq 2 ]]; then
         return 2
       fi

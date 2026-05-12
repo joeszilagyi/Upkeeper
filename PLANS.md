@@ -113,6 +113,43 @@ Completed in this patch:
 - Added deterministic tests proving create and restore logs no longer leak the
   selected relative path.
 
+## Sensitive Target Denylist Before Prompt Launch
+
+Status: completed
+
+Goal:
+Fail closed on common secret-bearing target paths before pre-contact backup,
+prompt compilation, or backend launch can treat them as ordinary review files.
+
+Constraints:
+- Keep the deny gate independent of `.upkeeperignore`.
+- Trigger before prompt compilation and regardless of whether backup mode later
+  resolves to off, plain, or age.
+- Start with deterministic path-pattern coverage for common secret-bearing
+  files; do not depend on broad entropy scanning in this patch.
+- Keep validation deterministic and local.
+
+Files likely touched:
+- `lib/upkeeper/precontact_backup.bash`
+- `tests/precontact_backup_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+Completed in this patch:
+- Added a built-in sensitive-target denylist to pre-contact target validation
+  for common secret-bearing paths such as `.env*`, credential dotfiles,
+  kubeconfig, SSH private key names, and private-key extensions.
+- Made the deny gate run before prompt compilation and backend launch even when
+  pre-contact backup mode is later disabled.
+- Added deterministic local coverage for the denylist through
+  `tests/precontact_backup_test.bash`.
+
 ## Security Hardening Batch: Fallback Chain Token
 
 Status: in_progress

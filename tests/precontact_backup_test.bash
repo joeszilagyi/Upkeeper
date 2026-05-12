@@ -351,8 +351,18 @@ test_unsafe_target_rejection() {
   local repo="$TEST_TMP_ROOT/unsafe repo"
   make_repo "$repo"
   reset_env "$repo" unsafe
+  mkdir -p "$repo/.aws" "$repo/.kube" "$repo/certs" "$repo/keys"
   ln -s "space file.sh" "$repo/dir/link.sh"
   mkdir -p "$repo/dir/subdir"
+  printf 'TOKEN=secret\n' >"$repo/.env"
+  printf '//registry.npmjs.org/:_authToken=secret\n' >"$repo/.npmrc"
+  printf '[pypi]\nusername=user\npassword=secret\n' >"$repo/.pypirc"
+  printf 'machine example.invalid login user password secret\n' >"$repo/.netrc"
+  printf '[default]\naws_access_key_id=key\naws_secret_access_key=secret\n' >"$repo/.aws/credentials"
+  printf 'clusters: []\nusers: []\n' >"$repo/.kube/config"
+  printf 'PRIVATE KEY\n' >"$repo/id_rsa"
+  printf -- '-----BEGIN PRIVATE KEY-----\n' >"$repo/certs/deploy.pem"
+  printf -- '-----BEGIN PRIVATE KEY-----\n' >"$repo/keys/service.key"
 
   assert_target_rejected "$repo/dir/space file.sh" "absolute_path"
   assert_target_rejected "../outside.sh" "unsafe_relative_path"
@@ -361,6 +371,15 @@ test_unsafe_target_rejection() {
   assert_target_rejected "dir/missing.sh" "missing_file"
   assert_target_rejected "runtime/local.txt" "runtime_path_rejected"
   assert_target_rejected ".git/config" "git_path_rejected"
+  assert_target_rejected ".env" "sensitive_target_rejected"
+  assert_target_rejected ".npmrc" "sensitive_target_rejected"
+  assert_target_rejected ".pypirc" "sensitive_target_rejected"
+  assert_target_rejected ".netrc" "sensitive_target_rejected"
+  assert_target_rejected ".aws/credentials" "sensitive_target_rejected"
+  assert_target_rejected ".kube/config" "sensitive_target_rejected"
+  assert_target_rejected "id_rsa" "sensitive_target_rejected"
+  assert_target_rejected "certs/deploy.pem" "sensitive_target_rejected"
+  assert_target_rejected "keys/service.key" "sensitive_target_rejected"
 }
 
 test_precontact_backup_validate_root_secure_private_dir() {

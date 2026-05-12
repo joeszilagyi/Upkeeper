@@ -3,6 +3,42 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Default Prompt Replacement Authority Removal
+
+Status: completed
+
+Goal:
+Remove the last conflicting replacement-target instruction from the default
+prompt so compiled prompt text no longer reintroduces unbacked replacement
+authority after the wrapper has established selected-target isolation.
+
+Constraints:
+- Preserve replacement selection only for prompt contexts that truly do not
+  include `WRAPPER_PRESELECTED_REVIEW_TARGET`.
+- Preserve `STOPPED_ON_BLOCKER` guidance for preselected-target cycles.
+- Add deterministic local validation so the unconditional replacement wording
+  cannot drift back into `prompts/default-review.md`.
+
+Files likely touched:
+- `prompts/default-review.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+Completed in this patch:
+- Removed the unconditional "select the next oldest eligible file" wording from
+  the default prompt's physical/safety exception branch.
+- Made replacement selection explicitly conditional on the absence of
+  `WRAPPER_PRESELECTED_REVIEW_TARGET`.
+- Added quick validation that fails if the default prompt regains unconditional
+  replacement-target authority.
+
 ## Private Artifact Umask At Entry
 
 Status: completed

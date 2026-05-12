@@ -605,3 +605,7 @@ Reconstructed pre-1.0 history:
 - Issue-fix mode now withholds private GitHub issue title/body/comment text from model prompts by default, while preserving wrapper-side issue selection and inferred-target extraction before Codex starts.
 - Selected-issue runtime logs now record only stable issue title/URL hashes plus the explicit model-exposure gate state instead of emitting raw private issue metadata.
 - Operators can still opt into private issue prompt exposure explicitly with `UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL=1` when a responsible fix requires the original issue prose.
+
+2026-05-12: backlog orchestration wrench:
+- Added `orchestration/backlog.sh`, a deliberately small operator launcher that opens or reuses a `[backlog]` PR, targets the newest open non-feature/non-research issue, runs one Upkeeper repair pass with `gpt-5.4` high reasoning, pushes the result, waits for PR checks, and merges the batch after 10 recorded fixes.
+- The launcher keeps the five-hour quota stop threshold at zero for this workflow while preserving a 10% weekly quota stop threshold, and falls back to a normal newest-file Upkeeper pass when no eligible issue is open.

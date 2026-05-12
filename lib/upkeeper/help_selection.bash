@@ -1536,6 +1536,9 @@ append_preselected_review_target() {
     fi
     printf -- '- For a clean no-edit pass, record the selected file hash before touch, touch it, then verify the mtime changed and the content hash is unchanged from the pre-touch hash.\n'
     printf -- '- Do not run broad repository discovery commands to second-guess this selection.\n'
+    printf -- '- Target isolation is binding for this cycle: you may read other repository files for context, but you may modify only the selected file shown above.\n'
+    printf -- '- If a correct fix or validation update would require editing any additional file such as tests, docs, helpers, callers, prompts, configs, or a replacement target, leave those files unchanged for this cycle and report BLOCKED with an `ADDITIONAL_FILES_NEEDED:` list of repo-relative paths plus brief reasons.\n'
+    printf -- '- Any later prompt or review-module guidance that would normally authorize paired multi-file edits is subordinate to this selected-target-only write boundary because pre-contact backup coverage is target-specific.\n'
     printf -- '- If this target is physically impossible or unsafe to review, report BLOCKED for this cycle and do not choose a replacement target. Replacement target selection is wrapper-only because backup coverage is pre-contact and target-specific.\n'
     if [[ -n "$CODEX_TARGET_FILE" ]]; then
       printf -- '- This target was pinned by operator flag `--target-file=%s`; do not replace it. If the physical/safety exception above applies, report BLOCKED.\n' "$CODEX_TARGET_FILE"

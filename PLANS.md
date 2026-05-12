@@ -150,6 +150,40 @@ Completed in this patch:
 - Added deterministic local coverage for the denylist through
   `tests/precontact_backup_test.bash`.
 
+## Restore Mode Applied After Rename
+
+Status: completed
+
+Goal:
+Keep temporary restore files private at `0600` until the final restore rename,
+then apply the restored file mode to the destination path.
+
+Constraints:
+- Preserve randomized restore temp names under the destination directory.
+- Preserve content-hash verification before rename.
+- Apply the recorded destination mode only after the final move succeeds.
+- Keep validation deterministic and local.
+
+Files likely touched:
+- `lib/upkeeper/precontact_backup.bash`
+- `tests/precontact_backup_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+Completed in this patch:
+- Moved restore-mode application from the temporary restore file to the final
+  destination after rename.
+- Kept the restore temp file on the safer private mode created by `mktemp`
+  until the move completes.
+- Added deterministic local coverage that inspects the temp-file mode at the
+  rename boundary and the final restored destination mode.
+
 ## Security Hardening Batch: Fallback Chain Token
 
 Status: in_progress

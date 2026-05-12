@@ -588,3 +588,7 @@ Reconstructed pre-1.0 history:
 2026-05-11: sensitive target denylist before prompt launch:
 - Upkeeper now fails closed on common secret-bearing target paths such as `.env*`, credential dotfiles, kubeconfig, SSH private key names, and private-key extensions before pre-contact backup, prompt compilation, or backend launch can treat them as ordinary review files.
 - The deny gate is built in and does not depend on `.upkeeperignore`, so tracked or otherwise eligible secret-like files no longer reach the normal backup-and-prompt flow by default.
+
+2026-05-11: restore temp-file mode stays private until rename:
+- Plain and age restore flows now keep the randomized temporary restore file on its private `mktemp` mode until after the final rename, instead of chmodding the temp path to the restored file mode first.
+- The restored destination still receives its recorded mode after rename, but the temporary filename no longer becomes briefly readable at a permissive mode before the move completes.

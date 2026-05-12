@@ -966,6 +966,7 @@ check_automation_obligation_framework() {
   )"
   [[ "$(jq -r '.status' <<<"$selected_json")" == "ok" ]] || fail "automation obligation selector did not find open obligation"
   [[ "$(jq -r '.id' <<<"$selected_json")" == "$obligation_id" ]] || fail "automation obligation selector returned the wrong obligation"
+  [[ "$(jq -r '.repair_target_file' <<<"$selected_json")" == "lib/upkeeper/session_store_preflight.bash" ]] || fail "automation obligation selector changed an already-eligible repair target"
   prompt_file="$(
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
       bash -c 'source "$1"; automation_prepare_obligation_prompt_file "$2"' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash" "$selected_json"
@@ -1003,6 +1004,16 @@ check_automation_obligation_framework() {
   [[ -f "$resolved_file" ]] || fail "automation obligation was not moved to resolved after clean selected cycle"
   [[ "$(jq -r '.status' "$resolved_file")" == "resolved" ]] || fail "resolved automation obligation status was not resolved"
   [[ "$(jq -r '.resolved_by_cycle_id' "$resolved_file")" == "validation-automation-resolve" ]] || fail "resolved automation obligation lost resolver cycle"
+
+  mkdir -p "$temp_dir/obligations/open"
+  cat >"$temp_dir/obligations/open/runtime-target.json" <<'JSON'
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"runtime-target","created_at":"2026-05-10T00:00:00-0700","kind":"target_file_not_eligible","severity":"medium","summary":"Runtime target fixture","target_file":"runtime/upkeeper-explicit-target-fixture.txt","launcher":"ChimneySweep","workflow":"obligation-repair"}
+JSON
+  selected_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
+      bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.repair_target_file' <<<"$selected_json")" == "ChimneySweep" ]] || fail "automation obligation selector did not remap a poisoned runtime target to ChimneySweep"
 
   rm -r "$temp_dir"
 }

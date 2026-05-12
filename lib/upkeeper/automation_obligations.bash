@@ -239,6 +239,16 @@ automation_open_cycle_obligation() {
   summary="Upkeeper automation cycle exited with $reason (exit $exit_code)"
   selected_target="${selected_target:-${RUN_SELECTED_REVIEW_PATH:-${CODEX_TARGET_FILE:-Upkeeper}}}"
   [[ -n "$selected_target" ]] || selected_target="Upkeeper"
+  if [[ "${UPKEEPER_AUTOMATION_WORKFLOW:-}" == "obligation-repair" \
+    && -n "${UPKEEPER_AUTOMATION_OBLIGATION_ID:-}" \
+    && "$reason" == "TARGET_FILE_NOT_ELIGIBLE" \
+    && -n "${CODEX_TARGET_FILE:-}" \
+    && "$selected_target" == "${CODEX_TARGET_FILE:-}" ]]; then
+    if declare -F log_line >/dev/null 2>&1; then
+      log_line "WARN" "automation.obligation.reopen_suppressed obligation_id=$(automation_shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_ID") reason=$(automation_shell_quote "$reason") target=$(automation_shell_quote "$selected_target")"
+    fi
+    return 0
+  fi
   id="$(printf '%s' "$kind|$CYCLE_ID|$CYCLE_RUN_HASH|$selected_target" | automation_hash_text)"
   open_dir="$(automation_obligation_root)/open"
   automation_private_dir "$open_dir" || return 1
@@ -406,12 +416,15 @@ automation_select_open_obligation_json() {
   local open_dir
 
   open_dir="$(automation_obligation_root)/open"
-  python3 - "$open_dir" <<'PY'
+  python3 - "$open_dir" "$ROOT_DIR" <<'PY'
 import json
+import os
 import pathlib
+import stat
 import sys
 
 open_dir = pathlib.Path(sys.argv[1])
+root_dir = pathlib.Path(sys.argv[2]).resolve()
 if not open_dir.is_dir():
     print(json.dumps({"status": "clean", "open_count": 0}, separators=(",", ":")))
     raise SystemExit(0)
@@ -436,6 +449,68 @@ def load(path: pathlib.Path):
     return data
 
 
+def normalized_repo_target(value):
+    raw = str(value or "").strip().replace("\\", "/")
+    if not raw:
+        return ""
+    if raw in (".", "none", "unknown", "null"):
+        return ""
+    if os.path.isabs(raw):
+        try:
+            relative = os.path.relpath(raw, root_dir)
+        except ValueError:
+            return ""
+        relative = relative.replace("\\", "/")
+        if relative == ".." or relative.startswith("../"):
+            return ""
+        raw = relative
+    normalized = os.path.normpath(raw).replace("\\", "/")
+    if normalized in ("", ".", "..") or normalized.startswith("../"):
+        return ""
+    return normalized
+
+
+def target_error(path):
+    if not path:
+        return "target path is empty"
+    if path == "Upkeeper.log":
+        return "target path is runtime evidence"
+    if path == ".git" or path.startswith(".git/"):
+        return "target path is inside .git"
+    if path == "runtime" or path.startswith("runtime/"):
+        return "target path is runtime evidence"
+    candidate = root_dir / path
+    try:
+        st = os.lstat(candidate)
+    except OSError:
+        return "target path is missing or unreadable"
+    if stat.S_ISLNK(st.st_mode):
+        return "target path is a symlink"
+    if not stat.S_ISREG(st.st_mode):
+        return "target path is not a regular file"
+    if not os.access(candidate, os.R_OK):
+        return "target path is missing or unreadable"
+    return ""
+
+
+def choose_repair_target(item, original_target, error):
+    launcher = normalized_repo_target(item.get("launcher", ""))
+    if launcher and not target_error(launcher):
+        return (
+            launcher,
+            "launcher_control_plane_default",
+            f"obligation target {original_target or 'unknown'} is ineligible: {error}",
+        )
+    if not target_error("Upkeeper"):
+        return (
+            "Upkeeper",
+            "upkeeper_control_plane_default",
+            f"obligation target {original_target or 'unknown'} is ineligible: {error}",
+        )
+    fallback = original_target or "Upkeeper"
+    return (fallback, "original_target_fallback", error)
+
+
 items = [item for item in (load(path) for path in sorted(open_dir.glob("*.json"))) if item]
 if not items:
     print(json.dumps({"status": "clean", "open_count": 0}, separators=(",", ":")))
@@ -455,6 +530,18 @@ selected = sorted(items, key=key)[0]
 target = str(selected.get("target_file") or "Upkeeper")
 if not target or target in (".", "none", "unknown", "null"):
     target = "Upkeeper"
+normalized_target = normalized_repo_target(target)
+target_error_detail = target_error(normalized_target)
+if target_error_detail:
+    repair_target, repair_target_basis, repair_target_detail = choose_repair_target(
+        selected,
+        normalized_target or target,
+        target_error_detail,
+    )
+else:
+    repair_target = normalized_target
+    repair_target_basis = "obligation_target"
+    repair_target_detail = ""
 
 result = {
     "status": "ok",
@@ -466,6 +553,9 @@ result = {
     "summary": str(selected.get("summary", "")),
     "created_at": str(selected.get("created_at", "")),
     "target_file": target,
+    "repair_target_file": repair_target,
+    "repair_target_basis": repair_target_basis,
+    "repair_target_detail": repair_target_detail,
     "source_cycle_id": str(selected.get("source_cycle_id", "")),
     "source_run_hash": str(selected.get("source_run_hash", "")),
     "launcher": str(selected.get("launcher", "")),
@@ -539,6 +629,9 @@ lines = [
     f"- issue_number: {data.get('issue_number', '')}",
     f"- issue_title: {data.get('issue_title', '')}",
     f"- target_file: {data.get('target_file', '')}",
+    f"- repair_target_file: {data.get('repair_target_file', data.get('target_file', ''))}",
+    f"- repair_target_basis: {data.get('repair_target_basis', 'obligation_target')}",
+    f"- repair_target_detail: {data.get('repair_target_detail', '')}",
     f"- reason: {data.get('reason', '')}",
     f"- run_record: {data.get('run_record', '')}",
     f"- transcript: {data.get('transcript', '')}",

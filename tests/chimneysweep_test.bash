@@ -106,6 +106,31 @@ write_open_obligation() {
 JSON
 }
 
+write_runtime_fixture_obligation() {
+  local obligation_dir="$1"
+  mkdir -p "$obligation_dir/open"
+  cat >"$obligation_dir/open/runtime-fixture-obligation.json" <<'JSON'
+{
+  "schema": 1,
+  "record_type": "automation_obligation",
+  "status": "open",
+  "id": "runtime-fixture-obligation",
+  "created_at": "2026-05-10T00:00:00-0700",
+  "kind": "target_file_not_eligible",
+  "severity": "medium",
+  "summary": "Runtime fixture target must not be replayed as the next explicit repair target",
+  "target_file": "runtime/upkeeper-explicit-target-fixture.txt",
+  "source_cycle_id": "fixture-cycle",
+  "source_run_hash": "fixture-run",
+  "launcher": "ChimneySweep",
+  "variant": "issue-repair",
+  "policy": "own-bug-queue",
+  "workflow": "obligation-repair",
+  "required_resolution": ["remap the poisoned target before the next repair cycle"]
+}
+JSON
+}
+
 test_chimneysweep_help_documents_fix_contract() {
   local help
 
@@ -194,6 +219,20 @@ test_chimneysweep_reconciles_obligations_before_github_queue() {
   fi
 }
 
+test_chimneysweep_remaps_runtime_fixture_obligation_targets() {
+  local output obligation_dir
+
+  obligation_dir="$TEST_TMP_ROOT/chimneysweep-runtime-target-obligations"
+  write_runtime_fixture_obligation "$obligation_dir"
+  output="$(UPKEEPER_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run 2>&1)"
+  grep -Fq "selected automation obligation runtime-fixture-obligation" <<<"$output" || fail "runtime fixture obligation was not selected"
+  grep -Fq -- "--target-file=ChimneySweep" <<<"$output" || fail "runtime fixture obligation was not remapped to ChimneySweep"
+  grep -Fq "obligation target remapped from runtime/upkeeper-explicit-target-fixture.txt to ChimneySweep" <<<"$output" || fail "runtime fixture obligation remap was not reported"
+  if grep -Fq -- "--target-file=runtime/upkeeper-explicit-target-fixture.txt" <<<"$output"; then
+    fail "runtime fixture obligation replayed the poisoned runtime target"
+  fi
+}
+
 test_chimneysweep_data_integrity_after_security_clear() {
   local output
 
@@ -271,6 +310,7 @@ test_chimneysweep_skipped_queue_counts_clean
 test_chimneysweep_security_class_wins
 test_chimneysweep_model_override_supports_spark
 test_chimneysweep_reconciles_obligations_before_github_queue
+test_chimneysweep_remaps_runtime_fixture_obligation_targets
 test_chimneysweep_data_integrity_after_security_clear
 test_chimneysweep_general_queue_prefers_containment_signal
 test_chimneysweep_exec_hands_locked_issue_to_upkeeper

@@ -212,6 +212,9 @@ if [[ "$obligation_status" == "ok" ]]; then
   obligation_id="$(automation_json_field "$obligation_json" id)"
   obligation_path="$(automation_json_field "$obligation_json" path)"
   obligation_target="$(automation_json_field "$obligation_json" target_file)"
+  obligation_repair_target="$(automation_json_field "$obligation_json" repair_target_file)"
+  obligation_repair_basis="$(automation_json_field "$obligation_json" repair_target_basis)"
+  obligation_repair_detail="$(automation_json_field "$obligation_json" repair_target_detail)"
   obligation_kind="$(automation_json_field "$obligation_json" kind)"
   obligation_summary="$(automation_json_field "$obligation_json" summary)"
   obligation_prompt_file="$(automation_prepare_obligation_prompt_file "$obligation_json")" || {
@@ -229,13 +232,17 @@ if [[ "$obligation_status" == "ok" ]]; then
     "--model-override=$CHIMNEYSWEEP_MODEL_OVERRIDE"
     "--prompt-pass=all"
     "--review-modules=p24,p25,p26,p27,p28,p29"
-    "--target-file=$obligation_target"
+    "--target-file=$obligation_repair_target"
     "--prompt-file"
     "$obligation_prompt_file"
   )
 
   printf 'ChimneySweep: selected automation obligation %s for repair\n' "$obligation_id" >&2
   printf 'ChimneySweep: obligation kind=%s target=%s summary=%s\n' "$obligation_kind" "$obligation_target" "$obligation_summary" >&2
+  if [[ "$obligation_repair_target" != "$obligation_target" ]]; then
+    printf 'ChimneySweep: obligation target remapped from %s to %s basis=%s detail=%s\n' \
+      "$obligation_target" "$obligation_repair_target" "$obligation_repair_basis" "$obligation_repair_detail" >&2
+  fi
 
   if [[ "$CHIMNEYSWEEP_JSON" == "1" ]]; then
     printf '%s\n' "$obligation_json"

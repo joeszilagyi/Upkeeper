@@ -99,6 +99,18 @@ REDACTED_PATH_PREFIX = "path-sha256:"
 PASS_RESULT_PATH_HMAC_PREFIX = "path-hmac-sha256:"
 METADATA_HMAC_PREFIX = "meta-hmac-sha256:"
 UPKEEPER_VERBOSE_METADATA_ENV = "UPKEEPER_VERBOSE_METADATA"
+TRANSIENT_ARTIFACT_KINDS = {"transcript", "compiled_prompt", "last_message"}
+ARTIFACT_RETENTION_CLASSES = {
+    "transcript": "transient",
+    "compiled_prompt": "transient",
+    "last_message": "transient",
+    "upkeeper_log": "operator_local",
+    "postmortem_report": "operator_local",
+    "startup_anomaly_state": "operator_local",
+    "wrapper_health_state": "operator_local",
+    "quota_block_marker": "operator_local",
+    "backup": "durable",
+}
 REDACTABLE_PATH_KEYS = {
     "path",
     "old_path",
@@ -1077,6 +1089,47 @@ def metadata_value_hmac(root: Path, key: str, value: str) -> str:
     material = f"{key}\0{value}"
     digest = hmac.digest(pass_result_hmac_key(root), material.encode("utf-8", "surrogateescape"), "sha256").hex()
     return METADATA_HMAC_PREFIX + digest
+
+
+def canonical_artifact_identity(root: Path, raw_path: str) -> str:
+    if not raw_path:
+        return ""
+    path = Path(raw_path).expanduser()
+    try:
+        normalized = path.resolve(strict=False)
+    except OSError:
+        normalized = path.absolute()
+    try:
+        relative = normalized.relative_to(root)
+    except ValueError:
+        return normalized.as_posix()
+    relative_text = normalize_rel_path(relative.as_posix())
+    return relative_text or "."
+
+
+def artifact_path_hmac(root: Path, raw_path: str) -> str:
+    normalized = canonical_artifact_identity(root, raw_path)
+    if not normalized:
+        return ""
+    digest = hmac.digest(pass_result_hmac_key(root), normalized.encode("utf-8", "surrogateescape"), "sha256").hex()
+    return PASS_RESULT_PATH_HMAC_PREFIX + digest
+
+
+def artifact_storage_path(root: Path, raw_path: str) -> str:
+    return artifact_path_hmac(root, raw_path)
+
+
+def artifact_retention_class(artifact_kind: str) -> str:
+    return ARTIFACT_RETENTION_CLASSES.get(artifact_kind, "durable")
+
+
+def artifact_details_payload(artifact_kind: str, details: Any = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {"retention_class": artifact_retention_class(artifact_kind)}
+    if isinstance(details, dict):
+        for key, value in details.items():
+            if has_meaningful_value(value):
+                payload[key] = value
+    return payload
 
 
 def normalized_metadata_key(key: str) -> str:
@@ -3542,6 +3595,7 @@ def record_selected_file_delta(
 
 def create_artifact_ref(
     conn: sqlite3.Connection,
+    root: Path,
     repo_id: int,
     *,
     cycle_pk: int | None,
@@ -3554,6 +3608,8 @@ def create_artifact_ref(
     if not path:
         return
     p = Path(path)
+    stored_path = artifact_storage_path(root, path)
+    stored_details = artifact_details_payload(artifact_kind, details)
     try:
         entry = p.lstat()
     except OSError:
@@ -3588,7 +3644,7 @@ def create_artifact_ref(
             from artifact_refs
             where repo_id = ? and artifact_kind = ? and path = ? and coalesce(sha256, '') = coalesce(?, '')
             """,
-            (repo_id, artifact_kind, path, digest),
+            (repo_id, artifact_kind, stored_path, digest),
         ).fetchone()
         if existing is not None:
             conn.execute(
@@ -3611,7 +3667,7 @@ def create_artifact_ref(
                     size,
                     observed_epoch,
                     1 if exists else 0,
-                    json_dumps(details) if details is not None else None,
+                    json_dumps(stored_details),
                     existing["artifact_id"],
                 ),
             )
@@ -3629,13 +3685,13 @@ def create_artifact_ref(
             cycle_pk,
             source_id,
             artifact_kind,
-            path,
+            stored_path,
             1 if exists else 0,
             size,
             digest,
             observed_epoch,
             1 if exists else 0,
-            json_dumps(details) if details is not None else None,
+            json_dumps(stored_details),
         ),
     )
 
@@ -3760,6 +3816,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         ]:
             create_artifact_ref(
                 conn,
+                root,
                 repo_id,
                 cycle_pk=cycle_pk,
                 source_id=source_id,
@@ -5177,6 +5234,7 @@ def command_backup(args: argparse.Namespace) -> int:
 
 def record_recovery_artifact_tree(
     conn: sqlite3.Connection,
+    root: Path,
     repo_id: int,
     source_id: int,
     artifact_kind: str,
@@ -5211,13 +5269,14 @@ def record_recovery_artifact_tree(
     for path in files[:limit]:
         create_artifact_ref(
             conn,
+            root,
             repo_id,
             cycle_pk=None,
             source_id=source_id,
             artifact_kind=artifact_kind,
             path=str(path),
             dedupe_identity=True,
-            details={"recovery_scan_root": str(root_path)},
+            details={"recovery_scan_scope": "runtime_tree"},
         )
         count += 1
     return count
@@ -5265,19 +5324,19 @@ def recover_artifact_refs(
                 if candidate:
                     artifact_roots.append(("wrapper_health_state", candidate))
         for artifact_kind, artifact_root in artifact_roots:
-            count = record_recovery_artifact_tree(conn, repo_id, source_id, artifact_kind, artifact_root)
+            count = record_recovery_artifact_tree(conn, root, repo_id, source_id, artifact_kind, artifact_root)
             if count:
-                recorded.append(f"{artifact_kind}:{artifact_root}:{count}")
+                recorded.append(f"{artifact_kind}:{artifact_retention_class(artifact_kind)}:{count}")
         for log_artifact in sorted(root.glob("Upkeeper.log.*")):
-            count = record_recovery_artifact_tree(conn, repo_id, source_id, "upkeeper_log", log_artifact, limit=1)
+            count = record_recovery_artifact_tree(conn, root, repo_id, source_id, "upkeeper_log", log_artifact, limit=1)
             if count:
-                recorded.append(f"upkeeper_log:{log_artifact}:{count}")
+                recorded.append(f"upkeeper_log:{artifact_retention_class('upkeeper_log')}:{count}")
         quota_root = root / "runtime/journals/upkeeper-postmortems"
         if quota_root.exists():
             for marker in sorted(quota_root.rglob("primary-quota-blocked-until.txt")):
-                count = record_recovery_artifact_tree(conn, repo_id, source_id, "quota_block_marker", marker, limit=1)
+                count = record_recovery_artifact_tree(conn, root, repo_id, source_id, "quota_block_marker", marker, limit=1)
                 if count:
-                    recorded.append(f"quota_block_marker:{marker}:{count}")
+                    recorded.append(f"quota_block_marker:{artifact_retention_class('quota_block_marker')}:{count}")
     conn.close()
     return recorded
 
@@ -5299,12 +5358,18 @@ def command_recover(args: argparse.Namespace) -> int:
     backup_path = None
     if args.backup_first and preexisting_db:
         backup_path = create_backup(conn, root, db_path)
-        sources.append(f"backup:{backup_path}")
+        sources.append("backup:1")
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, repo_id, "recovery", raw_ref="recover", parsed={"root": str(root)})
+        source_id = ensure_source_record(
+            conn,
+            repo_id,
+            "recovery",
+            raw_ref="recover",
+            parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
+        )
         if backup_path is not None:
-            create_artifact_ref(conn, repo_id, cycle_pk=None, source_id=source_id, artifact_kind="backup", path=str(backup_path))
+            create_artifact_ref(conn, root, repo_id, cycle_pk=None, source_id=source_id, artifact_kind="backup", path=str(backup_path))
     conn.close()
     status = "ok"
     if inside_git_repo(root):
@@ -5316,30 +5381,34 @@ def command_recover(args: argparse.Namespace) -> int:
         log_args.path = str(log_path)
         log_args.raw = False
         command_import_upkeeper_log(log_args)
-        sources.append(str(log_path))
+        sources.append("upkeeper_log_import:1")
     change_notes = sorted(root.glob("change_notes_*.md"))
     if change_notes:
         notes_args = argparse.Namespace(**vars(args))
         notes_args.paths = [str(p) for p in change_notes]
         notes_args.raw = False
         command_import_change_notes(notes_args)
-        sources.extend(str(p) for p in change_notes)
-    for export in sorted((db_path.parent / "exports").glob("*.jsonl")):
+        sources.append(f"change_notes_import:{len(change_notes)}")
+    exports = sorted((db_path.parent / "exports").glob("*.jsonl"))
+    for export in exports:
         import_args = argparse.Namespace(**vars(args))
         import_args.path = str(export)
         import_args.max_conflicts = args.max_conflicts
         command_import_jsonl(import_args)
-        sources.append(str(export))
-    for recovery_jsonl in sorted((db_path.parent / "recovery").glob("*.jsonl")):
+    if exports:
+        sources.append(f"export_import:{len(exports)}")
+    recovery_jsonls = sorted((db_path.parent / "recovery").glob("*.jsonl"))
+    for recovery_jsonl in recovery_jsonls:
         import_args = argparse.Namespace(**vars(args))
         import_args.path = str(recovery_jsonl)
         import_args.max_conflicts = args.max_conflicts
         command_import_jsonl(import_args)
-        sources.append(str(recovery_jsonl))
+    if recovery_jsonls:
+        sources.append(f"recovery_import:{len(recovery_jsonls)}")
     for marker_root in [root / "runtime/unaddressed-tool-failures/open", root / "runtime/unaddressed-tool-failures/resolved"]:
         if marker_root.exists():
             import_failure_markers(root, db_path, args.journal_mode, marker_root, allow_unsafe_db=args.allow_unsafe_db)
-            sources.append(str(marker_root))
+            sources.append("tool_failure_marker_import:1")
     sources.extend(recover_artifact_refs(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db))
     if not sources:
         status = "incomplete"
@@ -5913,22 +5982,68 @@ def command_prune(args: argparse.Namespace) -> int:
                 if not args.dry_run:
                     conn.execute(sql, (cutoff,))
         if args.transient_artifacts:
-            sql = """
-                select artifact_id, path from artifact_refs
-                where repo_id=? and retained=1 and artifact_kind in ('transcript','compiled_prompt','last_message')
+            transient_kinds = tuple(sorted(TRANSIENT_ARTIFACT_KINDS))
+            placeholders = ",".join("?" for _ in transient_kinds)
+            sql = f"""
+                select count(*) from artifact_refs
+                where repo_id=? and retained=1 and artifact_kind in ({placeholders})
             """
-            sql_params: list[Any] = [repo_id]
+            sql_params: list[Any] = [repo_id, *transient_kinds]
             if cutoff:
                 sql += " and observed_epoch < ?"
                 sql_params.append(cutoff)
-            rows = [dict(row) for row in conn.execute(sql, sql_params)]
-            actions.append({"action": "transient_artifacts_unretain", "rows": len(rows)})
+            row_count = int(conn.execute(sql, sql_params).fetchone()[0] or 0)
+            actions.append({"action": "transient_artifacts_unretain", "rows": row_count})
             if not args.dry_run:
-                update_sql = """
-                    update artifact_refs set retained=0
-                    where repo_id=? and retained=1 and artifact_kind in ('transcript','compiled_prompt','last_message')
+                update_sql = f"""
+                    update artifact_refs
+                    set retained=0
+                    where repo_id=? and retained=1 and artifact_kind in ({placeholders})
                 """
-                update_params: list[Any] = [repo_id]
+                update_params: list[Any] = [repo_id, *transient_kinds]
+                if cutoff:
+                    update_sql += " and observed_epoch < ?"
+                    update_params.append(cutoff)
+                conn.execute(
+                    update_sql,
+                    update_params,
+                )
+        if args.scrub_transient_metadata:
+            transient_kinds = tuple(sorted(TRANSIENT_ARTIFACT_KINDS))
+            placeholders = ",".join("?" for _ in transient_kinds)
+            sql = f"""
+                select count(*) from artifact_refs
+                where repo_id=?
+                  and artifact_kind in ({placeholders})
+                  and (
+                    retained=1
+                    or path is not null
+                    or size_bytes is not null
+                    or sha256 is not null
+                    or details_json is not null
+                  )
+            """
+            sql_params: list[Any] = [repo_id, *transient_kinds]
+            if cutoff:
+                sql += " and observed_epoch < ?"
+                sql_params.append(cutoff)
+            row_count = int(conn.execute(sql, sql_params).fetchone()[0] or 0)
+            actions.append({"action": "transient_artifacts_scrub", "rows": row_count})
+            if not args.dry_run:
+                update_sql = f"""
+                    update artifact_refs
+                    set retained=0, path=null, size_bytes=null, sha256=null, details_json=null
+                    where repo_id=?
+                      and artifact_kind in ({placeholders})
+                      and (
+                        retained=1
+                        or path is not null
+                        or size_bytes is not null
+                        or sha256 is not null
+                        or details_json is not null
+                      )
+                """
+                update_params: list[Any] = [repo_id, *transient_kinds]
                 if cutoff:
                     update_sql += " and observed_epoch < ?"
                     update_params.append(cutoff)
@@ -6112,6 +6227,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--older-than-days", type=int)
     p.add_argument("--raw-only", action="store_true")
     p.add_argument("--transient-artifacts", action="store_true")
+    p.add_argument("--scrub-transient-metadata", action="store_true")
     p.add_argument("--candidate-details", action="store_true")
     p.add_argument("--vacuum", action="store_true")
     p.add_argument("--dry-run", action="store_true")

@@ -3,6 +3,45 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Target-Isolated Write Boundary For Preselected Cycles
+
+Status: completed
+
+Goal:
+Remove prompt-authorized multi-file write scope from normal preselected review
+cycles so selected-target pre-contact backup coverage matches the model write
+authority actually granted for the cycle.
+
+Constraints:
+- Keep non-selected repository files readable for context during a selected-file
+  review.
+- Keep replacement target selection wrapper-owned and fail closed through
+  `BLOCKED` reporting when additional edits are required.
+- Avoid broad backup-scope expansion in this fix; treat selected-target-only
+  write authority as the binding isolation contract.
+- Keep validation deterministic and local.
+
+Files likely touched:
+- `lib/upkeeper/help_selection.bash`
+- `tests/precontact_backup_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+Completed in this patch:
+- Made the preselected-target prompt block explicitly binding for
+  selected-target-only writes.
+- Allowed read-only contextual inspection of non-selected repository files while
+  requiring `BLOCKED` plus `ADDITIONAL_FILES_NEEDED:` when a correct fix would
+  require extra file edits.
+- Declared any later paired-edit prompt/module guidance subordinate to the
+  selected-target backup boundary.
+
 ## Security Hardening Batch: Fallback Chain Token
 
 Status: in_progress

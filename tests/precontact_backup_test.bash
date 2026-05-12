@@ -419,6 +419,10 @@ EOF
   grep -Fq "report BLOCKED" "$compiled" || fail "compiled prompt missing BLOCKED rule"
   grep -Fq "Replacement target selection is wrapper-only" "$compiled" || fail "compiled prompt missing wrapper-only replacement rule"
   grep -Fq "Pre-contact backup was created by the wrapper before this prompt was compiled" "$compiled" || fail "compiled prompt missing backup notice"
+  grep -Fq "you may modify only the selected file shown above" "$compiled" || fail "compiled prompt missing selected-target-only write rule"
+  grep -Fq "ADDITIONAL_FILES_NEEDED:" "$compiled" || fail "compiled prompt missing additional-files-needed reporting rule"
+  grep -Fq "paired multi-file edits is subordinate to this selected-target-only write boundary" "$compiled" ||
+    fail "compiled prompt missing paired-edit override rule"
   ! grep -Fq "backup_id=$RUN_PRECONTACT_BACKUP_ID" "$compiled" || fail "compiled prompt leaked backup id"
   ! grep -Fq "backup_id=$RUN_PRECONTACT_BACKUP_ID" "$LOG_FILE" || fail "runtime log leaked backup id"
 

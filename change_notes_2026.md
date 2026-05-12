@@ -572,3 +572,7 @@ Reconstructed pre-1.0 history:
 - Postmortem sequences now store primary last-message metadata by status/outcome/hash instead of copying the full primary last message by default.
 - Default postmortem summary emission now logs only artifact metadata, not copied report prose.
 - Postmortem context, incident logs, bug records, and private raw auxiliary evidence are now written under private `0700`/`0600` postmortem permissions, and auxiliary environment failures no longer echo raw runtime paths into the live loop log.
+
+2026-05-11: selected-target write-boundary hardening:
+- Preselected review cycles now treat the selected target as the only writable file by default, even when later prompt modules would normally suggest paired tests, docs, helper, caller, or validation edits.
+- Non-selected repository files remain readable for context, but runs that need extra edits must now report `BLOCKED` with an `ADDITIONAL_FILES_NEEDED:` list instead of widening the write scope beyond the selected target's pre-contact backup coverage.

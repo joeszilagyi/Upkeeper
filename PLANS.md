@@ -3,6 +3,44 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Import-Upkeeper-Log Parsed Field Redaction
+
+Status: completed
+
+Goal:
+Stop `lattice import-upkeeper-log` from persisting sensitive parsed log fields
+into `source_records.parsed_json` and adjacent normalized cycle fields when raw
+line import is disabled.
+
+Constraints:
+- Keep the patch narrow to the lattice importer and its focused validation.
+- Preserve useful lifecycle import fields needed for sparse replay and status
+  reconstruction.
+- Default to allowlisting safe parsed fields instead of trying to redact every
+  possible sensitive key after storage.
+- Keep validation deterministic and local.
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+Completed in this patch:
+- Limited imported `source_records.parsed_json` for Upkeeper log rows to a
+  small safe allowlist instead of storing full parsed key/value payloads.
+- Stopped `import-upkeeper-log` from backfilling sensitive normalized cycle
+  fields such as selected paths, finish reasons, model/mode, and config-file
+  values from log text.
+- Added a focused lattice test proving sensitive parsed keys are dropped while
+  sparse lifecycle status reconstruction still works.
+
 ## Default Prompt Replacement Authority Removal
 
 Status: completed

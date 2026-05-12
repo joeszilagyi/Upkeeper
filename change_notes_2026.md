@@ -14,6 +14,11 @@ Version numbering note:
 	1. Upkeeper now sets `umask 077` at process entry before config loading or runtime artifact creation, so logs, transcripts, queue markers, postmortem files, locks, and similar local state default to owner-only permissions even on permissive host umask settings.
 	2. Added quick validation that fails if the entrypoint loses this early private-umask contract.
 
+2026-05-12: imported Upkeeper log rows now drop sensitive parsed fields by default:
+	1. `lattice import-upkeeper-log` now stores only a small safe allowlist in `source_records.parsed_json`, instead of persisting full parsed log key/value payloads when raw-line import is disabled.
+	2. Imported log replay no longer backfills sensitive normalized cycle fields such as selected paths, finish reasons, model/mode, or config-file values from log text, while preserving safe lifecycle status fields needed for sparse replay.
+	3. Added deterministic lattice coverage proving sensitive parsed keys are omitted from stored source records and normalized cycle rows.
+
 2026-05-11: bug-report-only draft-gating changes:
 	1. Changed `--bug-report-only` from a soft “file an issue if possible” prompt into a wrapper-owned local draft workflow, with issue-ready bug reports now expected through a final-message draft block that Upkeeper saves under runtime-local bug-report drafts.
 	2. Added a bug-report-only `gh` gate inside the Genie Protocol broker so backend Codex can still use read-only GitHub inspection, but `gh issue create` stays blocked unless `UPKEEPER_ALLOW_GH_ISSUE_WRITE=1`.

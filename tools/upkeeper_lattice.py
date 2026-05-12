@@ -119,6 +119,24 @@ REDACTABLE_PATH_KEYS = {
     "repo_alias_id",
     "artifact_kind",
 }
+UPKEEPER_LOG_SOURCE_SAFE_KEYS = {
+    "timestamp",
+    "level",
+    "event",
+    "cycle",
+    "run_hash",
+    "execution_origin",
+    "dirty_paths",
+    "dry_run",
+    "status_marker",
+    "codex_exit",
+    "exit_code",
+    "codex_exec_started",
+}
+UPKEEPER_LOG_CYCLE_START_SAFE_KEYS = {"execution_origin", "dirty_paths", "dry_run"}
+UPKEEPER_LOG_REVIEW_PRESELECT_SAFE_KEYS = {"basis"}
+UPKEEPER_LOG_SUMMARY_SAFE_KEYS = {"status_marker", "codex_exit"}
+UPKEEPER_LOG_EXIT_SAFE_KEYS = {"exit_code", "codex_exec_started"}
 PASS_RESULT_ALLOWED_KEYS = {
     "pass",
     "file",
@@ -4445,6 +4463,13 @@ def parse_upkeeper_log_line(line: str) -> dict[str, Any] | None:
     return parsed
 
 
+def filter_upkeeper_log_fields(parsed: dict[str, Any], allowed_keys: set[str]) -> dict[str, Any]:
+    # Imported log storage should default to a small operational allowlist so
+    # paths, targets, reasons, and other free-form detail do not survive as
+    # structured records when raw line import is disabled.
+    return {key: parsed[key] for key in allowed_keys if key in parsed}
+
+
 def command_import_upkeeper_log(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     log_path = Path(args.path or root / "Upkeeper.log")
@@ -4463,6 +4488,7 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
             parsed = parse_upkeeper_log_line(raw_line)
             if not parsed:
                 continue
+            safe_parsed = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_SOURCE_SAFE_KEYS)
             source_id = ensure_source_record(
                 conn,
                 repo_id,
@@ -4470,7 +4496,7 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                 source_path=str(log_path),
                 raw_ref=parsed.get("event", ""),
                 raw_text=raw_line if args.raw else None,
-                parsed=parsed,
+                parsed=safe_parsed,
                 parse_status="parsed",
             )
             cycle_id = str(parsed.get("cycle", ""))
@@ -4479,46 +4505,43 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
             if cycle_id and run_hash:
                 cycle_pk = ensure_cycle(conn, repo_id, cycle_id, run_hash, source_id=source_id)
                 if event == "cycle.start":
+                    start_fields = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_CYCLE_START_SAFE_KEYS)
                     ensure_cycle(
                         conn,
                         repo_id,
                         cycle_id,
                         run_hash,
                         source_id=source_id,
-                        execution_origin=parsed.get("execution_origin"),
-                        model=parsed.get("model"),
-                        effort=parsed.get("effort"),
-                        mode=parsed.get("mode"),
-                        config_file=parsed.get("config_file"),
-                        worktree_dirty=1 if str(parsed.get("dirty_paths", "0")).isdigit() and int(parsed.get("dirty_paths", "0")) > 0 else 0,
-                        dry_run=parse_bool_int(str(parsed.get("dry_run", ""))),
+                        execution_origin=start_fields.get("execution_origin"),
+                        worktree_dirty=1 if str(start_fields.get("dirty_paths", "0")).isdigit() and int(start_fields.get("dirty_paths", "0")) > 0 else 0,
+                        dry_run=parse_bool_int(str(start_fields.get("dry_run", ""))),
                     )
                 elif event == "review.preselect":
-                    selected_path = normalize_rel_path(str(parsed.get("path", "")))
-                    file_id = ensure_file(conn, repo_id, selected_path, source_id=source_id) if selected_path else None
-                    conn.execute(
-                        "update cycles set selected_file_id=?, selected_path=?, selection_basis=? where cycle_pk=?",
-                        (file_id, selected_path or None, parsed.get("basis"), cycle_pk),
-                    )
+                    preselect_fields = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_REVIEW_PRESELECT_SAFE_KEYS)
+                    if str(preselect_fields.get("basis", "")).strip() != "":
+                        conn.execute(
+                            "update cycles set selection_basis=? where cycle_pk=?",
+                            (preselect_fields.get("basis"), cycle_pk),
+                        )
                 elif event == "cycle.summary":
+                    summary_fields = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_SUMMARY_SAFE_KEYS)
                     updates: dict[str, Any] = {}
-                    if "status_marker" in parsed and str(parsed.get("status_marker", "")).strip() != "":
-                        updates["status_marker"] = parsed.get("status_marker")
-                    if "codex_exit" in parsed and str(parsed.get("codex_exit", "")).lstrip("-").isdigit():
-                        updates["codex_exit"] = int(parsed["codex_exit"])
+                    if "status_marker" in summary_fields and str(summary_fields.get("status_marker", "")).strip() != "":
+                        updates["status_marker"] = summary_fields.get("status_marker")
+                    if "codex_exit" in summary_fields and str(summary_fields.get("codex_exit", "")).lstrip("-").isdigit():
+                        updates["codex_exit"] = int(summary_fields["codex_exit"])
                     if updates:
                         conn.execute(
                             f"update cycles set {', '.join(f'{key}=?' for key in updates)} where cycle_pk=?",
                             list(updates.values()) + [cycle_pk],
                         )
                 elif event == "cycle.exit":
+                    exit_fields = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_EXIT_SAFE_KEYS)
                     updates: dict[str, Any] = {}
-                    if "exit_code" in parsed and str(parsed.get("exit_code", "")).lstrip("-").isdigit():
-                        updates["wrapper_exit"] = int(parsed["exit_code"])
-                    if "reason" in parsed and str(parsed.get("reason", "")).strip() != "":
-                        updates["finish_reason"] = parsed.get("reason")
-                    if "codex_exec_started" in parsed and str(parsed.get("codex_exec_started", "")).strip() != "":
-                        updates["codex_exec_started"] = parse_bool_int(str(parsed.get("codex_exec_started")))
+                    if "exit_code" in exit_fields and str(exit_fields.get("exit_code", "")).lstrip("-").isdigit():
+                        updates["wrapper_exit"] = int(exit_fields["exit_code"])
+                    if "codex_exec_started" in exit_fields and str(exit_fields.get("codex_exec_started", "")).strip() != "":
+                        updates["codex_exec_started"] = parse_bool_int(str(exit_fields.get("codex_exec_started")))
                     if updates:
                         conn.execute(
                             f"update cycles set {', '.join(f'{key}=?' for key in updates)} where cycle_pk=?",

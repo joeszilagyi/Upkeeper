@@ -1561,6 +1561,95 @@ if tuple(row) != expected:
 PY
 }
 
+test_import_upkeeper_log_omits_sensitive_parsed_fields() {
+  local repo
+
+  repo="$TEST_TMP_ROOT/lattice-log-import-redaction"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/log-import-redaction-init.out"
+
+  cat >"$TEST_TMP_ROOT/log-import-redaction.log" <<'EOF'
+2026-05-12T00:00:00-0700 [INFO] cycle=cycle-private run_hash=hash-private cycle.start execution_origin=primary model=gpt-5.5 effort=xhigh mode="--sandbox workspace-write" config_file=configurations/default.conf dirty_paths=2 dry_run=1 target=lib/upkeeper/process_args.bash review_globs="lib/upkeeper/*.bash" review_labels=security
+2026-05-12T00:00:01-0700 [INFO] cycle=cycle-private run_hash=hash-private review.preselect path=lib/upkeeper/process_args.bash basis=automatic_rotation source=manifest
+2026-05-12T00:00:02-0700 [INFO] cycle=cycle-private run_hash=hash-private cycle.summary status_marker=WORK_DONE codex_exit=0 detail="selected file stored elsewhere"
+2026-05-12T00:00:03-0700 [INFO] cycle=cycle-private run_hash=hash-private cycle.exit exit_code=0 reason="contains target path details" codex_exec_started=1
+EOF
+
+  lattice import-upkeeper-log --path "$TEST_TMP_ROOT/log-import-redaction.log" >"$TEST_TMP_ROOT/log-import-redaction-import.out" ||
+    fail "sensitive log import failed"
+
+  python3 - "$DB" <<'PY' || fail "sensitive log import retained restricted fields"
+import json
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+conn.row_factory = sqlite3.Row
+
+rows = conn.execute(
+    "select raw_ref, raw_text, parsed_json from source_records where source_kind='upkeeper_log' order by source_id"
+).fetchall()
+expected = {
+    "cycle.start": {"timestamp", "level", "event", "cycle", "run_hash", "execution_origin", "dirty_paths", "dry_run"},
+    "review.preselect": {"timestamp", "level", "event", "cycle", "run_hash"},
+    "cycle.summary": {"timestamp", "level", "event", "cycle", "run_hash", "status_marker", "codex_exit"},
+    "cycle.exit": {"timestamp", "level", "event", "cycle", "run_hash", "exit_code", "codex_exec_started"},
+}
+for row in rows:
+    raw_ref = row["raw_ref"]
+    parsed = json.loads(row["parsed_json"] or "{}")
+    if row["raw_text"] is not None:
+        raise AssertionError(f"raw_text should be empty when --raw is not used for {raw_ref}")
+    if raw_ref not in expected:
+        continue
+    if set(parsed) != expected[raw_ref]:
+        raise AssertionError(f"unexpected parsed_json keys for {raw_ref}: {sorted(parsed)}")
+    for forbidden_key in (
+        "model",
+        "effort",
+        "mode",
+        "config_file",
+        "path",
+        "target",
+        "source",
+        "reason",
+        "detail",
+        "review_globs",
+        "review_labels",
+    ):
+        if forbidden_key in parsed:
+            raise AssertionError(f"forbidden parsed_json key survived for {raw_ref}: {forbidden_key}")
+
+cycle = conn.execute(
+    "select execution_origin, model, effort, mode, config_file, selected_path, selection_basis, "
+    "status_marker, codex_exit, wrapper_exit, finish_reason, codex_exec_started, dry_run, worktree_dirty "
+    "from cycles where cycle_id='cycle-private' and run_hash='hash-private'"
+).fetchone()
+if cycle is None:
+    raise AssertionError("cycle-private row missing after log import")
+expected_cycle = (
+    "primary",
+    None,
+    None,
+    None,
+    None,
+    None,
+    "automatic_rotation",
+    "WORK_DONE",
+    0,
+    0,
+    None,
+    1,
+    1,
+    1,
+)
+if tuple(cycle) != expected_cycle:
+    raise AssertionError(f"normalized cycle fields were not safely filtered: {tuple(cycle)}")
+PY
+}
+
 test_planned_pass_semantics_do_not_mark_all_runs_as_planned() {
   local repo
 
@@ -1648,5 +1737,6 @@ test_recover_no_backup_first_toggle
 test_review_parser_and_redaction
 test_clean_touch_uses_mtime_ns
 test_sparse_lifecycle_replay_preserves_metadata
+test_import_upkeeper_log_omits_sensitive_parsed_fields
 test_planned_pass_semantics_do_not_mark_all_runs_as_planned
 printf 'ok - lattice\n'

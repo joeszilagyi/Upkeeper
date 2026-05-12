@@ -716,6 +716,13 @@ check_codex_mode_validation() {
   set -e
   [[ "$rc" -eq 2 ]] || fail "dangerously-bypass CODEX_MODE exited $rc, expected 2"
   grep -Fq "Genie Protocol requires sandboxed backend Codex execution" <<<"$output" || fail "dangerously-bypass CODEX_MODE error was not clear"
+
+  set +e
+  output="$(CODEX_MODE='--sandbox workspace-write --foo=bar' ./Upkeeper --version 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 2 ]] || fail "extra-token CODEX_MODE exited $rc, expected 2"
+  grep -Fq "CODEX_MODE only supports --sandbox workspace-write or --sandbox read-only" <<<"$output" || fail "extra-token CODEX_MODE error was not clear"
 }
 
 write_validation_quota_snapshot() {

@@ -883,8 +883,7 @@ append_csv_value() {
 }
 
 validate_codex_mode_args_or_exit() {
-  local mode_arg
-  local expect_sandbox_value=0
+  local first_mode_token sandbox_mode extra_mode_token
 
   CODEX_MODE_ARGS=()
   if [[ -z "${CODEX_MODE_STRING:-}" ]]; then
@@ -892,39 +891,51 @@ validate_codex_mode_args_or_exit() {
     exit 2
   fi
   read -r -a CODEX_MODE_ARGS <<<"$CODEX_MODE_STRING"
-  for mode_arg in "${CODEX_MODE_ARGS[@]}"; do
-    if (( expect_sandbox_value )); then
-      if [[ "$mode_arg" != workspace-write && "$mode_arg" != read-only ]]; then
-        if [[ "$mode_arg" == danger-full-access || "$mode_arg" == --dangerously-bypass-approvals-and-sandbox ]]; then
-          printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "$mode_arg" >&2
-          exit 2
-        fi
-        printf 'Upkeeper: invalid CODEX_MODE token %q; expected a sandbox mode argument\n' "$mode_arg" >&2
-        exit 2
-      fi
-      expect_sandbox_value=0
-      continue
-    fi
+  first_mode_token="${CODEX_MODE_ARGS[0]:-}"
+  sandbox_mode="${CODEX_MODE_ARGS[1]:-}"
+  extra_mode_token="${CODEX_MODE_ARGS[2]:-}"
 
-    if [[ "$mode_arg" != --* || "$mode_arg" == ---* ]]; then
-      printf 'Upkeeper: invalid CODEX_MODE token %q; expected a Codex option beginning with --\n' "$mode_arg" >&2
+  if [[ "$first_mode_token" != --* || "$first_mode_token" == ---* ]]; then
+    printf 'Upkeeper: invalid CODEX_MODE token %q; expected a Codex option beginning with --\n' "$first_mode_token" >&2
+    exit 2
+  fi
+  case "$first_mode_token" in
+    danger-full-access|--dangerously-bypass-approvals-and-sandbox)
+      printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "$first_mode_token" >&2
       exit 2
-    fi
-    case "$mode_arg" in
-      danger-full-access|--dangerously-bypass-approvals-and-sandbox)
-        printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "$mode_arg" >&2
-        exit 2
-        ;;
-      --sandbox)
-        expect_sandbox_value=1
-        ;;
-    esac
-  done
+      ;;
+    --sandbox)
+      ;;
+    *)
+      printf 'Upkeeper: invalid CODEX_MODE token %q; expected first token --sandbox\n' "$first_mode_token" >&2
+      exit 2
+      ;;
+  esac
 
-  if (( expect_sandbox_value )); then
+  if [[ -z "$sandbox_mode" ]]; then
     printf 'Upkeeper: invalid CODEX_MODE token --sandbox; expected a sandbox mode argument\n' >&2
     exit 2
   fi
+  if [[ "$sandbox_mode" != workspace-write && "$sandbox_mode" != read-only ]]; then
+    if [[ "$sandbox_mode" == danger-full-access || "$sandbox_mode" == --dangerously-bypass-approvals-and-sandbox ]]; then
+      printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "$sandbox_mode" >&2
+      exit 2
+    fi
+    printf 'Upkeeper: invalid CODEX_MODE token %q; expected a sandbox mode argument\n' "$sandbox_mode" >&2
+    exit 2
+  fi
+  if [[ -n "$extra_mode_token" ]]; then
+    if [[ "$extra_mode_token" == danger-full-access || "$extra_mode_token" == --dangerously-bypass-approvals-and-sandbox ]]; then
+      printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "$extra_mode_token" >&2
+      exit 2
+    fi
+    printf 'Upkeeper: invalid CODEX_MODE token %q; CODEX_MODE only supports --sandbox workspace-write or --sandbox read-only\n' "$extra_mode_token" >&2
+    exit 2
+  fi
+
+  CODEX_MODE_ARGS=(--sandbox "$sandbox_mode")
+  CODEX_MODE_SANDBOX="$sandbox_mode"
+  CODEX_MODE_STRING="--sandbox $sandbox_mode"
 }
 
 set_prompt_pass_or_die() {

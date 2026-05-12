@@ -1356,3 +1356,28 @@ Validation:
 Rollout notes:
 - eligible stored obligation targets should keep their existing `--target-file`
 - poisoned runtime/.git-style obligation targets should remap to the launcher control-plane file instead of reopening the same loop
+
+## Allowlisted CODEX_MODE Tuple Parsing
+
+Status: completed
+
+Goal:
+- stop `CODEX_MODE` from accepting arbitrary extra option tokens beyond the sandbox tuple in both the primary wrapper and auxiliary Codex path
+
+Constraints:
+- preserve supported sandbox tuples `--sandbox workspace-write` and `--sandbox read-only`
+- keep existing clear failure messages for missing dashes and dangerous bypass modes
+- keep auxiliary blocked-marker behavior aligned with the primary parser policy
+
+Files likely touched:
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/aux_codex.bash`
+- `tools/validate_upkeeper.sh`
+- `tests/aux_codex_test.bash`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`

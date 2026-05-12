@@ -77,6 +77,42 @@ Completed in this patch:
   review finds a wrapper defect outside the selected target.
 - Added quick validation that locks the stricter prompt contract in source.
 
+## Pre-Contact Backup Log Path Redaction
+
+Status: completed
+
+Goal:
+Stop pre-contact backup runtime logs from writing the raw selected relative
+target path while claiming the path was redacted.
+
+Constraints:
+- Keep protected metadata and restore behavior intact.
+- Preserve enough runtime evidence to correlate backup and restore activity
+  without exposing the raw target name.
+- Cover create and adjacent failure/restore logging paths together so the same
+  leak does not survive in neighboring branches.
+- Keep validation deterministic and local.
+
+Files likely touched:
+- `lib/upkeeper/precontact_backup.bash`
+- `tests/precontact_backup_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+Completed in this patch:
+- Replaced raw selected-target paths in pre-contact backup create, failure, and
+  restore log paths with a stable `target_hash`.
+- Kept `path_redacted=1` aligned with reality by removing the raw repo-relative
+  target path from those log lines.
+- Added deterministic tests proving create and restore logs no longer leak the
+  selected relative path.
+
 ## Security Hardening Batch: Fallback Chain Token
 
 Status: in_progress

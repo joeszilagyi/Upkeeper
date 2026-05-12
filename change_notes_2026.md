@@ -580,3 +580,7 @@ Reconstructed pre-1.0 history:
 2026-05-11: log self-review control-plane boundary hardening:
 - Current-cycle log self-review no longer permits same-pass repair of unselected `Upkeeper` control-plane files.
 - If log review finds a wrapper, prompt, or logging defect outside the selected target path, the cycle must now leave that file unchanged and report `BLOCKED` for a follow-up wrapper-selected run instead of widening write scope past the selected target backup boundary.
+
+2026-05-11: pre-contact backup log path redaction:
+- Pre-contact backup create, failure, and restore log lines now use a stable `target_hash` instead of logging the raw selected relative path while claiming `path_redacted=1`.
+- Protected backup metadata and restore behavior are unchanged, but normal runtime logs no longer leak target names such as customer, incident, or secret-bearing file labels.

@@ -1290,3 +1290,40 @@ Validation:
 - Likely files: `Upkeeper`, fallback/active-lock/precontact/quota/session/status modules, security docs/prompts, targeted tests, and selective validator/lattice test updates.
 - Validation: `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`; `for test_script in tests/*.bash; do bash "$test_script"; done`; `git diff --check`; `tools/validate_upkeeper.sh --quick`
 - Outcome: salvaged the fallback, lock inheritance, precontact backup, quota-marker, session-store, status-marker, startup-anomaly, and issue-fix hardening work from the dirty checkout; preserved the already-merged PR 342 lattice and CI repairs while selectively carrying over only the additional lattice regression coverage that still applied; repaired copied regressions in fallback contract creation, restore-temp cleanup, and lattice test globals before promoting the salvage set to a clean validated branch state.
+
+## Bug Report Only Local Draft And GitHub Write Gate
+
+Status: completed
+
+Goal:
+Turn `--bug-report-only` into a wrapper-owned local draft workflow instead of a
+soft prompt hint, so confirmed findings default to durable local issue drafts
+and backend GitHub writes stay blocked unless the operator explicitly allows
+issue creation.
+
+Constraints:
+- Preserve the existing Genie Protocol boundary that blocks direct backend
+  network tooling by default.
+- Keep normal issue-workflow comment/review posting behavior unchanged because
+  the wrapper, not backend Codex, owns that path.
+- Update only the operator-facing help/docs needed for the changed contract;
+  broader README housekeeping can wait.
+
+Files likely touched:
+- `Upkeeper`
+- `PLANS.md`
+- `change_notes_2026.md`
+- `docs/scripts/upkeeper.md`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/help_selection.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `tests/bug_report_only_test.bash`
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/bug_report_only_test.bash`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`

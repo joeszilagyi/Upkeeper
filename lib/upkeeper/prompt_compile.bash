@@ -240,17 +240,23 @@ append_bug_report_only_prompt() {
   {
     printf '\nWRAPPER_BUG_REPORT_ONLY\n'
     printf 'bug_report_only=1\n'
+    printf 'bug_report_draft_file=%s\n' "${RUN_BUG_REPORT_DRAFT_FILE:-none}"
+    printf 'bug_report_issue_write_allowed=%s\n' "$(truthy_as_int "${UPKEEPER_ALLOW_GH_ISSUE_WRITE:-0}")"
     printf '\nRules for bug-report-only mode:\n'
     printf -- '- This invoked cycle is investigation and bug filing only. Do not fix source defects in this cycle.\n'
     printf -- '- Do not edit, touch, format, delete, create, or apply patches to tracked source files.\n'
     printf -- '- This mode supersedes the normal clean-review instruction to touch the selected file. Do not touch it.\n'
     printf -- '- You may read files and run deterministic local commands needed to confirm or falsify findings.\n'
     printf -- '- Prefer temporary repros under `/tmp` or ignored `runtime/` evidence when a repro needs scratch files.\n'
-    printf -- '- If a bug is confirmed and `gh` is available, file a complete GitHub issue with title, impact, evidence, reproduction steps, expected behavior, actual behavior, and suggested fix.\n'
-    printf -- '- Apply labels that match the finding when practical: `bug`, `security`, `data-integrity`, `lattice`, or other existing repo labels.\n'
-    printf -- '- If `gh` is unavailable, authentication fails, or filing is otherwise blocked, include the full issue-ready report in the final response and mark the blocker clearly.\n'
+    printf -- '- Do not contact GitHub directly for writes unless the wrapper explicitly allows it through `UPKEEPER_ALLOW_GH_ISSUE_WRITE=1`; direct `gh issue create`, `curl`, `wget`, and similar write paths are blocked by default.\n'
+    printf -- '- Read-only GitHub inspection is allowed when practical, but the wrapper-owned local draft artifact is required regardless of whether GitHub write access is enabled for this cycle.\n'
+    printf -- '- If a bug is confirmed, put one complete issue-ready report in your final response between `UPKEEPER_BUG_REPORT_DRAFT_START` and `UPKEEPER_BUG_REPORT_DRAFT_END` marker lines. Do not wrap those markers in Markdown fences, bullets, quotes, or extra punctuation.\n'
+    printf -- '- The first line inside the marker block must begin with exactly `Title: `. An optional second line may begin with `Labels: ` and should use existing repo labels such as `bug`, `security`, `data-integrity`, or `lattice` when justified.\n'
+    printf -- '- After the title or optional labels line, include a complete issue-ready body with impact, evidence, reproduction steps, expected behavior, actual behavior, and a narrow suggested fix.\n'
+    printf -- '- Before you emit the draft block, redact or generalize secrets, access tokens, credentials, emails, customer names, private URLs, and absolute local filesystem paths. Use repo-relative paths or generic placeholders instead.\n'
+    printf -- '- Even when GitHub write access is explicitly allowed and you choose to create an issue, still include the same full final-message draft block so the wrapper preserves a durable local artifact.\n'
     printf -- '- If no bug is found, say so and finish cleanly without filing.\n'
-    printf -- '- Use `REVIEWED_AND_REPORTED` when at least one issue was filed or a complete issue-ready report was produced; use `REVIEWED_CLEAN` only when no bug was found.\n'
+    printf -- '- Use `REVIEWED_AND_REPORTED` only after including the final-message draft block; use `REVIEWED_CLEAN` only when no bug was found.\n'
   } >>"$compiled_file"
 
   log_line "INFO" "bug_report_only.prompt appended"

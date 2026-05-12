@@ -1592,6 +1592,7 @@ check_file_manifest_selection() {
     --bug-report-only
   grep -Fq "bug_report_only=1" "$temp_dir/bug-report-only.log" || fail "bug-report-only was not recorded in cycle.start"
   grep -Fq "bug_report_only.prompt appended" "$temp_dir/bug-report-only.log" || fail "bug-report-only prompt addendum was not appended"
+  bash tests/bug_report_only_test.bash
 
   mkdir -p "$temp_dir/bin"
   cat >"$temp_dir/bin/gh" <<'EOF'

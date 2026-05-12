@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.11
+## Version: v1.2.12
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -134,7 +134,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.11"
+UPKEEPER_VERSION="v1.2.12"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -325,6 +325,7 @@ FALLBACK_SCREEN_WATCH_ACTIVE="0"
 FALLBACK_SCREEN_TRIGGER=""
 RUN_COMPILED_PROMPT_FILE=""
 RUN_LAST_MESSAGE_FILE=""
+RUN_BUG_REPORT_DRAFT_FILE=""
 RUN_TRANSCRIPT_FILE=""
 RUN_TMP_DIR=""
 RUN_MARK_HEARTBEAT_PID=""
@@ -682,6 +683,7 @@ main() {
   last_message_file="$(run_mktemp last-message)"
   RUN_COMPILED_PROMPT_FILE="$compiled_prompt_file"
   RUN_LAST_MESSAGE_FILE="$last_message_file"
+  prepare_bug_report_draft_artifact || finish_cycle 70 BUG_REPORT_DRAFT_PREP_FAILED ERROR "codex_exec_started=0"
   trap cleanup_run_temp_files EXIT
 
   compile_prompt "$compiled_prompt_file"
@@ -927,7 +929,13 @@ main() {
     fi
   fi
 
-  primary_failure_classification="none"
+  if ! upkeeper_bug_report_finalize; then
+    status_marker="BLOCKED"
+    status_marker_source="bug_report_draft_failed"
+    primary_failure_classification="bug-report-draft"
+  fi
+
+  [[ -n "${primary_failure_classification:-}" ]] || primary_failure_classification="none"
   log_line "INFO" "cycle.summary execution_origin=$CODEX_EXECUTION_ORIGIN model=$CODEX_MODEL observed_primary_delta=$observed_primary_delta observed_secondary_delta=$observed_secondary_delta observed_delta_status=$observed_delta_status status_marker=${status_marker:-missing} status_marker_source=$status_marker_source session_end_state=$session_end_state agent_messages=$primary_session_agent_message_count tool_calls=$primary_session_tool_call_count tool_results=$primary_session_tool_result_count task_complete_last_agent_message=$primary_session_task_complete_last_agent_message codex_exit=$codex_exit"
   log_review_report_summary "$last_message_file" "${status_marker:-missing}" "$codex_exit"
   lattice_record_pass_results "$last_message_file" "${RUN_SELECTED_REVIEW_PATH:-}" "$(lattice_planned_passes_csv)"

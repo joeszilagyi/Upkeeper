@@ -3,6 +3,46 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Disk Preflight Prompt and Log Redaction
+
+Status: completed
+
+Goal:
+Stop disk-space startup anomaly handling from sending raw paths, probe paths,
+and mount metadata to the model while preserving actionable local diagnostics
+for operators.
+
+Constraints:
+- Keep the fix narrow to the disk-preflight and prompt-compilation flow.
+- Preserve the startup anomaly gate and operator-facing low-space signal.
+- Keep raw prompt notes limited to safe labels and percentages only.
+- Keep local log evidence useful, but default path and mount fields to hashes
+  unless an explicit diagnostic mode is enabled.
+- Add deterministic local validation for both the prompt contract and the local
+  log contract.
+
+Files likely touched:
+- `lib/upkeeper/disk_preflight.bash`
+- `lib/upkeeper/help_selection.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+Completed in this patch:
+- Redacted disk-preflight path, probe-path, and mount log fields by default,
+  while allowing raw shell-quoted values only in explicit diagnostic modes.
+- Reduced `DISK_SPACE_PROMPT_NOTE` to label-and-percentage-only anomaly notes
+  so startup prompts no longer leak local mount/path metadata to the model.
+- Added deterministic quick-validation coverage for the new disk-preflight log
+  and prompt-note contracts, and refreshed the mirrored operator docs.
+
 ## Import-Upkeeper-Log Parsed Field Redaction
 
 Status: completed

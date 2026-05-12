@@ -888,17 +888,19 @@ check_log_path_symlink_guard() {
 }
 
 check_disk_preflight_log_contract() {
-  local temp_dir path_with_token path_q output extracted_free synthetic_free
+  local temp_dir path_with_token path_q default_output debug_output extracted_free synthetic_free
 
-  log "checking disk preflight log quoting"
+  log "checking disk preflight log redaction"
   temp_dir="$(mktemp -d /tmp/upkeeper-disk-preflight.XXXXXX)"
   path_with_token="$temp_dir/path with spaces/free_percent=999"
   mkdir -p "$path_with_token"
 
-  if ! output="$(
+  if ! default_output="$(
     bash -c '
       set -euo pipefail
       shell_quote() { printf "%q" "$1"; }
+      terminal_mode() { printf "basic"; }
+      upkeeper_verbose_metadata_enabled() { return 1; }
       source "$1"
       fields="$(disk_space_fields "arg0 tmp" "$2")"
       free_percent="$(disk_preflight_free_percent_from_fields "$fields")"
@@ -911,15 +913,85 @@ check_disk_preflight_log_contract() {
     fail "disk preflight log contract check failed"
   fi
 
+  if ! debug_output="$(
+    bash -c '
+      set -euo pipefail
+      shell_quote() { printf "%q" "$1"; }
+      terminal_mode() { printf "debug1"; }
+      upkeeper_verbose_metadata_enabled() { return 1; }
+      source "$1"
+      disk_space_fields "arg0 tmp" "$2"
+    ' bash "$ROOT_DIR/lib/upkeeper/disk_preflight.bash" "$path_with_token"
+  )"; then
+    fail "disk preflight debug log contract check failed"
+  fi
+
   printf -v path_q '%q' "$path_with_token"
-  grep -Fq "label=arg0\\ tmp" <<<"$output" || fail "disk preflight label was not shell-quoted"
-  grep -Fq "path=$path_q" <<<"$output" || fail "disk preflight path was not shell-quoted"
-  extracted_free="$(sed -n 's/^extracted_free=//p' <<<"$output")"
+  grep -Fq "label=arg0\\ tmp" <<<"$default_output" || fail "disk preflight label was not shell-quoted"
+  grep -Fq "path_hash=" <<<"$default_output" || fail "disk preflight default output did not redact the path"
+  grep -Fq "mount_hash=" <<<"$default_output" || fail "disk preflight default output did not redact the mount"
+  grep -Fq "probe_path_hash=" <<<"$default_output" || fail "disk preflight default output did not redact the probe path"
+  grep -Fq "path_redacted=1" <<<"$default_output" || fail "disk preflight default output did not mark path redaction"
+  grep -Fq "mount_redacted=1" <<<"$default_output" || fail "disk preflight default output did not mark mount redaction"
+  grep -Fq "probe_path_redacted=1" <<<"$default_output" || fail "disk preflight default output did not mark probe-path redaction"
+  ! grep -Fq "path=$path_q" <<<"$default_output" || fail "disk preflight default output leaked the raw path"
+  grep -Fq "path=$path_q" <<<"$debug_output" || fail "disk preflight debug output did not include the raw path"
+  ! grep -Fq "path_hash=" <<<"$debug_output" || fail "disk preflight debug output still used redacted path fields"
+  extracted_free="$(sed -n 's/^extracted_free=//p' <<<"$default_output")"
   [[ -n "$extracted_free" ]] || fail "disk preflight free_percent extraction returned empty"
   [[ "$extracted_free" != "999" ]] || fail "disk preflight free_percent extraction used the path token"
   [[ "$extracted_free" =~ ^-?[0-9]+([.][0-9]+)?$ ]] || fail "disk preflight free_percent was not numeric: $extracted_free"
-  synthetic_free="$(sed -n 's/^synthetic_free=//p' <<<"$output")"
+  synthetic_free="$(sed -n 's/^synthetic_free=//p' <<<"$default_output")"
   [[ "$synthetic_free" == "88" ]] || fail "disk preflight free_percent parser did not use the intended field"
+
+  rm -r "$temp_dir"
+}
+
+check_disk_preflight_prompt_note_contract() {
+  local temp_dir existing_path missing_path output note_block
+
+  log "checking disk preflight prompt-note redaction"
+  temp_dir="$(mktemp -d /tmp/upkeeper-disk-preflight-note.XXXXXX)"
+  existing_path="$temp_dir/existing path/free_percent=999"
+  missing_path="$temp_dir/missing path/free_percent=998/nope"
+  mkdir -p "$existing_path"
+
+  if ! output="$(
+    bash -c '
+      set -euo pipefail
+      shell_quote() { printf "%q" "$1"; }
+      log_line() { printf "%s\n" "$2"; }
+      append_startup_anomaly_reason() { :; }
+      terminal_mode() { printf "basic"; }
+      upkeeper_verbose_metadata_enabled() { return 1; }
+      source "$1"
+      EXISTING_PATH="$2"
+      MISSING_PATH="$3"
+      CODEX_DISK_MIN_FREE_PERCENT=101
+      DISK_SPACE_PROMPT_NOTE=""
+      STARTUP_ANOMALY_GATE=0
+      disk_preflight_path_specs() {
+        printf "existing_label\t%s\n" "$EXISTING_PATH"
+        printf "missing_label\t%s\n" "$MISSING_PATH"
+      }
+      check_disk_space_preflight
+      printf "NOTE_BEGIN\n%s\nNOTE_END\n" "$DISK_SPACE_PROMPT_NOTE"
+    ' bash "$ROOT_DIR/lib/upkeeper/disk_preflight.bash" "$existing_path" "$missing_path"
+  )"; then
+    fail "disk preflight prompt-note contract check failed"
+  fi
+
+  note_block="$(awk '/^NOTE_BEGIN$/,/^NOTE_END$/' <<<"$output")"
+  grep -Fq "- disk.preflight low_space label=existing_label free_percent=" <<<"$note_block" || fail "disk preflight prompt note did not retain the low-space label and percentage"
+  grep -Fq "- disk.preflight unavailable label=missing_label" <<<"$note_block" || fail "disk preflight prompt note did not retain the unavailable label"
+  ! grep -Fq "$temp_dir" <<<"$note_block" || fail "disk preflight prompt note leaked a raw path"
+  ! grep -Fq "mount=" <<<"$note_block" || fail "disk preflight prompt note leaked mount metadata"
+  ! grep -Fq "path=" <<<"$note_block" || fail "disk preflight prompt note leaked path metadata"
+  ! grep -Fq "probe_path=" <<<"$note_block" || fail "disk preflight prompt note leaked probe-path metadata"
+  ! grep -Fq "size_kb=" <<<"$note_block" || fail "disk preflight prompt note leaked size metadata"
+  ! grep -Fq "used_kb=" <<<"$note_block" || fail "disk preflight prompt note leaked usage metadata"
+  ! grep -Fq "avail_kb=" <<<"$note_block" || fail "disk preflight prompt note leaked free-space metadata"
+  ! grep -Fq "used_percent=" <<<"$note_block" || fail "disk preflight prompt note leaked used-percent metadata"
 
   rm -r "$temp_dir"
 }
@@ -1384,7 +1456,7 @@ check_review_module_flags() {
     UPKEEPER_DRY_RUN=1 \
     ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25,p26,p27,p28,p29 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
 
-  grep -Fq "review_modules=p24,p25,p26,p27,p28,p29" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules"
+  grep -Fq "review_modules_hash=" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules metadata"
   grep -Fq "review.module_prompt enabled module=p24" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P24"
   grep -Fq "review.module_prompt enabled module=p25" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P25"
   grep -Fq "review.module_prompt enabled module=p26" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P26"
@@ -1444,11 +1516,10 @@ EOF
     ./Upkeeper --config-file="$profile" >"$temp_dir/config.out" 2>"$temp_dir/config.err"
 
   grep -Fq "config_loaded=1" "$temp_dir/Upkeeper.log" || fail "config dry-run did not record loaded config"
-  grep -Fq "config_file=$profile" "$temp_dir/Upkeeper.log" || fail "config dry-run did not record config path"
+  grep -Fq "config_file_hash=" "$temp_dir/Upkeeper.log" || fail "config dry-run did not record config metadata"
   grep -Fq "model=gpt-5.5" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply model"
-  grep -Fq "target_file=Upkeeper" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply target file"
+  grep -Fq "review.preselect path=Upkeeper" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply target file"
   grep -Fq "prompt_pass=all" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply prompt pass"
-  grep -Fq "review_modules=p28" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply review module"
   grep -Fq "review.module_prompt enabled module=p28" "$temp_dir/Upkeeper.log" || fail "config dry-run did not append P28"
 
   : >"$temp_dir/Upkeeper.log"
@@ -1462,9 +1533,9 @@ EOF
     UPKEEPER_DRY_RUN=1 \
     ./Upkeeper --config-file="$profile" --target-file=lib/upkeeper/codex_io.bash --p26 >"$temp_dir/override.out" 2>"$temp_dir/override.err"
 
-  grep -Fq "target_file=lib/upkeeper/codex_io.bash" "$temp_dir/Upkeeper.log" || fail "CLI target did not override config target"
-  grep -Fq "review_modules=p26" "$temp_dir/Upkeeper.log" || fail "CLI review module did not override config modules"
-  if grep -Fq "review_modules=p28" "$temp_dir/Upkeeper.log"; then
+  grep -Fq "review.preselect path=lib/upkeeper/codex_io.bash" "$temp_dir/Upkeeper.log" || fail "CLI target did not override config target"
+  grep -Fq "review.module_prompt enabled module=p26" "$temp_dir/Upkeeper.log" || fail "CLI review module did not override config modules"
+  if grep -Fq "review.module_prompt enabled module=p28" "$temp_dir/Upkeeper.log"; then
     fail "config review module leaked after CLI override"
   fi
 
@@ -2591,6 +2662,7 @@ check_postmortem_privacy_contract() {
     source ./Upkeeper
     CYCLE_ID="privacy-check"
     CYCLE_RUN_HASH="privacyhash"
+    LOG_FILE="$temp_dir/Upkeeper.log"
     CODEX_POSTMORTEM_DIR="$temp_dir/postmortems"
     POSTMORTEM_CONTEXT_PATH="$temp_dir/postmortems/privacy-check/incident-context.txt"
     POSTMORTEM_INCIDENT_LOG_PATH="$temp_dir/postmortems/privacy-check/incident-log.txt"
@@ -3316,6 +3388,7 @@ run_check symlink_target_selection_guard check_symlink_target_selection_guard
 run_check cycle_start_log_contract check_cycle_start_log_contract
 run_check log_path_symlink_guard check_log_path_symlink_guard
 run_check disk_preflight_log_contract check_disk_preflight_log_contract
+run_check disk_preflight_prompt_note_contract check_disk_preflight_prompt_note_contract
 run_check arg0_tmp_cleanup_contract check_arg0_tmp_cleanup_contract
 run_check automation_obligation_framework check_automation_obligation_framework
 run_check session_store_preflight_contract check_session_store_preflight_contract

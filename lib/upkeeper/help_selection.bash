@@ -217,9 +217,11 @@ Important:
     wrote cycle.exit/run.finish, logs previous_run.anomaly lines, and injects
     those findings into the prompt for the next healthy run.
   - Startup also logs disk.preflight lines for repo, log, Codex home/session,
-    temp, bwrap, arg0, and runtime paths. Path-like fields are shell-quoted for
-    parseable logs, and startup injects a prompt note when any write-critical
-    root is below ${CODEX_DISK_MIN_FREE_PERCENT}% free.
+    temp, bwrap, arg0, and runtime paths. Path and mount fields are hashed in
+    normal logs and switch to raw shell-quoted values only in debug1 or
+    full terminal mode; the model prompt receives only labels plus
+    free-space percentages when a write-critical root is below
+    ${CODEX_DISK_MIN_FREE_PERCENT}% free.
   - Startup anomalies are a gate by default: while prior-run, watchdog-style, or
     low-disk anomaly evidence is active, preselection is forced to the repo-local
     Upkeeper implementation and normal timestamp rotation is blocked until the

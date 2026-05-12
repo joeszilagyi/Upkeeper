@@ -6,9 +6,18 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-12: v1.2.13 changes:
+	1. Startup disk-preflight anomaly notes now send only safe labels and free-space percentages to the model, while local logs hash path and mount metadata by default and expose raw shell-quoted values only in debug1 or full terminal mode.
+	2. This release also keeps the default prompt from reintroducing replacement-target authority and sets a private process umask before runtime artifacts are created, with deterministic local validation covering the tightened contracts.
+
 2026-05-12: default prompt no longer grants unconditional replacement targets:
 	1. The default review prompt no longer contains a standalone "select the next oldest eligible file" instruction in the physical/safety exception branch.
 	2. Replacement selection is now explicitly conditional on the absence of `WRAPPER_PRESELECTED_REVIEW_TARGET`, and preselected-target cycles keep `STOPPED_ON_BLOCKER` as the required outcome when the selected file is impossible or unsafe.
+
+2026-05-12: disk preflight prompt and log metadata redaction:
+	1. Startup disk-preflight prompt notes now carry only safe labels plus free-space percentages, so low-space anomaly prompts no longer expose raw paths, probe paths, mount names, or size/usage fields to the model.
+	2. Local `disk.preflight` logs now hash path and mount metadata by default and emit raw shell-quoted values only in `debug1` or `full` terminal mode for explicit local diagnosis.
+	3. Added deterministic quick validation for both the redacted local log contract and the sanitized prompt-note contract.
 
 2026-05-12: private artifact umask at entry:
 	1. Upkeeper now sets `umask 077` at process entry before config loading or runtime artifact creation, so logs, transcripts, queue markers, postmortem files, locks, and similar local state default to owner-only permissions even on permissive host umask settings.

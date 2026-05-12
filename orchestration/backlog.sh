@@ -119,10 +119,17 @@ selected_issue() {
           $label == $needle
           or ($needle == "feature" and ($label | contains("feature")))
           or ($needle == "research" and ($label | contains("research")));
+        def excluded_by_title:
+          (.title // "" | ascii_downcase) as $title
+          | ($title | contains("feature:"))
+            or ($title | contains("enhancement:"))
+            or ($title | contains("research:"))
+            or ($title | contains("r&d:"))
+            or ($title | contains("r-and-d:"));
         def excluded_by_label:
           label_names as $labels
           | any(excluded_labels[]; . as $needle | any($labels[]; label_matches(.; $needle)));
-        map(select((excluded_by_label | not) and (($fixed | contains("," + (.number | tostring) + ",")) | not)))
+        map(select((.number | tostring) as $number | (excluded_by_label | not) and (excluded_by_title | not) and (($fixed | contains("," + $number + ",")) | not)))
         | sort_by(.createdAt)
         | reverse
         | .[0]

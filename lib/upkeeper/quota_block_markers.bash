@@ -6,10 +6,72 @@
 # Operator-facing behavior is summarized in docs/scripts/upkeeper.md; update
 # that guide and the current year's change_notes_YYYY.md when changing marker
 # semantics.
+quota_block_marker_root() {
+  printf '%s' "${UPKEEPER_QUOTA_PRIMARY_BLOCK_MARKER_DIR:-${CODEX_HOME_DIR:-$HOME/.codex}/upkeeper/quota-primary-block-markers}"
+}
+
+quota_block_validate_private_marker_root() {
+  local marker_root="$1"
+  local owner mode
+
+  if [[ -z "$marker_root" ]]; then
+    return 1
+  fi
+  if ! mkdir -p -- "$marker_root"; then
+    return 1
+  fi
+  if [[ -L "$marker_root" ]]; then
+    return 1
+  fi
+  if ! chmod 700 "$marker_root"; then
+    return 1
+  fi
+  owner="$(stat -Lc '%u' -- "$marker_root" 2>/dev/null || printf '')"
+  if [[ "$owner" != "$(id -u)" ]]; then
+    return 1
+  fi
+  mode="$(stat -Lc '%a' -- "$marker_root" 2>/dev/null || printf '000')"
+  if [[ "$mode" != "700" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+quota_block_copy_marker_to_private_store() {
+  local marker_path="$1"
+  local marker_root="$2"
+  local marker_pm_root="$marker_root/$CYCLE_ID"
+  local marker_private_path="$marker_pm_root/primary-quota-blocked-until.txt"
+
+  if ! quota_block_validate_private_marker_root "$marker_root"; then
+    log_line "WARN" "quota.blocked_marker_private_store_untrusted path=$(shell_quote "$marker_root")"
+    return 0
+  fi
+  if ! mkdir -p -- "$marker_pm_root"; then
+    log_line "WARN" "quota.blocked_marker_private_store_failed path=$(shell_quote "$marker_private_path") reason=mkdir_failed"
+    return 0
+  fi
+  if ! chmod 700 "$marker_pm_root"; then
+    log_line "WARN" "quota.blocked_marker_private_store_failed path=$(shell_quote "$marker_private_path") reason=chmod_failed"
+    return 0
+  fi
+  if ! cp -- "$marker_path" "$marker_private_path"; then
+    log_line "WARN" "quota.blocked_marker_private_store_failed path=$(shell_quote "$marker_private_path") reason=copy_failed"
+    return 0
+  fi
+  return 0
+}
+
 latest_active_primary_quota_block_marker() {
   local target_model="$1"
+  local marker_root
 
-  python3 - "$CODEX_POSTMORTEM_DIR" "$target_model" <<'PY'
+  marker_root="$(quota_block_marker_root)"
+  if ! quota_block_validate_private_marker_root "$marker_root"; then
+    return 1
+  fi
+
+  python3 - "$marker_root" "$target_model" <<'PY'
 from pathlib import Path
 import math
 import sys
@@ -172,6 +234,7 @@ EOF
     log_line "ERROR" "quota.blocked_marker_failed path=$(shell_quote "$marker_path") reason=rename_failed"
     return 0
   fi
+  quota_block_copy_marker_to_private_store "$marker_path" "$(quota_block_marker_root)"
 
   log_line "WARN" "quota.blocked_marker path=$(shell_quote "$marker_path") target_model=$CODEX_MODEL marker_source_phase=$marker_source_phase blocked_bucket=$blocked_buckets blocked_until=$(format_epoch_local "$blocked_until_epoch") quota_identity_changed=$marker_identity_changed"
 }

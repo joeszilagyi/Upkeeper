@@ -375,7 +375,6 @@ ensure_log_parent() {
         "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" "$(id -u)" "$log_parent_uid" >&2
       exit 3
     fi
-
     if (( (8#$log_parent_mode & 8#022) != 0 )); then
       printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=unsafe_permissions mode=%s\n' \
         "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" "$log_parent_mode" >&2
@@ -386,15 +385,48 @@ ensure_log_parent() {
 
 ensure_run_tmp_dir() {
   if [[ -n "$RUN_TMP_DIR" ]]; then
+    if [[ -L "$RUN_TMP_DIR" ]]; then
+      die "run temp directory is a symlink $RUN_TMP_DIR"
+    fi
+    if [[ ! -d "$RUN_TMP_DIR" ]]; then
+      die "run temp directory is not a directory $RUN_TMP_DIR"
+    fi
+    if ! chmod 700 "$RUN_TMP_DIR"; then
+      die "run temp directory is not writable $RUN_TMP_DIR"
+    fi
+    owner="$(stat -Lc '%u' -- "$RUN_TMP_DIR" 2>/dev/null || printf '')"
+    if [[ -z "$owner" || "$owner" != "$(id -u)" ]]; then
+      die "run temp directory has unexpected owner $RUN_TMP_DIR"
+    fi
+    mode="$(stat -Lc '%a' -- "$RUN_TMP_DIR" 2>/dev/null || printf '')"
+    if [[ -z "$mode" || "$mode" != 700 ]]; then
+      die "run temp directory permissions are insecure $RUN_TMP_DIR"
+    fi
+    log_line "INFO" "run.tmp_dir path=$(shell_quote "$RUN_TMP_DIR")" >/dev/null
     return 0
   fi
 
   local tmp_base="${TMPDIR:-/tmp}"
-  RUN_TMP_DIR="$tmp_base/upkeeper-$CYCLE_RUN_HASH"
-  if ! mkdir -p -- "$RUN_TMP_DIR"; then
-    die "failed to create run temp directory $RUN_TMP_DIR"
+  local mode owner
+  if ! RUN_TMP_DIR="$(mktemp -d "$tmp_base/upkeeper-XXXXXX")"; then
+    die "failed to create run temp directory under $tmp_base"
   fi
-  chmod 700 "$RUN_TMP_DIR" 2>/dev/null || true
+
+  if ! chmod 700 "$RUN_TMP_DIR"; then
+    die "run temp directory is not writable $RUN_TMP_DIR"
+  fi
+  owner="$(stat -Lc '%u' -- "$RUN_TMP_DIR" 2>/dev/null || printf '')"
+  if [[ -z "$owner" || "$owner" != "$(id -u)" ]]; then
+    die "run temp directory has unexpected owner $RUN_TMP_DIR"
+  fi
+  mode="$(stat -Lc '%a' -- "$RUN_TMP_DIR" 2>/dev/null || printf '')"
+  if [[ -z "$mode" || "$mode" != 700 ]]; then
+    die "run temp directory permissions are insecure $RUN_TMP_DIR"
+  fi
+  if [[ -L "$RUN_TMP_DIR" ]]; then
+    rm -rf -- "$RUN_TMP_DIR"
+    die "run temp directory is a symlink $RUN_TMP_DIR"
+  fi
   log_line "INFO" "run.tmp_dir path=$(shell_quote "$RUN_TMP_DIR")" >/dev/null
 }
 

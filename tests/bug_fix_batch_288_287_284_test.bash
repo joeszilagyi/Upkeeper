@@ -53,7 +53,7 @@ source "$PROJECT_ROOT/lib/upkeeper/codex_io.bash"
 source "$PROJECT_ROOT/lib/upkeeper/lattice.bash"
 source "$PROJECT_ROOT/lib/upkeeper/help_selection.bash"
 
-test_record_startup_anomaly_gate_review_ignores_model_attestation() {
+test_record_startup_anomaly_gate_review_rejects_missing_log_review_marker() {
   local repo="$TEST_TMP_ROOT/startup-gate"
   local state_file
   make_git_repo "$repo"
@@ -83,17 +83,55 @@ test_record_startup_anomaly_gate_review_ignores_model_attestation() {
 
   record_startup_anomaly_gate_review "$LAST_MESSAGE_FILE" "REVIEWED_CLEAN" "0"
 
-  [[ "$STARTUP_ANOMALY_GATE_RESOLVED" == "1" ]] || fail "startup gate did not resolve from wrapper log evidence"
+  [[ -z "$STARTUP_ANOMALY_GATE_RESOLVED" ]] || fail "startup gate resolved without a log review marker"
   [[ -f "$state_file" ]] || fail "startup anomaly state file was not written"
-  grep -Fxq 'status=resolved' "$state_file" || fail "startup anomaly state was not marked resolved"
-  if grep -q 'status=unresolved' "$state_file"; then
-    fail "startup anomaly state remained unresolved"
-  fi
+  grep -Fq 'status=unresolved' "$state_file" || fail "startup anomaly state was not marked unresolved"
+  grep -Fq 'reason=missing_current_cycle_log_review_evidence' "$state_file" || fail "startup anomaly unresolved for wrong reason"
+}
+
+test_record_startup_anomaly_gate_review_requires_matching_log_review_marker() {
+  local repo="$TEST_TMP_ROOT/startup-gate-288-marker"
+  local state_file
+  make_git_repo "$repo"
+  mkdir -p "$repo/runtime"
+
+  LOG_FILE="$repo/session.log"
+  LAST_MESSAGE_FILE="$repo/last-message.txt"
+  STARTUP_FINISH_CAPTURE="$repo/finish.txt"
+  CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$repo/state"
+  STARTUP_ANOMALY_GATE="1"
+  STARTUP_ANOMALY_REASONS="none"
+  STARTUP_ANOMALY_GATE_CHANGED_PATH_VIOLATION="0"
+  STARTUP_ANOMALY_GATE_RESOLVED=""
+  CYCLE_ID="cycle-startup-288-marker"
+  CYCLE_RUN_HASH="run-startup-288-marker"
+  ROOT_DIR="$repo"
+  SELF_PATH="$PROJECT_ROOT/Upkeeper"
+
+  mkdir -p "$CODEX_STARTUP_ANOMALY_GATE_STATE_DIR"
+  state_file="$CODEX_STARTUP_ANOMALY_GATE_STATE_DIR/$CYCLE_RUN_HASH.state"
+  : >"$LOG_FILE"
+  printf '%s [INFO] cycle.start cycle=%s\n' "$(timestamp_now)" "$CYCLE_ID" >>"$LOG_FILE"
+  printf '%s [INFO] run.start cycle=%s\n' "$(timestamp_now)" "$CYCLE_ID" >>"$LOG_FILE"
+  printf '%s [INFO] run.finish cycle=%s\n' "$(timestamp_now)" "$CYCLE_ID" >>"$LOG_FILE"
+  printf '%s [INFO] cycle.exit cycle=%s\n' "$(timestamp_now)" "$CYCLE_ID" >>"$LOG_FILE"
+  printf 'UPKEEPER_LOG_REVIEW: CHECKED cycle=%s anomalies=none log_sha256=%s\n' \
+    "$CYCLE_ID" "0000000000000000000000000000000000000000000000000000000000000000" \
+    >"$LAST_MESSAGE_FILE"
+
+  record_startup_anomaly_gate_review "$LAST_MESSAGE_FILE" "REVIEWED_CLEAN" "0"
+
+  [[ -z "$STARTUP_ANOMALY_GATE_RESOLVED" ]] || fail "startup gate resolved from mismatched log review marker"
+  [[ -f "$state_file" ]] || fail "startup anomaly state file was not written"
+  grep -Fq 'status=unresolved' "$state_file" || fail "startup anomaly state was not marked unresolved"
+  grep -Fq 'reason=missing_current_cycle_log_review_evidence' "$state_file" || fail "startup anomaly unresolved for wrong reason"
 }
 
 test_source_mutation_fingerprint_tracks_ref_and_reflog_changes() {
   local repo="$TEST_TMP_ROOT/source-mutation-fingerprint"
   local before after
+  local before_head before_branch before_index_tree
+  local after_head after_branch after_index_tree
   make_git_repo "$repo"
 
   cd "$repo"
@@ -102,6 +140,13 @@ test_source_mutation_fingerprint_tracks_ref_and_reflog_changes() {
   git commit -q -m "base fixture"
 
   before="$(upkeeper_source_mutation_fingerprint)"
+  before_head="$(git rev-parse --verify HEAD)"
+  before_branch="$(git symbolic-ref --short -q HEAD)"
+  before_index_tree="$(git write-tree)"
+
+  [[ -n "$before_head" ]] || fail "baseline source mutation setup lacked HEAD"
+  [[ -n "$before_branch" ]] || fail "baseline source mutation setup lacked branch"
+  [[ -n "$before_index_tree" ]] || fail "baseline source mutation setup lacked index-tree"
 
   printf 'mutated\n' >>tracked.txt
   git add tracked.txt
@@ -112,6 +157,14 @@ test_source_mutation_fingerprint_tracks_ref_and_reflog_changes() {
   [[ -n "$before" ]] || fail "baseline source mutation fingerprint was empty"
   [[ -n "$after" ]] || fail "post-commit source mutation fingerprint was empty"
   [[ "$before" != "$after" ]] || fail "source mutation fingerprint did not change after committed git history mutation"
+  after_head="$(git -C "$repo" rev-parse --verify HEAD)"
+  after_branch="$(git -C "$repo" symbolic-ref --short -q HEAD)"
+  after_index_tree="$(git -C "$repo" write-tree)"
+  [[ -n "$after_head" ]] || fail "post-commit source mutation fingerprint setup lacked HEAD"
+  [[ "$after_head" != "$before_head" ]] || fail "HEAD was unchanged after committed git history mutation"
+  [[ -n "$after_index_tree" ]] || fail "post-commit source mutation fingerprint setup lacked index-tree"
+  [[ "$after_index_tree" != "$before_index_tree" ]] || fail "index-tree was unchanged after committed git history mutation"
+  [[ "$after_branch" == "$before_branch" ]] || fail "branch changed after local commit in baseline test"
 }
 
 test_manifest_selection_uses_live_file_mtime_instead_of_manifest_mtime() {
@@ -178,7 +231,8 @@ EOF
   [[ "$selected" == "stale.sh" ]] || fail "manifest-based selection used stale manifest mtime; expected stale.sh by live file mtime"
 }
 
-test_record_startup_anomaly_gate_review_ignores_model_attestation
+test_record_startup_anomaly_gate_review_rejects_missing_log_review_marker
+test_record_startup_anomaly_gate_review_requires_matching_log_review_marker
 test_source_mutation_fingerprint_tracks_ref_and_reflog_changes
 test_manifest_selection_uses_live_file_mtime_instead_of_manifest_mtime
 printf 'bug_fix_batch_288_287_284_test: ok\n'

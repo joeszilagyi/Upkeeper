@@ -6,6 +6,13 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-11: dirty-checkout reconciliation changes:
+	1. Hardened direct fallback recovery so parent cycles always create a private fallback contract directory before launching a child run, preserve contract-carried target and issue context, and cleanly finish quota-triggered dry-run fallback orchestration.
+	2. Strengthened fallback and active-lock trust boundaries by hashing inherited fallback-chain tokens in lock state, requiring matching parent-process fingerprints for lock inheritance, and validating dry-run fallback tests against the real direct-child contract instead of looser shell-subprocess behavior.
+	3. Hardened precontact backup and quota-marker private state by requiring private temp and vault directories, rejecting symlinked backup-root path components, removing backup identifiers from operator log lines, cleaning restore temp state on failure, and mirroring active quota markers into a private store instead of trusting public marker paths alone.
+	4. Tightened operator-facing status and issue-fix trust rules by treating only plain accepted final markers as recoverable session outcomes, mapping `NO_CHANGES` to wrapper-owned work completion instead of a model marker contract, and ignoring inferred issue target files unless the issue workflow explicitly selected them.
+	5. Added salvage validation for the rescued bug-fix batches and lattice edge cases covering checked-out branch import state, read-only backups, transient-artifact age pruning, secure restore cleanup, quota-marker privacy, startup-anomaly evidence requirements, and issue-workflow target handling.
+
 2026-05-11: post-v1.2.12 catch-up changes:
 	1. Fixed `CODEX_MODE` parsing so the default sandbox pair `--sandbox workspace-write` remains valid while malformed first tokens, malformed sandbox arguments, and unsafe unsandboxed modes still fail closed with clear errors.
 	2. Fixed pull-request CI scope classification so docs-only detection fetches any missing base or head commit before diffing and falls back to full validation when commit scope cannot be proven locally.

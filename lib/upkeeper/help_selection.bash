@@ -592,11 +592,11 @@ import fnmatch
 import json
 import os
 import random
-import re
 import stat as statmod
 import subprocess
 import sys
 import time
+import re
 from pathlib import Path
 
 (
@@ -1006,9 +1006,12 @@ def manifest_paths(path: str) -> tuple[list[tuple[float, str]], str]:
         rel_path = str(item.get("rel_path", ""))
         if not rel_path:
             continue
+        stat_result, error = source_safe_file_stat(rel_path)
+        if error:
+            continue
         try:
-            mtime = float(item.get("mtime", 0))
-        except (TypeError, ValueError):
+            mtime = float(stat_result.st_mtime)
+        except (AttributeError, TypeError, ValueError):
             mtime = 0.0
         paths.append((mtime, rel_path))
     return paths, "manifest"

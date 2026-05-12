@@ -836,6 +836,97 @@ PY
   assert_sql_value "$quota_count_before" "select count(*) from artifact_refs where artifact_kind='quota_block_marker'"
 }
 
+test_import_git_prefers_checked_out_branch_state() {
+  local repo DB state
+
+  repo="$TEST_TMP_ROOT/lattice-import-git-head-branch"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  mkdir -p "$repo"
+  (
+    cd "$repo"
+    git init -q
+    git config user.name 'Lattice Test'
+    git config user.email 'lattice@example.invalid'
+    printf 'kept on master\n' >target.txt
+    git add target.txt
+    git commit -q -m "add target"
+    git checkout -q -b dead-delete
+    rm -f target.txt
+    git add -A
+    git commit -q -m "delete target on dead branch"
+    git checkout -q master
+  )
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/import-head-branch-init.out"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" import-git >"$TEST_TMP_ROOT/import-head-branch.out"
+
+  state="$(python3 - "$DB" <<'PY'
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+row = conn.execute("select current_state from files where canonical_path='target.txt'").fetchone()
+print("" if row is None else row[0] or "")
+conn.close()
+PY
+)"
+  [[ "$state" == "active" ]] || fail "import-git set head-tracked file as $state"
+}
+
+test_backup_is_read_only() {
+  local repo DB counts_before counts_after before_source_count before_artifact_count after_source_count after_artifact_count
+
+  repo="$TEST_TMP_ROOT/lattice-backup-read-only"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  mkdir -p "$repo"
+  (
+    cd "$repo"
+    git init -q
+    git config user.name 'Lattice Test'
+    git config user.email 'lattice@example.invalid'
+    printf 'noop\n' >README.md
+    git add README.md
+    git commit -q -m "init"
+  )
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/backup-read-only-init.out"
+
+  counts_before="$(python3 - "$DB" <<'PY'
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+print(
+    f"{conn.execute('select count(*) from source_records').fetchone()[0]} "
+    f"{conn.execute('select count(*) from artifact_refs').fetchone()[0]}"
+)
+conn.close()
+PY
+)"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" backup >"$TEST_TMP_ROOT/backup-read-only.out"
+  counts_after="$(python3 - "$DB" <<'PY'
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+print(
+    f"{conn.execute('select count(*) from source_records').fetchone()[0]} "
+    f"{conn.execute('select count(*) from artifact_refs').fetchone()[0]}"
+)
+conn.close()
+PY
+)"
+
+  before_source_count="${counts_before%% *}"
+  before_artifact_count="${counts_before##* }"
+  after_source_count="${counts_after%% *}"
+  after_artifact_count="${counts_after##* }"
+  if [[ "$before_source_count" != "$after_source_count" ]]; then
+    fail "backup mutated source_records count: before=$before_source_count after=$after_source_count"
+  fi
+  if [[ "$before_artifact_count" != "$after_artifact_count" ]]; then
+    fail "backup mutated artifact_refs count: before=$before_artifact_count after=$after_artifact_count"
+  fi
+}
+
 test_missing_selection_path_stays_missing() {
   local repo DB
 
@@ -1060,6 +1151,48 @@ test_export_backup_output_collision() {
   [[ "$rc" -ne 0 ]] || fail "backup to live DB should fail"
   grep -Fq "unsafe output path collides" "$TEST_TMP_ROOT/backup-collision-live.err" ||
     fail "backup to live DB did not report collision"
+}
+
+test_prune_respects_transient_artifact_older_than_days() {
+  local repo old_epoch now rc
+
+  repo="$TEST_TMP_ROOT/lattice-prune-artifact-cutoff"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/prune-cutoff-init.out"
+
+  now=$(date +%s)
+  old_epoch=$((now - 172800))
+  fresh_epoch=$((now - 3600))
+
+  run_sql "
+    insert into artifact_refs(repo_id, cycle_pk, source_id, artifact_kind, path, exists_at_record_time, observed_epoch, retained)
+      select repo_id, null, null, 'transcript', 'runtime/transcripts/artifact-old.log', 1, $old_epoch, 1 from repositories;
+    insert into artifact_refs(repo_id, cycle_pk, source_id, artifact_kind, path, exists_at_record_time, observed_epoch, retained)
+      select repo_id, null, null, 'transcript', 'runtime/transcripts/artifact-fresh.log', 1, $fresh_epoch, 1 from repositories;
+  "
+
+  lattice prune --transient-artifacts --older-than-days 1 >"$TEST_TMP_ROOT/prune-artifacts-cutoff.out" 2>"$TEST_TMP_ROOT/prune-artifacts-cutoff.err"
+
+  python3 - "$DB" <<'PY' || fail "transient artifact prune cutoff did not keep fresh artifact only"
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+rows = conn.execute(
+    "select path, retained from artifact_refs where path like 'runtime/transcripts/artifact-%.log' order by path"
+).fetchall()
+expected = {
+    "runtime/transcripts/artifact-fresh.log": 1,
+    "runtime/transcripts/artifact-old.log": 0,
+}
+if len(rows) != len(expected):
+    raise AssertionError(f"expected {len(expected)} fixture artifacts, got {len(rows)}: {rows}")
+for path, retained in rows:
+    if expected.get(path) != retained:
+        raise AssertionError(f"unexpected retained value for {path}: got {retained}, expected {expected[path]}")
+PY
 }
 
 test_recover_no_backup_first_toggle() {
@@ -1501,6 +1634,8 @@ PY
 
 test_lattice_cli_contracts
 test_no_git_import_and_recovery
+test_import_git_prefers_checked_out_branch_state
+test_backup_is_read_only
 test_missing_selection_path_stays_missing
 test_wrapper_required_policy
 test_unsafe_lattice_db_path_is_rejected_by_default
@@ -1508,6 +1643,7 @@ test_default_runtime_symlink_db_path_is_rejected
 test_ordinary_command_does_not_create_missing_db
 test_lattice_jsonl_input_guardrails
 test_export_backup_output_collision
+test_prune_respects_transient_artifact_older_than_days
 test_recover_no_backup_first_toggle
 test_review_parser_and_redaction
 test_clean_touch_uses_mtime_ns

@@ -35,12 +35,13 @@ log_line() {
 }
 
 test_latest_active_primary_quota_block_marker_rejects_nonfinite_epoch() {
-  local tmp_dir bad_dir good_dir err_file output good_marker future_epoch
+  local tmp_dir bad_dir good_dir private_root output good_marker expected_marker err_file future_epoch
 
   tmp_dir="$TEST_TMP_ROOT/read"
   bad_dir="$tmp_dir/bad"
   good_dir="$tmp_dir/good"
-  mkdir -p "$bad_dir" "$good_dir"
+  private_root="$tmp_dir/private"
+  mkdir -p "$bad_dir" "$good_dir" "$private_root"
 
   cat >"$bad_dir/primary-quota-blocked-until.txt" <<'EOF'
 primary_model: gpt-test
@@ -53,26 +54,34 @@ EOF
 primary_model: gpt-test
 blocked_until_epoch: $future_epoch
 EOF
+  mkdir -p "$private_root/good"
+  cp "$good_marker" "$private_root/good/primary-quota-blocked-until.txt"
+  expected_marker="$private_root/good/primary-quota-blocked-until.txt"
 
   CODEX_POSTMORTEM_DIR="$tmp_dir"
+  UPKEEPER_QUOTA_PRIMARY_BLOCK_MARKER_DIR="$private_root"
   err_file="$tmp_dir/stderr.txt"
   output="$(latest_active_primary_quota_block_marker "gpt-test" 2>"$err_file")" ||
     fail "latest active marker lookup failed"
 
-  [[ "$output" == "$good_marker" ]] ||
-    fail "expected $good_marker, got ${output:-<empty>}"
+  [[ "$output" == "$expected_marker" ]] ||
+    fail "expected $expected_marker, got ${output:-<empty>}"
+  [[ "$output" != "$good_marker" ]] || fail "public marker was incorrectly selected"
   [[ ! -s "$err_file" ]] ||
     fail "malformed marker produced stderr: $(tr '\n' ' ' <"$err_file")"
 }
 
 test_write_primary_quota_blocked_marker_writes_final_marker() {
-  local tmp_dir marker_path temp_paths now_epoch
+  local tmp_dir public_root private_root marker_path private_marker_path temp_paths now_epoch
 
   tmp_dir="$TEST_TMP_ROOT/write"
-  mkdir -p "$tmp_dir"
+  public_root="$tmp_dir/public"
+  private_root="$tmp_dir/private"
+  mkdir -p "$public_root"
   now_epoch="$(date '+%s')"
 
-  CODEX_POSTMORTEM_DIR="$tmp_dir"
+  CODEX_POSTMORTEM_DIR="$public_root"
+  UPKEEPER_QUOTA_PRIMARY_BLOCK_MARKER_DIR="$private_root"
   CYCLE_ID="20260507T000000-0700-test"
   CODEX_MODEL="gpt-test"
   primary_guardrail_decision="stop"
@@ -92,12 +101,16 @@ test_write_primary_quota_blocked_marker_writes_final_marker() {
 
   write_primary_quota_blocked_marker "test quota stop"
 
-  marker_path="$tmp_dir/$CYCLE_ID/primary-quota-blocked-until.txt"
-  [[ -s "$marker_path" ]] || fail "marker was not written"
+  marker_path="$public_root/$CYCLE_ID/primary-quota-blocked-until.txt"
+  private_marker_path="$private_root/$CYCLE_ID/primary-quota-blocked-until.txt"
+  [[ -s "$marker_path" ]] || fail "public marker was not written"
+  [[ -s "$private_marker_path" ]] || fail "private marker was not written"
   grep -qx 'primary_model: gpt-test' "$marker_path" ||
     fail "marker primary_model field missing"
   grep -qx 'blocked_bucket: primary' "$marker_path" ||
     fail "marker blocked_bucket field missing"
+  grep -qx 'primary_model: gpt-test' "$private_marker_path" ||
+    fail "private marker primary_model field missing"
 
   shopt -s nullglob
   temp_paths=("$marker_path".tmp.*)
@@ -106,6 +119,35 @@ test_write_primary_quota_blocked_marker_writes_final_marker() {
     fail "temporary marker path left behind"
 }
 
+test_latest_active_primary_quota_block_marker_ignores_postmortem_only_marker() {
+  local tmp_dir public_root private_root legacy_cycle output err_file future_epoch
+
+  tmp_dir="$TEST_TMP_ROOT/legacy-only"
+  public_root="$tmp_dir/public"
+  private_root="$tmp_dir/private"
+  mkdir -p "$public_root"
+
+  future_epoch="$(($(date '+%s') + 3600))"
+  legacy_cycle="legacy-cycle"
+  mkdir -p "$public_root/$legacy_cycle"
+  cat >"$public_root/$legacy_cycle/primary-quota-blocked-until.txt" <<EOF
+primary_model: gpt-test
+blocked_until_epoch: $future_epoch
+EOF
+
+  CODEX_POSTMORTEM_DIR="$public_root"
+  UPKEEPER_QUOTA_PRIMARY_BLOCK_MARKER_DIR="$private_root"
+  err_file="$tmp_dir/stderr.txt"
+  if output="$(latest_active_primary_quota_block_marker "gpt-test" 2>"$err_file")"; then
+    fail "latest active marker lookup incorrectly accepted public-only marker"
+  fi
+  [[ -z "${output:-}" ]] || fail "latest active marker lookup should have returned no marker"
+  if [[ -s "$err_file" ]]; then
+    fail "latest active marker lookup printed unexpected stderr: $(tr '\n' ' ' <"$err_file")"
+  fi
+}
+
 test_latest_active_primary_quota_block_marker_rejects_nonfinite_epoch
 test_write_primary_quota_blocked_marker_writes_final_marker
+test_latest_active_primary_quota_block_marker_ignores_postmortem_only_marker
 printf 'ok - quota_block_markers\n'

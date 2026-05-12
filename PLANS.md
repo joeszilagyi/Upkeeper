@@ -1282,3 +1282,11 @@ Validation:
 - `for test_script in tests/*.bash; do bash "$test_script"; done`
 - `git diff --check`
 - `tools/validate_upkeeper.sh --quick`
+
+## Dirty Checkout Reconciliation After PR 342 Merge
+- Status: completed
+- Goal: salvage still-valuable uncommitted fixes from `/home/joe/projects/Upkeeper/main` onto clean merged `main` without replaying stale lattice catch-up churn.
+- Constraints: preserve original dirty checkout untouched; do not reintroduce superseded lattice harness regressions from PR 342; keep operator-visible docs aligned with security behavior changes.
+- Likely files: `Upkeeper`, fallback/active-lock/precontact/quota/session/status modules, security docs/prompts, targeted tests, and selective validator/lattice test updates.
+- Validation: `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`; `for test_script in tests/*.bash; do bash "$test_script"; done`; `git diff --check`; `tools/validate_upkeeper.sh --quick`
+- Outcome: salvaged the fallback, lock inheritance, precontact backup, quota-marker, session-store, status-marker, startup-anomaly, and issue-fix hardening work from the dirty checkout; preserved the already-merged PR 342 lattice and CI repairs while selectively carrying over only the additional lattice regression coverage that still applied; repaired copied regressions in fallback contract creation, restore-temp cleanup, and lattice test globals before promoting the salvage set to a clean validated branch state.

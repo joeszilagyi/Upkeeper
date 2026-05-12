@@ -1,7 +1,6 @@
 # Codex final response markers are the contract between the model and wrapper.
-# Session-end parsing is only a fallback diagnostic for cases where the marker is
-# missing and the operator needs to know whether the turn aborted or completed
-# without an agent message.
+# Session parsing provides diagnostics for missing markers so operators can
+# diagnose turn shape issues without trusting natural-language inference.
 recover_status_marker_from_review_outcome() {
   local last_message_file="$1"
   local codex_exit_value="$2"
@@ -81,18 +80,15 @@ resolved_status_marker_from_analysis() {
   local analysis="$1"
   local codex_exit="$2"
   local task_complete_last_agent_message="$3"
-  local accepted candidate reason
+  local accepted
 
   accepted="$(json_field "$analysis" '.accepted_marker')"
+  if [[ "$accepted" == "NO_CHANGES" ]]; then
+    accepted="WORK_DONE"
+  fi
   if [[ -n "$accepted" ]]; then
     printf '%s' "$accepted"
     return 0
-  fi
-
-  candidate="$(json_field "$analysis" '.candidate_marker')"
-  reason="$(json_field "$analysis" '.candidate_rejection_reason')"
-  if [[ -n "$candidate" && "$reason" != "decorated_marker" && "$codex_exit" == "0" && "$task_complete_last_agent_message" == "present" ]]; then
-    printf '%s' "$candidate"
   fi
 }
 

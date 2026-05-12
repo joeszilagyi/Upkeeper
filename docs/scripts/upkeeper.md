@@ -263,9 +263,9 @@ Prompt behavior:
     `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` is set and `age` is available;
     otherwise it uses plain local mode unless encrypted backup is required.
     Plain mode is a recovery aid, not a same-user security boundary. Backup logs
-    and prompts include only `backup_id`, target, sha256, mode, encrypted,
-    `protected_from_backend`, and `path_redacted=1`; the vault path is not
-    prompt-visible. Restore a plain backup by id with:
+    and prompts include target, mode, encrypted, `protected_from_backend`, and
+    `path_redacted=1`; the vault path is not prompt-visible. Restore a plain
+    backup by id with:
       `tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID`
   - A repo-root `.upkeeperignore`, or the file named by `UPKEEPER_IGNORE_FILE`,
     is a target-selection firewall. It uses simple Gitignore-style glob lines

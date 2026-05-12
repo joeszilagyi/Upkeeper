@@ -47,6 +47,7 @@ launch_screen_fallback_loop() {
   local continuous_q max_children_q max_seconds_q
   local review_module review_module_q
   local fallback_chain_token
+  local contract_path_q
 
   screen_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen"
   session_name="upkeeper-${CYCLE_ID//[^A-Za-z0-9]/_}"
@@ -85,6 +86,7 @@ launch_screen_fallback_loop() {
   printf -v loop_parent_comm_q '%q' "$loop_parent_comm"
   printf -v loop_parent_args_q '%q' "$loop_parent_args"
   printf -v primary_model_q '%q' "$CODEX_MODEL"
+  printf -v contract_path_q '%q' "${CODEX_FALLBACK_CONTRACT_PATH:-}"
   fallback_chain_token="$(generate_fallback_chain_token)"
 
   if [[ -n "$PROMPT_FILE" ]]; then
@@ -249,6 +251,7 @@ while true; do
   CODEX_PRIMARY_MODEL_CONTEXT=$primary_model_q \
   CODEX_FALLBACK_TRIGGER=$trigger_q \
   CODEX_PARENT_CYCLE_ID=$(shell_quote "$CYCLE_ID") \
+  CODEX_FALLBACK_CONTRACT_PATH=$contract_path_q \
   CODEX_SCREEN_FALLBACK_CHILD_ID="\$child_cycle_id" \
   CODEX_LOOP_PARENT_PID=$loop_parent_pid_q \
   CODEX_LOOP_PARENT_COMM=$loop_parent_comm_q \

@@ -612,6 +612,7 @@ upkeeper_issue_workflow_post_comment() {
 }
 
 upkeeper_source_mutation_fingerprint() {
+  local head_ref branch_ref index_tree
   {
     printf 'tracked-diff\n'
     git diff --no-ext-diff --binary --
@@ -620,16 +621,22 @@ upkeeper_source_mutation_fingerprint() {
     printf '\nstatus\n'
     git status --porcelain=v1 --untracked-files=all
     printf '\nHEAD\n'
-    if ! git rev-parse --verify HEAD 2>/dev/null; then
+    if ! head_ref="$(git rev-parse --verify HEAD 2>/dev/null)"; then
       printf 'unknown'
+    else
+      printf '%s' "$head_ref"
     fi
     printf '\nbranch\n'
-    if ! git symbolic-ref --short -q HEAD 2>/dev/null; then
+    if ! branch_ref="$(git symbolic-ref --short -q HEAD 2>/dev/null)"; then
       printf 'detached_or_missing'
+    else
+      printf '%s' "$branch_ref"
     fi
     printf '\nindex-tree\n'
-    if ! git write-tree 2>/dev/null; then
+    if ! index_tree="$(git write-tree 2>/dev/null)"; then
       printf 'unknown'
+    else
+      printf '%s' "$index_tree"
     fi
     printf '\nrefs\n'
     if ! git for-each-ref --sort=refname --format='%(refname) %(objectname)' refs/heads refs/remotes 2>/dev/null; then
@@ -655,50 +662,36 @@ append_csv_value() {
 }
 
 validate_codex_mode_args_or_exit() {
-  local first_mode_token
   local mode_arg
   local expect_sandbox_value=0
 
   CODEX_MODE_ARGS=()
-  read -r -a CODEX_MODE_ARGS <<<"${CODEX_MODE_STRING:-}"
-  if ((${#CODEX_MODE_ARGS[@]} == 0)); then
+  if [[ -z "${CODEX_MODE_STRING:-}" ]]; then
     printf 'Upkeeper: invalid CODEX_MODE first token %q; expected a Codex option beginning with --\n' "${CODEX_MODE_STRING:-}" >&2
     exit 2
   fi
-  first_mode_token="${CODEX_MODE_ARGS[0]}"
-  if [[ "$first_mode_token" != --* || "$first_mode_token" == ---* ]]; then
-    if [[ "$first_mode_token" == danger-full-access || "$first_mode_token" == --dangerously-bypass-approvals-and-sandbox ]]; then
-      printf 'Upkeeper: invalid CODEX_MODE first token %q; Genie Protocol requires sandboxed backend Codex execution\n' "--dangerously-bypass-approvals-and-sandbox" >&2
-    else
-      printf 'Upkeeper: invalid CODEX_MODE first token %q; expected a Codex option beginning with --\n' "$first_mode_token" >&2
-    fi
-    exit 2
-  fi
+  read -r -a CODEX_MODE_ARGS <<<"$CODEX_MODE_STRING"
   for mode_arg in "${CODEX_MODE_ARGS[@]}"; do
     if (( expect_sandbox_value )); then
-      expect_sandbox_value=0
       if [[ "$mode_arg" != workspace-write && "$mode_arg" != read-only ]]; then
         if [[ "$mode_arg" == danger-full-access || "$mode_arg" == --dangerously-bypass-approvals-and-sandbox ]]; then
-          printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "--dangerously-bypass-approvals-and-sandbox" >&2
+          printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "$mode_arg" >&2
           exit 2
         fi
         printf 'Upkeeper: invalid CODEX_MODE token %q; expected a sandbox mode argument\n' "$mode_arg" >&2
         exit 2
       fi
+      expect_sandbox_value=0
       continue
     fi
 
     if [[ "$mode_arg" != --* || "$mode_arg" == ---* ]]; then
-      if [[ "$mode_arg" == danger-full-access || "$mode_arg" == --dangerously-bypass-approvals-and-sandbox ]]; then
-        printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "--dangerously-bypass-approvals-and-sandbox" >&2
-        exit 2
-      fi
       printf 'Upkeeper: invalid CODEX_MODE token %q; expected a Codex option beginning with --\n' "$mode_arg" >&2
       exit 2
     fi
     case "$mode_arg" in
       danger-full-access|--dangerously-bypass-approvals-and-sandbox)
-        printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "--dangerously-bypass-approvals-and-sandbox" >&2
+        printf 'Upkeeper: invalid CODEX_MODE token %q; Genie Protocol requires sandboxed backend Codex execution\n' "$mode_arg" >&2
         exit 2
         ;;
       --sandbox)
@@ -1022,13 +1015,11 @@ PY
 
   target_from_issue="$CODEX_ISSUE_FIX_TARGET_FILE"
   if [[ -z "${CODEX_TARGET_FILE:-}" ]]; then
-    if [[ -n "$target_from_issue" ]]; then
+    if [[ "$CODEX_ISSUE_FIX_SELECTED_LABEL" == "explicit" && -n "$target_from_issue" ]]; then
       CODEX_TARGET_FILE="$target_from_issue"
-      if [[ "$CODEX_ISSUE_FIX_SELECTED_LABEL" == "explicit" ]]; then
-        log_line "INFO" "issue_fix.target file_selected_from_explicit_issue number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") target_file=$(shell_quote "$CODEX_TARGET_FILE")"
-      else
-        log_line "INFO" "issue_fix.target file_selected_from_inferred_issue number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") selected_label=$(shell_quote "$CODEX_ISSUE_FIX_SELECTED_LABEL") target_file=$(shell_quote "$CODEX_TARGET_FILE")"
-      fi
+      log_line "INFO" "issue_fix.target file_selected_from_explicit_issue number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") target_file=$(shell_quote "$CODEX_TARGET_FILE")"
+    elif [[ -n "$target_from_issue" ]]; then
+      log_line "WARN" "issue_fix.target ignored reason=untrusted_inferred_source selected_label=$(shell_quote "$CODEX_ISSUE_FIX_SELECTED_LABEL") inferred_file=$(shell_quote "$target_from_issue")"
     fi
   fi
 

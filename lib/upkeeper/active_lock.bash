@@ -17,6 +17,17 @@ active_lock_field() {
   sed -n "s/^${key}=//p" "$file" | sed -n '1p'
 }
 
+fallback_chain_token_hash() {
+  local token="${1:-}"
+
+  python3 - "$token" <<'PY'
+import hashlib
+import sys
+
+print(hashlib.sha256(sys.argv[1].encode("utf-8")).hexdigest())
+PY
+}
+
 active_lock_age_seconds() {
   local path="$1"
   python3 - "$path" <<'PY'
@@ -59,7 +70,7 @@ release_active_lock() {
 
 acquire_active_lock_or_exit() {
   local lock_age_seconds lock_parent owner_pid owner_start owner_boot owner_cycle owner_run_hash owner_token fallback_inherit_fail state_file state_tmp
-  local fallback_parent_pid fallback_parent_start token_fd child_token
+  local fallback_parent_pid fallback_parent_start token_fd child_token child_token_hash
   local incomplete_lock_grace_seconds="30"
   if [[ -z "$CODEX_ACTIVE_LOCK_DIR" || "$CODEX_ACTIVE_LOCK_DIR" == "/" ]]; then
     log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=unsafe_lock_path"
@@ -83,12 +94,20 @@ acquire_active_lock_or_exit() {
     if process_fingerprint_alive "$owner_pid" "$owner_start" "$owner_boot"; then
       if [[ "${CODEX_FALLBACK_CHAIN_ACTIVE:-0}" == "1" && "${CODEX_ATTEMPT_ROLE:-}" == "fallback" ]]; then
         fallback_inherit_fail=""
+        child_token="${CODEX_FALLBACK_CHAIN_TOKEN:-}"
+        if [[ -z "$child_token" ]]; then
+          if ! [[ "${CODEX_FALLBACK_CHAIN_TOKEN_FD:-}" =~ ^[0-9]+$ ]]; then
+            fallback_inherit_fail="missing_fallback_chain_token_fd"
+          elif ! IFS= read -r child_token <&"${CODEX_FALLBACK_CHAIN_TOKEN_FD}"; then
+            fallback_inherit_fail="missing_fallback_chain_token_read"
+          fi
+        fi
         if [[ -z "${CODEX_PARENT_CYCLE_ID:-}" ]]; then
           fallback_inherit_fail="missing_parent_cycle"
-        elif ! [[ "${CODEX_FALLBACK_CHAIN_TOKEN_FD:-}" =~ ^[0-9]+$ ]]; then
-          fallback_inherit_fail="missing_fallback_chain_token_fd"
         elif [[ -z "$owner_token" ]]; then
           fallback_inherit_fail="missing_state_fallback_chain_token"
+        elif [[ -z "$child_token" ]]; then
+          fallback_inherit_fail="missing_fallback_chain_token_read"
         elif [[ "$owner_cycle" != "$CODEX_PARENT_CYCLE_ID" ]]; then
           fallback_inherit_fail="parent_cycle_mismatch"
         elif ! [[ "${CODEX_FALLBACK_PARENT_PID:-}" =~ ^[0-9]+$ ]]; then
@@ -99,10 +118,11 @@ acquire_active_lock_or_exit() {
           fallback_inherit_fail="parent_pid_mismatch"
         elif ! process_fingerprint_alive "${CODEX_FALLBACK_PARENT_PID:-}" "${CODEX_FALLBACK_PARENT_START:-}" "$owner_boot"; then
           fallback_inherit_fail="fallback_parent_process_fingerprint_mismatch"
-        elif ! IFS= read -r child_token <&"${CODEX_FALLBACK_CHAIN_TOKEN_FD}"; then
-          fallback_inherit_fail="missing_fallback_chain_token_read"
-        elif [[ "$owner_token" != "$child_token" ]]; then
-          fallback_inherit_fail="fallback_chain_token_mismatch"
+        else
+          child_token_hash="$(fallback_chain_token_hash "$child_token")"
+          if [[ "$owner_token" != "$child_token_hash" && "$owner_token" != "$child_token" ]]; then
+            fallback_inherit_fail="fallback_chain_token_mismatch"
+          fi
         fi
         token_fd="${CODEX_FALLBACK_CHAIN_TOKEN_FD:-}"
         [[ -n "$token_fd" ]] && eval "exec ${token_fd}<&-" 2>/dev/null || true
@@ -151,8 +171,8 @@ acquire_active_lock_or_exit() {
     printf 'wrapper_start=%s\n' "$(process_start_fingerprint "$$")"
     printf 'boot_id=%s\n' "$(system_boot_id)"
     printf 'root_dir=%s\n' "$ROOT_DIR"
-    printf 'self_path=%s\n' "$SELF_PATH"
-    printf 'fallback_chain_token=%s\n' "${CODEX_FALLBACK_CHAIN_TOKEN:-}"
+    printf 'self_path=%s\n' "${SELF_PATH:-}"
+    printf 'fallback_chain_token=%s\n' "$(fallback_chain_token_hash "${CODEX_FALLBACK_CHAIN_TOKEN:-}")"
     printf 'created_epoch=%s\n' "$(date '+%s')"
   } >"$state_tmp"; then
     rm -f -- "$state_tmp" 2>/dev/null || true

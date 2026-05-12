@@ -405,6 +405,15 @@ check_prompt_template() {
   grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 }
 
+check_default_prompt_target_isolation_contract() {
+  log "checking default prompt target isolation contract"
+  if grep -Fq -- "- select the next oldest eligible file" "$ROOT_DIR/prompts/default-review.md"; then
+    fail "default review prompt still grants unconditional replacement-target authority"
+  fi
+  grep -Fq -- "report \`STOPPED_ON_BLOCKER\` instead of" "$ROOT_DIR/prompts/default-review.md" ||
+    fail "default review prompt does not preserve STOPPED_ON_BLOCKER guidance for preselected targets"
+}
+
 check_help_and_diff() {
   local help validation_help
 
@@ -3261,6 +3270,7 @@ run_check syntax check_syntax
 run_check version_consistency check_version_consistency
 run_check module_map check_module_map
 run_check prompt_template check_prompt_template
+run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
 run_check codex_mode_validation check_codex_mode_validation

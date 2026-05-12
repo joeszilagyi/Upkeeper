@@ -6,6 +6,10 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-12: default prompt no longer grants unconditional replacement targets:
+	1. The default review prompt no longer contains a standalone "select the next oldest eligible file" instruction in the physical/safety exception branch.
+	2. Replacement selection is now explicitly conditional on the absence of `WRAPPER_PRESELECTED_REVIEW_TARGET`, and preselected-target cycles keep `STOPPED_ON_BLOCKER` as the required outcome when the selected file is impossible or unsafe.
+
 2026-05-12: private artifact umask at entry:
 	1. Upkeeper now sets `umask 077` at process entry before config loading or runtime artifact creation, so logs, transcripts, queue markers, postmortem files, locks, and similar local state default to owner-only permissions even on permissive host umask settings.
 	2. Added quick validation that fails if the entrypoint loses this early private-umask contract.

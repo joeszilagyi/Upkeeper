@@ -35,11 +35,12 @@ If one of those physical/safety exceptions applies:
 - state the exact exception
 - show the command/output proving it
 - do not touch that invalid file
-- select the next oldest eligible file
-- complete the execution on that replacement file only when this prompt does not include a
-  `WRAPPER_PRESELECTED_REVIEW_TARGET` block. If this prompt includes
-  `WRAPPER_PRESELECTED_REVIEW_TARGET` and the selected file is impossible, you
-  must report `STOPPED_ON_BLOCKER` instead of selecting a replacement.
+- if this prompt does not include a `WRAPPER_PRESELECTED_REVIEW_TARGET` block,
+  select the next oldest eligible file and complete the execution on that
+  replacement file only
+- if this prompt includes `WRAPPER_PRESELECTED_REVIEW_TARGET` and the selected
+  file is impossible or unsafe, you must report `STOPPED_ON_BLOCKER` instead of
+  selecting a replacement
 
 Scope rule -- generated and ignored artifacts:
 

@@ -473,12 +473,13 @@ check_gitignore_contract() {
 }
 
 check_force_added_gitignored_target_selection() {
-  local temp_dir client manifest_path rc
+  local temp_dir client manifest_path lattice_db rc
 
   log "checking force-added Git-ignored target exclusion"
   temp_dir="$(mktemp -d /tmp/upkeeper-gitignored-target.XXXXXX)"
   client="$temp_dir/client"
   manifest_path="$temp_dir/manifest.json"
+  lattice_db="$client/runtime/upkeeper-lattice/validation.sqlite3"
   mkdir -p "$client"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/10/fake-session.jsonl" "gpt-5.5"
 
@@ -515,7 +516,7 @@ check_force_added_gitignored_target_selection() {
         CODEX_FILE_MANIFEST_PATH="$manifest_path" \
         CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
         CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
-        UPKEEPER_LATTICE_DB="$temp_dir/lattice.sqlite3" \
+        UPKEEPER_LATTICE_DB="$lattice_db" \
         UPKEEPER_DRY_RUN=1 \
         ./Upkeeper "$@"
     ) >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
@@ -542,11 +543,11 @@ check_force_added_gitignored_target_selection() {
 
   "$ROOT_DIR/tools/upkeeper_lattice.py" \
     --root "$client" \
-    --db "$temp_dir/lattice-direct.sqlite3" \
+    --db "$lattice_db" \
     init >"$temp_dir/lattice-init.json"
   "$ROOT_DIR/tools/upkeeper_lattice.py" \
     --root "$client" \
-    --db "$temp_dir/lattice-direct.sqlite3" \
+    --db "$lattice_db" \
     query selection-candidates --mode max-cover --format jsonl >"$temp_dir/lattice-candidates.jsonl"
   python3 - "$temp_dir/lattice-candidates.jsonl" <<'PY' ||
 import json
@@ -567,12 +568,13 @@ PY
 }
 
 check_symlink_target_selection_guard() {
-  local temp_dir client manifest_path outside_target rc
+  local temp_dir client manifest_path lattice_db outside_target rc
 
   log "checking symlink target selection guard"
   temp_dir="$(mktemp -d /tmp/upkeeper-symlink-target.XXXXXX)"
   client="$temp_dir/client"
   manifest_path="$temp_dir/manifest.json"
+  lattice_db="$client/runtime/upkeeper-lattice/validation.sqlite3"
   outside_target="$temp_dir/outside-sentinel.txt"
   mkdir -p "$client"
   printf 'outside sentinel\n' >"$outside_target"
@@ -610,7 +612,7 @@ check_symlink_target_selection_guard() {
         CODEX_FILE_MANIFEST_PATH="$manifest_path" \
         CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
         CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
-        UPKEEPER_LATTICE_DB="$temp_dir/lattice.sqlite3" \
+        UPKEEPER_LATTICE_DB="$lattice_db" \
         UPKEEPER_DRY_RUN=1 \
         ./Upkeeper "$@"
     ) >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
@@ -637,11 +639,11 @@ check_symlink_target_selection_guard() {
 
   "$ROOT_DIR/tools/upkeeper_lattice.py" \
     --root "$client" \
-    --db "$temp_dir/lattice-direct.sqlite3" \
+    --db "$lattice_db" \
     init >"$temp_dir/lattice-init.json"
   "$ROOT_DIR/tools/upkeeper_lattice.py" \
     --root "$client" \
-    --db "$temp_dir/lattice-direct.sqlite3" \
+    --db "$lattice_db" \
     query selection-candidates --mode max-cover --format jsonl >"$temp_dir/lattice-candidates.jsonl"
   python3 - "$temp_dir/lattice-candidates.jsonl" <<'PY' ||
 import json
@@ -1460,6 +1462,7 @@ check_file_manifest_selection() {
       CODEX_FILE_MANIFEST_PATH="$manifest_path" \
       CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
       CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
+      UPKEEPER_LATTICE_ALLOW_UNSAFE_DB=1 \
       UPKEEPER_LATTICE_DB="$temp_dir/lattice.sqlite3" \
       UPKEEPER_DRY_RUN=1 \
       ./Upkeeper "$@" >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
@@ -1773,7 +1776,7 @@ PY
     source lib/upkeeper/tool_failure_queue.bash
     tool_failure_queue_finalize_run "lib/upkeeper/codex_io.bash" "$transcript" 0 "BLOCKED"
   )
-  marker_path_replay="$(printf '%s' "$temp_dir/failures/open/%s.json" "$marker_id")"
+  marker_path_replay="$(printf '%s/failures/open/%s.json' "$temp_dir" "$marker_id")"
   [[ "$(jq -r '.failure_count // 0' "$marker_path_replay")" == "1" ]] || fail "tool failure queue inflated failure_count on transcript replay"
 
   (

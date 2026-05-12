@@ -364,9 +364,8 @@ ensure_log_parent() {
     fi
 
     log_parent_uid="$(stat -Lc '%u' -- "$LOG_FILE_DIR" 2>/dev/null || printf '')"
-    log_parent_nlink="$(stat -Lc '%h' -- "$LOG_FILE_DIR" 2>/dev/null || printf '')"
     log_parent_mode="$(stat -Lc '%a' -- "$LOG_FILE_DIR" 2>/dev/null || printf '')"
-    if [[ -z "$log_parent_uid" || -z "$log_parent_nlink" || -z "$log_parent_mode" ]]; then
+    if [[ -z "$log_parent_uid" || -z "$log_parent_mode" ]]; then
       printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=stat_failed\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
       exit 3
     fi
@@ -374,11 +373,6 @@ ensure_log_parent() {
     if [[ "$log_parent_uid" != "$(id -u)" ]]; then
       printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=wrong_owner expected=%s actual=%s\n' \
         "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" "$(id -u)" "$log_parent_uid" >&2
-      exit 3
-    fi
-
-    if [[ "$log_parent_nlink" != "1" ]]; then
-      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=hardlinked_parent links=%s\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" "$log_parent_nlink" >&2
       exit 3
     fi
 

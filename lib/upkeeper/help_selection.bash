@@ -592,6 +592,7 @@ import fnmatch
 import json
 import os
 import random
+import re
 import stat as statmod
 import subprocess
 import sys

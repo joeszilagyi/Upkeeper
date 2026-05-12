@@ -435,7 +435,8 @@ CREATE_TABLE_SQL = [
       head_blob text,
       worktree_hash text,
       size_bytes integer,
-      mtime_epoch integer
+      mtime_epoch integer,
+      mtime_ns integer
     )
     """,
     """
@@ -1452,6 +1453,18 @@ def ensure_file_snapshot_mtime_ns_column(conn: sqlite3.Connection) -> None:
             pass
 
 
+def ensure_worktree_snapshot_path_mtime_ns_column(conn: sqlite3.Connection) -> None:
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(worktree_snapshot_paths)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "mtime_ns" not in columns:
+        try:
+            conn.execute("alter table worktree_snapshot_paths add column mtime_ns integer")
+        except sqlite3.Error:
+            pass
+
+
 def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
     now = epoch_now()
     with conn:
@@ -1461,6 +1474,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
         for sql in CREATE_INDEX_SQL:
             conn.execute(sql)
         ensure_file_snapshot_mtime_ns_column(conn)
+        ensure_worktree_snapshot_path_mtime_ns_column(conn)
         conn.execute("PRAGMA user_version=1")
         conn.execute(
             "insert or replace into schema_meta(key, value) values (?, ?)",
@@ -1474,6 +1488,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
             "insert or replace into schema_meta(key, value) values (?, ?)",
             ("updated_epoch", str(now)),
         )
+        ensure_worktree_snapshot_path_mtime_ns_column(conn)
         conn.execute(
             """
             insert or ignore into schema_migrations(
@@ -1650,6 +1665,7 @@ def ensure_file(
     canonical_path: str | None = None,
     state: str = "active",
     source_id: int | None = None,
+    prefer_historical_match: bool = False,
 ) -> int:
     now = epoch_now()
     path = normalize_rel_path(path)
@@ -1657,7 +1673,7 @@ def ensure_file(
     if not path:
         raise ValueError("empty path")
     row = None
-    if canonical == path:
+    if not prefer_historical_match and canonical == path:
         row = conn.execute(
             """
             select file_id
@@ -1684,6 +1700,17 @@ def ensure_file(
             limit 1
             """,
             (repo_id, path),
+        ).fetchone()
+    if not row and prefer_historical_match and canonical == path:
+        row = conn.execute(
+            """
+            select file_id
+            from files
+            where repo_id=? and current_path=?
+            order by case when canonical_path <> ? then 0 else 1 end, file_id
+            limit 1
+            """,
+            (repo_id, path, path),
         ).fetchone()
     if row:
         file_id = int(row["file_id"])
@@ -1773,6 +1800,134 @@ def ensure_file_historical_only(
         (file_id, path, now, now, source_id),
     )
     return file_id
+
+
+def merge_file_lineage(
+    conn: sqlite3.Connection,
+    source_file_id: int,
+    target_file_id: int,
+) -> int:
+    if source_file_id == target_file_id:
+        return target_file_id
+    source = conn.execute(
+        """
+        select file_id, canonical_path, current_path, current_state, first_seen_epoch, last_seen_epoch
+        from files
+        where file_id=?
+        """,
+        (source_file_id,),
+    ).fetchone()
+    target = conn.execute(
+        """
+        select file_id, canonical_path, current_path, current_state, first_seen_epoch, last_seen_epoch
+        from files
+        where file_id=?
+        """,
+        (target_file_id,),
+    ).fetchone()
+    if not source or not target:
+        return target_file_id
+
+    now = epoch_now()
+    merged_first_seen = min(
+        value
+        for value in (source["first_seen_epoch"], target["first_seen_epoch"])
+        if value is not None
+    )
+    merged_last_seen = max(
+        value
+        for value in (source["last_seen_epoch"], target["last_seen_epoch"], now)
+        if value is not None
+    )
+    merged_canonical = str(target["canonical_path"] or target["current_path"] or source["canonical_path"] or source["current_path"])
+    merged_current_path = str(target["current_path"] or source["current_path"] or merged_canonical)
+    merged_state = str(target["current_state"] or source["current_state"] or "unknown")
+    if merged_state == "unknown" and source["current_state"]:
+        merged_state = str(source["current_state"])
+
+    conn.execute(
+        """
+        update files
+        set canonical_path=?,
+            first_seen_epoch=?,
+            last_seen_epoch=?,
+            current_path=?,
+            current_state=?
+        where file_id=?
+        """,
+        (
+            merged_canonical,
+            merged_first_seen,
+            merged_last_seen,
+            merged_current_path,
+            merged_state,
+            target_file_id,
+        ),
+    )
+    conn.execute(
+        """
+        insert into file_paths(file_id, path, first_seen_epoch, last_seen_epoch, source_id)
+        select ?, path, first_seen_epoch, last_seen_epoch, source_id
+        from file_paths
+        where file_id=?
+        on conflict(file_id, path) do update set
+          first_seen_epoch=case
+            when file_paths.first_seen_epoch is null then excluded.first_seen_epoch
+            when excluded.first_seen_epoch is null then file_paths.first_seen_epoch
+            when excluded.first_seen_epoch < file_paths.first_seen_epoch then excluded.first_seen_epoch
+            else file_paths.first_seen_epoch
+          end,
+          last_seen_epoch=case
+            when file_paths.last_seen_epoch is null then excluded.last_seen_epoch
+            when excluded.last_seen_epoch is null then file_paths.last_seen_epoch
+            when excluded.last_seen_epoch > file_paths.last_seen_epoch then excluded.last_seen_epoch
+            else file_paths.last_seen_epoch
+          end,
+          source_id=coalesce(file_paths.source_id, excluded.source_id)
+        """,
+        (target_file_id, source_file_id),
+    )
+    for table, column in (
+        ("cycles", "selected_file_id"),
+        ("selection_runs", "selected_file_id"),
+        ("selection_candidates", "file_id"),
+        ("file_snapshots", "file_id"),
+        ("file_events", "file_id"),
+        ("git_file_changes", "file_id"),
+        ("tool_failures", "file_id"),
+        ("regression_events", "file_id"),
+        ("regression_causes", "cause_file_id"),
+        ("change_log_file_refs", "file_id"),
+        ("extension_facts", "file_id"),
+        ("operator_annotations", "file_id"),
+        ("file_pass_runs", "file_id"),
+        ("file_pass_rollups", "file_id"),
+        ("file_fragility_rollups", "file_id"),
+        ("file_git_churn_rollups", "file_id"),
+        ("file_selection_rollups", "file_id"),
+        ("file_failure_rollups", "file_id"),
+    ):
+        conn.execute(
+            f"update {table} set {column}=? where {column}=?",
+            (target_file_id, source_file_id),
+        )
+    conn.execute("delete from file_paths where file_id=?", (source_file_id,))
+    try:
+        conn.execute("delete from files where file_id=?", (source_file_id,))
+    except sqlite3.IntegrityError:
+        hidden_path = f"__merged__/file-{source_file_id}"
+        conn.execute(
+            """
+            update files
+            set canonical_path=?,
+                current_path=?,
+                current_state='merged',
+                last_seen_epoch=?
+            where file_id=?
+            """,
+            (hidden_path, hidden_path, now, source_file_id),
+        )
+    return target_file_id
 
 
 def file_id_for_path(conn: sqlite3.Connection, repo_id: int, path: str) -> int | None:
@@ -2020,6 +2175,15 @@ def parse_bool_int(raw: str | None) -> int | None:
     if raw in {"0", "false", "no", "off"}:
         return 0
     return None
+
+
+def parse_bool_flag(raw: str | None) -> bool:
+    if raw is None or raw is True:
+        return True
+    parsed = parse_bool_int(str(raw))
+    if parsed is None:
+        raise argparse.ArgumentTypeError(f"expected boolean value, got {raw!r}")
+    return bool(parsed)
 
 
 def has_meaningful_value(value: Any) -> bool:
@@ -2619,8 +2783,8 @@ def record_worktree_snapshot(
         conn.execute(
             """
             insert into worktree_snapshot_paths(
-              worktree_snapshot_id, file_id, path, status, old_path, head_blob, worktree_hash, size_bytes, mtime_epoch
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              worktree_snapshot_id, file_id, path, status, old_path, head_blob, worktree_hash, size_bytes, mtime_epoch, mtime_ns
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot_id,
@@ -2632,6 +2796,7 @@ def record_worktree_snapshot(
                 meta.get("worktree_hash"),
                 meta.get("size_bytes"),
                 meta.get("mtime_epoch"),
+                meta.get("mtime_ns"),
             ),
         )
     return snapshot_id
@@ -2657,6 +2822,35 @@ def latest_worktree_snapshot_id(
         (repo_id, cycle_pk, snapshot_kind),
     ).fetchone()
     return int(row["worktree_snapshot_id"]) if row else None
+
+
+def worktree_snapshot_path_row(
+    conn: sqlite3.Connection,
+    *,
+    repo_id: int,
+    cycle_pk: int | None,
+    path: str,
+    snapshot_kind: str,
+) -> sqlite3.Row | None:
+    snapshot_id = latest_worktree_snapshot_id(
+        conn,
+        repo_id=repo_id,
+        cycle_pk=cycle_pk,
+        snapshot_kind=snapshot_kind,
+    )
+    if snapshot_id is None:
+        return None
+    return conn.execute(
+        """
+        select p.*
+        from worktree_snapshot_paths p
+        join worktree_snapshots s on s.worktree_snapshot_id=p.worktree_snapshot_id
+        where s.repo_id=? and p.worktree_snapshot_id=? and p.path=?
+        order by p.worktree_snapshot_path_id desc
+        limit 1
+        """,
+        (repo_id, snapshot_id, path),
+    ).fetchone()
 
 
 def worktree_snapshot_path_map(conn: sqlite3.Connection, snapshot_id: int | None) -> dict[str, sqlite3.Row]:
@@ -3072,6 +3266,14 @@ def record_selected_file_delta(
         file_id=file_id,
         event_kind="snapshot_before",
     )
+    if not before and path:
+        before = worktree_snapshot_path_row(
+            conn,
+            repo_id=repo_id,
+            cycle_pk=cycle_pk,
+            path=path,
+            snapshot_kind="before_codex",
+        )
     after = conn.execute(
         "select * from file_snapshots where snapshot_id=? and repo_id=?",
         (after_snapshot_id, repo_id),
@@ -3097,7 +3299,8 @@ def record_selected_file_delta(
     before_mtime_ns = before["mtime_ns"]
     after_mtime_ns = after["mtime_ns"]
     details = {
-        "before_snapshot_id": before["snapshot_id"],
+        "before_snapshot_id": before["snapshot_id"] if "snapshot_id" in before.keys() else None,
+        "before_worktree_snapshot_id": before["worktree_snapshot_id"] if "worktree_snapshot_id" in before.keys() else None,
         "after_snapshot_id": after["snapshot_id"],
         "before_worktree_hash": before_hash,
         "after_worktree_hash": after_hash,
@@ -3432,10 +3635,10 @@ def parse_pass_result_lines(path: Path) -> tuple[list[dict[str, Any]], list[dict
                 break
             fields[key] = value
         if malformed:
-            rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "malformed_token"})
+            rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "malformed_token", "fields": fields})
             continue
         if duplicate:
-            rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": f"duplicate_key:{duplicate}"})
+            rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": f"duplicate_key:{duplicate}", "fields": fields})
             continue
         if not fields.get("pass") or not fields.get("file"):
             rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "missing_pass_or_file", "fields": fields})
@@ -3614,10 +3817,17 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
         planned = split_csv(args.planned_passes)
         planned.extend(args.planned_pass or [])
         seen: set[tuple[str, str]] = set()
+        rejected_pairs: set[tuple[str, str]] = set()
         if args.from_file:
             accepted, rejected = parse_pass_result_lines(Path(args.from_file))
             rejected_count = len(rejected)
             for item in rejected:
+                fields = item.get("fields", {})
+                if isinstance(fields, dict):
+                    rejected_pass = normalize_pass_code(str(fields.get("pass", ""))) if fields.get("pass") else ""
+                    rejected_path = normalize_rel_path(str(fields.get("file", ""))) if fields.get("file") else ""
+                    if rejected_pass and rejected_path:
+                        rejected_pairs.add((rejected_pass, rejected_path))
                 ensure_source_record(
                     conn,
                     repo_id,
@@ -3682,6 +3892,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
             pass_code = normalize_pass_code(raw_pass)
             if not target_path or (pass_code, target_path) in seen:
                 continue
+            inferred_outcome = "unknown" if (pass_code, target_path) in rejected_pairs else "planned"
             record_one_pass_result(
                 conn,
                 root,
@@ -3691,7 +3902,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 pass_code=pass_code,
                 path=target_path,
                 applicable=None,
-                outcome="planned",
+                outcome=inferred_outcome,
                 changed=None,
                 regression=None,
                 raw_line="",
@@ -3918,7 +4129,15 @@ def command_import_git(args: argparse.Namespace) -> int:
                 canonical = old_path if status_code.startswith("R") and old_path else path
                 state = "deleted" if status_code.startswith("D") else ("renamed" if status_code.startswith("R") else "active")
                 if sha == head_sha:
-                    file_id = ensure_file(conn, repo_id, path, canonical_path=canonical, state=state, source_id=commit_source_id)
+                    file_id = ensure_file(
+                        conn,
+                        repo_id,
+                        path,
+                        canonical_path=canonical,
+                        state=state,
+                        source_id=commit_source_id,
+                        prefer_historical_match=True,
+                    )
                 else:
                     file_id = ensure_file_historical_only(
                         conn,
@@ -3927,6 +4146,21 @@ def command_import_git(args: argparse.Namespace) -> int:
                         canonical_path=canonical,
                         source_id=commit_source_id,
                     )
+                if status_code.startswith("R") and old_path:
+                    current_row = conn.execute(
+                        """
+                        select file_id
+                        from files
+                        where repo_id=? and current_path=?
+                        order by case when canonical_path <> ? then 0 else 1 end, file_id
+                        limit 1
+                        """,
+                        (repo_id, path, path),
+                    ).fetchone()
+                    if current_row:
+                        current_file_id = int(current_row["file_id"])
+                        if current_file_id != file_id:
+                            file_id = merge_file_lineage(conn, file_id, current_file_id)
                 file_changes_seen += 1
                 cur = conn.execute(
                     """
@@ -4019,14 +4253,30 @@ def command_import_git(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
-def start_import(conn: sqlite3.Connection, repo_id: int, import_kind: str, details: Any = None) -> int:
-    cur = conn.execute(
-        """
-        insert into lattice_imports(repo_id, import_kind, started_epoch, status, rows_seen, rows_written, conflicts, details_json)
-        values (?, ?, ?, 'started', 0, 0, 0, ?)
-        """,
-        (repo_id, import_kind, epoch_now(), json_dumps(details) if details is not None else None),
-    )
+def start_import(
+    conn: sqlite3.Connection,
+    repo_id: int,
+    import_kind: str,
+    details: Any = None,
+    *,
+    forced_id: int | None = None,
+) -> int:
+    if forced_id is None:
+        cur = conn.execute(
+            """
+            insert into lattice_imports(repo_id, import_kind, started_epoch, status, rows_seen, rows_written, conflicts, details_json)
+            values (?, ?, ?, 'started', 0, 0, 0, ?)
+            """,
+            (repo_id, import_kind, epoch_now(), json_dumps(details) if details is not None else None),
+        )
+    else:
+        cur = conn.execute(
+            """
+            insert into lattice_imports(import_id, repo_id, import_kind, started_epoch, status, rows_seen, rows_written, conflicts, details_json)
+            values (?, ?, ?, ?, 'started', 0, 0, 0, ?)
+            """,
+            (forced_id, repo_id, import_kind, epoch_now(), json_dumps(details) if details is not None else None),
+        )
     return int(cur.lastrowid)
 
 
@@ -4342,6 +4592,14 @@ def redact_payload(payload: dict[str, Any], args: argparse.Namespace) -> dict[st
     return _redact(payload)
 
 
+def semantic_import_payload(table: str, payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    for key in ("source_id", "imported_epoch", "last_seen_epoch", "updated_epoch"):
+        if key in normalized:
+            normalized[key] = None
+    return normalized
+
+
 def command_export_jsonl(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
@@ -4419,15 +4677,39 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
     ensure_schema(conn)
     rows_seen = rows_written = conflicts = duplicates = 0
     refresh_pass_rollups = False
+    imported_import_max = 0
+    try:
+        input_lines = input_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        print_json({"status": "unavailable", "reason": "input_unreadable", "path": str(input_path)})
+        return EXIT_USAGE
+    for raw in input_lines:
+        if not raw:
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if row.get("row_type") != "lattice_imports":
+            continue
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        try:
+            imported_import_max = max(imported_import_max, int(payload.get("import_id") or 0))
+        except (TypeError, ValueError):
+            continue
     with conn:
         repo_id = ensure_repository(conn, root)
-        import_id = start_import(conn, repo_id, "lattice_import", {"path": str(input_path)})
-        source_id = ensure_source_record(conn, repo_id, "lattice_import", source_path=str(input_path), raw_ref="jsonl")
-        try:
-            input_lines = input_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            print_json({"status": "unavailable", "reason": "input_unreadable", "path": str(input_path)})
-            return EXIT_USAGE
+        conn.execute("PRAGMA defer_foreign_keys=ON")
+        existing_import_max = int(conn.execute("select coalesce(max(import_id), 0) from lattice_imports").fetchone()[0] or 0)
+        import_id = start_import(
+            conn,
+            repo_id,
+            "lattice_import",
+            {"path": str(input_path)},
+            forced_id=max(existing_import_max, imported_import_max) + 1,
+        )
         for raw in input_lines:
             if not raw:
                 continue
@@ -4466,11 +4748,12 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "redacted_path_payload")
                 continue
-            payload_hash = sha256_text(json_dumps(payload))
-            if str(row.get("payload_sha256", "")) != payload_hash:
+            raw_payload_hash = sha256_text(json_dumps(payload))
+            if str(row.get("payload_sha256", "")) != raw_payload_hash:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "payload_hash_mismatch")
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", raw_payload_hash, "payload_hash_mismatch")
                 continue
+            payload_hash = sha256_text(json_dumps(semantic_import_payload(str(table), payload)))
             if table == "lattice_unavailable" and isinstance(payload, dict):
                 ensure_source_record(
                     conn,
@@ -4503,7 +4786,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 if table in {"schema_meta", "schema_migrations"}:
                     duplicates += 1
                     continue
-                existing_payload = {key: existing[key] for key in columns}
+                existing_payload = semantic_import_payload(table, {key: existing[key] for key in columns})
                 existing_hash = sha256_text(json_dumps(existing_payload))
                 if existing_hash == payload_hash:
                     duplicates += 1
@@ -4536,7 +4819,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
         )
         if refresh_pass_rollups:
             refresh_rollups(conn, repo_id)
-        record_file_event(conn, repo_id, "import_reconciled", source_id=source_id, details={"path": str(input_path), "conflicts": conflicts})
+        record_file_event(conn, repo_id, "import_reconciled", details={"path": str(input_path), "conflicts": conflicts})
     status = "conflicts" if conflicts else "ok"
     print_json({"status": status, "rows_seen": rows_seen, "rows_written": rows_written, "duplicates": duplicates, "conflicts": conflicts})
     if conflicts > args.max_conflicts:
@@ -5469,6 +5752,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_cycle_args(p, required=False)
     p.add_argument("--pass", dest="pass_code")
     p.add_argument("--file", dest="path")
+    p.add_argument("--path", dest="path")
     p.add_argument("--applicable", default="")
     p.add_argument("--outcome", default="unknown", choices=sorted(ALLOWED_OUTCOMES))
     p.add_argument("--changed", default="")
@@ -5514,7 +5798,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=command_backup)
 
     p = sub.add_parser("recover")
-    p.add_argument("--backup-first", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--backup-first", nargs="?", const=True, default=True, type=parse_bool_flag)
+    p.add_argument("--no-backup-first", dest="backup_first", action="store_false")
     p.add_argument("--max-conflicts", type=int, default=999999)
     p.add_argument("--limit", type=int)
     p.set_defaults(func=command_recover)

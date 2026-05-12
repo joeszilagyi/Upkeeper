@@ -1253,3 +1253,32 @@ Validation:
 - `tools/check_public_docs.sh`
 - `tools/validate_upkeeper.sh --quick`
 - `git diff --check`
+
+## PR 340/341 Catch-Up And CI Repair
+
+Status: in_progress
+
+Goal:
+Catch up the open security/lattice stack onto one mergeable branch by carrying
+forward the latest committed lattice fix, repairing the broken default
+`CODEX_MODE` parsing path, and fixing the CI docs-only classifier so pull
+requests classify change scope from an available base commit.
+
+Constraints:
+- Preserve the original committed queue work already present on the stacked
+  branches.
+- Do not touch the large uncommitted automation churn in the original checkout.
+- Keep validation local-first and deterministic before any push/merge.
+- Prefer one surviving merge branch over rescuing both open PR branches.
+
+Files likely touched:
+- `PLANS.md`
+- `lib/upkeeper/codex_io.bash`
+- `.github/workflows/ci.yml`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`

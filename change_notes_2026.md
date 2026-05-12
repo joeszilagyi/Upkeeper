@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-11: post-v1.2.12 catch-up changes:
+	1. Fixed `CODEX_MODE` parsing so the default sandbox pair `--sandbox workspace-write` remains valid while malformed first tokens, malformed sandbox arguments, and unsafe unsandboxed modes still fail closed with clear errors.
+	2. Fixed pull-request CI scope classification so docs-only detection fetches any missing base or head commit before diffing and falls back to full validation when commit scope cannot be proven locally.
+	3. Removed the invalid log-parent directory link-count rejection so dedicated operator or validator temp directories no longer fail closed before the existing log-file hardlink protections run.
+	4. Restored issue-fix target pinning for normalized repo-local file references inferred from queued GitHub issues, so `--fix-next-issue` and explicit issue handoffs both carry the selected target into preselection.
+
 2026-05-11: v1.2.12 changes:
 	1. Hardened startup-anomaly gate resolution to use wrapper-derived current-cycle log evidence (`cycle.start`, `run.start`, `run.finish`, `cycle.exit`) before resolving gate state.
 	2. Removed the model self-attestation-only startup gate resolution path so unresolved or unverifiable gates now stay closed and force a follow-up self-review cycle.

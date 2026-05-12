@@ -46,6 +46,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          docs_only=0
+          scope_known=0
+          changed_paths=()
 
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
             base_sha="${{ github.event.pull_request.base.sha }}"
@@ -57,22 +60,37 @@ jobs:
 
           if [[ "$base_sha" == "0000000000000000000000000000000000000000" ]]; then
             mapfile -t changed_paths < <(git ls-files)
+            scope_known=1
           else
-            mapfile -t changed_paths < <(git diff --name-only "$base_sha" "$head_sha")
+            scope_known=1
+            for scope_sha in "$base_sha" "$head_sha"; do
+              [[ -n "$scope_sha" ]] || continue
+              if ! git cat-file -e "$scope_sha^{commit}" 2>/dev/null; then
+                if ! git fetch --no-tags --depth=1 origin "$scope_sha"; then
+                  scope_known=0
+                  break
+                fi
+              fi
+            done
+            if (( scope_known )); then
+              mapfile -t changed_paths < <(git diff --name-only "$base_sha" "$head_sha")
+            fi
           fi
 
-          docs_only=1
-          for path in "${changed_paths[@]}"; do
-            [[ -n "$path" ]] || continue
-            case "$path" in
-              README.md|AGENTS.md|PLANS.md|change_notes_*.md|docs/*.md|docs/*/*.md|prompts/*.md)
-                ;;
-              *)
-                docs_only=0
-                break
-                ;;
-            esac
-          done
+          if (( scope_known )); then
+            docs_only=1
+            for path in "${changed_paths[@]}"; do
+              [[ -n "$path" ]] || continue
+              case "$path" in
+                README.md|AGENTS.md|PLANS.md|change_notes_*.md|docs/*.md|docs/*/*.md|prompts/*.md)
+                  ;;
+                *)
+                  docs_only=0
+                  break
+                  ;;
+              esac
+            done
+          fi
 
           printf 'docs_only=%s\n' "$docs_only"
           printf 'docs_only=%s\n' "$docs_only" >>"$GITHUB_OUTPUT"

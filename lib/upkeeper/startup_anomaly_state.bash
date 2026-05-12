@@ -128,7 +128,7 @@ def normalized_epoch(value, fallback):
     return fallback_epoch, str(fallback_epoch)
 
 
-  for path in root.glob("*.state"):
+for path in root.glob("*.state"):
     fields = {}
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()

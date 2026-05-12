@@ -517,7 +517,8 @@ PY
   local original_db="$DB"
   cp "$TEST_TMP_ROOT/lattice-import-base.sqlite3" "$lattice_import_rollup_db"
   DB="$lattice_import_rollup_db"
-  lattice import-jsonl "$TEST_TMP_ROOT/export.jsonl" >"$TEST_TMP_ROOT/lattice-import-rollup.json"
+  UPKEEPER_LATTICE_ALLOW_UNSAFE_DB=1 \
+    lattice import-jsonl "$TEST_TMP_ROOT/export.jsonl" >"$TEST_TMP_ROOT/lattice-import-rollup.json"
   python3 - "$original_db" "$lattice_import_rollup_db" <<'PY' || fail "import-jsonl did not rebuild file_pass_rollups"
 import sqlite3
 import sys
@@ -839,6 +840,7 @@ test_missing_selection_path_stays_missing() {
   local repo DB
 
   repo="$TEST_TMP_ROOT/lattice-missing-selection"
+  REPO="$repo"
   DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
   make_repo "$repo"
   "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/missing-selection-init.out"
@@ -861,6 +863,7 @@ test_wrapper_required_policy() {
 
   repo="$TEST_TMP_ROOT/client"
   make_repo "$repo"
+  chmod 700 "$repo"
   ln -s "$ROOT_DIR/Upkeeper" "$repo/Upkeeper.sh"
   touch "$repo/tracked.sqlite3"
   (
@@ -955,6 +958,7 @@ test_default_runtime_symlink_db_path_is_rejected() {
   repo="$TEST_TMP_ROOT/lattice-unsafe-runtime-symlink"
   make_repo "$repo"
   mkdir -p "$TEST_TMP_ROOT/external-lattice-root"
+  mkdir -p "$repo/runtime"
   rm -rf "$repo/runtime/upkeeper-lattice"
   ln -s "$TEST_TMP_ROOT/external-lattice-root" "$repo/runtime/upkeeper-lattice"
 
@@ -1293,6 +1297,7 @@ test_clean_touch_uses_mtime_ns() {
   local repo rc
 
   repo="$TEST_TMP_ROOT/lattice-clean-touch-ns"
+  REPO="$repo"
   DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
   make_repo "$repo"
   "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/clean-touch-init.out"
@@ -1307,6 +1312,15 @@ test_clean_touch_uses_mtime_ns() {
     --config-file Upkeeper.conf \
     --dirty-path-count 0 \
     --dry-run 1 >"$TEST_TMP_ROOT/clean-touch-start.out"
+  cat >"$TEST_TMP_ROOT/clean-touch-selection.env" <<'EOF'
+path=README.md
+selection_mode=oldest-mtime
+selection_basis=clean touch fixture
+EOF
+  lattice record-preselect \
+    --cycle-id cycle-touch-ns \
+    --run-hash run-touch-ns \
+    --selection-file "$TEST_TMP_ROOT/clean-touch-selection.env" >"$TEST_TMP_ROOT/clean-touch-preselect.out"
 
   python3 - "$repo/README.md" <<'PY'
 import os
@@ -1344,6 +1358,7 @@ test_sparse_lifecycle_replay_preserves_metadata() {
   local repo rc
 
   repo="$TEST_TMP_ROOT/lattice-sparse-lifecycle"
+  REPO="$repo"
   DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
   make_repo "$repo"
   "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/sparse-lifecycle-init.out"
@@ -1417,6 +1432,7 @@ test_planned_pass_semantics_do_not_mark_all_runs_as_planned() {
   local repo
 
   repo="$TEST_TMP_ROOT/lattice-planned-semantics"
+  REPO="$repo"
   DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
   make_repo "$repo"
   "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/planned-semantics-init.out"

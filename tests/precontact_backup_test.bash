@@ -101,6 +101,7 @@ reset_env() {
   RUN_PRECONTACT_BACKUP_ENCRYPTED=""
   RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND=""
   mkdir -p "$RUN_TMP_DIR"
+  chmod 700 "$RUN_TMP_DIR"
   : >"$LOG_FILE"
 }
 
@@ -356,6 +357,29 @@ test_unsafe_target_rejection() {
   assert_target_rejected ".git/config" "git_path_rejected"
 }
 
+test_precontact_backup_validate_root_secure_private_dir() {
+  local repo="$TEST_TMP_ROOT/root-secure repo"
+  local symlink_root
+
+  make_repo "$repo"
+  reset_env "$repo" root-secure
+  UPKEEPER_PRECONTACT_BACKUP_ROOT="$TEST_TMP_ROOT/secure root"
+  if ! precontact_backup_validate_root "$repo"; then
+    fail "secure backup root failed validation"
+  fi
+  [[ "$(stat -Lc '%a' -- "$UPKEEPER_PRECONTACT_BACKUP_ROOT" 2>/dev/null || printf '')" == "700" ]] ||
+    fail "secure backup root did not enforce 0700 mode"
+
+  symlink_root="$TEST_TMP_ROOT/bad-root"
+  ln -s "$TEST_TMP_ROOT/does-not-exist" "$symlink_root"
+  UPKEEPER_PRECONTACT_BACKUP_ROOT="$symlink_root"
+  if precontact_backup_validate_root "$repo"; then
+    fail "symlinked backup root was accepted"
+  fi
+  [[ "$PRECONTACT_BACKUP_LAST_REASON" == "backup_root_contains_symlink" ]] ||
+    fail "symlinked root failed as $PRECONTACT_BACKUP_LAST_REASON"
+}
+
 test_prompt_redaction_and_replacement_rule() {
   local repo="$TEST_TMP_ROOT/prompt repo"
   local compiled="$TEST_TMP_ROOT/compiled.prompt"
@@ -396,6 +420,8 @@ EOF
   grep -Fq "Replacement target selection is wrapper-only" "$compiled" || fail "compiled prompt missing wrapper-only replacement rule"
   grep -Fq "Pre-contact backup was created by the wrapper before this prompt was compiled" "$compiled" || fail "compiled prompt missing backup notice"
   ! grep -Fq "backup_id=$RUN_PRECONTACT_BACKUP_ID" "$compiled" || fail "compiled prompt leaked backup id"
+  ! grep -Fq "backup_id=$RUN_PRECONTACT_BACKUP_ID" "$LOG_FILE" || fail "runtime log leaked backup id"
+
   ! grep -Fq "sha256=$RUN_PRECONTACT_BACKUP_SHA256" "$compiled" || fail "compiled prompt leaked backup content hash"
   ! grep -Fq "use the same source-safe selection boundary for the replacement" "$compiled" ||
     fail "compiled prompt still grants model replacement authority"
@@ -459,13 +485,54 @@ test_plain_restore_and_unsafe_id() {
     fail "absolute restore destination failed as $PRECONTACT_BACKUP_LAST_REASON"
 }
 
+test_plain_restore_temporary_directory_cleaned_on_failure() {
+  local repo="$TEST_TMP_ROOT/restore-cleanup repo"
+  local selection_file backup_id old_tmpdir old_run_tmp rc tmp_count tmp_root
+
+  make_repo "$repo"
+  reset_env "$repo" restore-cleanup
+  selection_file="$TEST_TMP_ROOT/restore-cleanup-selection.env"
+  write_selection_file "dir/space file.sh" "$selection_file"
+  precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
+  backup_id="$RUN_PRECONTACT_BACKUP_ID"
+
+  rm -f -- "$UPKEEPER_PRECONTACT_BACKUP_ROOT"/*/*/"${backup_id}.bak"
+  old_run_tmp="$RUN_TMP_DIR"
+  old_tmpdir="${TMPDIR-}"
+  RUN_TMP_DIR=""
+  tmp_root="$TEST_TMP_ROOT/restore-cleanup-tmp"
+  mkdir -p "$tmp_root"
+  TMPDIR="$tmp_root"
+
+  set +e
+  precontact_backup_restore_by_id "$backup_id" "$repo" "" ""
+  rc=$?
+  set -e
+
+  RUN_TMP_DIR="$old_run_tmp"
+  if [[ -n "$old_tmpdir" ]]; then
+    TMPDIR="$old_tmpdir"
+  else
+    unset TMPDIR
+  fi
+
+  [[ "$rc" -eq 1 ]] || fail "restore failure was expected"
+  [[ "$PRECONTACT_BACKUP_LAST_REASON" == "plain_artifact_missing" ]] ||
+    fail "restore failure did not preserve expected reason"
+
+  tmp_count="$(find "$tmp_root" -maxdepth 1 -type d -name 'upkeeper-restore-*' | wc -l | tr -d ' ')"
+  [[ "$tmp_count" == "0" ]] || fail "temporary restore directory not cleaned (found ${tmp_count})"
+}
+
 test_plain_required_backup_succeeds
 test_age_mode_uses_public_recipient_only
 test_required_encrypted_mode_fails_closed
 test_unsafe_target_rejection
+test_precontact_backup_validate_root_secure_private_dir
 test_prompt_redaction_and_replacement_rule
 test_retention_prunes_only_same_path
 test_plain_restore_and_unsafe_id
+test_plain_restore_temporary_directory_cleaned_on_failure
 test_age_restore_uses_payload_metadata
 
 printf 'precontact_backup_test: ok\n'

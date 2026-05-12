@@ -15,9 +15,7 @@ write_startup_anomaly_gate_state() {
     return 1
   fi
 
-  if [[ -z "${STARTUP_ANOMALY_GATE_STATE_FILE:-}" ]]; then
-    STARTUP_ANOMALY_GATE_STATE_FILE="$state_dir/$CYCLE_RUN_HASH.state"
-  fi
+  STARTUP_ANOMALY_GATE_STATE_FILE="$state_dir/$CYCLE_RUN_HASH.state"
   state_path="$STARTUP_ANOMALY_GATE_STATE_FILE"
   tmp_path="$state_path.tmp.$$"
   now_epoch="$(date '+%s')"
@@ -27,8 +25,9 @@ write_startup_anomaly_gate_state() {
     printf 'run_hash=%s\n' "$CYCLE_RUN_HASH"
     printf 'self_path=%s\n' "$SELF_PATH"
     printf 'root_dir=%s\n' "$ROOT_DIR"
-    printf 'reason=%s\n' "${STARTUP_ANOMALY_REASONS:-unknown}"
     printf 'status=%s\n' "$status"
+    printf 'reason=%s\n' "${detail:-none}"
+    printf 'active_reasons=%s\n' "${STARTUP_ANOMALY_REASONS:-unknown}"
     printf 'detail=%s\n' "${detail:-none}"
     printf 'created_epoch=%s\n' "$now_epoch"
     printf 'updated_epoch=%s\n' "$now_epoch"
@@ -150,10 +149,10 @@ for path in root.glob("*.state"):
     items.append((created_sort, created, state_file, cycle, run_hash, reason))
 
 for _, created, state_file, cycle, run_hash, reason in sorted(items, reverse=True)[:10]:
-        print(
-            f"previous_cycle={cycle} previous_run_hash={run_hash} "
-            f"reason=startup_anomaly_gate_unresolved_state created_epoch={created} "
-            f"state_file={state_file} state_reason={reason}"
+    print(
+        f"previous_cycle={cycle} previous_run_hash={run_hash} "
+        f"reason=startup_anomaly_gate_unresolved_state created_epoch={created} "
+        f"state_file={state_file} state_reason={reason}"
     )
 PY
 }
@@ -192,7 +191,7 @@ for path in root.glob("*.state"):
     if not target_reasons:
         print("1")
         raise SystemExit(0)
-    reasons = {token for token in str(fields.get("reason", "")).split(",") if token}
+    reasons = {token for token in str(fields.get("active_reasons", fields.get("reason", ""))).split(",") if token}
     if reasons.intersection(target_reasons):
         print("1")
         raise SystemExit(0)

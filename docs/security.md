@@ -79,8 +79,8 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/precontact-vault
 
 Upkeeper does not put that vault path in the compiled prompt, Lattice preselect
 evidence, or pre-contact backup log lines. Success logs contain only the
-selected relative target, content sha256, opaque `backup_id`, backup mode,
-encrypted flag, backend-protection flag, and `path_redacted=1`.
+selected relative target, backup mode, encrypted flag, backend-protection flag,
+and `path_redacted=1`.
 
 Plain backup mode copies the selected file and a JSON sidecar. It is useful for
 quick recovery, but it is not a security boundary: a same-user backend process

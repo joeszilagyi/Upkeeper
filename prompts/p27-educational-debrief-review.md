@@ -109,7 +109,6 @@ If P27 does not apply, include:
 The final response must still include exactly one normal Upkeeper final marker:
 
 - `UPKEEPER_STATUS: WORK_DONE`
-- `UPKEEPER_STATUS: NO_CHANGES`
 - `UPKEEPER_STATUS: BLOCKED`
 
 Do not invent a P27-specific final status marker.

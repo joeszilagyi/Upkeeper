@@ -193,6 +193,56 @@ PY
   return 0
 }
 
+precontact_backup_validate_private_dir_path_components() {
+  local path="$1"
+  local candidate="$path"
+
+  while [[ "$candidate" != "/" && -n "$candidate" ]]; do
+    if [[ -L "$candidate" ]]; then
+      precontact_backup_set_reason "backup_root_contains_symlink"
+      return 1
+    fi
+    candidate="$(dirname -- "$candidate")"
+  done
+  return 0
+}
+
+precontact_backup_prepare_private_dir() {
+  local path="$1"
+  local owner mode
+
+  if [[ -z "$path" ]]; then
+    precontact_backup_set_reason "backup_root_empty"
+    return 1
+  fi
+  if ! mkdir -p -- "$path"; then
+    precontact_backup_set_reason "backup_root_uncreatable"
+    return 1
+  fi
+  if ! precontact_backup_validate_private_dir_path_components "$path"; then
+    return 1
+  fi
+  if [[ ! -d "$path" ]]; then
+    precontact_backup_set_reason "backup_root_not_directory"
+    return 1
+  fi
+  if ! chmod 700 "$path"; then
+    precontact_backup_set_reason "backup_root_unsecure_permissions"
+    return 1
+  fi
+  owner="$(stat -Lc '%u' -- "$path" 2>/dev/null || printf '')"
+  if [[ "$owner" != "$(id -u)" ]]; then
+    precontact_backup_set_reason "backup_root_wrong_owner"
+    return 1
+  fi
+  mode="$(stat -Lc '%a' -- "$path" 2>/dev/null || printf '000')"
+  if [[ "$mode" != "700" ]]; then
+    precontact_backup_set_reason "backup_root_unsecure_permissions"
+    return 1
+  fi
+  return 0
+}
+
 precontact_backup_validate_root() {
   local raw_root="${UPKEEPER_PRECONTACT_BACKUP_ROOT:-}"
   local repo_root="${1:-}"
@@ -219,6 +269,13 @@ precontact_backup_validate_root() {
 
   if [[ "$resolved_root" == "$resolved_repo" || "$resolved_root" == "$resolved_repo"/* ]]; then
     precontact_backup_set_reason "unsafe_backup_root"
+    return 1
+  fi
+  if ! precontact_backup_validate_private_dir_path_components "$raw_root"; then
+    precontact_backup_set_reason "backup_root_contains_symlink"
+    return 1
+  fi
+  if ! precontact_backup_prepare_private_dir "$resolved_root"; then
     return 1
   fi
 
@@ -806,7 +863,7 @@ PY
     RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND="unknown"
   fi
 
-  log_line "INFO" "precontact_backup.created target=$(shell_quote "$rel_path") sha256=$content_sha backup_id=$backup_id mode=$resolved_mode encrypted=$RUN_PRECONTACT_BACKUP_ENCRYPTED protected_from_backend=$RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND path_redacted=1"
+  log_line "INFO" "precontact_backup.created target=$(shell_quote "$rel_path") backup_status=created mode=$resolved_mode encrypted=$RUN_PRECONTACT_BACKUP_ENCRYPTED protected_from_backend=$RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND path_redacted=1"
   precontact_backup_prune_for_path "$path_dir"
 }
 
@@ -867,7 +924,9 @@ precontact_backup_restore_by_id() {
   local identity_path="${3:-${UPKEEPER_PRECONTACT_BACKUP_AGE_IDENTITY:-}}"
   local restore_to="${4:-}"
   local vault_root sidecars sidecar_count sidecar rel_path content_sha encrypted mode
-  local target_abs target_dir tmp_restore artifact payload_tmp payload_metadata restored_sha
+  local target_abs target_dir tmp_restore="" artifact payload_tmp="" payload_metadata="" restored_sha
+  local restore_tmp_dir=""
+  local restore_tmp_dir_is_temp=0
 
   if [[ -z "$repo_root" ]]; then
     precontact_backup_set_reason "repo_root_required"
@@ -909,7 +968,38 @@ precontact_backup_restore_by_id() {
     mode="$(precontact_backup_json_field "$sidecar" "mode")" || mode=""
   fi
 
-  if ! tmp_restore="$(mktemp "${RUN_TMP_DIR:-/tmp}/.upkeeper-restore.XXXXXX")"; then
+  if [[ -z "$RUN_TMP_DIR" ]] && declare -F ensure_run_tmp_dir >/dev/null; then
+    if ! ensure_run_tmp_dir; then
+      precontact_backup_set_reason "restore_tmp_init_failed"
+      return 1
+    fi
+  fi
+  trap 'trap - RETURN; precontact_backup_restore_cleanup_tmp "${tmp_restore-}" "${payload_tmp-}" "${payload_metadata-}" "${restore_tmp_dir-}" "${restore_tmp_dir_is_temp-0}"' RETURN
+  restore_tmp_dir="${RUN_TMP_DIR:-}"
+  if [[ -z "$restore_tmp_dir" ]]; then
+    if ! restore_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-restore-XXXXXX")"; then
+      precontact_backup_set_reason "restore_tmp_init_failed"
+      return 1
+    fi
+    restore_tmp_dir_is_temp=1
+  fi
+  if [[ ! -d "$restore_tmp_dir" || -L "$restore_tmp_dir" ]]; then
+    [[ "$restore_tmp_dir_is_temp" == "1" ]] && rm -rf -- "$restore_tmp_dir"
+    precontact_backup_set_reason "restore_tmp_invalid_permissions"
+    return 1
+  fi
+  if [[ "$(stat -Lc '%u' -- "$restore_tmp_dir" 2>/dev/null || printf '')" != "$(id -u)" ]]; then
+    [[ "$restore_tmp_dir_is_temp" == "1" ]] && rm -rf -- "$restore_tmp_dir"
+    precontact_backup_set_reason "restore_tmp_invalid_permissions"
+    return 1
+  fi
+  if [[ "$(stat -Lc '%a' -- "$restore_tmp_dir" 2>/dev/null || printf '000')" != "700" ]]; then
+    [[ "$restore_tmp_dir_is_temp" == "1" ]] && rm -rf -- "$restore_tmp_dir"
+    precontact_backup_set_reason "restore_tmp_invalid_permissions"
+    return 1
+  fi
+
+  if ! tmp_restore="$(mktemp "${restore_tmp_dir}/.upkeeper-restore.XXXXXX")"; then
     precontact_backup_set_reason "restore_temp_failed"
     return 1
   fi
@@ -917,65 +1007,52 @@ precontact_backup_restore_by_id() {
   if [[ "$encrypted" == "true" ]]; then
     artifact="$(dirname -- "$sidecar")/${backup_id}.age"
     [[ -s "$artifact" ]] || {
-      rm -f -- "$tmp_restore"
       precontact_backup_set_reason "age_artifact_missing"
       return 1
     }
     [[ -n "$identity_path" ]] || {
-      rm -f -- "$tmp_restore"
       precontact_backup_set_reason "age_identity_required"
       return 1
     }
     [[ -r "$identity_path" ]] || {
-      rm -f -- "$tmp_restore"
       precontact_backup_set_reason "age_identity_unreadable"
       return 1
     }
     if ! payload_tmp="$(run_mktemp precontact-restore-payload)"; then
-      rm -f -- "$tmp_restore"
       precontact_backup_set_reason "restore_payload_temp_failed"
       return 1
     fi
     if ! age --decrypt --identity "$identity_path" --output "$payload_tmp" "$artifact"; then
-      rm -f -- "$tmp_restore" "$payload_tmp"
       precontact_backup_set_reason "age_decrypt_failed"
       return 1
     fi
     if ! payload_metadata="$(run_mktemp precontact-restore-metadata)"; then
-      rm -f -- "$tmp_restore" "$payload_tmp"
       precontact_backup_set_reason "restore_metadata_temp_failed"
       return 1
     fi
     if ! precontact_backup_extract_payload "$payload_tmp" "$tmp_restore" "$payload_metadata"; then
-      rm -f -- "$tmp_restore" "$payload_tmp" "$payload_metadata"
       precontact_backup_set_reason "payload_extract_failed"
       return 1
     fi
     if ! rel_path="$(precontact_backup_json_field "$payload_metadata" "selected_relative_path")"; then
-      rm -f -- "$tmp_restore" "$payload_tmp" "$payload_metadata"
       precontact_backup_set_reason "metadata_read_failed"
       return 1
     fi
     if ! content_sha="$(precontact_backup_json_field "$payload_metadata" "content_sha256")"; then
-      rm -f -- "$tmp_restore" "$payload_tmp" "$payload_metadata"
       precontact_backup_set_reason "metadata_read_failed"
       return 1
     fi
     if ! mode="$(precontact_backup_json_field "$payload_metadata" "mode")"; then
-      rm -f -- "$tmp_restore" "$payload_tmp" "$payload_metadata"
       precontact_backup_set_reason "metadata_read_failed"
       return 1
     fi
-    rm -f -- "$payload_tmp" "$payload_metadata"
   else
     artifact="$(dirname -- "$sidecar")/${backup_id}.bak"
     [[ -s "$artifact" ]] || {
-      rm -f -- "$tmp_restore"
       precontact_backup_set_reason "plain_artifact_missing"
       return 1
     }
     if ! precontact_backup_copy_file "$artifact" "$tmp_restore"; then
-      rm -f -- "$tmp_restore"
       precontact_backup_set_reason "restore_copy_failed"
       return 1
     fi
@@ -983,23 +1060,19 @@ precontact_backup_restore_by_id() {
 
   if ! target_abs="$(precontact_backup_validate_restore_destination "$repo_root" "$rel_path" "$restore_to")"; then
     precontact_backup_set_reason "unsafe_restore_destination"
-    rm -f -- "$tmp_restore"
     return 1
   fi
   target_dir="$(dirname -- "$target_abs")"
   if ! mkdir -p -- "$target_dir"; then
     precontact_backup_set_reason "restore_parent_mkdir_failed"
-    rm -f -- "$tmp_restore"
     return 1
   fi
 
   restored_sha="$(precontact_backup_sha256_file "$tmp_restore")" || {
-    rm -f -- "$tmp_restore"
     precontact_backup_set_reason "restore_hash_failed"
     return 1
   }
   if [[ "$restored_sha" != "$content_sha" ]]; then
-    rm -f -- "$tmp_restore"
     precontact_backup_set_reason "restore_hash_mismatch"
     return 1
   fi
@@ -1007,9 +1080,23 @@ precontact_backup_restore_by_id() {
     chmod "$mode" "$tmp_restore" 2>/dev/null || true
   fi
   if ! mv -- "$tmp_restore" "$target_abs"; then
-    rm -f -- "$tmp_restore"
     precontact_backup_set_reason "restore_rename_failed"
     return 1
   fi
-  precontact_backup_restore_log "INFO" "precontact_backup.restore backup_id=$backup_id target=$(shell_quote "$rel_path") path_redacted=1"
+  precontact_backup_restore_log "INFO" "precontact_backup.restore target=$(shell_quote "$rel_path") path_redacted=1"
+}
+
+precontact_backup_restore_cleanup_tmp() {
+  local tmp_restore="$1"
+  local payload_tmp="$2"
+  local payload_metadata="$3"
+  local restore_tmp_dir="$4"
+  local restore_tmp_dir_is_temp="$5"
+
+  [[ -n "${tmp_restore:-}" ]] && rm -f -- "$tmp_restore"
+  [[ -n "${payload_tmp:-}" ]] && rm -f -- "$payload_tmp"
+  [[ -n "${payload_metadata:-}" ]] && rm -f -- "$payload_metadata"
+  if [[ "$restore_tmp_dir_is_temp" == "1" && -n "$restore_tmp_dir" ]]; then
+    rm -rf -- "$restore_tmp_dir"
+  fi
 }

@@ -5890,8 +5890,16 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except BrokenPipeError:
+        devnull_fd = None
         try:
-            sys.stdout = open(os.devnull, "w", encoding="utf-8")
+            devnull_fd = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull_fd, sys.stdout.fileno())
         except OSError:
             pass
+        finally:
+            if devnull_fd is not None:
+                try:
+                    os.close(devnull_fd)
+                except OSError:
+                    pass
         raise SystemExit(EXIT_SUCCESS)

@@ -27,6 +27,10 @@ result = {
 def decorated_reason(line: str, core: str) -> str:
     if line.startswith("```") and line.endswith("```") and line[3:-3].strip() == core:
         return "markdown_code_fence"
+    if line.lstrip().startswith(("-", "*", "+", ">")):
+        body = line.lstrip("-*+> \t").strip()
+        if body == core:
+            return "bullet_marker"
     if line in {f"`{core}`", f"``{core}``"}:
         return "markdown_backticks"
     if len(line) >= 2 and line[0] == line[-1] and line[0] in {"'", '"'}:
@@ -37,44 +41,48 @@ def decorated_reason(line: str, core: str) -> str:
     return ""
 
 
+final_line = ""
 in_code_fence = False
-
 with open(path, "r", encoding="utf-8", errors="replace") as handle:
     for raw_line in handle:
         line = raw_line.rstrip("\r\n").strip()
+        if not line:
+            continue
         if line.startswith("```"):
-            for core, status in cores.items():
-                if core in line:
-                    reason = decorated_reason(line, core) or "markdown_code_fence"
-                    result["candidate_marker"] = status
-                    result["candidate_line"] = line
-                    result["candidate_rejection_reason"] = reason
             in_code_fence = not in_code_fence
             continue
+        if in_code_fence:
+            continue
+        final_line = line
+
+if final_line:
+    for core, status in cores.items():
+        if final_line == core:
+            result["accepted_marker"] = status
+            break
+
+    if not result["accepted_marker"]:
+        candidates = []
         for core, status in cores.items():
-            if line == core and in_code_fence:
-                result["candidate_marker"] = status
-                result["candidate_line"] = line
-                result["candidate_rejection_reason"] = "markdown_code_fence"
-            elif line == core:
-                result["accepted_marker"] = status
-            elif core in line:
-                reason = decorated_reason(line, core)
-                if reason:
-                    result["candidate_marker"] = status
-                    result["candidate_line"] = line
-                    result["candidate_rejection_reason"] = reason
-                elif not result["candidate_line"]:
-                    result["candidate_marker"] = status
-                    result["candidate_line"] = line
-                    result["candidate_rejection_reason"] = "decorated_marker"
+            if core in final_line:
+                candidates.append((core, status))
+        if len(candidates) > 1:
+            result["candidate_marker"] = candidates[0][1]
+            result["candidate_line"] = final_line
+            result["candidate_rejection_reason"] = "multiple_markers"
+        elif len(candidates) == 1:
+            core, status = candidates[0]
+            reason = decorated_reason(final_line, core) or "decorated_marker"
+            result["candidate_marker"] = status
+            result["candidate_line"] = final_line
+            result["candidate_rejection_reason"] = reason
 
 print(json.dumps(result, separators=(",", ":")))
 PY
 }
 
 while_marker_analysis_json() {
-  marker_analysis_json "$1" "UPKEEPER_STATUS" "WORK_DONE NO_BACKEND_TASK BLOCKED"
+  marker_analysis_json "$1" "UPKEEPER_STATUS" "WORK_DONE NO_CHANGES NO_BACKEND_TASK BLOCKED"
 }
 
 postmortem_marker_analysis_json() {
@@ -83,34 +91,23 @@ postmortem_marker_analysis_json() {
 
 parse_postmortem_marker() {
   local last_message_file="$1"
-  local marker
-  marker="$(python3 - "$last_message_file" <<'PY'
-import re
+  local analysis marker
+  analysis="$(postmortem_marker_analysis_json "$last_message_file")"
+  marker="$(python3 - "$analysis" <<'PY'
+import json
 import sys
 
-path = sys.argv[1]
-if not path or not path.strip():
-    sys.exit(0)
-
-allowed = {"REPORT_WRITTEN", "HARDENING_DONE", "BLOCKED"}
-pattern = re.compile(r"^\s*CODEX_POSTMORTEM_STATUS:\s*([A-Z_]+)\s*$")
 try:
-    with open(path, "r", encoding="utf-8", errors="replace") as handle:
-        for raw_line in handle:
-            match = pattern.match(raw_line.rstrip("\r\n"))
-            if not match:
-                continue
-            status = match.group(1)
-            if status in allowed:
-                print(status)
-                sys.exit(0)
-except OSError:
-    pass
-
-sys.exit(0)
+    data = json.loads(sys.argv[1])
+except (TypeError, json.JSONDecodeError):
+    sys.exit(0)
+print(data.get("accepted_marker", ""))
 PY
 )"
-  [[ -n "$marker" ]] && printf '%s' "$marker"
+  if [[ -n "$marker" ]]; then
+    printf '%s' "$marker"
+  fi
+  return 0
 }
 
 review_report_summary_json() {
@@ -707,7 +704,7 @@ record_startup_anomaly_gate_review() {
     if ! write_startup_anomaly_gate_state "unresolved" "nonzero_codex_exit"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
-  elif startup_anomaly_cycle_review_evidence_present "$LOG_FILE" "$CYCLE_ID"; then
+  elif current_cycle_log_review_present "$last_message_file" "$CYCLE_ID" "$LOG_FILE" "$STARTUP_ANOMALY_REASONS"; then
     STARTUP_ANOMALY_GATE_RESOLVED="1"
     if ! write_startup_anomaly_gate_state "resolved" "log_review_ack_checked"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"

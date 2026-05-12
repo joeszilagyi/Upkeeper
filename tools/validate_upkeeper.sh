@@ -473,13 +473,13 @@ check_gitignore_contract() {
 }
 
 check_force_added_gitignored_target_selection() {
-  local temp_dir client manifest_path lattice_db rc
+  local temp_dir client manifest_path rc lattice_db_path
 
   log "checking force-added Git-ignored target exclusion"
   temp_dir="$(mktemp -d /tmp/upkeeper-gitignored-target.XXXXXX)"
   client="$temp_dir/client"
   manifest_path="$temp_dir/manifest.json"
-  lattice_db="$client/runtime/upkeeper-lattice/validation.sqlite3"
+  lattice_db_path="$temp_dir/client/runtime/upkeeper-lattice/lattice-direct.sqlite3"
   mkdir -p "$client"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/10/fake-session.jsonl" "gpt-5.5"
 
@@ -504,6 +504,7 @@ check_force_added_gitignored_target_selection() {
         CODEX_LOG_FILE="$log_file" \
         CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
         CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+        CODEX_POSTMORTEM_DIR="$temp_dir/postmortems" \
         CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
         CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
         CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -516,7 +517,7 @@ check_force_added_gitignored_target_selection() {
         CODEX_FILE_MANIFEST_PATH="$manifest_path" \
         CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
         CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
-        UPKEEPER_LATTICE_DB="$lattice_db" \
+        UPKEEPER_LATTICE_DB="$temp_dir/lattice.sqlite3" \
         UPKEEPER_DRY_RUN=1 \
         ./Upkeeper "$@"
     ) >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
@@ -543,11 +544,11 @@ check_force_added_gitignored_target_selection() {
 
   "$ROOT_DIR/tools/upkeeper_lattice.py" \
     --root "$client" \
-    --db "$lattice_db" \
+    --db "$lattice_db_path" \
     init >"$temp_dir/lattice-init.json"
   "$ROOT_DIR/tools/upkeeper_lattice.py" \
     --root "$client" \
-    --db "$lattice_db" \
+    --db "$lattice_db_path" \
     query selection-candidates --mode max-cover --format jsonl >"$temp_dir/lattice-candidates.jsonl"
   python3 - "$temp_dir/lattice-candidates.jsonl" <<'PY' ||
 import json
@@ -568,14 +569,14 @@ PY
 }
 
 check_symlink_target_selection_guard() {
-  local temp_dir client manifest_path lattice_db outside_target rc
+  local temp_dir client manifest_path outside_target rc lattice_db_path
 
   log "checking symlink target selection guard"
   temp_dir="$(mktemp -d /tmp/upkeeper-symlink-target.XXXXXX)"
   client="$temp_dir/client"
   manifest_path="$temp_dir/manifest.json"
-  lattice_db="$client/runtime/upkeeper-lattice/validation.sqlite3"
   outside_target="$temp_dir/outside-sentinel.txt"
+  lattice_db_path="$temp_dir/client/runtime/upkeeper-lattice/lattice-direct.sqlite3"
   mkdir -p "$client"
   printf 'outside sentinel\n' >"$outside_target"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/10/fake-session.jsonl" "gpt-5.5"
@@ -600,6 +601,7 @@ check_symlink_target_selection_guard() {
         CODEX_LOG_FILE="$log_file" \
         CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
         CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+        CODEX_POSTMORTEM_DIR="$temp_dir/postmortems" \
         CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
         CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
         CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -612,7 +614,7 @@ check_symlink_target_selection_guard() {
         CODEX_FILE_MANIFEST_PATH="$manifest_path" \
         CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
         CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
-        UPKEEPER_LATTICE_DB="$lattice_db" \
+        UPKEEPER_LATTICE_DB="$temp_dir/lattice.sqlite3" \
         UPKEEPER_DRY_RUN=1 \
         ./Upkeeper "$@"
     ) >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
@@ -639,11 +641,11 @@ check_symlink_target_selection_guard() {
 
   "$ROOT_DIR/tools/upkeeper_lattice.py" \
     --root "$client" \
-    --db "$lattice_db" \
+    --db "$lattice_db_path" \
     init >"$temp_dir/lattice-init.json"
   "$ROOT_DIR/tools/upkeeper_lattice.py" \
     --root "$client" \
-    --db "$lattice_db" \
+    --db "$lattice_db_path" \
     query selection-candidates --mode max-cover --format jsonl >"$temp_dir/lattice-candidates.jsonl"
   python3 - "$temp_dir/lattice-candidates.jsonl" <<'PY' ||
 import json
@@ -692,14 +694,14 @@ check_codex_mode_validation() {
   rc=$?
   set -e
   [[ "$rc" -eq 2 ]] || fail "missing-dash CODEX_MODE exited $rc, expected 2"
-  grep -Fq "invalid CODEX_MODE first token sandbox" <<<"$output" || fail "missing-dash CODEX_MODE error was not clear"
+  grep -Eqq "invalid CODEX_MODE (first token sandbox|token sandbox)" <<<"$output" || fail "missing-dash CODEX_MODE error was not clear"
 
   set +e
   output="$(CODEX_MODE='---sandbox workspace-write' ./Upkeeper --version 2>&1)"
   rc=$?
   set -e
   [[ "$rc" -eq 2 ]] || fail "triple-hyphen CODEX_MODE exited $rc, expected 2"
-  grep -Fq "invalid CODEX_MODE first token ---sandbox" <<<"$output" || fail "triple-hyphen CODEX_MODE error was not clear"
+  grep -Eqq "invalid CODEX_MODE (first token ---sandbox|token ---sandbox)" <<<"$output" || fail "triple-hyphen CODEX_MODE error was not clear"
 
   set +e
   output="$(CODEX_MODE='--sandbox danger-full-access' ./Upkeeper --version 2>&1)"
@@ -1436,12 +1438,14 @@ EOF
 }
 
 check_file_manifest_selection() {
-  local temp_dir manifest_path output rc
+  local temp_dir manifest_path output rc lattice_db_path
 
   log "checking file manifest selection"
   temp_dir="$(mktemp -d /tmp/upkeeper-file-manifest.XXXXXX)"
   manifest_path="$temp_dir/manifest.json"
+  lattice_db_path="runtime/upkeeper-lattice/file-manifest-${temp_dir##*/}.sqlite3"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
+  mkdir -p runtime/upkeeper-lattice
 
   run_manifest_dry_run() {
     local log_file="$1"
@@ -1462,8 +1466,7 @@ check_file_manifest_selection() {
       CODEX_FILE_MANIFEST_PATH="$manifest_path" \
       CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
       CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
-      UPKEEPER_LATTICE_ALLOW_UNSAFE_DB=1 \
-      UPKEEPER_LATTICE_DB="$temp_dir/lattice.sqlite3" \
+      UPKEEPER_LATTICE_DB="$lattice_db_path" \
       UPKEEPER_DRY_RUN=1 \
       ./Upkeeper "$@" >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
   }
@@ -1654,8 +1657,8 @@ EOF
     --fix-next-issue
   grep -Fq "issue.fix_next selected number=910" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue did not select the oldest security issue"
   grep -Fq "selected_label=security" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue did not use security priority first"
-  grep -Fq "target_file=lib/upkeeper/codex_io.bash" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue did not infer the repo-local target file"
-  grep -Fq "review.preselect path=lib/upkeeper/codex_io.bash" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue did not pin the inferred target"
+  grep -Fq "issue_fix.target ignored reason=untrusted_inferred_source" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue did not report an untrusted inferred source"
+  grep -Fq "target_file=none" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue did not keep target file unpinned for inferred source"
   grep -Fq "issue.fix_prompt appended number=910" "$temp_dir/fix-next-issue.log" || fail "fix-next-issue prompt addendum was not appended"
 
   PATH="$temp_dir/bin:$PATH" run_manifest_dry_run "$temp_dir/fix-explicit-issue.log" \
@@ -1714,6 +1717,7 @@ EOF
   [[ "$rc" -eq 3 ]] || fail "invalid selection review module exited $rc, expected 3"
   grep -Fq "unknown review module filter: nope" <<<"$output" || fail "invalid selection review module error was not clear"
 
+  rm -f "$lattice_db_path" "$lattice_db_path-journal" "$lattice_db_path-wal" "$lattice_db_path-shm"
   rm -r "$temp_dir"
 }
 
@@ -1776,7 +1780,7 @@ PY
     source lib/upkeeper/tool_failure_queue.bash
     tool_failure_queue_finalize_run "lib/upkeeper/codex_io.bash" "$transcript" 0 "BLOCKED"
   )
-  marker_path_replay="$(printf '%s/failures/open/%s.json' "$temp_dir" "$marker_id")"
+  marker_path_replay="$temp_dir/failures/open/$marker_id.json"
   [[ "$(jq -r '.failure_count // 0' "$marker_path_replay")" == "1" ]] || fail "tool failure queue inflated failure_count on transcript replay"
 
   (

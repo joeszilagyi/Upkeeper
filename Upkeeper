@@ -95,6 +95,33 @@ load_upkeeper_config_file() {
   source "$config_path"
 }
 
+load_fallback_cycle_contract() {
+  local contract_path="${CODEX_FALLBACK_CONTRACT_PATH:-}"
+  local postmortem_root="${CODEX_POSTMORTEM_DIR:-${ROOT_DIR}/runtime/journals/upkeeper-postmortems}"
+
+  [[ "${CODEX_FALLBACK_CHAIN_ACTIVE:-0}" == "1" ]] || return 0
+  [[ -n "$contract_path" ]] || return 0
+
+  [[ "$contract_path" == /* ]] || return 1
+  [[ -f "$contract_path" ]] || return 1
+  [[ -r "$contract_path" ]] || return 1
+  [[ -L "$contract_path" ]] && return 1
+  case "$contract_path" in
+    "$postmortem_root"/*|"$postmortem_root")
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  # shellcheck source=/dev/null
+  source "$contract_path"
+}
+
+if ! load_fallback_cycle_contract; then
+  upkeeper_config_fail "invalid fallback contract path=${CODEX_FALLBACK_CONTRACT_PATH:-none}"
+fi
+
 preparse_upkeeper_config_args "$@"
 load_upkeeper_config_file
 
@@ -243,7 +270,7 @@ CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER="${CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER:-1}
 CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="${CODEX_STARTUP_ANOMALY_GATE_STATE_DIR:-$ROOT_DIR/runtime/startup-anomaly-gates}"
 CODEX_TOOL_FAILURE_QUEUE_ENABLED="${CODEX_TOOL_FAILURE_QUEUE_ENABLED:-1}"
 CODEX_TOOL_FAILURE_QUEUE_DIR="${CODEX_TOOL_FAILURE_QUEUE_DIR:-$ROOT_DIR/runtime/unaddressed-tool-failures}"
-CODEX_TOOL_FAILURE_QUEUE_BYPASS="0"
+CODEX_TOOL_FAILURE_QUEUE_BYPASS="${CODEX_TOOL_FAILURE_QUEUE_BYPASS:-0}"
 UPKEEPER_AUTOMATION_LEDGER_ENABLED="${UPKEEPER_AUTOMATION_LEDGER_ENABLED:-1}"
 UPKEEPER_AUTOMATION_LEDGER_DIR="${UPKEEPER_AUTOMATION_LEDGER_DIR:-$ROOT_DIR/runtime/upkeeper-automation-ledger}"
 UPKEEPER_OBLIGATION_DIR="${UPKEEPER_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
@@ -305,11 +332,11 @@ RUN_MARK_HEARTBEAT_STARTED="0"
 RUN_MARK_HEARTBEAT_STOPPED="0"
 RUN_TERMINAL_PROGRESS_PID=""
 RUN_CODEX_STARTED_EPOCH=""
-RUN_SELECTED_REVIEW_PATH=""
-RUN_SELECTED_REVIEW_BASIS=""
-RUN_SELECTED_FROM_FAILURE_QUEUE="0"
-RUN_SELECTED_FAILURE_MARKER_ID=""
-RUN_SELECTED_FAILURE_MARKER_PATH=""
+RUN_SELECTED_REVIEW_PATH="${RUN_SELECTED_REVIEW_PATH:-}"
+RUN_SELECTED_REVIEW_BASIS="${RUN_SELECTED_REVIEW_BASIS:-}"
+RUN_SELECTED_FROM_FAILURE_QUEUE="${RUN_SELECTED_FROM_FAILURE_QUEUE:-0}"
+RUN_SELECTED_FAILURE_MARKER_ID="${RUN_SELECTED_FAILURE_MARKER_ID:-}"
+RUN_SELECTED_FAILURE_MARKER_PATH="${RUN_SELECTED_FAILURE_MARKER_PATH:-}"
 RUN_PRECONTACT_BACKUP_ID=""
 RUN_PRECONTACT_BACKUP_SHA256=""
 RUN_PRECONTACT_BACKUP_MODE=""
@@ -326,15 +353,15 @@ UPKEEPER_LATTICE_AVAILABLE="0"
 UPKEEPER_LATTICE_WARNED="0"
 UPKEEPER_LATTICE_FINISH_RECORDED="0"
 LATTICE_LAST_OUTPUT=""
-CODEX_ISSUE_FIX_NUMBER=""
-CODEX_ISSUE_FIX_TITLE=""
-CODEX_ISSUE_FIX_URL=""
-CODEX_ISSUE_FIX_LABELS=""
-CODEX_ISSUE_FIX_SELECTED_LABEL=""
-CODEX_ISSUE_FIX_CREATED_AT=""
-CODEX_ISSUE_FIX_TARGET_FILE=""
-CODEX_ISSUE_FIX_BODY=""
-CODEX_ISSUE_FIX_COMMENTS_JSON="[]"
+CODEX_ISSUE_FIX_NUMBER="${CODEX_ISSUE_FIX_NUMBER:-}"
+CODEX_ISSUE_FIX_TITLE="${CODEX_ISSUE_FIX_TITLE:-}"
+CODEX_ISSUE_FIX_URL="${CODEX_ISSUE_FIX_URL:-}"
+CODEX_ISSUE_FIX_LABELS="${CODEX_ISSUE_FIX_LABELS:-}"
+CODEX_ISSUE_FIX_SELECTED_LABEL="${CODEX_ISSUE_FIX_SELECTED_LABEL:-}"
+CODEX_ISSUE_FIX_CREATED_AT="${CODEX_ISSUE_FIX_CREATED_AT:-}"
+CODEX_ISSUE_FIX_TARGET_FILE="${CODEX_ISSUE_FIX_TARGET_FILE:-}"
+CODEX_ISSUE_FIX_BODY="${CODEX_ISSUE_FIX_BODY:-}"
+CODEX_ISSUE_FIX_COMMENTS_JSON="${CODEX_ISSUE_FIX_COMMENTS_JSON:-[]}"
 
 source_upkeeper_module() {
   local module="$1"
@@ -407,7 +434,30 @@ UPKEEPER_MODULES=(
 for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
   source_upkeeper_module "$upkeeper_module"
 done
-unset upkeeper_module
+ unset upkeeper_module
+
+prepare_fallback_chain_token() {
+  local token_fd="${CODEX_FALLBACK_CHAIN_TOKEN_FD:-}"
+
+  if [[ "${CODEX_FALLBACK_CHAIN_ACTIVE:-0}" == "1" ]]; then
+    if ! [[ "$token_fd" =~ ^[0-9]+$ ]]; then
+      log_line "ERROR" "fallback_chain.token missing_fd"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=missing_fallback_chain_token_fd"
+    fi
+    if ! IFS= read -r CODEX_FALLBACK_CHAIN_TOKEN <&"$token_fd"; then
+      log_line "ERROR" "fallback_chain.token missing_read"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=missing_fallback_chain_token_read"
+    fi
+    if [[ -z "${CODEX_FALLBACK_CHAIN_TOKEN:-}" ]]; then
+      log_line "ERROR" "fallback_chain.token missing_value"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=fallback_chain_token_missing"
+    fi
+    [[ -n "$token_fd" ]] && eval "exec ${token_fd}<&-" 2>/dev/null || true
+    return 0
+  fi
+
+  CODEX_FALLBACK_CHAIN_TOKEN="$(generate_fallback_chain_token)"
+}
 
 # Main cycle.
 #
@@ -426,6 +476,7 @@ main() {
   require_commands
   normalize_guardrail_thresholds
   check_central_wrapper_health_or_exit
+  prepare_fallback_chain_token
   acquire_active_lock_or_exit
   trap cleanup_run_temp_files EXIT
   ensure_operator_guide
@@ -821,14 +872,14 @@ main() {
   else
     status_marker_source="missing"
   fi
-  if [[ -z "$status_marker" ]]; then
+  if [[ -z "$status_marker" && "${UPKEEPER_ALLOW_STATUS_RECOVERY:-0}" == "1" ]]; then
     if status_marker_review_recovery="$(recover_status_marker_from_review_outcome "$last_message_file" "$codex_exit" "$primary_session_task_complete_last_agent_message")"; then
       IFS=$'	' read -r status_marker status_marker_review_outcome status_marker_review_selected_file <<<"$status_marker_review_recovery"
       status_marker_source="review_outcome"
       log_line "WARN" "status_marker.recovered_from_review_outcome marker=$status_marker review_outcome=$status_marker_review_outcome selected_file=$(shell_quote "$status_marker_review_selected_file") codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
     fi
   fi
-  if [[ -z "$status_marker" ]]; then
+  if [[ -z "$status_marker" && "${UPKEEPER_ALLOW_STATUS_RECOVERY:-0}" == "1" ]]; then
     if status_marker_blocker_recovery="$(recover_status_marker_from_blocker_request "$last_message_file" "$codex_exit" "$primary_session_task_complete_last_agent_message")"; then
       IFS=$'	' read -r status_marker status_marker_blocker_reason _ <<<"$status_marker_blocker_recovery"
       status_marker_source="blocker_request"

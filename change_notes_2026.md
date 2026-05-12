@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-11: bug-report-only draft-gating changes:
+	1. Changed `--bug-report-only` from a soft “file an issue if possible” prompt into a wrapper-owned local draft workflow, with issue-ready bug reports now expected through a final-message draft block that Upkeeper saves under runtime-local bug-report drafts.
+	2. Added a bug-report-only `gh` gate inside the Genie Protocol broker so backend Codex can still use read-only GitHub inspection, but `gh issue create` stays blocked unless `UPKEEPER_ALLOW_GH_ISSUE_WRITE=1`.
+	3. Required `REVIEWED_AND_REPORTED` bug-report-only runs to leave a durable local draft artifact, blocking the cycle when the final response claims a reported bug without the wrapper-readable draft block.
+
 2026-05-11: dirty-checkout reconciliation changes:
 	1. Hardened direct fallback recovery so parent cycles always create a private fallback contract directory before launching a child run, preserve contract-carried target and issue context, and cleanly finish quota-triggered dry-run fallback orchestration.
 	2. Strengthened fallback and active-lock trust boundaries by hashing inherited fallback-chain tokens in lock state, requiring matching parent-process fingerprints for lock inheritance, and validating dry-run fallback tests against the real direct-child contract instead of looser shell-subprocess behavior.

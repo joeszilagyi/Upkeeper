@@ -8,23 +8,123 @@
 
 GENIE_PROTOCOL_BLOCKED_COMMANDS=(gh curl wget hub)
 
+upkeeper_bug_report_issue_write_allowed() {
+  config_truthy "${UPKEEPER_ALLOW_GH_ISSUE_WRITE:-0}"
+}
+
+prepare_bug_report_draft_artifact() {
+  local draft_root="${UPKEEPER_BUG_REPORT_DRAFT_DIR:-${ROOT_DIR:-$PWD}/runtime/upkeeper-bug-report-drafts}"
+
+  upkeeper_bug_report_only_enabled || return 0
+  mkdir -p -- "$draft_root" || return 1
+  chmod 700 "$draft_root" 2>/dev/null || true
+  RUN_BUG_REPORT_DRAFT_FILE="$draft_root/${CYCLE_ID}-${CYCLE_RUN_HASH}.md"
+  log_line "INFO" "bug_report_only.draft.destination path=$(shell_quote "$RUN_BUG_REPORT_DRAFT_FILE") issue_write_allowed=$(truthy_as_int "${UPKEEPER_ALLOW_GH_ISSUE_WRITE:-0}")"
+}
+
 prepare_genie_protocol_env() {
-  local command_name stub_path
+  local command_name stub_path real_gh_bin
 
   ensure_run_tmp_dir
   RUN_GENIE_BIN_DIR="$RUN_TMP_DIR/genie-bin"
   RUN_GENIE_GH_CONFIG_DIR="$RUN_TMP_DIR/genie-gh-config"
+  RUN_GENIE_REAL_GH_BIN=""
   mkdir -p -- "$RUN_GENIE_BIN_DIR" "$RUN_GENIE_GH_CONFIG_DIR"
   chmod 700 "$RUN_GENIE_BIN_DIR" "$RUN_GENIE_GH_CONFIG_DIR" 2>/dev/null || true
+  real_gh_bin="$(command -v gh 2>/dev/null || true)"
+  RUN_GENIE_REAL_GH_BIN="$real_gh_bin"
 
   for command_name in "${GENIE_PROTOCOL_BLOCKED_COMMANDS[@]}"; do
     stub_path="$RUN_GENIE_BIN_DIR/$command_name"
     if [[ ! -e "$stub_path" ]]; then
-      cat >"$stub_path" <<'EOF'
+      if [[ "$command_name" == "gh" ]] && upkeeper_bug_report_only_enabled; then
+        cat >"$stub_path" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+truthy() {
+  case "${1,,}" in
+    1|true|yes|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+real_gh="${UPKEEPER_REAL_GH_BIN:-}"
+if [[ -z "$real_gh" || ! -x "$real_gh" ]]; then
+  printf 'Upkeeper bug-report-only: real gh binary is unavailable; use the wrapper-owned local draft artifact instead.\n' >&2
+  exit 126
+fi
+
+original_args=("$@")
+cmd1="${1:-}"
+cmd2="${2:-}"
+allow_read=0
+case "${cmd1}:${cmd2}" in
+  auth:status|repo:view|label:list|issue:list|issue:view)
+    allow_read=1
+    ;;
+  api:*)
+    method="GET"
+    has_write_payload=0
+    shift
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -X|--method)
+          method="${2:-}"
+          shift 2
+          ;;
+        --method=*)
+          method="${1#*=}"
+          shift
+          ;;
+        -f|--field|-F|--raw-field|--input)
+          has_write_payload=1
+          shift 2
+          ;;
+        --field=*|--raw-field=*|--input=*)
+          has_write_payload=1
+          shift
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    if [[ "${method^^}" == "GET" && "$has_write_payload" == "0" ]]; then
+      allow_read=1
+    fi
+    ;;
+esac
+
+if [[ "$allow_read" == "1" ]]; then
+  exec "$real_gh" "${original_args[@]}"
+fi
+
+if [[ "$cmd1" == "issue" && "$cmd2" == "create" ]]; then
+  if ! truthy "${UPKEEPER_ALLOW_GH_ISSUE_WRITE:-0}"; then
+    printf 'Upkeeper bug-report-only: gh issue create is blocked unless UPKEEPER_ALLOW_GH_ISSUE_WRITE=1; write the wrapper-owned local draft instead.\n' >&2
+    exit 126
+  fi
+  visibility="$("$real_gh" repo view --json visibility --jq .visibility 2>/dev/null || printf 'unknown')"
+  [[ -n "$visibility" ]] || visibility="unknown"
+  printf 'Upkeeper bug-report-only: gh issue create allowed by UPKEEPER_ALLOW_GH_ISSUE_WRITE=1 repo_visibility=%s\n' "$visibility" >&2
+  exec "$real_gh" "$@"
+fi
+
+printf 'Upkeeper bug-report-only: direct gh command is blocked for backend Codex; use read-only gh inspection or the wrapper-owned local draft artifact.\n' >&2
+exit 126
+EOF
+      else
+        cat >"$stub_path" <<'EOF'
 #!/usr/bin/env bash
 printf 'Upkeeper Genie Protocol: direct %s access is blocked for backend Codex; use wrapper-provided issue packets and local draft artifacts.\n' "${0##*/}" >&2
 exit 126
 EOF
+      fi
       chmod 700 "$stub_path"
     fi
   done
@@ -55,6 +155,7 @@ run_codex_exec_capture() {
     -u GITHUB_API_URL
     -u GITHUB_GRAPHQL_URL
     PATH="$RUN_GENIE_BIN_DIR:$PATH"
+    UPKEEPER_REAL_GH_BIN="$RUN_GENIE_REAL_GH_BIN"
     GH_CONFIG_DIR="$RUN_GENIE_GH_CONFIG_DIR"
     GIT_TERMINAL_PROMPT=0
   )
@@ -609,6 +710,126 @@ upkeeper_issue_workflow_post_comment() {
 
   log_line "INFO" "issue.workflow_comment.posted stage=$(shell_quote "$stage") number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") path=$(shell_quote "$draft_file")"
   return 0
+}
+
+upkeeper_bug_report_extract_draft_from_last_message() {
+  local last_message_file="$1"
+  local draft_file="$2"
+
+  [[ -r "$last_message_file" ]] || return 1
+  [[ -n "$draft_file" ]] || return 1
+
+  python3 - "$last_message_file" "$draft_file" <<'PY'
+import os
+import pathlib
+import sys
+
+last_message = pathlib.Path(sys.argv[1])
+draft_path = pathlib.Path(sys.argv[2])
+start = "UPKEEPER_BUG_REPORT_DRAFT_START"
+end = "UPKEEPER_BUG_REPORT_DRAFT_END"
+
+try:
+    lines = last_message.read_text(encoding="utf-8", errors="replace").splitlines()
+except OSError as exc:
+    print(f"read_error:{exc}", file=sys.stderr)
+    sys.exit(1)
+
+blocks = []
+current = None
+for line in lines:
+    if line == start:
+      if current is not None:
+        print("nested_start", file=sys.stderr)
+        sys.exit(1)
+      current = []
+      continue
+    if line == end:
+      if current is None:
+        print("end_without_start", file=sys.stderr)
+        sys.exit(1)
+      blocks.append(current)
+      current = None
+      continue
+    if current is not None:
+      current.append(line)
+
+if current is not None:
+    print("missing_end", file=sys.stderr)
+    sys.exit(1)
+if len(blocks) != 1:
+    print(f"wrong_block_count:{len(blocks)}", file=sys.stderr)
+    sys.exit(1)
+
+body_lines = blocks[0]
+while body_lines and body_lines[-1] == "":
+    body_lines.pop()
+while body_lines and body_lines[0] == "":
+    body_lines.pop(0)
+body = "\n".join(body_lines).rstrip() + "\n"
+
+if not body.strip():
+    print("empty_body", file=sys.stderr)
+    sys.exit(1)
+first_line = body.splitlines()[0]
+if not first_line.startswith("Title: ") or not first_line[len("Title: "):].strip():
+    print("missing_title", file=sys.stderr)
+    sys.exit(1)
+if len(body.encode("utf-8", errors="replace")) > 131072:
+    print("body_too_large", file=sys.stderr)
+    sys.exit(1)
+if "\0" in body:
+    print("nul_byte", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    draft_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(draft_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(body)
+    os.chmod(str(draft_path), 0o600)
+except OSError as exc:
+    print(f"write_error:{exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+upkeeper_bug_report_materialize_draft() {
+  local draft_file="${RUN_BUG_REPORT_DRAFT_FILE:-}"
+  local output rc
+
+  [[ -n "$draft_file" ]] || return 1
+  if [[ -s "$draft_file" ]]; then
+    return 0
+  fi
+  if [[ -z "${RUN_LAST_MESSAGE_FILE:-}" || ! -r "$RUN_LAST_MESSAGE_FILE" ]]; then
+    log_line "ERROR" "bug_report_only.draft.unavailable path=$(shell_quote "$draft_file") reason=missing_last_message"
+    return 1
+  fi
+
+  set +e
+  output="$(upkeeper_bug_report_extract_draft_from_last_message "$RUN_LAST_MESSAGE_FILE" "$draft_file" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    log_line "ERROR" "bug_report_only.draft.unavailable path=$(shell_quote "$draft_file") reason=extract_failed detail=$(shell_quote "$output")"
+    return 1
+  fi
+
+  log_line "INFO" "bug_report_only.draft.extracted path=$(shell_quote "$draft_file") issue_write_allowed=$(truthy_as_int "${UPKEEPER_ALLOW_GH_ISSUE_WRITE:-0}")"
+  return 0
+}
+
+upkeeper_bug_report_finalize() {
+  local summary_json outcome
+
+  upkeeper_bug_report_only_enabled || return 0
+  summary_json="$(review_report_summary_json "${RUN_LAST_MESSAGE_FILE:-}" 2>/dev/null || true)"
+  outcome="$(json_field "$summary_json" '.outcome' 2>/dev/null || printf '')"
+  if [[ "$outcome" != "REVIEWED_AND_REPORTED" ]]; then
+    return 0
+  fi
+  upkeeper_bug_report_materialize_draft
 }
 
 upkeeper_source_mutation_fingerprint() {

@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.11
+Version: v1.2.12
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -388,7 +388,9 @@ Prompt behavior:
   - --bug-report-only, also accepted as --file-bug-only or --report-bug-only,
     makes the cycle investigate and file/report confirmed bugs without editing
     or touching tracked source. It intentionally supersedes the normal clean
-    review touch requirement for that invocation.
+    review touch requirement for that invocation. By default it writes a local
+    issue draft under runtime/upkeeper-bug-report-drafts and blocks direct
+    GitHub issue creation unless `UPKEEPER_ALLOW_GH_ISSUE_WRITE=1`.
   - --fix-next-issue, also accepted as --fix-oldest-bug, asks Upkeeper to pick
     the oldest open non-skipped GitHub issue by priority label order
     security > data-integrity > bug, infer a starting file from the issue body
@@ -427,6 +429,8 @@ Environment overrides:
   UPKEEPER_SELECTION_REVIEW_MODULES Default: empty
   UPKEEPER_MAX_COVER           Default: 0
   UPKEEPER_BUG_REPORT_ONLY     Default: 0
+  UPKEEPER_ALLOW_GH_ISSUE_WRITE Default: 0
+  UPKEEPER_BUG_REPORT_DRAFT_DIR Default: runtime/upkeeper-bug-report-drafts
   UPKEEPER_FIX_NEXT_ISSUE      Default: 0
   UPKEEPER_FIX_ISSUE           Default: empty
   UPKEEPER_ISSUE_WORKFLOW_STAGE Default: empty

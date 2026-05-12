@@ -361,7 +361,9 @@ Prompt behavior:
   - --bug-report-only, also accepted as --file-bug-only or --report-bug-only,
     makes the cycle investigate and file/report confirmed bugs without editing
     or touching tracked source. It intentionally supersedes the normal clean
-    review touch requirement for that invocation.
+    review touch requirement for that invocation. By default it writes a local
+    issue draft under runtime/upkeeper-bug-report-drafts and blocks direct
+    GitHub issue creation unless UPKEEPER_ALLOW_GH_ISSUE_WRITE=1.
   - --fix-next-issue, also accepted as --fix-oldest-bug, asks Upkeeper to pick
     the oldest open non-skipped GitHub issue by priority label order
     security > data-integrity > bug, infer a starting file from the issue body
@@ -400,6 +402,8 @@ Environment overrides:
   UPKEEPER_SELECTION_REVIEW_MODULES Default: empty
   UPKEEPER_MAX_COVER           Default: 0
   UPKEEPER_BUG_REPORT_ONLY     Default: 0
+  UPKEEPER_ALLOW_GH_ISSUE_WRITE Default: 0
+  UPKEEPER_BUG_REPORT_DRAFT_DIR Default: runtime/upkeeper-bug-report-drafts
   UPKEEPER_FIX_NEXT_ISSUE      Default: 0
   UPKEEPER_FIX_ISSUE           Default: empty
   UPKEEPER_ISSUE_WORKFLOW_STAGE Default: empty

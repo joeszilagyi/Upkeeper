@@ -39,6 +39,7 @@ refresh_postmortem_incident_log() {
   local incident_log_path="$1"
   [[ -n "$incident_log_path" ]] || return 0
   grep "cycle=$CYCLE_ID " "$LOG_FILE" >"$incident_log_path" || true
+  chmod 600 "$incident_log_path" 2>/dev/null || true
 }
 
 # Postmortem evidence writers.
@@ -177,10 +178,11 @@ primary_after_snapshot_stale_after_reset: ${after_snapshot_stale_after_reset:-un
 primary_before_used_left: primary_used=${primary_used:-unknown}% primary_left=${primary_left:-unknown}% secondary_used=${secondary_used:-unknown}% secondary_left=${secondary_left:-unknown}%
 primary_after_used_left: primary_used=${after_primary:-unknown}% primary_left=${after_primary_left:-unknown}% secondary_used=${after_secondary:-unknown}% secondary_left=${after_secondary_left:-unknown}%
 incident_log_path: $incident_log_path
-primary_last_message_copy: $primary_last_message_copy
+primary_last_message_metadata: $primary_last_message_copy
 repo_root: $ROOT_DIR
 loop_log: $LOG_FILE
 EOF
+  chmod 600 "$context_path" 2>/dev/null || true
 }
 
 write_postmortem_bug_record() {
@@ -264,4 +266,5 @@ Upkeeper incident: $trigger in cycle $CYCLE_ID
 This artifact is shell-generated so there is always a human-readable bug stub
 even if the later LLM post-mortem or hardening phases fail.
 EOF
+  chmod 600 "$bug_record_path" 2>/dev/null || true
 }

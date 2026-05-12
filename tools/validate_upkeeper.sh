@@ -2868,6 +2868,16 @@ EOF
   rm -r "$temp_dir"
 }
 
+check_log_self_review_target_boundary() {
+  log "checking log self-review target boundary"
+  grep -Fq 'leave that file unchanged in this cycle and report BLOCKED with the affected repo-relative path plus enough detail for a follow-up wrapper-selected run' \
+    "$ROOT_DIR/lib/upkeeper/prompt_compile.bash" ||
+    fail "log self-review prompt still permits unselected Upkeeper self-repair"
+  grep -Fq 'Do not repair or edit any unselected Upkeeper control-plane file during log-review self-verification' \
+    "$ROOT_DIR/lib/upkeeper/prompt_compile.bash" ||
+    fail "log self-review prompt does not forbid unselected Upkeeper control-plane edits"
+}
+
 check_status_session_jsonl_contract() {
   local temp_dir session_file state diagnostics agent_messages reached_type
 
@@ -3273,6 +3283,7 @@ run_check issue_workflow_comment_relay check_issue_workflow_comment_relay
 run_check issue_workflow_backend_mode_contract check_issue_workflow_backend_mode_contract
 run_check genie_protocol_backend_boundary check_genie_protocol_backend_boundary
 run_check prompt_pass_coverage_enforcement check_prompt_pass_coverage_enforcement
+run_check log_self_review_target_boundary check_log_self_review_target_boundary
 run_check tool_failure_queue check_tool_failure_queue
 run_check lattice_contract check_lattice_contract
 run_check fallback_artifact_helpers check_fallback_artifact_helpers

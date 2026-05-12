@@ -576,3 +576,7 @@ Reconstructed pre-1.0 history:
 2026-05-11: selected-target write-boundary hardening:
 - Preselected review cycles now treat the selected target as the only writable file by default, even when later prompt modules would normally suggest paired tests, docs, helper, caller, or validation edits.
 - Non-selected repository files remain readable for context, but runs that need extra edits must now report `BLOCKED` with an `ADDITIONAL_FILES_NEEDED:` list instead of widening the write scope beyond the selected target's pre-contact backup coverage.
+
+2026-05-11: log self-review control-plane boundary hardening:
+- Current-cycle log self-review no longer permits same-pass repair of unselected `Upkeeper` control-plane files.
+- If log review finds a wrapper, prompt, or logging defect outside the selected target path, the cycle must now leave that file unchanged and report `BLOCKED` for a follow-up wrapper-selected run instead of widening write scope past the selected target backup boundary.

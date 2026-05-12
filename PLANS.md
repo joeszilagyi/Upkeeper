@@ -42,6 +42,41 @@ Completed in this patch:
 - Declared any later paired-edit prompt/module guidance subordinate to the
   selected-target backup boundary.
 
+## Log Self-Review Target Boundary
+
+Status: completed
+
+Goal:
+Remove the remaining log-self-review prompt exception that let a cycle patch
+unselected Upkeeper control-plane files even though only the selected target
+had pre-contact backup coverage.
+
+Constraints:
+- Keep current-cycle log review mandatory.
+- Preserve log-review reporting for wrapper defects discovered during the cycle.
+- Require follow-up wrapper-selected work instead of same-pass unselected
+  self-repair for control-plane files.
+- Keep validation deterministic and local.
+
+Files likely touched:
+- `lib/upkeeper/prompt_compile.bash`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+Completed in this patch:
+- Removed the last log-self-review permission to repair unselected Upkeeper
+  control-plane files during a selected-target cycle.
+- Required `BLOCKED` reporting with the affected repo-relative path when log
+  review finds a wrapper defect outside the selected target.
+- Added quick validation that locks the stricter prompt contract in source.
+
 ## Security Hardening Batch: Fallback Chain Token
 
 Status: in_progress

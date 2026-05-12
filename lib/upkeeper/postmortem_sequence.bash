@@ -74,6 +74,87 @@ Response marker requirements:
 EOF
 }
 
+postmortem_private_dir() {
+  local dir_path="$1"
+
+  [[ -n "$dir_path" ]] || return 1
+  mkdir -p -- "$dir_path" || return 1
+  chmod 700 "$dir_path" 2>/dev/null || true
+}
+
+postmortem_set_private_file_mode() {
+  local file_path="$1"
+
+  [[ -n "$file_path" && -e "$file_path" ]] || return 0
+  chmod 600 "$file_path" 2>/dev/null || true
+}
+
+postmortem_file_sha256() {
+  local file_path="$1"
+
+  python3 - "$file_path" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+try:
+    data = path.read_bytes()
+except OSError:
+    print("missing")
+    raise SystemExit(0)
+print(hashlib.sha256(data).hexdigest())
+PY
+}
+
+write_postmortem_last_message_metadata() {
+  local source_path="${1:-}"
+  local metadata_path="$2"
+  local summary_json outcome selected_file marker hash_value byte_count line_count
+
+  [[ -n "$metadata_path" ]] || return 1
+  if [[ -n "$source_path" && -r "$source_path" ]]; then
+    summary_json="$(review_report_summary_json "$source_path" 2>/dev/null || true)"
+    outcome="$(json_field "$summary_json" '.outcome' 2>/dev/null || printf '')"
+    selected_file="$(json_field "$summary_json" '.selected_file' 2>/dev/null || printf '')"
+    marker="$(parse_postmortem_marker "$source_path" 2>/dev/null || true)"
+    hash_value="$(postmortem_file_sha256 "$source_path")"
+    byte_count="$(wc -c <"$source_path" | tr -d ' ')"
+    line_count="$(wc -l <"$source_path" | tr -d ' ')"
+    cat >"$metadata_path" <<EOF
+artifact_type: primary_last_message_metadata
+source_present: 1
+sha256: ${hash_value:-missing}
+bytes: ${byte_count:-0}
+lines: ${line_count:-0}
+review_outcome: ${outcome:-unknown}
+selected_file: ${selected_file:-unknown}
+postmortem_marker: ${marker:-missing}
+EOF
+  else
+    cat >"$metadata_path" <<'EOF'
+artifact_type: primary_last_message_metadata
+source_present: 0
+sha256: missing
+bytes: 0
+lines: 0
+review_outcome: unknown
+selected_file: unknown
+postmortem_marker: missing
+EOF
+  fi
+  postmortem_set_private_file_mode "$metadata_path"
+}
+
+copy_postmortem_private_artifact() {
+  local source_path="$1"
+  local artifact_path="$2"
+
+  [[ -r "$source_path" ]] || return 0
+  cp "$source_path" "$artifact_path" || return 1
+  postmortem_set_private_file_mode "$artifact_path"
+}
+
 write_quota_skipped_postmortem_report() {
   local report_path="$1"
   local trigger="$2"
@@ -118,6 +199,7 @@ The fallback child exit recorded by the wrapper was \`$child_exit\`. The scripte
 - No auxiliary hardening Codex pass was launched because the quota guardrail blocked \`$skipped_phase\`.
 - This shell-generated report exists so the incident remains documentable without spending the constrained model bucket.
 EOF
+  postmortem_set_private_file_mode "$report_path"
 }
 
 write_environment_skipped_postmortem_report() {
@@ -145,86 +227,63 @@ The fallback child exit recorded by the wrapper was \`$child_exit\`. The scripte
 - Fallback child exit: \`$child_exit\`.
 - Skipped auxiliary phase: \`$skipped_phase\`.
 - Skipped auxiliary model: \`$target_model\`.
-- CODEX_HOME: \`$CODEX_HOME_DIR\`.
-- Session store: \`$CODEX_HOME_DIR/sessions\`.
-- Arg0 temp root: \`$CODEX_ARG0_TMP_ROOT\`.
-- Arg0 quarantine root: \`$CODEX_ARG0_TMP_QUARANTINE_ROOT\`.
-- Bubblewrap temp registry: \`$CODEX_BWRAP_TMP_ROOT\`.
-- Write-check detail: \`$environment_detail\`.
+- Local Codex runtime write checks: blocked before auxiliary launch.
+- Default report output redacted raw filesystem paths and detailed runtime diagnostics; inspect the private postmortem evidence files under this cycle directory if direct filesystem debugging is required.
+- Redacted environment detail category: \`$environment_detail\`.
 - Incident context: \`$POSTMORTEM_CONTEXT_PATH\`.
 - Incident log: \`$POSTMORTEM_INCIDENT_LOG_PATH\`.
 ## Root Cause Hypotheses
-- The wrapper was launched from an environment where \`$CODEX_HOME_DIR/sessions\`, \`$CODEX_ARG0_TMP_ROOT\`, or \`$CODEX_BWRAP_TMP_ROOT\` could not be created, written, or cleaned up.
-- Because Codex creates a session before model work starts, primary, fallback, report, and hardening Codex calls would all fail the same way until the local filesystem or \`CODEX_HOME\` is fixed.
+- The wrapper was launched from an environment where the Codex session store, arg0 temp roots, or bubblewrap temp registry could not be created, written, or cleaned up.
+- Because Codex creates a session before model work starts, primary, fallback, report, and hardening Codex calls would all fail the same way until the local filesystem or \`CODEX_HOME\` setup is fixed.
 ## Action Plan
-- [ ] Confirm the current terminal or container can write to \`$CODEX_HOME_DIR/sessions\`.
-- [ ] Confirm stale \`$CODEX_ARG0_TMP_ROOT/codex-arg0*\` shim directories can be removed or moved to \`$CODEX_ARG0_TMP_QUARANTINE_ROOT\`.
-- [ ] Confirm the current terminal or container can write to \`$CODEX_BWRAP_TMP_ROOT\` and its \`lock\` file.
+- [ ] Confirm the current terminal or container can write to the Codex session store.
+- [ ] Confirm stale arg0 shim directories can be removed or quarantined successfully.
+- [ ] Confirm the current terminal or container can write to the bubblewrap temp registry and its lock file.
 - [ ] If the home directory is intentionally read-only, relaunch with \`CODEX_HOME\` pointed at a writable local directory.
 - [ ] Keep fallback and postmortem Codex execs blocked until local Codex runtime write checks pass.
 ## Hardening Targets
 - Wrapper/logging/prompt/guardrail fixes: keep live Codex execs behind local runtime write preflights and classify failures as local environment problems before attempting fallback.
 - Repo-lane fixes: do not treat this incident as evidence of a backend task failure; resume the active repo lane only after the local Codex runtime is writable.
 ## Relaunch Checklist
-- [ ] Run the wrapper from a terminal with writable \`CODEX_HOME\`, \`$CODEX_HOME_DIR/sessions\`, \`$CODEX_ARG0_TMP_ROOT\`, \`$CODEX_ARG0_TMP_QUARANTINE_ROOT\`, and \`$CODEX_BWRAP_TMP_ROOT\`.
+- [ ] Run the wrapper from a terminal with writable \`CODEX_HOME\`, session-store, arg0 temp, quarantine, and bubblewrap temp roots.
 - [ ] Confirm projected 5-hour capacity is above \`$five_hour_threshold%\` for \`$target_model\`, and weekly/main capacity is above \`$week_threshold%\`.
 - [ ] Relaunch \`while ./$SCRIPT_NAME; do sleep 60; done\` from the repo root.
 ## Hardening Outcome
 - No auxiliary hardening Codex pass was launched because the local Codex runtime was not writable.
 - This shell-generated report exists so the incident remains documentable without recursively launching Codex in the same broken environment.
 EOF
+  postmortem_set_private_file_mode "$report_path"
 }
 
-# Postmortem summaries are copied into the root loop log so the terminal scroll
-# carries the key facts even if the operator never opens the full report.
 emit_postmortem_summary() {
   local report_path="$1"
   local trigger="$2"
   local sequence_status="$3"
+  local report_present=0 report_hash="missing" report_bytes=0
+  local marker_path marker_present=0
 
-  local summary_block
-  local marker_path marker_block
   if [[ -s "$report_path" ]]; then
-    summary_block="$(
-      awk '
-        /^## Incident Summary$/ { section="Incident Summary"; count=0; next }
-        /^## Action Plan$/ { section="Action Plan"; count=0; next }
-        /^## Hardening Outcome$/ { section="Hardening Outcome"; count=0; next }
-        /^## / { section=""; next }
-        section != "" && count < 6 && NF {
-          if (!(section in seen)) {
-            print section ":"
-            seen[section]=1
-          }
-          print $0
-          count++
-        }
-      ' "$report_path"
-    )"
-  else
-    summary_block="Report file missing or empty."
+    report_present=1
+    report_hash="$(postmortem_file_sha256 "$report_path")"
+    report_bytes="$(wc -c <"$report_path" | tr -d ' ')"
   fi
 
   marker_path="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/primary-quota-blocked-until.txt"
   if [[ -s "$marker_path" ]]; then
-    marker_block="$(
-      printf 'Cooldown Marker:\n'
-      printf 'cooldown_marker_path: %s\n' "$marker_path"
-      printf 'blocked_bucket: %s\n' "$(marker_field "$marker_path" "blocked_bucket")"
-      printf 'blocked_until: %s\n' "$(marker_field "$marker_path" "blocked_until")"
-      printf 'recommended_operator_action: %s\n' "$(marker_field "$marker_path" "recommended_operator_action")"
-    )"
-  else
-    marker_block=""
+    marker_present=1
   fi
 
   {
     printf 'POSTMORTEM_SUMMARY_BEGIN cycle=%s trigger=%s status=%s report=%s\n' "$CYCLE_ID" "$trigger" "$sequence_status" "$report_path"
-    if [[ -n "$summary_block" ]]; then
-      printf '%s\n' "$summary_block" | sed 's/^/  /'
-    fi
-    if [[ -n "$marker_block" ]]; then
-      printf '%s\n' "$marker_block" | sed 's/^/  /'
+    printf '  report_present: %s\n' "$report_present"
+    printf '  report_sha256: %s\n' "$report_hash"
+    printf '  report_bytes: %s\n' "$report_bytes"
+    printf '  private_artifacts: context=%s incident_log=%s bug_record=%s\n' "${POSTMORTEM_CONTEXT_PATH:-none}" "${POSTMORTEM_INCIDENT_LOG_PATH:-none}" "${POSTMORTEM_BUG_RECORD_PATH:-none}"
+    printf '  cooldown_marker_present: %s\n' "$marker_present"
+    if [[ "$marker_present" == "1" ]]; then
+      printf '  blocked_bucket: %s\n' "$(marker_field "$marker_path" "blocked_bucket")"
+      printf '  blocked_until: %s\n' "$(marker_field "$marker_path" "blocked_until")"
+      printf '  recommended_operator_action: %s\n' "$(marker_field "$marker_path" "recommended_operator_action")"
     fi
     printf 'POSTMORTEM_SUMMARY_END\n'
   } | while IFS= read -r summary_line; do
@@ -244,8 +303,9 @@ run_postmortem_sequence() {
   POSTMORTEM_BUG_RECORD_PATH=""
   POSTMORTEM_SEQUENCE_STATUS="not_run"
 
-  local pm_root report_path context_path incident_log_path bug_record_path primary_last_message_copy
+  local pm_root report_path context_path incident_log_path bug_record_path primary_last_message_metadata
   local report_prompt_file report_last_message hardening_prompt_file hardening_last_message
+  local report_last_message_private hardening_last_message_private
   local report_exit report_marker hardening_exit hardening_marker
   local incident_classification errexit_was_set
 
@@ -254,17 +314,15 @@ run_postmortem_sequence() {
   context_path="$pm_root/incident-context.txt"
   incident_log_path="$pm_root/incident-log.txt"
   bug_record_path="$pm_root/bug-record.md"
-  primary_last_message_copy="$pm_root/primary-last-message.txt"
+  primary_last_message_metadata="$pm_root/primary-last-message.meta"
+  report_last_message_private="$pm_root/postmortem.report-last-message.txt"
+  hardening_last_message_private="$pm_root/postmortem.hardening-last-message.txt"
 
-  mkdir -p "$pm_root"
+  postmortem_private_dir "$pm_root"
   POSTMORTEM_INCIDENT_LOG_PATH="$incident_log_path"
   refresh_postmortem_incident_log "$incident_log_path"
-  if [[ -n "${last_message_file:-}" && -f "${last_message_file:-}" ]]; then
-    cp "$last_message_file" "$primary_last_message_copy"
-  else
-    : >"$primary_last_message_copy"
-  fi
-  write_postmortem_context "$context_path" "$trigger" "$detail_text" "$child_exit" "$incident_log_path" "$primary_last_message_copy"
+  write_postmortem_last_message_metadata "${last_message_file:-}" "$primary_last_message_metadata"
+  write_postmortem_context "$context_path" "$trigger" "$detail_text" "$child_exit" "$incident_log_path" "$primary_last_message_metadata"
   incident_classification="$(awk -F': ' '/^incident_classification: / { print $2; exit }' "$context_path" || true)"
   log_line "INFO" "postmortem.classification trigger=$trigger classification=${incident_classification:-unknown} child_exit=$child_exit"
 
@@ -292,6 +350,7 @@ Dry-run stub summary for trigger $trigger.
 ## Hardening Outcome
 - Dry run only; no live hardening change was executed.
 EOF
+    postmortem_set_private_file_mode "$report_path"
     POSTMORTEM_SEQUENCE_STATUS="dry_run_stub"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
@@ -317,6 +376,7 @@ EOF
   else
     set +e
   fi
+  copy_postmortem_private_artifact "$report_last_message" "$report_last_message_private"
   report_marker="$(parse_postmortem_marker "$report_last_message")"
   log_line "INFO" "postmortem.report.finish exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path report_exists=$([[ -e "$report_path" ]] && printf 1 || printf 0) report_nonempty=$([[ -s "$report_path" ]] && printf 1 || printf 0)"
 
@@ -355,12 +415,14 @@ EOF
   if [[ "$report_exit" -ne 0 || "$report_marker" != "REPORT_WRITTEN" || ! -s "$report_path" ]]; then
     POSTMORTEM_SEQUENCE_STATUS="report_failed"
     log_line "ERROR" "postmortem.report failed exit_code=$report_exit marker=${report_marker:-missing} expected_marker=REPORT_WRITTEN report_path=$report_path"
+    postmortem_set_private_file_mode "$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
     rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
     return 8
   fi
 
+  postmortem_set_private_file_mode "$report_path"
   compile_postmortem_hardening_prompt "$hardening_prompt_file" "$context_path" "$report_path"
   # Preserve the caller's errexit state here for the same reason as the report
   # phase: non-zero sequence returns are part of the wrapper contract.
@@ -374,6 +436,7 @@ EOF
   else
     set +e
   fi
+  copy_postmortem_private_artifact "$hardening_last_message" "$hardening_last_message_private"
   hardening_marker="$(parse_postmortem_marker "$hardening_last_message")"
 
   if [[ "$hardening_exit" -eq 86 ]]; then
@@ -385,6 +448,7 @@ EOF
 - The report was preserved and the wrapper stopped for manual relaunch instead of spending more recovery quota.
 EOF
     log_line "WARN" "postmortem.hardening skipped reason=quota_guardrail exit_code=$hardening_exit marker=${hardening_marker:-missing} report_path=$report_path"
+    postmortem_set_private_file_mode "$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
     rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
@@ -400,6 +464,7 @@ EOF
 - The report was preserved and the wrapper stopped for manual relaunch instead of recursively launching Codex in the same broken environment.
 EOF
     log_line "WARN" "postmortem.hardening skipped reason=local_codex_runtime_unwritable exit_code=$hardening_exit marker=${hardening_marker:-missing} report_path=$report_path"
+    postmortem_set_private_file_mode "$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
     rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
@@ -409,6 +474,7 @@ EOF
   if [[ "$hardening_exit" -ne 0 || "$hardening_marker" != "HARDENING_DONE" ]]; then
     POSTMORTEM_SEQUENCE_STATUS="hardening_failed"
     log_line "ERROR" "postmortem.hardening failed exit_code=$hardening_exit marker=${hardening_marker:-missing} expected_marker=HARDENING_DONE report_path=$report_path"
+    postmortem_set_private_file_mode "$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
     rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
@@ -416,6 +482,7 @@ EOF
   fi
 
   POSTMORTEM_SEQUENCE_STATUS="complete"
+  postmortem_set_private_file_mode "$report_path"
   write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
   emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
   rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"

@@ -1381,3 +1381,28 @@ Validation:
 - `for test_script in tests/*.bash; do bash "$test_script"; done`
 - `git diff --check`
 - `tools/validate_upkeeper.sh --quick`
+
+## Postmortem Evidence Redaction And Private Storage
+
+Status: completed
+
+Goal:
+- stop postmortem paths from copying full last messages by default, stop teeing raw report prose into terminal/log output, and keep raw auxiliary environment evidence out of default plaintext summaries
+
+Constraints:
+- preserve deterministic postmortem sequencing and existing marker contracts
+- keep enough metadata for operators to understand sequence status and locate private artifacts
+- store postmortem artifacts under private dirs/files with `0700`/`0600` permissions
+
+Files likely touched:
+- `lib/upkeeper/postmortem_sequence.bash`
+- `lib/upkeeper/postmortem_context.bash`
+- `lib/upkeeper/aux_codex.bash`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`

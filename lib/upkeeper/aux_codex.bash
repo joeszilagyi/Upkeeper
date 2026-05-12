@@ -236,22 +236,19 @@ run_aux_codex_exec() {
 
   session_store_detail="$(codex_session_store_write_check | compact_process_args || true)"
   if [[ "$session_store_detail" != "ok" ]]; then
-    session_store_detail_q="$(shell_quote "$session_store_detail")"
     write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "$session_store_detail"
-    log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=codex_session_store_unwritable code_home=$(shell_quote "$CODEX_HOME_DIR") session_store=$(shell_quote "$CODEX_HOME_DIR/sessions") detail=$session_store_detail_q"
+    log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=codex_session_store_unwritable detail_redacted=1"
     return 87
   fi
 
   arg0_tmp_detail="$(codex_arg0_tmp_cleanup_check | compact_process_args || true)"
   if [[ "$arg0_tmp_detail" != "ok" && "$arg0_tmp_detail" != ok\ * ]]; then
-    arg0_tmp_detail_q="$(shell_quote "$arg0_tmp_detail")"
     write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "$arg0_tmp_detail" "Codex arg0 temp directory contains uncleanable stale entries"
-    log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=codex_arg0_tmp_uncleanable arg0_root=$(shell_quote "$CODEX_ARG0_TMP_ROOT") detail=$arg0_tmp_detail_q"
+    log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=codex_arg0_tmp_uncleanable detail_redacted=1"
     return 87
   fi
   if [[ "$arg0_tmp_detail" == ok\ * ]]; then
-    arg0_tmp_detail_q="$(shell_quote "$arg0_tmp_detail")"
-    log_line "INFO" "$phase_label.arg0_tmp_cleanup model=$model arg0_root=$(shell_quote "$CODEX_ARG0_TMP_ROOT") detail=$arg0_tmp_detail_q"
+    log_line "INFO" "$phase_label.arg0_tmp_cleanup model=$model detail_redacted=1"
   fi
 
   if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
@@ -260,9 +257,8 @@ run_aux_codex_exec() {
     bwrap_tmp_detail="$(codex_bwrap_tmp_write_check | compact_process_args || true)"
   fi
   if [[ "$bwrap_tmp_detail" != "ok" ]]; then
-    bwrap_tmp_detail_q="$(shell_quote "$bwrap_tmp_detail")"
     write_aux_environment_blocked_marker "$phase_label" "$model" "$last_message_file" "$bwrap_tmp_detail" "Codex bubblewrap temp registry is not writable"
-    log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=codex_bwrap_tmp_unwritable registry_root=$(shell_quote "$CODEX_BWRAP_TMP_ROOT") detail=$bwrap_tmp_detail_q"
+    log_line "WARN" "$phase_label.finish exit_code=87 model=$model reason=codex_bwrap_tmp_unwritable detail_redacted=1"
     return 87
   fi
 

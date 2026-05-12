@@ -2519,7 +2519,72 @@ check_postmortem_sequence_marker_contract() {
 
     grep -Fxq "$expected_status" "$case_dir/status.txt" || fail "$case_name status was not $expected_status"
     grep -Fq "$expected_log" "$case_dir/Upkeeper.log" || fail "$case_name did not log expected marker failure"
+    if grep -Fq "Report fixture" "$case_dir/sequence.out"; then
+      fail "$case_name postmortem summary leaked raw report prose"
+    fi
+    grep -Fq "report_sha256:" "$case_dir/sequence.out" || fail "$case_name postmortem summary did not emit report metadata"
+    pm_root="$case_dir/postmortems/validation-$case_name"
+    [[ "$(stat -c %a "$pm_root")" == "700" ]] || fail "$case_name postmortem root permissions were not private"
+    [[ "$(stat -c %a "$pm_root/incident-context.txt")" == "600" ]] || fail "$case_name incident context permissions were not private"
+    [[ "$(stat -c %a "$pm_root/incident-log.txt")" == "600" ]] || fail "$case_name incident log permissions were not private"
+    [[ "$(stat -c %a "$pm_root/bug-record.md")" == "600" ]] || fail "$case_name bug record permissions were not private"
+    [[ "$(stat -c %a "$pm_root/primary-last-message.meta")" == "600" ]] || fail "$case_name primary last-message metadata permissions were not private"
   done
+
+  rm -r "$temp_dir"
+}
+
+check_postmortem_privacy_contract() {
+  local temp_dir report_path metadata_path marker_path
+
+  log "checking postmortem privacy contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-postmortem-privacy.XXXXXX)"
+  report_path="$temp_dir/postmortem.md"
+  metadata_path="$temp_dir/primary-last-message.meta"
+  marker_path="$temp_dir/aux-marker.txt"
+
+  (
+    cd "$ROOT_DIR"
+    source ./Upkeeper
+    CYCLE_ID="privacy-check"
+    CYCLE_RUN_HASH="privacyhash"
+    CODEX_POSTMORTEM_DIR="$temp_dir/postmortems"
+    POSTMORTEM_CONTEXT_PATH="$temp_dir/postmortems/privacy-check/incident-context.txt"
+    POSTMORTEM_INCIDENT_LOG_PATH="$temp_dir/postmortems/privacy-check/incident-log.txt"
+    POSTMORTEM_BUG_RECORD_PATH="$temp_dir/postmortems/privacy-check/bug-record.md"
+    postmortem_private_dir "$temp_dir/postmortems/privacy-check"
+    cat >"$temp_dir/last-message.txt" <<'EOF'
+Selected File: lib/upkeeper/postmortem_sequence.bash
+Findings: leaked secret token abc123 and operator email admin@example.com
+Changes Made: sanitized /tmp/private-root/runtime/secret.log
+Verification: none
+REVIEWED_AND_REPORTED
+EOF
+    write_postmortem_last_message_metadata "$temp_dir/last-message.txt" "$metadata_path"
+    cat >"$report_path" <<'EOF'
+# Upkeeper Postmortem
+## Incident Summary
+Leaked /tmp/private-root/runtime/secret.log with admin@example.com and https://secret.example.invalid/token
+## Action Plan
+Remove the leak.
+EOF
+    postmortem_set_private_file_mode "$report_path"
+    emit_postmortem_summary "$report_path" "failure" "complete"
+    write_aux_environment_blocked_marker "postmortem.report" "gpt-test" "$marker_path" "session store write probe failed for /tmp/private-root/codex-home/sessions"
+  ) >"$temp_dir/out.txt"
+
+  grep -Fq "sha256:" "$metadata_path" || fail "postmortem metadata did not record a hash"
+  if grep -Fq "admin@example.com" "$metadata_path"; then
+    fail "postmortem metadata leaked raw last-message content"
+  fi
+  if grep -Fq "/tmp/private-root/runtime/secret.log" "$temp_dir/out.txt"; then
+    fail "postmortem summary leaked a private path"
+  fi
+  if grep -Fq "admin@example.com" "$temp_dir/out.txt"; then
+    fail "postmortem summary leaked an email address"
+  fi
+  grep -Fq "report_sha256:" "$temp_dir/out.txt" || fail "postmortem summary did not emit report metadata"
+  grep -Fq "code_home:" "$marker_path" || fail "private auxiliary marker lost raw environment evidence"
 
   rm -r "$temp_dir"
 }
@@ -3176,6 +3241,7 @@ run_check runtime_format_json_helpers check_runtime_format_json_helpers
 run_check startup_anomaly_state_parser_contract check_startup_anomaly_state_parser_contract
 run_check postmortem_context_marker_classification check_postmortem_context_marker_classification
 run_check postmortem_sequence_marker_contract check_postmortem_sequence_marker_contract
+run_check postmortem_privacy_contract check_postmortem_privacy_contract
 run_check live_output_filter_pipe check_live_output_filter_pipe
 run_check review_summary_parser check_review_summary_parser
 run_check status_session_jsonl_contract check_status_session_jsonl_contract

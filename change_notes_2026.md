@@ -567,3 +567,8 @@ Reconstructed pre-1.0 history:
 2026-05-11: allowlisted `CODEX_MODE` tuple parsing:
 - `CODEX_MODE` now accepts only the allowlisted sandbox tuples `--sandbox workspace-write` and `--sandbox read-only` in both the primary wrapper and auxiliary Codex path.
 - Extra trailing mode tokens are now rejected instead of being forwarded into backend Codex option parsing.
+
+2026-05-11: postmortem evidence privacy hardening:
+- Postmortem sequences now store primary last-message metadata by status/outcome/hash instead of copying the full primary last message by default.
+- Default postmortem summary emission now logs only artifact metadata, not copied report prose.
+- Postmortem context, incident logs, bug records, and private raw auxiliary evidence are now written under private `0700`/`0600` postmortem permissions, and auxiliary environment failures no longer echo raw runtime paths into the live loop log.

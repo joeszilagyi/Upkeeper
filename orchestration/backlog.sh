@@ -104,6 +104,7 @@ quota_preflight_allows_backlog_run() {
   local primary_decision secondary_decision
 
   prepare_backlog_runtime_env
+  source "$ROOT_DIR/lib/upkeeper/config_validation.bash"
   source "$ROOT_DIR/lib/upkeeper/quota_state.bash"
   source "$ROOT_DIR/lib/upkeeper/quota_guardrails.bash"
 

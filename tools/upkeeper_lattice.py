@@ -7,6 +7,7 @@ import argparse
 import errno
 import fnmatch
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -95,6 +96,22 @@ BUILD_NAMES = {
 }
 TEST_DIRS = {"__tests__", "test", "tests"}
 REDACTED_PATH_PREFIX = "path-sha256:"
+PASS_RESULT_PATH_HMAC_PREFIX = "path-hmac-sha256:"
+METADATA_HMAC_PREFIX = "meta-hmac-sha256:"
+CONTENT_HMAC_PREFIX = "content-hmac-sha256:"
+UPKEEPER_VERBOSE_METADATA_ENV = "UPKEEPER_VERBOSE_METADATA"
+TRANSIENT_ARTIFACT_KINDS = {"transcript", "compiled_prompt", "last_message"}
+ARTIFACT_RETENTION_CLASSES = {
+    "transcript": "transient",
+    "compiled_prompt": "transient",
+    "last_message": "transient",
+    "upkeeper_log": "operator_local",
+    "postmortem_report": "operator_local",
+    "startup_anomaly_state": "operator_local",
+    "wrapper_health_state": "operator_local",
+    "quota_block_marker": "operator_local",
+    "backup": "durable",
+}
 REDACTABLE_PATH_KEYS = {
     "path",
     "old_path",
@@ -117,6 +134,78 @@ REDACTABLE_PATH_KEYS = {
     "repo_alias_id",
     "artifact_kind",
 }
+UPKEEPER_LOG_SOURCE_SAFE_KEYS = {
+    "timestamp",
+    "level",
+    "event",
+    "cycle",
+    "run_hash",
+    "execution_origin",
+    "dirty_paths",
+    "dry_run",
+    "status_marker",
+    "codex_exit",
+    "exit_code",
+    "codex_exec_started",
+}
+UPKEEPER_LOG_CYCLE_START_SAFE_KEYS = {"execution_origin", "dirty_paths", "dry_run"}
+UPKEEPER_LOG_REVIEW_PRESELECT_SAFE_KEYS = {"basis"}
+UPKEEPER_LOG_SUMMARY_SAFE_KEYS = {"status_marker", "codex_exit"}
+UPKEEPER_LOG_EXIT_SAFE_KEYS = {"exit_code", "codex_exec_started"}
+CYCLE_START_SAFE_KEYS = {
+    "timestamp",
+    "level",
+    "event",
+    "cycle",
+    "cycle_id",
+    "run_hash",
+    "execution_origin",
+    "dirty_paths",
+    "dirty_path_count",
+    "dry_run",
+    "start_epoch",
+}
+CYCLE_START_PATH_KEYS = {
+    "script",
+    "script_path",
+    "implementation",
+    "implementation_path",
+    "cwd",
+    "config",
+    "config_file",
+    "manifest",
+    "manifest_path",
+    "target_file",
+    "target_root",
+    "codex_home",
+}
+CYCLE_START_HASH_KEY_FRAGMENTS = (
+    "path",
+    "cwd",
+    "root",
+    "glob",
+    "label",
+    "review_module",
+    "review_modules",
+    "manifest",
+    "fallback",
+    "parent",
+    "child",
+    "pid",
+    "process",
+    "boot",
+    "uptime",
+    "target",
+)
+PASS_RESULT_ALLOWED_KEYS = {
+    "pass",
+    "file",
+    "applicable",
+    "outcome",
+    "changed",
+    "regression",
+}
+PASS_RESULT_DEBUG_STORAGE_VALUES = {"debug", "full"}
 
 
 REQUIRED_TABLES = [
@@ -964,6 +1053,150 @@ def sha256_bytes(data: bytes) -> str:
 
 def sha256_text(text: str) -> str:
     return sha256_bytes(text.encode("utf-8", "surrogateescape"))
+
+
+def current_lattice_raw_storage() -> str:
+    raw = os.environ.get("UPKEEPER_LATTICE_RAW_STORAGE", "limited").strip().lower()
+    return raw if raw else "limited"
+
+
+def verbose_metadata_enabled() -> bool:
+    return parse_bool_int(os.environ.get(UPKEEPER_VERBOSE_METADATA_ENV, "")) == 1
+
+
+def pass_result_debug_storage_enabled() -> bool:
+    return current_lattice_raw_storage() in PASS_RESULT_DEBUG_STORAGE_VALUES
+
+
+def pass_result_hmac_key(root: Path) -> bytes:
+    override = os.environ.get("UPKEEPER_LATTICE_REDACTION_KEY", "")
+    if override:
+        return override.encode("utf-8", "surrogateescape")
+    root = root.resolve()
+    info = repo_git_info(root)
+    material = f"{root}|{info['git_common_dir']}|{info['remote_url']}|upkeeper-pass-result"
+    return hashlib.sha256(material.encode("utf-8", "surrogateescape")).digest()
+
+
+def pass_result_path_hmac(root: Path, path: str) -> str:
+    normalized = normalize_rel_path(path)
+    if not normalized:
+        return ""
+    digest = hmac.digest(pass_result_hmac_key(root), normalized.encode("utf-8", "surrogateescape"), "sha256").hex()
+    return PASS_RESULT_PATH_HMAC_PREFIX + digest
+
+
+def metadata_value_hmac(root: Path, key: str, value: str) -> str:
+    material = f"{key}\0{value}"
+    digest = hmac.digest(pass_result_hmac_key(root), material.encode("utf-8", "surrogateescape"), "sha256").hex()
+    return METADATA_HMAC_PREFIX + digest
+
+
+def content_value_hmac(root: Path, value: str) -> str:
+    if not value or value in {"none", "unknown", "missing", "unavailable", "clean", "not_regular"}:
+        return value or "unknown"
+    material = f"content\0{value}"
+    digest = hmac.digest(pass_result_hmac_key(root), material.encode("utf-8", "surrogateescape"), "sha256").hex()
+    return CONTENT_HMAC_PREFIX + digest
+
+
+def canonical_artifact_identity(root: Path, raw_path: str) -> str:
+    if not raw_path:
+        return ""
+    path = Path(raw_path).expanduser()
+    try:
+        normalized = path.resolve(strict=False)
+    except OSError:
+        normalized = path.absolute()
+    try:
+        relative = normalized.relative_to(root)
+    except ValueError:
+        return normalized.as_posix()
+    relative_text = normalize_rel_path(relative.as_posix())
+    return relative_text or "."
+
+
+def artifact_path_hmac(root: Path, raw_path: str) -> str:
+    normalized = canonical_artifact_identity(root, raw_path)
+    if not normalized:
+        return ""
+    digest = hmac.digest(pass_result_hmac_key(root), normalized.encode("utf-8", "surrogateescape"), "sha256").hex()
+    return PASS_RESULT_PATH_HMAC_PREFIX + digest
+
+
+def artifact_storage_path(root: Path, raw_path: str) -> str:
+    return artifact_path_hmac(root, raw_path)
+
+
+def artifact_retention_class(artifact_kind: str) -> str:
+    return ARTIFACT_RETENTION_CLASSES.get(artifact_kind, "durable")
+
+
+def artifact_details_payload(artifact_kind: str, details: Any = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {"retention_class": artifact_retention_class(artifact_kind)}
+    if isinstance(details, dict):
+        for key, value in details.items():
+            if has_meaningful_value(value):
+                payload[key] = value
+    return payload
+
+
+def normalized_metadata_key(key: str) -> str:
+    return key.strip().lower().replace("-", "_")
+
+
+def cycle_start_key_is_path_like(key: str) -> bool:
+    return key in CYCLE_START_PATH_KEYS or "path" in key
+
+
+def cycle_start_key_should_hash(key: str) -> bool:
+    if cycle_start_key_is_path_like(key):
+        return True
+    return any(fragment in key for fragment in CYCLE_START_HASH_KEY_FRAGMENTS)
+
+
+def sanitize_cycle_start_fields(root: Path, fields: dict[str, Any]) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {}
+    verbose = verbose_metadata_enabled()
+    for key, value in fields.items():
+        if key == "func" or not has_meaningful_value(value):
+            continue
+        normalized_key = normalized_metadata_key(key)
+        if normalized_key in CYCLE_START_SAFE_KEYS:
+            sanitized[key] = value
+            continue
+        if verbose:
+            sanitized[key] = value
+            continue
+        if cycle_start_key_should_hash(normalized_key):
+            if cycle_start_key_is_path_like(normalized_key):
+                hashed = pass_result_path_hmac(root, str(value))
+            else:
+                hashed = metadata_value_hmac(root, normalized_key, str(value))
+            if hashed:
+                sanitized[f"{key}_hmac"] = hashed
+    return sanitized
+
+
+def render_upkeeper_log_line(fields: dict[str, Any]) -> str:
+    body_parts: list[str] = []
+    event = str(fields.get("event", "")).strip()
+    if event:
+        body_parts.append(event)
+    for key, value in fields.items():
+        if key in {"timestamp", "level", "event"} or not has_meaningful_value(value):
+            continue
+        body_parts.append(f"{key}={shlex.quote(str(value))}")
+    line_parts: list[str] = []
+    timestamp = str(fields.get("timestamp", "")).strip()
+    level = str(fields.get("level", "")).strip()
+    if timestamp:
+        line_parts.append(timestamp)
+    if level:
+        line_parts.append(f"[{level}]")
+    if body_parts:
+        line_parts.append(" ".join(body_parts))
+    return " ".join(line_parts).strip()
 
 
 def print_json(value: Any) -> None:
@@ -2258,14 +2491,16 @@ def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
         return meta
     status = git_porcelain_status_for_path(root, rel_path)
     meta["git_status"] = status[:2].replace(" ", "_") if status else "clean"
-    meta["worktree_hash"] = git_output(root, ["hash-object", "--", rel_path], "missing") if st is not None else "unavailable"
-    meta["head_blob"] = git_output(root, ["rev-parse", f"HEAD:{rel_path}"], "none")
-    if meta["head_blob"] == "none":
+    raw_worktree_hash = git_output(root, ["hash-object", "--", rel_path], "missing") if st is not None else "unavailable"
+    raw_head_blob = git_output(root, ["rev-parse", f"HEAD:{rel_path}"], "none")
+    if raw_head_blob == "none":
         meta["content_state"] = "untracked"
-    elif meta["head_blob"] == meta["worktree_hash"]:
+    elif raw_head_blob == raw_worktree_hash:
         meta["content_state"] = "matches_head"
     else:
         meta["content_state"] = "differs_from_head"
+    meta["worktree_hash"] = content_value_hmac(root, raw_worktree_hash)
+    meta["head_blob"] = content_value_hmac(root, raw_head_blob)
     meta["ignored"] = 1 if git_path_ignored(root, root / rel_path) else 0
     meta["test_path"] = 1 if is_test_path(rel_path) else 0
     meta["generated"] = 0
@@ -2685,12 +2920,13 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
-        parsed = vars(args).copy()
-        parsed.pop("func", None)
+        parsed = sanitize_cycle_start_fields(root, vars(args).copy())
         source_id = ensure_source_record(conn, repo_id, "wrapper_observed", raw_ref="cycle_start", parsed=parsed)
         worktree_dirty = None
         if args.dirty_path_count is not None:
             worktree_dirty = 1 if int(args.dirty_path_count or 0) > 0 else 0
+        verbose = verbose_metadata_enabled()
+        config_value = args.config_file if verbose or not has_meaningful_value(args.config_file) else pass_result_path_hmac(root, str(args.config_file))
         cycle_pk = ensure_cycle(
             conn,
             repo_id,
@@ -2699,14 +2935,14 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
             source_id=source_id,
             start_epoch=args.start_epoch or epoch_now(),
             execution_origin=args.execution_origin,
-            model=args.model,
-            effort=args.effort,
-            mode=args.mode,
-            config_file=args.config_file,
-            branch_name=args.branch_name or repo_git_info(root)["branch_name"],
-            head_sha=args.head_sha or repo_git_info(root)["head_sha"],
-            head_tree_sha=args.head_tree_sha or repo_git_info(root)["head_tree_sha"],
-            upstream_ref=args.upstream_ref,
+            model=args.model if verbose else None,
+            effort=args.effort if verbose else None,
+            mode=args.mode if verbose else None,
+            config_file=config_value,
+            branch_name=(args.branch_name or repo_git_info(root)["branch_name"]) if verbose else None,
+            head_sha=(args.head_sha or repo_git_info(root)["head_sha"]) if verbose else None,
+            head_tree_sha=(args.head_tree_sha or repo_git_info(root)["head_tree_sha"]) if verbose else None,
+            upstream_ref=args.upstream_ref if verbose else None,
             worktree_dirty=worktree_dirty,
             dry_run=parse_bool_int(str(args.dry_run)) if args.dry_run is not None else None,
         )
@@ -3370,6 +3606,7 @@ def record_selected_file_delta(
 
 def create_artifact_ref(
     conn: sqlite3.Connection,
+    root: Path,
     repo_id: int,
     *,
     cycle_pk: int | None,
@@ -3382,6 +3619,8 @@ def create_artifact_ref(
     if not path:
         return
     p = Path(path)
+    stored_path = artifact_storage_path(root, path)
+    stored_details = artifact_details_payload(artifact_kind, details)
     try:
         entry = p.lstat()
     except OSError:
@@ -3389,6 +3628,7 @@ def create_artifact_ref(
     exists = entry is not None and stat.S_ISREG(entry.st_mode)
     size = None
     digest = None
+    digest_hmac = None
     if exists:
         try:
             if hasattr(os, "O_NOFOLLOW"):
@@ -3404,6 +3644,7 @@ def create_artifact_ref(
                 payload = b"".join(chunks)
                 size = len(payload)
                 digest = sha256_bytes(payload)
+                digest_hmac = content_value_hmac(root, digest)
             finally:
                 os.close(fd)
         except OSError:
@@ -3416,7 +3657,7 @@ def create_artifact_ref(
             from artifact_refs
             where repo_id = ? and artifact_kind = ? and path = ? and coalesce(sha256, '') = coalesce(?, '')
             """,
-            (repo_id, artifact_kind, path, digest),
+            (repo_id, artifact_kind, stored_path, digest_hmac),
         ).fetchone()
         if existing is not None:
             conn.execute(
@@ -3439,7 +3680,7 @@ def create_artifact_ref(
                     size,
                     observed_epoch,
                     1 if exists else 0,
-                    json_dumps(details) if details is not None else None,
+                    json_dumps(stored_details),
                     existing["artifact_id"],
                 ),
             )
@@ -3457,13 +3698,13 @@ def create_artifact_ref(
             cycle_pk,
             source_id,
             artifact_kind,
-            path,
+            stored_path,
             1 if exists else 0,
             size,
-            digest,
+            digest_hmac,
             observed_epoch,
             1 if exists else 0,
-            json_dumps(details) if details is not None else None,
+            json_dumps(stored_details),
         ),
     )
 
@@ -3588,6 +3829,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         ]:
             create_artifact_ref(
                 conn,
+                root,
                 repo_id,
                 cycle_pk=cycle_pk,
                 source_id=source_id,
@@ -3596,6 +3838,50 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
             )
     print_json({"status": "ok", "cycle_pk": cycle_pk, "worktree_snapshot_id": snapshot_id})
     return EXIT_SUCCESS
+
+
+def pass_result_rejection_kind(reason: str) -> str:
+    if reason.startswith("shell_parse:"):
+        return "shell_parse"
+    if reason.startswith("duplicate_key:"):
+        return "duplicate_key"
+    if reason.startswith("unexpected_key:"):
+        return "unexpected_key"
+    if reason == "missing_pass_or_file":
+        return "missing_required"
+    return reason
+
+
+def maybe_normalize_pass_code(raw: Any) -> str:
+    text = str(raw or "").strip()
+    return normalize_pass_code(text) if re.fullmatch(r"P[0-9A-Za-z_.-]+", text) else ""
+
+
+def sanitize_rejected_pass_result(
+    root: Path,
+    item: dict[str, Any],
+    *,
+    selected_path: str = "",
+    preserve_raw: bool = False,
+) -> dict[str, Any]:
+    fields = item.get("fields", {})
+    if not isinstance(fields, dict):
+        fields = {}
+    rejected_path = normalize_rel_path(str(fields.get("file", ""))) if fields.get("file") else ""
+    payload: dict[str, Any] = {
+        "line_number": int(item.get("line_number", 0) or 0),
+        "rejection_kind": pass_result_rejection_kind(str(item.get("reason", "rejected"))),
+    }
+    normalized_pass = maybe_normalize_pass_code(fields.get("pass"))
+    if normalized_pass:
+        payload["pass"] = normalized_pass
+    if rejected_path:
+        payload["path_hmac"] = pass_result_path_hmac(root, rejected_path)
+    if selected_path:
+        payload["selected_path_hmac"] = pass_result_path_hmac(root, selected_path)
+    if preserve_raw and item.get("reason"):
+        payload["reason"] = str(item["reason"])
+    return payload
 
 
 def parse_pass_result_lines(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -3639,6 +3925,17 @@ def parse_pass_result_lines(path: Path) -> tuple[list[dict[str, Any]], list[dict
             continue
         if duplicate:
             rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": f"duplicate_key:{duplicate}", "fields": fields})
+            continue
+        extras = sorted(key for key in fields if key not in PASS_RESULT_ALLOWED_KEYS)
+        if extras:
+            rejected.append(
+                {
+                    "raw_line": raw_line,
+                    "line_number": line_number,
+                    "reason": f"unexpected_key:{extras[0]}",
+                    "fields": fields,
+                }
+            )
             continue
         if not fields.get("pass") or not fields.get("file"):
             rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "missing_pass_or_file", "fields": fields})
@@ -3801,6 +4098,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
     ensure_schema(conn)
     recorded = 0
     rejected_count = 0
+    preserve_raw = pass_result_debug_storage_enabled()
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -3818,14 +4116,16 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
         planned.extend(args.planned_pass or [])
         seen: set[tuple[str, str]] = set()
         rejected_pairs: set[tuple[str, str]] = set()
+        trusted_selected_path = normalize_rel_path(args.selected_path or "")
         if args.from_file:
             accepted, rejected = parse_pass_result_lines(Path(args.from_file))
-            rejected_count = len(rejected)
             for item in rejected:
                 fields = item.get("fields", {})
                 if isinstance(fields, dict):
-                    rejected_pass = normalize_pass_code(str(fields.get("pass", ""))) if fields.get("pass") else ""
-                    rejected_path = normalize_rel_path(str(fields.get("file", ""))) if fields.get("file") else ""
+                    rejected_pass = maybe_normalize_pass_code(fields.get("pass"))
+                    rejected_path = trusted_selected_path or (
+                        normalize_rel_path(str(fields.get("file", ""))) if fields.get("file") else ""
+                    )
                     if rejected_pass and rejected_path:
                         rejected_pairs.add((rejected_pass, rejected_path))
                 ensure_source_record(
@@ -3834,19 +4134,46 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     "transcript",
                     source_path=args.from_file,
                     raw_ref=f"pass_result_rejected:{item.get('line_number')}",
-                    raw_text=item.get("raw_line", ""),
-                    parsed=item,
+                    raw_text=item.get("raw_line", "") if preserve_raw else None,
+                    parsed=sanitize_rejected_pass_result(
+                        root,
+                        item,
+                        selected_path=trusted_selected_path,
+                        preserve_raw=preserve_raw,
+                    ),
                     parse_status="rejected",
                     fact_confidence="rejected",
                 )
+                rejected_count += 1
             for item in accepted:
                 pass_code = normalize_pass_code(item["pass"])
-                path = normalize_rel_path(item["file"])
+                reported_path = normalize_rel_path(item["file"])
+                if trusted_selected_path and reported_path != trusted_selected_path:
+                    rejected_pairs.add((pass_code, trusted_selected_path))
+                    ensure_source_record(
+                        conn,
+                        repo_id,
+                        "transcript",
+                        source_path=args.from_file,
+                        raw_ref=f"pass_result_rejected:{item.get('line_number')}",
+                        raw_text=item.get("raw_line", "") if preserve_raw else None,
+                        parsed={
+                            "line_number": int(item.get("line_number", 0) or 0),
+                            "pass": pass_code,
+                            "rejection_kind": "selected_path_mismatch",
+                            "path_hmac": pass_result_path_hmac(root, reported_path),
+                            "selected_path_hmac": pass_result_path_hmac(root, trusted_selected_path),
+                        },
+                        parse_status="rejected",
+                        fact_confidence="rejected",
+                    )
+                    rejected_count += 1
+                    continue
+                path = trusted_selected_path or reported_path
                 applicable = parse_bool_int(item.get("applicable"))
                 changed = parse_bool_int(item.get("changed"))
                 regression = parse_bool_int(item.get("regression"))
                 outcome = item.get("outcome", "unknown")
-                attrs = {k: v for k, v in item.items() if k not in {"pass", "file", "applicable", "outcome", "changed", "regression", "raw_line", "line_number"}}
                 record_one_pass_result(
                     conn,
                     root,
@@ -3859,9 +4186,11 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     outcome=outcome,
                     changed=changed,
                     regression=regression,
-                    raw_line=item.get("raw_line", ""),
+                    raw_line=item.get("raw_line", "") if preserve_raw else "",
                     planned=0,
-                    attributes=attrs,
+                    attributes={
+                        "upkeeper.pass_result:path_hmac": pass_result_path_hmac(root, path),
+                    },
                 )
                 seen.add((pass_code, path))
                 recorded += 1
@@ -3881,7 +4210,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 outcome=args.outcome,
                 changed=parse_bool_int(args.changed),
                 regression=parse_bool_int(args.regression),
-                raw_line=args.raw_line or "",
+                raw_line=args.raw_line if preserve_raw else "",
                 planned=0,
                 attributes=attrs,
             )
@@ -4320,6 +4649,13 @@ def parse_upkeeper_log_line(line: str) -> dict[str, Any] | None:
     return parsed
 
 
+def filter_upkeeper_log_fields(parsed: dict[str, Any], allowed_keys: set[str]) -> dict[str, Any]:
+    # Imported log storage should default to a small operational allowlist so
+    # paths, targets, reasons, and other free-form detail do not survive as
+    # structured records when raw line import is disabled.
+    return {key: parsed[key] for key in allowed_keys if key in parsed}
+
+
 def command_import_upkeeper_log(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     log_path = Path(args.path or root / "Upkeeper.log")
@@ -4338,14 +4674,18 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
             parsed = parse_upkeeper_log_line(raw_line)
             if not parsed:
                 continue
+            safe_parsed = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_SOURCE_SAFE_KEYS)
+            stored_raw_line = raw_line if args.raw else None
+            if stored_raw_line is not None and str(parsed.get("event", "")) == "cycle.start" and not verbose_metadata_enabled():
+                stored_raw_line = render_upkeeper_log_line(sanitize_cycle_start_fields(root, parsed))
             source_id = ensure_source_record(
                 conn,
                 repo_id,
                 "upkeeper_log",
                 source_path=str(log_path),
                 raw_ref=parsed.get("event", ""),
-                raw_text=raw_line if args.raw else None,
-                parsed=parsed,
+                raw_text=stored_raw_line,
+                parsed=safe_parsed,
                 parse_status="parsed",
             )
             cycle_id = str(parsed.get("cycle", ""))
@@ -4354,46 +4694,43 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
             if cycle_id and run_hash:
                 cycle_pk = ensure_cycle(conn, repo_id, cycle_id, run_hash, source_id=source_id)
                 if event == "cycle.start":
+                    start_fields = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_CYCLE_START_SAFE_KEYS)
                     ensure_cycle(
                         conn,
                         repo_id,
                         cycle_id,
                         run_hash,
                         source_id=source_id,
-                        execution_origin=parsed.get("execution_origin"),
-                        model=parsed.get("model"),
-                        effort=parsed.get("effort"),
-                        mode=parsed.get("mode"),
-                        config_file=parsed.get("config_file"),
-                        worktree_dirty=1 if str(parsed.get("dirty_paths", "0")).isdigit() and int(parsed.get("dirty_paths", "0")) > 0 else 0,
-                        dry_run=parse_bool_int(str(parsed.get("dry_run", ""))),
+                        execution_origin=start_fields.get("execution_origin"),
+                        worktree_dirty=1 if str(start_fields.get("dirty_paths", "0")).isdigit() and int(start_fields.get("dirty_paths", "0")) > 0 else 0,
+                        dry_run=parse_bool_int(str(start_fields.get("dry_run", ""))),
                     )
                 elif event == "review.preselect":
-                    selected_path = normalize_rel_path(str(parsed.get("path", "")))
-                    file_id = ensure_file(conn, repo_id, selected_path, source_id=source_id) if selected_path else None
-                    conn.execute(
-                        "update cycles set selected_file_id=?, selected_path=?, selection_basis=? where cycle_pk=?",
-                        (file_id, selected_path or None, parsed.get("basis"), cycle_pk),
-                    )
+                    preselect_fields = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_REVIEW_PRESELECT_SAFE_KEYS)
+                    if str(preselect_fields.get("basis", "")).strip() != "":
+                        conn.execute(
+                            "update cycles set selection_basis=? where cycle_pk=?",
+                            (preselect_fields.get("basis"), cycle_pk),
+                        )
                 elif event == "cycle.summary":
+                    summary_fields = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_SUMMARY_SAFE_KEYS)
                     updates: dict[str, Any] = {}
-                    if "status_marker" in parsed and str(parsed.get("status_marker", "")).strip() != "":
-                        updates["status_marker"] = parsed.get("status_marker")
-                    if "codex_exit" in parsed and str(parsed.get("codex_exit", "")).lstrip("-").isdigit():
-                        updates["codex_exit"] = int(parsed["codex_exit"])
+                    if "status_marker" in summary_fields and str(summary_fields.get("status_marker", "")).strip() != "":
+                        updates["status_marker"] = summary_fields.get("status_marker")
+                    if "codex_exit" in summary_fields and str(summary_fields.get("codex_exit", "")).lstrip("-").isdigit():
+                        updates["codex_exit"] = int(summary_fields["codex_exit"])
                     if updates:
                         conn.execute(
                             f"update cycles set {', '.join(f'{key}=?' for key in updates)} where cycle_pk=?",
                             list(updates.values()) + [cycle_pk],
                         )
                 elif event == "cycle.exit":
+                    exit_fields = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_EXIT_SAFE_KEYS)
                     updates: dict[str, Any] = {}
-                    if "exit_code" in parsed and str(parsed.get("exit_code", "")).lstrip("-").isdigit():
-                        updates["wrapper_exit"] = int(parsed["exit_code"])
-                    if "reason" in parsed and str(parsed.get("reason", "")).strip() != "":
-                        updates["finish_reason"] = parsed.get("reason")
-                    if "codex_exec_started" in parsed and str(parsed.get("codex_exec_started", "")).strip() != "":
-                        updates["codex_exec_started"] = parse_bool_int(str(parsed.get("codex_exec_started")))
+                    if "exit_code" in exit_fields and str(exit_fields.get("exit_code", "")).lstrip("-").isdigit():
+                        updates["wrapper_exit"] = int(exit_fields["exit_code"])
+                    if "codex_exec_started" in exit_fields and str(exit_fields.get("codex_exec_started", "")).strip() != "":
+                        updates["codex_exec_started"] = parse_bool_int(str(exit_fields.get("codex_exec_started")))
                     if updates:
                         conn.execute(
                             f"update cycles set {', '.join(f'{key}=?' for key in updates)} where cycle_pk=?",
@@ -4910,6 +5247,7 @@ def command_backup(args: argparse.Namespace) -> int:
 
 def record_recovery_artifact_tree(
     conn: sqlite3.Connection,
+    root: Path,
     repo_id: int,
     source_id: int,
     artifact_kind: str,
@@ -4944,13 +5282,14 @@ def record_recovery_artifact_tree(
     for path in files[:limit]:
         create_artifact_ref(
             conn,
+            root,
             repo_id,
             cycle_pk=None,
             source_id=source_id,
             artifact_kind=artifact_kind,
             path=str(path),
             dedupe_identity=True,
-            details={"recovery_scan_root": str(root_path)},
+            details={"recovery_scan_scope": "runtime_tree"},
         )
         count += 1
     return count
@@ -4998,19 +5337,19 @@ def recover_artifact_refs(
                 if candidate:
                     artifact_roots.append(("wrapper_health_state", candidate))
         for artifact_kind, artifact_root in artifact_roots:
-            count = record_recovery_artifact_tree(conn, repo_id, source_id, artifact_kind, artifact_root)
+            count = record_recovery_artifact_tree(conn, root, repo_id, source_id, artifact_kind, artifact_root)
             if count:
-                recorded.append(f"{artifact_kind}:{artifact_root}:{count}")
+                recorded.append(f"{artifact_kind}:{artifact_retention_class(artifact_kind)}:{count}")
         for log_artifact in sorted(root.glob("Upkeeper.log.*")):
-            count = record_recovery_artifact_tree(conn, repo_id, source_id, "upkeeper_log", log_artifact, limit=1)
+            count = record_recovery_artifact_tree(conn, root, repo_id, source_id, "upkeeper_log", log_artifact, limit=1)
             if count:
-                recorded.append(f"upkeeper_log:{log_artifact}:{count}")
+                recorded.append(f"upkeeper_log:{artifact_retention_class('upkeeper_log')}:{count}")
         quota_root = root / "runtime/journals/upkeeper-postmortems"
         if quota_root.exists():
             for marker in sorted(quota_root.rglob("primary-quota-blocked-until.txt")):
-                count = record_recovery_artifact_tree(conn, repo_id, source_id, "quota_block_marker", marker, limit=1)
+                count = record_recovery_artifact_tree(conn, root, repo_id, source_id, "quota_block_marker", marker, limit=1)
                 if count:
-                    recorded.append(f"quota_block_marker:{marker}:{count}")
+                    recorded.append(f"quota_block_marker:{artifact_retention_class('quota_block_marker')}:{count}")
     conn.close()
     return recorded
 
@@ -5032,12 +5371,18 @@ def command_recover(args: argparse.Namespace) -> int:
     backup_path = None
     if args.backup_first and preexisting_db:
         backup_path = create_backup(conn, root, db_path)
-        sources.append(f"backup:{backup_path}")
+        sources.append("backup:1")
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, repo_id, "recovery", raw_ref="recover", parsed={"root": str(root)})
+        source_id = ensure_source_record(
+            conn,
+            repo_id,
+            "recovery",
+            raw_ref="recover",
+            parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
+        )
         if backup_path is not None:
-            create_artifact_ref(conn, repo_id, cycle_pk=None, source_id=source_id, artifact_kind="backup", path=str(backup_path))
+            create_artifact_ref(conn, root, repo_id, cycle_pk=None, source_id=source_id, artifact_kind="backup", path=str(backup_path))
     conn.close()
     status = "ok"
     if inside_git_repo(root):
@@ -5049,30 +5394,34 @@ def command_recover(args: argparse.Namespace) -> int:
         log_args.path = str(log_path)
         log_args.raw = False
         command_import_upkeeper_log(log_args)
-        sources.append(str(log_path))
+        sources.append("upkeeper_log_import:1")
     change_notes = sorted(root.glob("change_notes_*.md"))
     if change_notes:
         notes_args = argparse.Namespace(**vars(args))
         notes_args.paths = [str(p) for p in change_notes]
         notes_args.raw = False
         command_import_change_notes(notes_args)
-        sources.extend(str(p) for p in change_notes)
-    for export in sorted((db_path.parent / "exports").glob("*.jsonl")):
+        sources.append(f"change_notes_import:{len(change_notes)}")
+    exports = sorted((db_path.parent / "exports").glob("*.jsonl"))
+    for export in exports:
         import_args = argparse.Namespace(**vars(args))
         import_args.path = str(export)
         import_args.max_conflicts = args.max_conflicts
         command_import_jsonl(import_args)
-        sources.append(str(export))
-    for recovery_jsonl in sorted((db_path.parent / "recovery").glob("*.jsonl")):
+    if exports:
+        sources.append(f"export_import:{len(exports)}")
+    recovery_jsonls = sorted((db_path.parent / "recovery").glob("*.jsonl"))
+    for recovery_jsonl in recovery_jsonls:
         import_args = argparse.Namespace(**vars(args))
         import_args.path = str(recovery_jsonl)
         import_args.max_conflicts = args.max_conflicts
         command_import_jsonl(import_args)
-        sources.append(str(recovery_jsonl))
+    if recovery_jsonls:
+        sources.append(f"recovery_import:{len(recovery_jsonls)}")
     for marker_root in [root / "runtime/unaddressed-tool-failures/open", root / "runtime/unaddressed-tool-failures/resolved"]:
         if marker_root.exists():
             import_failure_markers(root, db_path, args.journal_mode, marker_root, allow_unsafe_db=args.allow_unsafe_db)
-            sources.append(str(marker_root))
+            sources.append("tool_failure_marker_import:1")
     sources.extend(recover_artifact_refs(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db))
     if not sources:
         status = "incomplete"
@@ -5646,22 +5995,68 @@ def command_prune(args: argparse.Namespace) -> int:
                 if not args.dry_run:
                     conn.execute(sql, (cutoff,))
         if args.transient_artifacts:
-            sql = """
-                select artifact_id, path from artifact_refs
-                where repo_id=? and retained=1 and artifact_kind in ('transcript','compiled_prompt','last_message')
+            transient_kinds = tuple(sorted(TRANSIENT_ARTIFACT_KINDS))
+            placeholders = ",".join("?" for _ in transient_kinds)
+            sql = f"""
+                select count(*) from artifact_refs
+                where repo_id=? and retained=1 and artifact_kind in ({placeholders})
             """
-            sql_params: list[Any] = [repo_id]
+            sql_params: list[Any] = [repo_id, *transient_kinds]
             if cutoff:
                 sql += " and observed_epoch < ?"
                 sql_params.append(cutoff)
-            rows = [dict(row) for row in conn.execute(sql, sql_params)]
-            actions.append({"action": "transient_artifacts_unretain", "rows": len(rows)})
+            row_count = int(conn.execute(sql, sql_params).fetchone()[0] or 0)
+            actions.append({"action": "transient_artifacts_unretain", "rows": row_count})
             if not args.dry_run:
-                update_sql = """
-                    update artifact_refs set retained=0
-                    where repo_id=? and retained=1 and artifact_kind in ('transcript','compiled_prompt','last_message')
+                update_sql = f"""
+                    update artifact_refs
+                    set retained=0
+                    where repo_id=? and retained=1 and artifact_kind in ({placeholders})
                 """
-                update_params: list[Any] = [repo_id]
+                update_params: list[Any] = [repo_id, *transient_kinds]
+                if cutoff:
+                    update_sql += " and observed_epoch < ?"
+                    update_params.append(cutoff)
+                conn.execute(
+                    update_sql,
+                    update_params,
+                )
+        if args.scrub_transient_metadata:
+            transient_kinds = tuple(sorted(TRANSIENT_ARTIFACT_KINDS))
+            placeholders = ",".join("?" for _ in transient_kinds)
+            sql = f"""
+                select count(*) from artifact_refs
+                where repo_id=?
+                  and artifact_kind in ({placeholders})
+                  and (
+                    retained=1
+                    or path is not null
+                    or size_bytes is not null
+                    or sha256 is not null
+                    or details_json is not null
+                  )
+            """
+            sql_params: list[Any] = [repo_id, *transient_kinds]
+            if cutoff:
+                sql += " and observed_epoch < ?"
+                sql_params.append(cutoff)
+            row_count = int(conn.execute(sql, sql_params).fetchone()[0] or 0)
+            actions.append({"action": "transient_artifacts_scrub", "rows": row_count})
+            if not args.dry_run:
+                update_sql = f"""
+                    update artifact_refs
+                    set retained=0, path=null, size_bytes=null, sha256=null, details_json=null
+                    where repo_id=?
+                      and artifact_kind in ({placeholders})
+                      and (
+                        retained=1
+                        or path is not null
+                        or size_bytes is not null
+                        or sha256 is not null
+                        or details_json is not null
+                      )
+                """
+                update_params: list[Any] = [repo_id, *transient_kinds]
                 if cutoff:
                     update_sql += " and observed_epoch < ?"
                     update_params.append(cutoff)
@@ -5845,6 +6240,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--older-than-days", type=int)
     p.add_argument("--raw-only", action="store_true")
     p.add_argument("--transient-artifacts", action="store_true")
+    p.add_argument("--scrub-transient-metadata", action="store_true")
     p.add_argument("--candidate-details", action="store_true")
     p.add_argument("--vacuum", action="store_true")
     p.add_argument("--dry-run", action="store_true")

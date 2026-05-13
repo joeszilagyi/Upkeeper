@@ -43,6 +43,124 @@ process_start_fingerprint() {
   printf 'proc_start_ticks=unknown'
 }
 
+log_kv_value() {
+  printf '%q' "${1:-}"
+}
+
+log_kv() {
+  local key="$1"
+  local value="${2:-}"
+
+  case "$key" in
+    ''|*[!A-Za-z0-9_.-]*)
+      key="invalid_key"
+      ;;
+  esac
+  printf '%s=%s' "$key" "$(log_kv_value "$value")"
+}
+
+upkeeper_value_has_control_chars() {
+  local value="${1:-}"
+
+  case "$value" in
+    *[[:cntrl:]]*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+upkeeper_redaction_key_material() {
+  local key_file key_value token
+
+  if [[ -n "${UPKEEPER_REDACTION_KEY:-}" ]]; then
+    printf '%s' "$UPKEEPER_REDACTION_KEY"
+    return 0
+  fi
+  if [[ -n "${UPKEEPER_LATTICE_REDACTION_KEY:-}" ]]; then
+    printf '%s' "$UPKEEPER_LATTICE_REDACTION_KEY"
+    return 0
+  fi
+
+  key_file="${UPKEEPER_REDACTION_KEY_FILE:-${ROOT_DIR:-$PWD}/runtime/upkeeper-redaction.key}"
+  if [[ -r "$key_file" ]]; then
+    IFS= read -r key_value <"$key_file" || key_value=""
+    if [[ -n "$key_value" ]]; then
+      printf '%s' "$key_value"
+      return 0
+    fi
+  fi
+
+  mkdir -p -- "$(dirname -- "$key_file")" 2>/dev/null || true
+  chmod 700 "$(dirname -- "$key_file")" 2>/dev/null || true
+  if [[ -r /dev/urandom ]]; then
+    token="$(od -An -N 32 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+  else
+    token=""
+  fi
+  if [[ -z "$token" ]]; then
+    token="$(printf '%s' "${ROOT_DIR:-$PWD}|${CYCLE_ID:-unknown}|$$|$(date '+%s%N' 2>/dev/null || date '+%s')" | sha256sum 2>/dev/null | awk '{print $1}')"
+  fi
+  if [[ -n "$token" ]]; then
+    printf '%s\n' "$token" >"$key_file" 2>/dev/null || true
+    chmod 600 "$key_file" 2>/dev/null || true
+    printf '%s' "$token"
+    return 0
+  fi
+
+  printf '%s' "${ROOT_DIR:-$PWD}|upkeeper-redaction-fallback"
+}
+
+upkeeper_hmac_sha256_text() {
+  local namespace="$1"
+  local value="${2:-}"
+  local key
+
+  key="$(upkeeper_redaction_key_material)"
+  python3 - "$key" "$namespace" "$value" <<'PY' 2>/dev/null || printf 'unknown'
+import hashlib
+import hmac
+import sys
+
+key, namespace, value = sys.argv[1:4]
+material = f"{namespace}\0{value}".encode("utf-8", "surrogateescape")
+print(hmac.new(key.encode("utf-8", "surrogateescape"), material, hashlib.sha256).hexdigest())
+PY
+}
+
+upkeeper_path_hmac() {
+  local value="${1:-}"
+
+  if [[ -z "$value" || "$value" == "none" || "$value" == "unknown" ]]; then
+    printf '%s' "${value:-none}"
+    return 0
+  fi
+  printf 'path-hmac-sha256:%s' "$(upkeeper_hmac_sha256_text path "$value")"
+}
+
+upkeeper_value_hmac() {
+  local namespace="$1"
+  local value="${2:-}"
+
+  if [[ -z "$value" || "$value" == "none" || "$value" == "unknown" || "$value" == "missing" || "$value" == "unavailable" || "$value" == "clean" ]]; then
+    printf '%s' "${value:-unknown}"
+    return 0
+  fi
+  printf 'value-hmac-sha256:%s' "$(upkeeper_hmac_sha256_text "$namespace" "$value")"
+}
+
+upkeeper_content_hmac() {
+  local value="${1:-}"
+
+  if [[ -z "$value" || "$value" == "none" || "$value" == "unknown" || "$value" == "missing" || "$value" == "unavailable" || "$value" == "clean" || "$value" == "not_regular" ]]; then
+    printf '%s' "${value:-unknown}"
+    return 0
+  fi
+  printf 'content-hmac-sha256:%s' "$(upkeeper_hmac_sha256_text content "$value")"
+}
+
 generate_fallback_chain_token() {
   local token
   if [[ -r /dev/urandom ]]; then

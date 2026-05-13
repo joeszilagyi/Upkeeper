@@ -62,6 +62,40 @@ print(hashlib.sha256(sys.argv[1].encode("utf-8", "surrogateescape")).hexdigest()
 PY
 }
 
+precontact_backup_hmac_text() {
+  local namespace="$1"
+  local value="$2"
+  local key
+
+  if declare -F upkeeper_hmac_sha256_text >/dev/null 2>&1; then
+    upkeeper_hmac_sha256_text "precontact_backup.$namespace" "$value"
+    return 0
+  fi
+
+  key="${UPKEEPER_REDACTION_KEY:-precontact-backup-test-key}"
+  python3 - "$key" "precontact_backup.$namespace" "$value" <<'PY' 2>/dev/null || printf 'unknown'
+import hashlib
+import hmac
+import sys
+
+key, namespace, value = sys.argv[1:4]
+material = f"{namespace}\0{value}".encode("utf-8", "surrogateescape")
+print(hmac.new(key.encode("utf-8", "surrogateescape"), material, hashlib.sha256).hexdigest())
+PY
+}
+
+precontact_backup_path_hmac() {
+  local value="$1"
+
+  printf 'path-hmac-sha256:%s' "$(precontact_backup_hmac_text path "$value")"
+}
+
+precontact_backup_content_hmac() {
+  local value="$1"
+
+  printf 'content-hmac-sha256:%s' "$(precontact_backup_hmac_text content "$value")"
+}
+
 precontact_backup_realpath() {
   local path="$1"
   python3 - "$path" <<'PY'
@@ -92,6 +126,17 @@ if isinstance(value, bool):
     value = "true" if value else "false"
 print(value)
 PY
+}
+
+precontact_backup_content_fingerprint_field() {
+  local json_path="$1"
+  local value
+
+  if value="$(precontact_backup_json_field "$json_path" "content_hmac" 2>/dev/null)" && [[ -n "$value" ]]; then
+    printf '%s' "$value"
+    return 0
+  fi
+  precontact_backup_json_field "$json_path" "content_sha256"
 }
 
 precontact_backup_selection_field() {
@@ -380,10 +425,10 @@ PY
 precontact_backup_write_metadata() {
   local output_path="$1"
   local repo_key="$2"
-  local repo_root_hash="$3"
+  local repo_root_hmac="$3"
   local rel_path="$4"
-  local path_sha="$5"
-  local content_sha="$6"
+  local path_hmac="$5"
+  local content_hmac="$6"
   local cycle_id="$7"
   local cycle_run_hash="$8"
   local created_utc="${9}"
@@ -401,8 +446,8 @@ precontact_backup_write_metadata() {
   local selected_head_blob="${21}"
 
   python3 - "$output_path" \
-    "$repo_key" "$repo_root_hash" "$rel_path" "$path_sha" \
-    "$content_sha" "$cycle_id" "$cycle_run_hash" "$created_utc" \
+    "$repo_key" "$repo_root_hmac" "$rel_path" "$path_hmac" \
+    "$content_hmac" "$cycle_id" "$cycle_run_hash" "$created_utc" \
     "$size_bytes" "$mode" "$mtime" "$selected_git_status" \
     "$selected_worktree_hash" "$selection_basis" "$backup_mode" \
     "$encrypted" "$protected_from_backend" "$derivation_sha" \
@@ -413,10 +458,10 @@ import sys
 (
     output_path,
     repo_key,
-    repo_root_hash,
+    repo_root_hmac,
     rel_path,
-    path_sha,
-    content_sha,
+    path_hmac,
+    content_hmac,
     cycle_id,
     cycle_run_hash,
     created_utc,
@@ -452,13 +497,13 @@ elif not protected_from_backend:
     protected_value = "unknown"
 
 metadata = {
-    "schema_version": 1,
+    "schema_version": 2,
     "backup_id_derivation_sha256": derivation_sha,
     "repo_key": repo_key,
-    "repo_root_sha256": repo_root_hash,
+    "repo_root_hmac": repo_root_hmac,
     "selected_relative_path": rel_path,
-    "relative_path_sha256": path_sha,
-    "content_sha256": content_sha,
+    "relative_path_hmac": path_hmac,
+    "content_hmac": content_hmac,
     "cycle_id": cycle_id,
     "cycle_run_hash": cycle_run_hash,
     "created_utc": created_utc,
@@ -730,7 +775,7 @@ precontact_backup_fail_or_continue() {
   local rel_path="$1"
   local reason="$2"
   local unavailable="${3:-0}"
-  local target_hash=""
+  local target_hmac=""
 
   if [[ "$unavailable" == "1" ]]; then
     log_line "ERROR" "precontact_backup.unavailable reason=$(shell_quote "$reason") required=$(precontact_backup_required && printf 1 || printf 0)"
@@ -738,10 +783,10 @@ precontact_backup_fail_or_continue() {
       finish_cycle 7 PRECONTACT_BACKUP_UNAVAILABLE ERROR "codex_exec_started=0 reason=$(shell_quote "$reason")"
     fi
   else
-    target_hash="$(precontact_backup_sha256_text "$rel_path")"
-    log_line "ERROR" "precontact_backup.failed target_hash=$target_hash reason=$(shell_quote "$reason") path_redacted=1"
+    target_hmac="$(precontact_backup_path_hmac "$rel_path")"
+    log_line "ERROR" "precontact_backup.failed target_hmac=$target_hmac reason=$(shell_quote "$reason") path_redacted=1"
     if precontact_backup_required; then
-      finish_cycle 7 PRECONTACT_BACKUP_FAILED ERROR "codex_exec_started=0 target_hash=$target_hash reason=$(shell_quote "$reason") path_redacted=1"
+      finish_cycle 7 PRECONTACT_BACKUP_FAILED ERROR "codex_exec_started=0 target_hmac=$target_hmac reason=$(shell_quote "$reason") path_redacted=1"
     fi
   fi
   return 0
@@ -750,7 +795,7 @@ precontact_backup_fail_or_continue() {
 precontact_backup_selected_target_or_exit() {
   local rel_path="$1"
   local selection_file="${2:-}"
-  local resolved_mode target_abs content_sha path_sha repo_real repo_sha repo_key path_dir
+  local resolved_mode target_abs content_sha content_hmac path_hmac path_key repo_real repo_hmac repo_key path_dir
   local created_utc compact_utc derivation_sha backup_id metadata_file size_bytes
   local sidecar_file
   local mode_text mtime_text selected_git_status selected_worktree_hash
@@ -786,15 +831,17 @@ precontact_backup_selected_target_or_exit() {
     precontact_backup_fail_or_continue "$rel_path" "target_hash_failed" 0
     return 0
   fi
-  path_sha="$(precontact_backup_sha256_text "$rel_path")"
+  content_hmac="$(precontact_backup_content_hmac "$content_sha")"
+  path_key="$(precontact_backup_hmac_text path "$rel_path")"
+  path_hmac="path-hmac-sha256:$path_key"
   repo_real="$(precontact_backup_realpath "$ROOT_DIR")"
-  repo_sha="$(precontact_backup_sha256_text "$repo_real")"
-  repo_key="repo-$repo_sha"
+  repo_hmac="$(precontact_backup_hmac_text repo "$repo_real")"
+  repo_key="repo-hmac-$repo_hmac"
   created_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   compact_utc="$(date -u '+%Y%m%dT%H%M%SZ')"
-  derivation_sha="$(precontact_backup_sha256_text "$content_sha|$path_sha|$CYCLE_ID|$CYCLE_RUN_HASH|$created_utc")"
+  derivation_sha="$(precontact_backup_sha256_text "$content_hmac|$path_hmac|$CYCLE_ID|$CYCLE_RUN_HASH|$created_utc")"
   backup_id="pb-${compact_utc}-${derivation_sha:0:32}"
-  path_dir="$PRECONTACT_BACKUP_RESOLVED_ROOT/$repo_key/path-$path_sha"
+  path_dir="$PRECONTACT_BACKUP_RESOLVED_ROOT/$repo_key/path-hmac-$path_key"
 
   if ! mkdir -p -- "$PRECONTACT_BACKUP_RESOLVED_ROOT/$repo_key" "$path_dir"; then
     precontact_backup_fail_or_continue "$rel_path" "mkdir_failed" 0
@@ -839,8 +886,8 @@ PY
     precontact_backup_fail_or_continue "$rel_path" "metadata_temp_failed" 0
     return 0
   fi
-  if ! precontact_backup_write_metadata "$metadata_file" "$repo_key" "$repo_sha" \
-    "$rel_path" "$path_sha" "$content_sha" "$CYCLE_ID" "$CYCLE_RUN_HASH" \
+  if ! precontact_backup_write_metadata "$metadata_file" "$repo_key" "repo-hmac-sha256:$repo_hmac" \
+    "$rel_path" "$path_hmac" "$content_hmac" "$CYCLE_ID" "$CYCLE_RUN_HASH" \
     "$created_utc" "$size_bytes" "$mode_text" "$mtime_text" "$selected_git_status" \
     "$selected_worktree_hash" "$selection_basis" "$resolved_mode" "$encrypted" \
     "$protected" "$derivation_sha" "$selected_content_state" "$selected_head_blob"; then
@@ -890,7 +937,7 @@ PY
     RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND="unknown"
   fi
 
-  log_line "INFO" "precontact_backup.created target_hash=$path_sha backup_status=created mode=$resolved_mode encrypted=$RUN_PRECONTACT_BACKUP_ENCRYPTED protected_from_backend=$RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND path_redacted=1"
+  log_line "INFO" "precontact_backup.created target_hmac=$path_hmac backup_status=created mode=$resolved_mode encrypted=$RUN_PRECONTACT_BACKUP_ENCRYPTED protected_from_backend=$RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND path_redacted=1"
   precontact_backup_prune_for_path "$path_dir"
 }
 
@@ -950,7 +997,7 @@ precontact_backup_restore_by_id() {
   local repo_root="$2"
   local identity_path="${3:-${UPKEEPER_PRECONTACT_BACKUP_AGE_IDENTITY:-}}"
   local restore_to="${4:-}"
-  local vault_root sidecars sidecar_count sidecar rel_path content_sha encrypted mode
+  local vault_root sidecars sidecar_count sidecar rel_path content_fingerprint encrypted mode
   local target_abs target_dir tmp_restore="" artifact payload_tmp="" payload_metadata="" restored_sha
   local restore_tmp_dir=""
   local restore_tmp_dir_is_temp=0
@@ -988,7 +1035,7 @@ precontact_backup_restore_by_id() {
       precontact_backup_set_reason "metadata_read_failed"
       return 1
     fi
-    if ! content_sha="$(precontact_backup_json_field "$sidecar" "content_sha256")"; then
+    if ! content_fingerprint="$(precontact_backup_content_fingerprint_field "$sidecar")"; then
       precontact_backup_set_reason "metadata_read_failed"
       return 1
     fi
@@ -1065,7 +1112,7 @@ precontact_backup_restore_by_id() {
       precontact_backup_set_reason "metadata_read_failed"
       return 1
     fi
-    if ! content_sha="$(precontact_backup_json_field "$payload_metadata" "content_sha256")"; then
+    if ! content_fingerprint="$(precontact_backup_content_fingerprint_field "$payload_metadata")"; then
       precontact_backup_set_reason "metadata_read_failed"
       return 1
     fi
@@ -1099,10 +1146,20 @@ precontact_backup_restore_by_id() {
     precontact_backup_set_reason "restore_hash_failed"
     return 1
   }
-  if [[ "$restored_sha" != "$content_sha" ]]; then
-    precontact_backup_set_reason "restore_hash_mismatch"
-    return 1
-  fi
+  case "$content_fingerprint" in
+    content-hmac-sha256:*)
+      if [[ "$(precontact_backup_content_hmac "$restored_sha")" != "$content_fingerprint" ]]; then
+        precontact_backup_set_reason "restore_hash_mismatch"
+        return 1
+      fi
+      ;;
+    *)
+      if [[ "$restored_sha" != "$content_fingerprint" ]]; then
+        precontact_backup_set_reason "restore_hash_mismatch"
+        return 1
+      fi
+      ;;
+  esac
   if ! mv -- "$tmp_restore" "$target_abs"; then
     precontact_backup_set_reason "restore_rename_failed"
     return 1
@@ -1110,7 +1167,7 @@ precontact_backup_restore_by_id() {
   if [[ "$mode" =~ ^[0-7]{3,4}$ ]]; then
     chmod "$mode" "$target_abs" 2>/dev/null || true
   fi
-  precontact_backup_restore_log "INFO" "precontact_backup.restore target_hash=$(precontact_backup_sha256_text "$rel_path") path_redacted=1"
+  precontact_backup_restore_log "INFO" "precontact_backup.restore target_hmac=$(precontact_backup_path_hmac "$rel_path") path_redacted=1"
 }
 
 precontact_backup_restore_cleanup_tmp() {

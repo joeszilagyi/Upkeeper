@@ -64,17 +64,15 @@ new_transcript_file() {
 
 file_blob_hash() {
   local path="$1"
-  git hash-object -- "$path" 2>/dev/null || printf 'unknown'
+  local raw_hash
+
+  raw_hash="$(git hash-object -- "$path" 2>/dev/null || true)"
+  upkeeper_content_hmac "${raw_hash:-unknown}"
 }
 
 hash_text() {
   local value="$1"
-  python3 - "$value" <<'PY' 2>/dev/null || printf 'unknown'
-import hashlib
-import sys
-
-print(hashlib.sha256(sys.argv[1].encode("utf-8", "surrogateescape")).hexdigest()[:24])
-PY
+  upkeeper_value_hmac text "$value"
 }
 
 file_size_bytes() {

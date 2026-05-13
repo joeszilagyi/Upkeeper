@@ -336,7 +336,7 @@ compile_prompt() {
 
   if [[ -n "$PROMPT_FILE" ]]; then
     {
-      printf '\nAdditional task guidance from %s:\n' "$PROMPT_FILE"
+      printf '\nAdditional task guidance from operator prompt file:\n'
       cat "$PROMPT_FILE"
     } >>"$compiled_file"
   elif [[ -n "$INLINE_PROMPT" ]]; then

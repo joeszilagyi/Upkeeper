@@ -6,13 +6,33 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-13: v1.2.14 changes:
+	1. Cleared the deferred data-protection issue cluster by rejecting control characters in prompt-file paths, using central log key/value encoding for `run.start`, and removing the prompt-file path from compiled prompt prose.
+	2. Startup-anomaly unresolved-state prompts now expose only HMAC state ids, reason classes, timestamps, and redaction markers; raw state paths, run hashes, and details stay in protected local state files.
+	3. Startup-anomaly and selected-target changed-path logs now publish path HMACs, coarse path classes/extensions, statuses, and `content_changed` booleans while preserving full raw path/hash evidence in protected local diagnostics.
+	4. Selected-target preselection, pre-contact backup metadata/logs, and Lattice artifact references now use keyed HMAC fingerprints for path and content identity instead of raw SHA-256/git object hashes on normal operator-facing surfaces.
+
+2026-05-12: v1.2.13 changes:
+	1. Startup disk-preflight anomaly notes now send only safe labels and free-space percentages to the model, while local logs hash path and mount metadata by default and expose raw shell-quoted values only in debug1 or full terminal mode.
+	2. This release also keeps the default prompt from reintroducing replacement-target authority and sets a private process umask before runtime artifacts are created, with deterministic local validation covering the tightened contracts.
+
 2026-05-12: default prompt no longer grants unconditional replacement targets:
 	1. The default review prompt no longer contains a standalone "select the next oldest eligible file" instruction in the physical/safety exception branch.
 	2. Replacement selection is now explicitly conditional on the absence of `WRAPPER_PRESELECTED_REVIEW_TARGET`, and preselected-target cycles keep `STOPPED_ON_BLOCKER` as the required outcome when the selected file is impossible or unsafe.
 
+2026-05-12: disk preflight prompt and log metadata redaction:
+	1. Startup disk-preflight prompt notes now carry only safe labels plus free-space percentages, so low-space anomaly prompts no longer expose raw paths, probe paths, mount names, or size/usage fields to the model.
+	2. Local `disk.preflight` logs now hash path and mount metadata by default and emit raw shell-quoted values only in `debug1` or `full` terminal mode for explicit local diagnosis.
+	3. Added deterministic quick validation for both the redacted local log contract and the sanitized prompt-note contract.
+
 2026-05-12: private artifact umask at entry:
 	1. Upkeeper now sets `umask 077` at process entry before config loading or runtime artifact creation, so logs, transcripts, queue markers, postmortem files, locks, and similar local state default to owner-only permissions even on permissive host umask settings.
 	2. Added quick validation that fails if the entrypoint loses this early private-umask contract.
+
+2026-05-12: imported Upkeeper log rows now drop sensitive parsed fields by default:
+	1. `lattice import-upkeeper-log` now stores only a small safe allowlist in `source_records.parsed_json`, instead of persisting full parsed log key/value payloads when raw-line import is disabled.
+	2. Imported log replay no longer backfills sensitive normalized cycle fields such as selected paths, finish reasons, model/mode, or config-file values from log text, while preserving safe lifecycle status fields needed for sparse replay.
+	3. Added deterministic lattice coverage proving sensitive parsed keys are omitted from stored source records and normalized cycle rows.
 
 2026-05-11: bug-report-only draft-gating changes:
 	1. Changed `--bug-report-only` from a soft “file an issue if possible” prompt into a wrapper-owned local draft workflow, with issue-ready bug reports now expected through a final-message draft block that Upkeeper saves under runtime-local bug-report drafts.
@@ -609,3 +629,17 @@ Reconstructed pre-1.0 history:
 2026-05-12: backlog orchestration wrench:
 - Added `orchestration/backlog.sh`, a deliberately small operator launcher that opens or reuses a `[backlog]` PR, targets the newest open non-feature/non-research issue, runs one Upkeeper repair pass with `gpt-5.4` high reasoning, pushes the result, waits for PR checks, and merges the batch after 10 recorded fixes.
 - The launcher keeps the five-hour quota stop threshold at zero for this workflow while preserving a 10% weekly quota stop threshold, and falls back to a normal newest-file Upkeeper pass when no eligible issue is open.
+
+2026-05-12: backlog wrench post-fix efficiency hardening:
+- `orchestration/backlog.sh` now scrubs Python bytecode cache artifacts before the commit path and disables bytecode generation during backlog runs so one-file issue fixes do not stall on transient `__pycache__` junk.
+- Existing open backlog PRs with recorded fixes now wait only up to a bounded interval for GitHub checks to settle before the next loop iteration, instead of hanging indefinitely on stale aggregate check states.
+- A clean backlog branch now gates the next issue on the current PR checks completing, so the loop does not spend model cycles starting a new fix while the previous fix is still waiting on CI.
+- Issue text that clearly describes bug-report-only dirty-state fingerprinting now pins directly to `lib/upkeeper/codex_io.bash` so those issue runs do not burn a full selected-file cycle on an unrelated rotation target.
+- The backlog launcher now logs each local validation phase plus the commit/push/check-wait transitions so long post-fix validation windows read as active progress instead of a silent apparent hang.
+- The backlog launcher now defaults to light per-bug validation (`bash -n` plus `git diff --check`) and defers the full unit-test, docs, quick-validator, and PR-check gate to the batch-merge boundary, so an open backlog PR can stack fixes faster instead of serializing on full validation and CI after every issue.
+- `cycle.start` / `record-cycle-start` metadata issues now pin to `Upkeeper` before generic Lattice keyword matches, so wrapper-emitter privacy bugs do not waste a full selected-file cycle on importer-side mitigation first.
+- Blocked-issue deferral now preserves the real Upkeeper exit status instead of accidentally converting `BLOCKED` into success through shell negation, so repeated selected-file-boundary blockers are skipped for the current backlog branch instead of being retried immediately.
+- The backlog launcher now checks the local exact-model quota snapshot before issue selection and skips the cycle cleanly when the primary bucket is still in `defer`, preventing one-minute retry churn and repeated quota-stop obligations on the same issue.
+- Backlog control flow now also captures the real function exit statuses in `main()` for both quota preflight and issue runs, fixing a second shell-negation bug that was still turning `BLOCKED` issue reviews and quota-defer preflights into apparent success paths.
+- Backlog `main()` now captures those nonzero statuses in `if ...; then ... else ... fi` form so `set -e` does not abort the script before blocked-issue deferral or quota-defer handling can run.
+- Issue text describing log-rotation archives, startup-anomaly gate path/hash leaks, unresolved startup-anomaly state leakage, and `prompt_file` / `run.start` log injection now pins directly to the wrapper modules that actually own those behaviors, preventing the backlog loop from wasting full issue cycles on excluded artifacts like `Upkeeper.log` or unrelated quota helpers.

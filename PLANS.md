@@ -3,6 +3,84 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Disk Preflight Prompt and Log Redaction
+
+Status: completed
+
+Goal:
+Stop disk-space startup anomaly handling from sending raw paths, probe paths,
+and mount metadata to the model while preserving actionable local diagnostics
+for operators.
+
+Constraints:
+- Keep the fix narrow to the disk-preflight and prompt-compilation flow.
+- Preserve the startup anomaly gate and operator-facing low-space signal.
+- Keep raw prompt notes limited to safe labels and percentages only.
+- Keep local log evidence useful, but default path and mount fields to hashes
+  unless an explicit diagnostic mode is enabled.
+- Add deterministic local validation for both the prompt contract and the local
+  log contract.
+
+Files likely touched:
+- `lib/upkeeper/disk_preflight.bash`
+- `lib/upkeeper/help_selection.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+Completed in this patch:
+- Redacted disk-preflight path, probe-path, and mount log fields by default,
+  while allowing raw shell-quoted values only in explicit diagnostic modes.
+- Reduced `DISK_SPACE_PROMPT_NOTE` to label-and-percentage-only anomaly notes
+  so startup prompts no longer leak local mount/path metadata to the model.
+- Added deterministic quick-validation coverage for the new disk-preflight log
+  and prompt-note contracts, and refreshed the mirrored operator docs.
+
+## Import-Upkeeper-Log Parsed Field Redaction
+
+Status: completed
+
+Goal:
+Stop `lattice import-upkeeper-log` from persisting sensitive parsed log fields
+into `source_records.parsed_json` and adjacent normalized cycle fields when raw
+line import is disabled.
+
+Constraints:
+- Keep the patch narrow to the lattice importer and its focused validation.
+- Preserve useful lifecycle import fields needed for sparse replay and status
+  reconstruction.
+- Default to allowlisting safe parsed fields instead of trying to redact every
+  possible sensitive key after storage.
+- Keep validation deterministic and local.
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+Completed in this patch:
+- Limited imported `source_records.parsed_json` for Upkeeper log rows to a
+  small safe allowlist instead of storing full parsed key/value payloads.
+- Stopped `import-upkeeper-log` from backfilling sensitive normalized cycle
+  fields such as selected paths, finish reasons, model/mode, and config-file
+  values from log text.
+- Added a focused lattice test proving sensitive parsed keys are dropped while
+  sparse lifecycle status reconstruction still works.
+
 ## Default Prompt Replacement Authority Removal
 
 Status: completed
@@ -1609,6 +1687,33 @@ Rollout notes:
 - eligible stored obligation targets should keep their existing `--target-file`
 - poisoned runtime/.git-style obligation targets should remap to the launcher control-plane file instead of reopening the same loop
 
+## Backlog Wrench Batch Throughput Rebalance
+
+Status: in progress
+
+Goal:
+- make `orchestration/backlog.sh` chew through backlog issues faster by moving heavy validation and CI waiting from every single bug to the batch boundary
+- preserve clean-trunk quality by keeping the strong validation and PR merge gate before the batch merges
+
+Constraints:
+- keep one shared backlog PR / branch model
+- keep per-bug runs cheap enough to stack fixes instead of serializing on GitHub CI
+- preserve operator-visible progress logging so long local validation windows do not look like silent hangs
+- keep the current `#319` dirty-state fingerprint fix on the backlog branch while changing the wrench behavior around it
+
+Files likely touched:
+- `PLANS.md`
+- `orchestration/backlog.sh`
+- `change_notes_2026.md`
+- `lib/upkeeper/codex_io.bash`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
 ## Allowlisted CODEX_MODE Tuple Parsing
 
 Status: completed
@@ -1687,5 +1792,47 @@ Files likely touched:
 Validation:
 - `bash -n Upkeeper ChimneySweep lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
 - `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+## Deferred Data-Protection Issue Burn-Down
+
+Status: completed
+
+Goal:
+- clear issues #309, #311, #312, and #314 as one deliberate multi-file repair
+- stop normal logs, prompts, startup-anomaly summaries, and Lattice artifact
+  references from exposing raw prompt paths, changed paths, or stable content
+  hashes
+- keep private local diagnostics and restore integrity checks available without
+  making those details model-visible by default
+
+Constraints:
+- preserve target isolation, pre-contact backup restore safety, startup-anomaly
+  gate behavior, and existing Lattice import/export compatibility where feasible
+- use keyed HMACs or boolean content-change signals for operator-facing equality
+  evidence
+- reject control characters in path-like operator inputs before they can reach
+  log records
+
+Files likely touched:
+- `PLANS.md`
+- `Upkeeper`
+- `lib/upkeeper/runtime_foundation.bash`
+- `lib/upkeeper/transcript_artifacts.bash`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/help_selection.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `lib/upkeeper/startup_anomaly_state.bash`
+- `lib/upkeeper/worktree_state.bash`
+- `lib/upkeeper/precontact_backup.bash`
+- `tools/upkeeper_lattice.py`
+- focused tests and operator docs
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
 - `git diff --check`
 - `tools/validate_upkeeper.sh --quick`

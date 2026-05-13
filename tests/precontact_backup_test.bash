@@ -94,6 +94,7 @@ reset_env() {
   UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE=20
   UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT=""
   UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS=1
+  UPKEEPER_REDACTION_KEY="precontact-test-key-$name"
   CODEX_TARGET_FILE=""
   RUN_PRECONTACT_BACKUP_ID=""
   RUN_PRECONTACT_BACKUP_SHA256=""
@@ -132,7 +133,7 @@ json_path_count() {
 
 test_plain_required_backup_succeeds() {
   local repo="$TEST_TMP_ROOT/plain repo"
-  local selection_file json_file bak_file expected_sha derivation_prefix backup_id expected_path_hash
+  local selection_file json_file bak_file expected_sha derivation_prefix backup_id expected_path_hmac
   make_repo "$repo"
   reset_env "$repo" plain
   selection_file="$TEST_TMP_ROOT/plain-selection.env"
@@ -147,20 +148,23 @@ test_plain_required_backup_succeeds() {
   [[ -s "$bak_file" ]] || fail "plain backup artifact missing"
 
   expected_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
-  expected_path_hash="$(precontact_backup_sha256_text "dir/space file.sh")"
+  expected_path_hmac="$(precontact_backup_path_hmac "dir/space file.sh")"
   [[ "$(precontact_backup_sha256_file "$bak_file")" == "$expected_sha" ]] || fail "plain backup sha mismatch"
   backup_id="$(basename -- "$json_file" .json)"
   derivation_prefix="$(jq -r '.backup_id_derivation_sha256[0:32]' "$json_file")"
   [[ "$backup_id" == *"$derivation_prefix"* ]] || fail "backup id does not derive from recorded derivation sha"
-  grep -Fq "precontact_backup.created target_hash=$expected_path_hash" "$LOG_FILE" || fail "created log did not record target hash"
+  grep -Fq "precontact_backup.created target_hmac=$expected_path_hmac" "$LOG_FILE" || fail "created log did not record target HMAC"
   ! grep -Fq "target=dir/space file.sh" "$LOG_FILE" || fail "created log leaked selected relative path"
   jq -e \
     --arg rel "dir/space file.sh" \
-    --arg sha "$expected_sha" \
-    '.schema_version == 1
+    --arg content_hmac "$(precontact_backup_content_hmac "$expected_sha")" \
+    --arg path_hmac "$expected_path_hmac" \
+    '.schema_version == 2
       and .selected_relative_path == $rel
-      and .content_sha256 == $sha
-      and (.relative_path_sha256 | length) == 64
+      and .content_hmac == $content_hmac
+      and .relative_path_hmac == $path_hmac
+      and (.content_sha256 | not)
+      and (.relative_path_sha256 | not)
       and .cycle_id == "cycle-plain"
       and .cycle_run_hash == "hash-plain"
       and .selected_git_status == "clean"
@@ -176,7 +180,7 @@ test_age_mode_uses_public_recipient_only() {
   local repo="$TEST_TMP_ROOT/age repo"
   local fake_bin="$TEST_TMP_ROOT/fake-age-bin"
   local record="$TEST_TMP_ROOT/fake-age-record.txt"
-  local selection_file json_file age_file old_path
+  local selection_file json_file age_file old_path expected_path_hmac
   make_repo "$repo"
   reset_env "$repo" age
   selection_file="$TEST_TMP_ROOT/age-selection.env"
@@ -239,7 +243,7 @@ test_age_restore_uses_payload_metadata() {
   local fake_bin="$TEST_TMP_ROOT/fake-age-bin"
   local selection_file json_file age_file restored_sha original_sha sidecar
   local identity_file="$TEST_TMP_ROOT/age-identity.key"
-  local old_path expected_path_hash
+  local old_path expected_path_hmac
   local record
   make_repo "$repo"
   reset_env "$repo" age_restore
@@ -304,13 +308,13 @@ SH
   [[ -s "$sidecar" ]] || fail "age restore test missing age sidecar"
 
   original_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
-  expected_path_hash="$(precontact_backup_sha256_text "dir/space file.sh")"
+  expected_path_hmac="$(precontact_backup_path_hmac "dir/space file.sh")"
   printf 'mutated\n' >"$repo/dir/space file.sh"
   precontact_backup_restore_by_id "$RUN_PRECONTACT_BACKUP_ID" "$repo" "$identity_file" ""
   restored_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
   PATH="$old_path"
   [[ "$restored_sha" == "$original_sha" ]] || fail "age restore did not restore original bytes"
-  grep -Fq "precontact_backup.restore target_hash=$expected_path_hash" "$LOG_FILE" || fail "restore log did not record target hash"
+  grep -Fq "precontact_backup.restore target_hmac=$expected_path_hmac" "$LOG_FILE" || fail "restore log did not record target HMAC"
   ! grep -Fq "precontact_backup.restore target=dir/space file.sh" "$LOG_FILE" || fail "restore log leaked selected relative path"
 
   jq -e 'has("selected_relative_path") | not' "$sidecar" >/dev/null ||
@@ -458,7 +462,7 @@ EOF
 
 test_retention_prunes_only_same_path() {
   local repo="$TEST_TMP_ROOT/retention repo"
-  local selection_file path_sha repo_sha path_dir other_sha other_dir count other_count i
+  local selection_file path_key repo_hmac path_dir other_key other_dir count other_count i
   make_repo "$repo"
   reset_env "$repo" retention
   UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE=2
@@ -474,11 +478,11 @@ test_retention_prunes_only_same_path() {
     precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
   done
 
-  repo_sha="$(precontact_backup_sha256_text "$(precontact_backup_realpath "$repo")")"
-  path_sha="$(precontact_backup_sha256_text "dir/space file.sh")"
-  other_sha="$(precontact_backup_sha256_text "dir/other.sh")"
-  path_dir="$UPKEEPER_PRECONTACT_BACKUP_ROOT/repo-$repo_sha/path-$path_sha"
-  other_dir="$UPKEEPER_PRECONTACT_BACKUP_ROOT/repo-$repo_sha/path-$other_sha"
+  repo_hmac="$(precontact_backup_hmac_text repo "$(precontact_backup_realpath "$repo")")"
+  path_key="$(precontact_backup_hmac_text path "dir/space file.sh")"
+  other_key="$(precontact_backup_hmac_text path "dir/other.sh")"
+  path_dir="$UPKEEPER_PRECONTACT_BACKUP_ROOT/repo-hmac-$repo_hmac/path-hmac-$path_key"
+  other_dir="$UPKEEPER_PRECONTACT_BACKUP_ROOT/repo-hmac-$repo_hmac/path-hmac-$other_key"
   count="$(json_path_count "$path_dir")"
   other_count="$(json_path_count "$other_dir")"
   [[ "$count" == "2" ]] || fail "retention kept $count backups for selected path, expected 2"

@@ -18,12 +18,7 @@ upkeeper_issue_fix_private_issue_body_to_model_allowed() {
 
 issue_fix_log_hash() {
   local value="${1:-}"
-  python3 - "$value" <<'PY' 2>/dev/null || printf 'unknown'
-import hashlib
-import sys
-
-print(hashlib.sha256(sys.argv[1].encode("utf-8", "surrogateescape")).hexdigest()[:24])
-PY
+  upkeeper_value_hmac issue "$value"
 }
 
 prepare_bug_report_draft_artifact() {
@@ -846,42 +841,75 @@ upkeeper_bug_report_finalize() {
   upkeeper_bug_report_materialize_draft
 }
 
+upkeeper_source_mutation_status_summary() {
+  (
+    set -o pipefail
+    git status --porcelain=v1 --untracked-files=all 2>/dev/null |
+      awk '
+        {
+          code = substr($0, 1, 2)
+          if (code == "??") {
+            counts["untracked"]++
+          } else if (code != "") {
+            counts["status:" code]++
+          }
+        }
+        END {
+          for (key in counts) {
+            printf "%s=%d\n", key, counts[key]
+          }
+        }
+      ' | sort
+  )
+}
+
+upkeeper_source_mutation_hmac() {
+  local key="${1:-}"
+
+  python3 -c '
+import hashlib
+import hmac
+import sys
+
+key = sys.argv[1].encode("utf-8", "surrogateescape")
+payload = sys.stdin.buffer.read()
+print(hmac.new(key, payload, hashlib.sha256).hexdigest()[:24])
+' "$key" 2>/dev/null || return 1
+}
+
 upkeeper_source_mutation_fingerprint() {
-  local head_ref branch_ref index_tree
-  {
-    printf 'tracked-diff\n'
-    git diff --no-ext-diff --binary --
-    printf '\nindexed-diff\n'
-    git diff --cached --no-ext-diff --binary --
-    printf '\nstatus\n'
-    git status --porcelain=v1 --untracked-files=all
-    printf '\nHEAD\n'
-    if ! head_ref="$(git rev-parse --verify HEAD 2>/dev/null)"; then
-      printf 'unknown'
-    else
-      printf '%s' "$head_ref"
-    fi
-    printf '\nbranch\n'
-    if ! branch_ref="$(git symbolic-ref --short -q HEAD 2>/dev/null)"; then
-      printf 'detached_or_missing'
-    else
-      printf '%s' "$branch_ref"
-    fi
-    printf '\nindex-tree\n'
-    if ! index_tree="$(git write-tree 2>/dev/null)"; then
-      printf 'unknown'
-    else
-      printf '%s' "$index_tree"
-    fi
-    printf '\nrefs\n'
-    if ! git for-each-ref --sort=refname --format='%(refname) %(objectname)' refs/heads refs/remotes 2>/dev/null; then
-      printf 'unknown'
-    fi
-    printf '\nreflogs\n'
-    if ! git reflog --date=unix --pretty=format:'%H|%gD|%s' --all 2>/dev/null | head -n 80; then
-      printf 'unknown'
-    fi
-  } 2>/dev/null | git hash-object --stdin
+  local head_ref branch_ref index_tree hmac_key status_summary
+
+  hmac_key="${CYCLE_RUN_HASH:-${CYCLE_ID:-upkeeper-source-mutation}}"
+  status_summary="$(upkeeper_source_mutation_status_summary)" || return 1
+  (
+    set -o pipefail
+    {
+      printf 'tracked-diff\n'
+      git diff --no-ext-diff --binary --
+      printf '\nindexed-diff\n'
+      git diff --cached --no-ext-diff --binary --
+      printf '\nstatus-summary\n%s\n' "$status_summary"
+      printf 'HEAD\n'
+      if ! head_ref="$(git rev-parse --verify HEAD 2>/dev/null)"; then
+        printf 'unknown'
+      else
+        printf '%s' "$head_ref"
+      fi
+      printf '\nbranch\n'
+      if ! branch_ref="$(git symbolic-ref --short -q HEAD 2>/dev/null)"; then
+        printf 'detached_or_missing'
+      else
+        printf '%s' "$branch_ref"
+      fi
+      printf '\nindex-tree\n'
+      if ! index_tree="$(git write-tree 2>/dev/null)"; then
+        printf 'unknown'
+      else
+        printf '%s' "$index_tree"
+      fi
+    } 2>/dev/null | upkeeper_source_mutation_hmac "$hmac_key"
+  )
 }
 
 append_csv_value() {
@@ -1559,9 +1587,18 @@ resolve_prompt_file() {
     die "use either --prompt-file or --prompt, not both"
   fi
   if [[ -n "$PROMPT_FILE" ]]; then
+    if upkeeper_value_has_control_chars "$PROMPT_FILE"; then
+      die "prompt file path contains control characters"
+    fi
     PROMPT_FILE="$(resolve_path "$PROMPT_FILE")"
+    if upkeeper_value_has_control_chars "$PROMPT_FILE"; then
+      die "resolved prompt file path contains control characters"
+    fi
     if [[ "$UPKEEPER_AUTOMATION_LAUNCHER" != "$SCRIPT_NAME" ]]; then
       prompt_trust_root="$(resolve_path "$prompt_trust_root")"
+      if upkeeper_value_has_control_chars "$prompt_trust_root"; then
+        die "prompt trust root contains control characters"
+      fi
       [[ -d "$prompt_trust_root" ]] || die "prompt trust root is not a directory: $prompt_trust_root"
       case "$PROMPT_FILE" in
         "$prompt_trust_root"|"$prompt_trust_root"/*)

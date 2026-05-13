@@ -3,11 +3,37 @@
 # The wrapper writes these local state files when a prior cycle needs the next
 # run to inspect Upkeeper itself before normal target selection. The reader keeps
 # malformed or operator-edited state files from corrupting parseable log fields.
+startup_anomaly_redaction_key_material() {
+  if declare -F upkeeper_redaction_key_material >/dev/null 2>&1; then
+    upkeeper_redaction_key_material
+  else
+    printf '%s' "${UPKEEPER_REDACTION_KEY:-startup-anomaly-test-key}"
+  fi
+}
+
+startup_anomaly_path_hmac() {
+  local value="$1"
+
+  if declare -F upkeeper_path_hmac >/dev/null 2>&1; then
+    upkeeper_path_hmac "$value"
+    return 0
+  fi
+  printf 'path-hmac-sha256:%s' "$(python3 - "${UPKEEPER_REDACTION_KEY:-startup-anomaly-test-key}" "$value" <<'PY' 2>/dev/null || printf 'unknown'
+import hashlib
+import hmac
+import sys
+
+key, value = sys.argv[1:3]
+print(hmac.new(key.encode("utf-8", "surrogateescape"), f"path\0{value}".encode("utf-8", "surrogateescape"), hashlib.sha256).hexdigest())
+PY
+)"
+}
+
 write_startup_anomaly_gate_state() {
   local status="$1"
   local detail="${2:-}"
   local state_dir="$CODEX_STARTUP_ANOMALY_GATE_STATE_DIR"
-  local state_path tmp_path now_epoch
+  local state_path tmp_path now_epoch detail_class reasons_class
 
   [[ -n "$state_dir" ]] || return 1
   if ! mkdir -p -- "$state_dir"; then
@@ -42,7 +68,11 @@ write_startup_anomaly_gate_state() {
     return 1
   fi
 
-  log_line "INFO" "startup_anomaly.gate_state status=$status path=$(shell_quote "$state_path") reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") detail=$(shell_quote "${detail:-none}")"
+  detail_class="${detail:-none}"
+  detail_class="${detail_class//[^A-Za-z0-9_.-]/_}"
+  reasons_class="${STARTUP_ANOMALY_REASONS:-unknown}"
+  reasons_class="${reasons_class//[^A-Za-z0-9_.-,]/_}"
+  log_line "INFO" "startup_anomaly.gate_state status=$status path_hmac=$(startup_anomaly_path_hmac "$state_path") reasons_class=$(shell_quote "$reasons_class") detail_class=$(shell_quote "$detail_class") detail_redacted=1"
   return 0
 }
 
@@ -97,14 +127,19 @@ PY
 
 startup_anomaly_state_lines() {
   local state_dir="$CODEX_STARTUP_ANOMALY_GATE_STATE_DIR"
+  local hmac_key
   [[ -d "$state_dir" ]] || return 0
 
-  python3 - "$state_dir" <<'PY'
+  hmac_key="$(startup_anomaly_redaction_key_material)"
+  python3 - "$state_dir" "$hmac_key" <<'PY'
 from pathlib import Path
+import hashlib
+import hmac
 import string
 import sys
 
 root = Path(sys.argv[1])
+hmac_key = sys.argv[2].encode("utf-8", "surrogateescape")
 items = []
 
 LOG_FIELD_SAFE = set(string.ascii_letters + string.digits + "/._-:@%+=,")
@@ -127,6 +162,18 @@ def normalized_epoch(value, fallback):
     return fallback_epoch, str(fallback_epoch)
 
 
+def hmac_value(namespace, value):
+    material = f"{namespace}\0{value}".encode("utf-8", "surrogateescape")
+    return hmac.new(hmac_key, material, hashlib.sha256).hexdigest()
+
+
+def reason_class(value):
+    text = "" if value is None else str(value).strip().lower()
+    text = "".join(ch if ch in string.ascii_lowercase + string.digits + "_-" else "_" for ch in text)
+    text = "_".join(token for token in text.split("_") if token)
+    return text[:80] or "unknown"
+
+
 for path in root.glob("*.state"):
     fields = {}
     try:
@@ -142,17 +189,17 @@ for path in root.glob("*.state"):
     if fields.get("status") != "unresolved":
         continue
     created_sort, created = normalized_epoch(fields.get("created_epoch"), stat.st_mtime)
-    cycle = log_field(fields.get("cycle_id"), max_len=120)
-    run_hash = log_field(fields.get("run_hash"), max_len=120)
-    reason = log_field(fields.get("reason"), max_len=200)
-    state_file = log_field(path, max_len=500)
-    items.append((created_sort, created, state_file, cycle, run_hash, reason))
+    _, updated = normalized_epoch(fields.get("updated_epoch"), stat.st_mtime)
+    state_id = "state-hmac-sha256:" + hmac_value("startup_state", path.name)
+    state_file_hmac = "path-hmac-sha256:" + hmac_value("path", str(path))
+    reason = reason_class(fields.get("reason") or fields.get("active_reasons"))
+    items.append((created_sort, created, updated, state_id, state_file_hmac, reason))
 
-for _, created, state_file, cycle, run_hash, reason in sorted(items, reverse=True)[:10]:
+for _, created, updated, state_id, state_file_hmac, reason in sorted(items, reverse=True)[:10]:
     print(
-        f"previous_cycle={cycle} previous_run_hash={run_hash} "
-        f"reason=startup_anomaly_gate_unresolved_state created_epoch={created} "
-        f"state_file={state_file} state_reason={reason}"
+        f"reason=startup_anomaly_gate_unresolved_state state_id={state_id} "
+        f"reason_class={reason} created_epoch={created} updated_epoch={updated} "
+        f"state_file_hmac={state_file_hmac} detail_redacted=1"
     )
 PY
 }

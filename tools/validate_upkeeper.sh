@@ -849,9 +849,42 @@ check_cycle_start_log_contract() {
   set -e
 
   [[ "$rc" -eq 0 ]] || fail "cycle.start log contract dry-run exited $rc"
-  grep -Fq 'mode=--sandbox\ workspace-write' "$temp_dir/Upkeeper.log" || fail "cycle.start did not quote CODEX_MODE with spaces"
-  grep -Fq "code_home=$code_home_q" "$temp_dir/Upkeeper.log" || fail "cycle.start did not quote CODEX_HOME with spaces"
+  grep -Fq 'verbose_metadata=0' "$temp_dir/Upkeeper.log" || fail "cycle.start default path did not log verbose_metadata=0"
+  grep -Fq 'code_home_hash=' "$temp_dir/Upkeeper.log" || fail "cycle.start default path did not record code_home_hash"
+  if grep -Fq ' mode=--sandbox\ workspace-write' "$temp_dir/Upkeeper.log"; then
+    fail "cycle.start default path leaked raw CODEX_MODE"
+  fi
+  if grep -Fq " code_home=$code_home_q" "$temp_dir/Upkeeper.log"; then
+    fail "cycle.start default path leaked raw CODEX_HOME"
+  fi
   grep -Fq "reason=DRY_RUN" "$temp_dir/Upkeeper.log" || fail "cycle.start log contract dry-run did not finish cleanly"
+
+  : >"$temp_dir/Upkeeper.log"
+  set +e
+  CODEX_HOME="$temp_dir/codex home" \
+    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    UPKEEPER_DRY_RUN=1 \
+    UPKEEPER_VERBOSE_METADATA=1 \
+    CODEX_MODE='--sandbox workspace-write' \
+    ./Upkeeper >"$temp_dir/out-verbose.txt" 2>"$temp_dir/err-verbose.txt"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 0 ]] || fail "cycle.start verbose log contract dry-run exited $rc"
+  grep -Fq 'verbose_metadata=1' "$temp_dir/Upkeeper.log" || fail "cycle.start verbose path did not log verbose_metadata=1"
+  grep -Fq 'mode=--sandbox\ workspace-write' "$temp_dir/Upkeeper.log" || fail "cycle.start verbose path did not quote CODEX_MODE with spaces"
+  grep -Fq "code_home=$code_home_q" "$temp_dir/Upkeeper.log" || fail "cycle.start verbose path did not quote CODEX_HOME with spaces"
   rm -r "$temp_dir"
 }
 
@@ -888,17 +921,19 @@ check_log_path_symlink_guard() {
 }
 
 check_disk_preflight_log_contract() {
-  local temp_dir path_with_token path_q output extracted_free synthetic_free
+  local temp_dir path_with_token path_q default_output debug_output extracted_free synthetic_free
 
-  log "checking disk preflight log quoting"
+  log "checking disk preflight log redaction"
   temp_dir="$(mktemp -d /tmp/upkeeper-disk-preflight.XXXXXX)"
   path_with_token="$temp_dir/path with spaces/free_percent=999"
   mkdir -p "$path_with_token"
 
-  if ! output="$(
+  if ! default_output="$(
     bash -c '
       set -euo pipefail
       shell_quote() { printf "%q" "$1"; }
+      terminal_mode() { printf "basic"; }
+      upkeeper_verbose_metadata_enabled() { return 1; }
       source "$1"
       fields="$(disk_space_fields "arg0 tmp" "$2")"
       free_percent="$(disk_preflight_free_percent_from_fields "$fields")"
@@ -911,15 +946,85 @@ check_disk_preflight_log_contract() {
     fail "disk preflight log contract check failed"
   fi
 
+  if ! debug_output="$(
+    bash -c '
+      set -euo pipefail
+      shell_quote() { printf "%q" "$1"; }
+      terminal_mode() { printf "debug1"; }
+      upkeeper_verbose_metadata_enabled() { return 1; }
+      source "$1"
+      disk_space_fields "arg0 tmp" "$2"
+    ' bash "$ROOT_DIR/lib/upkeeper/disk_preflight.bash" "$path_with_token"
+  )"; then
+    fail "disk preflight debug log contract check failed"
+  fi
+
   printf -v path_q '%q' "$path_with_token"
-  grep -Fq "label=arg0\\ tmp" <<<"$output" || fail "disk preflight label was not shell-quoted"
-  grep -Fq "path=$path_q" <<<"$output" || fail "disk preflight path was not shell-quoted"
-  extracted_free="$(sed -n 's/^extracted_free=//p' <<<"$output")"
+  grep -Fq "label=arg0\\ tmp" <<<"$default_output" || fail "disk preflight label was not shell-quoted"
+  grep -Fq "path_hash=" <<<"$default_output" || fail "disk preflight default output did not redact the path"
+  grep -Fq "mount_hash=" <<<"$default_output" || fail "disk preflight default output did not redact the mount"
+  grep -Fq "probe_path_hash=" <<<"$default_output" || fail "disk preflight default output did not redact the probe path"
+  grep -Fq "path_redacted=1" <<<"$default_output" || fail "disk preflight default output did not mark path redaction"
+  grep -Fq "mount_redacted=1" <<<"$default_output" || fail "disk preflight default output did not mark mount redaction"
+  grep -Fq "probe_path_redacted=1" <<<"$default_output" || fail "disk preflight default output did not mark probe-path redaction"
+  ! grep -Fq "path=$path_q" <<<"$default_output" || fail "disk preflight default output leaked the raw path"
+  grep -Fq "path=$path_q" <<<"$debug_output" || fail "disk preflight debug output did not include the raw path"
+  ! grep -Fq "path_hash=" <<<"$debug_output" || fail "disk preflight debug output still used redacted path fields"
+  extracted_free="$(sed -n 's/^extracted_free=//p' <<<"$default_output")"
   [[ -n "$extracted_free" ]] || fail "disk preflight free_percent extraction returned empty"
   [[ "$extracted_free" != "999" ]] || fail "disk preflight free_percent extraction used the path token"
   [[ "$extracted_free" =~ ^-?[0-9]+([.][0-9]+)?$ ]] || fail "disk preflight free_percent was not numeric: $extracted_free"
-  synthetic_free="$(sed -n 's/^synthetic_free=//p' <<<"$output")"
+  synthetic_free="$(sed -n 's/^synthetic_free=//p' <<<"$default_output")"
   [[ "$synthetic_free" == "88" ]] || fail "disk preflight free_percent parser did not use the intended field"
+
+  rm -r "$temp_dir"
+}
+
+check_disk_preflight_prompt_note_contract() {
+  local temp_dir existing_path missing_path output note_block
+
+  log "checking disk preflight prompt-note redaction"
+  temp_dir="$(mktemp -d /tmp/upkeeper-disk-preflight-note.XXXXXX)"
+  existing_path="$temp_dir/existing path/free_percent=999"
+  missing_path="$temp_dir/missing path/free_percent=998/nope"
+  mkdir -p "$existing_path"
+
+  if ! output="$(
+    bash -c '
+      set -euo pipefail
+      shell_quote() { printf "%q" "$1"; }
+      log_line() { printf "%s\n" "$2"; }
+      append_startup_anomaly_reason() { :; }
+      terminal_mode() { printf "basic"; }
+      upkeeper_verbose_metadata_enabled() { return 1; }
+      source "$1"
+      EXISTING_PATH="$2"
+      MISSING_PATH="$3"
+      CODEX_DISK_MIN_FREE_PERCENT=101
+      DISK_SPACE_PROMPT_NOTE=""
+      STARTUP_ANOMALY_GATE=0
+      disk_preflight_path_specs() {
+        printf "existing_label\t%s\n" "$EXISTING_PATH"
+        printf "missing_label\t%s\n" "$MISSING_PATH"
+      }
+      check_disk_space_preflight
+      printf "NOTE_BEGIN\n%s\nNOTE_END\n" "$DISK_SPACE_PROMPT_NOTE"
+    ' bash "$ROOT_DIR/lib/upkeeper/disk_preflight.bash" "$existing_path" "$missing_path"
+  )"; then
+    fail "disk preflight prompt-note contract check failed"
+  fi
+
+  note_block="$(awk '/^NOTE_BEGIN$/,/^NOTE_END$/' <<<"$output")"
+  grep -Fq -- "- disk.preflight low_space label=existing_label free_percent=" <<<"$note_block" || fail "disk preflight prompt note did not retain the existing_label low-space note"
+  grep -Fq -- "- disk.preflight low_space label=missing_label free_percent=" <<<"$note_block" || fail "disk preflight prompt note did not retain the missing_label low-space note"
+  ! grep -Fq "$temp_dir" <<<"$note_block" || fail "disk preflight prompt note leaked a raw path"
+  ! grep -Fq "mount=" <<<"$note_block" || fail "disk preflight prompt note leaked mount metadata"
+  ! grep -Fq "path=" <<<"$note_block" || fail "disk preflight prompt note leaked path metadata"
+  ! grep -Fq "probe_path=" <<<"$note_block" || fail "disk preflight prompt note leaked probe-path metadata"
+  ! grep -Fq "size_kb=" <<<"$note_block" || fail "disk preflight prompt note leaked size metadata"
+  ! grep -Fq "used_kb=" <<<"$note_block" || fail "disk preflight prompt note leaked usage metadata"
+  ! grep -Fq "avail_kb=" <<<"$note_block" || fail "disk preflight prompt note leaked free-space metadata"
+  ! grep -Fq "used_percent=" <<<"$note_block" || fail "disk preflight prompt note leaked used-percent metadata"
 
   rm -r "$temp_dir"
 }
@@ -1384,7 +1489,7 @@ check_review_module_flags() {
     UPKEEPER_DRY_RUN=1 \
     ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25,p26,p27,p28,p29 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
 
-  grep -Fq "review_modules=p24,p25,p26,p27,p28,p29" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules"
+  grep -Fq "review_modules_hash=" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules metadata"
   grep -Fq "review.module_prompt enabled module=p24" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P24"
   grep -Fq "review.module_prompt enabled module=p25" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P25"
   grep -Fq "review.module_prompt enabled module=p26" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P26"
@@ -1444,11 +1549,11 @@ EOF
     ./Upkeeper --config-file="$profile" >"$temp_dir/config.out" 2>"$temp_dir/config.err"
 
   grep -Fq "config_loaded=1" "$temp_dir/Upkeeper.log" || fail "config dry-run did not record loaded config"
-  grep -Fq "config_file=$profile" "$temp_dir/Upkeeper.log" || fail "config dry-run did not record config path"
+  grep -Fq "config_file_hash=" "$temp_dir/Upkeeper.log" || fail "config dry-run did not record config metadata"
   grep -Fq "model=gpt-5.5" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply model"
-  grep -Fq "target_file=Upkeeper" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply target file"
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply target file"
+  grep -Fq "path_redacted=1" "$temp_dir/Upkeeper.log" || fail "config dry-run did not redact target path"
   grep -Fq "prompt_pass=all" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply prompt pass"
-  grep -Fq "review_modules=p28" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply review module"
   grep -Fq "review.module_prompt enabled module=p28" "$temp_dir/Upkeeper.log" || fail "config dry-run did not append P28"
 
   : >"$temp_dir/Upkeeper.log"
@@ -1462,9 +1567,10 @@ EOF
     UPKEEPER_DRY_RUN=1 \
     ./Upkeeper --config-file="$profile" --target-file=lib/upkeeper/codex_io.bash --p26 >"$temp_dir/override.out" 2>"$temp_dir/override.err"
 
-  grep -Fq "target_file=lib/upkeeper/codex_io.bash" "$temp_dir/Upkeeper.log" || fail "CLI target did not override config target"
-  grep -Fq "review_modules=p26" "$temp_dir/Upkeeper.log" || fail "CLI review module did not override config modules"
-  if grep -Fq "review_modules=p28" "$temp_dir/Upkeeper.log"; then
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/Upkeeper.log" || fail "CLI target did not override config target"
+  grep -Fq "selection_mode=explicit_target" "$temp_dir/Upkeeper.log" || fail "CLI target did not use explicit target selection"
+  grep -Fq "review.module_prompt enabled module=p26" "$temp_dir/Upkeeper.log" || fail "CLI review module did not override config modules"
+  if grep -Fq "review.module_prompt enabled module=p28" "$temp_dir/Upkeeper.log"; then
     fail "config review module leaked after CLI override"
   fi
 
@@ -1593,14 +1699,14 @@ check_file_manifest_selection() {
     --target-file=Upkeeper \
     --target-root=lib/upkeeper \
     --selection-source=manifest
-  grep -Fq "review.preselect path=Upkeeper" "$temp_dir/forced.log" || fail "--target-file did not override target-root selection filter"
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/forced.log" || fail "--target-file did not override target-root selection filter"
   grep -Fq "selection_mode=explicit_target" "$temp_dir/forced.log" || fail "--target-file was not logged as explicit target mode"
 
   run_manifest_dry_run "$temp_dir/docs-target.log" \
     --target-file=docs/scripts/upkeeper.md \
     --review-modules=p26,p28 \
     --prompt-pass=all
-  grep -Fq "review.preselect path=docs/scripts/upkeeper.md" "$temp_dir/docs-target.log" || fail "explicit docs target was not accepted"
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/docs-target.log" || fail "explicit docs target was not accepted"
   grep -Fq "selection_mode=explicit_target" "$temp_dir/docs-target.log" || fail "explicit docs target was not logged as explicit target mode"
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/docs-target.log" || fail "explicit docs target dry-run did not finish cleanly"
 
@@ -1626,8 +1732,10 @@ check_file_manifest_selection() {
     export UPKEEPER_PROMPT_PASS="all"
     run_manifest_dry_run "$temp_dir/docs-config-target.log"
   )
-  grep -Fq "review.preselect path=docs/scripts/upkeeper.md" "$temp_dir/docs-config-target.log" || fail "configured explicit docs target was not accepted"
-  grep -Fq "review_modules=p26,p28" "$temp_dir/docs-config-target.log" || fail "configured review modules were not applied"
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/docs-config-target.log" || fail "configured explicit docs target was not accepted"
+  if grep -Eq '(^| )review_modules_hash=none( |$)' "$temp_dir/docs-config-target.log"; then
+    fail "configured review modules were not applied"
+  fi
   grep -Fq "prompt_pass=all" "$temp_dir/docs-config-target.log" || fail "configured prompt pass was not applied"
 
   run_manifest_dry_run "$temp_dir/docs-auto.log" \
@@ -1645,7 +1753,9 @@ check_file_manifest_selection() {
     --include-glob='*.md'
   grep -Fq "selection_mode=lattice_max_cover" "$temp_dir/max-cover.log" || fail "max-cover did not use Lattice max-cover selection"
   grep -Fq "prompt_pass=all" "$temp_dir/max-cover.log" || fail "max-cover did not force all prompt passes"
-  grep -Fq "review_modules=p24,p25,p26,p27,p28,p29" "$temp_dir/max-cover.log" || fail "max-cover did not append P24-P29"
+  if grep -Eq '(^| )review_modules_hash=none( |$)' "$temp_dir/max-cover.log"; then
+    fail "max-cover did not append P24-P29"
+  fi
   grep -Fq "max_cover=1" "$temp_dir/max-cover.log" || fail "max-cover was not recorded in cycle.start"
 
   run_manifest_dry_run "$temp_dir/bug-report-only.log" \
@@ -1728,7 +1838,7 @@ EOF
   grep -Fq "issue.fix_issue selected number=912" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not lock the explicit issue"
   grep -Fq "selected_label=explicit" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not mark explicit selection"
   grep -Fq "target_file=lib/upkeeper/help_selection.bash" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not infer the explicit issue target"
-  grep -Fq "review.preselect path=lib/upkeeper/help_selection.bash" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not pin the explicit inferred target"
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not pin the explicit inferred target"
   grep -Fq "issue.fix_prompt appended number=912" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue prompt addendum was not appended"
 
   PATH="$temp_dir/bin:$PATH" run_manifest_dry_run "$temp_dir/fix-comment-stage.log" \
@@ -1968,7 +2078,7 @@ PY
     UPKEEPER_DRY_RUN=1 \
     ./Upkeeper >"$temp_dir/selection.out" 2>"$temp_dir/selection.err"
 
-  grep -Fq "review.preselect path=lib/upkeeper/codex_io.bash" "$temp_dir/selection.log" || fail "failure queue did not force marked target"
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/selection.log" || fail "failure queue did not force marked target"
   grep -Fq "failure_queue_selected=1" "$temp_dir/selection.log" || fail "failure queue selection was not logged"
 
   CODEX_HOME="$temp_dir/codex-home" \
@@ -2356,15 +2466,15 @@ check_startup_anomaly_state_parser_contract() {
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$state_dir" bash -c 'source lib/upkeeper/startup_anomaly_state.bash; startup_anomaly_state_lines'
   )"
 
-  grep -Fq 'previous_cycle=cycle\ with\ spaces' <<<"$output" || fail "startup anomaly cycle id was not log-escaped"
-  grep -Fq 'previous_run_hash=hash\ with\ spaces' <<<"$output" || fail "startup anomaly run hash was not log-escaped"
-  grep -Fq 'bad\ state.state' <<<"$output" || fail "startup anomaly state path was not log-escaped"
-  grep -Fq 'state_reason=manual\ reason' <<<"$output" || fail "startup anomaly reason was not log-escaped"
+  grep -Fq 'state_id=state-hmac-sha256:' <<<"$output" || fail "startup anomaly state id HMAC missing"
+  grep -Fq 'state_file_hmac=path-hmac-sha256:' <<<"$output" || fail "startup anomaly state path HMAC missing"
+  grep -Fq 'reason_class=manual_reason' <<<"$output" || fail "startup anomaly reason class missing"
+  grep -Fq 'detail_redacted=1' <<<"$output" || fail "startup anomaly detail redaction marker missing"
   grep -Eq 'created_epoch=[0-9]+ ' <<<"$output" || fail "startup anomaly fallback epoch missing"
   if grep -Fq 'extra=bad' <<<"$output"; then
     fail "startup anomaly parser accepted malformed created_epoch as log fields"
   fi
-  if grep -Fq 'startup gates' <<<"$output" || grep -Fq 'manual reason' <<<"$output"; then
+  if grep -Fq 'startup gates' <<<"$output" || grep -Fq 'manual reason' <<<"$output" || grep -Fq 'hash with spaces' <<<"$output"; then
     fail "startup anomaly parser emitted raw whitespace in log field values"
   fi
 
@@ -2591,6 +2701,7 @@ check_postmortem_privacy_contract() {
     source ./Upkeeper
     CYCLE_ID="privacy-check"
     CYCLE_RUN_HASH="privacyhash"
+    LOG_FILE="$temp_dir/Upkeeper.log"
     CODEX_POSTMORTEM_DIR="$temp_dir/postmortems"
     POSTMORTEM_CONTEXT_PATH="$temp_dir/postmortems/privacy-check/incident-context.txt"
     POSTMORTEM_INCIDENT_LOG_PATH="$temp_dir/postmortems/privacy-check/incident-log.txt"
@@ -3039,7 +3150,12 @@ JSON
 JSON
 
   output="$(bash -lc 'cd "$1"; source lib/upkeeper/worktree_state.bash; startup_anomaly_gate_changed_path_violations "$2" "$3"' bash "$ROOT_DIR" "$before_file" "$after_file")"
-  grep -Fq "changed_path='unrelated.txt'" <<<"$output" || fail "gate allowlist did not report unrelated changed path"
+  grep -Fq "changed_path path_hmac=path-hmac-sha256:" <<<"$output" || fail "gate allowlist did not report unrelated changed path HMAC"
+  grep -Fq "extension=.txt" <<<"$output" || fail "gate allowlist did not report unrelated changed path extension"
+  grep -Fq "content_changed=1" <<<"$output" || fail "gate allowlist did not report changed content boolean"
+  if grep -Fq "unrelated.txt" <<<"$output"; then
+    fail "gate allowlist emitted raw unrelated path: $output"
+  fi
   if grep -Eq "Upkeeper|change_notes|docs/scripts|lib/upkeeper|tools/validate" <<<"$output"; then
     fail "gate allowlist reported an allowed Upkeeper-suite path: $output"
   fi
@@ -3316,6 +3432,7 @@ run_check symlink_target_selection_guard check_symlink_target_selection_guard
 run_check cycle_start_log_contract check_cycle_start_log_contract
 run_check log_path_symlink_guard check_log_path_symlink_guard
 run_check disk_preflight_log_contract check_disk_preflight_log_contract
+run_check disk_preflight_prompt_note_contract check_disk_preflight_prompt_note_contract
 run_check arg0_tmp_cleanup_contract check_arg0_tmp_cleanup_contract
 run_check automation_obligation_framework check_automation_obligation_framework
 run_check session_store_preflight_contract check_session_store_preflight_contract

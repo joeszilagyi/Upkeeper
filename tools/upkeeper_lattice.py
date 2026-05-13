@@ -219,7 +219,19 @@ PASS_RESULT_ALLOWED_KEYS = {
     "changed",
     "regression",
 }
+RAW_STORAGE_MODES = {"none", "minimal", "limited", "full"}
+RAW_STORAGE_COMPAT_MODES = RAW_STORAGE_MODES | {"debug"}
 PASS_RESULT_DEBUG_STORAGE_VALUES = {"debug", "full"}
+MINIMAL_PARSED_SOURCE_RECORDS = {
+    ("lattice_export", ""),
+    ("recovery", "recover"),
+    ("recovery", "recover_artifacts"),
+}
+LIMITED_PARSED_SOURCE_RECORDS = MINIMAL_PARSED_SOURCE_RECORDS | {
+    ("local_git", ""),
+    ("transcript", "rejected"),
+    ("upkeeper_log", ""),
+}
 
 
 REQUIRED_TABLES = [
@@ -1170,6 +1182,11 @@ def sanitize_source_record_payload(
     return updated
 
 
+def configured_lattice_raw_storage() -> str:
+    raw = os.environ.get("UPKEEPER_LATTICE_RAW_STORAGE", "limited").strip().lower()
+    return raw if raw else "limited"
+
+
 def sanitize_git_privacy_payload(table: str, payload: dict[str, Any], *, root: Path | None = None) -> dict[str, Any]:
     if table == "contributors":
         updated = dict(payload)
@@ -1203,15 +1220,91 @@ def sanitize_git_privacy_payload(table: str, payload: dict[str, Any], *, root: P
 
 
 def current_lattice_raw_storage() -> str:
-    raw = os.environ.get("UPKEEPER_LATTICE_RAW_STORAGE", "limited").strip().lower()
-    return raw if raw else "limited"
+    raw = configured_lattice_raw_storage()
+    return raw if raw in RAW_STORAGE_COMPAT_MODES else "limited"
+
+
+def effective_lattice_raw_storage(raw_storage_mode: str | None = None) -> str:
+    mode = (raw_storage_mode or current_lattice_raw_storage()).strip().lower()
+    if mode == "debug":
+        return "full"
+    return mode if mode in RAW_STORAGE_MODES else "limited"
+
+
+def source_record_parsed_allowed(source_kind: str, raw_ref: str, parse_status: str, *, raw_storage_mode: str | None = None) -> bool:
+    mode = effective_lattice_raw_storage(raw_storage_mode)
+    if mode == "full":
+        return True
+    if mode == "none":
+        return False
+    key = (source_kind, "rejected" if source_kind == "transcript" and parse_status == "rejected" else "")
+    if source_kind == "recovery":
+        key = (source_kind, raw_ref)
+    if mode == "minimal":
+        return key in MINIMAL_PARSED_SOURCE_RECORDS
+    return key in LIMITED_PARSED_SOURCE_RECORDS
+
+
+def normalize_source_record_parsed(
+    source_kind: str,
+    raw_ref: str,
+    parse_status: str,
+    parsed: Any,
+    *,
+    raw_storage_mode: str | None = None,
+) -> Any:
+    if parsed is None:
+        return None
+    if not source_record_parsed_allowed(source_kind, raw_ref, parse_status, raw_storage_mode=raw_storage_mode):
+        return None
+    if source_kind != "local_git" or not isinstance(parsed, dict):
+        return parsed
+    normalized = dict(parsed)
+    keep_subject = effective_lattice_raw_storage(raw_storage_mode) == "full"
+    summary = commit_subject_summary(
+        normalized.get("subject") if keep_subject and isinstance(normalized.get("subject"), str) else None,
+        normalized.get("subject_hash"),
+        normalized.get("subject_length"),
+        normalized.get("subject_included") if keep_subject else 0,
+    )
+    normalized["subject_hash"] = summary["subject_hash"]
+    normalized["subject_length"] = summary["subject_length"]
+    normalized["subject_included"] = summary["subject_included"]
+    normalized.pop("subject", None)
+    if summary["subject"] is not None:
+        normalized["subject"] = summary["subject"]
+    return normalized
+
+
+def normalized_source_record_parsed_json(
+    source_kind: str,
+    raw_ref: str,
+    parse_status: str,
+    parsed_json: str | None,
+    *,
+    raw_storage_mode: str | None = None,
+) -> str | None:
+    if not isinstance(parsed_json, str) or not parsed_json.strip():
+        return None
+    try:
+        parsed = json.loads(parsed_json)
+    except (TypeError, json.JSONDecodeError):
+        return parsed_json if effective_lattice_raw_storage(raw_storage_mode) == "full" else None
+    normalized = normalize_source_record_parsed(
+        source_kind,
+        raw_ref,
+        parse_status,
+        parsed,
+        raw_storage_mode=raw_storage_mode,
+    )
+    return json_dumps(normalized) if normalized is not None else None
 
 
 def raw_repo_identity_enabled() -> bool:
     raw = os.environ.get(UPKEEPER_RAW_REPO_IDENTITY_ENV, "").strip()
     if raw:
         return parse_bool_int(raw) == 1
-    return current_lattice_raw_storage() == "full"
+    return effective_lattice_raw_storage() == "full"
 
 
 def repo_identity_context(root: Path, info: dict[str, str] | None = None) -> tuple[str, str, str]:
@@ -2334,11 +2427,20 @@ def ensure_source_record(
     parsed: Any = None,
     parse_status: str = "parsed",
     fact_confidence: str = "observed",
+    raw_storage_mode: str | None = None,
 ) -> int:
     if source_kind not in SOURCE_KINDS:
         source_kind = "operator"
     now = epoch_now()
     stored_source_path = source_record_storage_path(root, source_kind, source_path)
+    stored_raw_text = raw_text if effective_lattice_raw_storage(raw_storage_mode) == "full" else None
+    stored_parsed = normalize_source_record_parsed(
+        source_kind,
+        raw_ref,
+        parse_status,
+        parsed,
+        raw_storage_mode=raw_storage_mode,
+    )
     cur = conn.execute(
         """
         insert into source_records(
@@ -2354,8 +2456,8 @@ def ensure_source_record(
             source_epoch,
             now,
             raw_ref or None,
-            raw_text,
-            json_dumps(parsed) if parsed is not None else None,
+            stored_raw_text,
+            json_dumps(stored_parsed) if stored_parsed is not None else None,
             parse_status,
             fact_confidence,
         ),
@@ -3252,6 +3354,65 @@ def command_init(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id: int) -> dict[str, dict[str, dict[str, bool]]]:
+    checks: dict[str, dict[str, dict[str, bool]]] = {}
+    safe_log_payload = {
+        "timestamp": "2026-05-13T00:00:00-0700",
+        "level": "INFO",
+        "event": "cycle.start",
+        "cycle": "probe",
+        "run_hash": "probe",
+        "execution_origin": "primary",
+        "dry_run": "1",
+    }
+    unsafe_selection_payload = {"selection": {"path": "secret.txt"}, "candidate_count": 1}
+    for mode in ("none", "minimal", "limited", "full"):
+        conn.execute(f"SAVEPOINT raw_storage_{mode}")
+        try:
+            safe_id = ensure_source_record(
+                conn,
+                root,
+                repo_id,
+                "upkeeper_log",
+                raw_ref="cycle.start",
+                raw_text="sensitive raw log line",
+                parsed=safe_log_payload,
+                raw_storage_mode=mode,
+            )
+            unsafe_id = ensure_source_record(
+                conn,
+                root,
+                repo_id,
+                "wrapper_observed",
+                raw_ref="preselect",
+                raw_text='{"path":"secret.txt"}',
+                parsed=unsafe_selection_payload,
+                raw_storage_mode=mode,
+            )
+            safe_row = conn.execute(
+                "select raw_text, parsed_json from source_records where source_id=?",
+                (safe_id,),
+            ).fetchone()
+            unsafe_row = conn.execute(
+                "select raw_text, parsed_json from source_records where source_id=?",
+                (unsafe_id,),
+            ).fetchone()
+            checks[mode] = {
+                "safe_upkeeper_log": {
+                    "raw_text_stored": bool(safe_row["raw_text"]) if safe_row is not None else False,
+                    "parsed_json_stored": bool(safe_row["parsed_json"]) if safe_row is not None else False,
+                },
+                "unsafe_wrapper_observed": {
+                    "raw_text_stored": bool(unsafe_row["raw_text"]) if unsafe_row is not None else False,
+                    "parsed_json_stored": bool(unsafe_row["parsed_json"]) if unsafe_row is not None else False,
+                },
+            }
+        finally:
+            conn.execute(f"ROLLBACK TO raw_storage_{mode}")
+            conn.execute(f"RELEASE raw_storage_{mode}")
+    return checks
+
+
 def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
@@ -3304,6 +3465,11 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             return result, EXIT_INTEGRITY
         meta = conn.execute("select value from schema_meta where key='schema_version'").fetchone()
         result["checks"]["schema_meta_version"] = meta["value"] if meta else None
+        configured_raw_storage = configured_lattice_raw_storage()
+        result["checks"]["raw_storage_requested"] = configured_raw_storage
+        result["checks"]["raw_storage_effective"] = effective_lattice_raw_storage(configured_raw_storage)
+        result["checks"]["raw_storage_valid"] = configured_raw_storage in RAW_STORAGE_COMPAT_MODES
+        result["checks"]["raw_storage_enforcement"] = probe_raw_storage_enforcement(conn, root, ensure_repository(conn, root))
         if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
             result["status"] = "schema_mismatch"
             return result, EXIT_SCHEMA_MISMATCH
@@ -5007,17 +5173,21 @@ def command_import_git(args: argparse.Namespace) -> int:
                     ),
                 )
                 if commit_source_id is not None:
+                    normalized_commit_source = normalize_source_record_parsed(
+                        "local_git",
+                        commit_sha,
+                        "parsed",
+                        local_git_source_payload(
+                            contributor_identity_hash(an, ae) or None,
+                            contributor_identity_hash(cn, ce) or None,
+                            subject,
+                            include_commit_subjects=include_commit_subjects,
+                        ),
+                    )
                     conn.execute(
                         "update source_records set parsed_json=? where source_id=?",
                         (
-                            json_dumps(
-                                local_git_source_payload(
-                                    contributor_identity_hash(an, ae) or None,
-                                    contributor_identity_hash(cn, ce) or None,
-                                    subject,
-                                    include_commit_subjects=include_commit_subjects,
-                                )
-                            ),
+                            json_dumps(normalized_commit_source) if normalized_commit_source is not None else None,
                             commit_source_id,
                         ),
                     )
@@ -5725,6 +5895,16 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             columns = table_columns(conn, table)
             pk = table_primary_key(conn, table)
             filtered = {k: v for k, v in payload.items() if k in columns}
+            if table == "source_records":
+                filtered = sanitize_source_record_payload(filtered, root=root)
+                filtered["raw_text"] = filtered.get("raw_text") if effective_lattice_raw_storage() == "full" else None
+                filtered["parsed_json"] = normalized_source_record_parsed_json(
+                    str(filtered.get("source_kind") or ""),
+                    str(filtered.get("raw_ref") or ""),
+                    str(filtered.get("parse_status") or "parsed"),
+                    filtered.get("parsed_json") if isinstance(filtered.get("parsed_json"), str) else None,
+                )
+                payload_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
             if not filtered:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", payload_hash, "empty_filtered_payload")

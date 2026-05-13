@@ -107,6 +107,13 @@ SSH_REMOTE_HMAC_PREFIX = "ssh-remote-hmac-sha256:"
 LOCAL_REMOTE_HMAC_PREFIX = "local-remote-hmac-sha256:"
 UPKEEPER_VERBOSE_METADATA_ENV = "UPKEEPER_VERBOSE_METADATA"
 UPKEEPER_RAW_REPO_IDENTITY_ENV = "UPKEEPER_LATTICE_RAW_REPO_IDENTITY"
+SOURCE_RECORD_PATH_HMAC_KINDS = {
+    "lattice_export",
+    "lattice_import",
+    "recovery",
+    "tool_failure_marker",
+    "upkeeper_log",
+}
 TRANSIENT_ARTIFACT_KINDS = {"transcript", "compiled_prompt", "last_message"}
 ARTIFACT_RETENTION_CLASSES = {
     "transcript": "transient",
@@ -1117,19 +1124,34 @@ def local_git_source_payload(
     return payload
 
 
-def sanitize_source_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    if payload.get("source_kind") != "local_git":
-        return payload
-    parsed_json = payload.get("parsed_json")
+def source_record_storage_path(root: Path, source_kind: str, value: str) -> str:
+    if not value or identity_value_is_redacted(value):
+        return value
+    if source_kind not in SOURCE_RECORD_PATH_HMAC_KINDS:
+        return value
+    return artifact_path_hmac(root, value)
+
+
+def sanitize_source_record_payload(
+    payload: dict[str, Any],
+    *,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    updated = dict(payload)
+    source_kind = str(updated.get("source_kind") or "")
+    if root is not None and isinstance(updated.get("source_path"), str):
+        updated["source_path"] = source_record_storage_path(root, source_kind, updated["source_path"])
+    if source_kind != "local_git":
+        return updated
+    parsed_json = updated.get("parsed_json")
     if not isinstance(parsed_json, str) or not parsed_json.strip():
-        return payload
+        return updated
     try:
         parsed = json.loads(parsed_json)
     except (TypeError, json.JSONDecodeError):
-        return payload
+        return updated
     if not isinstance(parsed, dict):
-        return payload
-    updated = dict(payload)
+        return updated
     normalized = dict(parsed)
     summary = commit_subject_summary(
         normalized.get("subject") if isinstance(normalized.get("subject"), str) else None,
@@ -1148,7 +1170,7 @@ def sanitize_source_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return updated
 
 
-def sanitize_git_privacy_payload(table: str, payload: dict[str, Any]) -> dict[str, Any]:
+def sanitize_git_privacy_payload(table: str, payload: dict[str, Any], *, root: Path | None = None) -> dict[str, Any]:
     if table == "contributors":
         updated = dict(payload)
         identity_hash = str(updated.get("identity_hash") or "")
@@ -1176,7 +1198,7 @@ def sanitize_git_privacy_payload(table: str, payload: dict[str, Any]) -> dict[st
         )
         return updated
     if table == "source_records":
-        return sanitize_source_record_payload(payload)
+        return sanitize_source_record_payload(payload, root=root)
     return payload
 
 
@@ -1368,6 +1390,18 @@ def scrub_repo_identity_rows(conn: sqlite3.Connection, repo_id: int, context: tu
             new_branch = protected_branch_name(context, branch_name)
             if new_branch != branch_name:
                 conn.execute(f"update {table} set branch_name=? where {pk}=?", (new_branch, int(row[pk])))
+
+
+def scrub_source_record_rows(conn: sqlite3.Connection, root: Path, repo_id: int) -> None:
+    for row in conn.execute(
+        "select source_id, source_kind, source_path from source_records where repo_id=? and source_path is not null",
+        (repo_id,),
+    ):
+        source_kind = str(row["source_kind"] or "")
+        source_path = row["source_path"] if isinstance(row["source_path"], str) else ""
+        updated_path = source_record_storage_path(root, source_kind, source_path)
+        if updated_path != source_path:
+            conn.execute("update source_records set source_path=? where source_id=?", (updated_path, int(row["source_id"])))
 
 
 def verbose_metadata_enabled() -> bool:
@@ -2169,6 +2203,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     user_version = conn.execute("PRAGMA user_version").fetchone()[0]
     if int(user_version) != SCHEMA_VERSION:
         fail(f"PRAGMA user_version mismatch: expected {SCHEMA_VERSION}, got {user_version}", EXIT_SCHEMA_MISMATCH)
+    ensure_file_snapshot_mtime_ns_column(conn)
+    ensure_worktree_snapshot_path_mtime_ns_column(conn)
+    scrub_legacy_git_privacy_data(conn)
 
 
 def sanitize_remote_url(raw: str) -> str:
@@ -2279,11 +2316,13 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
             (repo_id, kind, value, now, now),
         )
     scrub_repo_identity_rows(conn, repo_id, context)
+    scrub_source_record_rows(conn, root, repo_id)
     return repo_id
 
 
 def ensure_source_record(
     conn: sqlite3.Connection,
+    root: Path,
     repo_id: int,
     source_kind: str,
     *,
@@ -2299,6 +2338,7 @@ def ensure_source_record(
     if source_kind not in SOURCE_KINDS:
         source_kind = "operator"
     now = epoch_now()
+    stored_source_path = source_record_storage_path(root, source_kind, source_path)
     cur = conn.execute(
         """
         insert into source_records(
@@ -2309,7 +2349,7 @@ def ensure_source_record(
         (
             repo_id,
             source_kind,
-            source_path or None,
+            stored_source_path or None,
             source_uri or None,
             source_epoch,
             now,
@@ -2752,6 +2792,7 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path) -> None:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
             conn,
+            root,
             repo_id,
             "wrapper_observed",
             raw_ref="pass_registry",
@@ -3356,7 +3397,7 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
     with conn:
         repo_id = ensure_repository(conn, root)
         parsed = sanitize_cycle_start_fields(root, vars(args).copy())
-        source_id = ensure_source_record(conn, repo_id, "wrapper_observed", raw_ref="cycle_start", parsed=parsed)
+        source_id = ensure_source_record(conn, root, repo_id, "wrapper_observed", raw_ref="cycle_start", parsed=parsed)
         worktree_dirty = None
         if args.dirty_path_count is not None:
             worktree_dirty = 1 if int(args.dirty_path_count or 0) > 0 else 0
@@ -3644,7 +3685,7 @@ def command_record_worktree_snapshot(args: argparse.Namespace) -> int:
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, repo_id, "wrapper_observed", raw_ref=f"worktree_snapshot:{args.snapshot_kind}")
+        source_id = ensure_source_record(conn, root, repo_id, "wrapper_observed", raw_ref=f"worktree_snapshot:{args.snapshot_kind}")
         cycle_pk = None
         if args.cycle_id and args.run_hash:
             cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
@@ -3663,6 +3704,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
             conn,
+            root,
             repo_id,
             "wrapper_observed",
             raw_ref="preselect",
@@ -4157,7 +4199,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         review = parse_review_summary_file(Path(args.last_message_file)) if args.last_message_file else {}
         review_outcome = args.review_outcome or review.get("review_outcome") or None
         reported_selected = normalize_rel_path(args.review_selected_path or review.get("selected_file", ""))
-        source_id = ensure_source_record(conn, repo_id, "wrapper_observed", raw_ref="cycle_finish", parsed=parsed)
+        source_id = ensure_source_record(conn, root, repo_id, "wrapper_observed", raw_ref="cycle_finish", parsed=parsed)
         cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
         selected_path = normalize_rel_path(args.selected_path or "")
         selected_file_id = ensure_file(conn, repo_id, selected_path, source_id=source_id) if selected_path else None
@@ -4540,6 +4582,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
             conn,
+            root,
             repo_id,
             "transcript" if args.from_file else "wrapper_observed",
             source_path=args.from_file or "",
@@ -4567,6 +4610,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         rejected_pairs.add((rejected_pass, rejected_path))
                 ensure_source_record(
                     conn,
+                    root,
                     repo_id,
                     "transcript",
                     source_path=args.from_file,
@@ -4589,6 +4633,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     rejected_pairs.add((pass_code, trusted_selected_path))
                     ensure_source_record(
                         conn,
+                        root,
                         repo_id,
                         "transcript",
                         source_path=args.from_file,
@@ -4834,7 +4879,7 @@ def command_import_git(args: argparse.Namespace) -> int:
         scrub_legacy_git_privacy_data(conn)
         repo_id = ensure_repository(conn, root)
         import_id = start_import(conn, repo_id, "local_git", {"root": str(root)})
-        source_id = ensure_source_record(conn, repo_id, "local_git", raw_ref="git-import", parse_status="started")
+        source_id = ensure_source_record(conn, root, repo_id, "local_git", raw_ref="git-import", parse_status="started")
         try:
             revs = subprocess.check_output(["git", "-C", str(root), "rev-list", "--all", "--reverse"], text=True)
         except subprocess.CalledProcessError:
@@ -4887,6 +4932,7 @@ def command_import_git(args: argparse.Namespace) -> int:
                 )
                 commit_source_id = ensure_source_record(
                     conn,
+                    root,
                     repo_id,
                     "local_git",
                     raw_ref=commit_sha,
@@ -5221,6 +5267,7 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                 stored_raw_line = render_upkeeper_log_line(sanitize_cycle_start_fields(root, parsed))
             source_id = ensure_source_record(
                 conn,
+                root,
                 repo_id,
                 "upkeeper_log",
                 source_path=str(log_path),
@@ -5309,6 +5356,7 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                 text = item.group(2)
                 source_id = ensure_source_record(
                     conn,
+                    root,
                     repo_id,
                     "change_notes",
                     source_path=str(path),
@@ -5518,7 +5566,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
             if table.startswith("file_") and table.endswith("_rollups"):
                 continue
             for payload in export_table_rows(conn, table, repo_id=repo_id):
-                payload = sanitize_git_privacy_payload(table, payload)
+                payload = sanitize_git_privacy_payload(table, payload, root=root)
                 payload = sanitize_import_identity_payload(table, payload, context)
                 payload = redact_payload(payload, args)
                 pk = table_primary_key(conn, table)
@@ -5557,7 +5605,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
             "insert into lattice_exports(repo_id, export_kind, output_path, started_epoch, finished_epoch, row_count, sha256) values (?, 'jsonl', ?, ?, ?, ?, ?)",
             (repo_id, str(output), started, finished, row_count, digest),
         )
-        source_id = ensure_source_record(conn, repo_id, "lattice_export", source_path=str(output), raw_ref=digest, parsed={"row_count": row_count})
+        source_id = ensure_source_record(conn, root, repo_id, "lattice_export", source_path=str(output), raw_ref=digest, parsed={"row_count": row_count})
         record_file_event(conn, repo_id, "export_written", source_id=source_id, path=str(output), details={"row_count": row_count, "sha256": digest})
     print_json({"status": "ok", "output_path": str(output), "row_count": row_count, "sha256": digest})
     return EXIT_SUCCESS
@@ -5658,6 +5706,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             if table == "lattice_unavailable" and isinstance(payload, dict):
                 ensure_source_record(
                     conn,
+                    root,
                     repo_id,
                     "recovery",
                     source_path=str(input_path),
@@ -5888,7 +5937,7 @@ def recover_artifact_refs(
     recorded: list[str] = []
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, repo_id, "recovery", raw_ref="recover_artifacts")
+        source_id = ensure_source_record(conn, root, repo_id, "recovery", raw_ref="recover_artifacts")
         artifact_roots = [
             ("startup_anomaly_state", root / "runtime/startup-anomaly-gates"),
             ("transcript", root / "runtime/upkeeper-transcripts"),
@@ -5940,6 +5989,7 @@ def command_recover(args: argparse.Namespace) -> int:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
             conn,
+            root,
             repo_id,
             "recovery",
             raw_ref="recover",
@@ -6015,7 +6065,7 @@ def import_failure_markers(
                 continue
             target = normalize_rel_path(str(data.get("target_path", "")))
             file_id = ensure_file(conn, repo_id, target) if target else None
-            source_id = ensure_source_record(conn, repo_id, "tool_failure_marker", source_path=str(path), raw_ref=str(data.get("marker_id", path.stem)), parsed=data)
+            source_id = ensure_source_record(conn, root, repo_id, "tool_failure_marker", source_path=str(path), raw_ref=str(data.get("marker_id", path.stem)), parsed=data)
             conn.execute(
                 """
                 insert into tool_failures(
@@ -6500,7 +6550,7 @@ def command_mark_regression(args: argparse.Namespace) -> int:
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, repo_id, args.source_kind, raw_ref="mark-regression", parsed=vars(args))
+        source_id = ensure_source_record(conn, root, repo_id, args.source_kind, raw_ref="mark-regression", parsed=vars(args))
         file_id = ensure_file(conn, repo_id, args.path, source_id=source_id)
         cycle_pk = None
         if args.cycle_id:
@@ -6542,7 +6592,7 @@ def command_prune(args: argparse.Namespace) -> int:
     actions: list[dict[str, Any]] = []
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, repo_id, "operator", raw_ref="prune", parsed=vars(args))
+        source_id = ensure_source_record(conn, root, repo_id, "operator", raw_ref="prune", parsed=vars(args))
         if args.raw_only:
             sql = "update source_records set raw_text=null where raw_text is not null"
             params: tuple[Any, ...] = ()

@@ -101,7 +101,12 @@ METADATA_HMAC_PREFIX = "meta-hmac-sha256:"
 CONTENT_HMAC_PREFIX = "content-hmac-sha256:"
 CONTRIBUTOR_HASH_PREFIX = "contributor-sha256:"
 COMMIT_SUBJECT_HASH_PREFIX = "subject-sha256:"
+BRANCH_HMAC_PREFIX = "branch-hmac-sha256:"
+REMOTE_HMAC_PREFIX = "remote-hmac-sha256:"
+SSH_REMOTE_HMAC_PREFIX = "ssh-remote-hmac-sha256:"
+LOCAL_REMOTE_HMAC_PREFIX = "local-remote-hmac-sha256:"
 UPKEEPER_VERBOSE_METADATA_ENV = "UPKEEPER_VERBOSE_METADATA"
+UPKEEPER_RAW_REPO_IDENTITY_ENV = "UPKEEPER_LATTICE_RAW_REPO_IDENTITY"
 TRANSIENT_ARTIFACT_KINDS = {"transcript", "compiled_prompt", "last_message"}
 ARTIFACT_RETENTION_CLASSES = {
     "transcript": "transient",
@@ -1180,6 +1185,191 @@ def current_lattice_raw_storage() -> str:
     return raw if raw else "limited"
 
 
+def raw_repo_identity_enabled() -> bool:
+    raw = os.environ.get(UPKEEPER_RAW_REPO_IDENTITY_ENV, "").strip()
+    if raw:
+        return parse_bool_int(raw) == 1
+    return current_lattice_raw_storage() == "full"
+
+
+def repo_identity_context(root: Path, info: dict[str, str] | None = None) -> tuple[str, str, str]:
+    info = info or repo_git_info(root)
+    return (str(root.resolve()), str(info.get("git_common_dir") or ""), str(info.get("remote_url") or ""))
+
+
+def repo_identity_hmac_key(context: tuple[str, str, str], purpose: str) -> bytes:
+    root_value, git_common_dir, remote_seed = context
+    material = f"{root_value}\0{git_common_dir}\0{remote_seed}\0{purpose}"
+    return hashlib.sha256(material.encode("utf-8", "surrogateescape")).digest()
+
+
+def repo_identity_value_hmac(context: tuple[str, str, str], namespace: str, value: str, prefix: str) -> str:
+    if not value:
+        return ""
+    material = f"{namespace}\0{value}"
+    digest = hmac.digest(repo_identity_hmac_key(context, "repo-identity"), material.encode("utf-8", "surrogateescape"), "sha256").hex()
+    return prefix + digest
+
+
+def identity_value_is_redacted(value: str) -> bool:
+    if not value:
+        return False
+    prefixes = (
+        REDACTED_PATH_PREFIX,
+        PASS_RESULT_PATH_HMAC_PREFIX,
+        METADATA_HMAC_PREFIX,
+        CONTENT_HMAC_PREFIX,
+        CONTRIBUTOR_HASH_PREFIX,
+        COMMIT_SUBJECT_HASH_PREFIX,
+        BRANCH_HMAC_PREFIX,
+        REMOTE_HMAC_PREFIX,
+        SSH_REMOTE_HMAC_PREFIX,
+        LOCAL_REMOTE_HMAC_PREFIX,
+    )
+    return value.startswith(prefixes)
+
+
+def remote_is_ssh(raw: str) -> bool:
+    lowered = raw.lower()
+    if lowered.startswith(("ssh://", "git+ssh://")):
+        return True
+    return bool(re.match(r"^[^/\s@]+@[^:\s]+:.+", raw))
+
+
+def remote_is_local(raw: str) -> bool:
+    lowered = raw.lower()
+    if lowered.startswith("file://"):
+        return True
+    if raw.startswith(("/", "./", "../", "~")):
+        return True
+    return bool(re.match(r"^[A-Za-z]:[\\/]", raw))
+
+
+def protected_repo_path(context: tuple[str, str, str], value: str) -> str:
+    if not value or identity_value_is_redacted(value):
+        return value
+    if raw_repo_identity_enabled():
+        return value
+    return repo_identity_value_hmac(context, "path", value, PASS_RESULT_PATH_HMAC_PREFIX)
+
+
+def protected_branch_name(context: tuple[str, str, str], value: str) -> str:
+    if not value or identity_value_is_redacted(value):
+        return value
+    if raw_repo_identity_enabled():
+        return value
+    return repo_identity_value_hmac(context, "branch_name", value, BRANCH_HMAC_PREFIX)
+
+
+def protected_remote_url(context: tuple[str, str, str], value: str) -> str:
+    if not value:
+        return ""
+    value = sanitize_remote_url(value)
+    if identity_value_is_redacted(value):
+        return value
+    if raw_repo_identity_enabled():
+        if remote_is_ssh(value):
+            return repo_identity_value_hmac(context, "ssh_remote_url", value, SSH_REMOTE_HMAC_PREFIX)
+        if remote_is_local(value):
+            return repo_identity_value_hmac(context, "local_remote_url", value, LOCAL_REMOTE_HMAC_PREFIX)
+        return value
+    return repo_identity_value_hmac(context, "remote_url", value, REMOTE_HMAC_PREFIX)
+
+
+def protected_origin_url_hash(context: tuple[str, str, str], value: str) -> str:
+    if not value:
+        return ""
+    if identity_value_is_redacted(value):
+        return value
+    value = sanitize_remote_url(value)
+    return repo_identity_value_hmac(context, "origin_url", value, REMOTE_HMAC_PREFIX)
+
+
+def sanitize_repository_payload(payload: dict[str, Any], context: tuple[str, str, str]) -> dict[str, Any]:
+    updated = dict(payload)
+    for key in ("root_path", "first_seen_root_path", "current_root_path", "working_tree_path", "git_common_dir"):
+        if isinstance(updated.get(key), str):
+            updated[key] = protected_repo_path(context, updated[key])
+    if isinstance(updated.get("branch_name"), str):
+        updated["branch_name"] = protected_branch_name(context, updated["branch_name"])
+    remote_value = updated.get("remote_url") if isinstance(updated.get("remote_url"), str) else ""
+    if remote_value:
+        updated["remote_url"] = protected_remote_url(context, remote_value)
+    origin_value = updated.get("origin_url_hash") if isinstance(updated.get("origin_url_hash"), str) else ""
+    if remote_value:
+        updated["origin_url_hash"] = protected_origin_url_hash(context, remote_value)
+    elif origin_value and not identity_value_is_redacted(origin_value):
+        updated["origin_url_hash"] = repo_identity_value_hmac(context, "legacy_origin_url_hash", origin_value, REMOTE_HMAC_PREFIX)
+    return updated
+
+
+def sanitize_repo_alias_payload(payload: dict[str, Any], context: tuple[str, str, str]) -> dict[str, Any]:
+    updated = dict(payload)
+    alias_kind = str(updated.get("alias_kind") or "")
+    alias_value = updated.get("alias_value") if isinstance(updated.get("alias_value"), str) else ""
+    if not alias_value:
+        return updated
+    if alias_kind in {"root_path", "git_common_dir"}:
+        updated["alias_value"] = protected_repo_path(context, alias_value)
+    elif alias_kind == "remote_url_hash":
+        if identity_value_is_redacted(alias_value):
+            updated["alias_value"] = alias_value
+        else:
+            updated["alias_value"] = repo_identity_value_hmac(context, "remote_url_hash", alias_value, REMOTE_HMAC_PREFIX)
+    return updated
+
+
+def scrub_repo_identity_rows(conn: sqlite3.Connection, repo_id: int, context: tuple[str, str, str]) -> None:
+    row = conn.execute(
+        """
+        select root_path, first_seen_root_path, current_root_path, working_tree_path, git_common_dir, branch_name, remote_url, origin_url_hash
+        from repositories
+        where repo_id=?
+        """,
+        (repo_id,),
+    ).fetchone()
+    if row:
+        updated = sanitize_repository_payload(dict(row), context)
+        conn.execute(
+            """
+            update repositories
+            set root_path=?, first_seen_root_path=?, current_root_path=?, working_tree_path=?,
+                git_common_dir=?, branch_name=?, remote_url=?, origin_url_hash=?
+            where repo_id=?
+            """,
+            (
+                updated.get("root_path"),
+                updated.get("first_seen_root_path"),
+                updated.get("current_root_path"),
+                updated.get("working_tree_path"),
+                updated.get("git_common_dir"),
+                updated.get("branch_name"),
+                updated.get("remote_url"),
+                updated.get("origin_url_hash"),
+                repo_id,
+            ),
+        )
+    for row in conn.execute("select repo_alias_id, alias_kind, alias_value from repo_aliases where repo_id=?", (repo_id,)):
+        updated = sanitize_repo_alias_payload(dict(row), context)
+        new_value = updated.get("alias_value")
+        if not isinstance(new_value, str) or new_value == row["alias_value"]:
+            continue
+        duplicate = conn.execute(
+            "select repo_alias_id from repo_aliases where repo_id=? and alias_kind=? and alias_value=?",
+            (repo_id, row["alias_kind"], new_value),
+        ).fetchone()
+        if duplicate and int(duplicate["repo_alias_id"]) != int(row["repo_alias_id"]):
+            conn.execute("delete from repo_aliases where repo_alias_id=?", (int(row["repo_alias_id"]),))
+            continue
+        conn.execute("update repo_aliases set alias_value=? where repo_alias_id=?", (new_value, int(row["repo_alias_id"])))
+    for table, pk in (("cycles", "cycle_pk"), ("worktree_snapshots", "worktree_snapshot_id")):
+        for row in conn.execute(f"select {pk}, branch_name from {table} where repo_id=? and branch_name is not null", (repo_id,)):
+            branch_name = row["branch_name"] if isinstance(row["branch_name"], str) else ""
+            new_branch = protected_branch_name(context, branch_name)
+            if new_branch != branch_name:
+                conn.execute(f"update {table} set branch_name=? where {pk}=?", (new_branch, int(row[pk])))
+
+
 def verbose_metadata_enabled() -> bool:
     return parse_bool_int(os.environ.get(UPKEEPER_VERBOSE_METADATA_ENV, "")) == 1
 
@@ -1194,8 +1384,7 @@ def pass_result_hmac_key(root: Path) -> bytes:
         return override.encode("utf-8", "surrogateescape")
     root = root.resolve()
     info = repo_git_info(root)
-    material = f"{root}|{info['git_common_dir']}|{info['remote_url']}|upkeeper-pass-result"
-    return hashlib.sha256(material.encode("utf-8", "surrogateescape")).digest()
+    return repo_identity_hmac_key(repo_identity_context(root, info), "upkeeper-pass-result")
 
 
 def pass_result_path_hmac(root: Path, path: str) -> str:
@@ -1985,6 +2174,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 def sanitize_remote_url(raw: str) -> str:
     if not raw:
         return ""
+    raw = raw.strip()
     return re.sub(r"(https?://)[^/@\s]+@", r"\1<redacted>@", raw)
 
 
@@ -2004,9 +2194,23 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
     root = root.resolve()
     info = repo_git_info(root)
     common = info["git_common_dir"]
+    context = repo_identity_context(root, info)
     repo_key_src = f"{root}|{common}|{info['remote_url']}"
     repo_key = sha256_text(repo_key_src)
-    origin_hash = sha256_text(info["remote_url"]) if info["remote_url"] else ""
+    identity = sanitize_repository_payload(
+        {
+            "root_path": str(root),
+            "first_seen_root_path": str(root),
+            "current_root_path": str(root),
+            "working_tree_path": str(root),
+            "git_common_dir": common,
+            "branch_name": info["branch_name"],
+            "remote_url": info["remote_url"],
+            "origin_url_hash": info["remote_url"],
+        },
+        context,
+    )
+    origin_hash = str(identity.get("origin_url_hash") or "")
     row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
     if row:
         repo_id = int(row["repo_id"])
@@ -2018,13 +2222,13 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
             where repo_id=?
             """,
             (
-                str(root),
-                str(root),
-                common,
+                identity["current_root_path"],
+                identity["working_tree_path"],
+                identity["git_common_dir"],
                 info["head_sha"],
                 info["head_tree_sha"],
-                info["branch_name"],
-                info["remote_url"],
+                identity["branch_name"],
+                identity["remote_url"],
                 origin_hash,
                 now,
                 repo_id,
@@ -2041,15 +2245,15 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
             """,
             (
                 repo_key,
-                str(root),
-                str(root),
-                str(root),
-                str(root),
-                common,
+                identity["root_path"],
+                identity["first_seen_root_path"],
+                identity["current_root_path"],
+                identity["working_tree_path"],
+                identity["git_common_dir"],
                 info["head_sha"],
                 info["head_tree_sha"],
-                info["branch_name"],
-                info["remote_url"],
+                identity["branch_name"],
+                identity["remote_url"],
                 origin_hash,
                 now,
                 now,
@@ -2057,9 +2261,9 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
         )
         repo_id = int(cur.lastrowid)
     for kind, value in [
-        ("root_path", str(root)),
+        ("root_path", identity["root_path"]),
         ("repo_key", repo_key),
-        ("git_common_dir", common),
+        ("git_common_dir", identity["git_common_dir"]),
         ("remote_url_hash", origin_hash),
     ]:
         if not value:
@@ -2074,6 +2278,7 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
             """,
             (repo_id, kind, value, now, now),
         )
+    scrub_repo_identity_rows(conn, repo_id, context)
     return repo_id
 
 
@@ -3146,6 +3351,8 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
     db_path = normalize_db_path(args.db, root)
     conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
+    info = repo_git_info(root)
+    context = repo_identity_context(root, info)
     with conn:
         repo_id = ensure_repository(conn, root)
         parsed = sanitize_cycle_start_fields(root, vars(args).copy())
@@ -3167,9 +3374,9 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
             effort=args.effort if verbose else None,
             mode=args.mode if verbose else None,
             config_file=config_value,
-            branch_name=(args.branch_name or repo_git_info(root)["branch_name"]) if verbose else None,
-            head_sha=(args.head_sha or repo_git_info(root)["head_sha"]) if verbose else None,
-            head_tree_sha=(args.head_tree_sha or repo_git_info(root)["head_tree_sha"]) if verbose else None,
+            branch_name=protected_branch_name(context, args.branch_name or info["branch_name"]) if verbose else None,
+            head_sha=(args.head_sha or info["head_sha"]) if verbose else None,
+            head_tree_sha=(args.head_tree_sha or info["head_tree_sha"]) if verbose else None,
             upstream_ref=args.upstream_ref if verbose else None,
             worktree_dirty=worktree_dirty,
             dry_run=parse_bool_int(str(args.dry_run)) if args.dry_run is not None else None,
@@ -3190,8 +3397,10 @@ def record_worktree_snapshot(
     source_id: int | None = None,
 ) -> int:
     observed = epoch_now()
-    head_sha = git_output(root, ["rev-parse", "--verify", "HEAD"], "")
-    branch = git_output(root, ["branch", "--show-current"], "")
+    info = repo_git_info(root)
+    context = repo_identity_context(root, info)
+    head_sha = info["head_sha"]
+    branch = protected_branch_name(context, info["branch_name"])
     raw = b""
     try:
         raw = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--untracked-files=all"])
@@ -5261,6 +5470,20 @@ def redact_payload(payload: dict[str, Any], args: argparse.Namespace) -> dict[st
     return _redact(payload)
 
 
+def sanitize_import_identity_payload(table: str, payload: dict[str, Any], context: tuple[str, str, str]) -> dict[str, Any]:
+    if table == "repositories":
+        return sanitize_repository_payload(payload, context)
+    if table == "repo_aliases":
+        return sanitize_repo_alias_payload(payload, context)
+    if table in {"cycles", "worktree_snapshots"}:
+        updated = dict(payload)
+        branch_name = updated.get("branch_name")
+        if isinstance(branch_name, str):
+            updated["branch_name"] = protected_branch_name(context, branch_name)
+        return updated
+    return payload
+
+
 def semantic_import_payload(table: str, payload: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
     for key in ("source_id", "imported_epoch", "last_seen_epoch", "updated_epoch"):
@@ -5275,6 +5498,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
     conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     repo_id = ensure_repository(conn, root)
+    context = repo_identity_context(root)
     output = validate_lattice_output_path(
         root,
         args.output if args.output else db_path.parent / "exports" / f"lattice-export-{epoch_now()}.jsonl",
@@ -5295,6 +5519,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
                 continue
             for payload in export_table_rows(conn, table, repo_id=repo_id):
                 payload = sanitize_git_privacy_payload(table, payload)
+                payload = sanitize_import_identity_payload(table, payload, context)
                 payload = redact_payload(payload, args)
                 pk = table_primary_key(conn, table)
                 logical = f"{table}:{payload.get(pk) if pk else sha256_text(json_dumps(payload))}"
@@ -5309,7 +5534,11 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
                     },
                     "repo_identity": {
                         "repo_id": repo_id,
-                        "root_path": str(root) if not args.redact_paths else "path-sha256:" + sha256_text(str(root)),
+                        "root_path": (
+                            REDACTED_PATH_PREFIX + sha256_text(str(root))
+                            if args.redact_paths
+                            else protected_repo_path(context, str(root))
+                        ),
                     },
                     "payload": payload,
                     "payload_sha256": payload_hash,
@@ -5371,6 +5600,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             continue
     with conn:
         repo_id = ensure_repository(conn, root)
+        context = repo_identity_context(root)
         conn.execute("PRAGMA defer_foreign_keys=ON")
         existing_import_max = int(conn.execute("select coalesce(max(import_id), 0) from lattice_imports").fetchone()[0] or 0)
         import_id = start_import(
@@ -5423,6 +5653,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", raw_payload_hash, "payload_hash_mismatch")
                 continue
+            payload = sanitize_import_identity_payload(str(table), payload, context)
             payload_hash = sha256_text(json_dumps(semantic_import_payload(str(table), payload)))
             if table == "lattice_unavailable" and isinstance(payload, dict):
                 ensure_source_record(
@@ -6426,6 +6657,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db", default=None, help="SQLite DB path")
     parser.add_argument("--journal-mode", default=os.environ.get("UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE", "delete"), choices=["delete", "wal"])
     parser.add_argument("--allow-unsafe-db", action="store_true", default=os.environ.get("UPKEEPER_LATTICE_ALLOW_UNSAFE_DB") == "1")
+    parser.add_argument(
+        "--raw-repo-identity",
+        action="store_true",
+        default=os.environ.get(UPKEEPER_RAW_REPO_IDENTITY_ENV) == "1",
+        help="opt in to raw path/branch/HTTPS repo identity storage; SSH and local remotes remain redacted",
+    )
     parser.add_argument("--upkeeper-ignore-file", default=os.environ.get("CODEX_UPKEEPER_IGNORE_FILE", os.environ.get("UPKEEPER_IGNORE_FILE", ".upkeeperignore")), help="Upkeeper target-selection ignore file")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -6619,6 +6856,8 @@ def add_scope(parser: argparse.ArgumentParser, default: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "raw_repo_identity", False):
+        os.environ[UPKEEPER_RAW_REPO_IDENTITY_ENV] = "1"
     try:
         return int(args.func(args))
     except sqlite3.IntegrityError as exc:

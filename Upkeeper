@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.14
+## Version: v1.2.15
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -38,6 +38,7 @@ UPKEEPER_CONFIG_FILE_EXPLICIT="0"
 UPKEEPER_CONFIG_DISABLE="${UPKEEPER_CONFIG_DISABLE:-0}"
 UPKEEPER_CONFIG_LOADED="0"
 UPKEEPER_CONFIG_SOURCE="none"
+UPKEEPER_CONFIG_SOURCE_HASH="none"
 
 upkeeper_config_fail() {
   printf 'Upkeeper: %s\n' "$*" >&2
@@ -55,6 +56,101 @@ resolve_upkeeper_config_path() {
       printf '%s/%s' "$ROOT_DIR" "$raw_path"
       ;;
   esac
+}
+
+upkeeper_config_path_mode() {
+  local path="$1"
+  local mode=""
+
+  if mode="$(stat -Lc '%a' "$path" 2>/dev/null)"; then
+    printf '%s' "$mode"
+    return 0
+  fi
+  if mode="$(stat -f '%Lp' "$path" 2>/dev/null)"; then
+    printf '%s' "$mode"
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$path" <<'PY'
+import os
+import stat
+import sys
+
+print(oct(stat.S_IMODE(os.lstat(sys.argv[1]).st_mode))[2:])
+PY
+    return $?
+  fi
+
+  return 1
+}
+
+upkeeper_config_content_hash() {
+  local path="$1"
+  local digest=""
+
+  if command -v sha256sum >/dev/null 2>&1 && digest="$(sha256sum "$path" 2>/dev/null)"; then
+    digest="${digest%% *}"
+    printf 'sha256:%s' "$digest"
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1 && digest="$(shasum -a 256 "$path" 2>/dev/null)"; then
+    digest="${digest%% *}"
+    printf 'sha256:%s' "$digest"
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$path" <<'PY'
+import hashlib
+import sys
+
+digest = hashlib.sha256()
+with open(sys.argv[1], "rb") as handle:
+    for chunk in iter(lambda: handle.read(65536), b""):
+        digest.update(chunk)
+print(f"sha256:{digest.hexdigest()}")
+PY
+    return $?
+  fi
+
+  return 1
+}
+
+upkeeper_config_assert_trusted_path() {
+  local config_path="$1"
+  local reject_group_writable="${2:-1}"
+  local component=""
+  local segment=""
+  local remainder=""
+  local mode=""
+
+  [[ "$config_path" == /* ]] || upkeeper_config_fail "config file path must be absolute after resolution: $config_path"
+  [[ -L "$config_path" ]] && upkeeper_config_fail "config file must not be a symlink: $config_path"
+  [[ -O "$config_path" ]] || upkeeper_config_fail "config file must be owned by the current user: $config_path"
+
+  remainder="${config_path#/}"
+  component="/"
+  while [[ -n "$remainder" ]]; do
+    segment="${remainder%%/*}"
+    if [[ "$component" == "/" ]]; then
+      component="/$segment"
+    else
+      component="$component/$segment"
+    fi
+
+    [[ -L "$component" ]] && upkeeper_config_fail "config path must not include symlink components: $component"
+    mode="$(upkeeper_config_path_mode "$component")" || upkeeper_config_fail "unable to inspect config path permissions: $component"
+    if [[ "$reject_group_writable" == "1" ]]; then
+      (( (8#$mode & 022) == 0 )) || upkeeper_config_fail "config path must not be group/world-writable: $component mode=$mode"
+    else
+      (( (8#$mode & 002) == 0 )) || upkeeper_config_fail "config path must not be world-writable: $component mode=$mode"
+    fi
+
+    if [[ "$remainder" == */* ]]; then
+      remainder="${remainder#*/}"
+    else
+      remainder=""
+    fi
+  done
 }
 
 preparse_upkeeper_config_args() {
@@ -78,6 +174,8 @@ preparse_upkeeper_config_args() {
 
 load_upkeeper_config_file() {
   local config_path
+  local config_dir
+  local reject_group_writable="1"
 
   [[ "$UPKEEPER_CONFIG_DISABLE" == "1" ]] && return 0
   [[ -n "$UPKEEPER_CONFIG_FILE" ]] || return 0
@@ -89,10 +187,17 @@ load_upkeeper_config_file() {
   fi
   [[ -f "$config_path" ]] || upkeeper_config_fail "config file is not a regular file: $config_path"
   [[ -r "$config_path" ]] || upkeeper_config_fail "config file is not readable: $config_path"
+  # The built-in default config lives inside the checked-out wrapper tree, so
+  # keep current checkouts working while rejecting world-writable path hops.
+  [[ "$config_path" == "$UPKEEPER_CONFIG_DEFAULT_FILE" ]] && reject_group_writable="0"
+  upkeeper_config_assert_trusted_path "$config_path" "$reject_group_writable"
+  config_dir="$(cd -P -- "$(dirname -- "$config_path")" && pwd)"
+  config_path="$config_dir/$(basename -- "$config_path")"
 
   UPKEEPER_CONFIG_FILE="$config_path"
   UPKEEPER_CONFIG_LOADED="1"
   UPKEEPER_CONFIG_SOURCE="$config_path"
+  UPKEEPER_CONFIG_SOURCE_HASH="$(upkeeper_config_content_hash "$config_path" || printf 'unknown')"
   # shellcheck source=/dev/null
   source "$config_path"
 }
@@ -136,7 +241,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.14"
+UPKEEPER_VERSION="v1.2.15"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -1043,6 +1148,7 @@ cycle_start_log_message() {
     fields+=("loop_parent_start=$loop_parent_start_fingerprint")
     fields+=("loop_parent_override=$loop_parent_override")
     fields+=("config_file=$(shell_quote "$UPKEEPER_CONFIG_SOURCE")")
+    fields+=("config_file_hash=$(shell_quote "${UPKEEPER_CONFIG_SOURCE_HASH:-none}")")
     fields+=("mode=$(shell_quote "$CODEX_MODE_STRING")")
     fields+=("model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}")")
     fields+=("model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED")
@@ -1074,7 +1180,7 @@ cycle_start_log_message() {
     fields+=("wrapper_process_hash=$(shell_quote "$(cycle_start_process_hash "$$" "$SCRIPT_NAME" "$wrapper_start_fingerprint")")")
     fields+=("parent_process_hash=$(shell_quote "$(cycle_start_process_hash "$direct_parent_pid" "$direct_parent_comm" "$direct_parent_start_fingerprint")")")
     fields+=("loop_parent_process_hash=$(shell_quote "$(cycle_start_process_hash "$loop_parent_pid" "$loop_parent_comm" "$loop_parent_start_fingerprint")")")
-    fields+=("config_file_hash=$(shell_quote "$(cycle_start_metadata_hash "$UPKEEPER_CONFIG_SOURCE")")")
+    fields+=("config_file_hash=$(shell_quote "${UPKEEPER_CONFIG_SOURCE_HASH:-$(cycle_start_metadata_hash "$UPKEEPER_CONFIG_SOURCE")}")")
     fields+=("target_file_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_TARGET_FILE:-none}")")")
     fields+=("target_root_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_TARGET_ROOT:-none}")")")
     fields+=("issue_priority_labels_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_ISSUE_PRIORITY_LABELS:-none}")")")

@@ -446,6 +446,527 @@ upkeeper_verbose_metadata_enabled() {
   config_truthy "${UPKEEPER_VERBOSE_METADATA:-0}"
 }
 
+upkeeper_runtime_identity_debug_enabled() {
+  upkeeper_verbose_metadata_enabled
+}
+
+system_boot_id_raw() {
+  if [[ -r /proc/sys/kernel/random/boot_id ]]; then
+    tr -d '[:space:]' </proc/sys/kernel/random/boot_id
+  else
+    printf 'unknown'
+  fi
+}
+
+process_start_fingerprint_raw() {
+  local pid="$1"
+  local stat_text after_comm
+  if [[ -r "/proc/$pid/stat" ]]; then
+    IFS= read -r stat_text <"/proc/$pid/stat" || true
+    after_comm="${stat_text##*) }"
+    set -- $after_comm
+    if [[ $# -ge 20 && -n "${20:-}" ]]; then
+      printf 'proc_start_ticks=%s' "${20}"
+      return 0
+    fi
+  fi
+  printf 'proc_start_ticks=unknown'
+}
+
+upkeeper_runtime_identity_value() {
+  local namespace="$1"
+  local value="${2:-}"
+
+  if upkeeper_runtime_identity_debug_enabled; then
+    printf '%s' "$value"
+  else
+    upkeeper_value_hmac "$namespace" "$value"
+  fi
+}
+
+upkeeper_runtime_path_value() {
+  local value="${1:-}"
+
+  if upkeeper_runtime_identity_debug_enabled; then
+    printf '%s' "$value"
+  else
+    upkeeper_path_hmac "$value"
+  fi
+}
+
+upkeeper_runtime_identity_matches() {
+  local namespace="$1"
+  local raw_value="${2:-}"
+  local expected_value="${3:-}"
+  local protected_value
+
+  protected_value="$(upkeeper_value_hmac "$namespace" "$raw_value")"
+  [[ "$expected_value" == "$raw_value" || "$expected_value" == "$protected_value" ]]
+}
+
+upkeeper_shlex_quote() {
+  local value="${1-}"
+  local escaped
+
+  case "$value" in
+    '')
+      printf "''"
+      ;;
+    *[!A-Za-z0-9_./:=,-]*)
+      escaped="${value//\'/\'\"\'\"\'}"
+      printf "'%s'" "$escaped"
+      ;;
+    *)
+      printf '%s' "$value"
+      ;;
+  esac
+}
+
+system_boot_id() {
+  local raw_value
+  raw_value="$(system_boot_id_raw)"
+  upkeeper_runtime_identity_value boot_id "$raw_value"
+}
+
+process_start_fingerprint() {
+  local pid="$1"
+  local raw_value
+  raw_value="$(process_start_fingerprint_raw "$pid")"
+  upkeeper_runtime_identity_value process_start "$raw_value"
+}
+
+process_fingerprint_alive() {
+  local pid="$1"
+  local expected_start="$2"
+  local expected_boot="$3"
+  local current_start_raw current_boot_raw
+
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" >/dev/null 2>&1 || return 1
+  current_boot_raw="$(system_boot_id_raw)"
+  if [[ -n "$expected_boot" && "$expected_boot" != "unknown" ]] \
+    && ! upkeeper_runtime_identity_matches boot_id "$current_boot_raw" "$expected_boot"; then
+    return 1
+  fi
+  current_start_raw="$(process_start_fingerprint_raw "$pid")"
+  upkeeper_runtime_identity_matches process_start "$current_start_raw" "$expected_start"
+}
+
+write_wrapper_health_state() {
+  local phase="$1"
+  local state_dir="$CODEX_WRAPPER_HEALTH_STATE_DIR"
+  local self_path_hash wrapper_blob_hash state_file tmp_file now_epoch
+
+  [[ -n "$state_dir" ]] || return 1
+  if ! mkdir -p -- "$state_dir"; then
+    log_line "ERROR" "central_wrapper.health_state_unwritable dir=$(shell_quote "$state_dir") reason=mkdir_failed"
+    return 1
+  fi
+
+  IFS=$'\t' read -r self_path_hash wrapper_blob_hash < <(wrapper_health_key_fields)
+  if [[ -z "${WRAPPER_HEALTH_STATE_FILE:-}" ]]; then
+    WRAPPER_HEALTH_STATE_FILE="$state_dir/$self_path_hash.$wrapper_blob_hash.$CYCLE_RUN_HASH.state"
+  fi
+  state_file="$WRAPPER_HEALTH_STATE_FILE"
+  tmp_file="$state_file.tmp.$$"
+  now_epoch="$(date '+%s')"
+
+  if ! {
+    printf 'status=%s\n' "$phase"
+    printf 'cycle_id=%s\n' "$CYCLE_ID"
+    printf 'run_hash=%s\n' "$CYCLE_RUN_HASH"
+    printf 'self_path=%s\n' "$(upkeeper_runtime_path_value "$SELF_PATH")"
+    printf 'self_path_hash=%s\n' "$self_path_hash"
+    printf 'wrapper_blob_hash=%s\n' "$wrapper_blob_hash"
+    printf 'root_dir=%s\n' "$(upkeeper_runtime_path_value "$ROOT_DIR")"
+    printf 'pid=%s\n' "$$"
+    printf 'wrapper_start=%s\n' "$(process_start_fingerprint "$$")"
+    printf 'boot_id=%s\n' "$(system_boot_id)"
+    printf 'last_mark_epoch=%s\n' "$now_epoch"
+    printf 'updated_epoch=%s\n' "$now_epoch"
+  } >"$tmp_file"; then
+    rm -f "$tmp_file"
+    log_line "ERROR" "central_wrapper.health_state_unwritable path=$(shell_quote "$state_file") reason=write_failed"
+    return 1
+  fi
+  if ! mv -f -- "$tmp_file" "$state_file"; then
+    rm -f "$tmp_file"
+    log_line "ERROR" "central_wrapper.health_state_unwritable path=$(shell_quote "$state_file") reason=rename_failed"
+    return 1
+  fi
+  return 0
+}
+
+scan_wrapper_health_state() {
+  local state_dir="$CODEX_WRAPPER_HEALTH_STATE_DIR"
+  local self_path_hash wrapper_blob_hash stale_seconds current_boot_raw
+  local prefix state_file status pid expected_start expected_boot cycle_id run_hash last_mark_raw last_mark_age
+  local now_epoch terminal_state archived_path archive_dir reason
+
+  [[ -d "$state_dir" ]] || return 0
+  IFS=$'\t' read -r self_path_hash wrapper_blob_hash < <(wrapper_health_key_fields)
+  stale_seconds="$(wrapper_health_stale_seconds)"
+  current_boot_raw="$(system_boot_id_raw)"
+  now_epoch="$(date '+%s')"
+  prefix="$self_path_hash.$wrapper_blob_hash."
+  terminal_state=",exited,aborted,cleanup,die,finish,resolved,"
+
+  shopt -s nullglob
+  for state_file in "$state_dir"/"$prefix"*.state; do
+    [[ -f "$state_file" ]] || continue
+    run_hash="$(sed -n 's/^run_hash=//p' "$state_file" | sed -n '1p')"
+    [[ "$run_hash" == "$CYCLE_RUN_HASH" ]] && continue
+    status="$(sed -n 's/^status=//p' "$state_file" | sed -n '1p')"
+    if [[ "$terminal_state" == *",$status,"* ]]; then
+      continue
+    fi
+    pid="$(sed -n 's/^pid=//p' "$state_file" | sed -n '1p')"
+    expected_start="$(sed -n 's/^wrapper_start=//p' "$state_file" | sed -n '1p')"
+    expected_boot="$(sed -n 's/^boot_id=//p' "$state_file" | sed -n '1p')"
+    cycle_id="$(sed -n 's/^cycle_id=//p' "$state_file" | sed -n '1p')"
+    last_mark_raw="$(sed -n 's/^last_mark_epoch=//p' "$state_file" | sed -n '1p')"
+    if [[ "$last_mark_raw" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      last_mark_age=$((now_epoch - ${last_mark_raw%%.*}))
+    else
+      last_mark_age=-1
+    fi
+    if process_fingerprint_alive "$pid" "$expected_start" "$expected_boot" \
+      && [[ "$last_mark_age" -ge 0 && "$last_mark_age" -le "$stale_seconds" ]]; then
+      printf 'status=healthy action=allow peer_cycle=%s peer_run_hash=%s peer_pid=%s last_mark_age_seconds=%s state_file=%s\n' \
+        "$(upkeeper_shlex_quote "${cycle_id:-unknown}")" \
+        "$(upkeeper_shlex_quote "${run_hash:-unknown}")" \
+        "$(upkeeper_shlex_quote "${pid:-unknown}")" \
+        "$last_mark_age" \
+        "$(upkeeper_shlex_quote "$state_file")"
+      continue
+    fi
+
+    if ! [[ "$pid" =~ ^[0-9]+$ ]] || ! kill -0 "$pid" >/dev/null 2>&1; then
+      if [[ "$last_mark_age" -ge 0 && "$last_mark_age" -gt "$stale_seconds" ]]; then
+        archive_dir="${CODEX_WRAPPER_HEALTH_ARCHIVE_DIR:-}"
+        archived_path=""
+        if [[ -n "$archive_dir" ]]; then
+          mkdir -p -- "$archive_dir" 2>/dev/null || true
+          archived_path="$archive_dir/$(basename -- "${state_file%.state}")-retired-$(date '+%Y%m%dT%H%M%S%z')-$$.state"
+          if ! mv -f -- "$state_file" "$archived_path" 2>/dev/null; then
+            archived_path=""
+          fi
+        fi
+        if [[ -n "$archived_path" ]]; then
+          printf 'status=reclaimed action=archive reason=pid_not_alive peer_cycle=%s peer_run_hash=%s peer_pid=%s last_mark_age_seconds=%s stale_seconds=%s state_file=%s archived_state_file=%s\n' \
+            "$(upkeeper_shlex_quote "${cycle_id:-unknown}")" \
+            "$(upkeeper_shlex_quote "${run_hash:-unknown}")" \
+            "$(upkeeper_shlex_quote "${pid:-unknown}")" \
+            "$last_mark_age" \
+            "$stale_seconds" \
+            "$(upkeeper_shlex_quote "$state_file")" \
+            "$(upkeeper_shlex_quote "$archived_path")"
+          continue
+        fi
+      fi
+      reason="pid_not_alive"
+    elif ! upkeeper_runtime_identity_matches process_start "$(process_start_fingerprint_raw "$pid")" "$expected_start"; then
+      reason="pid_start_fingerprint_mismatch"
+    elif [[ -n "$expected_boot" && "$expected_boot" != "unknown" ]] \
+      && ! upkeeper_runtime_identity_matches boot_id "$current_boot_raw" "$expected_boot"; then
+      reason="boot_id_changed"
+    else
+      reason="heartbeat_stale"
+    fi
+
+    if [[ "$last_mark_age" -lt 0 ]]; then
+      last_mark_age="unknown"
+    fi
+    printf 'status=quarantine action=fail_closed reason=%s peer_cycle=%s peer_run_hash=%s peer_pid=%s last_mark_age_seconds=%s stale_seconds=%s state_file=%s\n' \
+      "$reason" \
+      "$(upkeeper_shlex_quote "${cycle_id:-unknown}")" \
+      "$(upkeeper_shlex_quote "${run_hash:-unknown}")" \
+      "$(upkeeper_shlex_quote "${pid:-unknown}")" \
+      "$last_mark_age" \
+      "$stale_seconds" \
+      "$(upkeeper_shlex_quote "$state_file")"
+  done
+  shopt -u nullglob
+}
+
+acquire_active_lock_or_exit() {
+  local lock_age_seconds lock_parent owner_pid owner_start owner_boot owner_cycle owner_run_hash owner_token fallback_inherit_fail state_file state_tmp
+  local fallback_parent_pid fallback_parent_start token_fd child_token child_token_hash
+  local incomplete_lock_grace_seconds="30"
+  if [[ -z "$CODEX_ACTIVE_LOCK_DIR" || "$CODEX_ACTIVE_LOCK_DIR" == "/" ]]; then
+    log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=unsafe_lock_path"
+    finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=unsafe_lock_path"
+  fi
+  lock_parent="$(dirname -- "$CODEX_ACTIVE_LOCK_DIR")"
+  if ! mkdir -p -- "$lock_parent"; then
+    log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=parent_mkdir_failed"
+    finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=parent_mkdir_failed"
+  fi
+
+  if mkdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
+    ACTIVE_LOCK_ACQUIRED="1"
+  else
+    owner_pid="$(active_lock_field pid || true)"
+    owner_start="$(active_lock_field wrapper_start || true)"
+    owner_boot="$(active_lock_field boot_id || true)"
+    owner_cycle="$(active_lock_field cycle_id || true)"
+    owner_run_hash="$(active_lock_field run_hash || true)"
+    owner_token="$(active_lock_field fallback_chain_token || true)"
+    if process_fingerprint_alive "$owner_pid" "$owner_start" "$owner_boot"; then
+      if [[ "${CODEX_FALLBACK_CHAIN_ACTIVE:-0}" == "1" && "${CODEX_ATTEMPT_ROLE:-}" == "fallback" ]]; then
+        fallback_inherit_fail=""
+        child_token="${CODEX_FALLBACK_CHAIN_TOKEN:-}"
+        if [[ -z "$child_token" ]]; then
+          if ! [[ "${CODEX_FALLBACK_CHAIN_TOKEN_FD:-}" =~ ^[0-9]+$ ]]; then
+            fallback_inherit_fail="missing_fallback_chain_token_fd"
+          elif ! IFS= read -r child_token <&"${CODEX_FALLBACK_CHAIN_TOKEN_FD}"; then
+            fallback_inherit_fail="missing_fallback_chain_token_read"
+          fi
+        fi
+        if [[ -z "${CODEX_PARENT_CYCLE_ID:-}" ]]; then
+          fallback_inherit_fail="missing_parent_cycle"
+        elif [[ -z "$owner_token" ]]; then
+          fallback_inherit_fail="missing_state_fallback_chain_token"
+        elif [[ -z "$child_token" ]]; then
+          fallback_inherit_fail="missing_fallback_chain_token_read"
+        elif [[ "$owner_cycle" != "$CODEX_PARENT_CYCLE_ID" ]]; then
+          fallback_inherit_fail="parent_cycle_mismatch"
+        elif ! [[ "${CODEX_FALLBACK_PARENT_PID:-}" =~ ^[0-9]+$ ]]; then
+          fallback_inherit_fail="missing_fallback_parent_pid"
+        elif ! [[ "${CODEX_FALLBACK_PARENT_START:-}" ]]; then
+          fallback_inherit_fail="missing_fallback_parent_start"
+        elif [[ "$PPID" != "${CODEX_FALLBACK_PARENT_PID:-}" ]]; then
+          fallback_inherit_fail="parent_pid_mismatch"
+        elif ! process_fingerprint_alive "${CODEX_FALLBACK_PARENT_PID:-}" "${CODEX_FALLBACK_PARENT_START:-}" "$owner_boot"; then
+          fallback_inherit_fail="fallback_parent_process_fingerprint_mismatch"
+        else
+          child_token_hash="$(fallback_chain_token_hash "$child_token")"
+          if [[ "$owner_token" != "$child_token_hash" && "$owner_token" != "$child_token" ]]; then
+            fallback_inherit_fail="fallback_chain_token_mismatch"
+          fi
+        fi
+        token_fd="${CODEX_FALLBACK_CHAIN_TOKEN_FD:-}"
+        [[ -n "$token_fd" ]] && eval "exec ${token_fd}<&-" 2>/dev/null || true
+        fallback_parent_pid="${CODEX_FALLBACK_PARENT_PID:-}"
+        fallback_parent_start="${CODEX_FALLBACK_PARENT_START:-}"
+
+        if [[ -n "$fallback_inherit_fail" ]]; then
+          log_line "WARN" "active_lock.fallback_inherit_rejected path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} reason=$fallback_inherit_fail child_cycle=$CYCLE_ID"
+          log_line "WARN" "active_lock.held path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=exit reason=$fallback_inherit_fail"
+          finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} requested_parent_cycle=${CODEX_PARENT_CYCLE_ID:-unknown} reason=$fallback_inherit_fail"
+        fi
+        log_line "INFO" "active_lock.inherited path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} child_cycle=$CYCLE_ID"
+        ACTIVE_LOCK_ACQUIRED="0"
+        return 0
+      fi
+      log_line "WARN" "active_lock.held path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=exit"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown}"
+    fi
+    lock_age_seconds="$(active_lock_age_seconds "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null || printf 'unknown')"
+    if [[ "$lock_age_seconds" =~ ^[0-9]+$ && "$lock_age_seconds" -lt "$incomplete_lock_grace_seconds" ]]; then
+      log_line "WARN" "active_lock.incomplete path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} lock_age_seconds=$lock_age_seconds grace_seconds=$incomplete_lock_grace_seconds action=exit"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 reason=incomplete_recent_lock owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} lock_age_seconds=$lock_age_seconds grace_seconds=$incomplete_lock_grace_seconds"
+    fi
+    log_line "WARN" "active_lock.stale path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=reclaim"
+    rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state" 2>/dev/null || true
+    rm -f -- "$CODEX_ACTIVE_LOCK_DIR"/state.tmp.* 2>/dev/null || true
+    if ! rmdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
+      log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=stale_lock_not_empty"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=stale_lock_not_empty"
+    fi
+    if ! mkdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
+      log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=reclaim_mkdir_failed"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=reclaim_mkdir_failed"
+    fi
+    ACTIVE_LOCK_ACQUIRED="1"
+  fi
+
+  state_file="$CODEX_ACTIVE_LOCK_DIR/state"
+  state_tmp="$CODEX_ACTIVE_LOCK_DIR/state.tmp.$$"
+  if ! {
+    printf 'cycle_id=%s\n' "$CYCLE_ID"
+    printf 'run_hash=%s\n' "$CYCLE_RUN_HASH"
+    printf 'pid=%s\n' "$$"
+    printf 'wrapper_start=%s\n' "$(process_start_fingerprint "$$")"
+    printf 'boot_id=%s\n' "$(system_boot_id)"
+    printf 'root_dir=%s\n' "$(upkeeper_runtime_path_value "$ROOT_DIR")"
+    printf 'self_path=%s\n' "$(upkeeper_runtime_path_value "${SELF_PATH:-}")"
+    printf 'fallback_chain_token=%s\n' "$(fallback_chain_token_hash "${CODEX_FALLBACK_CHAIN_TOKEN:-}")"
+    printf 'created_epoch=%s\n' "$(date '+%s')"
+  } >"$state_tmp"; then
+    rm -f -- "$state_tmp" 2>/dev/null || true
+    release_active_lock
+    log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=state_write_failed"
+    finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=state_write_failed"
+  fi
+  if ! mv -f -- "$state_tmp" "$state_file"; then
+    rm -f -- "$state_tmp" 2>/dev/null || true
+    release_active_lock
+    log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=state_rename_failed"
+    finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=state_rename_failed"
+  fi
+
+  log_line "INFO" "active_lock.acquired path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR")"
+}
+
+previous_run_anomaly_lines() {
+  if [[ ! -s "$LOG_FILE" ]]; then
+    return 0
+  fi
+
+  python3 - "$LOG_FILE" "$CYCLE_ID" "$CODEX_PREVIOUS_RUN_SCAN_MINUTES" "$(system_boot_id_raw)" "$(system_boot_id)" "$(upkeeper_redaction_key_material)" <<'PY'
+import datetime as dt
+import hashlib
+import hmac
+import re
+import sys
+import time
+
+log_path, current_cycle, minutes_raw, current_boot_raw, current_boot_protected, redaction_key = sys.argv[1:7]
+try:
+    scan_minutes = max(0, int(minutes_raw))
+except ValueError:
+    scan_minutes = 240
+cutoff = time.time() - (scan_minutes * 60)
+cycle_re = re.compile(r"\bcycle=([^ ]+)")
+run_hash_re = re.compile(r"\brun_hash=([^ ]+)")
+boot_id_re = re.compile(r"\bboot_id=([^ ]+)")
+cycles = {}
+latest_previous_run_ack_epoch = None
+
+
+def redact_boot_id(value):
+    if value in {"", "unknown", "none", "missing", "unavailable"}:
+        return value or "unknown"
+    material = f"boot_id\0{value}".encode("utf-8", "surrogateescape")
+    digest = hmac.new(
+        redaction_key.encode("utf-8", "surrogateescape"),
+        material,
+        hashlib.sha256,
+    ).hexdigest()
+    return f"value-hmac-sha256:{digest}"
+
+
+def parsed_epoch(line):
+    stamp = line.split(" ", 1)[0]
+    try:
+        return dt.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S%z").timestamp()
+    except ValueError:
+        return None
+
+
+try:
+    handle = open(log_path, "r", encoding="utf-8", errors="replace")
+except OSError:
+    raise SystemExit(0)
+
+with handle:
+    for line in handle:
+        epoch = parsed_epoch(line)
+        if epoch is not None and scan_minutes > 0 and epoch < cutoff:
+            continue
+        if (
+            epoch is not None
+            and " startup_anomaly.gate_resolved " in line
+            and "reasons=previous_run_anomaly" in line
+        ):
+            if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
+                latest_previous_run_ack_epoch = epoch
+        cycle_match = cycle_re.search(line)
+        if not cycle_match:
+            continue
+        cycle = cycle_match.group(1)
+        if cycle == current_cycle:
+            continue
+        info = cycles.setdefault(
+            cycle,
+            {
+                "run_hash": "unknown",
+                "start": False,
+                "exit": False,
+                "run_start": False,
+                "run_finish": False,
+                "gate_unresolved": False,
+                "gate_resolved": False,
+                "watchdog_anomaly": False,
+                "last_boot_id": "unknown",
+                "last_epoch": epoch,
+                "last_line": line.strip(),
+            },
+        )
+        hash_match = run_hash_re.search(line)
+        if hash_match:
+            info["run_hash"] = hash_match.group(1)
+        boot_id_match = boot_id_re.search(line)
+        if boot_id_match:
+            info["last_boot_id"] = boot_id_match.group(1)
+        if " cycle.start " in line:
+            info["start"] = True
+        if " cycle.exit " in line:
+            info["exit"] = True
+        if " run.start " in line:
+            info["run_start"] = True
+        if " run.finish " in line:
+            info["run_finish"] = True
+        if " startup_anomaly.gate_unresolved " in line:
+            info["gate_unresolved"] = True
+        if " startup_anomaly.gate_resolved " in line:
+            info["gate_resolved"] = True
+        if " watchdog.anomaly " in line:
+            info["watchdog_anomaly"] = True
+        info["last_epoch"] = epoch
+        info["last_line"] = line.strip()
+
+printed = 0
+acknowledged = 0
+for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"] or 0, reverse=True):
+    reason = ""
+    if info["start"] and not info["exit"]:
+        last_boot_id = info.get("last_boot_id", "unknown")
+        boot_matches = last_boot_id in {
+            "",
+            "unknown",
+            current_boot_raw,
+            current_boot_protected,
+            redact_boot_id(current_boot_raw),
+        }
+        reason = "missing_cycle_exit" if boot_matches else "probable_reboot_or_power_loss"
+    elif info["run_start"] and not info["run_finish"] and not info["exit"]:
+        reason = "missing_run_finish"
+    elif info["watchdog_anomaly"]:
+        reason = "watchdog_anomaly"
+    elif info["gate_unresolved"] and not info["gate_resolved"]:
+        reason = "startup_anomaly_gate_unresolved"
+    if not reason:
+        continue
+    if (
+        latest_previous_run_ack_epoch is not None
+        and info["last_epoch"] is not None
+        and info["last_epoch"] <= latest_previous_run_ack_epoch
+    ):
+        acknowledged += 1
+        continue
+    last_epoch = "unknown" if info["last_epoch"] is None else str(int(info["last_epoch"]))
+    last_line = info["last_line"].replace("\\", "\\\\").replace("\t", " ")[:300]
+    print(
+        f"previous_cycle={cycle} previous_run_hash={info['run_hash']} "
+        f"reason={reason} scan_minutes={scan_minutes} last_epoch={last_epoch} "
+        f"previous_boot_id={redact_boot_id(info.get('last_boot_id', 'unknown'))} "
+        f"last_line={last_line!r}"
+    )
+    printed += 1
+    if printed >= 10:
+        break
+if acknowledged:
+    print(
+        "__ACK__ "
+        f"suppressed={acknowledged} "
+        f"ack_epoch={int(latest_previous_run_ack_epoch)} "
+        "reason=previous_run_anomaly_gate_reviewed"
+    )
+PY
+}
+
 cycle_start_metadata_hash() {
   local value="${1:-}"
 
@@ -563,7 +1084,7 @@ cycle_start_log_message() {
     fields+=("selection_review_modules_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_SELECTION_REVIEW_MODULES:-none}")")")
     fields+=("review_modules_hash=$(shell_quote "$(cycle_start_metadata_hash "$review_modules")")")
     fields+=("code_home_hash=$(shell_quote "$(cycle_start_metadata_hash "$CODEX_HOME_DIR")")")
-    fields+=("boot_id_hash=$(shell_quote "$(cycle_start_metadata_hash "$(system_boot_id)")")")
+    fields+=("boot_id_hash=$(shell_quote "$(system_boot_id)")")
   fi
 
   local message="${fields[0]}"

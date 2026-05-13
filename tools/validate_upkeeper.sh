@@ -1551,7 +1551,8 @@ EOF
   grep -Fq "config_loaded=1" "$temp_dir/Upkeeper.log" || fail "config dry-run did not record loaded config"
   grep -Fq "config_file_hash=" "$temp_dir/Upkeeper.log" || fail "config dry-run did not record config metadata"
   grep -Fq "model=gpt-5.5" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply model"
-  grep -Fq "review.preselect path=Upkeeper" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply target file"
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply target file"
+  grep -Fq "path_redacted=1" "$temp_dir/Upkeeper.log" || fail "config dry-run did not redact target path"
   grep -Fq "prompt_pass=all" "$temp_dir/Upkeeper.log" || fail "config dry-run did not apply prompt pass"
   grep -Fq "review.module_prompt enabled module=p28" "$temp_dir/Upkeeper.log" || fail "config dry-run did not append P28"
 
@@ -1566,7 +1567,8 @@ EOF
     UPKEEPER_DRY_RUN=1 \
     ./Upkeeper --config-file="$profile" --target-file=lib/upkeeper/codex_io.bash --p26 >"$temp_dir/override.out" 2>"$temp_dir/override.err"
 
-  grep -Fq "review.preselect path=lib/upkeeper/codex_io.bash" "$temp_dir/Upkeeper.log" || fail "CLI target did not override config target"
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/Upkeeper.log" || fail "CLI target did not override config target"
+  grep -Fq "selection_mode=explicit_target" "$temp_dir/Upkeeper.log" || fail "CLI target did not use explicit target selection"
   grep -Fq "review.module_prompt enabled module=p26" "$temp_dir/Upkeeper.log" || fail "CLI review module did not override config modules"
   if grep -Fq "review.module_prompt enabled module=p28" "$temp_dir/Upkeeper.log"; then
     fail "config review module leaked after CLI override"
@@ -1697,14 +1699,14 @@ check_file_manifest_selection() {
     --target-file=Upkeeper \
     --target-root=lib/upkeeper \
     --selection-source=manifest
-  grep -Fq "review.preselect path=Upkeeper" "$temp_dir/forced.log" || fail "--target-file did not override target-root selection filter"
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/forced.log" || fail "--target-file did not override target-root selection filter"
   grep -Fq "selection_mode=explicit_target" "$temp_dir/forced.log" || fail "--target-file was not logged as explicit target mode"
 
   run_manifest_dry_run "$temp_dir/docs-target.log" \
     --target-file=docs/scripts/upkeeper.md \
     --review-modules=p26,p28 \
     --prompt-pass=all
-  grep -Fq "review.preselect path=docs/scripts/upkeeper.md" "$temp_dir/docs-target.log" || fail "explicit docs target was not accepted"
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/docs-target.log" || fail "explicit docs target was not accepted"
   grep -Fq "selection_mode=explicit_target" "$temp_dir/docs-target.log" || fail "explicit docs target was not logged as explicit target mode"
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/docs-target.log" || fail "explicit docs target dry-run did not finish cleanly"
 
@@ -1730,7 +1732,7 @@ check_file_manifest_selection() {
     export UPKEEPER_PROMPT_PASS="all"
     run_manifest_dry_run "$temp_dir/docs-config-target.log"
   )
-  grep -Fq "review.preselect path=docs/scripts/upkeeper.md" "$temp_dir/docs-config-target.log" || fail "configured explicit docs target was not accepted"
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/docs-config-target.log" || fail "configured explicit docs target was not accepted"
   if grep -Eq '(^| )review_modules_hash=none( |$)' "$temp_dir/docs-config-target.log"; then
     fail "configured review modules were not applied"
   fi
@@ -1836,7 +1838,7 @@ EOF
   grep -Fq "issue.fix_issue selected number=912" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not lock the explicit issue"
   grep -Fq "selected_label=explicit" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not mark explicit selection"
   grep -Fq "target_file=lib/upkeeper/help_selection.bash" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not infer the explicit issue target"
-  grep -Fq "review.preselect path=lib/upkeeper/help_selection.bash" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not pin the explicit inferred target"
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not pin the explicit inferred target"
   grep -Fq "issue.fix_prompt appended number=912" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue prompt addendum was not appended"
 
   PATH="$temp_dir/bin:$PATH" run_manifest_dry_run "$temp_dir/fix-comment-stage.log" \
@@ -2076,7 +2078,7 @@ PY
     UPKEEPER_DRY_RUN=1 \
     ./Upkeeper >"$temp_dir/selection.out" 2>"$temp_dir/selection.err"
 
-  grep -Fq "review.preselect path=lib/upkeeper/codex_io.bash" "$temp_dir/selection.log" || fail "failure queue did not force marked target"
+  grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/selection.log" || fail "failure queue did not force marked target"
   grep -Fq "failure_queue_selected=1" "$temp_dir/selection.log" || fail "failure queue selection was not logged"
 
   CODEX_HOME="$temp_dir/codex-home" \
@@ -2464,15 +2466,15 @@ check_startup_anomaly_state_parser_contract() {
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$state_dir" bash -c 'source lib/upkeeper/startup_anomaly_state.bash; startup_anomaly_state_lines'
   )"
 
-  grep -Fq 'previous_cycle=cycle\ with\ spaces' <<<"$output" || fail "startup anomaly cycle id was not log-escaped"
-  grep -Fq 'previous_run_hash=hash\ with\ spaces' <<<"$output" || fail "startup anomaly run hash was not log-escaped"
-  grep -Fq 'bad\ state.state' <<<"$output" || fail "startup anomaly state path was not log-escaped"
-  grep -Fq 'state_reason=manual\ reason' <<<"$output" || fail "startup anomaly reason was not log-escaped"
+  grep -Fq 'state_id=state-hmac-sha256:' <<<"$output" || fail "startup anomaly state id HMAC missing"
+  grep -Fq 'state_file_hmac=path-hmac-sha256:' <<<"$output" || fail "startup anomaly state path HMAC missing"
+  grep -Fq 'reason_class=manual_reason' <<<"$output" || fail "startup anomaly reason class missing"
+  grep -Fq 'detail_redacted=1' <<<"$output" || fail "startup anomaly detail redaction marker missing"
   grep -Eq 'created_epoch=[0-9]+ ' <<<"$output" || fail "startup anomaly fallback epoch missing"
   if grep -Fq 'extra=bad' <<<"$output"; then
     fail "startup anomaly parser accepted malformed created_epoch as log fields"
   fi
-  if grep -Fq 'startup gates' <<<"$output" || grep -Fq 'manual reason' <<<"$output"; then
+  if grep -Fq 'startup gates' <<<"$output" || grep -Fq 'manual reason' <<<"$output" || grep -Fq 'hash with spaces' <<<"$output"; then
     fail "startup anomaly parser emitted raw whitespace in log field values"
   fi
 
@@ -3148,7 +3150,12 @@ JSON
 JSON
 
   output="$(bash -lc 'cd "$1"; source lib/upkeeper/worktree_state.bash; startup_anomaly_gate_changed_path_violations "$2" "$3"' bash "$ROOT_DIR" "$before_file" "$after_file")"
-  grep -Fq "changed_path='unrelated.txt'" <<<"$output" || fail "gate allowlist did not report unrelated changed path"
+  grep -Fq "changed_path path_hmac=path-hmac-sha256:" <<<"$output" || fail "gate allowlist did not report unrelated changed path HMAC"
+  grep -Fq "extension=.txt" <<<"$output" || fail "gate allowlist did not report unrelated changed path extension"
+  grep -Fq "content_changed=1" <<<"$output" || fail "gate allowlist did not report changed content boolean"
+  if grep -Fq "unrelated.txt" <<<"$output"; then
+    fail "gate allowlist emitted raw unrelated path: $output"
+  fi
   if grep -Eq "Upkeeper|change_notes|docs/scripts|lib/upkeeper|tools/validate" <<<"$output"; then
     fail "gate allowlist reported an allowed Upkeeper-suite path: $output"
   fi

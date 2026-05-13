@@ -1,5 +1,25 @@
 # Human-facing inline help. This is also the seed text for a missing tracked
 # operator guide; once the guide exists, the Markdown becomes the living document.
+help_selection_content_hmac() {
+  local value="${1:-}"
+
+  if declare -F upkeeper_content_hmac >/dev/null 2>&1; then
+    upkeeper_content_hmac "$value"
+    return 0
+  fi
+  printf 'content-hmac-sha256:%s' "$(printf '%s' "$value" | sha256sum | awk '{print $1}')"
+}
+
+help_selection_path_hmac() {
+  local value="${1:-}"
+
+  if declare -F upkeeper_path_hmac >/dev/null 2>&1; then
+    upkeeper_path_hmac "$value"
+    return 0
+  fi
+  printf 'path-hmac-sha256:%s' "$(printf '%s' "$value" | sha256sum | awk '{print $1}')"
+}
+
 show_help() {
   cat <<EOF
 Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
@@ -279,10 +299,11 @@ Prompt behavior:
   - A WRAPPER_PRESELECTED_REVIEW_TARGET section overrides every later repertoire
     selection rule for that cycle; all applicable review prompts run against
     that same target unless the file is physically impossible or unsafe to read.
-  - Preselection records the selected target's git status and content hash before
-    Codex starts. If the selected file is already dirty, that is baseline state,
-    not a blocker by itself; touch verification must compare against the
-    pre-touch content hash rather than assuming the diff against HEAD is empty.
+  - Preselection records the selected target's git status, content state, and
+    HMAC content fingerprints before Codex starts. If the selected file is
+    already dirty, that is baseline state, not a blocker by itself; touch
+    verification must compare against a local pre-touch content fingerprint
+    rather than assuming the diff against HEAD is empty.
   - Tests are not script/tool targets merely because they use a script-language
     extension; select tests only when explicit extra guidance asks for test
     review or no eligible script/tool target exists.
@@ -305,6 +326,8 @@ Prompt behavior:
   - --prompt-file FILE appends extra task guidance from FILE.
     In unattended launcher mode, FILE must stay under
     UPKEEPER_PROMPT_TRUST_ROOT unless UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE=1.
+    Paths containing control characters are rejected before logging or prompt
+    compilation.
   - --prompt TEXT appends extra task guidance inline.
   - --review-module=p24 appends the central P24 de-LLM-ing viability review
     module for this invoked cycle.
@@ -1440,6 +1463,7 @@ PY
 append_preselected_review_target() {
   local compiled_file="$1"
   local selection selector_rc err_file detail selected_path selected_epoch selected_age eligible_count selected_git_status selected_content_state selected_worktree_hash selected_basis
+  local selected_head_blob selected_content_changed
   local selection_mode selection_source manifest_status selection_order target_root target_max_depth include_globs exclude_globs selection_review_modules
   local failure_queue_selected failure_marker_id failure_marker_path failure_marker_first_seen_epoch failure_marker_failure_count failure_marker_first_failure_kind failure_marker_first_failure_exit_line
   local selection_file
@@ -1482,6 +1506,7 @@ append_preselected_review_target() {
   selected_age="$(sed -n 's/^age=//p' <<<"$selection")"
   selected_git_status="$(sed -n 's/^git_status=//p' <<<"$selection")"
   selected_content_state="$(sed -n 's/^content_state=//p' <<<"$selection")"
+  selected_head_blob="$(sed -n 's/^head_blob=//p' <<<"$selection")"
   selected_worktree_hash="$(sed -n 's/^worktree_hash=//p' <<<"$selection")"
   selected_basis="$(sed -n 's/^selection_basis=//p' <<<"$selection")"
   eligible_count="$(sed -n 's/^eligible_count=//p' <<<"$selection")"
@@ -1501,6 +1526,34 @@ append_preselected_review_target() {
   failure_marker_failure_count="$(sed -n 's/^failure_marker_failure_count=//p' <<<"$selection")"
   failure_marker_first_failure_kind="$(sed -n 's/^failure_marker_first_failure_kind=//p' <<<"$selection")"
   failure_marker_first_failure_exit_line="$(sed -n 's/^failure_marker_first_failure_exit_line=//p' <<<"$selection")"
+  case "$selected_content_state" in
+    matches_head)
+      selected_content_changed="0"
+      ;;
+    differs_from_head|untracked)
+      selected_content_changed="1"
+      ;;
+    *)
+      selected_content_changed="unknown"
+      ;;
+  esac
+  selected_head_blob="$(help_selection_content_hmac "$selected_head_blob")"
+  selected_worktree_hash="$(help_selection_content_hmac "$selected_worktree_hash")"
+  selection="$(awk \
+    -v head_blob="$selected_head_blob" \
+    -v worktree_hash="$selected_worktree_hash" \
+    -v content_changed="$selected_content_changed" '
+      BEGIN { emitted_content_changed = 0 }
+      /^head_blob=/ { print "head_blob=" head_blob; next }
+      /^worktree_hash=/ { print "worktree_hash=" worktree_hash; next }
+      /^content_changed=/ { print "content_changed=" content_changed; emitted_content_changed = 1; next }
+      { print }
+      END {
+        if (!emitted_content_changed) {
+          print "content_changed=" content_changed
+        }
+      }
+    ' <<<"$selection")"
   RUN_SELECTED_REVIEW_PATH="$selected_path"
   RUN_SELECTED_REVIEW_BASIS="$selected_basis"
   RUN_SELECTED_FROM_FAILURE_QUEUE="${failure_queue_selected:-0}"
@@ -1530,13 +1583,13 @@ append_preselected_review_target() {
     fi
     printf -- '- Verify only this file exists, is readable, and is eligible before reviewing it.\n'
     printf -- '- This preselected target overrides all later P1-P23 selection rules; run applicable prompts against this same file.\n'
-    printf -- '- Use git_status/content_state/head_blob/worktree_hash above as the pre-run baseline for this file.\n'
+    printf -- '- Use git_status/content_state/content_changed and the HMAC fingerprints above as the pre-run baseline for this file.\n'
     printf -- '- If content_state differs_from_head or git_status is not clean, that dirty content existed before this review; do not reset it or block solely because git diff versus HEAD is non-empty.\n'
     if [[ -n "${RUN_PRECONTACT_BACKUP_ID:-}" ]]; then
       printf -- '- Pre-contact backup was created by the wrapper before this prompt was compiled: mode=%s encrypted=%s protected_from_backend=%s.\n' "$RUN_PRECONTACT_BACKUP_MODE" "$RUN_PRECONTACT_BACKUP_ENCRYPTED" "$RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND"
       printf -- '- Do not attempt to access, inspect, prune, restore, modify, or discover backup artifacts. Vault paths are intentionally not prompt-visible.\n'
     fi
-    printf -- '- For a clean no-edit pass, record the selected file hash before touch, touch it, then verify the mtime changed and the content hash is unchanged from the pre-touch hash.\n'
+    printf -- '- For a clean no-edit pass, record a local pre-touch content fingerprint, touch it, then verify the mtime changed and the content is unchanged from the pre-touch fingerprint.\n'
     printf -- '- Do not run broad repository discovery commands to second-guess this selection.\n'
     printf -- '- Target isolation is binding for this cycle: you may read other repository files for context, but you may modify only the selected file shown above.\n'
     printf -- '- If a correct fix or validation update would require editing any additional file such as tests, docs, helpers, callers, prompts, configs, or a replacement target, leave those files unchanged for this cycle and report BLOCKED with an `ADDITIONAL_FILES_NEEDED:` list of repo-relative paths plus brief reasons.\n'
@@ -1555,7 +1608,7 @@ append_preselected_review_target() {
     fi
   } >>"$compiled_file"
 
-  log_line "INFO" "review.preselect path=$(shell_quote "$selected_path") epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} worktree_hash=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} selection_mode=${selection_mode:-unknown} selection_source=${selection_source:-unknown} manifest_status=$(shell_quote "${manifest_status:-unknown}") selection_order=${selection_order:-unknown} target_root=$(shell_quote "${target_root:-none}") target_depth=$(shell_quote "${target_max_depth:-none}") include_globs=$(shell_quote "${include_globs:-none}") exclude_globs=$(shell_quote "${exclude_globs:-none}") selection_review_modules=$(shell_quote "${selection_review_modules:-none}") failure_queue_selected=${failure_queue_selected:-0} failure_marker_id=$(shell_quote "${failure_marker_id:-none}") basis=$(shell_quote "${selected_basis:-unknown}")"
+  log_line "INFO" "review.preselect path_hmac=$(help_selection_path_hmac "$selected_path") path_redacted=1 epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} content_changed=${selected_content_changed:-unknown} worktree_hmac=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} selection_mode=${selection_mode:-unknown} selection_source=${selection_source:-unknown} manifest_status=$(shell_quote "${manifest_status:-unknown}") selection_order=${selection_order:-unknown} target_root=$(shell_quote "${target_root:-none}") target_depth=$(shell_quote "${target_max_depth:-none}") include_globs=$(shell_quote "${include_globs:-none}") exclude_globs=$(shell_quote "${exclude_globs:-none}") selection_review_modules=$(shell_quote "${selection_review_modules:-none}") failure_queue_selected=${failure_queue_selected:-0} failure_marker_id=$(shell_quote "${failure_marker_id:-none}") basis=$(shell_quote "${selected_basis:-unknown}")"
   terminal_emit_progress "selected file ${selected_path:-unknown} (age=${selected_age:-unknown}; mode=${selection_mode:-unknown}; source=${selection_source:-unknown}; order=${selection_order:-unknown}; reason=${selected_basis:-unknown}; eligible=${eligible_count:-unknown})"
 }
 

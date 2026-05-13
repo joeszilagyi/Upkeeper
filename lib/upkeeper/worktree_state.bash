@@ -1,3 +1,29 @@
+worktree_redaction_key_material() {
+  if declare -F upkeeper_redaction_key_material >/dev/null 2>&1; then
+    upkeeper_redaction_key_material
+  else
+    printf '%s' "${UPKEEPER_REDACTION_KEY:-worktree-state-test-key}"
+  fi
+}
+
+worktree_path_hmac() {
+  local value="$1"
+
+  if declare -F upkeeper_path_hmac >/dev/null 2>&1; then
+    upkeeper_path_hmac "$value"
+    return 0
+  fi
+  printf 'path-hmac-sha256:%s' "$(python3 - "${UPKEEPER_REDACTION_KEY:-worktree-state-test-key}" "$value" <<'PY' 2>/dev/null || printf 'unknown'
+import hashlib
+import hmac
+import sys
+
+key, value = sys.argv[1:3]
+print(hmac.new(key.encode("utf-8", "surrogateescape"), f"path\0{value}".encode("utf-8", "surrogateescape"), hashlib.sha256).hexdigest())
+PY
+)"
+}
+
 refresh_worktree_counts() {
   DIRTY_PATH_COUNT=0
   TRACKED_MODIFIED_PATH_COUNT=0
@@ -112,12 +138,20 @@ capture_startup_anomaly_gate_baseline() {
 startup_anomaly_gate_changed_path_violations() {
   local before_file="$1"
   local after_file="$2"
-  python3 - "$before_file" "$after_file" <<'PY'
+  local diagnostics_file="${3:-}"
+  local hmac_key
+
+  hmac_key="$(worktree_redaction_key_material)"
+  python3 - "$before_file" "$after_file" "$diagnostics_file" "$hmac_key" <<'PY'
+import hashlib
+import hmac
 import json
+from pathlib import Path
 import re
 import sys
 
-before_path, after_path = sys.argv[1:3]
+before_path, after_path, diagnostics_path, hmac_key_text = sys.argv[1:5]
+hmac_key = hmac_key_text.encode("utf-8", "surrogateescape")
 
 try:
     before = json.load(open(before_path, "r", encoding="utf-8"))
@@ -152,15 +186,91 @@ def allowed(path):
         or any(path.startswith(prefix) for prefix in allowed_prefixes)
     )
 
+
+def hmac_value(namespace, value):
+    material = f"{namespace}\0{value}".encode("utf-8", "surrogateescape")
+    return hmac.new(hmac_key, material, hashlib.sha256).hexdigest()
+
+
+def path_hmac(path):
+    return "path-hmac-sha256:" + hmac_value("path", path)
+
+
+def extension_class(path):
+    suffix = Path(path).suffix.lower()
+    if not suffix:
+        return "none"
+    if not re.fullmatch(r"[.][a-z0-9_+-]{1,24}", suffix):
+        return "other"
+    return suffix
+
+
+def coarse_path_class(path):
+    lower = path.lower()
+    name = Path(lower).name
+    suffix = Path(lower).suffix
+    if lower.startswith(".git/"):
+        return "git"
+    if lower.startswith("runtime/"):
+        return "runtime"
+    if "test" in lower.split("/"):
+        return "test"
+    if suffix in {".bash", ".sh", ".py", ".js", ".ts", ".mjs", ".cjs"} or name in {"upkeeper", "chimneysweep", "flameon"}:
+        return "script"
+    if suffix in {".md", ".rst", ".txt"}:
+        return "documentation"
+    if suffix in {".conf", ".json", ".yaml", ".yml", ".toml", ".ini"}:
+        return "configuration"
+    if suffix:
+        return "source"
+    return "no_extension"
+
+
+diagnostics = []
+
+
+def record_diagnostic(kind, payload):
+    diagnostics.append({"kind": kind, **payload})
+
+
+def emit_control_change(key, before_value, after_value):
+    record_diagnostic("control_state_changed", {"key": key, "before": before_value, "after": after_value})
+    print(f"control_state_changed key={key!r} changed=1 values_redacted=1")
+
+
+def emit_path_change(path, before_state, after_state):
+    before_status = before_state.get("status", "unknown")
+    after_status = after_state.get("status", "unknown")
+    before_hash = before_state.get("hash", "unknown")
+    after_hash = after_state.get("hash", "unknown")
+    content_changed = 1 if before_hash != after_hash else 0
+    status_changed = 1 if before_status != after_status else 0
+    record_diagnostic(
+        "changed_path",
+        {
+            "path": path,
+            "before_status": before_status,
+            "before_hash": before_hash,
+            "after_status": after_status,
+            "after_hash": after_hash,
+            "content_changed": content_changed,
+            "status_changed": status_changed,
+        },
+    )
+    print(
+        f"changed_path path_hmac={path_hmac(path)} "
+        f"path_class={coarse_path_class(path)} extension={extension_class(path)} "
+        f"before_status={before_status} after_status={after_status} "
+        f"content_changed={content_changed} status_changed={status_changed}"
+    )
+
+
 before_meta = before.get("__meta__", {})
 after_meta = after.get("__meta__", {})
 for key in sorted(set(before_meta) | set(after_meta)):
     if before_meta.get(key) == after_meta.get(key):
         continue
-    print(
-        f"control_state_changed key={key!r} "
-        f"before={before_meta.get(key, 'missing')!r} after={after_meta.get(key, 'missing')!r}"
-    )
+    emit_control_change(key, before_meta.get(key, "missing"), after_meta.get(key, "missing"))
 
 
 for path in sorted(set(before) | set(after)):
@@ -172,12 +282,15 @@ for path in sorted(set(before) | set(after)):
         continue
     before_state = before.get(path, {"status": "clean", "hash": "clean"})
     after_state = after.get(path, {"status": "clean", "hash": "clean"})
-    print(
-        f"changed_path={path!r} before_status={before_state.get('status', 'unknown')} "
-        f"before_hash={before_state.get('hash', 'unknown')} "
-        f"after_status={after_state.get('status', 'unknown')} "
-        f"after_hash={after_state.get('hash', 'unknown')}"
-    )
+    emit_path_change(path, before_state, after_state)
+
+if diagnostics_path and diagnostics:
+    try:
+        with open(diagnostics_path, "w", encoding="utf-8") as handle:
+            for item in diagnostics:
+                handle.write(json.dumps(item, sort_keys=True, separators=(",", ":")) + "\n")
+    except OSError:
+        pass
 PY
 }
 
@@ -185,15 +298,21 @@ selected_target_scope_violations() {
   local before_file="$1"
   local after_file="$2"
   local selected_path="$3"
+  local hmac_key
 
   [[ -n "$before_file" && -f "$before_file" ]] || return 0
   [[ -n "$after_file" && -f "$after_file" ]] || return 0
 
-  python3 - "$before_file" "$after_file" "$selected_path" <<'PY'
+  hmac_key="$(worktree_redaction_key_material)"
+  python3 - "$before_file" "$after_file" "$selected_path" "$hmac_key" <<'PY'
+import hashlib
+import hmac
 import json
+from pathlib import Path
 import sys
 
-before_path, after_path, selected_path = sys.argv[1:4]
+before_path, after_path, selected_path, hmac_key_text = sys.argv[1:5]
+hmac_key = hmac_key_text.encode("utf-8", "surrogateescape")
 
 if not selected_path:
     raise SystemExit(0)
@@ -207,6 +326,21 @@ except OSError:
 if not isinstance(before, dict) or not isinstance(after, dict):
     raise SystemExit(0)
 
+
+def hmac_value(namespace, value):
+    material = f"{namespace}\0{value}".encode("utf-8", "surrogateescape")
+    return hmac.new(hmac_key, material, hashlib.sha256).hexdigest()
+
+
+def path_hmac(path):
+    return "path-hmac-sha256:" + hmac_value("path", path)
+
+
+def extension_class(path):
+    suffix = Path(path).suffix.lower()
+    return suffix if suffix else "none"
+
+
 for path in sorted(set(before) | set(after)):
     if path == "__meta__":
         continue
@@ -215,11 +349,13 @@ for path in sorted(set(before) | set(after)):
     if path != selected_path:
         before_state = before.get(path, {"status": "clean", "hash": "clean"})
         after_state = after.get(path, {"status": "clean", "hash": "clean"})
+        before_hash = before_state.get("hash", "unknown")
+        after_hash = after_state.get("hash", "unknown")
         print(
-            f"changed_path={path!r} before_status={before_state.get('status', 'unknown')} "
-            f"before_hash={before_state.get('hash', 'unknown')} "
+            f"changed_path path_hmac={path_hmac(path)} extension={extension_class(path)} "
+            f"before_status={before_state.get('status', 'unknown')} "
             f"after_status={after_state.get('status', 'unknown')} "
-            f"after_hash={after_state.get('hash', 'unknown')}"
+            f"content_changed={1 if before_hash != after_hash else 0}"
         )
 PY
 }
@@ -236,7 +372,7 @@ enforce_selected_target_scope() {
   while IFS= read -r violation; do
     [[ -n "$violation" ]] || continue
     violation_count=$((violation_count + 1))
-    log_line "WARN" "selected_target_scope.violation selected_path=$(shell_quote "$selected_path") $violation"
+    log_line "WARN" "selected_target_scope.violation selected_path_hmac=$(worktree_path_hmac "$selected_path") path_redacted=1 $violation"
   done < <(selected_target_scope_violations "$before_file" "$after_file" "$selected_path")
 
   if [[ "$violation_count" -gt 0 ]]; then
@@ -247,19 +383,25 @@ enforce_selected_target_scope() {
 }
 
 enforce_startup_anomaly_changed_paths() {
-  local after_file violation_count=0 violation
+  local after_file diagnostics_file violation_count=0 violation
   [[ "$STARTUP_ANOMALY_GATE" == "1" ]] || return 0
   [[ -n "${STARTUP_ANOMALY_GATE_BASELINE_FILE:-}" && -f "$STARTUP_ANOMALY_GATE_BASELINE_FILE" ]] || return 0
 
   after_file="$(run_mktemp startup-gate-after)"
   write_git_status_snapshot_json "$after_file"
+  diagnostics_file="$CODEX_STARTUP_ANOMALY_GATE_STATE_DIR/$CYCLE_RUN_HASH.changed-path-diagnostics.jsonl"
+  mkdir -p -- "$CODEX_STARTUP_ANOMALY_GATE_STATE_DIR" 2>/dev/null || true
+  chmod 700 "$CODEX_STARTUP_ANOMALY_GATE_STATE_DIR" 2>/dev/null || true
+  : >"$diagnostics_file" 2>/dev/null || diagnostics_file=""
+  [[ -n "$diagnostics_file" ]] && chmod 600 "$diagnostics_file" 2>/dev/null || true
   while IFS= read -r violation; do
     [[ -n "$violation" ]] || continue
     violation_count=$((violation_count + 1))
     log_line "WARN" "startup_anomaly.gate_violation $violation"
-  done < <(startup_anomaly_gate_changed_path_violations "$STARTUP_ANOMALY_GATE_BASELINE_FILE" "$after_file")
+  done < <(startup_anomaly_gate_changed_path_violations "$STARTUP_ANOMALY_GATE_BASELINE_FILE" "$after_file" "$diagnostics_file")
 
   if [[ "$violation_count" -gt 0 ]]; then
+    log_line "WARN" "startup_anomaly.gate_violation_summary count=$violation_count diagnostics=protected_local diagnostics_path_hmac=$(worktree_path_hmac "$diagnostics_file")"
     STARTUP_ANOMALY_GATE_CHANGED_PATH_VIOLATION="1"
     append_startup_anomaly_reason "gate_changed_path_violation"
     if ! write_startup_anomaly_gate_state "unresolved" "changed_path_violation"; then

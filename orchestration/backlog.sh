@@ -269,6 +269,18 @@ target_hint_for_issue() {
   [[ -n "$issue_number" ]] || return 0
   issue_text="$(gh issue view "$issue_number" --json title,body --jq '((.title // "") + "\n" + (.body // "")) | ascii_downcase')"
   case "$issue_text" in
+    *log\ rotation*|*rotated\ log*|*plaintext\ archive*|*plaintext\ archives*|*retained\ archive*|*zip\ archive*|*upkeeper.log.*.zip*|*upkeeper.log*)
+      [[ -f lib/upkeeper/log_rotation.bash ]] && printf '%s\n' "lib/upkeeper/log_rotation.bash"
+      ;;
+    *startup_anomaly.gate_violation*|*startup-anomaly.gate-violation*|*changed_path*|*before_hash*|*after_hash*|*review.preselect*|*worktree\ hash*)
+      [[ -f lib/upkeeper/worktree_state.bash ]] && printf '%s\n' "lib/upkeeper/worktree_state.bash"
+      ;;
+    *startup\ anomaly\ state*|*unresolved\ startup\ anomaly*|*previous_cycle*|*previous_run_hash*|*unresolved\ anomaly*)
+      [[ -f lib/upkeeper/startup_anomaly_state.bash ]] && printf '%s\n' "lib/upkeeper/startup_anomaly_state.bash"
+      ;;
+    *prompt_file*|*run.start*|*prompt\ file*)
+      [[ -f Upkeeper ]] && printf '%s\n' "Upkeeper"
+      ;;
     *cycle.start*|*record-cycle-start*|*verbose\ metadata*|*operator\ and\ config\ metadata*|*config\ file*|*issue\ labels*|*include/exclude\ globs*|*manifest\ path*)
       [[ -f Upkeeper ]] && printf '%s\n' "Upkeeper"
       ;;

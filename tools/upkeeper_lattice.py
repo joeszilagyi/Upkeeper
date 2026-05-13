@@ -98,6 +98,7 @@ TEST_DIRS = {"__tests__", "test", "tests"}
 REDACTED_PATH_PREFIX = "path-sha256:"
 PASS_RESULT_PATH_HMAC_PREFIX = "path-hmac-sha256:"
 METADATA_HMAC_PREFIX = "meta-hmac-sha256:"
+CONTENT_HMAC_PREFIX = "content-hmac-sha256:"
 UPKEEPER_VERBOSE_METADATA_ENV = "UPKEEPER_VERBOSE_METADATA"
 TRANSIENT_ARTIFACT_KINDS = {"transcript", "compiled_prompt", "last_message"}
 ARTIFACT_RETENTION_CLASSES = {
@@ -1089,6 +1090,14 @@ def metadata_value_hmac(root: Path, key: str, value: str) -> str:
     material = f"{key}\0{value}"
     digest = hmac.digest(pass_result_hmac_key(root), material.encode("utf-8", "surrogateescape"), "sha256").hex()
     return METADATA_HMAC_PREFIX + digest
+
+
+def content_value_hmac(root: Path, value: str) -> str:
+    if not value or value in {"none", "unknown", "missing", "unavailable", "clean", "not_regular"}:
+        return value or "unknown"
+    material = f"content\0{value}"
+    digest = hmac.digest(pass_result_hmac_key(root), material.encode("utf-8", "surrogateescape"), "sha256").hex()
+    return CONTENT_HMAC_PREFIX + digest
 
 
 def canonical_artifact_identity(root: Path, raw_path: str) -> str:
@@ -2482,14 +2491,16 @@ def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
         return meta
     status = git_porcelain_status_for_path(root, rel_path)
     meta["git_status"] = status[:2].replace(" ", "_") if status else "clean"
-    meta["worktree_hash"] = git_output(root, ["hash-object", "--", rel_path], "missing") if st is not None else "unavailable"
-    meta["head_blob"] = git_output(root, ["rev-parse", f"HEAD:{rel_path}"], "none")
-    if meta["head_blob"] == "none":
+    raw_worktree_hash = git_output(root, ["hash-object", "--", rel_path], "missing") if st is not None else "unavailable"
+    raw_head_blob = git_output(root, ["rev-parse", f"HEAD:{rel_path}"], "none")
+    if raw_head_blob == "none":
         meta["content_state"] = "untracked"
-    elif meta["head_blob"] == meta["worktree_hash"]:
+    elif raw_head_blob == raw_worktree_hash:
         meta["content_state"] = "matches_head"
     else:
         meta["content_state"] = "differs_from_head"
+    meta["worktree_hash"] = content_value_hmac(root, raw_worktree_hash)
+    meta["head_blob"] = content_value_hmac(root, raw_head_blob)
     meta["ignored"] = 1 if git_path_ignored(root, root / rel_path) else 0
     meta["test_path"] = 1 if is_test_path(rel_path) else 0
     meta["generated"] = 0
@@ -3617,6 +3628,7 @@ def create_artifact_ref(
     exists = entry is not None and stat.S_ISREG(entry.st_mode)
     size = None
     digest = None
+    digest_hmac = None
     if exists:
         try:
             if hasattr(os, "O_NOFOLLOW"):
@@ -3632,6 +3644,7 @@ def create_artifact_ref(
                 payload = b"".join(chunks)
                 size = len(payload)
                 digest = sha256_bytes(payload)
+                digest_hmac = content_value_hmac(root, digest)
             finally:
                 os.close(fd)
         except OSError:
@@ -3644,7 +3657,7 @@ def create_artifact_ref(
             from artifact_refs
             where repo_id = ? and artifact_kind = ? and path = ? and coalesce(sha256, '') = coalesce(?, '')
             """,
-            (repo_id, artifact_kind, stored_path, digest),
+            (repo_id, artifact_kind, stored_path, digest_hmac),
         ).fetchone()
         if existing is not None:
             conn.execute(
@@ -3688,7 +3701,7 @@ def create_artifact_ref(
             stored_path,
             1 if exists else 0,
             size,
-            digest,
+            digest_hmac,
             observed_epoch,
             1 if exists else 0,
             json_dumps(stored_details),

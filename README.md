@@ -420,10 +420,9 @@ fail before Codex launch unless Lattice is writable and healthy.
 
 Selected-target pre-contact backups are enabled and required by default. The
 default vault is outside the repository, and Upkeeper logs only an opaque
-`backup_id`, selected relative target, content sha256, mode, encrypted flag,
-protection flag, and `path_redacted=1`. Plain mode is a recovery aid, not a
-same-user security boundary; use age mode when the backup content should be
-encrypted before storage:
+target HMAC, mode, encrypted flag, protection flag, and `path_redacted=1`.
+Plain mode is a recovery aid, not a same-user security boundary; use age mode
+when the backup content should be encrypted before storage:
 
 ```sh
 UPKEEPER_PRECONTACT_BACKUP_MODE="auto"

@@ -18,12 +18,7 @@ upkeeper_issue_fix_private_issue_body_to_model_allowed() {
 
 issue_fix_log_hash() {
   local value="${1:-}"
-  python3 - "$value" <<'PY' 2>/dev/null || printf 'unknown'
-import hashlib
-import sys
-
-print(hashlib.sha256(sys.argv[1].encode("utf-8", "surrogateescape")).hexdigest()[:24])
-PY
+  upkeeper_value_hmac issue "$value"
 }
 
 prepare_bug_report_draft_artifact() {
@@ -1592,9 +1587,18 @@ resolve_prompt_file() {
     die "use either --prompt-file or --prompt, not both"
   fi
   if [[ -n "$PROMPT_FILE" ]]; then
+    if upkeeper_value_has_control_chars "$PROMPT_FILE"; then
+      die "prompt file path contains control characters"
+    fi
     PROMPT_FILE="$(resolve_path "$PROMPT_FILE")"
+    if upkeeper_value_has_control_chars "$PROMPT_FILE"; then
+      die "resolved prompt file path contains control characters"
+    fi
     if [[ "$UPKEEPER_AUTOMATION_LAUNCHER" != "$SCRIPT_NAME" ]]; then
       prompt_trust_root="$(resolve_path "$prompt_trust_root")"
+      if upkeeper_value_has_control_chars "$prompt_trust_root"; then
+        die "prompt trust root contains control characters"
+      fi
       [[ -d "$prompt_trust_root" ]] || die "prompt trust root is not a directory: $prompt_trust_root"
       case "$PROMPT_FILE" in
         "$prompt_trust_root"|"$prompt_trust_root"/*)

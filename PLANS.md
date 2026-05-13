@@ -1794,3 +1794,45 @@ Validation:
 - `for test_script in tests/*.bash; do bash "$test_script"; done`
 - `git diff --check`
 - `tools/validate_upkeeper.sh --quick`
+
+## Deferred Data-Protection Issue Burn-Down
+
+Status: completed
+
+Goal:
+- clear issues #309, #311, #312, and #314 as one deliberate multi-file repair
+- stop normal logs, prompts, startup-anomaly summaries, and Lattice artifact
+  references from exposing raw prompt paths, changed paths, or stable content
+  hashes
+- keep private local diagnostics and restore integrity checks available without
+  making those details model-visible by default
+
+Constraints:
+- preserve target isolation, pre-contact backup restore safety, startup-anomaly
+  gate behavior, and existing Lattice import/export compatibility where feasible
+- use keyed HMACs or boolean content-change signals for operator-facing equality
+  evidence
+- reject control characters in path-like operator inputs before they can reach
+  log records
+
+Files likely touched:
+- `PLANS.md`
+- `Upkeeper`
+- `lib/upkeeper/runtime_foundation.bash`
+- `lib/upkeeper/transcript_artifacts.bash`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/help_selection.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `lib/upkeeper/startup_anomaly_state.bash`
+- `lib/upkeeper/worktree_state.bash`
+- `lib/upkeeper/precontact_backup.bash`
+- `tools/upkeeper_lattice.py`
+- focused tests and operator docs
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`

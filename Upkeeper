@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.13
+## Version: v1.2.14
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -136,7 +136,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.13"
+UPKEEPER_VERSION="v1.2.14"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -824,7 +824,7 @@ main() {
   trap cleanup_run_temp_files EXIT
 
   compile_prompt "$compiled_prompt_file"
-  log_line "INFO" "run.compiled_prompt.ready path=$(shell_quote "$compiled_prompt_file") blob_hash=$(file_blob_hash "$compiled_prompt_file") size_bytes=$(file_size_bytes "$compiled_prompt_file")"
+  log_line "INFO" "run.compiled_prompt.ready $(log_kv path "$compiled_prompt_file") content_hmac=$(file_blob_hash "$compiled_prompt_file") size_bytes=$(file_size_bytes "$compiled_prompt_file")"
   log_line "INFO" "run.log_self_review_required log_file=$(shell_quote "$LOG_FILE") target_cycle=$CYCLE_ID"
   capture_startup_anomaly_gate_baseline
 
@@ -855,7 +855,7 @@ main() {
   if upkeeper_issue_workflow_read_only_enabled; then
     log_line "INFO" "genie_protocol.backend_mode stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") source=issue_workflow_read_only mode=$(shell_quote "$backend_mode_summary") comment_transport=last_message_block"
   fi
-  log_line "INFO" "run.start execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=${PROMPT_FILE:-inline/default} compiled_prompt=$compiled_prompt_file transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE")"
+  log_line "INFO" "run.start $(log_kv execution_origin "$CODEX_EXECUTION_ORIGIN") $(log_kv prompt_file "${PROMPT_FILE:-inline/default}") $(log_kv compiled_prompt "$compiled_prompt_file") $(log_kv transcript "$RUN_TRANSCRIPT_FILE")"
   RUN_CODEX_STARTED_EPOCH="$(date '+%s')"
   terminal_emit_progress "starting Codex review for ${RUN_SELECTED_REVIEW_PATH:-unknown} (model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT pass=${CODEX_PROMPT_PASS:-default}; transcript=$RUN_TRANSCRIPT_FILE)"
   start_terminal_progress_heartbeat "primary" "$RUN_TRANSCRIPT_FILE" "$RUN_CODEX_STARTED_EPOCH" "${RUN_SELECTED_REVIEW_PATH:-unknown}"

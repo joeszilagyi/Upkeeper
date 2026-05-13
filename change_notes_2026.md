@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-13: v1.2.14 changes:
+	1. Cleared the deferred data-protection issue cluster by rejecting control characters in prompt-file paths, using central log key/value encoding for `run.start`, and removing the prompt-file path from compiled prompt prose.
+	2. Startup-anomaly unresolved-state prompts now expose only HMAC state ids, reason classes, timestamps, and redaction markers; raw state paths, run hashes, and details stay in protected local state files.
+	3. Startup-anomaly and selected-target changed-path logs now publish path HMACs, coarse path classes/extensions, statuses, and `content_changed` booleans while preserving full raw path/hash evidence in protected local diagnostics.
+	4. Selected-target preselection, pre-contact backup metadata/logs, and Lattice artifact references now use keyed HMAC fingerprints for path and content identity instead of raw SHA-256/git object hashes on normal operator-facing surfaces.
+
 2026-05-12: v1.2.13 changes:
 	1. Startup disk-preflight anomaly notes now send only safe labels and free-space percentages to the model, while local logs hash path and mount metadata by default and expose raw shell-quoted values only in debug1 or full terminal mode.
 	2. This release also keeps the default prompt from reintroducing replacement-target authority and sets a private process umask before runtime artifacts are created, with deterministic local validation covering the tightened contracts.
@@ -636,3 +642,4 @@ Reconstructed pre-1.0 history:
 - The backlog launcher now checks the local exact-model quota snapshot before issue selection and skips the cycle cleanly when the primary bucket is still in `defer`, preventing one-minute retry churn and repeated quota-stop obligations on the same issue.
 - Backlog control flow now also captures the real function exit statuses in `main()` for both quota preflight and issue runs, fixing a second shell-negation bug that was still turning `BLOCKED` issue reviews and quota-defer preflights into apparent success paths.
 - Backlog `main()` now captures those nonzero statuses in `if ...; then ... else ... fi` form so `set -e` does not abort the script before blocked-issue deferral or quota-defer handling can run.
+- Issue text describing log-rotation archives, startup-anomaly gate path/hash leaks, unresolved startup-anomaly state leakage, and `prompt_file` / `run.start` log injection now pins directly to the wrapper modules that actually own those behaviors, preventing the backlog loop from wasting full issue cycles on excluded artifacts like `Upkeeper.log` or unrelated quota helpers.

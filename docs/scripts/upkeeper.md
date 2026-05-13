@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.13
+Version: v1.2.14
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -264,9 +264,9 @@ Prompt behavior:
     `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` is set and `age` is available;
     otherwise it uses plain local mode unless encrypted backup is required.
     Plain mode is a recovery aid, not a same-user security boundary. Backup logs
-    and prompts include target, mode, encrypted, `protected_from_backend`, and
-    `path_redacted=1`; the vault path is not prompt-visible. Restore a plain
-    backup by id with:
+    and prompts include HMAC target identity, mode, encrypted,
+    `protected_from_backend`, and `path_redacted=1`; the vault path is not
+    prompt-visible. Restore a plain backup by id with:
       `tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID`
   - A repo-root `.upkeeperignore`, or the file named by `UPKEEPER_IGNORE_FILE`,
     is a target-selection firewall. It uses simple Gitignore-style glob lines
@@ -286,10 +286,11 @@ Prompt behavior:
     read, Codex must report `BLOCKED` and must not choose a replacement target.
     Replacement target selection is wrapper-only because pre-contact backup
     coverage is target-specific.
-  - Preselection records the selected target's git status and content hash before
-    Codex starts. If the selected file is already dirty, that is baseline state,
-    not a blocker by itself; touch verification must compare against the
-    pre-touch content hash rather than assuming the diff against HEAD is empty.
+  - Preselection records the selected target's git status, content state, and
+    HMAC content fingerprints before Codex starts. If the selected file is
+    already dirty, that is baseline state, not a blocker by itself; touch
+    verification must compare against a local pre-touch content fingerprint
+    rather than assuming the diff against HEAD is empty.
   - Tests are not script/tool targets merely because they use a script-language
     extension; select tests only when explicit extra guidance asks for test
     review or no eligible script/tool target exists.
@@ -310,6 +311,8 @@ Prompt behavior:
     rejected so the wrapper does not silently fall back to the default prompt.
     In unattended launcher mode, FILE must be under `UPKEEPER_PROMPT_TRUST_ROOT`
     unless `UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE=1`.
+    Paths containing control characters are rejected before logging or prompt
+    compilation.
     Standalone add-on prompts include
     `prompts/p23-data-contract-negative-fixture-audit.md` for explicit
     data-contract review and `prompts/p24-de-llm-ing-viability-review.md` for

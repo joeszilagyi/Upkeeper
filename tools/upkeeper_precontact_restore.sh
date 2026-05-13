@@ -14,7 +14,7 @@ Restore one Upkeeper pre-contact backup by opaque backup id.
 
 Defaults restore to the original selected relative path. Age-encrypted backups
 require --identity=PATH or UPKEEPER_PRECONTACT_BACKUP_AGE_IDENTITY. The restore
-verifies content_sha256 before replacing the destination.
+verifies the stored content fingerprint before replacing the destination.
 USAGE
 }
 

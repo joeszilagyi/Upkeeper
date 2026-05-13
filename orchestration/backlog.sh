@@ -458,8 +458,9 @@ main() {
     exit 0
   fi
 
-  if ! quota_preflight_allows_backlog_run; then
-    local quota_status="$?"
+  quota_preflight_allows_backlog_run
+  local quota_status="$?"
+  if [[ "$quota_status" -ne 0 ]]; then
     [[ "$quota_status" -eq 3 ]] && exit 0
     exit "$quota_status"
   fi
@@ -467,10 +468,8 @@ main() {
   issue_info="$(selected_issue "$pr_number")"
   issue_number="$(awk -F '\t' '{print $1}' <<<"$issue_info")"
 
-  run_status=0
-  if ! run_upkeeper_for_one_target "$issue_number"; then
-    run_status="$?"
-  fi
+  run_upkeeper_for_one_target "$issue_number"
+  run_status="$?"
 
   if [[ "$run_status" -eq 2 ]]; then
     if has_worktree_changes; then

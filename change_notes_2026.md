@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-12: lattice Git import privacy defaults:
+	1. `tools/upkeeper_lattice.py import-git` now stores contributor identity as a stable SHA-256 token by default and only preserves contributor name/email when `--include-contributor-pii` is explicitly requested.
+	2. Git commit imports now store a subject hash plus subject length by default, keep raw subjects only behind `--include-commit-subjects`, and scrub legacy non-opt-in rows on the next mutating lattice pass.
+	3. `query file-history` and `export-jsonl` now follow the same privacy contract so default operator-facing outputs no longer surface raw Git contributor PII or commit subjects from non-opt-in rows.
+
 2026-05-13: v1.2.14 changes:
 	1. Cleared the deferred data-protection issue cluster by rejecting control characters in prompt-file paths, using central log key/value encoding for `run.start`, and removing the prompt-file path from compiled prompt prose.
 	2. Startup-anomaly unresolved-state prompts now expose only HMAC state ids, reason classes, timestamps, and redaction markers; raw state paths, run hashes, and details stay in protected local state files.

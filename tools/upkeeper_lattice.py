@@ -99,6 +99,8 @@ REDACTED_PATH_PREFIX = "path-sha256:"
 PASS_RESULT_PATH_HMAC_PREFIX = "path-hmac-sha256:"
 METADATA_HMAC_PREFIX = "meta-hmac-sha256:"
 CONTENT_HMAC_PREFIX = "content-hmac-sha256:"
+CONTRIBUTOR_HASH_PREFIX = "contributor-sha256:"
+COMMIT_SUBJECT_HASH_PREFIX = "subject-sha256:"
 UPKEEPER_VERBOSE_METADATA_ENV = "UPKEEPER_VERBOSE_METADATA"
 TRANSIENT_ARTIFACT_KINDS = {"transcript", "compiled_prompt", "last_message"}
 ARTIFACT_RETENTION_CLASSES = {
@@ -704,6 +706,8 @@ CREATE_TABLE_SQL = [
       name text,
       email text,
       github_login text,
+      identity_hash text,
+      pii_included integer not null default 0,
       unique(name, email)
     )
     """,
@@ -717,6 +721,9 @@ CREATE_TABLE_SQL = [
       author_epoch integer,
       committer_epoch integer,
       subject text,
+      subject_hash text,
+      subject_length integer,
+      subject_included integer not null default 0,
       source_id integer references source_records(source_id),
       unique(repo_id, sha)
     )
@@ -1003,6 +1010,7 @@ CREATE_INDEX_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_file_pass_runs_repo_pass_outcome ON file_pass_runs(repo_id, pass_code, outcome)",
     "CREATE INDEX IF NOT EXISTS idx_file_events_repo_file_epoch ON file_events(repo_id, file_id, event_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_git_commits_repo_sha ON git_commits(repo_id, sha)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_contributors_identity_hash ON contributors(identity_hash) WHERE identity_hash IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_git_file_changes_unique_event ON git_file_changes(repo_id, commit_id, path, coalesce(old_path, ''), coalesce(status, ''))",
     "CREATE INDEX IF NOT EXISTS idx_git_file_changes_repo_path_epoch ON git_file_changes(repo_id, path, change_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_regression_events_repo_file_epoch ON regression_events(repo_id, file_id, marked_epoch)",
@@ -1053,6 +1061,118 @@ def sha256_bytes(data: bytes) -> str:
 
 def sha256_text(text: str) -> str:
     return sha256_bytes(text.encode("utf-8", "surrogateescape"))
+
+
+def contributor_identity_hash(name: str, email: str) -> str:
+    if not name and not email:
+        return ""
+    return CONTRIBUTOR_HASH_PREFIX + sha256_text(f"name={name}\0email={email}")
+
+
+def commit_subject_hash(subject: str) -> str:
+    return COMMIT_SUBJECT_HASH_PREFIX + sha256_text(subject)
+
+
+def commit_subject_summary(subject: str | None, subject_hash: Any, subject_length: Any, subject_included: Any) -> dict[str, Any]:
+    included = 1 if parse_bool_int(str(subject_included) if subject_included is not None else None) == 1 else 0
+    raw_subject = subject if isinstance(subject, str) else ""
+    derived_hash = str(subject_hash or "")
+    if not derived_hash and (raw_subject or subject is not None):
+        derived_hash = commit_subject_hash(raw_subject)
+    derived_length = subject_length
+    if derived_length is None and (raw_subject or subject is not None):
+        derived_length = len(raw_subject)
+    return {
+        "subject": raw_subject if included else None,
+        "subject_hash": derived_hash or None,
+        "subject_length": int(derived_length) if derived_length is not None else None,
+        "subject_included": included,
+    }
+
+
+def local_git_source_payload(
+    author_hash: str | None,
+    committer_hash: str | None,
+    subject: str,
+    *,
+    include_commit_subjects: bool,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "author_identity_hash": author_hash or None,
+        "committer_identity_hash": committer_hash or None,
+    }
+    payload.update(
+        commit_subject_summary(
+            subject if include_commit_subjects else None,
+            commit_subject_hash(subject),
+            len(subject),
+            1 if include_commit_subjects else 0,
+        )
+    )
+    return payload
+
+
+def sanitize_source_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("source_kind") != "local_git":
+        return payload
+    parsed_json = payload.get("parsed_json")
+    if not isinstance(parsed_json, str) or not parsed_json.strip():
+        return payload
+    try:
+        parsed = json.loads(parsed_json)
+    except (TypeError, json.JSONDecodeError):
+        return payload
+    if not isinstance(parsed, dict):
+        return payload
+    updated = dict(payload)
+    normalized = dict(parsed)
+    summary = commit_subject_summary(
+        normalized.get("subject") if isinstance(normalized.get("subject"), str) else None,
+        normalized.get("subject_hash"),
+        normalized.get("subject_length"),
+        normalized.get("subject_included"),
+    )
+    normalized["subject_hash"] = summary["subject_hash"]
+    normalized["subject_length"] = summary["subject_length"]
+    normalized["subject_included"] = summary["subject_included"]
+    if summary["subject_included"] == 1 and summary["subject"] is not None:
+        normalized["subject"] = summary["subject"]
+    else:
+        normalized.pop("subject", None)
+    updated["parsed_json"] = json_dumps(normalized)
+    return updated
+
+
+def sanitize_git_privacy_payload(table: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if table == "contributors":
+        updated = dict(payload)
+        identity_hash = str(updated.get("identity_hash") or "")
+        name = updated.get("name") if isinstance(updated.get("name"), str) else ""
+        email = updated.get("email") if isinstance(updated.get("email"), str) else ""
+        if not identity_hash:
+            identity_hash = contributor_identity_hash(name, email)
+        updated["identity_hash"] = identity_hash or None
+        pii_included = 1 if parse_bool_int(str(updated.get("pii_included")) if updated.get("pii_included") is not None else None) == 1 else 0
+        updated["pii_included"] = pii_included
+        if pii_included != 1:
+            updated["name"] = None
+            updated["email"] = None
+            updated["github_login"] = None
+        return updated
+    if table == "git_commits":
+        updated = dict(payload)
+        updated.update(
+            commit_subject_summary(
+                updated.get("subject") if isinstance(updated.get("subject"), str) else None,
+                updated.get("subject_hash"),
+                updated.get("subject_length"),
+                updated.get("subject_included"),
+            )
+        )
+        return updated
+    if table == "source_records":
+        return sanitize_source_record_payload(payload)
+    return payload
 
 
 def current_lattice_raw_storage() -> str:
@@ -1698,6 +1818,111 @@ def ensure_worktree_snapshot_path_mtime_ns_column(conn: sqlite3.Connection) -> N
             pass
 
 
+def ensure_contributor_privacy_columns(conn: sqlite3.Connection) -> None:
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(contributors)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "identity_hash" not in columns:
+        try:
+            conn.execute("alter table contributors add column identity_hash text")
+        except sqlite3.Error:
+            pass
+    if "pii_included" not in columns:
+        try:
+            conn.execute("alter table contributors add column pii_included integer not null default 0")
+        except sqlite3.Error:
+            pass
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_contributors_identity_hash ON contributors(identity_hash) WHERE identity_hash IS NOT NULL"
+        )
+    except sqlite3.Error:
+        pass
+
+
+def ensure_git_commit_privacy_columns(conn: sqlite3.Connection) -> None:
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(git_commits)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "subject_hash" not in columns:
+        try:
+            conn.execute("alter table git_commits add column subject_hash text")
+        except sqlite3.Error:
+            pass
+    if "subject_length" not in columns:
+        try:
+            conn.execute("alter table git_commits add column subject_length integer")
+        except sqlite3.Error:
+            pass
+    if "subject_included" not in columns:
+        try:
+            conn.execute("alter table git_commits add column subject_included integer not null default 0")
+        except sqlite3.Error:
+            pass
+
+
+def scrub_legacy_git_privacy_data(conn: sqlite3.Connection) -> None:
+    ensure_contributor_privacy_columns(conn)
+    ensure_git_commit_privacy_columns(conn)
+    contributor_columns = set(table_columns(conn, "contributors"))
+    if {"contributor_id", "name", "email", "identity_hash", "pii_included"}.issubset(contributor_columns):
+        for row in conn.execute("select contributor_id, name, email, github_login, identity_hash, pii_included from contributors"):
+            identity_hash = str(row["identity_hash"] or "")
+            name = row["name"] if isinstance(row["name"], str) else ""
+            email = row["email"] if isinstance(row["email"], str) else ""
+            if not identity_hash:
+                identity_hash = contributor_identity_hash(name, email)
+            pii_included = 1 if parse_bool_int(str(row["pii_included"]) if row["pii_included"] is not None else None) == 1 else 0
+            if pii_included == 1:
+                conn.execute(
+                    "update contributors set identity_hash=? where contributor_id=?",
+                    (identity_hash or None, int(row["contributor_id"])),
+                )
+                continue
+            conn.execute(
+                """
+                update contributors
+                set identity_hash=?, name=NULL, email=NULL, github_login=NULL, pii_included=0
+                where contributor_id=?
+                """,
+                (identity_hash or None, int(row["contributor_id"])),
+            )
+    commit_columns = set(table_columns(conn, "git_commits"))
+    if {"commit_id", "subject", "subject_hash", "subject_length", "subject_included"}.issubset(commit_columns):
+        for row in conn.execute("select commit_id, subject, subject_hash, subject_length, subject_included from git_commits"):
+            summary = commit_subject_summary(
+                row["subject"] if isinstance(row["subject"], str) else None,
+                row["subject_hash"],
+                row["subject_length"],
+                row["subject_included"],
+            )
+            if summary["subject_included"] == 1:
+                conn.execute(
+                    "update git_commits set subject_hash=?, subject_length=?, subject_included=1 where commit_id=?",
+                    (summary["subject_hash"], summary["subject_length"], int(row["commit_id"])),
+                )
+                continue
+            conn.execute(
+                """
+                update git_commits
+                set subject=NULL, subject_hash=?, subject_length=?, subject_included=0
+                where commit_id=?
+                """,
+                (summary["subject_hash"], summary["subject_length"], int(row["commit_id"])),
+            )
+    for row in conn.execute(
+        "select source_id, source_kind, parsed_json from source_records where source_kind='local_git' and parsed_json is not null"
+    ):
+        payload = sanitize_source_record_payload(dict(row))
+        if payload.get("parsed_json") != row["parsed_json"]:
+            conn.execute(
+                "update source_records set parsed_json=? where source_id=?",
+                (payload.get("parsed_json"), int(row["source_id"])),
+            )
+
+
 def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
     now = epoch_now()
     with conn:
@@ -1708,6 +1933,9 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
             conn.execute(sql)
         ensure_file_snapshot_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_mtime_ns_column(conn)
+        ensure_contributor_privacy_columns(conn)
+        ensure_git_commit_privacy_columns(conn)
+        scrub_legacy_git_privacy_data(conn)
         conn.execute("PRAGMA user_version=1")
         conn.execute(
             "insert or replace into schema_meta(key, value) values (?, ?)",
@@ -4326,28 +4554,63 @@ def refresh_rollups(conn: sqlite3.Connection, repo_id: int) -> None:
         )
 
 
-def ensure_contributor(conn: sqlite3.Connection, name: str, email: str) -> int | None:
+def ensure_contributor(
+    conn: sqlite3.Connection,
+    name: str,
+    email: str,
+    *,
+    include_pii: bool = False,
+) -> int | None:
+    ensure_contributor_privacy_columns(conn)
     if not name and not email:
         return None
-    conn.execute(
-        "insert or ignore into contributors(name, email) values (?, ?)",
-        (name or None, email or None),
-    )
+    identity_hash = contributor_identity_hash(name, email)
     row = conn.execute(
-        "select contributor_id from contributors where name is ? and email is ?",
-        (name or None, email or None),
+        "select contributor_id, identity_hash from contributors where identity_hash=?",
+        (identity_hash,),
     ).fetchone()
+    if not row:
+        row = conn.execute(
+            "select contributor_id, identity_hash from contributors where name is ? and email is ?",
+            (name or None, email or None),
+        ).fetchone()
     if row:
-        return int(row["contributor_id"])
-    row = conn.execute(
-        "select contributor_id from contributors where coalesce(name,'')=? and coalesce(email,'')=?",
-        (name, email),
-    ).fetchone()
-    return int(row["contributor_id"]) if row else None
+        contributor_id = int(row["contributor_id"])
+        if include_pii:
+            conn.execute(
+                """
+                update contributors
+                set identity_hash=?, name=?, email=?, pii_included=1
+                where contributor_id=?
+                """,
+                (identity_hash, name or None, email or None, contributor_id),
+            )
+        elif not row["identity_hash"]:
+            conn.execute(
+                """
+                update contributors
+                set identity_hash=?, name=NULL, email=NULL, github_login=NULL, pii_included=0
+                where contributor_id=?
+                """,
+                (identity_hash, contributor_id),
+            )
+        return contributor_id
+    cur = conn.execute(
+        "insert into contributors(name, email, identity_hash, pii_included) values (?, ?, ?, ?)",
+        (
+            (name or None) if include_pii else None,
+            (email or None) if include_pii else None,
+            identity_hash,
+            1 if include_pii else 0,
+        ),
+    )
+    return int(cur.lastrowid)
 
 
 def command_import_git(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    include_contributor_pii = bool(getattr(args, "include_contributor_pii", False))
+    include_commit_subjects = bool(getattr(args, "include_commit_subjects", False))
     if not inside_git_repo(root):
         print_json({"status": "unavailable", "reason": "no_git_repository"})
         return EXIT_GIT_UNAVAILABLE
@@ -4359,6 +4622,7 @@ def command_import_git(args: argparse.Namespace) -> int:
     rows_written = 0
     duplicate_file_changes = 0
     with conn:
+        scrub_legacy_git_privacy_data(conn)
         repo_id = ensure_repository(conn, root)
         import_id = start_import(conn, repo_id, "local_git", {"root": str(root)})
         source_id = ensure_source_record(conn, repo_id, "local_git", raw_ref="git-import", parse_status="started")
@@ -4404,22 +4668,34 @@ def command_import_git(args: argparse.Namespace) -> int:
                 commit_id = int(commit_row["commit_id"])
                 commit_source_id = int(commit_row["source_id"]) if commit_row["source_id"] is not None else None
             else:
-                author_id = ensure_contributor(conn, an, ae)
-                committer_id = ensure_contributor(conn, cn, ce)
+                author_id = ensure_contributor(conn, an, ae, include_pii=include_contributor_pii)
+                committer_id = ensure_contributor(conn, cn, ce, include_pii=include_contributor_pii)
+                subject_summary = commit_subject_summary(
+                    subject if include_commit_subjects else None,
+                    commit_subject_hash(subject),
+                    len(subject),
+                    1 if include_commit_subjects else 0,
+                )
                 commit_source_id = ensure_source_record(
                     conn,
                     repo_id,
                     "local_git",
                     raw_ref=commit_sha,
-                    parsed={"subject": subject},
+                    parsed=local_git_source_payload(
+                        contributor_identity_hash(an, ae) or None,
+                        contributor_identity_hash(cn, ce) or None,
+                        subject,
+                        include_commit_subjects=include_commit_subjects,
+                    ),
                     source_epoch=int(at or 0) if str(at).isdigit() else None,
                     parse_status="parsed",
                 )
                 cur = conn.execute(
                     """
                     insert into git_commits(
-                      repo_id, sha, author_id, committer_id, author_epoch, committer_epoch, subject, source_id
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                      repo_id, sha, author_id, committer_id, author_epoch, committer_epoch,
+                      subject, subject_hash, subject_length, subject_included, source_id
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         repo_id,
@@ -4428,12 +4704,68 @@ def command_import_git(args: argparse.Namespace) -> int:
                         committer_id,
                         int(at or 0) if str(at).isdigit() else None,
                         int(ct or 0) if str(ct).isdigit() else None,
-                        subject,
+                        subject_summary["subject"],
+                        subject_summary["subject_hash"],
+                        subject_summary["subject_length"],
+                        subject_summary["subject_included"],
                         commit_source_id,
                     ),
                 )
                 commit_id = int(cur.lastrowid)
                 commits_written += 1
+            if commit_row:
+                subject_summary = commit_subject_summary(
+                    subject if include_commit_subjects else None,
+                    commit_subject_hash(subject),
+                    len(subject),
+                    1 if include_commit_subjects else 0,
+                )
+                author_id = ensure_contributor(conn, an, ae, include_pii=include_contributor_pii)
+                committer_id = ensure_contributor(conn, cn, ce, include_pii=include_contributor_pii)
+                conn.execute(
+                    """
+                    update git_commits
+                    set author_id=coalesce(author_id, ?),
+                        committer_id=coalesce(committer_id, ?),
+                        subject_hash=coalesce(subject_hash, ?),
+                        subject_length=coalesce(subject_length, ?),
+                        subject_included=case
+                          when ?=1 then 1
+                          else coalesce(subject_included, 0)
+                        end,
+                        subject=case
+                          when ?=1 then ?
+                          when coalesce(subject_included, 0)=1 then subject
+                          else NULL
+                        end
+                    where commit_id=?
+                    """,
+                    (
+                        author_id,
+                        committer_id,
+                        subject_summary["subject_hash"],
+                        subject_summary["subject_length"],
+                        subject_summary["subject_included"],
+                        subject_summary["subject_included"],
+                        subject_summary["subject"],
+                        commit_id,
+                    ),
+                )
+                if commit_source_id is not None:
+                    conn.execute(
+                        "update source_records set parsed_json=? where source_id=?",
+                        (
+                            json_dumps(
+                                local_git_source_payload(
+                                    contributor_identity_hash(an, ae) or None,
+                                    contributor_identity_hash(cn, ce) or None,
+                                    subject,
+                                    include_commit_subjects=include_commit_subjects,
+                                )
+                            ),
+                            commit_source_id,
+                        ),
+                    )
             i = 8
             while i < len(parts):
                 status_code = parts[i].strip()
@@ -4962,6 +5294,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
             if table.startswith("file_") and table.endswith("_rollups"):
                 continue
             for payload in export_table_rows(conn, table, repo_id=repo_id):
+                payload = sanitize_git_privacy_payload(table, payload)
                 payload = redact_payload(payload, args)
                 pk = table_primary_key(conn, table)
                 logical = f"{table}:{payload.get(pk) if pk else sha256_text(json_dumps(payload))}"
@@ -5550,16 +5883,30 @@ def query_file_history(conn: sqlite3.Connection, root: Path, repo_id: int, args:
         (repo_id, file_id),
     ):
         rows.append(dict(row))
+    git_commit_columns = set(table_columns(conn, "git_commits"))
+    subject_hash_expr = "c.subject_hash as subject_hash" if "subject_hash" in git_commit_columns else "null as subject_hash"
+    subject_length_expr = "c.subject_length as subject_length" if "subject_length" in git_commit_columns else "null as subject_length"
+    subject_included_expr = "c.subject_included as subject_included" if "subject_included" in git_commit_columns else "0 as subject_included"
     for row in conn.execute(
-        """
-        select g.change_epoch as epoch, 'git_change' as kind, g.path, g.status, c.sha, c.subject
+        f"""
+        select g.change_epoch as epoch, 'git_change' as kind, g.path, g.status, c.sha, c.subject,
+               {subject_hash_expr}, {subject_length_expr}, {subject_included_expr}
         from git_file_changes g join git_commits c on c.commit_id=g.commit_id
         where g.repo_id=? and g.file_id=?
         order by g.change_epoch, g.git_file_change_id
         """,
         (repo_id, file_id),
     ):
-        rows.append(dict(row))
+        payload = dict(row)
+        payload.update(
+            commit_subject_summary(
+                payload.get("subject") if isinstance(payload.get("subject"), str) else None,
+                payload.get("subject_hash"),
+                payload.get("subject_length"),
+                payload.get("subject_included"),
+            )
+        )
+        rows.append(payload)
     return sorted(rows, key=lambda item: (item.get("epoch") or 0, str(item.get("kind"))))
 
 
@@ -6162,6 +6509,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("import-git")
     p.add_argument("--limit", type=int)
+    p.add_argument("--include-contributor-pii", action="store_true")
+    p.add_argument("--include-commit-subjects", action="store_true")
     p.set_defaults(func=command_import_git)
 
     p = sub.add_parser("import-upkeeper-log")

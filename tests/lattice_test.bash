@@ -872,6 +872,95 @@ PY
   [[ "$state" == "active" ]] || fail "import-git set head-tracked file as $state"
 }
 
+test_import_git_privacy_defaults_and_opt_in() {
+  local repo default_db optin_db export_path
+
+  repo="$TEST_TMP_ROOT/lattice-import-git-privacy"
+  default_db="$repo/runtime/upkeeper-lattice/default.sqlite3"
+  optin_db="$repo/runtime/upkeeper-lattice/optin.sqlite3"
+  export_path="$TEST_TMP_ROOT/lattice-privacy-export.jsonl"
+  mkdir -p "$repo"
+  (
+    cd "$repo"
+    git init -q
+    git config user.name 'Lattice Privacy Fixture'
+    git config user.email 'fixture@example.invalid'
+    printf 'privacy fixture\n' >tracked.txt
+    git add tracked.txt
+    GIT_AUTHOR_NAME='Alice Example' \
+      GIT_AUTHOR_EMAIL='alice@example.com' \
+      GIT_COMMITTER_NAME='Bob Example' \
+      GIT_COMMITTER_EMAIL='bob@example.com' \
+      git commit -q -m 'Incident ACME-42 for Jane Doe'
+  )
+
+  "$LATTICE_TOOL" --root "$repo" --db "$default_db" init >"$TEST_TMP_ROOT/privacy-default-init.out"
+  "$LATTICE_TOOL" --root "$repo" --db "$default_db" import-git >"$TEST_TMP_ROOT/privacy-default-import.out"
+  python3 - "$default_db" <<'PY' || fail "default import-git retained contributor or subject PII"
+import json
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+conn.row_factory = sqlite3.Row
+contributor = dict(conn.execute("select name, email, identity_hash, pii_included from contributors order by contributor_id limit 1").fetchone())
+commit = dict(conn.execute("select subject, subject_hash, subject_length, subject_included from git_commits order by commit_id limit 1").fetchone())
+parsed = json.loads(
+    conn.execute(
+        "select parsed_json from source_records where source_kind='local_git' and raw_ref!='git-import' order by source_id limit 1"
+    ).fetchone()[0]
+)
+conn.close()
+
+assert contributor["name"] is None, contributor
+assert contributor["email"] is None, contributor
+assert contributor["identity_hash"].startswith("contributor-sha256:"), contributor
+assert int(contributor["pii_included"]) == 0, contributor
+assert commit["subject"] is None, commit
+assert commit["subject_hash"].startswith("subject-sha256:"), commit
+assert int(commit["subject_length"]) == len("Incident ACME-42 for Jane Doe"), commit
+assert int(commit["subject_included"]) == 0, commit
+assert "subject" not in parsed or parsed["subject"] is None, parsed
+assert parsed["subject_hash"].startswith("subject-sha256:"), parsed
+PY
+  "$LATTICE_TOOL" --root "$repo" --db "$default_db" query file-history --path tracked.txt --format json >"$TEST_TMP_ROOT/privacy-default-history.json"
+  python3 - "$TEST_TMP_ROOT/privacy-default-history.json" <<'PY' || fail "file-history exposed a raw commit subject by default"
+import json
+import sys
+
+rows = json.load(open(sys.argv[1], encoding="utf-8"))
+git_rows = [row for row in rows if row.get("kind") == "git_change"]
+assert git_rows, rows
+assert git_rows[0]["subject"] is None, git_rows
+assert git_rows[0]["subject_hash"].startswith("subject-sha256:"), git_rows
+PY
+  "$LATTICE_TOOL" --root "$repo" --db "$default_db" export-jsonl --output "$export_path" >"$TEST_TMP_ROOT/privacy-default-export.out"
+  if rg -q 'alice@example.com|Incident ACME-42 for Jane Doe' "$export_path"; then
+    fail "default export-jsonl leaked contributor or commit subject PII"
+  fi
+
+  "$LATTICE_TOOL" --root "$repo" --db "$optin_db" init >"$TEST_TMP_ROOT/privacy-optin-init.out"
+  "$LATTICE_TOOL" --root "$repo" --db "$optin_db" import-git --include-contributor-pii --include-commit-subjects >"$TEST_TMP_ROOT/privacy-optin-import.out"
+  python3 - "$optin_db" <<'PY' || fail "opt-in import-git did not preserve raw contributor or subject data"
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+conn.row_factory = sqlite3.Row
+contributor = dict(conn.execute("select name, email, identity_hash, pii_included from contributors where email is not null order by contributor_id limit 1").fetchone())
+commit = dict(conn.execute("select subject, subject_hash, subject_length, subject_included from git_commits order by commit_id limit 1").fetchone())
+conn.close()
+
+assert contributor["name"] == "Alice Example", contributor
+assert contributor["email"] == "alice@example.com", contributor
+assert contributor["identity_hash"].startswith("contributor-sha256:"), contributor
+assert int(contributor["pii_included"]) == 1, contributor
+assert commit["subject"] == "Incident ACME-42 for Jane Doe", commit
+assert commit["subject_hash"].startswith("subject-sha256:"), commit
+assert int(commit["subject_included"]) == 1, commit
+PY
+}
+
 test_backup_is_read_only() {
   local repo DB counts_before counts_after before_source_count before_artifact_count after_source_count after_artifact_count
 
@@ -1724,6 +1813,7 @@ PY
 test_lattice_cli_contracts
 test_no_git_import_and_recovery
 test_import_git_prefers_checked_out_branch_state
+test_import_git_privacy_defaults_and_opt_in
 test_backup_is_read_only
 test_missing_selection_path_stays_missing
 test_wrapper_required_policy

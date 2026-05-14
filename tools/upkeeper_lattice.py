@@ -1142,6 +1142,18 @@ def source_record_storage_path(root: Path, source_kind: str, value: str) -> str:
     return artifact_path_hmac(root, value)
 
 
+def source_record_storage_uri(root: Path, source_kind: str, value: str) -> str:
+    if not value or identity_value_is_redacted(value):
+        return value
+    if source_kind not in SOURCE_RECORD_PATH_HMAC_KINDS:
+        return value
+    return artifact_path_hmac(root, value)
+
+
+def sanitize_upkeeper_log_parsed(parsed: dict[str, Any]) -> dict[str, Any]:
+    return filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_SOURCE_SAFE_KEYS)
+
+
 def sanitize_source_record_payload(
     payload: dict[str, Any],
     *,
@@ -1151,7 +1163,18 @@ def sanitize_source_record_payload(
     source_kind = str(updated.get("source_kind") or "")
     if root is not None and isinstance(updated.get("source_path"), str):
         updated["source_path"] = source_record_storage_path(root, source_kind, updated["source_path"])
+    if root is not None and isinstance(updated.get("source_uri"), str):
+        updated["source_uri"] = source_record_storage_uri(root, source_kind, updated["source_uri"])
     if source_kind != "local_git":
+        if source_kind == "upkeeper_log":
+            parsed_json = updated.get("parsed_json")
+            if isinstance(parsed_json, str) and parsed_json.strip():
+                try:
+                    parsed = json.loads(parsed_json)
+                except (TypeError, json.JSONDecodeError):
+                    return updated
+                if isinstance(parsed, dict):
+                    updated["parsed_json"] = json_dumps(sanitize_upkeeper_log_parsed(parsed))
         return updated
     parsed_json = updated.get("parsed_json")
     if not isinstance(parsed_json, str) or not parsed_json.strip():
@@ -1257,6 +1280,8 @@ def normalize_source_record_parsed(
         return None
     if not source_record_parsed_allowed(source_kind, raw_ref, parse_status, raw_storage_mode=raw_storage_mode):
         return None
+    if source_kind == "upkeeper_log" and isinstance(parsed, dict):
+        return sanitize_upkeeper_log_parsed(parsed)
     if source_kind != "local_git" or not isinstance(parsed, dict):
         return parsed
     normalized = dict(parsed)
@@ -1510,14 +1535,23 @@ def scrub_repo_identity_rows(conn: sqlite3.Connection, repo_id: int, context: tu
 
 def scrub_source_record_rows(conn: sqlite3.Connection, root: Path, repo_id: int) -> None:
     for row in conn.execute(
-        "select source_id, source_kind, source_path from source_records where repo_id=? and source_path is not null",
+        """
+        select source_id, source_kind, source_path, source_uri
+        from source_records
+        where repo_id=? and (source_path is not null or source_uri is not null)
+        """,
         (repo_id,),
     ):
         source_kind = str(row["source_kind"] or "")
         source_path = row["source_path"] if isinstance(row["source_path"], str) else ""
         updated_path = source_record_storage_path(root, source_kind, source_path)
-        if updated_path != source_path:
-            conn.execute("update source_records set source_path=? where source_id=?", (updated_path, int(row["source_id"])))
+        source_uri = row["source_uri"] if isinstance(row["source_uri"], str) else ""
+        updated_uri = source_record_storage_uri(root, source_kind, source_uri)
+        if updated_path != source_path or updated_uri != source_uri:
+            conn.execute(
+                "update source_records set source_path=?, source_uri=? where source_id=?",
+                (updated_path, updated_uri, int(row["source_id"])),
+            )
 
 
 def verbose_metadata_enabled() -> bool:
@@ -2456,6 +2490,7 @@ def ensure_source_record(
         source_kind = "operator"
     now = epoch_now()
     stored_source_path = source_record_storage_path(root, source_kind, source_path)
+    stored_source_uri = source_record_storage_uri(root, source_kind, source_uri)
     stored_raw_text = raw_text if effective_lattice_raw_storage(raw_storage_mode) == "full" else None
     stored_parsed = normalize_source_record_parsed(
         source_kind,
@@ -2475,7 +2510,7 @@ def ensure_source_record(
             repo_id,
             source_kind,
             stored_source_path or None,
-            source_uri or None,
+            stored_source_uri or None,
             source_epoch,
             now,
             raw_ref or None,
@@ -3388,6 +3423,22 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
         "execution_origin": "primary",
         "dry_run": "1",
     }
+    replayed_quota_payload = {
+        "timestamp": "2026-05-13T00:00:05-0700",
+        "level": "WARN",
+        "event": "quota.current",
+        "cycle": "probe",
+        "run_hash": "probe",
+        "execution_origin": "primary",
+        "dry_run": "0",
+        "source": "/home/joe/.codex/sessions/2026/05/session.jsonl",
+        "limit_id": "plan-123",
+        "limit_name": "Example Plan",
+        "plan_type": "paid",
+        "snapshot_model_hint": "gpt-5.5",
+        "primary_used": "91%",
+        "primary_reset": "2026-05-13 01:00:00 -0700",
+    }
     unsafe_selection_payload = {"selection": {"path": "secret.txt"}, "candidate_count": 1}
     for mode in ("none", "minimal", "limited", "full"):
         conn.execute(f"SAVEPOINT raw_storage_{mode}")
@@ -3412,6 +3463,17 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
                 parsed=unsafe_selection_payload,
                 raw_storage_mode=mode,
             )
+            replayed_id = ensure_source_record(
+                conn,
+                root,
+                repo_id,
+                "upkeeper_log",
+                source_path="/home/joe/.codex/sessions/2026/05/session.jsonl",
+                source_uri="file:///home/joe/.codex/sessions/2026/05/session.jsonl",
+                raw_ref="quota.current",
+                parsed=replayed_quota_payload,
+                raw_storage_mode=mode,
+            )
             safe_row = conn.execute(
                 "select raw_text, parsed_json from source_records where source_id=?",
                 (safe_id,),
@@ -3420,6 +3482,13 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
                 "select raw_text, parsed_json from source_records where source_id=?",
                 (unsafe_id,),
             ).fetchone()
+            replayed_row = conn.execute(
+                "select source_path, source_uri, parsed_json from source_records where source_id=?",
+                (replayed_id,),
+            ).fetchone()
+            replayed_parsed = {}
+            if replayed_row is not None and isinstance(replayed_row["parsed_json"], str) and replayed_row["parsed_json"]:
+                replayed_parsed = json.loads(replayed_row["parsed_json"])
             checks[mode] = {
                 "safe_upkeeper_log": {
                     "raw_text_stored": bool(safe_row["raw_text"]) if safe_row is not None else False,
@@ -3428,6 +3497,23 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
                 "unsafe_wrapper_observed": {
                     "raw_text_stored": bool(unsafe_row["raw_text"]) if unsafe_row is not None else False,
                     "parsed_json_stored": bool(unsafe_row["parsed_json"]) if unsafe_row is not None else False,
+                },
+                "replayed_upkeeper_log": {
+                    "source_path_hashed": bool(replayed_row is not None and str(replayed_row["source_path"] or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX)),
+                    "source_uri_hashed": bool(replayed_row is not None and str(replayed_row["source_uri"] or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX)),
+                    "allowed_keys_only": set(replayed_parsed) <= UPKEEPER_LOG_SOURCE_SAFE_KEYS,
+                    "quota_fields_removed": not any(
+                        key in replayed_parsed
+                        for key in (
+                            "source",
+                            "limit_id",
+                            "limit_name",
+                            "plan_type",
+                            "snapshot_model_hint",
+                            "primary_used",
+                            "primary_reset",
+                        )
+                    ),
                 },
             }
         finally:
@@ -5454,7 +5540,7 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
             parsed = parse_upkeeper_log_line(raw_line)
             if not parsed:
                 continue
-            safe_parsed = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_SOURCE_SAFE_KEYS)
+            safe_parsed = sanitize_upkeeper_log_parsed(parsed)
             stored_raw_line = raw_line if args.raw else None
             if stored_raw_line is not None and str(parsed.get("event", "")) == "cycle.start" and not verbose_metadata_enabled():
                 stored_raw_line = render_upkeeper_log_line(sanitize_cycle_start_fields(root, parsed))

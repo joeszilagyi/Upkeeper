@@ -5680,11 +5680,16 @@ def redact_payload(payload: dict[str, Any], args: argparse.Namespace) -> dict[st
     if not isinstance(payload, dict):
         return payload
 
+    raw_export_policy = getattr(args, "raw_export_policy", "full_redact")
+
     def _redact(raw: Any) -> Any:
         if isinstance(raw, dict):
             out: dict[str, Any] = {}
             for key, value in raw.items():
-                if key in ("raw_text", "details_json", "parsed_json") and args.redact_raw:
+                if key in ("raw_text", "details_json", "parsed_json") and raw_export_policy != "include":
+                    if raw_export_policy != "structured_redact":
+                        out[key] = "<redacted>"
+                        continue
                     if isinstance(value, str):
                         parsed = None
                         try:
@@ -5711,6 +5716,16 @@ def redact_payload(payload: dict[str, Any], args: argparse.Namespace) -> dict[st
         return raw
 
     return _redact(payload)
+
+
+def warn_sensitive_export_request(args: argparse.Namespace, output: Path) -> None:
+    if getattr(args, "raw_export_policy", "full_redact") != "include":
+        return
+    print(
+        "upkeeper_lattice: WARNING: export-jsonl requested --include-raw; "
+        f"{output} remains mode 0600 but may contain sensitive local evidence",
+        file=sys.stderr,
+    )
 
 
 def sanitize_import_identity_payload(table: str, payload: dict[str, Any], context: tuple[str, str, str]) -> dict[str, Any]:
@@ -5753,6 +5768,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
     if not output.parent.exists():
         output.parent.mkdir(parents=True, exist_ok=True)
         chmod_private(output.parent, is_dir=True)
+    warn_sensitive_export_request(args, output)
     started = epoch_now()
     row_count = 0
     with conn, tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(output.parent), delete=False) as handle:
@@ -7039,10 +7055,34 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("export-jsonl")
     p.add_argument("--output")
     p.add_argument("--overwrite", action="store_true")
-    p.add_argument("--redact-raw", action="store_true")
-    p.add_argument("--redact-paths", action="store_true")
-    p.add_argument("--redact-contributors", action="store_true")
-    p.set_defaults(func=command_export_jsonl)
+    p.add_argument(
+        "--include-raw",
+        dest="raw_export_policy",
+        action="store_const",
+        const="include",
+        help="include raw_text/details_json/parsed_json fields; warns because exports may contain sensitive local evidence",
+    )
+    p.add_argument(
+        "--include-paths",
+        dest="redact_paths",
+        action="store_false",
+        help="include raw paths, remotes, and repo identity values in exported payloads",
+    )
+    p.add_argument(
+        "--include-contributors",
+        dest="redact_contributors",
+        action="store_false",
+        help="include contributor name/email/login fields when the database already stores them",
+    )
+    p.add_argument("--redact-raw", dest="raw_export_policy", action="store_const", const="structured_redact", help=argparse.SUPPRESS)
+    p.add_argument("--redact-paths", dest="redact_paths", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--redact-contributors", dest="redact_contributors", action="store_true", help=argparse.SUPPRESS)
+    p.set_defaults(
+        func=command_export_jsonl,
+        raw_export_policy="full_redact",
+        redact_paths=True,
+        redact_contributors=True,
+    )
 
     p = sub.add_parser("import-jsonl")
     p.add_argument("path")

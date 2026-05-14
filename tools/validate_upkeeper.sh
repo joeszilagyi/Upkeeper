@@ -302,6 +302,8 @@ check_backlog_launcher_contract() {
   grep -Fq 'interactive stdio remained attached after backlog auto-detach' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed auto-detach"
   grep -Fq 'interactive stdin remained attached after backlog watch-mode reexec' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed watch-mode reexec"
   grep -Fq 'another backlog run already owns this checkout' orchestration/backlog.sh || fail "backlog launcher does not explain active backlog ownership"
+  grep -Fq 'active-owner.' orchestration/backlog.sh || fail "backlog launcher does not track an explicit repo-local active owner file"
+  grep -Fq 'start_ticks' orchestration/backlog.sh || fail "backlog launcher does not guard against stale PID reuse in active owner tracking"
   [[ -x orchestration/backlog_loop.sh ]] || fail "backlog safe loop wrapper is not executable"
   grep -Fq 'CODEX_TERMINAL_VERBOSITY="${BACKLOG_CODEX_TERMINAL_VERBOSITY:-${CODEX_TERMINAL_VERBOSITY:-quiet}}"' orchestration/backlog.sh || fail "backlog launcher does not default to quiet terminal output"
   grep -Fq '</dev/null >>"$log_file" 2>&1' orchestration/backlog_loop.sh || fail "backlog loop wrapper does not detach stdin and redirect output"

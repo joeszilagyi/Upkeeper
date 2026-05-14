@@ -11,6 +11,7 @@ Version numbering note:
 	2. Backlog runs default to quiet terminal verbosity, reducing live model chatter on unattended issue batches while preserving full transcripts under the backlog state directory.
 	3. Explicit issue-target handoff now ignores excluded runtime/log/.git targets before preselection, and backlog issue hints map manifest-related issues to `lib/upkeeper/file_manifest.bash` instead of handing `runtime/upkeeper-file-manifest.json` to Upkeeper.
 	4. Lattice backups now avoid a destination-connection path that could stall local validation while holding a zero-byte backup file and source journal.
+	5. Interactive backlog auto-detach notices now include the current branch, the most recent issue/target activity recovered from the loop log, and a ready-to-run `tail -f` command so operators can tell what the detached loop is doing without opening the script.
 
 2026-05-12: lattice Git import privacy defaults:
 	1. `tools/upkeeper_lattice.py import-git` now stores contributor identity as a stable SHA-256 token by default and only preserves contributor name/email when `--include-contributor-pii` is explicitly requested.

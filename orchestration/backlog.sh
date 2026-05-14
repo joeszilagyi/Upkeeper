@@ -44,6 +44,36 @@ backlog_state_root() {
   printf '%s\n' "${BACKLOG_STATE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog}"
 }
 
+backlog_recent_log_summary() {
+  local log_file="$1"
+
+  [[ -f "$log_file" ]] || return 0
+  awk '
+    /^backlog: running Upkeeper for issue #[0-9]+/ { line=$0 }
+    END {
+      if (line != "") {
+        sub(/^backlog: /, "", line)
+        print line
+      }
+    }
+  ' "$log_file"
+}
+
+print_stdio_redirect_notice() {
+  local log_file="$1"
+  local branch summary
+
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  summary="$(backlog_recent_log_summary "$log_file")"
+
+  printf '# backlog: interactive stdio detected; redirecting this run to %s\n' "$log_file" >&2
+  printf '# backlog: current branch: %s\n' "$branch" >&2
+  if [[ -n "$summary" ]]; then
+    printf '# backlog: recent activity: %s\n' "$summary" >&2
+  fi
+  printf '# backlog: follow progress with: tail -f %s\n' "$log_file" >&2
+}
+
 redirect_interactive_stdio() {
   local state_root log_file
 
@@ -60,7 +90,7 @@ redirect_interactive_stdio() {
   mkdir -p -- "$state_root" "$(dirname -- "$log_file")"
   chmod 700 "$state_root" "$(dirname -- "$log_file")" 2>/dev/null || true
 
-  printf '# backlog: interactive stdio detected; redirecting this run to %s\n' "$log_file" >&2
+  print_stdio_redirect_notice "$log_file"
   if [[ "${BACKLOG_STDIO_AUTODETACH_PROBE:-0}" == "1" ]]; then
     exit 0
   fi

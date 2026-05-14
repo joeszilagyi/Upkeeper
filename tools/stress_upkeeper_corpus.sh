@@ -161,6 +161,7 @@ init_sample_repo() {
 
   repo="$(sample_path "$name")"
   mkdir -p -- "$repo"
+  chmod 700 "$repo" 2>/dev/null || true
   git -C "$repo" init -q
   git -C "$repo" config user.name "Upkeeper Stress Corpus"
   git -C "$repo" config user.email "upkeeper-stress@example.invalid"
@@ -209,7 +210,8 @@ run_upkeeper_dry() {
   safe_run_id="$(printf '%s' "$run_id" | tr -c 'A-Za-z0-9_.-' '_')"
   evidence_dir="$WORK_ROOT/evidence/$safe_run_id"
   codex_home="$WORK_ROOT/codex-home/$safe_run_id"
-  mkdir -p -- "$evidence_dir"
+  mkdir -p -- "$evidence_dir" "$codex_home"
+  chmod 700 "$evidence_dir" "$codex_home" 2>/dev/null || true
   write_quota_snapshot "$codex_home/sessions/2026/05/08/stress-session.jsonl" "gpt-5.5"
 
   set +e
@@ -262,6 +264,14 @@ assert_file_not_contains() {
   if grep -Fq -- "$needle" "$file"; then
     fail "$message"
   fi
+}
+
+assert_redacted_preselect() {
+  local log_file="$1"
+  local message="$2"
+
+  assert_file_contains "$log_file" "review.preselect path_hmac=path-hmac-sha256:" "$message"
+  assert_file_contains "$log_file" "path_redacted=1" "$message"
 }
 
 create_bash_tool_sample() {
@@ -467,10 +477,10 @@ check_bash_tool_sample() {
   log_file="$repo/Upkeeper.log"
   : >"$log_file"
   evidence="$(run_upkeeper_dry bash-tool "$repo" basic 0 "$log_file")"
-  assert_file_contains "$log_file" "review.preselect path=bin/old-tool.sh" "bash sample did not select oldest tool"
-  assert_file_not_contains "$log_file" "review.preselect path=tests/test_old_tool.sh" "bash sample selected a test"
-  assert_file_not_contains "$log_file" "review.preselect path=generated/ignored.sh" "bash sample selected ignored generated output"
+  assert_redacted_preselect "$log_file" "bash sample did not log a redacted preselection"
   assert_file_contains "$evidence/stderr.txt" "selected file bin/old-tool.sh" "basic terminal did not show selected bash file"
+  assert_file_not_contains "$evidence/stderr.txt" "selected file tests/test_old_tool.sh" "bash sample selected a test"
+  assert_file_not_contains "$evidence/stderr.txt" "selected file generated/ignored.sh" "bash sample selected ignored generated output"
   pass "bash-tool selected source tool and ignored tests/generated output"
 }
 
@@ -486,20 +496,21 @@ check_python_sample() {
   [[ "$rc" -eq 65 ]] || fail "python malformed config fixture exited $rc, expected 65"
   assert_file_contains "$WORK_ROOT/evidence/python-bad.err" "malformed json:" "python malformed config diagnostic was not focused"
   evidence="$(run_upkeeper_dry python-package "$repo" basic 0 "$log_file")"
-  assert_file_contains "$log_file" "review.preselect path=tools/parse_config.py" "python sample did not select parser tool"
+  assert_redacted_preselect "$log_file" "python sample did not log a redacted preselection"
   assert_file_contains "$evidence/stderr.txt" "selected file tools/parse_config.py" "basic terminal did not show selected python file"
   pass "python-package selected parser tool and proved malformed-data diagnostic"
 }
 
 check_node_sample() {
-  local repo log_file
+  local repo evidence log_file
   repo="$(create_node_sample)"
   log_file="$repo/Upkeeper.log"
   : >"$log_file"
-  run_upkeeper_dry node-typescript "$repo" basic 0 "$log_file" >/dev/null
-  assert_file_contains "$log_file" "review.preselect path=scripts/build.mjs" "node sample did not select package script"
-  assert_file_not_contains "$log_file" "review.preselect path=docs/api.md" "node sample selected docs in automatic rotation"
-  assert_file_not_contains "$log_file" "review.preselect path=dist/bundle.js" "node sample selected generated bundle"
+  evidence="$(run_upkeeper_dry node-typescript "$repo" basic 0 "$log_file")"
+  assert_redacted_preselect "$log_file" "node sample did not log a redacted preselection"
+  assert_file_contains "$evidence/stderr.txt" "selected file scripts/build.mjs" "node sample did not select package script"
+  assert_file_not_contains "$evidence/stderr.txt" "selected file docs/api.md" "node sample selected docs in automatic rotation"
+  assert_file_not_contains "$evidence/stderr.txt" "selected file dist/bundle.js" "node sample selected generated bundle"
   pass "node-typescript selected package script and ignored docs/generated output"
 }
 
@@ -515,36 +526,39 @@ check_docs_only_sample() {
 }
 
 check_generated_heavy_sample() {
-  local repo log_file
+  local repo evidence log_file
   repo="$(create_generated_heavy_sample)"
   log_file="$repo/Upkeeper.log"
   : >"$log_file"
-  run_upkeeper_dry generated-heavy "$repo" basic 0 "$log_file" >/dev/null
-  assert_file_contains "$log_file" "review.preselect path=tools/clean.sh" "generated-heavy sample did not select source tool"
-  assert_file_not_contains "$log_file" "generated/ignored.sh" "generated-heavy sample selected ignored generated path"
-  assert_file_not_contains "$log_file" "dist/ignored.sh" "generated-heavy sample selected ignored dist path"
-  assert_file_not_contains "$log_file" "runtime/evidence.log" "generated-heavy sample selected runtime evidence"
+  evidence="$(run_upkeeper_dry generated-heavy "$repo" basic 0 "$log_file")"
+  assert_redacted_preselect "$log_file" "generated-heavy sample did not log a redacted preselection"
+  assert_file_contains "$evidence/stderr.txt" "selected file tools/clean.sh" "generated-heavy sample did not select source tool"
+  assert_file_not_contains "$evidence/stderr.txt" "selected file generated/ignored.sh" "generated-heavy sample selected ignored generated path"
+  assert_file_not_contains "$evidence/stderr.txt" "selected file dist/ignored.sh" "generated-heavy sample selected ignored dist path"
+  assert_file_not_contains "$evidence/stderr.txt" "selected file runtime/evidence.log" "generated-heavy sample selected runtime evidence"
   pass "generated-heavy repo kept ignored/generated/runtime paths out of selection"
 }
 
 check_symlinked_client_sample() {
-  local repo log_file
+  local repo evidence log_file
   repo="$(create_symlinked_client_sample)"
   log_file="$repo/Upkeeper.log"
   : >"$log_file"
-  run_upkeeper_dry symlinked-client "$repo" basic 0 "$log_file" >/dev/null
-  assert_file_contains "$log_file" "implementation=$ROOT_DIR/Upkeeper" "symlinked client did not resolve central implementation"
-  assert_file_contains "$log_file" "review.preselect path=scripts/client-maintenance.sh" "symlinked client did not select local script"
+  evidence="$(run_upkeeper_dry symlinked-client "$repo" basic 0 "$log_file")"
+  assert_file_contains "$log_file" "implementation_hash=value-hmac-sha256:" "symlinked client did not log central implementation hash"
+  assert_redacted_preselect "$log_file" "symlinked client did not log a redacted preselection"
+  assert_file_contains "$evidence/stderr.txt" "selected file scripts/client-maintenance.sh" "symlinked client did not select local script"
   pass "symlinked client used central modules against client repo"
 }
 
 check_dirty_worktree_sample() {
-  local repo log_file
+  local repo evidence log_file
   repo="$(create_dirty_worktree_sample)"
   log_file="$repo/Upkeeper.log"
   : >"$log_file"
-  run_upkeeper_dry dirty-worktree "$repo" basic 0 "$log_file" >/dev/null
-  assert_file_contains "$log_file" "review.preselect path=tools/dirty.sh" "dirty sample did not select dirty tool"
+  evidence="$(run_upkeeper_dry dirty-worktree "$repo" basic 0 "$log_file")"
+  assert_redacted_preselect "$log_file" "dirty sample did not log a redacted preselection"
+  assert_file_contains "$evidence/stderr.txt" "selected file tools/dirty.sh" "dirty sample did not select dirty tool"
   assert_file_contains "$log_file" "content_state=differs_from_head" "dirty sample did not preserve dirty baseline metadata"
   pass "dirty worktree target was treated as baseline state"
 }
@@ -702,6 +716,7 @@ require_commands
 
 WORK_ROOT="$(mktemp -d /tmp/upkeeper-stress-corpus.XXXXXX)"
 mkdir -p "$WORK_ROOT/samples" "$WORK_ROOT/evidence" "$WORK_ROOT/codex-home"
+chmod 700 "$WORK_ROOT" "$WORK_ROOT/samples" "$WORK_ROOT/evidence" "$WORK_ROOT/codex-home" 2>/dev/null || true
 log "work root: $WORK_ROOT"
 log "mode: local; backend Codex disabled"
 

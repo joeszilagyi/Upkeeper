@@ -313,6 +313,10 @@ without multiplying Git churn evidence. Normal `init` also removes duplicate
 Git file-change rows left by older local databases before recreating the unique
 guard index. Without `.git`, it reports unavailable with reason
 `no_git_repository` and does not classify the condition as a DB failure.
+Contributor identity now defaults to a stable SHA-256 token instead of stored
+name/email PII, and commit rows store a subject hash plus subject length unless
+`import-git --include-contributor-pii` or `import-git --include-commit-subjects`
+is explicitly requested.
 
 `import-upkeeper-log` reconstructs parseable cycle and preselection facts from
 `Upkeeper.log`, including quoted fields such as `mode=--sandbox\ workspace-write`.
@@ -329,6 +333,9 @@ runtime/upkeeper-lattice/exports/
 Each exported row includes schema version, row type, row version, logical key,
 source identity, repo identity, payload, payload SHA-256, and exported epoch.
 Options can redact raw text, paths, and contributors.
+Default exports also preserve the Git-import privacy contract by omitting raw
+contributor fields and raw commit subjects unless those values were explicitly
+included at import time.
 
 `import-jsonl` is idempotent. Same logical key and same payload hash is a
 duplicate. Same logical key and a different payload hash records a conflict and

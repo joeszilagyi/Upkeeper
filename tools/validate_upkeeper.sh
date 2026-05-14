@@ -288,6 +288,31 @@ check_syntax() {
   bash -n tools/*.sh
   bash -n tests/*.bash
   bash -n testruns/*.sh
+  bash -n orchestration/*.sh
+}
+
+check_backlog_launcher_contract() {
+  local temp_dir status
+
+  log "checking backlog launcher safety contract"
+  grep -Fq 'BACKLOG_ALLOW_INTERACTIVE_STDIO' orchestration/backlog.sh || fail "backlog launcher missing interactive-stdio override"
+  grep -Fq '[[ ! -t 0 && ! -t 1 && ! -t 2 ]]' orchestration/backlog.sh || fail "backlog launcher does not require detached stdio"
+  grep -Fq 'exec "$SCRIPT_PATH" "$@" </dev/null >>"$log_file" 2>&1' orchestration/backlog.sh || fail "backlog launcher does not auto-detach interactive stdio"
+  grep -Fq 'interactive stdio remained attached after backlog auto-detach' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed auto-detach"
+  [[ -x orchestration/backlog_loop.sh ]] || fail "backlog safe loop wrapper is not executable"
+  grep -Fq 'CODEX_TERMINAL_VERBOSITY="${BACKLOG_CODEX_TERMINAL_VERBOSITY:-${CODEX_TERMINAL_VERBOSITY:-quiet}}"' orchestration/backlog.sh || fail "backlog launcher does not default to quiet terminal output"
+  grep -Fq '</dev/null >>"$log_file" 2>&1' orchestration/backlog_loop.sh || fail "backlog loop wrapper does not detach stdin and redirect output"
+  grep -Fq 'ineligible_explicit_issue_target' lib/upkeeper/codex_io.bash || fail "issue target handoff does not reject ineligible explicit targets before preselection"
+  if command -v script >/dev/null 2>&1; then
+    temp_dir="$VALIDATION_TMP_ROOT/backlog-stdio"
+    mkdir -p "$temp_dir"
+    status=0
+    BACKLOG_STDIO_AUTODETACH_PROBE=1 BACKLOG_LOOP_LOG_FILE="$temp_dir/loop.log" \
+      script -qfec ./orchestration/backlog.sh "$temp_dir/typescript" >/dev/null 2>&1 || status="$?"
+    [[ "$status" == "0" ]] || fail "backlog launcher interactive stdio auto-detach probe exited $status"
+    grep -Fq '# backlog: interactive stdio detected; redirecting this run to '"$temp_dir/loop.log" "$temp_dir/typescript" ||
+      fail "backlog launcher did not explain interactive stdio auto-detach"
+  fi
 }
 
 check_version_consistency() {
@@ -1518,10 +1543,14 @@ check_review_module_flags() {
 }
 
 check_config_file_support() {
-  local temp_dir profile output rc
+  local temp_dir profile output rc secure_parent
 
   log "checking config file support"
-  temp_dir="$(mktemp -d /tmp/upkeeper-config-file.XXXXXX)"
+  secure_parent="${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper-validation"
+  mkdir -p "$secure_parent"
+  chmod 700 "$secure_parent" 2>/dev/null || true
+  temp_dir="$(mktemp -d "$secure_parent/config-file.XXXXXX")"
+  chmod 700 "$temp_dir" 2>/dev/null || true
   profile="$temp_dir/profile.conf"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
 
@@ -1537,6 +1566,7 @@ UPKEEPER_REVIEW_MODULES="p28"
 UPKEEPER_PROMPT_PASS="all"
 UPKEEPER_IGNORE_FAILURE_QUEUE="1"
 EOF
+  chmod 600 "$profile" 2>/dev/null || true
 
   CODEX_HOME="$temp_dir/codex-home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
@@ -1814,6 +1844,11 @@ JSON
 {"number":912,"title":"Explicit issue points at `lib/upkeeper/help_selection.bash`","url":"https://example.invalid/issues/912","createdAt":"2026-05-03T00:00:00Z","state":"OPEN","labels":[{"name":"bug"}],"body":"Fix `lib/upkeeper/help_selection.bash:1` for the explicit handoff."}
 JSON
       ;;
+    913)
+      cat <<'JSON'
+{"number":913,"title":"Explicit issue points at runtime manifest state","url":"https://example.invalid/issues/913","createdAt":"2026-05-04T00:00:00Z","state":"OPEN","labels":[{"name":"bug"}],"body":"Fix `runtime/upkeeper-file-manifest.json` handling without reviewing runtime state directly."}
+JSON
+      ;;
     *)
       printf '{"body":""}\n'
       ;;
@@ -1840,6 +1875,15 @@ EOF
   grep -Fq "target_file=lib/upkeeper/help_selection.bash" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not infer the explicit issue target"
   grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not pin the explicit inferred target"
   grep -Fq "issue.fix_prompt appended number=912" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue prompt addendum was not appended"
+
+  PATH="$temp_dir/bin:$PATH" run_manifest_dry_run "$temp_dir/fix-explicit-runtime-issue.log" \
+    --fix-issue=913
+  grep -Fq "issue.fix_issue selected number=913" "$temp_dir/fix-explicit-runtime-issue.log" || fail "fix-issue did not lock the explicit runtime issue"
+  grep -Fq "issue_fix.target ignored reason=ineligible_explicit_issue_target" "$temp_dir/fix-explicit-runtime-issue.log" || fail "fix-issue did not reject the ineligible explicit runtime target"
+  grep -Fq "target_file=none" "$temp_dir/fix-explicit-runtime-issue.log" || fail "fix-issue pinned an ineligible runtime target"
+  if grep -Fq "reason=TARGET_FILE_NOT_ELIGIBLE" "$temp_dir/fix-explicit-runtime-issue.log"; then
+    fail "fix-issue reached preselection with an ineligible runtime target"
+  fi
 
   PATH="$temp_dir/bin:$PATH" run_manifest_dry_run "$temp_dir/fix-comment-stage.log" \
     --fix-issue=912 \
@@ -3230,7 +3274,7 @@ check_symlinked_client() {
       CODEX_POSTMORTEM_ENABLED=0 \
       UPKEEPER_DRY_RUN=1 \
       ./Upkeeper.sh >/dev/null
-    grep -Fq "implementation=$ROOT_DIR/Upkeeper" Upkeeper.log
+    grep -Fq "implementation_hash=value-hmac-sha256:" Upkeeper.log
     grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" Upkeeper.log
   )
   rm -r "$temp_dir"
@@ -3418,6 +3462,7 @@ run_check live_output_filter_pipe check_live_output_filter_pipe
 run_check review_summary_parser check_review_summary_parser
 run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
+run_check backlog_launcher_contract check_backlog_launcher_contract
 
 if [[ "$MODE" == "smoke" ]]; then
   log "$MODE validation passed"

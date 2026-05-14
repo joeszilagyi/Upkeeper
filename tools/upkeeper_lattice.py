@@ -99,7 +99,21 @@ REDACTED_PATH_PREFIX = "path-sha256:"
 PASS_RESULT_PATH_HMAC_PREFIX = "path-hmac-sha256:"
 METADATA_HMAC_PREFIX = "meta-hmac-sha256:"
 CONTENT_HMAC_PREFIX = "content-hmac-sha256:"
+CONTRIBUTOR_HASH_PREFIX = "contributor-sha256:"
+COMMIT_SUBJECT_HASH_PREFIX = "subject-sha256:"
+BRANCH_HMAC_PREFIX = "branch-hmac-sha256:"
+REMOTE_HMAC_PREFIX = "remote-hmac-sha256:"
+SSH_REMOTE_HMAC_PREFIX = "ssh-remote-hmac-sha256:"
+LOCAL_REMOTE_HMAC_PREFIX = "local-remote-hmac-sha256:"
 UPKEEPER_VERBOSE_METADATA_ENV = "UPKEEPER_VERBOSE_METADATA"
+UPKEEPER_RAW_REPO_IDENTITY_ENV = "UPKEEPER_LATTICE_RAW_REPO_IDENTITY"
+SOURCE_RECORD_PATH_HMAC_KINDS = {
+    "lattice_export",
+    "lattice_import",
+    "recovery",
+    "tool_failure_marker",
+    "upkeeper_log",
+}
 TRANSIENT_ARTIFACT_KINDS = {"transcript", "compiled_prompt", "last_message"}
 ARTIFACT_RETENTION_CLASSES = {
     "transcript": "transient",
@@ -205,7 +219,19 @@ PASS_RESULT_ALLOWED_KEYS = {
     "changed",
     "regression",
 }
+RAW_STORAGE_MODES = {"none", "minimal", "limited", "full"}
+RAW_STORAGE_COMPAT_MODES = RAW_STORAGE_MODES | {"debug"}
 PASS_RESULT_DEBUG_STORAGE_VALUES = {"debug", "full"}
+MINIMAL_PARSED_SOURCE_RECORDS = {
+    ("lattice_export", ""),
+    ("recovery", "recover"),
+    ("recovery", "recover_artifacts"),
+}
+LIMITED_PARSED_SOURCE_RECORDS = MINIMAL_PARSED_SOURCE_RECORDS | {
+    ("local_git", ""),
+    ("transcript", "rejected"),
+    ("upkeeper_log", ""),
+}
 
 
 REQUIRED_TABLES = [
@@ -704,6 +730,8 @@ CREATE_TABLE_SQL = [
       name text,
       email text,
       github_login text,
+      identity_hash text,
+      pii_included integer not null default 0,
       unique(name, email)
     )
     """,
@@ -717,6 +745,9 @@ CREATE_TABLE_SQL = [
       author_epoch integer,
       committer_epoch integer,
       subject text,
+      subject_hash text,
+      subject_length integer,
+      subject_included integer not null default 0,
       source_id integer references source_records(source_id),
       unique(repo_id, sha)
     )
@@ -1003,6 +1034,7 @@ CREATE_INDEX_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_file_pass_runs_repo_pass_outcome ON file_pass_runs(repo_id, pass_code, outcome)",
     "CREATE INDEX IF NOT EXISTS idx_file_events_repo_file_epoch ON file_events(repo_id, file_id, event_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_git_commits_repo_sha ON git_commits(repo_id, sha)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_contributors_identity_hash ON contributors(identity_hash) WHERE identity_hash IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_git_file_changes_unique_event ON git_file_changes(repo_id, commit_id, path, coalesce(old_path, ''), coalesce(status, ''))",
     "CREATE INDEX IF NOT EXISTS idx_git_file_changes_repo_path_epoch ON git_file_changes(repo_id, path, change_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_regression_events_repo_file_epoch ON regression_events(repo_id, file_id, marked_epoch)",
@@ -1055,9 +1087,414 @@ def sha256_text(text: str) -> str:
     return sha256_bytes(text.encode("utf-8", "surrogateescape"))
 
 
-def current_lattice_raw_storage() -> str:
+def contributor_identity_hash(name: str, email: str) -> str:
+    if not name and not email:
+        return ""
+    return CONTRIBUTOR_HASH_PREFIX + sha256_text(f"name={name}\0email={email}")
+
+
+def commit_subject_hash(subject: str) -> str:
+    return COMMIT_SUBJECT_HASH_PREFIX + sha256_text(subject)
+
+
+def commit_subject_summary(subject: str | None, subject_hash: Any, subject_length: Any, subject_included: Any) -> dict[str, Any]:
+    included = 1 if parse_bool_int(str(subject_included) if subject_included is not None else None) == 1 else 0
+    raw_subject = subject if isinstance(subject, str) else ""
+    derived_hash = str(subject_hash or "")
+    if not derived_hash and (raw_subject or subject is not None):
+        derived_hash = commit_subject_hash(raw_subject)
+    derived_length = subject_length
+    if derived_length is None and (raw_subject or subject is not None):
+        derived_length = len(raw_subject)
+    return {
+        "subject": raw_subject if included else None,
+        "subject_hash": derived_hash or None,
+        "subject_length": int(derived_length) if derived_length is not None else None,
+        "subject_included": included,
+    }
+
+
+def local_git_source_payload(
+    author_hash: str | None,
+    committer_hash: str | None,
+    subject: str,
+    *,
+    include_commit_subjects: bool,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "author_identity_hash": author_hash or None,
+        "committer_identity_hash": committer_hash or None,
+    }
+    payload.update(
+        commit_subject_summary(
+            subject if include_commit_subjects else None,
+            commit_subject_hash(subject),
+            len(subject),
+            1 if include_commit_subjects else 0,
+        )
+    )
+    return payload
+
+
+def source_record_storage_path(root: Path, source_kind: str, value: str) -> str:
+    if not value or identity_value_is_redacted(value):
+        return value
+    if source_kind not in SOURCE_RECORD_PATH_HMAC_KINDS:
+        return value
+    return artifact_path_hmac(root, value)
+
+
+def sanitize_source_record_payload(
+    payload: dict[str, Any],
+    *,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    updated = dict(payload)
+    source_kind = str(updated.get("source_kind") or "")
+    if root is not None and isinstance(updated.get("source_path"), str):
+        updated["source_path"] = source_record_storage_path(root, source_kind, updated["source_path"])
+    if source_kind != "local_git":
+        return updated
+    parsed_json = updated.get("parsed_json")
+    if not isinstance(parsed_json, str) or not parsed_json.strip():
+        return updated
+    try:
+        parsed = json.loads(parsed_json)
+    except (TypeError, json.JSONDecodeError):
+        return updated
+    if not isinstance(parsed, dict):
+        return updated
+    normalized = dict(parsed)
+    summary = commit_subject_summary(
+        normalized.get("subject") if isinstance(normalized.get("subject"), str) else None,
+        normalized.get("subject_hash"),
+        normalized.get("subject_length"),
+        normalized.get("subject_included"),
+    )
+    normalized["subject_hash"] = summary["subject_hash"]
+    normalized["subject_length"] = summary["subject_length"]
+    normalized["subject_included"] = summary["subject_included"]
+    if summary["subject_included"] == 1 and summary["subject"] is not None:
+        normalized["subject"] = summary["subject"]
+    else:
+        normalized.pop("subject", None)
+    updated["parsed_json"] = json_dumps(normalized)
+    return updated
+
+
+def configured_lattice_raw_storage() -> str:
     raw = os.environ.get("UPKEEPER_LATTICE_RAW_STORAGE", "limited").strip().lower()
     return raw if raw else "limited"
+
+
+def sanitize_git_privacy_payload(table: str, payload: dict[str, Any], *, root: Path | None = None) -> dict[str, Any]:
+    if table == "contributors":
+        updated = dict(payload)
+        identity_hash = str(updated.get("identity_hash") or "")
+        name = updated.get("name") if isinstance(updated.get("name"), str) else ""
+        email = updated.get("email") if isinstance(updated.get("email"), str) else ""
+        if not identity_hash:
+            identity_hash = contributor_identity_hash(name, email)
+        updated["identity_hash"] = identity_hash or None
+        pii_included = 1 if parse_bool_int(str(updated.get("pii_included")) if updated.get("pii_included") is not None else None) == 1 else 0
+        updated["pii_included"] = pii_included
+        if pii_included != 1:
+            updated["name"] = None
+            updated["email"] = None
+            updated["github_login"] = None
+        return updated
+    if table == "git_commits":
+        updated = dict(payload)
+        updated.update(
+            commit_subject_summary(
+                updated.get("subject") if isinstance(updated.get("subject"), str) else None,
+                updated.get("subject_hash"),
+                updated.get("subject_length"),
+                updated.get("subject_included"),
+            )
+        )
+        return updated
+    if table == "source_records":
+        return sanitize_source_record_payload(payload, root=root)
+    return payload
+
+
+def current_lattice_raw_storage() -> str:
+    raw = configured_lattice_raw_storage()
+    return raw if raw in RAW_STORAGE_COMPAT_MODES else "limited"
+
+
+def effective_lattice_raw_storage(raw_storage_mode: str | None = None) -> str:
+    mode = (raw_storage_mode or current_lattice_raw_storage()).strip().lower()
+    if mode == "debug":
+        return "full"
+    return mode if mode in RAW_STORAGE_MODES else "limited"
+
+
+def source_record_parsed_allowed(source_kind: str, raw_ref: str, parse_status: str, *, raw_storage_mode: str | None = None) -> bool:
+    mode = effective_lattice_raw_storage(raw_storage_mode)
+    if mode == "full":
+        return True
+    if mode == "none":
+        return False
+    key = (source_kind, "rejected" if source_kind == "transcript" and parse_status == "rejected" else "")
+    if source_kind == "recovery":
+        key = (source_kind, raw_ref)
+    if mode == "minimal":
+        return key in MINIMAL_PARSED_SOURCE_RECORDS
+    return key in LIMITED_PARSED_SOURCE_RECORDS
+
+
+def normalize_source_record_parsed(
+    source_kind: str,
+    raw_ref: str,
+    parse_status: str,
+    parsed: Any,
+    *,
+    raw_storage_mode: str | None = None,
+) -> Any:
+    if parsed is None:
+        return None
+    if not source_record_parsed_allowed(source_kind, raw_ref, parse_status, raw_storage_mode=raw_storage_mode):
+        return None
+    if source_kind != "local_git" or not isinstance(parsed, dict):
+        return parsed
+    normalized = dict(parsed)
+    keep_subject = effective_lattice_raw_storage(raw_storage_mode) == "full"
+    summary = commit_subject_summary(
+        normalized.get("subject") if keep_subject and isinstance(normalized.get("subject"), str) else None,
+        normalized.get("subject_hash"),
+        normalized.get("subject_length"),
+        normalized.get("subject_included") if keep_subject else 0,
+    )
+    normalized["subject_hash"] = summary["subject_hash"]
+    normalized["subject_length"] = summary["subject_length"]
+    normalized["subject_included"] = summary["subject_included"]
+    normalized.pop("subject", None)
+    if summary["subject"] is not None:
+        normalized["subject"] = summary["subject"]
+    return normalized
+
+
+def normalized_source_record_parsed_json(
+    source_kind: str,
+    raw_ref: str,
+    parse_status: str,
+    parsed_json: str | None,
+    *,
+    raw_storage_mode: str | None = None,
+) -> str | None:
+    if not isinstance(parsed_json, str) or not parsed_json.strip():
+        return None
+    try:
+        parsed = json.loads(parsed_json)
+    except (TypeError, json.JSONDecodeError):
+        return parsed_json if effective_lattice_raw_storage(raw_storage_mode) == "full" else None
+    normalized = normalize_source_record_parsed(
+        source_kind,
+        raw_ref,
+        parse_status,
+        parsed,
+        raw_storage_mode=raw_storage_mode,
+    )
+    return json_dumps(normalized) if normalized is not None else None
+
+
+def raw_repo_identity_enabled() -> bool:
+    raw = os.environ.get(UPKEEPER_RAW_REPO_IDENTITY_ENV, "").strip()
+    if raw:
+        return parse_bool_int(raw) == 1
+    return effective_lattice_raw_storage() == "full"
+
+
+def repo_identity_context(root: Path, info: dict[str, str] | None = None) -> tuple[str, str, str]:
+    info = info or repo_git_info(root)
+    return (str(root.resolve()), str(info.get("git_common_dir") or ""), str(info.get("remote_url") or ""))
+
+
+def repo_identity_hmac_key(context: tuple[str, str, str], purpose: str) -> bytes:
+    root_value, git_common_dir, remote_seed = context
+    material = f"{root_value}\0{git_common_dir}\0{remote_seed}\0{purpose}"
+    return hashlib.sha256(material.encode("utf-8", "surrogateescape")).digest()
+
+
+def repo_identity_value_hmac(context: tuple[str, str, str], namespace: str, value: str, prefix: str) -> str:
+    if not value:
+        return ""
+    material = f"{namespace}\0{value}"
+    digest = hmac.digest(repo_identity_hmac_key(context, "repo-identity"), material.encode("utf-8", "surrogateescape"), "sha256").hex()
+    return prefix + digest
+
+
+def identity_value_is_redacted(value: str) -> bool:
+    if not value:
+        return False
+    prefixes = (
+        REDACTED_PATH_PREFIX,
+        PASS_RESULT_PATH_HMAC_PREFIX,
+        METADATA_HMAC_PREFIX,
+        CONTENT_HMAC_PREFIX,
+        CONTRIBUTOR_HASH_PREFIX,
+        COMMIT_SUBJECT_HASH_PREFIX,
+        BRANCH_HMAC_PREFIX,
+        REMOTE_HMAC_PREFIX,
+        SSH_REMOTE_HMAC_PREFIX,
+        LOCAL_REMOTE_HMAC_PREFIX,
+    )
+    return value.startswith(prefixes)
+
+
+def remote_is_ssh(raw: str) -> bool:
+    lowered = raw.lower()
+    if lowered.startswith(("ssh://", "git+ssh://")):
+        return True
+    return bool(re.match(r"^[^/\s@]+@[^:\s]+:.+", raw))
+
+
+def remote_is_local(raw: str) -> bool:
+    lowered = raw.lower()
+    if lowered.startswith("file://"):
+        return True
+    if raw.startswith(("/", "./", "../", "~")):
+        return True
+    return bool(re.match(r"^[A-Za-z]:[\\/]", raw))
+
+
+def protected_repo_path(context: tuple[str, str, str], value: str) -> str:
+    if not value or identity_value_is_redacted(value):
+        return value
+    if raw_repo_identity_enabled():
+        return value
+    return repo_identity_value_hmac(context, "path", value, PASS_RESULT_PATH_HMAC_PREFIX)
+
+
+def protected_branch_name(context: tuple[str, str, str], value: str) -> str:
+    if not value or identity_value_is_redacted(value):
+        return value
+    if raw_repo_identity_enabled():
+        return value
+    return repo_identity_value_hmac(context, "branch_name", value, BRANCH_HMAC_PREFIX)
+
+
+def protected_remote_url(context: tuple[str, str, str], value: str) -> str:
+    if not value:
+        return ""
+    value = sanitize_remote_url(value)
+    if identity_value_is_redacted(value):
+        return value
+    if raw_repo_identity_enabled():
+        if remote_is_ssh(value):
+            return repo_identity_value_hmac(context, "ssh_remote_url", value, SSH_REMOTE_HMAC_PREFIX)
+        if remote_is_local(value):
+            return repo_identity_value_hmac(context, "local_remote_url", value, LOCAL_REMOTE_HMAC_PREFIX)
+        return value
+    return repo_identity_value_hmac(context, "remote_url", value, REMOTE_HMAC_PREFIX)
+
+
+def protected_origin_url_hash(context: tuple[str, str, str], value: str) -> str:
+    if not value:
+        return ""
+    if identity_value_is_redacted(value):
+        return value
+    value = sanitize_remote_url(value)
+    return repo_identity_value_hmac(context, "origin_url", value, REMOTE_HMAC_PREFIX)
+
+
+def sanitize_repository_payload(payload: dict[str, Any], context: tuple[str, str, str]) -> dict[str, Any]:
+    updated = dict(payload)
+    for key in ("root_path", "first_seen_root_path", "current_root_path", "working_tree_path", "git_common_dir"):
+        if isinstance(updated.get(key), str):
+            updated[key] = protected_repo_path(context, updated[key])
+    if isinstance(updated.get("branch_name"), str):
+        updated["branch_name"] = protected_branch_name(context, updated["branch_name"])
+    remote_value = updated.get("remote_url") if isinstance(updated.get("remote_url"), str) else ""
+    if remote_value:
+        updated["remote_url"] = protected_remote_url(context, remote_value)
+    origin_value = updated.get("origin_url_hash") if isinstance(updated.get("origin_url_hash"), str) else ""
+    if remote_value:
+        updated["origin_url_hash"] = protected_origin_url_hash(context, remote_value)
+    elif origin_value and not identity_value_is_redacted(origin_value):
+        updated["origin_url_hash"] = repo_identity_value_hmac(context, "legacy_origin_url_hash", origin_value, REMOTE_HMAC_PREFIX)
+    return updated
+
+
+def sanitize_repo_alias_payload(payload: dict[str, Any], context: tuple[str, str, str]) -> dict[str, Any]:
+    updated = dict(payload)
+    alias_kind = str(updated.get("alias_kind") or "")
+    alias_value = updated.get("alias_value") if isinstance(updated.get("alias_value"), str) else ""
+    if not alias_value:
+        return updated
+    if alias_kind in {"root_path", "git_common_dir"}:
+        updated["alias_value"] = protected_repo_path(context, alias_value)
+    elif alias_kind == "remote_url_hash":
+        if identity_value_is_redacted(alias_value):
+            updated["alias_value"] = alias_value
+        else:
+            updated["alias_value"] = repo_identity_value_hmac(context, "remote_url_hash", alias_value, REMOTE_HMAC_PREFIX)
+    return updated
+
+
+def scrub_repo_identity_rows(conn: sqlite3.Connection, repo_id: int, context: tuple[str, str, str]) -> None:
+    row = conn.execute(
+        """
+        select root_path, first_seen_root_path, current_root_path, working_tree_path, git_common_dir, branch_name, remote_url, origin_url_hash
+        from repositories
+        where repo_id=?
+        """,
+        (repo_id,),
+    ).fetchone()
+    if row:
+        updated = sanitize_repository_payload(dict(row), context)
+        conn.execute(
+            """
+            update repositories
+            set root_path=?, first_seen_root_path=?, current_root_path=?, working_tree_path=?,
+                git_common_dir=?, branch_name=?, remote_url=?, origin_url_hash=?
+            where repo_id=?
+            """,
+            (
+                updated.get("root_path"),
+                updated.get("first_seen_root_path"),
+                updated.get("current_root_path"),
+                updated.get("working_tree_path"),
+                updated.get("git_common_dir"),
+                updated.get("branch_name"),
+                updated.get("remote_url"),
+                updated.get("origin_url_hash"),
+                repo_id,
+            ),
+        )
+    for row in conn.execute("select repo_alias_id, alias_kind, alias_value from repo_aliases where repo_id=?", (repo_id,)):
+        updated = sanitize_repo_alias_payload(dict(row), context)
+        new_value = updated.get("alias_value")
+        if not isinstance(new_value, str) or new_value == row["alias_value"]:
+            continue
+        duplicate = conn.execute(
+            "select repo_alias_id from repo_aliases where repo_id=? and alias_kind=? and alias_value=?",
+            (repo_id, row["alias_kind"], new_value),
+        ).fetchone()
+        if duplicate and int(duplicate["repo_alias_id"]) != int(row["repo_alias_id"]):
+            conn.execute("delete from repo_aliases where repo_alias_id=?", (int(row["repo_alias_id"]),))
+            continue
+        conn.execute("update repo_aliases set alias_value=? where repo_alias_id=?", (new_value, int(row["repo_alias_id"])))
+    for table, pk in (("cycles", "cycle_pk"), ("worktree_snapshots", "worktree_snapshot_id")):
+        for row in conn.execute(f"select {pk}, branch_name from {table} where repo_id=? and branch_name is not null", (repo_id,)):
+            branch_name = row["branch_name"] if isinstance(row["branch_name"], str) else ""
+            new_branch = protected_branch_name(context, branch_name)
+            if new_branch != branch_name:
+                conn.execute(f"update {table} set branch_name=? where {pk}=?", (new_branch, int(row[pk])))
+
+
+def scrub_source_record_rows(conn: sqlite3.Connection, root: Path, repo_id: int) -> None:
+    for row in conn.execute(
+        "select source_id, source_kind, source_path from source_records where repo_id=? and source_path is not null",
+        (repo_id,),
+    ):
+        source_kind = str(row["source_kind"] or "")
+        source_path = row["source_path"] if isinstance(row["source_path"], str) else ""
+        updated_path = source_record_storage_path(root, source_kind, source_path)
+        if updated_path != source_path:
+            conn.execute("update source_records set source_path=? where source_id=?", (updated_path, int(row["source_id"])))
 
 
 def verbose_metadata_enabled() -> bool:
@@ -1074,8 +1511,7 @@ def pass_result_hmac_key(root: Path) -> bytes:
         return override.encode("utf-8", "surrogateescape")
     root = root.resolve()
     info = repo_git_info(root)
-    material = f"{root}|{info['git_common_dir']}|{info['remote_url']}|upkeeper-pass-result"
-    return hashlib.sha256(material.encode("utf-8", "surrogateescape")).digest()
+    return repo_identity_hmac_key(repo_identity_context(root, info), "upkeeper-pass-result")
 
 
 def pass_result_path_hmac(root: Path, path: str) -> str:
@@ -1698,6 +2134,111 @@ def ensure_worktree_snapshot_path_mtime_ns_column(conn: sqlite3.Connection) -> N
             pass
 
 
+def ensure_contributor_privacy_columns(conn: sqlite3.Connection) -> None:
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(contributors)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "identity_hash" not in columns:
+        try:
+            conn.execute("alter table contributors add column identity_hash text")
+        except sqlite3.Error:
+            pass
+    if "pii_included" not in columns:
+        try:
+            conn.execute("alter table contributors add column pii_included integer not null default 0")
+        except sqlite3.Error:
+            pass
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_contributors_identity_hash ON contributors(identity_hash) WHERE identity_hash IS NOT NULL"
+        )
+    except sqlite3.Error:
+        pass
+
+
+def ensure_git_commit_privacy_columns(conn: sqlite3.Connection) -> None:
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(git_commits)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "subject_hash" not in columns:
+        try:
+            conn.execute("alter table git_commits add column subject_hash text")
+        except sqlite3.Error:
+            pass
+    if "subject_length" not in columns:
+        try:
+            conn.execute("alter table git_commits add column subject_length integer")
+        except sqlite3.Error:
+            pass
+    if "subject_included" not in columns:
+        try:
+            conn.execute("alter table git_commits add column subject_included integer not null default 0")
+        except sqlite3.Error:
+            pass
+
+
+def scrub_legacy_git_privacy_data(conn: sqlite3.Connection) -> None:
+    ensure_contributor_privacy_columns(conn)
+    ensure_git_commit_privacy_columns(conn)
+    contributor_columns = set(table_columns(conn, "contributors"))
+    if {"contributor_id", "name", "email", "identity_hash", "pii_included"}.issubset(contributor_columns):
+        for row in conn.execute("select contributor_id, name, email, github_login, identity_hash, pii_included from contributors"):
+            identity_hash = str(row["identity_hash"] or "")
+            name = row["name"] if isinstance(row["name"], str) else ""
+            email = row["email"] if isinstance(row["email"], str) else ""
+            if not identity_hash:
+                identity_hash = contributor_identity_hash(name, email)
+            pii_included = 1 if parse_bool_int(str(row["pii_included"]) if row["pii_included"] is not None else None) == 1 else 0
+            if pii_included == 1:
+                conn.execute(
+                    "update contributors set identity_hash=? where contributor_id=?",
+                    (identity_hash or None, int(row["contributor_id"])),
+                )
+                continue
+            conn.execute(
+                """
+                update contributors
+                set identity_hash=?, name=NULL, email=NULL, github_login=NULL, pii_included=0
+                where contributor_id=?
+                """,
+                (identity_hash or None, int(row["contributor_id"])),
+            )
+    commit_columns = set(table_columns(conn, "git_commits"))
+    if {"commit_id", "subject", "subject_hash", "subject_length", "subject_included"}.issubset(commit_columns):
+        for row in conn.execute("select commit_id, subject, subject_hash, subject_length, subject_included from git_commits"):
+            summary = commit_subject_summary(
+                row["subject"] if isinstance(row["subject"], str) else None,
+                row["subject_hash"],
+                row["subject_length"],
+                row["subject_included"],
+            )
+            if summary["subject_included"] == 1:
+                conn.execute(
+                    "update git_commits set subject_hash=?, subject_length=?, subject_included=1 where commit_id=?",
+                    (summary["subject_hash"], summary["subject_length"], int(row["commit_id"])),
+                )
+                continue
+            conn.execute(
+                """
+                update git_commits
+                set subject=NULL, subject_hash=?, subject_length=?, subject_included=0
+                where commit_id=?
+                """,
+                (summary["subject_hash"], summary["subject_length"], int(row["commit_id"])),
+            )
+    for row in conn.execute(
+        "select source_id, source_kind, parsed_json from source_records where source_kind='local_git' and parsed_json is not null"
+    ):
+        payload = sanitize_source_record_payload(dict(row))
+        if payload.get("parsed_json") != row["parsed_json"]:
+            conn.execute(
+                "update source_records set parsed_json=? where source_id=?",
+                (payload.get("parsed_json"), int(row["source_id"])),
+            )
+
+
 def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
     now = epoch_now()
     with conn:
@@ -1708,6 +2249,9 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
             conn.execute(sql)
         ensure_file_snapshot_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_mtime_ns_column(conn)
+        ensure_contributor_privacy_columns(conn)
+        ensure_git_commit_privacy_columns(conn)
+        scrub_legacy_git_privacy_data(conn)
         conn.execute("PRAGMA user_version=1")
         conn.execute(
             "insert or replace into schema_meta(key, value) values (?, ?)",
@@ -1752,11 +2296,15 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     user_version = conn.execute("PRAGMA user_version").fetchone()[0]
     if int(user_version) != SCHEMA_VERSION:
         fail(f"PRAGMA user_version mismatch: expected {SCHEMA_VERSION}, got {user_version}", EXIT_SCHEMA_MISMATCH)
+    ensure_file_snapshot_mtime_ns_column(conn)
+    ensure_worktree_snapshot_path_mtime_ns_column(conn)
+    scrub_legacy_git_privacy_data(conn)
 
 
 def sanitize_remote_url(raw: str) -> str:
     if not raw:
         return ""
+    raw = raw.strip()
     return re.sub(r"(https?://)[^/@\s]+@", r"\1<redacted>@", raw)
 
 
@@ -1776,9 +2324,23 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
     root = root.resolve()
     info = repo_git_info(root)
     common = info["git_common_dir"]
+    context = repo_identity_context(root, info)
     repo_key_src = f"{root}|{common}|{info['remote_url']}"
     repo_key = sha256_text(repo_key_src)
-    origin_hash = sha256_text(info["remote_url"]) if info["remote_url"] else ""
+    identity = sanitize_repository_payload(
+        {
+            "root_path": str(root),
+            "first_seen_root_path": str(root),
+            "current_root_path": str(root),
+            "working_tree_path": str(root),
+            "git_common_dir": common,
+            "branch_name": info["branch_name"],
+            "remote_url": info["remote_url"],
+            "origin_url_hash": info["remote_url"],
+        },
+        context,
+    )
+    origin_hash = str(identity.get("origin_url_hash") or "")
     row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
     if row:
         repo_id = int(row["repo_id"])
@@ -1790,13 +2352,13 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
             where repo_id=?
             """,
             (
-                str(root),
-                str(root),
-                common,
+                identity["current_root_path"],
+                identity["working_tree_path"],
+                identity["git_common_dir"],
                 info["head_sha"],
                 info["head_tree_sha"],
-                info["branch_name"],
-                info["remote_url"],
+                identity["branch_name"],
+                identity["remote_url"],
                 origin_hash,
                 now,
                 repo_id,
@@ -1813,15 +2375,15 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
             """,
             (
                 repo_key,
-                str(root),
-                str(root),
-                str(root),
-                str(root),
-                common,
+                identity["root_path"],
+                identity["first_seen_root_path"],
+                identity["current_root_path"],
+                identity["working_tree_path"],
+                identity["git_common_dir"],
                 info["head_sha"],
                 info["head_tree_sha"],
-                info["branch_name"],
-                info["remote_url"],
+                identity["branch_name"],
+                identity["remote_url"],
                 origin_hash,
                 now,
                 now,
@@ -1829,9 +2391,9 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
         )
         repo_id = int(cur.lastrowid)
     for kind, value in [
-        ("root_path", str(root)),
+        ("root_path", identity["root_path"]),
         ("repo_key", repo_key),
-        ("git_common_dir", common),
+        ("git_common_dir", identity["git_common_dir"]),
         ("remote_url_hash", origin_hash),
     ]:
         if not value:
@@ -1846,11 +2408,14 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
             """,
             (repo_id, kind, value, now, now),
         )
+    scrub_repo_identity_rows(conn, repo_id, context)
+    scrub_source_record_rows(conn, root, repo_id)
     return repo_id
 
 
 def ensure_source_record(
     conn: sqlite3.Connection,
+    root: Path,
     repo_id: int,
     source_kind: str,
     *,
@@ -1862,10 +2427,20 @@ def ensure_source_record(
     parsed: Any = None,
     parse_status: str = "parsed",
     fact_confidence: str = "observed",
+    raw_storage_mode: str | None = None,
 ) -> int:
     if source_kind not in SOURCE_KINDS:
         source_kind = "operator"
     now = epoch_now()
+    stored_source_path = source_record_storage_path(root, source_kind, source_path)
+    stored_raw_text = raw_text if effective_lattice_raw_storage(raw_storage_mode) == "full" else None
+    stored_parsed = normalize_source_record_parsed(
+        source_kind,
+        raw_ref,
+        parse_status,
+        parsed,
+        raw_storage_mode=raw_storage_mode,
+    )
     cur = conn.execute(
         """
         insert into source_records(
@@ -1876,13 +2451,13 @@ def ensure_source_record(
         (
             repo_id,
             source_kind,
-            source_path or None,
+            stored_source_path or None,
             source_uri or None,
             source_epoch,
             now,
             raw_ref or None,
-            raw_text,
-            json_dumps(parsed) if parsed is not None else None,
+            stored_raw_text,
+            json_dumps(stored_parsed) if stored_parsed is not None else None,
             parse_status,
             fact_confidence,
         ),
@@ -2319,6 +2894,7 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path) -> None:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
             conn,
+            root,
             repo_id,
             "wrapper_observed",
             raw_ref="pass_registry",
@@ -2778,6 +3354,65 @@ def command_init(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id: int) -> dict[str, dict[str, dict[str, bool]]]:
+    checks: dict[str, dict[str, dict[str, bool]]] = {}
+    safe_log_payload = {
+        "timestamp": "2026-05-13T00:00:00-0700",
+        "level": "INFO",
+        "event": "cycle.start",
+        "cycle": "probe",
+        "run_hash": "probe",
+        "execution_origin": "primary",
+        "dry_run": "1",
+    }
+    unsafe_selection_payload = {"selection": {"path": "secret.txt"}, "candidate_count": 1}
+    for mode in ("none", "minimal", "limited", "full"):
+        conn.execute(f"SAVEPOINT raw_storage_{mode}")
+        try:
+            safe_id = ensure_source_record(
+                conn,
+                root,
+                repo_id,
+                "upkeeper_log",
+                raw_ref="cycle.start",
+                raw_text="sensitive raw log line",
+                parsed=safe_log_payload,
+                raw_storage_mode=mode,
+            )
+            unsafe_id = ensure_source_record(
+                conn,
+                root,
+                repo_id,
+                "wrapper_observed",
+                raw_ref="preselect",
+                raw_text='{"path":"secret.txt"}',
+                parsed=unsafe_selection_payload,
+                raw_storage_mode=mode,
+            )
+            safe_row = conn.execute(
+                "select raw_text, parsed_json from source_records where source_id=?",
+                (safe_id,),
+            ).fetchone()
+            unsafe_row = conn.execute(
+                "select raw_text, parsed_json from source_records where source_id=?",
+                (unsafe_id,),
+            ).fetchone()
+            checks[mode] = {
+                "safe_upkeeper_log": {
+                    "raw_text_stored": bool(safe_row["raw_text"]) if safe_row is not None else False,
+                    "parsed_json_stored": bool(safe_row["parsed_json"]) if safe_row is not None else False,
+                },
+                "unsafe_wrapper_observed": {
+                    "raw_text_stored": bool(unsafe_row["raw_text"]) if unsafe_row is not None else False,
+                    "parsed_json_stored": bool(unsafe_row["parsed_json"]) if unsafe_row is not None else False,
+                },
+            }
+        finally:
+            conn.execute(f"ROLLBACK TO raw_storage_{mode}")
+            conn.execute(f"RELEASE raw_storage_{mode}")
+    return checks
+
+
 def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
@@ -2830,6 +3465,11 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             return result, EXIT_INTEGRITY
         meta = conn.execute("select value from schema_meta where key='schema_version'").fetchone()
         result["checks"]["schema_meta_version"] = meta["value"] if meta else None
+        configured_raw_storage = configured_lattice_raw_storage()
+        result["checks"]["raw_storage_requested"] = configured_raw_storage
+        result["checks"]["raw_storage_effective"] = effective_lattice_raw_storage(configured_raw_storage)
+        result["checks"]["raw_storage_valid"] = configured_raw_storage in RAW_STORAGE_COMPAT_MODES
+        result["checks"]["raw_storage_enforcement"] = probe_raw_storage_enforcement(conn, root, ensure_repository(conn, root))
         if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
             result["status"] = "schema_mismatch"
             return result, EXIT_SCHEMA_MISMATCH
@@ -2918,10 +3558,12 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
     db_path = normalize_db_path(args.db, root)
     conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
+    info = repo_git_info(root)
+    context = repo_identity_context(root, info)
     with conn:
         repo_id = ensure_repository(conn, root)
         parsed = sanitize_cycle_start_fields(root, vars(args).copy())
-        source_id = ensure_source_record(conn, repo_id, "wrapper_observed", raw_ref="cycle_start", parsed=parsed)
+        source_id = ensure_source_record(conn, root, repo_id, "wrapper_observed", raw_ref="cycle_start", parsed=parsed)
         worktree_dirty = None
         if args.dirty_path_count is not None:
             worktree_dirty = 1 if int(args.dirty_path_count or 0) > 0 else 0
@@ -2939,9 +3581,9 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
             effort=args.effort if verbose else None,
             mode=args.mode if verbose else None,
             config_file=config_value,
-            branch_name=(args.branch_name or repo_git_info(root)["branch_name"]) if verbose else None,
-            head_sha=(args.head_sha or repo_git_info(root)["head_sha"]) if verbose else None,
-            head_tree_sha=(args.head_tree_sha or repo_git_info(root)["head_tree_sha"]) if verbose else None,
+            branch_name=protected_branch_name(context, args.branch_name or info["branch_name"]) if verbose else None,
+            head_sha=(args.head_sha or info["head_sha"]) if verbose else None,
+            head_tree_sha=(args.head_tree_sha or info["head_tree_sha"]) if verbose else None,
             upstream_ref=args.upstream_ref if verbose else None,
             worktree_dirty=worktree_dirty,
             dry_run=parse_bool_int(str(args.dry_run)) if args.dry_run is not None else None,
@@ -2962,8 +3604,10 @@ def record_worktree_snapshot(
     source_id: int | None = None,
 ) -> int:
     observed = epoch_now()
-    head_sha = git_output(root, ["rev-parse", "--verify", "HEAD"], "")
-    branch = git_output(root, ["branch", "--show-current"], "")
+    info = repo_git_info(root)
+    context = repo_identity_context(root, info)
+    head_sha = info["head_sha"]
+    branch = protected_branch_name(context, info["branch_name"])
     raw = b""
     try:
         raw = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--untracked-files=all"])
@@ -3207,7 +3851,7 @@ def command_record_worktree_snapshot(args: argparse.Namespace) -> int:
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, repo_id, "wrapper_observed", raw_ref=f"worktree_snapshot:{args.snapshot_kind}")
+        source_id = ensure_source_record(conn, root, repo_id, "wrapper_observed", raw_ref=f"worktree_snapshot:{args.snapshot_kind}")
         cycle_pk = None
         if args.cycle_id and args.run_hash:
             cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
@@ -3226,6 +3870,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
             conn,
+            root,
             repo_id,
             "wrapper_observed",
             raw_ref="preselect",
@@ -3720,7 +4365,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         review = parse_review_summary_file(Path(args.last_message_file)) if args.last_message_file else {}
         review_outcome = args.review_outcome or review.get("review_outcome") or None
         reported_selected = normalize_rel_path(args.review_selected_path or review.get("selected_file", ""))
-        source_id = ensure_source_record(conn, repo_id, "wrapper_observed", raw_ref="cycle_finish", parsed=parsed)
+        source_id = ensure_source_record(conn, root, repo_id, "wrapper_observed", raw_ref="cycle_finish", parsed=parsed)
         cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
         selected_path = normalize_rel_path(args.selected_path or "")
         selected_file_id = ensure_file(conn, repo_id, selected_path, source_id=source_id) if selected_path else None
@@ -4103,6 +4748,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
             conn,
+            root,
             repo_id,
             "transcript" if args.from_file else "wrapper_observed",
             source_path=args.from_file or "",
@@ -4130,6 +4776,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         rejected_pairs.add((rejected_pass, rejected_path))
                 ensure_source_record(
                     conn,
+                    root,
                     repo_id,
                     "transcript",
                     source_path=args.from_file,
@@ -4152,6 +4799,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     rejected_pairs.add((pass_code, trusted_selected_path))
                     ensure_source_record(
                         conn,
+                        root,
                         repo_id,
                         "transcript",
                         source_path=args.from_file,
@@ -4326,28 +4974,63 @@ def refresh_rollups(conn: sqlite3.Connection, repo_id: int) -> None:
         )
 
 
-def ensure_contributor(conn: sqlite3.Connection, name: str, email: str) -> int | None:
+def ensure_contributor(
+    conn: sqlite3.Connection,
+    name: str,
+    email: str,
+    *,
+    include_pii: bool = False,
+) -> int | None:
+    ensure_contributor_privacy_columns(conn)
     if not name and not email:
         return None
-    conn.execute(
-        "insert or ignore into contributors(name, email) values (?, ?)",
-        (name or None, email or None),
-    )
+    identity_hash = contributor_identity_hash(name, email)
     row = conn.execute(
-        "select contributor_id from contributors where name is ? and email is ?",
-        (name or None, email or None),
+        "select contributor_id, identity_hash from contributors where identity_hash=?",
+        (identity_hash,),
     ).fetchone()
+    if not row:
+        row = conn.execute(
+            "select contributor_id, identity_hash from contributors where name is ? and email is ?",
+            (name or None, email or None),
+        ).fetchone()
     if row:
-        return int(row["contributor_id"])
-    row = conn.execute(
-        "select contributor_id from contributors where coalesce(name,'')=? and coalesce(email,'')=?",
-        (name, email),
-    ).fetchone()
-    return int(row["contributor_id"]) if row else None
+        contributor_id = int(row["contributor_id"])
+        if include_pii:
+            conn.execute(
+                """
+                update contributors
+                set identity_hash=?, name=?, email=?, pii_included=1
+                where contributor_id=?
+                """,
+                (identity_hash, name or None, email or None, contributor_id),
+            )
+        elif not row["identity_hash"]:
+            conn.execute(
+                """
+                update contributors
+                set identity_hash=?, name=NULL, email=NULL, github_login=NULL, pii_included=0
+                where contributor_id=?
+                """,
+                (identity_hash, contributor_id),
+            )
+        return contributor_id
+    cur = conn.execute(
+        "insert into contributors(name, email, identity_hash, pii_included) values (?, ?, ?, ?)",
+        (
+            (name or None) if include_pii else None,
+            (email or None) if include_pii else None,
+            identity_hash,
+            1 if include_pii else 0,
+        ),
+    )
+    return int(cur.lastrowid)
 
 
 def command_import_git(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    include_contributor_pii = bool(getattr(args, "include_contributor_pii", False))
+    include_commit_subjects = bool(getattr(args, "include_commit_subjects", False))
     if not inside_git_repo(root):
         print_json({"status": "unavailable", "reason": "no_git_repository"})
         return EXIT_GIT_UNAVAILABLE
@@ -4359,9 +5042,10 @@ def command_import_git(args: argparse.Namespace) -> int:
     rows_written = 0
     duplicate_file_changes = 0
     with conn:
+        scrub_legacy_git_privacy_data(conn)
         repo_id = ensure_repository(conn, root)
         import_id = start_import(conn, repo_id, "local_git", {"root": str(root)})
-        source_id = ensure_source_record(conn, repo_id, "local_git", raw_ref="git-import", parse_status="started")
+        source_id = ensure_source_record(conn, root, repo_id, "local_git", raw_ref="git-import", parse_status="started")
         try:
             revs = subprocess.check_output(["git", "-C", str(root), "rev-list", "--all", "--reverse"], text=True)
         except subprocess.CalledProcessError:
@@ -4404,22 +5088,35 @@ def command_import_git(args: argparse.Namespace) -> int:
                 commit_id = int(commit_row["commit_id"])
                 commit_source_id = int(commit_row["source_id"]) if commit_row["source_id"] is not None else None
             else:
-                author_id = ensure_contributor(conn, an, ae)
-                committer_id = ensure_contributor(conn, cn, ce)
+                author_id = ensure_contributor(conn, an, ae, include_pii=include_contributor_pii)
+                committer_id = ensure_contributor(conn, cn, ce, include_pii=include_contributor_pii)
+                subject_summary = commit_subject_summary(
+                    subject if include_commit_subjects else None,
+                    commit_subject_hash(subject),
+                    len(subject),
+                    1 if include_commit_subjects else 0,
+                )
                 commit_source_id = ensure_source_record(
                     conn,
+                    root,
                     repo_id,
                     "local_git",
                     raw_ref=commit_sha,
-                    parsed={"subject": subject},
+                    parsed=local_git_source_payload(
+                        contributor_identity_hash(an, ae) or None,
+                        contributor_identity_hash(cn, ce) or None,
+                        subject,
+                        include_commit_subjects=include_commit_subjects,
+                    ),
                     source_epoch=int(at or 0) if str(at).isdigit() else None,
                     parse_status="parsed",
                 )
                 cur = conn.execute(
                     """
                     insert into git_commits(
-                      repo_id, sha, author_id, committer_id, author_epoch, committer_epoch, subject, source_id
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                      repo_id, sha, author_id, committer_id, author_epoch, committer_epoch,
+                      subject, subject_hash, subject_length, subject_included, source_id
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         repo_id,
@@ -4428,12 +5125,72 @@ def command_import_git(args: argparse.Namespace) -> int:
                         committer_id,
                         int(at or 0) if str(at).isdigit() else None,
                         int(ct or 0) if str(ct).isdigit() else None,
-                        subject,
+                        subject_summary["subject"],
+                        subject_summary["subject_hash"],
+                        subject_summary["subject_length"],
+                        subject_summary["subject_included"],
                         commit_source_id,
                     ),
                 )
                 commit_id = int(cur.lastrowid)
                 commits_written += 1
+            if commit_row:
+                subject_summary = commit_subject_summary(
+                    subject if include_commit_subjects else None,
+                    commit_subject_hash(subject),
+                    len(subject),
+                    1 if include_commit_subjects else 0,
+                )
+                author_id = ensure_contributor(conn, an, ae, include_pii=include_contributor_pii)
+                committer_id = ensure_contributor(conn, cn, ce, include_pii=include_contributor_pii)
+                conn.execute(
+                    """
+                    update git_commits
+                    set author_id=coalesce(author_id, ?),
+                        committer_id=coalesce(committer_id, ?),
+                        subject_hash=coalesce(subject_hash, ?),
+                        subject_length=coalesce(subject_length, ?),
+                        subject_included=case
+                          when ?=1 then 1
+                          else coalesce(subject_included, 0)
+                        end,
+                        subject=case
+                          when ?=1 then ?
+                          when coalesce(subject_included, 0)=1 then subject
+                          else NULL
+                        end
+                    where commit_id=?
+                    """,
+                    (
+                        author_id,
+                        committer_id,
+                        subject_summary["subject_hash"],
+                        subject_summary["subject_length"],
+                        subject_summary["subject_included"],
+                        subject_summary["subject_included"],
+                        subject_summary["subject"],
+                        commit_id,
+                    ),
+                )
+                if commit_source_id is not None:
+                    normalized_commit_source = normalize_source_record_parsed(
+                        "local_git",
+                        commit_sha,
+                        "parsed",
+                        local_git_source_payload(
+                            contributor_identity_hash(an, ae) or None,
+                            contributor_identity_hash(cn, ce) or None,
+                            subject,
+                            include_commit_subjects=include_commit_subjects,
+                        ),
+                    )
+                    conn.execute(
+                        "update source_records set parsed_json=? where source_id=?",
+                        (
+                            json_dumps(normalized_commit_source) if normalized_commit_source is not None else None,
+                            commit_source_id,
+                        ),
+                    )
             i = 8
             while i < len(parts):
                 status_code = parts[i].strip()
@@ -4680,6 +5437,7 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                 stored_raw_line = render_upkeeper_log_line(sanitize_cycle_start_fields(root, parsed))
             source_id = ensure_source_record(
                 conn,
+                root,
                 repo_id,
                 "upkeeper_log",
                 source_path=str(log_path),
@@ -4768,6 +5526,7 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                 text = item.group(2)
                 source_id = ensure_source_record(
                     conn,
+                    root,
                     repo_id,
                     "change_notes",
                     source_path=str(path),
@@ -4929,6 +5688,20 @@ def redact_payload(payload: dict[str, Any], args: argparse.Namespace) -> dict[st
     return _redact(payload)
 
 
+def sanitize_import_identity_payload(table: str, payload: dict[str, Any], context: tuple[str, str, str]) -> dict[str, Any]:
+    if table == "repositories":
+        return sanitize_repository_payload(payload, context)
+    if table == "repo_aliases":
+        return sanitize_repo_alias_payload(payload, context)
+    if table in {"cycles", "worktree_snapshots"}:
+        updated = dict(payload)
+        branch_name = updated.get("branch_name")
+        if isinstance(branch_name, str):
+            updated["branch_name"] = protected_branch_name(context, branch_name)
+        return updated
+    return payload
+
+
 def semantic_import_payload(table: str, payload: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
     for key in ("source_id", "imported_epoch", "last_seen_epoch", "updated_epoch"):
@@ -4943,6 +5716,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
     conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     repo_id = ensure_repository(conn, root)
+    context = repo_identity_context(root)
     output = validate_lattice_output_path(
         root,
         args.output if args.output else db_path.parent / "exports" / f"lattice-export-{epoch_now()}.jsonl",
@@ -4962,6 +5736,8 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
             if table.startswith("file_") and table.endswith("_rollups"):
                 continue
             for payload in export_table_rows(conn, table, repo_id=repo_id):
+                payload = sanitize_git_privacy_payload(table, payload, root=root)
+                payload = sanitize_import_identity_payload(table, payload, context)
                 payload = redact_payload(payload, args)
                 pk = table_primary_key(conn, table)
                 logical = f"{table}:{payload.get(pk) if pk else sha256_text(json_dumps(payload))}"
@@ -4976,7 +5752,11 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
                     },
                     "repo_identity": {
                         "repo_id": repo_id,
-                        "root_path": str(root) if not args.redact_paths else "path-sha256:" + sha256_text(str(root)),
+                        "root_path": (
+                            REDACTED_PATH_PREFIX + sha256_text(str(root))
+                            if args.redact_paths
+                            else protected_repo_path(context, str(root))
+                        ),
                     },
                     "payload": payload,
                     "payload_sha256": payload_hash,
@@ -4995,7 +5775,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
             "insert into lattice_exports(repo_id, export_kind, output_path, started_epoch, finished_epoch, row_count, sha256) values (?, 'jsonl', ?, ?, ?, ?, ?)",
             (repo_id, str(output), started, finished, row_count, digest),
         )
-        source_id = ensure_source_record(conn, repo_id, "lattice_export", source_path=str(output), raw_ref=digest, parsed={"row_count": row_count})
+        source_id = ensure_source_record(conn, root, repo_id, "lattice_export", source_path=str(output), raw_ref=digest, parsed={"row_count": row_count})
         record_file_event(conn, repo_id, "export_written", source_id=source_id, path=str(output), details={"row_count": row_count, "sha256": digest})
     print_json({"status": "ok", "output_path": str(output), "row_count": row_count, "sha256": digest})
     return EXIT_SUCCESS
@@ -5038,6 +5818,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             continue
     with conn:
         repo_id = ensure_repository(conn, root)
+        context = repo_identity_context(root)
         conn.execute("PRAGMA defer_foreign_keys=ON")
         existing_import_max = int(conn.execute("select coalesce(max(import_id), 0) from lattice_imports").fetchone()[0] or 0)
         import_id = start_import(
@@ -5090,10 +5871,12 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", raw_payload_hash, "payload_hash_mismatch")
                 continue
+            payload = sanitize_import_identity_payload(str(table), payload, context)
             payload_hash = sha256_text(json_dumps(semantic_import_payload(str(table), payload)))
             if table == "lattice_unavailable" and isinstance(payload, dict):
                 ensure_source_record(
                     conn,
+                    root,
                     repo_id,
                     "recovery",
                     source_path=str(input_path),
@@ -5112,6 +5895,16 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             columns = table_columns(conn, table)
             pk = table_primary_key(conn, table)
             filtered = {k: v for k, v in payload.items() if k in columns}
+            if table == "source_records":
+                filtered = sanitize_source_record_payload(filtered, root=root)
+                filtered["raw_text"] = filtered.get("raw_text") if effective_lattice_raw_storage() == "full" else None
+                filtered["parsed_json"] = normalized_source_record_parsed_json(
+                    str(filtered.get("source_kind") or ""),
+                    str(filtered.get("raw_ref") or ""),
+                    str(filtered.get("parse_status") or "parsed"),
+                    filtered.get("parsed_json") if isinstance(filtered.get("parsed_json"), str) else None,
+                )
+                payload_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
             if not filtered:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", payload_hash, "empty_filtered_payload")
@@ -5218,10 +6011,24 @@ def create_backup(
     if not backup_path.parent.exists():
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         chmod_private(backup_path.parent, is_dir=True)
-    backup_journal_mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0] or "delete").strip().lower()
-    backup_conn = connect(backup_path, backup_journal_mode, create_if_missing=True)
+    if backup_path.exists() or backup_path.is_symlink():
+        try:
+            existing = backup_path.lstat()
+        except OSError as exc:
+            fail(f"backup path not stat-able: {backup_path} ({exc})", EXIT_DB_UNAVAILABLE)
+        if stat.S_ISLNK(existing.st_mode):
+            fail(f"backup path is a symlink: {backup_path}", EXIT_USAGE)
+        if not stat.S_ISREG(existing.st_mode):
+            fail(f"backup path is not regular: {backup_path}", EXIT_USAGE)
+    if conn.in_transaction:
+        conn.commit()
+    backup_conn = sqlite3.connect(str(backup_path))
     try:
-        conn.backup(backup_conn)
+        backup_conn.execute("PRAGMA busy_timeout=5000")
+        if backup_conn.in_transaction:
+            backup_conn.commit()
+        conn.backup(backup_conn, pages=128, sleep=0.01)
+        backup_conn.commit()
     finally:
         backup_conn.close()
     chmod_private(backup_path)
@@ -5324,7 +6131,7 @@ def recover_artifact_refs(
     recorded: list[str] = []
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, repo_id, "recovery", raw_ref="recover_artifacts")
+        source_id = ensure_source_record(conn, root, repo_id, "recovery", raw_ref="recover_artifacts")
         artifact_roots = [
             ("startup_anomaly_state", root / "runtime/startup-anomaly-gates"),
             ("transcript", root / "runtime/upkeeper-transcripts"),
@@ -5376,6 +6183,7 @@ def command_recover(args: argparse.Namespace) -> int:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
             conn,
+            root,
             repo_id,
             "recovery",
             raw_ref="recover",
@@ -5451,7 +6259,7 @@ def import_failure_markers(
                 continue
             target = normalize_rel_path(str(data.get("target_path", "")))
             file_id = ensure_file(conn, repo_id, target) if target else None
-            source_id = ensure_source_record(conn, repo_id, "tool_failure_marker", source_path=str(path), raw_ref=str(data.get("marker_id", path.stem)), parsed=data)
+            source_id = ensure_source_record(conn, root, repo_id, "tool_failure_marker", source_path=str(path), raw_ref=str(data.get("marker_id", path.stem)), parsed=data)
             conn.execute(
                 """
                 insert into tool_failures(
@@ -5550,16 +6358,30 @@ def query_file_history(conn: sqlite3.Connection, root: Path, repo_id: int, args:
         (repo_id, file_id),
     ):
         rows.append(dict(row))
+    git_commit_columns = set(table_columns(conn, "git_commits"))
+    subject_hash_expr = "c.subject_hash as subject_hash" if "subject_hash" in git_commit_columns else "null as subject_hash"
+    subject_length_expr = "c.subject_length as subject_length" if "subject_length" in git_commit_columns else "null as subject_length"
+    subject_included_expr = "c.subject_included as subject_included" if "subject_included" in git_commit_columns else "0 as subject_included"
     for row in conn.execute(
-        """
-        select g.change_epoch as epoch, 'git_change' as kind, g.path, g.status, c.sha, c.subject
+        f"""
+        select g.change_epoch as epoch, 'git_change' as kind, g.path, g.status, c.sha, c.subject,
+               {subject_hash_expr}, {subject_length_expr}, {subject_included_expr}
         from git_file_changes g join git_commits c on c.commit_id=g.commit_id
         where g.repo_id=? and g.file_id=?
         order by g.change_epoch, g.git_file_change_id
         """,
         (repo_id, file_id),
     ):
-        rows.append(dict(row))
+        payload = dict(row)
+        payload.update(
+            commit_subject_summary(
+                payload.get("subject") if isinstance(payload.get("subject"), str) else None,
+                payload.get("subject_hash"),
+                payload.get("subject_length"),
+                payload.get("subject_included"),
+            )
+        )
+        rows.append(payload)
     return sorted(rows, key=lambda item: (item.get("epoch") or 0, str(item.get("kind"))))
 
 
@@ -5922,7 +6744,7 @@ def command_mark_regression(args: argparse.Namespace) -> int:
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, repo_id, args.source_kind, raw_ref="mark-regression", parsed=vars(args))
+        source_id = ensure_source_record(conn, root, repo_id, args.source_kind, raw_ref="mark-regression", parsed=vars(args))
         file_id = ensure_file(conn, repo_id, args.path, source_id=source_id)
         cycle_pk = None
         if args.cycle_id:
@@ -5964,7 +6786,7 @@ def command_prune(args: argparse.Namespace) -> int:
     actions: list[dict[str, Any]] = []
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, repo_id, "operator", raw_ref="prune", parsed=vars(args))
+        source_id = ensure_source_record(conn, root, repo_id, "operator", raw_ref="prune", parsed=vars(args))
         if args.raw_only:
             sql = "update source_records set raw_text=null where raw_text is not null"
             params: tuple[Any, ...] = ()
@@ -6079,6 +6901,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db", default=None, help="SQLite DB path")
     parser.add_argument("--journal-mode", default=os.environ.get("UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE", "delete"), choices=["delete", "wal"])
     parser.add_argument("--allow-unsafe-db", action="store_true", default=os.environ.get("UPKEEPER_LATTICE_ALLOW_UNSAFE_DB") == "1")
+    parser.add_argument(
+        "--raw-repo-identity",
+        action="store_true",
+        default=os.environ.get(UPKEEPER_RAW_REPO_IDENTITY_ENV) == "1",
+        help="opt in to raw path/branch/HTTPS repo identity storage; SSH and local remotes remain redacted",
+    )
     parser.add_argument("--upkeeper-ignore-file", default=os.environ.get("CODEX_UPKEEPER_IGNORE_FILE", os.environ.get("UPKEEPER_IGNORE_FILE", ".upkeeperignore")), help="Upkeeper target-selection ignore file")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -6162,6 +6990,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("import-git")
     p.add_argument("--limit", type=int)
+    p.add_argument("--include-contributor-pii", action="store_true")
+    p.add_argument("--include-commit-subjects", action="store_true")
     p.set_defaults(func=command_import_git)
 
     p = sub.add_parser("import-upkeeper-log")
@@ -6270,6 +7100,8 @@ def add_scope(parser: argparse.ArgumentParser, default: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "raw_repo_identity", False):
+        os.environ[UPKEEPER_RAW_REPO_IDENTITY_ENV] = "1"
     try:
         return int(args.func(args))
     except sqlite3.IntegrityError as exc:

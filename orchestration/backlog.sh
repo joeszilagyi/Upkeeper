@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
+SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "$SCRIPT_SOURCE")"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
@@ -16,6 +17,9 @@ BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-high}"
 BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
 BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-900}"
 BACKLOG_PER_BUG_VALIDATION_MODE="${BACKLOG_PER_BUG_VALIDATION_MODE:-light}"
+BACKLOG_ALLOW_INTERACTIVE_STDIN="${BACKLOG_ALLOW_INTERACTIVE_STDIN:-0}"
+BACKLOG_ALLOW_INTERACTIVE_STDIO="${BACKLOG_ALLOW_INTERACTIVE_STDIO:-$BACKLOG_ALLOW_INTERACTIVE_STDIN}"
+BACKLOG_STDIO_AUTODETACHED="${BACKLOG_STDIO_AUTODETACHED:-0}"
 
 log() {
   printf 'backlog: %s\n' "$*" >&2
@@ -38,6 +42,34 @@ require_clean_worktree() {
 
 backlog_state_root() {
   printf '%s\n' "${BACKLOG_STATE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog}"
+}
+
+redirect_interactive_stdio() {
+  local state_root log_file
+
+  [[ "$BACKLOG_ALLOW_INTERACTIVE_STDIO" == "1" ]] && return 0
+  [[ ! -t 0 && ! -t 1 && ! -t 2 ]] && return 0
+
+  if [[ "$BACKLOG_STDIO_AUTODETACHED" == "1" ]]; then
+    log "ERROR: interactive stdio remained attached after backlog auto-detach"
+    exit 64
+  fi
+
+  state_root="$(backlog_state_root)"
+  log_file="${BACKLOG_LOOP_LOG_FILE:-$state_root/loop.log}"
+  mkdir -p -- "$state_root" "$(dirname -- "$log_file")"
+  chmod 700 "$state_root" "$(dirname -- "$log_file")" 2>/dev/null || true
+
+  printf '# backlog: interactive stdio detected; redirecting this run to %s\n' "$log_file" >&2
+  if [[ "${BACKLOG_STDIO_AUTODETACH_PROBE:-0}" == "1" ]]; then
+    exit 0
+  fi
+
+  export BACKLOG_STDIO_AUTODETACHED=1
+  exec "$SCRIPT_PATH" "$@" </dev/null >>"$log_file" 2>&1
+
+  log "ERROR: failed to redirect interactive stdio to $log_file"
+  exit 64
 }
 
 backlog_branch_key() {
@@ -73,6 +105,7 @@ prepare_backlog_runtime_env() {
   export CODEX_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-0}"
   export CODEX_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-0}"
   export UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="${BACKLOG_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL:-1}"
+  export CODEX_TERMINAL_VERBOSITY="${BACKLOG_CODEX_TERMINAL_VERBOSITY:-${CODEX_TERMINAL_VERBOSITY:-quiet}}"
   export PYTHONDONTWRITEBYTECODE=1
 
   state_root="$(backlog_state_root)"
@@ -281,7 +314,10 @@ target_hint_for_issue() {
     *prompt_file*|*run.start*|*prompt\ file*)
       [[ -f Upkeeper ]] && printf '%s\n' "Upkeeper"
       ;;
-    *cycle.start*|*record-cycle-start*|*verbose\ metadata*|*operator\ and\ config\ metadata*|*config\ file*|*issue\ labels*|*include/exclude\ globs*|*manifest\ path*)
+    *runtime/upkeeper-file-manifest.json*|*upkeeper-file-manifest.json*|*file\ manifest*|*manifest\ refresh*|*manifest\ selection*)
+      [[ -f lib/upkeeper/file_manifest.bash ]] && printf '%s\n' "lib/upkeeper/file_manifest.bash"
+      ;;
+    *cycle.start*|*record-cycle-start*|*verbose\ metadata*|*operator\ and\ config\ metadata*|*config\ file*|*issue\ labels*|*include/exclude\ globs*)
       [[ -f Upkeeper ]] && printf '%s\n' "Upkeeper"
       ;;
     *lattice*|*pass_result*|*pass-result*)
@@ -442,6 +478,8 @@ merge_and_clean() {
 
 main() {
   local pr_info pr_number branch issue_info issue_number count run_status
+
+  redirect_interactive_stdio "$@"
 
   require_command git
   require_command gh

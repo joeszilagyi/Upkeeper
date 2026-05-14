@@ -184,7 +184,10 @@ Important:
     UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE, UPKEEPER_MODEL_OVERRIDE,
     UPKEEPER_IGNORE_FAILURE_QUEUE, UPKEEPER_BUG_REPORT_ONLY, and
     UPKEEPER_FIX_NEXT_ISSUE. They may also set pre-contact backup defaults such
-    as UPKEEPER_PRECONTACT_BACKUP_MODE, UPKEEPER_PRECONTACT_BACKUP_ROOT, and
+    as UPKEEPER_PRECONTACT_BACKUP_MODE,
+    UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED,
+    UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT,
+    UPKEEPER_PRECONTACT_BACKUP_ROOT, and
     UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT. They may also set selection
     defaults such as UPKEEPER_SELECTION_SOURCE, UPKEEPER_SELECTION_ORDER,
     UPKEEPER_FILE_MANIFEST_MODE, UPKEEPER_TARGET_ROOT,
@@ -279,10 +282,14 @@ Prompt behavior:
     appended, Upkeeper creates a pre-contact backup when enabled. The default
     vault is outside the repository. Auto mode uses age encryption when
     UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT is set and age is available;
-    otherwise it uses plain local mode unless encrypted backup is required.
-    Plain mode is a recovery aid, not a same-user security boundary. Backup
-    logs and prompts include mode, encrypted, protected_from_backend, and
-    path_redacted=1; the vault path is not
+    otherwise the default contract fails closed before backend launch because
+    encrypted backup is required. Plain mode is a recovery aid, not a same-user
+    security boundary, and now requires both
+    UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0 and
+    UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1. Plaintext backup also
+    rejects high-confidence private-key content even when that unsafe override
+    is set. Backup logs and prompts include mode, encrypted,
+    protected_from_backend, and path_redacted=1; the vault path is not
     prompt-visible. Restore a plain backup by id with:
       tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID
   - A repo-root .upkeeperignore, or the file named by UPKEEPER_IGNORE_FILE,
@@ -453,6 +460,7 @@ Environment overrides:
   UPKEEPER_PRECONTACT_BACKUP_REQUIRED Default: $UPKEEPER_PRECONTACT_BACKUP_REQUIRED
   UPKEEPER_PRECONTACT_BACKUP_MODE Default: $UPKEEPER_PRECONTACT_BACKUP_MODE
   UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED Default: $UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT Default: $UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT
   UPKEEPER_PRECONTACT_BACKUP_ROOT Default: $UPKEEPER_PRECONTACT_BACKUP_ROOT
   UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE Default: $UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE
   UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT Default: empty

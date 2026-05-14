@@ -144,10 +144,11 @@ backend-visible environments.
 
 ## Optional Dependencies
 
-- `age` is optional only for plain `./Upkeeper` compatibility runs that do not
-  require encrypted selected-target backup. If `UPKEEPER_PRECONTACT_BACKUP_MODE`
-  is `age`, or `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=1`, missing `age`
-  or a missing recipient fails the cycle before backend launch.
+- `age` is optional only when an operator explicitly opts into unsafe plaintext
+  recovery by setting both `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0` and
+  `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1`. With the central
+  defaults, missing `age` or a missing recipient fails the cycle before backend
+  launch.
 - `realpath` is used for central implementation path resolution when available;
   `python3` is the fallback.
 - `stat` is used for transcript sizing when available; `python3` is the

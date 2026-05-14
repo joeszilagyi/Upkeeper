@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.15
+Version: v1.2.16
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -167,6 +167,8 @@ Important:
     `UPKEEPER_IGNORE_FAILURE_QUEUE`, `UPKEEPER_MAX_COVER`,
     `UPKEEPER_BUG_REPORT_ONLY`, and `UPKEEPER_FIX_NEXT_ISSUE`. They may also
     set pre-contact backup defaults such as `UPKEEPER_PRECONTACT_BACKUP_MODE`,
+    `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED`,
+    `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT`,
     `UPKEEPER_PRECONTACT_BACKUP_ROOT`, and
     `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT`. They may also set selection defaults such as `UPKEEPER_SELECTION_SOURCE`,
     `UPKEEPER_SELECTION_ORDER`,
@@ -270,11 +272,15 @@ Prompt behavior:
     appended, Upkeeper creates a pre-contact backup when enabled. The default
     vault is outside the repository. Auto mode uses age encryption when
     `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` is set and `age` is available;
-    otherwise it uses plain local mode unless encrypted backup is required.
-    Plain mode is a recovery aid, not a same-user security boundary. Backup logs
-    and prompts include HMAC target identity, mode, encrypted,
-    `protected_from_backend`, and `path_redacted=1`; the vault path is not
-    prompt-visible. Restore a plain backup by id with:
+    otherwise the default contract fails closed before backend launch because
+    encrypted backup is required. Plain mode is a recovery aid, not a same-user
+    security boundary, and now requires both
+    `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0` and
+    `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1`. Plaintext backup
+    also rejects high-confidence private-key content even when that unsafe
+    override is set. Backup logs and prompts include HMAC target identity, mode,
+    encrypted, `protected_from_backend`, and `path_redacted=1`; the vault path
+    is not prompt-visible. Restore a plain backup by id with:
       `tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID`
   - A repo-root `.upkeeperignore`, or the file named by `UPKEEPER_IGNORE_FILE`,
     is a target-selection firewall. It uses simple Gitignore-style glob lines
@@ -469,8 +475,9 @@ Environment overrides:
   UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE Default: delete
   UPKEEPER_PRECONTACT_BACKUP_ENABLED Default: 1
   UPKEEPER_PRECONTACT_BACKUP_REQUIRED Default: 1
-  UPKEEPER_PRECONTACT_BACKUP_MODE Default: age
+  UPKEEPER_PRECONTACT_BACKUP_MODE Default: auto
   UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED Default: 1
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT Default: 0
   UPKEEPER_PRECONTACT_BACKUP_ROOT Default: ${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/precontact-vault
   UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE Default: 20
   UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT Default: empty
@@ -643,12 +650,15 @@ use it only when manually restoring encrypted backup payloads.
 ## Pre-Contact Backup Examples
 
 Plain local backup mode keeps a copy outside the repository. It is useful for
-manual recovery, but it is not protected from same-user deletion:
+manual recovery, but it is not protected from same-user deletion and now
+requires an explicit unsafe override:
 
 ```sh
 UPKEEPER_PRECONTACT_BACKUP_ENABLED=1
 UPKEEPER_PRECONTACT_BACKUP_REQUIRED=1
 UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
 UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE=20
 ```
 

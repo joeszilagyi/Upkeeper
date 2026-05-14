@@ -68,8 +68,9 @@ configured Codex sandbox mode and the task it performs. Dry-run mode
 After Upkeeper selects a review target and before it appends the selected-target
 authority block to the compiled prompt, it creates a pre-contact backup when
 `UPKEEPER_PRECONTACT_BACKUP_ENABLED=1`. The default is required
-(`UPKEEPER_PRECONTACT_BACKUP_REQUIRED=1`), so backup creation failures stop the
-cycle before backend launch with `codex_exec_started=0`.
+(`UPKEEPER_PRECONTACT_BACKUP_REQUIRED=1`) and encrypted-required
+(`UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=1`), so backup creation failures
+stop the cycle before backend launch with `codex_exec_started=0`.
 
 The default vault root is outside the repository:
 
@@ -85,8 +86,12 @@ selected target HMAC, backup mode, encrypted flag, backend-protection flag, and
 Plain backup mode copies the selected file and a JSON sidecar. It is useful for
 quick recovery, but it is not a security boundary: a same-user backend process
 that can discover and access the vault through other means may be able to read
-or delete plain artifacts. Upkeeper therefore records plain backups as
-`encrypted=false` and `protected_from_backend=false`.
+or delete plain artifacts. Plain mode therefore requires an explicit unsafe
+operator opt-in with both `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0` and
+`UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1`, and Upkeeper rejects the
+plaintext path when the selected file contains high-confidence private-key
+material. Upkeeper records accepted plain backups as `encrypted=false` and
+`protected_from_backend=false`.
 
 Age mode encrypts the backup payload to a configured public recipient. Backup
 creation uses only the public recipient; it must not request, read, log, or

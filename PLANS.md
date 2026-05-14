@@ -3,6 +3,49 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Pre-Contact Backup Plaintext Fail-Closed Hardening
+
+Status: in_progress
+
+Goal:
+Make selected-target pre-contact backup fail closed by default unless encrypted
+backup is available, and require an explicit unsafe operator override before any
+plaintext backup path can run.
+
+Constraints:
+- Keep the patch focused on the pre-contact backup contract surfaced by issue
+  `#289`.
+- Preserve encrypted age backups and existing restore behavior.
+- Allow plaintext backups only through an explicit unsafe opt-in, with an
+  additional high-confidence sensitive-content gate before writing `.bak`
+  artifacts.
+- Update operator-visible defaults, compatibility notes, and release notes in
+  the same committed state because plain `./Upkeeper` runs without `age` will
+  now stop before backend launch.
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/precontact_backup.bash`
+- `lib/upkeeper/help_selection.bash`
+- `Upkeeper.conf`
+- `configurations/default.conf`
+- `tests/precontact_backup_test.bash`
+- `docs/scripts/upkeeper.md`
+- `docs/security.md`
+- `docs/dependencies.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/precontact_backup_test.bash`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `./Upkeeper --help`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Lattice Export Privacy And Import Roundtrip
 
 Status: completed

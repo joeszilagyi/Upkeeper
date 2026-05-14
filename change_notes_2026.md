@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-14: v1.2.16 changes:
+	1. Selected-target pre-contact backup now defaults to encrypted-required mode for ordinary `./Upkeeper` runs, so missing `age` or a missing public recipient stops the cycle before backend launch instead of silently falling back to plaintext.
+	2. Plaintext pre-contact backup is now available only through an explicit unsafe operator override (`UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0` plus `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1`), making the compatibility break and migration path explicit.
+	3. Added a high-confidence plaintext content gate that rejects private-key material before writing `.bak` artifacts, and refreshed local tests plus operator-facing help/docs for the tightened contract.
+
 2026-05-13: v1.2.15 changes:
 	1. Backlog batch runs now support safe interactive watch mode by default: `orchestration/backlog.sh` cuts off stdin, keeps live output visible in the current terminal, and mirrors that output to the private backlog loop log, while `orchestration/backlog_loop.sh` and `BACKLOG_INTERACTIVE_MODE=detach` remain available for fully detached looping.
 	2. Backlog runs default to quiet terminal verbosity, reducing live model chatter on unattended issue batches while preserving full transcripts under the backlog state directory.

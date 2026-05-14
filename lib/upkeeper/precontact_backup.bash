@@ -32,6 +32,10 @@ precontact_backup_required() {
   precontact_backup_enabled && precontact_backup_truthy "${UPKEEPER_PRECONTACT_BACKUP_REQUIRED:-1}"
 }
 
+precontact_backup_allow_unsafe_plaintext() {
+  precontact_backup_truthy "${UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT:-0}"
+}
+
 precontact_backup_set_reason() {
   PRECONTACT_BACKUP_LAST_REASON="$1"
   return 1
@@ -172,6 +176,43 @@ precontact_backup_sensitive_target_path() {
       ;;
   esac
   return 1
+}
+
+precontact_backup_validate_plaintext_target_content() {
+  local target_abs="$1"
+  local rc=0
+
+  python3 - "$target_abs" <<'PY' || rc=$?
+from pathlib import Path
+import sys
+
+data = Path(sys.argv[1]).read_bytes()
+markers = (
+    b"-----BEGIN OPENSSH PRIVATE KEY-----",
+    b"-----BEGIN RSA PRIVATE KEY-----",
+    b"-----BEGIN DSA PRIVATE KEY-----",
+    b"-----BEGIN EC PRIVATE KEY-----",
+    b"-----BEGIN PRIVATE KEY-----",
+    b"-----BEGIN PGP PRIVATE KEY BLOCK-----",
+)
+for marker in markers:
+    if marker in data:
+        raise SystemExit(2)
+PY
+
+  case "$rc" in
+    0)
+      return 0
+      ;;
+    2)
+      precontact_backup_set_reason "plaintext_sensitive_content_rejected"
+      return 1
+      ;;
+    *)
+      precontact_backup_set_reason "plaintext_content_scan_failed"
+      return 1
+      ;;
+  esac
 }
 
 precontact_backup_validate_target() {
@@ -355,7 +396,7 @@ precontact_backup_validate_root() {
 
 precontact_backup_resolve_mode() {
   local mode="${UPKEEPER_PRECONTACT_BACKUP_MODE:-auto}"
-  local require_encrypted="${UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED:-0}"
+  local require_encrypted="${UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED:-1}"
 
   PRECONTACT_BACKUP_RESOLVED_MODE=""
   mode="${mode,,}"
@@ -384,6 +425,10 @@ precontact_backup_resolve_mode() {
         precontact_backup_set_reason "age_missing"
         return 1
       fi
+      if ! precontact_backup_allow_unsafe_plaintext; then
+        precontact_backup_set_reason "plaintext_override_required"
+        return 1
+      fi
       PRECONTACT_BACKUP_RESOLVED_MODE="plain"
       ;;
     age)
@@ -400,6 +445,10 @@ precontact_backup_resolve_mode() {
     plain)
       if precontact_backup_truthy "$require_encrypted"; then
         precontact_backup_set_reason "encrypted_required"
+        return 1
+      fi
+      if ! precontact_backup_allow_unsafe_plaintext; then
+        precontact_backup_set_reason "plaintext_override_required"
         return 1
       fi
       PRECONTACT_BACKUP_RESOLVED_MODE="plain"
@@ -829,6 +878,10 @@ precontact_backup_selected_target_or_exit() {
   target_abs="$PRECONTACT_BACKUP_VALIDATED_ABS_PATH"
   if ! content_sha="$(precontact_backup_sha256_file "$target_abs")"; then
     precontact_backup_fail_or_continue "$rel_path" "target_hash_failed" 0
+    return 0
+  fi
+  if [[ "$resolved_mode" == "plain" ]] && ! precontact_backup_validate_plaintext_target_content "$target_abs"; then
+    precontact_backup_fail_or_continue "$rel_path" "${PRECONTACT_BACKUP_LAST_REASON:-plaintext_content_rejected}" 0
     return 0
   fi
   content_hmac="$(precontact_backup_content_hmac "$content_sha")"

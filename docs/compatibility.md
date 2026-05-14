@@ -98,6 +98,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   backup failures must stop before backend launch with `codex_exec_started=0`.
   The default vault is outside the repository, and wrapper-generated prompts,
   logs, and Lattice preselect evidence must not expose the vault root.
+- The central defaults now require encrypted pre-contact backup. Keeping the
+  old silent plaintext fallback was unsafe, so operators who intentionally need
+  plaintext recovery must explicitly set both
+  `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0` and
+  `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1`.
 - The central default config remains `Upkeeper.conf`, and named config profiles
   can be selected per invocation with `--config-file=PATH`.
 - Existing documented environment knobs keep their meaning unless a change note

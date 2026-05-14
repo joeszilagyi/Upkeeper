@@ -1237,6 +1237,8 @@ def source_record_parsed_allowed(source_kind: str, raw_ref: str, parse_status: s
         return True
     if mode == "none":
         return False
+    if source_kind == "recovery" and parse_status == "spooled_lattice_unavailable":
+        return True
     key = (source_kind, "rejected" if source_kind == "transcript" and parse_status == "rejected" else "")
     if source_kind == "recovery":
         key = (source_kind, raw_ref)
@@ -1274,6 +1276,29 @@ def normalize_source_record_parsed(
     if summary["subject"] is not None:
         normalized["subject"] = summary["subject"]
     return normalized
+
+
+def summarize_lattice_unavailable_payload(payload: dict[str, Any], raw_line: str) -> dict[str, Any]:
+    summary: dict[str, Any] = {"raw_sha256": sha256_text(raw_line)}
+    cycle_id = payload.get("cycle_id")
+    if isinstance(cycle_id, str) and cycle_id.strip():
+        summary["cycle_id"] = cycle_id
+    run_hash = payload.get("run_hash")
+    if isinstance(run_hash, str) and run_hash.strip():
+        summary["run_hash"] = run_hash
+    observed_epoch = payload.get("observed_epoch")
+    try:
+        if observed_epoch is not None:
+            summary["observed_epoch"] = int(observed_epoch)
+    except (TypeError, ValueError):
+        pass
+    db_path = payload.get("db_path")
+    if isinstance(db_path, str) and db_path:
+        summary["db_path_sha256"] = sha256_text(db_path)
+    detail = payload.get("detail")
+    if isinstance(detail, str) and detail:
+        summary["detail_sha256"] = sha256_text(detail)
+    return summary
 
 
 def normalized_source_record_parsed_json(
@@ -5874,6 +5899,9 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             payload = sanitize_import_identity_payload(str(table), payload, context)
             payload_hash = sha256_text(json_dumps(semantic_import_payload(str(table), payload)))
             if table == "lattice_unavailable" and isinstance(payload, dict):
+                # Recovery spool rows can contain DB paths and prior failure text;
+                # default imports keep only a hashed summary unless raw retention
+                # is explicitly requested and raw storage mode allows it.
                 ensure_source_record(
                     conn,
                     root,
@@ -5882,7 +5910,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     source_path=str(input_path),
                     raw_ref=logical_key,
                     raw_text=raw if not getattr(args, "redact_raw", False) else None,
-                    parsed=payload,
+                    parsed=summarize_lattice_unavailable_payload(payload, raw),
                     parse_status="spooled_lattice_unavailable",
                     fact_confidence="observed",
                 )
@@ -5897,7 +5925,11 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             filtered = {k: v for k, v in payload.items() if k in columns}
             if table == "source_records":
                 filtered = sanitize_source_record_payload(filtered, root=root)
-                filtered["raw_text"] = filtered.get("raw_text") if effective_lattice_raw_storage() == "full" else None
+                filtered["raw_text"] = (
+                    filtered.get("raw_text")
+                    if effective_lattice_raw_storage() == "full" and not getattr(args, "redact_raw", False)
+                    else None
+                )
                 filtered["parsed_json"] = normalized_source_record_parsed_json(
                     str(filtered.get("source_kind") or ""),
                     str(filtered.get("raw_ref") or ""),
@@ -7015,7 +7047,19 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("import-jsonl")
     p.add_argument("path")
     p.add_argument("--max-conflicts", type=int, default=0)
-    p.set_defaults(func=command_import_jsonl)
+    p.add_argument(
+        "--redact-raw",
+        dest="redact_raw",
+        action="store_true",
+        help="redact imported raw source lines and keep only safe summary fields (default)",
+    )
+    p.add_argument(
+        "--preserve-raw",
+        dest="redact_raw",
+        action="store_false",
+        help="allow imported raw source lines when raw storage mode is full",
+    )
+    p.set_defaults(func=command_import_jsonl, redact_raw=True)
 
     p = sub.add_parser("backup")
     p.add_argument("--output")

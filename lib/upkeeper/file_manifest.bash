@@ -37,6 +37,11 @@ ensure_file_manifest_for_selection() {
     CODEX_SELECTION_SOURCE="enumerate"
     return 0
   fi
+  if ! chmod 700 "$manifest_dir"; then
+    log_line "WARN" "file_manifest.skip reason=manifest_dir_unprotected path=$(shell_quote "$manifest_path") action=fall_back_to_enumerate"
+    CODEX_SELECTION_SOURCE="enumerate"
+    return 0
+  fi
 
   set +e
   output="$(python3 - "$ROOT_DIR" "$manifest_path" "$CODEX_FILE_MANIFEST_MODE" "$CODEX_FILE_MANIFEST_MAX_AGE_SECONDS" "$CODEX_UPKEEPER_IGNORE_FILE" <<'PY'
@@ -306,6 +311,7 @@ def existing_payload() -> dict[str, object] | None:
 
 def write_payload(payload: dict[str, object]) -> None:
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(manifest_path.parent, 0o700)
     fd, temp_name = tempfile.mkstemp(prefix=f".{manifest_path.name}.", suffix=".tmp", dir=str(manifest_path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

@@ -6011,10 +6011,24 @@ def create_backup(
     if not backup_path.parent.exists():
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         chmod_private(backup_path.parent, is_dir=True)
-    backup_journal_mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0] or "delete").strip().lower()
-    backup_conn = connect(backup_path, backup_journal_mode, create_if_missing=True)
+    if backup_path.exists() or backup_path.is_symlink():
+        try:
+            existing = backup_path.lstat()
+        except OSError as exc:
+            fail(f"backup path not stat-able: {backup_path} ({exc})", EXIT_DB_UNAVAILABLE)
+        if stat.S_ISLNK(existing.st_mode):
+            fail(f"backup path is a symlink: {backup_path}", EXIT_USAGE)
+        if not stat.S_ISREG(existing.st_mode):
+            fail(f"backup path is not regular: {backup_path}", EXIT_USAGE)
+    if conn.in_transaction:
+        conn.commit()
+    backup_conn = sqlite3.connect(str(backup_path))
     try:
-        conn.backup(backup_conn)
+        backup_conn.execute("PRAGMA busy_timeout=5000")
+        if backup_conn.in_transaction:
+            backup_conn.commit()
+        conn.backup(backup_conn, pages=128, sleep=0.01)
+        backup_conn.commit()
     finally:
         backup_conn.close()
     chmod_private(backup_path)

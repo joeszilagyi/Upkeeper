@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-13: v1.2.15 changes:
+	1. Backlog batch runs now auto-detach when `orchestration/backlog.sh` is invoked with interactive stdin, stdout, or stderr; the old `while ./orchestration/backlog.sh; do sleep 60; done` loop shape remains usable, but run output is redirected to the private backlog loop log instead of the active terminal.
+	2. Backlog runs default to quiet terminal verbosity, reducing live model chatter on unattended issue batches while preserving full transcripts under the backlog state directory.
+	3. Explicit issue-target handoff now ignores excluded runtime/log/.git targets before preselection, and backlog issue hints map manifest-related issues to `lib/upkeeper/file_manifest.bash` instead of handing `runtime/upkeeper-file-manifest.json` to Upkeeper.
+	4. Lattice backups now avoid a destination-connection path that could stall local validation while holding a zero-byte backup file and source journal.
+
 2026-05-12: lattice Git import privacy defaults:
 	1. `tools/upkeeper_lattice.py import-git` now stores contributor identity as a stable SHA-256 token by default and only preserves contributor name/email when `--include-contributor-pii` is explicitly requested.
 	2. Git commit imports now store a subject hash plus subject length by default, keep raw subjects only behind `--include-commit-subjects`, and scrub legacy non-opt-in rows on the next mutating lattice pass.

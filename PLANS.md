@@ -3,6 +3,46 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Backlog Interactive TTY Input Hardening
+
+Status: completed
+
+Goal:
+Stop unattended backlog output from being able to turn into interactive shell
+input, and stop issue-target inference from handing excluded runtime artifacts
+to Upkeeper as explicit review targets.
+
+Constraints:
+- Auto-detach direct `backlog.sh` invocations attached to an interactive stdin,
+  stdout, or stderr unless an operator explicitly opts out for a one-shot
+  diagnostic run.
+- Provide a safe loop launcher that detaches stdin and records backlog output in
+  a private log file instead of streaming model/status text into the terminal.
+- Keep issue-target handling compatible for valid explicit repo files while
+  rejecting obvious runtime/log/.git targets before preselection.
+- Refresh operator docs, release notes, and deterministic local validation.
+- Keep the full symlinked-client wrapper/migration behavior out of this hotfix;
+  this change only hardens the central backlog launcher path.
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `orchestration/backlog_loop.sh`
+- `lib/upkeeper/codex_io.bash`
+- `tools/upkeeper_lattice.py`
+- `tools/validate_upkeeper.sh`
+- `tools/stress_upkeeper_corpus.sh`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/backlog_loop.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `bash tests/lattice_test.bash`
+- `tools/stress_upkeeper_corpus.sh --local`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Disk Preflight Prompt and Log Redaction
 
 Status: completed

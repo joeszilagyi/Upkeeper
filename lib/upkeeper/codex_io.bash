@@ -21,6 +21,34 @@ issue_fix_log_hash() {
   upkeeper_value_hmac issue "$value"
 }
 
+issue_fix_explicit_target_ineligible_reason() {
+  local path="${1:-}"
+  local abs_path
+
+  case "$path" in
+    ""|/*|../*|*/../*)
+      printf 'outside_repository'
+      return 0
+      ;;
+    .git|.git/*|runtime|runtime/*|Upkeeper.log|*.log|*.log.*|*.zip)
+      printf 'excluded_runtime_or_log_target'
+      return 0
+      ;;
+  esac
+
+  abs_path="${ROOT_DIR:-$PWD}/$path"
+  if [[ -L "$abs_path" ]]; then
+    printf 'symlink_target'
+    return 0
+  fi
+  if [[ ! -f "$abs_path" || ! -r "$abs_path" ]]; then
+    printf 'missing_or_unreadable'
+    return 0
+  fi
+
+  return 1
+}
+
 prepare_bug_report_draft_artifact() {
   local draft_root="${UPKEEPER_BUG_REPORT_DRAFT_DIR:-${ROOT_DIR:-$PWD}/runtime/upkeeper-bug-report-drafts}"
 
@@ -1038,7 +1066,7 @@ apply_configured_cli_defaults() {
 }
 
 resolve_issue_fix_next_or_exit() {
-  local issue_event issue_json requested_number status target_from_issue title_hash url_hash
+  local issue_event issue_json requested_number status target_from_issue title_hash url_hash ineligible_reason
 
   upkeeper_issue_fix_next_enabled || return 0
   requested_number="${CODEX_ISSUE_FIX_REQUESTED_NUMBER:-}"
@@ -1299,8 +1327,12 @@ PY
   target_from_issue="$CODEX_ISSUE_FIX_TARGET_FILE"
   if [[ -z "${CODEX_TARGET_FILE:-}" ]]; then
     if [[ "$CODEX_ISSUE_FIX_SELECTED_LABEL" == "explicit" && -n "$target_from_issue" ]]; then
-      CODEX_TARGET_FILE="$target_from_issue"
-      log_line "INFO" "issue_fix.target file_selected_from_explicit_issue number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") target_file=$(shell_quote "$CODEX_TARGET_FILE")"
+      if ineligible_reason="$(issue_fix_explicit_target_ineligible_reason "$target_from_issue")"; then
+        log_line "WARN" "issue_fix.target ignored reason=ineligible_explicit_issue_target number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") target_file=$(shell_quote "$target_from_issue") detail=$(shell_quote "$ineligible_reason")"
+      else
+        CODEX_TARGET_FILE="$target_from_issue"
+        log_line "INFO" "issue_fix.target file_selected_from_explicit_issue number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") target_file=$(shell_quote "$CODEX_TARGET_FILE")"
+      fi
     elif [[ -n "$target_from_issue" ]]; then
       log_line "WARN" "issue_fix.target ignored reason=untrusted_inferred_source selected_label=$(shell_quote "$CODEX_ISSUE_FIX_SELECTED_LABEL") inferred_file=$(shell_quote "$target_from_issue")"
     fi

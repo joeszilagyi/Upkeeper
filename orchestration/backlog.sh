@@ -19,7 +19,11 @@ BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-900}"
 BACKLOG_PER_BUG_VALIDATION_MODE="${BACKLOG_PER_BUG_VALIDATION_MODE:-light}"
 BACKLOG_ALLOW_INTERACTIVE_STDIN="${BACKLOG_ALLOW_INTERACTIVE_STDIN:-0}"
 BACKLOG_ALLOW_INTERACTIVE_STDIO="${BACKLOG_ALLOW_INTERACTIVE_STDIO:-$BACKLOG_ALLOW_INTERACTIVE_STDIN}"
+BACKLOG_INTERACTIVE_MODE="${BACKLOG_INTERACTIVE_MODE:-watch}"
+BACKLOG_ACTIVE_ATTACH_LINES="${BACKLOG_ACTIVE_ATTACH_LINES:-20}"
 BACKLOG_STDIO_AUTODETACHED="${BACKLOG_STDIO_AUTODETACHED:-0}"
+BACKLOG_STDIO_WATCHED="${BACKLOG_STDIO_WATCHED:-0}"
+BACKLOG_ACTIVE_OWNER_START_TICKS=""
 
 log() {
   printf 'backlog: %s\n' "$*" >&2
@@ -44,6 +48,18 @@ backlog_state_root() {
   printf '%s\n' "${BACKLOG_STATE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog}"
 }
 
+backlog_repo_key() {
+  printf '%s\n' "$ROOT_DIR" | tr '/: ' '___' | tr -cd '[:alnum:]_.-'
+}
+
+backlog_active_owner_file() {
+  local state_root
+  state_root="$(backlog_state_root)"
+  mkdir -p "$state_root"
+  chmod 700 "$state_root" 2>/dev/null || true
+  printf '%s/active-owner.%s.tsv\n' "$state_root" "$(backlog_repo_key)"
+}
+
 backlog_recent_log_summary() {
   local log_file="$1"
 
@@ -59,7 +75,98 @@ backlog_recent_log_summary() {
   ' "$log_file"
 }
 
-print_stdio_redirect_notice() {
+backlog_process_start_ticks() {
+  local pid="$1"
+
+  [[ -r "/proc/$pid/stat" ]] || return 1
+  awk '{print $22}' "/proc/$pid/stat"
+}
+
+backlog_owner_field() {
+  local owner_file="$1"
+  local key="$2"
+
+  [[ -f "$owner_file" ]] || return 1
+  awk -F '\t' -v key="$key" '$1 == key { print substr($0, index($0, "\t") + 1); exit }' "$owner_file"
+}
+
+backlog_pid_matches_owner() {
+  local pid="$1"
+  local expected_start_ticks="$2"
+  local cmdline cwd current_start_ticks
+
+  [[ -n "$pid" && -r "/proc/$pid/cmdline" ]] || return 1
+  cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+  [[ "$cmdline" == *"orchestration/backlog.sh"* ]] || return 1
+  cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+  [[ "$cwd" == "$ROOT_DIR" ]] || return 1
+  current_start_ticks="$(backlog_process_start_ticks "$pid" 2>/dev/null || true)"
+  [[ -n "$current_start_ticks" && "$current_start_ticks" == "$expected_start_ticks" ]] || return 1
+  return 0
+}
+
+backlog_active_owner_pid() {
+  local owner_file pid start_ticks
+
+  owner_file="$(backlog_active_owner_file)"
+  [[ -f "$owner_file" ]] || return 1
+  pid="$(backlog_owner_field "$owner_file" pid)"
+  start_ticks="$(backlog_owner_field "$owner_file" start_ticks)"
+  if backlog_pid_matches_owner "$pid" "$start_ticks"; then
+    printf '%s\n' "$pid"
+    return 0
+  fi
+
+  rm -f -- "$owner_file"
+  return 1
+}
+
+write_backlog_active_owner() {
+  local owner_file log_file branch start_ticks
+
+  owner_file="$(backlog_active_owner_file)"
+  log_file="${BACKLOG_LOOP_LOG_FILE:-$(backlog_state_root)/loop.log}"
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  start_ticks="$(backlog_process_start_ticks "$$")"
+  BACKLOG_ACTIVE_OWNER_START_TICKS="$start_ticks"
+
+  {
+    printf 'pid\t%s\n' "$$"
+    printf 'start_ticks\t%s\n' "$start_ticks"
+    printf 'branch\t%s\n' "$branch"
+    printf 'log_file\t%s\n' "$log_file"
+  } >"$owner_file"
+  chmod 600 "$owner_file" 2>/dev/null || true
+}
+
+clear_backlog_active_owner() {
+  local owner_file owner_pid owner_start_ticks
+
+  owner_file="$(backlog_active_owner_file)"
+  [[ -f "$owner_file" ]] || return 0
+  owner_pid="$(backlog_owner_field "$owner_file" pid)"
+  owner_start_ticks="$(backlog_owner_field "$owner_file" start_ticks)"
+  if [[ "$owner_pid" == "$$" && -n "$BACKLOG_ACTIVE_OWNER_START_TICKS" && "$owner_start_ticks" == "$BACKLOG_ACTIVE_OWNER_START_TICKS" ]]; then
+    rm -f -- "$owner_file"
+  fi
+}
+
+print_stdio_watch_notice() {
+  local log_file="$1"
+  local branch summary
+
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  summary="$(backlog_recent_log_summary "$log_file")"
+
+  printf '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to %s\n' "$log_file" >&2
+  printf '# backlog: current branch: %s\n' "$branch" >&2
+  if [[ -n "$summary" ]]; then
+    printf '# backlog: recent activity: %s\n' "$summary" >&2
+  fi
+  printf '# backlog: follow progress with: tail -f %s\n' "$log_file" >&2
+}
+
+print_stdio_detach_notice() {
   local log_file="$1"
   local branch summary
 
@@ -74,11 +181,44 @@ print_stdio_redirect_notice() {
   printf '# backlog: follow progress with: tail -f %s\n' "$log_file" >&2
 }
 
+follow_active_backlog_output() {
+  local pid="$1"
+  local log_file="$2"
+  local summary owner_file owner_branch
+
+  owner_file="$(backlog_active_owner_file)"
+  owner_branch="$(backlog_owner_field "$owner_file" branch 2>/dev/null || true)"
+
+  summary="$(backlog_recent_log_summary "$log_file")"
+  printf '# backlog: another backlog run already owns this checkout (pid=%s)\n' "$pid" >&2
+  if [[ -n "$owner_branch" ]]; then
+    printf '# backlog: active branch: %s\n' "$owner_branch" >&2
+  fi
+  if [[ -n "$summary" ]]; then
+    printf '# backlog: current activity: %s\n' "$summary" >&2
+  fi
+  printf '# backlog: attaching to %s until pid %s exits\n' "$log_file" "$pid" >&2
+  if [[ -f "$log_file" ]]; then
+    tail -n "$BACKLOG_ACTIVE_ATTACH_LINES" -f --pid="$pid" "$log_file" || true
+  else
+    while kill -0 "$pid" 2>/dev/null; do
+      sleep 1
+    done
+  fi
+}
 redirect_interactive_stdio() {
-  local state_root log_file
+  local state_root log_file active_pid
 
   [[ "$BACKLOG_ALLOW_INTERACTIVE_STDIO" == "1" ]] && return 0
   [[ ! -t 0 && ! -t 1 && ! -t 2 ]] && return 0
+
+  if [[ "$BACKLOG_STDIO_WATCHED" == "1" ]]; then
+    if [[ -t 0 ]]; then
+      log "ERROR: interactive stdin remained attached after backlog watch-mode reexec"
+      exit 64
+    fi
+    return 0
+  fi
 
   if [[ "$BACKLOG_STDIO_AUTODETACHED" == "1" ]]; then
     log "ERROR: interactive stdio remained attached after backlog auto-detach"
@@ -90,15 +230,39 @@ redirect_interactive_stdio() {
   mkdir -p -- "$state_root" "$(dirname -- "$log_file")"
   chmod 700 "$state_root" "$(dirname -- "$log_file")" 2>/dev/null || true
 
-  print_stdio_redirect_notice "$log_file"
   if [[ "${BACKLOG_STDIO_AUTODETACH_PROBE:-0}" == "1" ]]; then
+    if [[ "$BACKLOG_INTERACTIVE_MODE" == "detach" ]]; then
+      print_stdio_detach_notice "$log_file"
+    else
+      print_stdio_watch_notice "$log_file"
+    fi
     exit 0
   fi
 
-  export BACKLOG_STDIO_AUTODETACHED=1
-  exec "$SCRIPT_PATH" "$@" </dev/null >>"$log_file" 2>&1
+  active_pid="$(backlog_active_owner_pid || true)"
+  if [[ -n "$active_pid" ]]; then
+    log_file="$(backlog_owner_field "$(backlog_active_owner_file)" log_file 2>/dev/null || printf '%s' "$log_file")"
+    follow_active_backlog_output "$active_pid" "$log_file"
+    exit 0
+  fi
 
-  log "ERROR: failed to redirect interactive stdio to $log_file"
+  case "$BACKLOG_INTERACTIVE_MODE" in
+    watch)
+      print_stdio_watch_notice "$log_file"
+      export BACKLOG_STDIO_WATCHED=1
+      exec "$SCRIPT_PATH" "$@" </dev/null > >(tee -a "$log_file") 2>&1
+      ;;
+    detach)
+      print_stdio_detach_notice "$log_file"
+      export BACKLOG_STDIO_AUTODETACHED=1
+      exec "$SCRIPT_PATH" "$@" </dev/null >>"$log_file" 2>&1
+      ;;
+    *)
+      fail "unsupported BACKLOG_INTERACTIVE_MODE: $BACKLOG_INTERACTIVE_MODE"
+      ;;
+  esac
+
+  log "ERROR: failed to activate interactive backlog stdio mode for $log_file"
   exit 64
 }
 
@@ -510,6 +674,8 @@ main() {
   local pr_info pr_number branch issue_info issue_number count run_status
 
   redirect_interactive_stdio "$@"
+  write_backlog_active_owner
+  trap clear_backlog_active_owner EXIT
 
   require_command git
   require_command gh

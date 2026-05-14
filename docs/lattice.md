@@ -332,14 +332,24 @@ runtime/upkeeper-lattice/exports/
 
 Each exported row includes schema version, row type, row version, logical key,
 source identity, repo identity, payload, payload SHA-256, and exported epoch.
-Options can redact raw text, paths, and contributors.
-Default exports also preserve the Git-import privacy contract by omitting raw
-contributor fields and raw commit subjects unless those values were explicitly
-included at import time.
+Default exports now redact raw payload fields and path-bearing fields unless the
+operator explicitly asks for disclosure with `--include-raw` and/or
+`--include-paths`. Contributor fields remain redacted unless
+`--include-contributors` is requested, and raw exports print a warning because
+the JSONL may contain sensitive local evidence. Default exports also preserve
+the Git-import privacy contract by omitting raw contributor fields and raw
+commit subjects unless those values were explicitly included at import time.
+
+If an operator needs a JSONL file for structural replay into another lattice
+database, use `export-jsonl --include-paths`. The default redacted export is
+safe for sharing and inspection, but it intentionally leaves path-bearing rows
+too anonymized for full-fidelity file/cycle/history reconstruction.
 
 `import-jsonl` is idempotent. Same logical key and same payload hash is a
 duplicate. Same logical key and a different payload hash records a conflict and
-does not silently overwrite existing facts.
+does not silently overwrite existing facts. Raw source lines stay redacted on
+import by default; use `import-jsonl --preserve-raw` only when the destination
+raw-storage mode is intentionally `full`.
 
 `backup` uses SQLite backup support instead of blind-copying a live DB. Backups
 default to:

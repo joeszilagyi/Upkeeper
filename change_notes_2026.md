@@ -18,6 +18,11 @@ Version numbering note:
 	2. Git commit imports now store a subject hash plus subject length by default, keep raw subjects only behind `--include-commit-subjects`, and scrub legacy non-opt-in rows on the next mutating lattice pass.
 	3. `query file-history` and `export-jsonl` now follow the same privacy contract so default operator-facing outputs no longer surface raw Git contributor PII or commit subjects from non-opt-in rows.
 
+2026-05-14: lattice export/import privacy defaults:
+	1. `tools/upkeeper_lattice.py export-jsonl` now redacts raw payload fields and path-bearing fields by default, with explicit `--include-raw`, `--include-paths`, and `--include-contributors` opt-ins for operators who need disclosure.
+	2. `tools/upkeeper_lattice.py import-jsonl` now defaults to redacting imported raw source lines, and replay-oriented roundtrip validation explicitly requests `--include-paths` when it needs full-fidelity structural reconstruction instead of the privacy-default export.
+	3. Structural lattice fields such as `source_kind` are no longer path-redacted, preventing privacy-default exports from corrupting source-record identity semantics.
+
 2026-05-13: v1.2.14 changes:
 	1. Cleared the deferred data-protection issue cluster by rejecting control characters in prompt-file paths, using central log key/value encoding for `run.start`, and removing the prompt-file path from compiled prompt prose.
 	2. Startup-anomaly unresolved-state prompts now expose only HMAC state ids, reason classes, timestamps, and redaction markers; raw state paths, run hashes, and details stay in protected local state files.

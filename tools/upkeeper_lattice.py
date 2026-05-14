@@ -142,11 +142,9 @@ REDACTABLE_PATH_KEYS = {
     "output_path",
     "detail_path",
     "remote_url",
-    "source_kind",
     "alias_value",
     "source_uri",
     "repo_alias_id",
-    "artifact_kind",
 }
 UPKEEPER_LOG_SOURCE_SAFE_KEYS = {
     "timestamp",

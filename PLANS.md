@@ -3,6 +3,38 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Lattice Export Privacy And Import Roundtrip
+
+Status: completed
+
+Goal:
+Keep the new privacy-default `export-jsonl` / `import-jsonl` contract for
+issues `#304` and `#305` without breaking deterministic local lattice
+roundtrip validation or leaving the backlog PR dirty against current `main`.
+
+Constraints:
+- Default exports should stay privacy-preserving for ordinary operator use.
+- Roundtrip/import-rebuild validation should explicitly request path disclosure
+  when it needs full-fidelity structural replay.
+- Structural classifier fields such as `source_kind` must not be path-redacted.
+- Refresh the focused lattice docs, release notes, and backlog branch state so
+  the PR no longer carries already-merged launcher churn.
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `docs/lattice.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/lattice_test.bash`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Backlog Interactive TTY Input Hardening
 
 Status: completed

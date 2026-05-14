@@ -512,7 +512,7 @@ path = pathlib.Path(json.load(open(sys.argv[1], encoding="utf-8"))["backup_path"
 assert path.exists() and path.stat().st_size > 0, path
 PY
 
-  lattice export-jsonl --output "$TEST_TMP_ROOT/export.jsonl" >$TEST_TMP_ROOT/lattice-export.json
+  lattice export-jsonl --include-paths --output "$TEST_TMP_ROOT/export.jsonl" >$TEST_TMP_ROOT/lattice-export.json
   local lattice_import_rollup_db="$TEST_TMP_ROOT/lattice-import-rollup.sqlite3"
   local original_db="$DB"
   cp "$TEST_TMP_ROOT/lattice-import-base.sqlite3" "$lattice_import_rollup_db"
@@ -568,15 +568,32 @@ if rollup[0] < 1:
 PY
   DB="$original_db"
 
-  lattice import-jsonl "$TEST_TMP_ROOT/export.jsonl" >$TEST_TMP_ROOT/lattice-import-repeat-1.json
-  lattice import-jsonl "$TEST_TMP_ROOT/export.jsonl" >$TEST_TMP_ROOT/lattice-import-repeat-2.json
+  "$LATTICE_TOOL" --root "$REPO" --db "$original_db" export-jsonl --output "$TEST_TMP_ROOT/export-redacted.jsonl" >"$TEST_TMP_ROOT/lattice-export-redacted.json"
+  local redacted_import_db="$TEST_TMP_ROOT/lattice-import-redacted.sqlite3"
+  cp "$TEST_TMP_ROOT/lattice-import-base.sqlite3" "$redacted_import_db"
+  DB="$redacted_import_db"
+  set +e
+  UPKEEPER_LATTICE_ALLOW_UNSAFE_DB=1 \
+    lattice import-jsonl "$TEST_TMP_ROOT/export-redacted.jsonl" >"$TEST_TMP_ROOT/lattice-import-redacted.out" 2>"$TEST_TMP_ROOT/lattice-import-redacted.err"
+  local redacted_export_rc=$?
+  set -e
+  [[ "$redacted_export_rc" -ne 0 ]] || fail "default redacted export should require --include-paths for structural replay"
+  DB="$original_db"
+
+  UPKEEPER_LATTICE_RAW_STORAGE=full \
+    lattice export-jsonl --include-paths --include-raw --output "$TEST_TMP_ROOT/export-replay.jsonl" >"$TEST_TMP_ROOT/lattice-export-replay.json"
+
+  UPKEEPER_LATTICE_RAW_STORAGE=full \
+    lattice import-jsonl --preserve-raw "$TEST_TMP_ROOT/export-replay.jsonl" >$TEST_TMP_ROOT/lattice-import-repeat-1.json
+  UPKEEPER_LATTICE_RAW_STORAGE=full \
+    lattice import-jsonl --preserve-raw "$TEST_TMP_ROOT/export-replay.jsonl" >$TEST_TMP_ROOT/lattice-import-repeat-2.json
   python3 - $TEST_TMP_ROOT/lattice-import-repeat-2.json <<'PY' || fail "repeated JSONL import was not idempotent"
 import json, sys
 data = json.load(open(sys.argv[1], encoding="utf-8"))
 assert data["conflicts"] == 0, data
 PY
 
-  python3 - "$TEST_TMP_ROOT/export.jsonl" "$TEST_TMP_ROOT/conflict.jsonl" <<'PY'
+  python3 - "$TEST_TMP_ROOT/export-replay.jsonl" "$TEST_TMP_ROOT/conflict.jsonl" <<'PY'
 import json
 import sys
 
@@ -593,14 +610,16 @@ with open(src, encoding="utf-8") as handle, open(dst, "w", encoding="utf-8") as 
 assert changed
 PY
   set +e
-  lattice import-jsonl "$TEST_TMP_ROOT/conflict.jsonl" >"$TEST_TMP_ROOT/conflict.out" 2>"$TEST_TMP_ROOT/conflict.err"
+  UPKEEPER_LATTICE_RAW_STORAGE=full \
+    lattice import-jsonl --preserve-raw "$TEST_TMP_ROOT/conflict.jsonl" >"$TEST_TMP_ROOT/conflict.out" 2>"$TEST_TMP_ROOT/conflict.err"
   local conflict_rc=$?
   set -e
   [[ "$conflict_rc" -eq 8 ]] || fail "conflicting JSONL import exited $conflict_rc, expected 8"
   assert_sql_value "1" "select count(*) from lattice_import_conflicts"
 
   set +e
-  lattice import-jsonl "$TEST_TMP_ROOT/export.jsonl" --max-conflicts=0 >"$TEST_TMP_ROOT/malformed-jsonl.out" 2>"$TEST_TMP_ROOT/malformed-jsonl.err"
+  UPKEEPER_LATTICE_RAW_STORAGE=full \
+    lattice import-jsonl --preserve-raw "$TEST_TMP_ROOT/export-replay.jsonl" --max-conflicts=0 >"$TEST_TMP_ROOT/malformed-jsonl.out" 2>"$TEST_TMP_ROOT/malformed-jsonl.err"
   local malformed_jsonl_rc=$?
   set -e
   [[ "$malformed_jsonl_rc" -eq 0 ]] || fail "valid export should still import successfully, got $malformed_jsonl_rc"

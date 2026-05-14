@@ -296,9 +296,14 @@ check_backlog_launcher_contract() {
 
   log "checking backlog launcher safety contract"
   grep -Fq 'BACKLOG_ALLOW_INTERACTIVE_STDIO' orchestration/backlog.sh || fail "backlog launcher missing interactive-stdio override"
-  grep -Fq '[[ ! -t 0 && ! -t 1 && ! -t 2 ]]' orchestration/backlog.sh || fail "backlog launcher does not require detached stdio"
-  grep -Fq 'exec "$SCRIPT_PATH" "$@" </dev/null >>"$log_file" 2>&1' orchestration/backlog.sh || fail "backlog launcher does not auto-detach interactive stdio"
+  grep -Fq 'BACKLOG_INTERACTIVE_MODE="${BACKLOG_INTERACTIVE_MODE:-watch}"' orchestration/backlog.sh || fail "backlog launcher does not default interactive use to watch mode"
+  grep -Fq 'exec "$SCRIPT_PATH" "$@" </dev/null > >(tee -a "$log_file") 2>&1' orchestration/backlog.sh || fail "backlog launcher does not keep interactive watch output visible while cutting off stdin"
+  grep -Fq 'exec "$SCRIPT_PATH" "$@" </dev/null >>"$log_file" 2>&1' orchestration/backlog.sh || fail "backlog launcher no longer exposes explicit detach mode"
   grep -Fq 'interactive stdio remained attached after backlog auto-detach' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed auto-detach"
+  grep -Fq 'interactive stdin remained attached after backlog watch-mode reexec' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed watch-mode reexec"
+  grep -Fq 'another backlog run already owns this checkout' orchestration/backlog.sh || fail "backlog launcher does not explain active backlog ownership"
+  grep -Fq 'active-owner.' orchestration/backlog.sh || fail "backlog launcher does not track an explicit repo-local active owner file"
+  grep -Fq 'start_ticks' orchestration/backlog.sh || fail "backlog launcher does not guard against stale PID reuse in active owner tracking"
   [[ -x orchestration/backlog_loop.sh ]] || fail "backlog safe loop wrapper is not executable"
   grep -Fq 'CODEX_TERMINAL_VERBOSITY="${BACKLOG_CODEX_TERMINAL_VERBOSITY:-${CODEX_TERMINAL_VERBOSITY:-quiet}}"' orchestration/backlog.sh || fail "backlog launcher does not default to quiet terminal output"
   grep -Fq '</dev/null >>"$log_file" 2>&1' orchestration/backlog_loop.sh || fail "backlog loop wrapper does not detach stdin and redirect output"
@@ -310,8 +315,8 @@ check_backlog_launcher_contract() {
     BACKLOG_STDIO_AUTODETACH_PROBE=1 BACKLOG_LOOP_LOG_FILE="$temp_dir/loop.log" \
       script -qfec ./orchestration/backlog.sh "$temp_dir/typescript" >/dev/null 2>&1 || status="$?"
     [[ "$status" == "0" ]] || fail "backlog launcher interactive stdio auto-detach probe exited $status"
-    grep -Fq '# backlog: interactive stdio detected; redirecting this run to '"$temp_dir/loop.log" "$temp_dir/typescript" ||
-      fail "backlog launcher did not explain interactive stdio auto-detach"
+    grep -Fq '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to '"$temp_dir/loop.log" "$temp_dir/typescript" ||
+      fail "backlog launcher did not explain interactive watch mode"
   fi
 }
 

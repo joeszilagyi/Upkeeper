@@ -220,6 +220,7 @@ PASS_RESULT_ALLOWED_KEYS = {
 RAW_STORAGE_MODES = {"none", "minimal", "limited", "full"}
 RAW_STORAGE_COMPAT_MODES = RAW_STORAGE_MODES | {"debug"}
 PASS_RESULT_DEBUG_STORAGE_VALUES = {"debug", "full"}
+DEFAULT_RAW_STORAGE_MODE = "limited"
 MINIMAL_PARSED_SOURCE_RECORDS = {
     ("lattice_export", ""),
     ("recovery", "recover"),
@@ -1204,8 +1205,8 @@ def sanitize_source_record_payload(
 
 
 def configured_lattice_raw_storage() -> str:
-    raw = os.environ.get("UPKEEPER_LATTICE_RAW_STORAGE", "limited").strip().lower()
-    return raw if raw else "limited"
+    raw = os.environ.get("UPKEEPER_LATTICE_RAW_STORAGE", DEFAULT_RAW_STORAGE_MODE).strip().lower()
+    return raw if raw else DEFAULT_RAW_STORAGE_MODE
 
 
 def sanitize_git_privacy_payload(table: str, payload: dict[str, Any], *, root: Path | None = None) -> dict[str, Any]:
@@ -1242,14 +1243,14 @@ def sanitize_git_privacy_payload(table: str, payload: dict[str, Any], *, root: P
 
 def current_lattice_raw_storage() -> str:
     raw = configured_lattice_raw_storage()
-    return raw if raw in RAW_STORAGE_COMPAT_MODES else "limited"
+    return raw if raw in RAW_STORAGE_COMPAT_MODES else DEFAULT_RAW_STORAGE_MODE
 
 
 def effective_lattice_raw_storage(raw_storage_mode: str | None = None) -> str:
     mode = (raw_storage_mode or current_lattice_raw_storage()).strip().lower()
     if mode == "debug":
         return "full"
-    return mode if mode in RAW_STORAGE_MODES else "limited"
+    return mode if mode in RAW_STORAGE_MODES else DEFAULT_RAW_STORAGE_MODE
 
 
 def source_record_parsed_allowed(source_kind: str, raw_ref: str, parse_status: str, *, raw_storage_mode: str | None = None) -> bool:
@@ -1346,6 +1347,29 @@ def normalized_source_record_parsed_json(
         raw_storage_mode=raw_storage_mode,
     )
     return json_dumps(normalized) if normalized is not None else None
+
+
+def sanitize_imported_source_record_row(
+    payload: dict[str, Any],
+    *,
+    root: Path,
+    redact_raw: bool,
+    raw_storage_mode: str | None = None,
+) -> dict[str, Any]:
+    filtered = sanitize_source_record_payload(payload, root=root)
+    filtered["raw_text"] = (
+        filtered.get("raw_text")
+        if effective_lattice_raw_storage(raw_storage_mode) == "full" and not redact_raw
+        else None
+    )
+    filtered["parsed_json"] = normalized_source_record_parsed_json(
+        str(filtered.get("source_kind") or ""),
+        str(filtered.get("raw_ref") or ""),
+        str(filtered.get("parse_status") or "parsed"),
+        filtered.get("parsed_json") if isinstance(filtered.get("parsed_json"), str) else None,
+        raw_storage_mode=raw_storage_mode,
+    )
+    return filtered
 
 
 def raw_repo_identity_enabled() -> bool:
@@ -1558,8 +1582,9 @@ def verbose_metadata_enabled() -> bool:
     return parse_bool_int(os.environ.get(UPKEEPER_VERBOSE_METADATA_ENV, "")) == 1
 
 
-def pass_result_debug_storage_enabled() -> bool:
-    return current_lattice_raw_storage() in PASS_RESULT_DEBUG_STORAGE_VALUES
+def pass_result_debug_storage_enabled(raw_storage_mode: str | None = None) -> bool:
+    mode = (raw_storage_mode or current_lattice_raw_storage()).strip().lower()
+    return mode in PASS_RESULT_DEBUG_STORAGE_VALUES
 
 
 def pass_result_hmac_key(root: Path) -> bytes:
@@ -2296,7 +2321,7 @@ def scrub_legacy_git_privacy_data(conn: sqlite3.Connection) -> None:
             )
 
 
-def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
+def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_storage_mode: str | None = None) -> None:
     now = epoch_now()
     with conn:
         for sql in CREATE_TABLE_SQL:
@@ -2340,7 +2365,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None) -> None:
                 "insert or replace into schema_meta(key, value) values (?, ?)",
                 ("git_file_changes_deduped_epoch", str(now)),
             )
-    install_pass_registry(conn, root or default_root())
+    install_pass_registry(conn, root or default_root(), raw_storage_mode=raw_storage_mode)
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -2946,7 +2971,7 @@ def ensure_pass(conn: sqlite3.Connection, pass_code: str) -> int:
     return int(row["pass_id"])
 
 
-def install_pass_registry(conn: sqlite3.Connection, root: Path) -> None:
+def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_mode: str | None = None) -> None:
     now = epoch_now()
     with conn:
         repo_id = ensure_repository(conn, root)
@@ -2958,6 +2983,7 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path) -> None:
             raw_ref="pass_registry",
             parsed={"passes": PASS_REGISTRY},
             parse_status="registry",
+            raw_storage_mode=raw_storage_mode,
         )
         conn.execute(
             """
@@ -3395,6 +3421,7 @@ def command_init(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
     journal_mode = args.journal_mode
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     conn = connect_checked(
         root,
         db_path,
@@ -3404,7 +3431,7 @@ def command_init(args: argparse.Namespace) -> int:
         create_if_missing=True,
     )
     try:
-        init_schema(conn, root)
+        init_schema(conn, root, raw_storage_mode=raw_storage_mode)
         chmod_private(db_path)
     finally:
         conn.close()
@@ -3440,6 +3467,14 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
         "primary_reset": "2026-05-13 01:00:00 -0700",
     }
     unsafe_selection_payload = {"selection": {"path": "secret.txt"}, "candidate_count": 1}
+    imported_source_payload = {
+        "source_kind": "wrapper_observed",
+        "raw_ref": "preselect",
+        "raw_text": '{"path":"secret.txt"}',
+        "parsed_json": json_dumps(unsafe_selection_payload),
+        "parse_status": "parsed",
+        "fact_confidence": "observed",
+    }
     for mode in ("none", "minimal", "limited", "full"):
         conn.execute(f"SAVEPOINT raw_storage_{mode}")
         try:
@@ -3474,6 +3509,31 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
                 parsed=replayed_quota_payload,
                 raw_storage_mode=mode,
             )
+            rejected_id = ensure_source_record(
+                conn,
+                root,
+                repo_id,
+                "transcript",
+                raw_ref="pass_result_rejected:1",
+                raw_text="UPKEEPER_PASS_RESULT: pass=P2 file=wrong.txt unexpected=1",
+                parsed={
+                    "line_number": 1,
+                    "pass": "P2",
+                    "path_hmac": pass_result_path_hmac(root, "wrong.txt"),
+                    "selected_path_hmac": pass_result_path_hmac(root, "tools/upkeeper_lattice.py"),
+                    "rejection_kind": "unexpected_key",
+                    "reason": "unexpected_key:unexpected",
+                },
+                parse_status="rejected",
+                fact_confidence="rejected",
+                raw_storage_mode=mode,
+            )
+            imported_source_record = sanitize_imported_source_record_row(
+                imported_source_payload,
+                root=root,
+                redact_raw=False,
+                raw_storage_mode=mode,
+            )
             safe_row = conn.execute(
                 "select raw_text, parsed_json from source_records where source_id=?",
                 (safe_id,),
@@ -3486,6 +3546,10 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
                 "select source_path, source_uri, parsed_json from source_records where source_id=?",
                 (replayed_id,),
             ).fetchone()
+            rejected_row = conn.execute(
+                "select raw_text, parsed_json from source_records where source_id=?",
+                (rejected_id,),
+            ).fetchone()
             replayed_parsed = {}
             if replayed_row is not None and isinstance(replayed_row["parsed_json"], str) and replayed_row["parsed_json"]:
                 replayed_parsed = json.loads(replayed_row["parsed_json"])
@@ -3497,6 +3561,14 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
                 "unsafe_wrapper_observed": {
                     "raw_text_stored": bool(unsafe_row["raw_text"]) if unsafe_row is not None else False,
                     "parsed_json_stored": bool(unsafe_row["parsed_json"]) if unsafe_row is not None else False,
+                },
+                "rejected_transcript_pass": {
+                    "raw_text_stored": bool(rejected_row["raw_text"]) if rejected_row is not None else False,
+                    "parsed_json_stored": bool(rejected_row["parsed_json"]) if rejected_row is not None else False,
+                },
+                "imported_source_record": {
+                    "raw_text_stored": bool(imported_source_record.get("raw_text")),
+                    "parsed_json_stored": bool(imported_source_record.get("parsed_json")),
                 },
                 "replayed_upkeeper_log": {
                     "source_path_hashed": bool(replayed_row is not None and str(replayed_row["source_path"] or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX)),
@@ -3665,6 +3737,7 @@ def record_cycle_link_from_env(conn: sqlite3.Connection, repo_id: int, cycle_pk:
 def command_record_cycle_start(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     info = repo_git_info(root)
@@ -3672,7 +3745,15 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
     with conn:
         repo_id = ensure_repository(conn, root)
         parsed = sanitize_cycle_start_fields(root, vars(args).copy())
-        source_id = ensure_source_record(conn, root, repo_id, "wrapper_observed", raw_ref="cycle_start", parsed=parsed)
+        source_id = ensure_source_record(
+            conn,
+            root,
+            repo_id,
+            "wrapper_observed",
+            raw_ref="cycle_start",
+            parsed=parsed,
+            raw_storage_mode=raw_storage_mode,
+        )
         worktree_dirty = None
         if args.dirty_path_count is not None:
             worktree_dirty = 1 if int(args.dirty_path_count or 0) > 0 else 0
@@ -3956,11 +4037,19 @@ def record_worktree_delta_events(
 
 def command_record_worktree_snapshot(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, root, repo_id, "wrapper_observed", raw_ref=f"worktree_snapshot:{args.snapshot_kind}")
+        source_id = ensure_source_record(
+            conn,
+            root,
+            repo_id,
+            "wrapper_observed",
+            raw_ref=f"worktree_snapshot:{args.snapshot_kind}",
+            raw_storage_mode=raw_storage_mode,
+        )
         cycle_pk = None
         if args.cycle_id and args.run_hash:
             cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
@@ -3971,6 +4060,7 @@ def command_record_worktree_snapshot(args: argparse.Namespace) -> int:
 
 def command_record_preselect(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     selection = parse_key_value_file(Path(args.selection_file)) if args.selection_file else parse_key_value_text(sys.stdin.read())
@@ -3985,6 +4075,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
             raw_ref="preselect",
             raw_text=json_dumps(selection),
             parsed={"selection": selection, "candidate_count": len(candidate_rows)},
+            raw_storage_mode=raw_storage_mode,
         )
         cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
         selected_path = normalize_rel_path(selection.get("path", ""))
@@ -4467,6 +4558,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     with conn:
         repo_id = ensure_repository(conn, root)
         parsed = vars(args).copy()
@@ -4474,7 +4566,15 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         review = parse_review_summary_file(Path(args.last_message_file)) if args.last_message_file else {}
         review_outcome = args.review_outcome or review.get("review_outcome") or None
         reported_selected = normalize_rel_path(args.review_selected_path or review.get("selected_file", ""))
-        source_id = ensure_source_record(conn, root, repo_id, "wrapper_observed", raw_ref="cycle_finish", parsed=parsed)
+        source_id = ensure_source_record(
+            conn,
+            root,
+            repo_id,
+            "wrapper_observed",
+            raw_ref="cycle_finish",
+            parsed=parsed,
+            raw_storage_mode=raw_storage_mode,
+        )
         cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
         selected_path = normalize_rel_path(args.selected_path or "")
         selected_file_id = ensure_file(conn, repo_id, selected_path, source_id=source_id) if selected_path else None
@@ -4848,11 +4948,12 @@ def record_one_pass_result(
 
 def command_record_pass_result(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     recorded = 0
     rejected_count = 0
-    preserve_raw = pass_result_debug_storage_enabled()
+    preserve_raw = pass_result_debug_storage_enabled(raw_storage_mode)
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -4863,6 +4964,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
             source_path=args.from_file or "",
             raw_ref="pass_result",
             parsed=vars(args),
+            raw_storage_mode=raw_storage_mode,
         )
         cycle_pk = None
         if args.cycle_id and args.run_hash:
@@ -4899,6 +5001,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     ),
                     parse_status="rejected",
                     fact_confidence="rejected",
+                    raw_storage_mode=raw_storage_mode,
                 )
                 rejected_count += 1
             for item in accepted:
@@ -4923,6 +5026,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         },
                         parse_status="rejected",
                         fact_confidence="rejected",
+                        raw_storage_mode=raw_storage_mode,
                     )
                     rejected_count += 1
                     continue
@@ -5138,6 +5242,7 @@ def ensure_contributor(
 
 def command_import_git(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     include_contributor_pii = bool(getattr(args, "include_contributor_pii", False))
     include_commit_subjects = bool(getattr(args, "include_commit_subjects", False))
     if not inside_git_repo(root):
@@ -5154,7 +5259,15 @@ def command_import_git(args: argparse.Namespace) -> int:
         scrub_legacy_git_privacy_data(conn)
         repo_id = ensure_repository(conn, root)
         import_id = start_import(conn, repo_id, "local_git", {"root": str(root)})
-        source_id = ensure_source_record(conn, root, repo_id, "local_git", raw_ref="git-import", parse_status="started")
+        source_id = ensure_source_record(
+            conn,
+            root,
+            repo_id,
+            "local_git",
+            raw_ref="git-import",
+            parse_status="started",
+            raw_storage_mode=raw_storage_mode,
+        )
         try:
             revs = subprocess.check_output(["git", "-C", str(root), "rev-list", "--all", "--reverse"], text=True)
         except subprocess.CalledProcessError:
@@ -5219,6 +5332,7 @@ def command_import_git(args: argparse.Namespace) -> int:
                     ),
                     source_epoch=int(at or 0) if str(at).isdigit() else None,
                     parse_status="parsed",
+                    raw_storage_mode=raw_storage_mode,
                 )
                 cur = conn.execute(
                     """
@@ -5292,6 +5406,7 @@ def command_import_git(args: argparse.Namespace) -> int:
                             subject,
                             include_commit_subjects=include_commit_subjects,
                         ),
+                        raw_storage_mode=raw_storage_mode,
                     )
                     conn.execute(
                         "update source_records set parsed_json=? where source_id=?",
@@ -5524,6 +5639,7 @@ def filter_upkeeper_log_fields(parsed: dict[str, Any], allowed_keys: set[str]) -
 
 def command_import_upkeeper_log(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     log_path = Path(args.path or root / "Upkeeper.log")
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
@@ -5554,6 +5670,7 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                 raw_text=stored_raw_line,
                 parsed=safe_parsed,
                 parse_status="parsed",
+                raw_storage_mode=raw_storage_mode,
             )
             cycle_id = str(parsed.get("cycle", ""))
             run_hash = str(parsed.get("run_hash", ""))
@@ -5611,6 +5728,7 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
 
 def command_import_change_notes(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     paths = [Path(p) for p in args.paths] if args.paths else sorted(root.glob("change_notes_*.md"))
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
@@ -5642,6 +5760,7 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                     raw_ref=f"{current_version}:{line_number}",
                     raw_text=raw if args.raw else None,
                     parsed={"version": current_version, "date": current_date, "item_number": int(item.group(1)), "text": text},
+                    raw_storage_mode=raw_storage_mode,
                 )
                 cur = conn.execute(
                     """
@@ -5836,6 +5955,7 @@ def semantic_import_payload(table: str, payload: dict[str, Any]) -> dict[str, An
 
 def command_export_jsonl(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     db_path = normalize_db_path(args.db, root)
     conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
@@ -5900,7 +6020,16 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
             "insert into lattice_exports(repo_id, export_kind, output_path, started_epoch, finished_epoch, row_count, sha256) values (?, 'jsonl', ?, ?, ?, ?, ?)",
             (repo_id, str(output), started, finished, row_count, digest),
         )
-        source_id = ensure_source_record(conn, root, repo_id, "lattice_export", source_path=str(output), raw_ref=digest, parsed={"row_count": row_count})
+        source_id = ensure_source_record(
+            conn,
+            root,
+            repo_id,
+            "lattice_export",
+            source_path=str(output),
+            raw_ref=digest,
+            parsed={"row_count": row_count},
+            raw_storage_mode=raw_storage_mode,
+        )
         record_file_event(conn, repo_id, "export_written", source_id=source_id, path=str(output), details={"row_count": row_count, "sha256": digest})
     print_json({"status": "ok", "output_path": str(output), "row_count": row_count, "sha256": digest})
     return EXIT_SUCCESS
@@ -5908,6 +6037,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
 
 def command_import_jsonl(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     input_path = Path(args.path)
     if not input_path.exists():
         print_json({"status": "unavailable", "reason": "missing_input", "path": str(input_path)})
@@ -6013,6 +6143,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     parsed=summarize_lattice_unavailable_payload(payload, raw),
                     parse_status="spooled_lattice_unavailable",
                     fact_confidence="observed",
+                    raw_storage_mode=raw_storage_mode,
                 )
                 rows_written += 1
                 continue
@@ -6024,17 +6155,11 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             pk = table_primary_key(conn, table)
             filtered = {k: v for k, v in payload.items() if k in columns}
             if table == "source_records":
-                filtered = sanitize_source_record_payload(filtered, root=root)
-                filtered["raw_text"] = (
-                    filtered.get("raw_text")
-                    if effective_lattice_raw_storage() == "full" and not getattr(args, "redact_raw", False)
-                    else None
-                )
-                filtered["parsed_json"] = normalized_source_record_parsed_json(
-                    str(filtered.get("source_kind") or ""),
-                    str(filtered.get("raw_ref") or ""),
-                    str(filtered.get("parse_status") or "parsed"),
-                    filtered.get("parsed_json") if isinstance(filtered.get("parsed_json"), str) else None,
+                filtered = sanitize_imported_source_record_row(
+                    filtered,
+                    root=root,
+                    redact_raw=bool(getattr(args, "redact_raw", False)),
+                    raw_storage_mode=raw_storage_mode,
                 )
                 payload_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
             if not filtered:
@@ -6257,13 +6382,21 @@ def recover_artifact_refs(
     journal_mode: str,
     *,
     allow_unsafe_db: bool,
+    raw_storage_mode: str | None = None,
 ) -> list[str]:
     conn = connect_checked(root, db_path, journal_mode, allow_unsafe_db=allow_unsafe_db)
     ensure_schema(conn)
     recorded: list[str] = []
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, root, repo_id, "recovery", raw_ref="recover_artifacts")
+        source_id = ensure_source_record(
+            conn,
+            root,
+            repo_id,
+            "recovery",
+            raw_ref="recover_artifacts",
+            raw_storage_mode=raw_storage_mode,
+        )
         artifact_roots = [
             ("startup_anomaly_state", root / "runtime/startup-anomaly-gates"),
             ("transcript", root / "runtime/upkeeper-transcripts"),
@@ -6296,6 +6429,7 @@ def recover_artifact_refs(
 def command_recover(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     preexisting_db = db_path.exists()
     conn = connect_checked(
         root,
@@ -6305,7 +6439,7 @@ def command_recover(args: argparse.Namespace) -> int:
         create_parent=True,
         create_if_missing=True,
     )
-    init_schema(conn, root)
+    init_schema(conn, root, raw_storage_mode=raw_storage_mode)
     sources = []
     backup_path = None
     if args.backup_first and preexisting_db:
@@ -6320,12 +6454,14 @@ def command_recover(args: argparse.Namespace) -> int:
             "recovery",
             raw_ref="recover",
             parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
+            raw_storage_mode=raw_storage_mode,
         )
         if backup_path is not None:
             create_artifact_ref(conn, root, repo_id, cycle_pk=None, source_id=source_id, artifact_kind="backup", path=str(backup_path))
     conn.close()
     status = "ok"
     if inside_git_repo(root):
+        args.raw_storage_mode = raw_storage_mode
         rc = command_import_git(args)
         sources.append(f"git:{rc}")
     log_path = root / "Upkeeper.log"
@@ -6333,6 +6469,7 @@ def command_recover(args: argparse.Namespace) -> int:
         log_args = argparse.Namespace(**vars(args))
         log_args.path = str(log_path)
         log_args.raw = False
+        log_args.raw_storage_mode = raw_storage_mode
         command_import_upkeeper_log(log_args)
         sources.append("upkeeper_log_import:1")
     change_notes = sorted(root.glob("change_notes_*.md"))
@@ -6340,6 +6477,7 @@ def command_recover(args: argparse.Namespace) -> int:
         notes_args = argparse.Namespace(**vars(args))
         notes_args.paths = [str(p) for p in change_notes]
         notes_args.raw = False
+        notes_args.raw_storage_mode = raw_storage_mode
         command_import_change_notes(notes_args)
         sources.append(f"change_notes_import:{len(change_notes)}")
     exports = sorted((db_path.parent / "exports").glob("*.jsonl"))
@@ -6347,6 +6485,7 @@ def command_recover(args: argparse.Namespace) -> int:
         import_args = argparse.Namespace(**vars(args))
         import_args.path = str(export)
         import_args.max_conflicts = args.max_conflicts
+        import_args.raw_storage_mode = raw_storage_mode
         command_import_jsonl(import_args)
     if exports:
         sources.append(f"export_import:{len(exports)}")
@@ -6355,14 +6494,30 @@ def command_recover(args: argparse.Namespace) -> int:
         import_args = argparse.Namespace(**vars(args))
         import_args.path = str(recovery_jsonl)
         import_args.max_conflicts = args.max_conflicts
+        import_args.raw_storage_mode = raw_storage_mode
         command_import_jsonl(import_args)
     if recovery_jsonls:
         sources.append(f"recovery_import:{len(recovery_jsonls)}")
     for marker_root in [root / "runtime/unaddressed-tool-failures/open", root / "runtime/unaddressed-tool-failures/resolved"]:
         if marker_root.exists():
-            import_failure_markers(root, db_path, args.journal_mode, marker_root, allow_unsafe_db=args.allow_unsafe_db)
+            import_failure_markers(
+                root,
+                db_path,
+                args.journal_mode,
+                marker_root,
+                allow_unsafe_db=args.allow_unsafe_db,
+                raw_storage_mode=raw_storage_mode,
+            )
             sources.append("tool_failure_marker_import:1")
-    sources.extend(recover_artifact_refs(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db))
+    sources.extend(
+        recover_artifact_refs(
+            root,
+            db_path,
+            args.journal_mode,
+            allow_unsafe_db=args.allow_unsafe_db,
+            raw_storage_mode=raw_storage_mode,
+        )
+    )
     if not sources:
         status = "incomplete"
     recovery_dir = db_path.parent / "recovery"
@@ -6378,7 +6533,13 @@ def command_recover(args: argparse.Namespace) -> int:
 
 
 def import_failure_markers(
-    root: Path, db_path: Path, journal_mode: str, marker_root: Path, *, allow_unsafe_db: bool
+    root: Path,
+    db_path: Path,
+    journal_mode: str,
+    marker_root: Path,
+    *,
+    allow_unsafe_db: bool,
+    raw_storage_mode: str | None = None,
 ) -> None:
     conn = connect_checked(root, db_path, journal_mode, allow_unsafe_db=allow_unsafe_db)
     ensure_schema(conn)
@@ -6391,7 +6552,16 @@ def import_failure_markers(
                 continue
             target = normalize_rel_path(str(data.get("target_path", "")))
             file_id = ensure_file(conn, repo_id, target) if target else None
-            source_id = ensure_source_record(conn, root, repo_id, "tool_failure_marker", source_path=str(path), raw_ref=str(data.get("marker_id", path.stem)), parsed=data)
+            source_id = ensure_source_record(
+                conn,
+                root,
+                repo_id,
+                "tool_failure_marker",
+                source_path=str(path),
+                raw_ref=str(data.get("marker_id", path.stem)),
+                parsed=data,
+                raw_storage_mode=raw_storage_mode,
+            )
             conn.execute(
                 """
                 insert into tool_failures(
@@ -6872,11 +7042,20 @@ def command_query(args: argparse.Namespace) -> int:
 
 def command_mark_regression(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, root, repo_id, args.source_kind, raw_ref="mark-regression", parsed=vars(args))
+        source_id = ensure_source_record(
+            conn,
+            root,
+            repo_id,
+            args.source_kind,
+            raw_ref="mark-regression",
+            parsed=vars(args),
+            raw_storage_mode=raw_storage_mode,
+        )
         file_id = ensure_file(conn, repo_id, args.path, source_id=source_id)
         cycle_pk = None
         if args.cycle_id:
@@ -6912,13 +7091,22 @@ def command_mark_regression(args: argparse.Namespace) -> int:
 
 def command_prune(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     cutoff = epoch_now() - int(args.older_than_days or 0) * 86400 if args.older_than_days else None
     actions: list[dict[str, Any]] = []
     with conn:
         repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(conn, root, repo_id, "operator", raw_ref="prune", parsed=vars(args))
+        source_id = ensure_source_record(
+            conn,
+            root,
+            repo_id,
+            "operator",
+            raw_ref="prune",
+            parsed=vars(args),
+            raw_storage_mode=raw_storage_mode,
+        )
         if args.raw_only:
             sql = "update source_records set raw_text=null where raw_text is not null"
             params: tuple[Any, ...] = ()

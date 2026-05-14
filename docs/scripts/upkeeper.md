@@ -116,9 +116,13 @@ Transcript and live terminal behavior:
 Important:
   - Run the loop in a dedicated shell or terminal tab.
   - Run backlog batches with `orchestration/backlog_loop.sh`, or call
-    `orchestration/backlog.sh` directly and let it auto-detach stdin, stdout,
-    and stderr to the private backlog loop log. Backlog launcher notices are
-    shell-comment lines so accidental terminal input feedback stays a no-op.
+    `orchestration/backlog.sh` directly for safe interactive watch mode: it
+    cuts off stdin, keeps live output in the current terminal, and mirrors that
+    output to the private backlog loop log. Set
+    `BACKLOG_INTERACTIVE_MODE=detach` or use `orchestration/backlog_loop.sh`
+    when you want a fully detached background-style loop instead. Backlog
+    launcher notices are shell-comment lines so accidental terminal input
+    feedback stays a no-op.
   - The living repo-local operator guide is:
       docs/scripts/upkeeper.md
     If that guide is missing, normal startup bootstraps it once from this help

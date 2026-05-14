@@ -43,6 +43,41 @@ Validation:
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
 
+## Backlog Interactive Watch Mode
+
+Status: completed
+
+Goal:
+Make direct interactive backlog use safe and operator-friendly by keeping live
+output visible in the terminal while cutting off stdin feedback, and by making
+repeat invocations attach to the already-running backlog job for the same repo
+instead of acting like a new run.
+
+Constraints:
+- Preserve the original safety goal: no interactive stdin should remain
+  attached to a live backlog cycle unless an operator explicitly opts out.
+- Keep a fully detached path available through `orchestration/backlog_loop.sh`
+  and an explicit launcher mode override.
+- Make repeated interactive invocations explain that another backlog run already
+  owns the checkout and show that run's activity instead of failing opaquely.
+- Refresh operator docs, release notes, and deterministic local validation for
+  the new default behavior.
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `orchestration/backlog_loop.sh`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/backlog_loop.sh`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Disk Preflight Prompt and Log Redaction
 
 Status: completed

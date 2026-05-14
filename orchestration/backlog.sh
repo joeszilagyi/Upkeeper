@@ -19,7 +19,10 @@ BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-900}"
 BACKLOG_PER_BUG_VALIDATION_MODE="${BACKLOG_PER_BUG_VALIDATION_MODE:-light}"
 BACKLOG_ALLOW_INTERACTIVE_STDIN="${BACKLOG_ALLOW_INTERACTIVE_STDIN:-0}"
 BACKLOG_ALLOW_INTERACTIVE_STDIO="${BACKLOG_ALLOW_INTERACTIVE_STDIO:-$BACKLOG_ALLOW_INTERACTIVE_STDIN}"
+BACKLOG_INTERACTIVE_MODE="${BACKLOG_INTERACTIVE_MODE:-watch}"
+BACKLOG_ACTIVE_ATTACH_LINES="${BACKLOG_ACTIVE_ATTACH_LINES:-20}"
 BACKLOG_STDIO_AUTODETACHED="${BACKLOG_STDIO_AUTODETACHED:-0}"
+BACKLOG_STDIO_WATCHED="${BACKLOG_STDIO_WATCHED:-0}"
 
 log() {
   printf 'backlog: %s\n' "$*" >&2
@@ -44,11 +47,101 @@ backlog_state_root() {
   printf '%s\n' "${BACKLOG_STATE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog}"
 }
 
+backlog_recent_log_summary() {
+  local log_file="$1"
+
+  [[ -f "$log_file" ]] || return 0
+  awk '
+    /^backlog: running Upkeeper for issue #[0-9]+/ { line=$0 }
+    END {
+      if (line != "") {
+        sub(/^backlog: /, "", line)
+        print line
+      }
+    }
+  ' "$log_file"
+}
+
+backlog_active_pid() {
+  local proc pid cmdline cwd
+
+  for proc in /proc/[0-9]*; do
+    pid="${proc#/proc/}"
+    [[ "$pid" == "$$" ]] && continue
+    [[ -r "$proc/cmdline" ]] || continue
+    cmdline="$(tr '\0' ' ' <"$proc/cmdline" 2>/dev/null || true)"
+    [[ "$cmdline" == *"orchestration/backlog.sh"* ]] || continue
+    cwd="$(readlink -f "$proc/cwd" 2>/dev/null || true)"
+    [[ "$cwd" == "$ROOT_DIR" ]] || continue
+    printf '%s\n' "$pid"
+    return 0
+  done
+
+  return 1
+}
+
+print_stdio_watch_notice() {
+  local log_file="$1"
+  local branch summary
+
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  summary="$(backlog_recent_log_summary "$log_file")"
+
+  printf '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to %s\n' "$log_file" >&2
+  printf '# backlog: current branch: %s\n' "$branch" >&2
+  if [[ -n "$summary" ]]; then
+    printf '# backlog: recent activity: %s\n' "$summary" >&2
+  fi
+  printf '# backlog: follow progress with: tail -f %s\n' "$log_file" >&2
+}
+
+print_stdio_detach_notice() {
+  local log_file="$1"
+  local branch summary
+
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  summary="$(backlog_recent_log_summary "$log_file")"
+
+  printf '# backlog: interactive stdio detected; redirecting this run to %s\n' "$log_file" >&2
+  printf '# backlog: current branch: %s\n' "$branch" >&2
+  if [[ -n "$summary" ]]; then
+    printf '# backlog: recent activity: %s\n' "$summary" >&2
+  fi
+  printf '# backlog: follow progress with: tail -f %s\n' "$log_file" >&2
+}
+
+follow_active_backlog_output() {
+  local pid="$1"
+  local log_file="$2"
+  local summary
+
+  summary="$(backlog_recent_log_summary "$log_file")"
+  printf '# backlog: another backlog run already owns this checkout (pid=%s)\n' "$pid" >&2
+  if [[ -n "$summary" ]]; then
+    printf '# backlog: current activity: %s\n' "$summary" >&2
+  fi
+  printf '# backlog: attaching to %s until pid %s exits\n' "$log_file" "$pid" >&2
+  if [[ -f "$log_file" ]]; then
+    tail -n "$BACKLOG_ACTIVE_ATTACH_LINES" -f --pid="$pid" "$log_file" || true
+  else
+    while kill -0 "$pid" 2>/dev/null; do
+      sleep 1
+    done
+  fi
+}
 redirect_interactive_stdio() {
-  local state_root log_file
+  local state_root log_file active_pid
 
   [[ "$BACKLOG_ALLOW_INTERACTIVE_STDIO" == "1" ]] && return 0
   [[ ! -t 0 && ! -t 1 && ! -t 2 ]] && return 0
+
+  if [[ "$BACKLOG_STDIO_WATCHED" == "1" ]]; then
+    if [[ -t 0 ]]; then
+      log "ERROR: interactive stdin remained attached after backlog watch-mode reexec"
+      exit 64
+    fi
+    return 0
+  fi
 
   if [[ "$BACKLOG_STDIO_AUTODETACHED" == "1" ]]; then
     log "ERROR: interactive stdio remained attached after backlog auto-detach"
@@ -60,15 +153,38 @@ redirect_interactive_stdio() {
   mkdir -p -- "$state_root" "$(dirname -- "$log_file")"
   chmod 700 "$state_root" "$(dirname -- "$log_file")" 2>/dev/null || true
 
-  printf '# backlog: interactive stdio detected; redirecting this run to %s\n' "$log_file" >&2
   if [[ "${BACKLOG_STDIO_AUTODETACH_PROBE:-0}" == "1" ]]; then
+    if [[ "$BACKLOG_INTERACTIVE_MODE" == "detach" ]]; then
+      print_stdio_detach_notice "$log_file"
+    else
+      print_stdio_watch_notice "$log_file"
+    fi
     exit 0
   fi
 
-  export BACKLOG_STDIO_AUTODETACHED=1
-  exec "$SCRIPT_PATH" "$@" </dev/null >>"$log_file" 2>&1
+  active_pid="$(backlog_active_pid || true)"
+  if [[ -n "$active_pid" ]]; then
+    follow_active_backlog_output "$active_pid" "$log_file"
+    exit 0
+  fi
 
-  log "ERROR: failed to redirect interactive stdio to $log_file"
+  case "$BACKLOG_INTERACTIVE_MODE" in
+    watch)
+      print_stdio_watch_notice "$log_file"
+      export BACKLOG_STDIO_WATCHED=1
+      exec "$SCRIPT_PATH" "$@" </dev/null > >(tee -a "$log_file") 2>&1
+      ;;
+    detach)
+      print_stdio_detach_notice "$log_file"
+      export BACKLOG_STDIO_AUTODETACHED=1
+      exec "$SCRIPT_PATH" "$@" </dev/null >>"$log_file" 2>&1
+      ;;
+    *)
+      fail "unsupported BACKLOG_INTERACTIVE_MODE: $BACKLOG_INTERACTIVE_MODE"
+      ;;
+  esac
+
+  log "ERROR: failed to activate interactive backlog stdio mode for $log_file"
   exit 64
 }
 

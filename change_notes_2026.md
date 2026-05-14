@@ -7,10 +7,11 @@ Version numbering note:
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
 2026-05-13: v1.2.15 changes:
-	1. Backlog batch runs now auto-detach when `orchestration/backlog.sh` is invoked with interactive stdin, stdout, or stderr; the old `while ./orchestration/backlog.sh; do sleep 60; done` loop shape remains usable, but run output is redirected to the private backlog loop log instead of the active terminal.
+	1. Backlog batch runs now support safe interactive watch mode by default: `orchestration/backlog.sh` cuts off stdin, keeps live output visible in the current terminal, and mirrors that output to the private backlog loop log, while `orchestration/backlog_loop.sh` and `BACKLOG_INTERACTIVE_MODE=detach` remain available for fully detached looping.
 	2. Backlog runs default to quiet terminal verbosity, reducing live model chatter on unattended issue batches while preserving full transcripts under the backlog state directory.
 	3. Explicit issue-target handoff now ignores excluded runtime/log/.git targets before preselection, and backlog issue hints map manifest-related issues to `lib/upkeeper/file_manifest.bash` instead of handing `runtime/upkeeper-file-manifest.json` to Upkeeper.
 	4. Lattice backups now avoid a destination-connection path that could stall local validation while holding a zero-byte backup file and source journal.
+	5. Interactive backlog notices now include the current branch, recent issue/target activity, and a ready-to-run `tail -f` command; repeat interactive invocations also admit when another backlog run already owns the checkout and attach to its live log instead of acting like a fresh start.
 
 2026-05-12: lattice Git import privacy defaults:
 	1. `tools/upkeeper_lattice.py import-git` now stores contributor identity as a stable SHA-256 token by default and only preserves contributor name/email when `--include-contributor-pii` is explicitly requested.

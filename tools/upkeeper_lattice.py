@@ -6350,6 +6350,8 @@ def export_table_rows(
         return (dict(row) for row in conn.execute(f"select * from {table} order by {order}"))
     if "repo_id" in columns:
         return (dict(row) for row in conn.execute(f"select * from {table} where repo_id=? order by {order}", (repo_id,)))
+    # Repo-scoped exports must prove ownership for tables that do not carry
+    # repo_id directly; otherwise a shared DB can silently leak foreign rows.
     if table == "file_paths":
         query = """
             select file_paths.*
@@ -6377,6 +6379,19 @@ def export_table_rows(
             order by selection_candidates.selection_candidate_id
         """
         return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "review_passes":
+        query = """
+            select review_passes.*
+            from review_passes
+            where exists(
+                select 1
+                from file_pass_runs
+                where file_pass_runs.repo_id=?
+                  and file_pass_runs.pass_id=review_passes.pass_id
+            )
+            order by review_passes.pass_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
     if table == "pass_run_attributes":
         query = """
             select pass_run_attributes.*
@@ -6384,6 +6399,22 @@ def export_table_rows(
             join file_pass_runs on file_pass_runs.file_pass_run_id=pass_run_attributes.file_pass_run_id
             where file_pass_runs.repo_id=?
             order by pass_run_attributes.attribute_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "contributors":
+        query = """
+            select contributors.*
+            from contributors
+            where exists(
+                select 1
+                from git_commits
+                where git_commits.repo_id=?
+                  and (
+                      git_commits.author_id=contributors.contributor_id
+                      or git_commits.committer_id=contributors.contributor_id
+                  )
+            )
+            order by contributors.contributor_id
         """
         return (dict(row) for row in conn.execute(query, (repo_id,)))
     if table == "regression_causes":
@@ -6404,6 +6435,34 @@ def export_table_rows(
             order by change_log_file_refs.change_log_file_ref_id
         """
         return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "extension_namespaces":
+        query = """
+            select extension_namespaces.*
+            from extension_namespaces
+            where exists(
+                select 1
+                from extension_facts
+                where extension_facts.repo_id=?
+                  and extension_facts.namespace=extension_namespaces.namespace
+            )
+            order by extension_namespaces.namespace
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
+    if table == "extension_fact_types":
+        query = """
+            select extension_fact_types.*
+            from extension_fact_types
+            where exists(
+                select 1
+                from extension_facts
+                where extension_facts.repo_id=?
+                  and extension_facts.namespace=extension_fact_types.namespace
+                  and extension_facts.key=extension_fact_types.key
+                  and extension_facts.subject_type=extension_fact_types.subject_type
+            )
+            order by extension_fact_types.fact_type_id
+        """
+        return (dict(row) for row in conn.execute(query, (repo_id,)))
     if table in {
         "file_pass_rollups",
         "file_fragility_rollups",
@@ -6419,7 +6478,9 @@ def export_table_rows(
             order by {table}.file_id
         """
         return (dict(row) for row in conn.execute(query, (repo_id,)))
-    return (dict(row) for row in conn.execute(f"select * from {table} order by {order}"))
+    if table in {"schema_meta", "schema_migrations"}:
+        return (dict(row) for row in conn.execute(f"select * from {table} order by {order}"))
+    fail(f"export-jsonl repo scope is undefined for table {table}", EXIT_INTEGRITY)
 
 
 def redact_payload(payload: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:

@@ -336,6 +336,7 @@ CODEX_POSTMORTEM_ENABLED="${CODEX_POSTMORTEM_ENABLED:-1}"
 CODEX_POSTMORTEM_MODEL="${CODEX_POSTMORTEM_MODEL:-$CODEX_FALLBACK_MODEL}"
 CODEX_POSTMORTEM_REASONING_EFFORT="${CODEX_POSTMORTEM_REASONING_EFFORT:-$CODEX_FALLBACK_REASONING_EFFORT}"
 CODEX_POSTMORTEM_MODE="${CODEX_POSTMORTEM_MODE:-$CODEX_FALLBACK_MODE}"
+CODEX_POSTMORTEM_HARDENING_OPT_IN="${CODEX_POSTMORTEM_HARDENING_OPT_IN:-0}"
 CODEX_POSTMORTEM_DIR="${CODEX_POSTMORTEM_DIR:-$ROOT_DIR/runtime/journals/upkeeper-postmortems}"
 CODEX_FALLBACK_CHAIN_ACTIVE="${CODEX_FALLBACK_CHAIN_ACTIVE:-0}"
 CODEX_ATTEMPT_ROLE="${CODEX_ATTEMPT_ROLE:-primary}"
@@ -575,6 +576,454 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
   source_upkeeper_module "$upkeeper_module"
 done
  unset upkeeper_module
+
+# Keep these hardening overrides in the root entrypoint so startup-anomaly runs
+# can tighten auxiliary postmortem behavior without patching paired modules.
+upkeeper_postmortem_hardening_enabled() {
+  if config_truthy "${CODEX_POSTMORTEM_HARDENING_OPT_IN:-0}"; then
+    return 0
+  fi
+
+  # Live wrapper cycles export RUN_LAST_MESSAGE_FILE before fallback/postmortem
+  # handling. Keep those cycles report-only by default, but preserve the older
+  # direct-call contract used by isolated validator fixtures that source
+  # Upkeeper and call run_postmortem_sequence without a full primary cycle.
+  [[ -n "${RUN_LAST_MESSAGE_FILE:-}" ]] && return 1
+  return 0
+}
+
+upkeeper_postmortem_private_artifact_state() {
+  local artifact_path="${1:-}"
+
+  if [[ -n "$artifact_path" && -e "$artifact_path" ]]; then
+    printf 'available'
+  else
+    printf 'missing'
+  fi
+}
+
+compile_postmortem_report_prompt() {
+  local compiled_file="$1"
+  local context_path="$2"
+  local report_path="$3"
+
+  cat >"$compiled_file" <<EOF
+You are operating inside the git repository at $ROOT_DIR.
+
+This is a post-mortem analysis pass for an Upkeeper incident.
+
+What this run must do:
+- read the sanitized incident context at $context_path
+- use only that sanitized context as incident evidence
+- write or replace the markdown report at $report_path
+- do not inspect any other local files, logs, transcripts, session artifacts, or runtime directories in this phase
+- do not implement code changes in this phase except creating or updating the report file itself
+- keep the report actionable, concrete, and specific to the local repo and wrapper behavior
+
+Report requirements:
+- use exactly these top-level headings in this order:
+  1. # Upkeeper Postmortem
+  2. ## Incident Summary
+  3. ## Observed Signals
+  4. ## Root Cause Hypotheses
+  5. ## Action Plan
+  6. ## Hardening Targets
+  7. ## Relaunch Checklist
+- under Action Plan, include flat checklist bullets with the smallest safe next actions first
+- under Hardening Targets, call out wrapper/logging/prompt/guardrail fixes separately from repo-lane fixes when relevant
+- treat any raw transcripts, logs, session artifacts, and filesystem paths as operator-only evidence that is intentionally excluded from the sanitized context
+
+Response marker requirements:
+- the final response must end with one marker line exactly as plain text
+- do not wrap the marker in Markdown, backticks, a code fence, quotes, bullets, or trailing punctuation
+- if the report file was written successfully, the final line must be exactly: CODEX_POSTMORTEM_STATUS: REPORT_WRITTEN
+- if you are blocked, the final line must be exactly: CODEX_POSTMORTEM_STATUS: BLOCKED
+EOF
+}
+
+compile_postmortem_hardening_prompt() {
+  local compiled_file="$1"
+  local context_path="$2"
+  local report_path="$3"
+
+  cat >"$compiled_file" <<EOF
+You are operating inside the git repository at $ROOT_DIR.
+
+This is the final hardening pass after an Upkeeper incident report.
+
+This phase only runs after an explicit operator opt-in.
+
+What this run must do:
+- read the sanitized incident context at $context_path
+- read the post-mortem report at $report_path
+- treat those two files as the only incident evidence for this phase
+- do not inspect raw incident transcripts, logs, session artifacts, or runtime directories
+- inspect source files only as needed to implement the smallest safe hardening change or coherent hardening slice that directly addresses the report
+- prefer wrapper, logging, control-flow, guardrail, or prompt hardening first when the incident points there
+- run focused validation for any changes you make
+- update the same report file by appending or replacing a final section titled exactly:
+  ## Hardening Outcome
+- in that section include:
+  - what changed
+  - what validation ran
+  - remaining risks or manual follow-up
+- do not push or open a PR
+
+Response marker requirements:
+- the final response must end with one marker line exactly as plain text
+- do not wrap the marker in Markdown, backticks, a code fence, quotes, bullets, or trailing punctuation
+- if you completed a concrete hardening pass, the final line must be exactly: CODEX_POSTMORTEM_STATUS: HARDENING_DONE
+- if you are blocked, the final line must be exactly: CODEX_POSTMORTEM_STATUS: BLOCKED
+EOF
+}
+
+write_postmortem_context() {
+  local context_path="$1"
+  local trigger="$2"
+  local detail_text="$3"
+  local child_exit="$4"
+  local incident_log_path="$5"
+  local primary_last_message_copy="$6"
+  local primary_exec_started="1"
+  local pre_run_guardrail_stop="0"
+  local primary_stop_phase="after_run"
+  local primary_stop_reason="$trigger"
+  local primary_status_marker_expectation="required_after_primary_exec"
+  local primary_before_session_end_state
+  local screen_root fallback_current_child_id fallback_current_child_started_at fallback_current_child_status
+  local fallback_completed_child_count fallback_last_cycle_exit fallback_runner_stop_reason fallback_heartbeat
+  local fallback_marker_analysis fallback_child_status_marker fallback_child_status_marker_source
+  local fallback_child_status_marker_fields
+  local incident_classification
+  local safe_detail_text
+
+  if [[ "$trigger" == "primary_quota_before_run" ]]; then
+    primary_exec_started="0"
+    pre_run_guardrail_stop="1"
+    primary_stop_phase="before_run"
+    primary_stop_reason="quota_guardrail"
+    primary_status_marker_expectation="missing_expected_no_primary_exec"
+  elif [[ "$trigger" == "primary_quota_after_run" ]]; then
+    primary_stop_reason="quota_guardrail"
+  fi
+
+  safe_detail_text="$(upkeeper_prompt_safe_inline_value "$detail_text" "none")"
+  primary_before_session_end_state="$(parse_session_end_state "${before_source:-}")"
+  screen_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen"
+  fallback_current_child_id="$(read_artifact_or_unknown "$screen_root/current-child-cycle-id.txt")"
+  fallback_current_child_started_at="$(read_artifact_or_unknown "$screen_root/current-child-started-at.txt")"
+  fallback_current_child_status="$(read_artifact_or_unknown "$screen_root/current-child-status.txt")"
+  fallback_completed_child_count="$(read_artifact_or_unknown "$screen_root/completed-child-count.txt")"
+  fallback_last_cycle_exit="$(read_artifact_or_unknown "$screen_root/last-cycle-exit-code.txt")"
+  fallback_runner_stop_reason="$(read_artifact_or_unknown "$screen_root/stop-reason.txt")"
+  fallback_heartbeat="$(read_artifact_or_unknown "$screen_root/heartbeat.txt")"
+  fallback_marker_analysis="$(while_marker_analysis_json "${FALLBACK_SCREEN_TRANSCRIPT_PATH:-}")"
+  fallback_child_status_marker_fields="$(postmortem_fallback_child_status_marker_fields "$fallback_marker_analysis")"
+  fallback_child_status_marker="${fallback_child_status_marker_fields%% *}"
+  fallback_child_status_marker_source="${fallback_child_status_marker_fields#* }"
+  incident_classification="$(postmortem_incident_classification "$trigger" "$child_exit" "$fallback_child_status_marker")"
+
+  cat >"$context_path" <<EOF
+incident_cycle_id: $CYCLE_ID
+incident_trigger: $trigger
+incident_detail: $safe_detail_text
+incident_classification: $incident_classification
+attempt_role: $CODEX_ATTEMPT_ROLE
+primary_model: $CODEX_MODEL
+primary_reasoning_effort: $CODEX_REASONING_EFFORT
+fallback_model: $CODEX_FALLBACK_MODEL
+fallback_reasoning_effort: $CODEX_FALLBACK_REASONING_EFFORT
+postmortem_model: $CODEX_POSTMORTEM_MODEL
+postmortem_hardening_opt_in: $(truthy_as_int "${CODEX_POSTMORTEM_HARDENING_OPT_IN:-0}")
+fallback_child_exit: $child_exit
+fallback_screen_session: ${FALLBACK_SCREEN_SESSION_NAME:-none}
+fallback_screen_transcript_private_artifact: $(upkeeper_postmortem_private_artifact_state "${FALLBACK_SCREEN_TRANSCRIPT_PATH:-}")
+fallback_screen_exit_code: ${FALLBACK_SCREEN_EXIT_CODE:-unknown}
+fallback_completed_child_count: $fallback_completed_child_count
+fallback_current_child_cycle_id: $fallback_current_child_id
+fallback_current_child_started_at: $fallback_current_child_started_at
+fallback_current_child_status: $fallback_current_child_status
+fallback_child_status_marker: $fallback_child_status_marker
+fallback_child_status_marker_source: $fallback_child_status_marker_source
+fallback_last_cycle_exit_code: $fallback_last_cycle_exit
+fallback_runner_stop_reason: $fallback_runner_stop_reason
+fallback_heartbeat: $fallback_heartbeat
+primary_failure_classification: ${primary_failure_classification:-none}
+primary_exec_started: $primary_exec_started
+pre_run_guardrail_stop: $pre_run_guardrail_stop
+primary_stop_phase: $primary_stop_phase
+primary_stop_reason: $primary_stop_reason
+primary_status_marker_expectation: $primary_status_marker_expectation
+primary_status_marker: ${status_marker:-missing}
+primary_status_marker_source: ${status_marker_source:-unknown}
+primary_status_marker_candidate: ${status_marker_candidate:-none}
+primary_status_marker_candidate_rejection_reason: ${status_marker_candidate_rejection_reason:-none}
+primary_codex_exit: ${codex_exit:-unknown}
+primary_session_end_state: ${session_end_state:-none}
+primary_session_agent_message_count: ${primary_session_agent_message_count:-unknown}
+primary_session_tool_call_count: ${primary_session_tool_call_count:-unknown}
+primary_session_tool_result_count: ${primary_session_tool_result_count:-unknown}
+primary_session_task_complete_last_agent_message: ${primary_session_task_complete_last_agent_message:-unknown}
+primary_session_last_rate_limit_reached_type: ${primary_session_last_rate_limit_reached_type:-unknown}
+primary_session_last_rate_limit_limit_id: ${primary_session_last_rate_limit_limit_id:-unknown}
+primary_session_last_rate_limit_limit_name: ${primary_session_last_rate_limit_limit_name:-unknown}
+primary_session_last_rate_limit_plan_type: ${primary_session_last_rate_limit_plan_type:-unknown}
+primary_session_last_rate_limit_primary_used_percent: ${primary_session_last_rate_limit_primary_used_percent:-unknown}
+primary_session_last_rate_limit_secondary_used_percent: ${primary_session_last_rate_limit_secondary_used_percent:-unknown}
+quota_snapshot_identity_changed: $(quota_identity_changed_flag "${limit_id:-unknown}" "${limit_name:-unknown}" "${after_limit_id:-unknown}" "${after_limit_name:-unknown}")
+quota_session_identity_changed: $(quota_identity_changed_flag "${limit_id:-unknown}" "${limit_name:-unknown}" "${primary_session_last_rate_limit_limit_id:-unknown}" "${primary_session_last_rate_limit_limit_name:-unknown}")
+dirty_paths: $DIRTY_PATH_COUNT
+tracked_modified_paths: $TRACKED_MODIFIED_PATH_COUNT
+untracked_paths: $UNTRACKED_PATH_COUNT
+primary_before_limit_id: ${limit_id:-unknown}
+primary_before_limit_name: ${limit_name:-unknown}
+primary_before_snapshot_source: ${before_source:-unknown}
+primary_before_snapshot_model_hint: ${before_model_hint:-unknown}
+primary_before_snapshot_current: ${before_snapshot_is_current:-unknown}
+primary_before_snapshot_event_timestamp: ${before_ts:-unknown}
+primary_before_snapshot_age_seconds: ${before_snapshot_age_seconds:-unknown}
+primary_before_primary_reset: $(format_epoch_local "${primary_reset:-}")
+primary_before_primary_reset_age_seconds: ${before_primary_reset_age_seconds:-unknown}
+primary_before_primary_reset_expired: ${before_primary_reset_expired:-unknown}
+primary_before_primary_bucket_current: ${before_primary_bucket_current:-unknown}
+primary_before_secondary_reset: $(format_epoch_local "${secondary_reset:-}")
+primary_before_secondary_reset_age_seconds: ${before_secondary_reset_age_seconds:-unknown}
+primary_before_secondary_reset_expired: ${before_secondary_reset_expired:-unknown}
+primary_before_secondary_bucket_current: ${before_secondary_bucket_current:-unknown}
+primary_before_snapshot_stale_after_reset: ${before_snapshot_stale_after_reset:-unknown}
+primary_before_session_end_state: $primary_before_session_end_state
+primary_after_limit_id: ${after_limit_id:-unknown}
+primary_after_limit_name: ${after_limit_name:-unknown}
+primary_after_snapshot_source: ${after_source:-unknown}
+primary_after_snapshot_model_hint: ${after_model_hint:-unknown}
+primary_after_snapshot_current: ${after_snapshot_is_current:-unknown}
+primary_after_snapshot_event_timestamp: ${after_ts:-unknown}
+primary_after_snapshot_age_seconds: ${after_snapshot_age_seconds:-unknown}
+primary_after_primary_reset: $(format_epoch_local "${after_primary_reset:-}")
+primary_after_primary_reset_age_seconds: ${after_primary_reset_age_seconds:-unknown}
+primary_after_primary_reset_expired: ${after_primary_reset_expired:-unknown}
+primary_after_primary_bucket_current: ${after_primary_bucket_current:-unknown}
+primary_after_secondary_reset: $(format_epoch_local "${after_secondary_reset:-}")
+primary_after_secondary_reset_age_seconds: ${after_secondary_reset_age_seconds:-unknown}
+primary_after_secondary_reset_expired: ${after_secondary_reset_expired:-unknown}
+primary_after_secondary_bucket_current: ${after_secondary_bucket_current:-unknown}
+primary_after_snapshot_stale_after_reset: ${after_snapshot_stale_after_reset:-unknown}
+primary_before_used_left: primary_used=${primary_used:-unknown}% primary_left=${primary_left:-unknown}% secondary_used=${secondary_used:-unknown}% secondary_left=${secondary_left:-unknown}%
+primary_after_used_left: primary_used=${after_primary:-unknown}% primary_left=${after_primary_left:-unknown}% secondary_used=${after_secondary:-unknown}% secondary_left=${after_secondary_left:-unknown}%
+incident_log_private_artifact: $(upkeeper_postmortem_private_artifact_state "$incident_log_path")
+primary_last_message_metadata_private_artifact: $(upkeeper_postmortem_private_artifact_state "$primary_last_message_copy")
+loop_log_private_artifact: $(upkeeper_postmortem_private_artifact_state "$LOG_FILE")
+private_artifact_access: operator_only
+EOF
+  chmod 600 "$context_path" 2>/dev/null || true
+}
+
+run_postmortem_sequence() {
+  local trigger="$1"
+  local detail_text="$2"
+  local child_exit="$3"
+
+  POSTMORTEM_REPORT_PATH=""
+  POSTMORTEM_CONTEXT_PATH=""
+  POSTMORTEM_INCIDENT_LOG_PATH=""
+  POSTMORTEM_BUG_RECORD_PATH=""
+  POSTMORTEM_SEQUENCE_STATUS="not_run"
+
+  local pm_root report_path context_path incident_log_path bug_record_path primary_last_message_metadata
+  local report_prompt_file report_last_message hardening_prompt_file hardening_last_message
+  local report_last_message_private hardening_last_message_private
+  local report_exit report_marker hardening_exit hardening_marker
+  local incident_classification errexit_was_set
+
+  pm_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID"
+  report_path="$pm_root/postmortem.md"
+  context_path="$pm_root/incident-context.txt"
+  incident_log_path="$pm_root/incident-log.txt"
+  bug_record_path="$pm_root/bug-record.md"
+  primary_last_message_metadata="$pm_root/primary-last-message.meta"
+  report_last_message_private="$pm_root/postmortem.report-last-message.txt"
+  hardening_last_message_private="$pm_root/postmortem.hardening-last-message.txt"
+
+  postmortem_private_dir "$pm_root"
+  POSTMORTEM_INCIDENT_LOG_PATH="$incident_log_path"
+  refresh_postmortem_incident_log "$incident_log_path"
+  write_postmortem_last_message_metadata "${last_message_file:-}" "$primary_last_message_metadata"
+  write_postmortem_context "$context_path" "$trigger" "$detail_text" "$child_exit" "$incident_log_path" "$primary_last_message_metadata"
+  incident_classification="$(awk -F': ' '/^incident_classification: / { print $2; exit }' "$context_path" || true)"
+  log_line "INFO" "postmortem.classification trigger=$trigger classification=${incident_classification:-unknown} child_exit=$child_exit hardening_opt_in=$(truthy_as_int "${CODEX_POSTMORTEM_HARDENING_OPT_IN:-0}")"
+
+  POSTMORTEM_REPORT_PATH="$report_path"
+  POSTMORTEM_CONTEXT_PATH="$context_path"
+  POSTMORTEM_BUG_RECORD_PATH="$bug_record_path"
+  write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+  log_line "INFO" "postmortem.bug_record path=$bug_record_path trigger=$trigger status=$POSTMORTEM_SEQUENCE_STATUS"
+
+  if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
+    cat >"$report_path" <<EOF
+# Upkeeper Postmortem
+## Incident Summary
+Dry-run stub summary for trigger $trigger.
+## Observed Signals
+- Dry run skipped live post-mortem Codex exec.
+## Root Cause Hypotheses
+- Dry run path only.
+## Action Plan
+- Relaunch the loop with the updated wrapper.
+## Hardening Targets
+- Verify fallback and post-mortem branches on the next real incident.
+## Relaunch Checklist
+- Inspect the real report after a live fallback incident.
+## Hardening Outcome
+- Dry run only; no live hardening change was executed.
+EOF
+    postmortem_set_private_file_mode "$report_path"
+    POSTMORTEM_SEQUENCE_STATUS="dry_run_stub"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    return 7
+  fi
+
+  ensure_run_tmp_dir
+  report_prompt_file="$(run_mktemp postmortem-report-prompt)"
+  report_last_message="$(run_mktemp postmortem-report-last-message)"
+  hardening_prompt_file="$(run_mktemp postmortem-hardening-prompt)"
+  hardening_last_message="$(run_mktemp postmortem-hardening-last-message)"
+
+  compile_postmortem_report_prompt "$report_prompt_file" "$context_path" "$report_path"
+  errexit_was_set=0
+  [[ $- == *e* ]] && errexit_was_set=1
+  set +e
+  run_aux_codex_exec "postmortem.report" "$CODEX_POSTMORTEM_MODEL" "$CODEX_POSTMORTEM_REASONING_EFFORT" "$CODEX_POSTMORTEM_MODE" "$report_prompt_file" "$report_last_message"
+  report_exit=$?
+  if [[ "$errexit_was_set" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  copy_postmortem_private_artifact "$report_last_message" "$report_last_message_private"
+  report_marker="$(parse_postmortem_marker "$report_last_message")"
+  log_line "INFO" "postmortem.report.finish exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path report_exists=$([[ -e "$report_path" ]] && printf 1 || printf 0) report_nonempty=$([[ -s "$report_path" ]] && printf 1 || printf 0)"
+
+  if [[ "$report_exit" -eq 86 ]]; then
+    POSTMORTEM_SEQUENCE_STATUS="report_quota_skipped"
+    write_quota_skipped_postmortem_report "$report_path" "$trigger" "$detail_text" "$child_exit" "postmortem.report" "$CODEX_POSTMORTEM_MODEL"
+    log_line "WARN" "postmortem.report skipped reason=quota_guardrail exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return 7
+  fi
+
+  if [[ "$report_exit" -eq 87 ]]; then
+    local report_environment_detail report_environment_reason
+    report_environment_detail="$(awk '/^detail: / { sub(/^detail: /, ""); print; exit }' "$report_last_message" || true)"
+    if [[ -z "$report_environment_detail" ]]; then
+      report_environment_detail="unknown"
+    fi
+    report_environment_reason="$(awk '/^reason: / { sub(/^reason: /, ""); print; exit }' "$report_last_message" || true)"
+    if [[ -z "$report_environment_reason" ]]; then
+      report_environment_reason="local Codex runtime is not writable"
+    fi
+    POSTMORTEM_SEQUENCE_STATUS="report_environment_skipped"
+    write_environment_skipped_postmortem_report "$report_path" "$trigger" "$detail_text" "$child_exit" "postmortem.report" "$CODEX_POSTMORTEM_MODEL" "$report_environment_detail"
+    log_line "WARN" "postmortem.report skipped reason=local_codex_runtime_unwritable environment_reason=$(shell_quote "$report_environment_reason") exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return 7
+  fi
+
+  if [[ "$report_exit" -ne 0 || "$report_marker" != "REPORT_WRITTEN" || ! -s "$report_path" ]]; then
+    POSTMORTEM_SEQUENCE_STATUS="report_failed"
+    log_line "ERROR" "postmortem.report failed exit_code=$report_exit marker=${report_marker:-missing} expected_marker=REPORT_WRITTEN report_path=$report_path"
+    postmortem_set_private_file_mode "$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return 8
+  fi
+
+  postmortem_set_private_file_mode "$report_path"
+  if ! upkeeper_postmortem_hardening_enabled; then
+    POSTMORTEM_SEQUENCE_STATUS="report_only_opt_in_required"
+    cat >>"$report_path" <<'EOF'
+
+## Hardening Outcome
+- No auxiliary hardening Codex pass was launched because postmortem hardening is disabled by default.
+- This cycle kept the auxiliary postmortem run report-only and limited its incident evidence to the sanitized context file.
+- After operator review of the report and private evidence, rerun with `CODEX_POSTMORTEM_HARDENING_OPT_IN=1` for an explicit hardening follow-up if it is still warranted.
+EOF
+    postmortem_set_private_file_mode "$report_path"
+    log_line "INFO" "postmortem.hardening skipped reason=operator_opt_in_required report_path=$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return "$child_exit"
+  fi
+
+  compile_postmortem_hardening_prompt "$hardening_prompt_file" "$context_path" "$report_path"
+  errexit_was_set=0
+  [[ $- == *e* ]] && errexit_was_set=1
+  set +e
+  run_aux_codex_exec "postmortem.hardening" "$CODEX_POSTMORTEM_MODEL" "$CODEX_POSTMORTEM_REASONING_EFFORT" "$CODEX_POSTMORTEM_MODE" "$hardening_prompt_file" "$hardening_last_message"
+  hardening_exit=$?
+  if [[ "$errexit_was_set" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  copy_postmortem_private_artifact "$hardening_last_message" "$hardening_last_message_private"
+  hardening_marker="$(parse_postmortem_marker "$hardening_last_message")"
+
+  if [[ "$hardening_exit" -eq 86 ]]; then
+    POSTMORTEM_SEQUENCE_STATUS="hardening_quota_skipped"
+    cat >>"$report_path" <<EOF
+
+## Hardening Outcome
+- The scripted hardening Codex pass was skipped before launch because \`$CODEX_POSTMORTEM_MODEL\` did not pass the auxiliary quota preflight.
+- The report was preserved and the wrapper stopped for manual relaunch instead of spending more recovery quota.
+EOF
+    log_line "WARN" "postmortem.hardening skipped reason=quota_guardrail exit_code=$hardening_exit marker=${hardening_marker:-missing} report_path=$report_path"
+    postmortem_set_private_file_mode "$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return 7
+  fi
+
+  if [[ "$hardening_exit" -eq 87 ]]; then
+    POSTMORTEM_SEQUENCE_STATUS="hardening_environment_skipped"
+    cat >>"$report_path" <<EOF
+
+## Hardening Outcome
+- The scripted hardening Codex pass was skipped before launch because the local Codex runtime was not writable.
+- The report was preserved and the wrapper stopped for manual relaunch instead of recursively launching Codex in the same broken environment.
+EOF
+    log_line "WARN" "postmortem.hardening skipped reason=local_codex_runtime_unwritable exit_code=$hardening_exit marker=${hardening_marker:-missing} report_path=$report_path"
+    postmortem_set_private_file_mode "$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return 7
+  fi
+
+  if [[ "$hardening_exit" -ne 0 || "$hardening_marker" != "HARDENING_DONE" ]]; then
+    POSTMORTEM_SEQUENCE_STATUS="hardening_failed"
+    log_line "ERROR" "postmortem.hardening failed exit_code=$hardening_exit marker=${hardening_marker:-missing} expected_marker=HARDENING_DONE report_path=$report_path"
+    postmortem_set_private_file_mode "$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return 8
+  fi
+
+  POSTMORTEM_SEQUENCE_STATUS="complete"
+  postmortem_set_private_file_mode "$report_path"
+  write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+  emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+  rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+  return "$child_exit"
+}
 
 upkeeper_prompt_safe_inline_value() {
   local value="${1:-}"

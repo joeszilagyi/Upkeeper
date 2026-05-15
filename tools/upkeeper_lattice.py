@@ -2348,12 +2348,12 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
         for sql in CREATE_TABLE_SQL:
             conn.execute(sql)
         deduped_git_change_groups = dedupe_git_file_changes(conn)
-        for sql in CREATE_INDEX_SQL:
-            conn.execute(sql)
         ensure_file_snapshot_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_mtime_ns_column(conn)
         ensure_contributor_privacy_columns(conn)
         ensure_git_commit_privacy_columns(conn)
+        for sql in CREATE_INDEX_SQL:
+            conn.execute(sql)
         scrub_legacy_git_privacy_data(conn)
         conn.execute("PRAGMA user_version=1")
         conn.execute(

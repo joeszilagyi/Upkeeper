@@ -12,10 +12,10 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
+Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.17
+Version: v1.2.18
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -351,7 +351,9 @@ Prompt behavior:
     discoveries into local tests or fixtures, and
     `prompts/p29-reuse-harvesting-review.md` for bounded reuse harvesting of
     helpers, fixtures, prompt language, documentation blocks, command idioms,
-    validation patterns, and local assets.
+    validation patterns, and local assets, and
+    `prompts/p30-stark-protocol-review.md` for permanent hardening and
+    non-regression barriers after useful failures or fragile recovery paths.
   - --config-file=PATH selects a shell-compatible config file for this invoked
     cycle. Use the equals form; spaced form is rejected.
   - --no-config disables the default config for this invoked cycle.
@@ -369,9 +371,11 @@ Prompt behavior:
     module for this invoked cycle.
   - --review-module=p29 appends the central P29 reuse harvesting review module
     for this invoked cycle.
-  - --review-modules=p24,p25,p26,p27,p28,p29 appends multiple modules in a single flag;
+  - --review-module=p30 appends the central P30 Stark Protocol permanent
+    hardening review module for this invoked cycle.
+  - --review-modules=p24,p25,p26,p27,p28,p29,p30 appends multiple modules in a single flag;
     repeated --review-module flags are also accepted and duplicate modules are ignored.
-  - --p24, --p25, --p26, --p27, --p28, and --p29 are shorthand aliases for the corresponding review modules.
+  - --p24, --p25, --p26, --p27, --p28, --p29, and --p30 are shorthand aliases for the corresponding review modules.
     Review module flags are one-cycle guidance only and do not persist to later
     loop iterations. They are not enabled by --prompt-pass=all unless requested.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5
@@ -398,7 +402,7 @@ Prompt behavior:
   - --manifest-file=PATH selects a different local manifest path for this cycle.
   - --include-glob=PATTERN and --exclude-glob=PATTERN add local path filters.
     --include-globs=a,b and --exclude-globs=a,b replace the configured lists.
-  - --selection-review-modules=p24,p25,p26,p27,p28,p29 filters candidates using
+  - --selection-review-modules=p24,p25,p26,p27,p28,p29,p30 filters candidates using
     deterministic local approximations for files likely relevant to those
     optional review modules. It is a selection filter, not a review-module
     prompt request; pair it with --review-module when you want both.
@@ -410,7 +414,7 @@ Prompt behavior:
   - --prompt-pass=all forces the selected target through all P1-P23 repertoire
     passes for this invoked cycle. Use the equals form; spaced form is rejected.
   - --max-cover is a one-cycle high-coverage mode. It sets --prompt-pass=all,
-    appends P24-P29, and asks Lattice for max-cover target ranking across
+    appends P24-P30, and asks Lattice for max-cover target ranking across
     current tracked source-safe text files. Explicit targets, startup anomaly
     gates, and active failure-queue markers still keep their existing priority.
   - --bug-report-only, also accepted as --file-bug-only or --report-bug-only,
@@ -610,7 +614,7 @@ process can start. If the actionable queue is clean, it prints `high five yay`
 and exits 25. Otherwise it prefers security-class issues, then data-integrity
 issues, then the remaining queue ranked by containment title/tag signals,
 severity, and least-recently-touched age. The selected issue is handed to
-Upkeeper as `--fix-issue=NUMBER`, with `--prompt-pass=all` and all P24-P29
+Upkeeper as `--fix-issue=NUMBER`, with `--prompt-pass=all` and all P24-P30
 review modules enabled. Its default workflow runs separate comment, review, and
 apply stages with `--issue-workflow-stage=comment|review|apply`, so the first
 two stages are source read-only and run backend Codex in a read-only repository

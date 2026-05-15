@@ -23,7 +23,7 @@ Usage: ${0##*/} [--silent|--basic|--debug1] [--model-override=SPEC] [--model MOD
 Run one quota-respecting Upkeeper max-cover cycle:
   - reconcile open Upkeeper automation obligations before normal burn selection
   - gpt-5.5 xhigh via Upkeeper's model override
-  - all P1-P23 passes plus P24-P29 review modules
+  - all P1-P23 passes plus P24-P30 review modules
   - Lattice max-cover target ranking
   - bug-report-only investigation and issue filing instead of source fixing
   - fail-closed launcher full burn: Lattice required, encrypted pre-contact
@@ -178,7 +178,7 @@ if [[ "$obligation_status" == "ok" ]]; then
   args=(
     "--model-override=$FLAMEON_MODEL_OVERRIDE"
     "--prompt-pass=all"
-    "--review-modules=p24,p25,p26,p27,p28,p29"
+    "--review-modules=p24,p25,p26,p27,p28,p29,p30"
     "--target-file=$obligation_target"
     "--prompt-file"
     "$obligation_prompt_file"

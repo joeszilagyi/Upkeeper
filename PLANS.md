@@ -3,9 +3,63 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## P30 Stark Protocol Review Module
+
+Status: completed
+
+Goal:
+Add P30 as a first-class opt-in review module for permanent hardening: each
+observed weakness must either be removed, guarded by deterministic validation,
+documented as an invariant, or left as an explicit blocked follow-up instead of
+being allowed to fail the same way again.
+
+Constraints:
+- Treat P30 as public operator behavior, not just a local prompt file.
+- Keep it opt-in through review-module flags while including it in full-burn
+  and max-cover review-module bundles.
+- Preserve existing P24-P29 behavior and aliases.
+- Keep deterministic local validation no-quota and make P30 wiring
+  non-regressible through help, docs, prompt, Lattice, completion, launcher, and
+  test checks.
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `lib/upkeeper/help_selection.bash`
+- `lib/upkeeper/lattice.bash`
+- `tools/upkeeper_lattice.py`
+- `tools/validate_upkeeper.sh`
+- `tools/check_public_docs.sh`
+- `prompts/p30-stark-protocol-review.md`
+- `prompts/README.md`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `docs/public-documentation-policy.md`
+- `FlameOn`
+- `ChimneySweep`
+- `completions/upkeeper.bash`
+- `testruns/all_p_modules_once.sh`
+- `testruns/all_p_modules_600s.sh`
+- `tests/chimneysweep_test.bash`
+- `tests/flameon_test.bash`
+- `tests/lattice_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `./Upkeeper --help`
+- `./Upkeeper --version`
+- `git diff --check`
+
 ## Pre-Contact Backup Machine Bootstrap And Fail-Closed Hardening
 
-Status: in_progress
+Status: completed
 
 Goal:
 Keep selected-target pre-contact backup fail-closed by default unless encrypted
@@ -58,7 +112,7 @@ Validation:
 
 ## Backlog Dirty-Worktree Autoshelve
 
-Status: in_progress
+Status: completed
 
 Goal:
 Let `orchestration/backlog.sh` preserve unrelated local wrapper work

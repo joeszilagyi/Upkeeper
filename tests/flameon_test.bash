@@ -18,7 +18,7 @@ test_flameon_help_documents_burn_contract() {
   grep -Fq "gpt-5.5 xhigh" <<<"$help" || fail "FlameOn help missing model/effort contract"
   grep -Fq -- "--model-override=SPEC" <<<"$help" || fail "FlameOn help missing model override flag"
   grep -Fq -- "--model MODEL" <<<"$help" || fail "FlameOn help missing model shortcut flag"
-  grep -Fq "all P1-P23 passes plus P24-P29" <<<"$help" || fail "FlameOn help missing all-pass contract"
+  grep -Fq "all P1-P23 passes plus P24-P30" <<<"$help" || fail "FlameOn help missing all-pass contract"
   grep -Fq "Lattice max-cover target ranking" <<<"$help" || fail "FlameOn help missing Lattice selection contract"
   grep -Fq -- "-backup_queue" <<<"$help" || fail "FlameOn help missing backup queue flag"
 }

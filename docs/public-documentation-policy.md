@@ -142,3 +142,14 @@ Use it when repeated or likely-to-repeat helpers, fixtures, prompt language,
 documentation blocks, command idioms, validation patterns, or local assets can
 become a bounded reusable project contract without making the code harder to
 read.
+
+P30 is the Stark Protocol pass:
+
+```sh
+./Upkeeper --review-module=p30
+```
+
+Use it when a useful failure, near miss, or fragile recovery path should become
+permanent hardening: a local guard, deterministic validation, documented
+invariant, automation obligation, or explicit blocked follow-up that prevents
+the same weakness from silently recurring.

@@ -35,7 +35,7 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--help`, `-h`, `--version`, `--config-file=...`, `--no-config`,
   `--prompt-file`, `--prompt`,
   `--review-module=...`, `--review-modules=...`, `--p24`, `--p25`, `--p26`,
-  `--p27`, `--p28`, `--p29`, `--model-override=...`, `--target-file=...`, and
+  `--p27`, `--p28`, `--p29`, `--p30`, `--model-override=...`, `--target-file=...`, and
   `--target-root=...`, `--target-depth=...`,
   `--selection-source=manifest|enumerate`,
   `--selection-order=oldest|newest|random`, `--refresh-manifest`,
@@ -62,7 +62,7 @@ Future changes should preserve this operator-visible surface as far as possible:
   handed to Upkeeper with `--fix-issue=NUMBER`. Its default workflow is
   comment, review, then apply across separate Upkeeper instantiations. The
   comment/review stages are source read-only and leave issue comments; the apply
-  stage works the bug. Each stage requests all prompt passes and all P24-P29
+  stage works the bug. Each stage requests all prompt passes and all P24-P30
   review modules for the locked issue target, and uses the same full-burn
   launcher protections and quota-bypass behavior as FlameOn.
 - The clean no-op path is a first-class contract. When automation health,

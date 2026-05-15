@@ -231,7 +231,7 @@ if [[ "$obligation_status" == "ok" ]]; then
   args=(
     "--model-override=$CHIMNEYSWEEP_MODEL_OVERRIDE"
     "--prompt-pass=all"
-    "--review-modules=p24,p25,p26,p27,p28,p29"
+    "--review-modules=p24,p25,p26,p27,p28,p29,p30"
     "--target-file=$obligation_repair_target"
     "--prompt-file"
     "$obligation_prompt_file"
@@ -506,7 +506,7 @@ PY
 args=(
   "--model-override=$CHIMNEYSWEEP_MODEL_OVERRIDE"
   "--prompt-pass=all"
-  "--review-modules=p24,p25,p26,p27,p28,p29"
+  "--review-modules=p24,p25,p26,p27,p28,p29,p30"
   "--fix-issue=$issue_number"
 )
 

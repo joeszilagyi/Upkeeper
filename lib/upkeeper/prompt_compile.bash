@@ -28,6 +28,9 @@ review_module_prompt_path() {
     p29)
       printf '%s/prompts/p29-reuse-harvesting-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
       ;;
+    p30)
+      printf '%s/prompts/p30-stark-protocol-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
+      ;;
     *)
       return 1
       ;;

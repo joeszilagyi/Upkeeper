@@ -241,9 +241,20 @@ PY
   [[ -s "$TEST_TMP_ROOT/max-cover-head.jsonl" ]] || fail "max-cover pipe did not emit one row"
   [[ ! -s "$TEST_TMP_ROOT/max-cover-head.err" ]] || fail "max-cover pipe wrote stderr on closed pipe"
 
-  for pass_num in $(seq 1 29); do
+  mapfile -t active_pass_codes < <(
+    python3 - "$DB" <<'PY'
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+for (pass_code,) in conn.execute("select pass_code from review_passes where active=1 order by pass_code"):
+    print(pass_code)
+PY
+  )
+  [[ "${#active_pass_codes[@]}" -gt 0 ]] || fail "could not read active Lattice pass registry"
+  for pass_code in "${active_pass_codes[@]}"; do
     lattice record-pass-result \
-      --pass "P$pass_num" \
+      --pass "$pass_code" \
       --file "README.md" \
       --applicable 1 \
       --outcome clean \

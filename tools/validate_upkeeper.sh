@@ -411,6 +411,7 @@ check_prompt_template() {
   [[ -s prompts/p27-educational-debrief-review.md ]] || fail "P27 review module prompt is missing or empty"
   [[ -s prompts/p28-unit-test-harvesting-review.md ]] || fail "P28 review module prompt is missing or empty"
   [[ -s prompts/p29-reuse-harvesting-review.md ]] || fail "P29 review module prompt is missing or empty"
+  [[ -s prompts/p30-stark-protocol-review.md ]] || fail "P30 review module prompt is missing or empty"
   [[ -x tools/upkeeper_lattice.py ]] || fail "Lattice tool is missing or not executable"
   [[ -s lib/upkeeper/lattice.bash ]] || fail "Lattice wrapper module is missing or empty"
   [[ -s lib/upkeeper/precontact_backup.bash ]] || fail "pre-contact backup module is missing or empty"
@@ -457,6 +458,12 @@ check_prompt_template() {
   grep -Fq "Registry Preference" prompts/p29-reuse-harvesting-review.md || fail "P29 registry preference missing"
   grep -Fq "Reuse Debt Output" prompts/p29-reuse-harvesting-review.md || fail "P29 reuse debt output missing"
   grep -Fq "ShellCheck Integration Policy" prompts/p29-reuse-harvesting-review.md || fail "P29 ShellCheck policy missing"
+  grep -Fq "# P30 Stark Protocol Review" prompts/p30-stark-protocol-review.md || fail "P30 prompt title missing"
+  grep -Fq "P30: not applicable" prompts/p30-stark-protocol-review.md || fail "P30 applicability gate missing"
+  grep -Fq "same weakness cannot get us twice" prompts/p30-stark-protocol-review.md || fail "P30 same-weakness rule missing"
+  grep -Fq "Permanent hardening test" prompts/p30-stark-protocol-review.md || fail "P30 hardening test missing"
+  grep -Fq "Non-regression evidence" prompts/p30-stark-protocol-review.md || fail "P30 non-regression evidence output missing"
+  grep -Fq "same weakness cannot silently recur" prompts/p30-stark-protocol-review.md || fail "P30 repeat-path boundary missing"
   grep -Fq "UPKEEPER_PASS_RESULT" prompts/default-review.md || fail "default prompt missing pass-result marker contract"
   grep -Fq "UPKEEPER_LATTICE_ENABLED" Upkeeper.conf || fail "root config missing Lattice defaults"
   grep -Fq "UPKEEPER_LATTICE_ENABLED" configurations/default.conf || fail "default profile missing Lattice defaults"
@@ -478,6 +485,7 @@ check_prompt_template() {
   grep -Fq "educational debrief" README.md || fail "README missing P27 summary"
   grep -Fq "unit-test harvesting" README.md || fail "README missing P28 summary"
   grep -Fq "reuse harvesting" README.md || fail "README missing P29 summary"
+  grep -Fq "Stark Protocol" README.md || fail "README missing P30 summary"
   grep -Fq "Upkeeper.conf" README.md || fail "README missing config file summary"
   grep -Fq "tools/stress_upkeeper_corpus.sh --local" README.md || fail "README missing stress corpus command"
   grep -Fq ".upkeeperignore" README.md || fail "README missing .upkeeperignore docs"
@@ -516,6 +524,7 @@ check_help_and_diff() {
   grep -Fq -- "--review-module=p27" <<<"$help" || fail "help missing --review-module=p27"
   grep -Fq -- "--review-module=p28" <<<"$help" || fail "help missing --review-module=p28"
   grep -Fq -- "--review-module=p29" <<<"$help" || fail "help missing --review-module=p29"
+  grep -Fq -- "--review-module=p30" <<<"$help" || fail "help missing --review-module=p30"
   grep -Fq -- "--config-file=PATH" <<<"$help" || fail "help missing --config-file"
   grep -Fq -- "--no-config" <<<"$help" || fail "help missing --no-config"
   grep -Fq -- "--target-root=PATH" <<<"$help" || fail "help missing --target-root"
@@ -527,13 +536,14 @@ check_help_and_diff() {
   grep -Fq -- "--include-globs=a,b" <<<"$help" || fail "help missing --include-globs"
   grep -Fq -- "--exclude-glob=PATTERN" <<<"$help" || fail "help missing --exclude-glob"
   grep -Fq -- "--exclude-globs=a,b" <<<"$help" || fail "help missing --exclude-globs"
-  grep -Fq -- "--selection-review-modules=p24,p25,p26,p27,p28,p29" <<<"$help" || fail "help missing --selection-review-modules"
+  grep -Fq -- "--selection-review-modules=p24,p25,p26,p27,p28,p29,p30" <<<"$help" || fail "help missing --selection-review-modules"
   grep -Fq -- "--p24" <<<"$help" || fail "help missing --p24"
   grep -Fq -- "--p25" <<<"$help" || fail "help missing --p25"
   grep -Fq -- "--p26" <<<"$help" || fail "help missing --p26"
   grep -Fq -- "--p27" <<<"$help" || fail "help missing --p27"
   grep -Fq -- "--p28" <<<"$help" || fail "help missing --p28"
   grep -Fq -- "--p29" <<<"$help" || fail "help missing --p29"
+  grep -Fq -- "--p30" <<<"$help" || fail "help missing --p30"
   grep -Fq -- "--ignore-failure-queue" <<<"$help" || fail "help missing --ignore-failure-queue"
   grep -Fq -- "--backup-queue" <<<"$help" || fail "help missing --backup-queue"
   grep -Fq -- "--max-cover" <<<"$help" || fail "help missing --max-cover"
@@ -1575,7 +1585,7 @@ check_review_module_flags() {
     CODEX_FALLBACK_SCREEN_ENABLED=0 \
     CODEX_POSTMORTEM_ENABLED=0 \
     UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25,p26,p27,p28,p29 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+    ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25,p26,p27,p28,p29,p30 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
 
   grep -Fq "review_modules_hash=" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules metadata"
   grep -Fq "review.module_prompt enabled module=p24" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P24"
@@ -1584,13 +1594,17 @@ check_review_module_flags() {
   grep -Fq "review.module_prompt enabled module=p27" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P27"
   grep -Fq "review.module_prompt enabled module=p28" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P28"
   grep -Fq "review.module_prompt enabled module=p29" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P29"
+  grep -Fq "review.module_prompt enabled module=p30" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P30"
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not finish cleanly"
 
-  output="$(./Upkeeper --p24 --p25 --p26 --p27 --p28 --p29 --version)"
+  output="$(./Upkeeper --p24 --p25 --p26 --p27 --p28 --p29 --p30 --version)"
   [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "review module shorthand flags broke --version"
 
   output="$(./Upkeeper --review-module=library-reuse --review-module=function-reuse --review-module=asset-reuse --version)"
   [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "P29 reuse aliases broke --version"
+
+  output="$(./Upkeeper --review-module=stark-protocol --review-module=permanent-hardening --review-module=non-regression --version)"
+  [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "P30 hardening aliases broke --version"
 
   set +e
   output="$(
@@ -1847,7 +1861,7 @@ check_file_manifest_selection() {
   grep -Fq "selection_mode=lattice_max_cover" "$temp_dir/max-cover.log" || fail "max-cover did not use Lattice max-cover selection"
   grep -Fq "prompt_pass=all" "$temp_dir/max-cover.log" || fail "max-cover did not force all prompt passes"
   if grep -Eq '(^| )review_modules_hash=none( |$)' "$temp_dir/max-cover.log"; then
-    fail "max-cover did not append P24-P29"
+    fail "max-cover did not append P24-P30"
   fi
   grep -Fq "max_cover=1" "$temp_dir/max-cover.log" || fail "max-cover was not recorded in cycle.start"
 

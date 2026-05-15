@@ -410,6 +410,27 @@ PASS_REGISTRY.extend(
             "applicability_hint": "stable reusable assets and helper extraction",
             "schedule_hint": "explicit review module",
         },
+        {
+            "pass_code": "P30",
+            "title": "Stark Protocol Review",
+            "prompt_source_path": "prompts/p30-stark-protocol-review.md",
+            "default_in_repertoire": False,
+            "module_prompt": True,
+            "aliases": [
+                "stark",
+                "stark-protocol",
+                "permanent-hardening",
+                "hardening",
+                "non-regression",
+                "regression-proof",
+                "no-repeat",
+                "final-hardening",
+            ],
+            "active": True,
+            "introduced_version": "v1.2.18",
+            "applicability_hint": "permanent hardening and non-regression barriers",
+            "schedule_hint": "explicit review module",
+        },
     ]
 )
 

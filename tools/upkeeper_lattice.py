@@ -3025,6 +3025,22 @@ def normalize_change_note_ref(path: str) -> str:
     return normalized
 
 
+def normalize_repo_file_identity_ref(root: Path, path: str) -> str:
+    # Change-note imports may mention URLs and runtime artifacts in prose, but
+    # only repo-local source paths should become durable file identities.
+    normalized = normalize_change_note_ref(path)
+    if not normalized:
+        return ""
+    if normalized == "Upkeeper.log" or normalized.startswith((".git/", "runtime/")):
+        return ""
+    try:
+        resolved = (root / normalized).resolve(strict=False)
+        resolved.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return ""
+    return normalized
+
+
 def ensure_cycle(
     conn: sqlite3.Connection,
     repo_id: int,
@@ -3802,7 +3818,12 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["raw_storage_enforcement"] = probe_raw_storage_enforcement(conn, root, ensure_repository(conn, root))
         review_summary_probe = probe_review_summary_parsing()
         result["checks"]["review_summary_parsing"] = review_summary_probe
+        change_note_ref_probe = probe_change_note_file_identity_validation()
+        result["checks"]["change_note_file_identity_validation"] = change_note_ref_probe
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not all(bool(item.get("ok")) for item in change_note_ref_probe.values()):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
@@ -4463,6 +4484,49 @@ def probe_review_summary_parsing() -> dict[str, Any]:
                 "actual_review_outcome": actual_outcome,
                 "ok": actual_selected == expected_selected and actual_outcome == expected_outcome,
             }
+    return results
+
+
+def probe_change_note_file_identity_validation() -> dict[str, Any]:
+    results: dict[str, Any] = {}
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-change-note-ref-") as repo_dir:
+        root = Path(repo_dir).resolve()
+        cases = {
+            "valid_repo_file": ("tools/upkeeper_lattice.py", "tools/upkeeper_lattice.py"),
+            "url_rejected": ("https://example.invalid/not-a-file.py", ""),
+            "absolute_rejected": ("/tmp/not-a-file.py", ""),
+            "traversal_rejected": ("../outside.py", ""),
+            "control_char_rejected": ("docs/line\nbreak.py", ""),
+            "runtime_rejected": ("runtime/generated/report.py", ""),
+            "git_dir_rejected": (".git/hooks/pre-commit.py", ""),
+            "upkeeper_log_rejected": ("Upkeeper.log", ""),
+        }
+        for name, (raw, expected) in cases.items():
+            actual = normalize_repo_file_identity_ref(root, raw)
+            results[name] = {
+                "input": safe_output_text(raw),
+                "expected": expected,
+                "actual": actual,
+                "ok": actual == expected,
+            }
+        with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-change-note-outside-") as outside_dir:
+            escape = root / "escape"
+            try:
+                os.symlink(outside_dir, escape, target_is_directory=True)
+            except OSError as exc:
+                results["symlink_escape_rejected"] = {
+                    "supported": False,
+                    "error": safe_output_text(str(exc)),
+                    "ok": True,
+                }
+            else:
+                actual = normalize_repo_file_identity_ref(root, "escape/not-a-file.py")
+                results["symlink_escape_rejected"] = {
+                    "supported": True,
+                    "expected": "",
+                    "actual": actual,
+                    "ok": actual == "",
+                }
     return results
 
 
@@ -5972,7 +6036,7 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                 )
                 entry_id = int(cur.lastrowid)
                 for ref in re.findall(r"`([^`]+\.[A-Za-z0-9]+)`", text):
-                    normalized_ref = normalize_change_note_ref(ref)
+                    normalized_ref = normalize_repo_file_identity_ref(root, ref)
                     if not normalized_ref:
                         continue
                     if "/" not in normalized_ref and normalized_ref not in {"Upkeeper", "README.md", "AGENTS.md"}:

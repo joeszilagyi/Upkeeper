@@ -1253,6 +1253,46 @@ prepare_fallback_chain_token() {
   CODEX_FALLBACK_CHAIN_TOKEN="$(generate_fallback_chain_token)"
 }
 
+fallback_locked_target_path() {
+  if [[ -n "${RUN_SELECTED_REVIEW_PATH:-}" ]]; then
+    printf '%s' "$RUN_SELECTED_REVIEW_PATH"
+    return 0
+  fi
+  if [[ -n "${CODEX_TARGET_FILE:-}" ]]; then
+    printf '%s' "$CODEX_TARGET_FILE"
+    return 0
+  fi
+  return 1
+}
+
+run_locked_fallback_cycle() {
+  local trigger="$1"
+  shift
+  local locked_target=""
+  local original_target_file="${CODEX_TARGET_FILE:-}"
+  local target_locked=0
+  local fallback_rc=0
+
+  if locked_target="$(fallback_locked_target_path)"; then
+    if [[ -n "$locked_target" && "$locked_target" != "${CODEX_TARGET_FILE:-}" ]]; then
+      CODEX_TARGET_FILE="$locked_target"
+      target_locked=1
+      log_line "INFO" "fallback.target_lock trigger=$trigger target_file_hash=$(shell_quote "$(cycle_start_metadata_hash "$locked_target")") path_redacted=1 source=run_selected_review_path"
+    fi
+  fi
+
+  set +e
+  run_fallback_cycle "$trigger" "$@"
+  fallback_rc=$?
+  set -e
+
+  if [[ "$target_locked" == "1" ]]; then
+    CODEX_TARGET_FILE="$original_target_file"
+  fi
+
+  return "$fallback_rc"
+}
+
 # Main cycle.
 #
 # Order matters:
@@ -1447,7 +1487,7 @@ main() {
     write_primary_quota_blocked_marker "$stop_reason"
     if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
       local fallback_exit=0
-      run_fallback_cycle "primary_quota_before_run" "$stop_reason" || fallback_exit=$?
+      run_locked_fallback_cycle "primary_quota_before_run" "$stop_reason" || fallback_exit=$?
       finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=primary_quota_before_run final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
     fi
     log_line "WARN" "quota.stop reason=\"$stop_reason\""
@@ -1775,7 +1815,7 @@ main() {
     fi
     if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
       local fallback_exit=0
-      run_fallback_cycle "primary_quota_after_run" "$post_run_stop_reason codex_exit=$codex_exit status_marker=${status_marker:-missing} session_end_state=$session_end_state classification=$primary_failure_classification" || fallback_exit=$?
+      run_locked_fallback_cycle "primary_quota_after_run" "$post_run_stop_reason codex_exit=$codex_exit status_marker=${status_marker:-missing} session_end_state=$session_end_state classification=$primary_failure_classification" || fallback_exit=$?
       if [[ "$primary_failure_classification" == "PRIMARY_NO_AGENT_MESSAGE_AFTER_QUOTA_EXHAUSTION" ]]; then
         local fallback_child_id fallback_child_marker
         fallback_child_id="$(read_artifact_or_unknown "$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen/current-child-cycle-id.txt")"
@@ -1809,7 +1849,7 @@ main() {
       if [[ "$DIRTY_PATH_COUNT" -gt 0 ]]; then
         if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK" == "1" ]] && fallback_available; then
           local fallback_exit=0
-          run_fallback_cycle "dirty_no_backend_task" "dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT" || fallback_exit=$?
+          run_locked_fallback_cycle "dirty_no_backend_task" "dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT" || fallback_exit=$?
           finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=dirty_no_backend_task final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
         fi
         log_line "WARN" "cycle.stop no backend task reported on a dirty worktree; treating this as a soft miss and continuing the outer loop"
@@ -1825,7 +1865,7 @@ main() {
     BLOCKED)
       if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_BLOCKED" == "1" ]] && fallback_available; then
         local fallback_exit=0
-        run_fallback_cycle "blocked" "codex_exit=$codex_exit" || fallback_exit=$?
+        run_locked_fallback_cycle "blocked" "codex_exit=$codex_exit" || fallback_exit=$?
         finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=blocked final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
       fi
       finish_cycle 2 BLOCKED WARN "codex_exit=$codex_exit"
@@ -1842,7 +1882,7 @@ main() {
       fi
       if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_FAILURE" == "1" ]] && fallback_available; then
         local fallback_exit=0
-        run_fallback_cycle "failure" "codex_exit=$codex_exit session_end_state=$session_end_state status_marker=${status_marker:-missing} status_marker_source=$status_marker_source" || fallback_exit=$?
+        run_locked_fallback_cycle "failure" "codex_exit=$codex_exit session_end_state=$session_end_state status_marker=${status_marker:-missing} status_marker_source=$status_marker_source" || fallback_exit=$?
         finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=failure final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
       fi
       if [[ "$codex_exit" -ne 0 ]]; then

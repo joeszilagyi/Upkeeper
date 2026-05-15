@@ -3950,9 +3950,14 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["raw_storage_enforcement"] = probe_raw_storage_enforcement(conn, root, ensure_repository(conn, root))
         review_summary_probe = probe_review_summary_parsing()
         result["checks"]["review_summary_parsing"] = review_summary_probe
+        cycle_finish_probe = probe_cycle_finish_target_mismatch()
+        result["checks"]["cycle_finish_target_mismatch"] = cycle_finish_probe
         change_note_ref_probe = probe_change_note_file_identity_validation()
         result["checks"]["change_note_file_identity_validation"] = change_note_ref_probe
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(cycle_finish_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not all(bool(item.get("ok")) for item in change_note_ref_probe.values()):
@@ -4619,6 +4624,109 @@ def probe_review_summary_parsing() -> dict[str, Any]:
     return results
 
 
+def probe_cycle_finish_target_mismatch() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-cycle-finish-") as tmpdir:
+        root = Path(tmpdir)
+        selected_path = "tools/original.py"
+        reported_path = "tools/replacement.py"
+        try:
+            subprocess.run(
+                ["git", "init", "-q", str(root)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        (root / "tools").mkdir(parents=True, exist_ok=True)
+        (root / selected_path).write_text("print('original')\n", encoding="utf-8")
+        (root / reported_path).write_text("print('replacement')\n", encoding="utf-8")
+        review_path = root / "last-message.txt"
+        review_path.write_text(
+            "Selected file: `tools/replacement.py`\nReview outcome: REVIEWED_AND_FIXED\n",
+            encoding="utf-8",
+        )
+        db_path = root / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True, create_parent=True, create_if_missing=True)
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+        finally:
+            conn.close()
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="wal",
+            allow_unsafe_db=True,
+            raw_storage_mode="minimal",
+            cycle_id="cycle-mismatch",
+            run_hash="run-mismatch",
+            status_marker="WORK_DONE",
+            review_outcome=None,
+            review_selected_path=None,
+            codex_exit=0,
+            wrapper_exit=0,
+            finish_reason="work_done",
+            finish_level="info",
+            codex_exec_started=1,
+            dry_run="1",
+            selected_path=selected_path,
+            last_message_file=str(review_path),
+            transcript_path=None,
+            compiled_prompt_path=None,
+            log_path=None,
+            snapshot_kind="after_codex",
+            end_epoch=1234567890,
+        )
+        command_record_cycle_finish(args)
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True)
+        try:
+            cycle = conn.execute(
+                """
+                select status_marker, review_outcome, finish_reason, finish_level, selected_path
+                  from cycles
+                 where cycle_id=? and run_hash=?
+                """,
+                ("cycle-mismatch", "run-mismatch"),
+            ).fetchone()
+            rejected = conn.execute(
+                """
+                select event_kind, path, details_json
+                  from file_events
+                 where event_kind='target_substitution_rejected'
+                 order by event_id desc
+                 limit 1
+                """
+            ).fetchone()
+            substituted_count = int(
+                conn.execute("select count(*) from file_events where event_kind='target_substituted'").fetchone()[0]
+            )
+        finally:
+            conn.close()
+    details = json.loads(rejected["details_json"]) if rejected and rejected["details_json"] else {}
+    ok = bool(cycle) and bool(rejected) and substituted_count == 0
+    if cycle:
+        ok = ok and cycle["status_marker"] == "BLOCKED"
+        ok = ok and cycle["review_outcome"] == "STOPPED_ON_BLOCKER"
+        ok = ok and cycle["finish_reason"] == "selected_path_mismatch"
+        ok = ok and cycle["finish_level"] == "error"
+        ok = ok and cycle["selected_path"] == selected_path
+    ok = ok and details.get("preselected_path") == selected_path
+    ok = ok and details.get("reported_selected_path") == reported_path
+    return {
+        "expected_selected_path": selected_path,
+        "reported_selected_path": reported_path,
+        "actual_selected_path": cycle["selected_path"] if cycle else None,
+        "status_marker": cycle["status_marker"] if cycle else None,
+        "review_outcome": cycle["review_outcome"] if cycle else None,
+        "finish_reason": cycle["finish_reason"] if cycle else None,
+        "finish_level": cycle["finish_level"] if cycle else None,
+        "target_substituted_count": substituted_count,
+        "rejected_event_kind": rejected["event_kind"] if rejected else None,
+        "rejected_event_path": rejected["path"] if rejected else None,
+        "ok": ok,
+    }
+
+
 def probe_change_note_file_identity_validation() -> dict[str, Any]:
     results: dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-change-note-ref-") as repo_dir:
@@ -4993,6 +5101,9 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         review = parse_review_summary_file(Path(args.last_message_file)) if args.last_message_file else {}
         review_outcome = args.review_outcome or review.get("review_outcome") or None
         reported_selected = external_rel_path(args.review_selected_path or review.get("selected_file", ""))
+        status_marker = args.status_marker
+        finish_reason = args.finish_reason
+        finish_level = args.finish_level
         source_id = ensure_source_record(
             conn,
             root,
@@ -5008,13 +5119,12 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         cycle_selected_path = selected_path
         cycle_selected_file_id = selected_file_id
         if reported_selected and selected_path and reported_selected != selected_path:
-            replacement_id = ensure_file(conn, repo_id, reported_selected, source_id=source_id)
-            cycle_selected_path = reported_selected
-            cycle_selected_file_id = replacement_id
+            # The wrapper-selected target is backed up before Codex runs, so a
+            # different reported target is invalid evidence rather than a new cycle target.
             record_file_event(
                 conn,
                 repo_id,
-                "target_substituted",
+                "target_substitution_rejected",
                 file_id=cycle_selected_file_id,
                 cycle_pk=cycle_pk,
                 source_id=source_id,
@@ -5022,6 +5132,10 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 confidence="reported",
                 details={"preselected_path": selected_path, "reported_selected_path": reported_selected},
             )
+            review_outcome = "STOPPED_ON_BLOCKER"
+            status_marker = "BLOCKED"
+            finish_reason = "selected_path_mismatch"
+            finish_level = "error"
         elif reported_selected and not selected_path:
             cycle_selected_path = reported_selected
             cycle_selected_file_id = ensure_file(conn, repo_id, reported_selected, source_id=source_id)
@@ -5037,18 +5151,18 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 details={"reported_selected_path": reported_selected},
             )
         updates: list[tuple[str, Any]] = [("end_epoch", args.end_epoch or epoch_now())]
-        if args.status_marker:
-            updates.append(("status_marker", args.status_marker))
+        if status_marker:
+            updates.append(("status_marker", status_marker))
         if review_outcome:
             updates.append(("review_outcome", review_outcome))
         if args.codex_exit is not None:
             updates.append(("codex_exit", args.codex_exit))
         if args.wrapper_exit is not None:
             updates.append(("wrapper_exit", args.wrapper_exit))
-        if args.finish_reason:
-            updates.append(("finish_reason", args.finish_reason))
-        if args.finish_level:
-            updates.append(("finish_level", args.finish_level))
+        if finish_reason:
+            updates.append(("finish_reason", finish_reason))
+        if finish_level:
+            updates.append(("finish_level", finish_level))
         if args.codex_exec_started is not None:
             updates.append(("codex_exec_started", args.codex_exec_started))
         if args.dry_run is not None:

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.19
+## Version: v1.2.20
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -269,7 +269,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.19"
+UPKEEPER_VERSION="v1.2.20"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -618,6 +618,347 @@ fi
 if declare -f tool_failure_queue_finalize_run >/dev/null 2>&1; then
   eval "$(declare -f tool_failure_queue_finalize_run | sed '1s/^tool_failure_queue_finalize_run ()/upkeeper_tool_failure_queue_finalize_run_original ()/')"
 fi
+
+UPKEEPER_PRECONTACT_BACKUP_SECURE_TARGET_ABS=""
+
+# Keep restore hardening in the entrypoint when a selected-target-only cycle
+# cannot patch the sourced module directly. This closes symlink-parent races by
+# opening each directory component with O_NOFOLLOW and renaming via dir_fd.
+upkeeper_precontact_backup_secure_install_restored_file() {
+  local repo_root="$1"
+  local rel_path="$2"
+  local override_path="${3:-}"
+  local tmp_restore="$4"
+  local mode="${5:-}"
+  local result status reason target_abs
+
+  UPKEEPER_PRECONTACT_BACKUP_SECURE_TARGET_ABS=""
+
+  if ! result="$(
+    python3 - "$repo_root" "$rel_path" "$override_path" "$tmp_restore" "$mode" <<'PY'
+import errno
+import os
+import re
+import stat
+import sys
+from pathlib import Path
+
+repo_root, rel_path, override_path, tmp_restore, mode_text = sys.argv[1:6]
+
+
+def emit(status: str, reason: str = "", target_abs: str = "") -> None:
+    print(f"status={status}")
+    if reason:
+        print(f"reason={reason}")
+    if target_abs:
+        print(f"target_abs={target_abs}")
+
+
+candidate_text = override_path or rel_path
+candidate = Path(candidate_text)
+if candidate.is_absolute():
+    emit("error", "absolute_path")
+    raise SystemExit(0)
+
+parts = candidate.parts
+if not parts or any(part in {"", ".", ".."} for part in parts):
+    emit("error", "unsafe_relative_path")
+    raise SystemExit(0)
+if parts[0] == ".git":
+    emit("error", "git_path_rejected")
+    raise SystemExit(0)
+if parts[0] == "runtime":
+    emit("error", "runtime_path_rejected")
+    raise SystemExit(0)
+if not os.path.isfile(tmp_restore):
+    emit("error", "restore_temp_missing")
+    raise SystemExit(0)
+
+root = Path(repo_root).resolve()
+target_abs = root.joinpath(*parts)
+try:
+    target_abs.relative_to(root)
+except ValueError:
+    emit("error", "target_outside_repo")
+    raise SystemExit(0)
+
+open_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
+if nofollow_flag == 0:
+    emit("error", "restore_nofollow_unsupported")
+    raise SystemExit(0)
+
+mode_value = None
+if mode_text and re.fullmatch(r"[0-7]{3,4}", mode_text):
+    mode_value = int(mode_text, 8)
+
+dir_fd = None
+next_fd = None
+target_fd = None
+
+try:
+    dir_fd = os.open(root, open_flags)
+    for part in parts[:-1]:
+        try:
+            existing_stat = os.lstat(part, dir_fd=dir_fd)
+        except FileNotFoundError:
+            existing_stat = None
+        except OSError as exc:
+            emit("error", f"restore_parent_stat_failed:{exc.__class__.__name__}")
+            raise SystemExit(0)
+
+        if existing_stat is None:
+            try:
+                os.mkdir(part, 0o700, dir_fd=dir_fd)
+            except FileExistsError:
+                pass
+            except OSError as exc:
+                emit("error", f"restore_parent_create_failed:{exc.__class__.__name__}")
+                raise SystemExit(0)
+        elif stat.S_ISLNK(existing_stat.st_mode):
+            emit("error", "restore_parent_symlinked")
+            raise SystemExit(0)
+        elif not stat.S_ISDIR(existing_stat.st_mode):
+            emit("error", "restore_parent_not_directory")
+            raise SystemExit(0)
+
+        try:
+            next_fd = os.open(part, open_flags | nofollow_flag, dir_fd=dir_fd)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                emit("error", "restore_parent_symlinked")
+            elif exc.errno == errno.ENOTDIR:
+                emit("error", "restore_parent_not_directory")
+            else:
+                emit("error", f"restore_parent_open_failed:{exc.__class__.__name__}")
+            raise SystemExit(0)
+
+        os.close(dir_fd)
+        dir_fd = next_fd
+        next_fd = None
+
+    final_name = parts[-1]
+    try:
+        target_stat = os.lstat(final_name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        target_stat = None
+    except OSError as exc:
+        emit("error", f"restore_target_stat_failed:{exc.__class__.__name__}")
+        raise SystemExit(0)
+
+    if target_stat is not None:
+        if stat.S_ISLNK(target_stat.st_mode):
+            emit("error", "symlink_target_rejected")
+            raise SystemExit(0)
+        if stat.S_ISDIR(target_stat.st_mode):
+            emit("error", "directory_target_rejected")
+            raise SystemExit(0)
+
+    os.replace(tmp_restore, final_name, dst_dir_fd=dir_fd)
+
+    if mode_value is not None:
+        try:
+            target_fd = os.open(final_name, os.O_RDONLY | nofollow_flag, dir_fd=dir_fd)
+            os.fchmod(target_fd, mode_value)
+        except OSError:
+            pass
+        finally:
+            if target_fd is not None:
+                os.close(target_fd)
+                target_fd = None
+
+    emit("ok", target_abs=str(target_abs))
+finally:
+    if target_fd is not None:
+        os.close(target_fd)
+    if next_fd is not None:
+        os.close(next_fd)
+    if dir_fd is not None:
+        os.close(dir_fd)
+PY
+  )"; then
+    precontact_backup_set_reason "restore_secure_install_failed"
+    return 1
+  fi
+
+  status="$(awk -F= 'index($0, "status=") == 1 { print substr($0, 8); exit }' <<<"$result")"
+  reason="$(awk -F= 'index($0, "reason=") == 1 { print substr($0, 8); exit }' <<<"$result")"
+  target_abs="$(awk -F= 'index($0, "target_abs=") == 1 { print substr($0, 12); exit }' <<<"$result")"
+  if [[ "$status" != "ok" || -z "$target_abs" ]]; then
+    precontact_backup_set_reason "${reason:-unsafe_restore_destination}"
+    return 1
+  fi
+
+  UPKEEPER_PRECONTACT_BACKUP_SECURE_TARGET_ABS="$target_abs"
+  return 0
+}
+
+precontact_backup_restore_by_id() {
+  local backup_id="$1"
+  local repo_root="$2"
+  local identity_path="${3:-${UPKEEPER_PRECONTACT_BACKUP_AGE_IDENTITY:-}}"
+  local restore_to="${4:-}"
+  local vault_root sidecars sidecar_count sidecar rel_path content_fingerprint encrypted mode
+  local target_abs tmp_restore="" artifact payload_tmp="" payload_metadata="" restored_sha
+  local restore_tmp_dir=""
+  local restore_tmp_dir_is_temp=0
+
+  if [[ -z "$repo_root" ]]; then
+    precontact_backup_set_reason "repo_root_required"
+    return 1
+  fi
+  if [[ ! "$backup_id" =~ ^[A-Za-z0-9_.:-]+$ || "$backup_id" == *"/"* ]]; then
+    precontact_backup_set_reason "unsafe_backup_id"
+    return 1
+  fi
+
+  if ! precontact_backup_validate_root "$repo_root"; then
+    return 1
+  fi
+  vault_root="$PRECONTACT_BACKUP_RESOLVED_ROOT"
+
+  sidecars="$(precontact_backup_find_sidecar_by_id "$backup_id" "$vault_root")"
+  sidecar_count="$(printf '%s\n' "$sidecars" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [[ "$sidecar_count" != "1" ]]; then
+    precontact_backup_set_reason "backup_id_not_unique_or_missing"
+    return 1
+  fi
+  sidecar="$(printf '%s\n' "$sidecars" | sed -n '1p')"
+
+  if ! encrypted="$(precontact_backup_json_field "$sidecar" "encrypted")"; then
+    precontact_backup_set_reason "metadata_read_failed"
+    return 1
+  fi
+  if [[ "$encrypted" == "true" ]]; then
+    :
+  else
+    if ! rel_path="$(precontact_backup_json_field "$sidecar" "selected_relative_path")"; then
+      precontact_backup_set_reason "metadata_read_failed"
+      return 1
+    fi
+    if ! content_fingerprint="$(precontact_backup_content_fingerprint_field "$sidecar")"; then
+      precontact_backup_set_reason "metadata_read_failed"
+      return 1
+    fi
+    mode="$(precontact_backup_json_field "$sidecar" "mode")" || mode=""
+  fi
+
+  if [[ -z "$RUN_TMP_DIR" ]] && declare -F ensure_run_tmp_dir >/dev/null; then
+    if ! ensure_run_tmp_dir; then
+      precontact_backup_set_reason "restore_tmp_init_failed"
+      return 1
+    fi
+  fi
+  trap 'trap - RETURN; precontact_backup_restore_cleanup_tmp "${tmp_restore-}" "${payload_tmp-}" "${payload_metadata-}" "${restore_tmp_dir-}" "${restore_tmp_dir_is_temp-0}"' RETURN
+  restore_tmp_dir="${RUN_TMP_DIR:-}"
+  if [[ -z "$restore_tmp_dir" ]]; then
+    if ! restore_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-restore-XXXXXX")"; then
+      precontact_backup_set_reason "restore_tmp_init_failed"
+      return 1
+    fi
+    restore_tmp_dir_is_temp=1
+  fi
+  if [[ ! -d "$restore_tmp_dir" || -L "$restore_tmp_dir" ]]; then
+    [[ "$restore_tmp_dir_is_temp" == "1" ]] && rm -rf -- "$restore_tmp_dir"
+    precontact_backup_set_reason "restore_tmp_invalid_permissions"
+    return 1
+  fi
+  if [[ "$(stat -Lc '%u' -- "$restore_tmp_dir" 2>/dev/null || printf '')" != "$(id -u)" ]]; then
+    [[ "$restore_tmp_dir_is_temp" == "1" ]] && rm -rf -- "$restore_tmp_dir"
+    precontact_backup_set_reason "restore_tmp_invalid_permissions"
+    return 1
+  fi
+  if [[ "$(stat -Lc '%a' -- "$restore_tmp_dir" 2>/dev/null || printf '000')" != "700" ]]; then
+    [[ "$restore_tmp_dir_is_temp" == "1" ]] && rm -rf -- "$restore_tmp_dir"
+    precontact_backup_set_reason "restore_tmp_invalid_permissions"
+    return 1
+  fi
+
+  if ! tmp_restore="$(mktemp "${restore_tmp_dir}/.upkeeper-restore.XXXXXX")"; then
+    precontact_backup_set_reason "restore_temp_failed"
+    return 1
+  fi
+
+  if [[ "$encrypted" == "true" ]]; then
+    artifact="$(dirname -- "$sidecar")/${backup_id}.age"
+    [[ -s "$artifact" ]] || {
+      precontact_backup_set_reason "age_artifact_missing"
+      return 1
+    }
+    [[ -n "$identity_path" ]] || {
+      precontact_backup_set_reason "age_identity_required"
+      return 1
+    }
+    [[ -r "$identity_path" ]] || {
+      precontact_backup_set_reason "age_identity_unreadable"
+      return 1
+    }
+    if ! payload_tmp="$(run_mktemp precontact-restore-payload)"; then
+      precontact_backup_set_reason "restore_payload_temp_failed"
+      return 1
+    fi
+    if ! age --decrypt --identity "$identity_path" --output "$payload_tmp" "$artifact"; then
+      precontact_backup_set_reason "age_decrypt_failed"
+      return 1
+    fi
+    if ! payload_metadata="$(run_mktemp precontact-restore-metadata)"; then
+      precontact_backup_set_reason "restore_metadata_temp_failed"
+      return 1
+    fi
+    if ! precontact_backup_extract_payload "$payload_tmp" "$tmp_restore" "$payload_metadata"; then
+      precontact_backup_set_reason "payload_extract_failed"
+      return 1
+    fi
+    if ! rel_path="$(precontact_backup_json_field "$payload_metadata" "selected_relative_path")"; then
+      precontact_backup_set_reason "metadata_read_failed"
+      return 1
+    fi
+    if ! content_fingerprint="$(precontact_backup_content_fingerprint_field "$payload_metadata")"; then
+      precontact_backup_set_reason "metadata_read_failed"
+      return 1
+    fi
+    if ! mode="$(precontact_backup_json_field "$payload_metadata" "mode")"; then
+      precontact_backup_set_reason "metadata_read_failed"
+      return 1
+    fi
+  else
+    artifact="$(dirname -- "$sidecar")/${backup_id}.bak"
+    [[ -s "$artifact" ]] || {
+      precontact_backup_set_reason "plain_artifact_missing"
+      return 1
+    }
+    if ! precontact_backup_copy_file "$artifact" "$tmp_restore"; then
+      precontact_backup_set_reason "restore_copy_failed"
+      return 1
+    fi
+  fi
+
+  restored_sha="$(precontact_backup_sha256_file "$tmp_restore")" || {
+    precontact_backup_set_reason "restore_hash_failed"
+    return 1
+  }
+  case "$content_fingerprint" in
+    content-hmac-sha256:*)
+      if [[ "$(precontact_backup_content_hmac "$restored_sha")" != "$content_fingerprint" ]]; then
+        precontact_backup_set_reason "restore_hash_mismatch"
+        return 1
+      fi
+      ;;
+    *)
+      if [[ "$restored_sha" != "$content_fingerprint" ]]; then
+        precontact_backup_set_reason "restore_hash_mismatch"
+        return 1
+      fi
+      ;;
+  esac
+
+  if ! upkeeper_precontact_backup_secure_install_restored_file "$repo_root" "$rel_path" "$restore_to" "$tmp_restore" "$mode"; then
+    return 1
+  fi
+  target_abs="$UPKEEPER_PRECONTACT_BACKUP_SECURE_TARGET_ABS"
+
+  precontact_backup_restore_log "INFO" "precontact_backup.restore target_hmac=$(precontact_backup_path_hmac "$rel_path") path_redacted=1"
+}
 
 upkeeper_preselect_output_field() {
   local key="$1"

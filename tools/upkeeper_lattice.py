@@ -295,6 +295,8 @@ REQUIRED_TABLES = [
 ]
 
 REQUIRED_INDEXES = {
+    "idx_artifact_refs_unique_identity_digest": "artifact_refs",
+    "idx_artifact_refs_unique_identity_missing_digest": "artifact_refs",
     "idx_cycles_repo_cycle": "cycles",
     "idx_cycles_repo_selected_path": "cycles",
     "idx_files_repo_current_path": "files",
@@ -1060,6 +1062,8 @@ CREATE_TABLE_SQL = [
 ]
 
 CREATE_INDEX_SQL = [
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, artifact_kind, path) WHERE sha256 IS NULL",
     "CREATE INDEX IF NOT EXISTS idx_cycles_repo_cycle ON cycles(repo_id, cycle_id)",
     "CREATE INDEX IF NOT EXISTS idx_cycles_repo_selected_path ON cycles(repo_id, selected_path)",
     "CREATE INDEX IF NOT EXISTS idx_files_repo_current_path ON files(repo_id, current_path)",
@@ -2317,6 +2321,123 @@ def dedupe_git_file_changes(conn: sqlite3.Connection) -> int:
     return duplicate_groups
 
 
+def dedupe_artifact_refs(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        """
+        select count(*) from (
+          select 1
+          from artifact_refs
+          group by repo_id, artifact_kind, path, coalesce(sha256, '')
+          having count(*) > 1
+        )
+        """
+    ).fetchone()
+    duplicate_groups = int(row[0] or 0) if row else 0
+    if not duplicate_groups:
+        return 0
+
+    duplicate_keys = conn.execute(
+        """
+        select repo_id, artifact_kind, path, coalesce(sha256, '') as sha_key
+        from artifact_refs
+        group by repo_id, artifact_kind, path, coalesce(sha256, '')
+        having count(*) > 1
+        """
+    ).fetchall()
+    for key in duplicate_keys:
+        rows = conn.execute(
+            """
+            select artifact_id, cycle_pk, source_id, exists_at_record_time, size_bytes,
+                   sha256, created_epoch, observed_epoch, retained, details_json
+            from artifact_refs
+            where repo_id = ? and artifact_kind = ? and path = ?
+              and coalesce(sha256, '') = ?
+            order by observed_epoch desc, artifact_id desc
+            """,
+            (key["repo_id"], key["artifact_kind"], key["path"], key["sha_key"]),
+        ).fetchall()
+        if len(rows) < 2:
+            continue
+        winner = dict(rows[0])
+        winner_id = int(winner["artifact_id"])
+        merged_cycle_pk = winner["cycle_pk"]
+        merged_source_id = winner["source_id"]
+        merged_exists = winner["exists_at_record_time"]
+        merged_size = winner["size_bytes"]
+        merged_created = winner["created_epoch"]
+        merged_observed = winner["observed_epoch"]
+        merged_retained = winner["retained"]
+        merged_details = winner["details_json"]
+        for row_data in rows[1:]:
+            if merged_cycle_pk is None and row_data["cycle_pk"] is not None:
+                merged_cycle_pk = row_data["cycle_pk"]
+            if merged_source_id is None and row_data["source_id"] is not None:
+                merged_source_id = row_data["source_id"]
+            if merged_exists is None and row_data["exists_at_record_time"] is not None:
+                merged_exists = row_data["exists_at_record_time"]
+            if merged_size is None and row_data["size_bytes"] is not None:
+                merged_size = row_data["size_bytes"]
+            if merged_created is None and row_data["created_epoch"] is not None:
+                merged_created = row_data["created_epoch"]
+            if merged_observed is None and row_data["observed_epoch"] is not None:
+                merged_observed = row_data["observed_epoch"]
+            if merged_retained is None and row_data["retained"] is not None:
+                merged_retained = row_data["retained"]
+            if not merged_details and row_data["details_json"]:
+                merged_details = row_data["details_json"]
+        conn.execute(
+            """
+            update artifact_refs
+            set cycle_pk=?, source_id=?, exists_at_record_time=?, size_bytes=?,
+                created_epoch=?, observed_epoch=?, retained=?, details_json=?
+            where artifact_id=?
+            """,
+            (
+                merged_cycle_pk,
+                merged_source_id,
+                merged_exists,
+                merged_size,
+                merged_created,
+                merged_observed,
+                merged_retained,
+                merged_details,
+                winner_id,
+            ),
+        )
+        duplicate_ids = [int(row_data["artifact_id"]) for row_data in rows[1:]]
+        placeholders = ",".join("?" for _ in duplicate_ids)
+        conn.execute(f"delete from artifact_refs where artifact_id in ({placeholders})", duplicate_ids)
+    return duplicate_groups
+
+
+def ensure_artifact_ref_identity_indexes(conn: sqlite3.Connection) -> int:
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(artifact_refs)").fetchall()}
+    except sqlite3.Error:
+        return 0
+    required = {
+        "artifact_id",
+        "repo_id",
+        "artifact_kind",
+        "path",
+        "sha256",
+        "observed_epoch",
+    }
+    if not required.issubset(columns):
+        return 0
+    duplicate_groups = dedupe_artifact_refs(conn)
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, artifact_kind, path) WHERE sha256 IS NULL"
+        )
+    except sqlite3.Error:
+        pass
+    return duplicate_groups
+
+
 def ensure_file_snapshot_mtime_ns_column(conn: sqlite3.Connection) -> None:
     try:
         columns = {row["name"] for row in conn.execute("pragma table_info(file_snapshots)").fetchall()}
@@ -2451,6 +2572,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
     with conn:
         for sql in CREATE_TABLE_SQL:
             conn.execute(sql)
+        deduped_artifact_ref_groups = ensure_artifact_ref_identity_indexes(conn)
         deduped_git_change_groups = dedupe_git_file_changes(conn)
         ensure_file_snapshot_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_mtime_ns_column(conn)
@@ -2490,6 +2612,15 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
                 "insert or replace into schema_meta(key, value) values (?, ?)",
                 ("git_file_changes_deduped_epoch", str(now)),
             )
+        if deduped_artifact_ref_groups:
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("artifact_refs_deduped_groups", str(deduped_artifact_ref_groups)),
+            )
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("artifact_refs_deduped_epoch", str(now)),
+            )
     install_pass_registry(conn, root or default_root(), raw_storage_mode=raw_storage_mode)
 
 
@@ -2503,6 +2634,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     user_version = conn.execute("PRAGMA user_version").fetchone()[0]
     if int(user_version) != SCHEMA_VERSION:
         fail(f"PRAGMA user_version mismatch: expected {SCHEMA_VERSION}, got {user_version}", EXIT_SCHEMA_MISMATCH)
+    ensure_artifact_ref_identity_indexes(conn)
     ensure_file_snapshot_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_mtime_ns_column(conn)
     scrub_legacy_git_privacy_data(conn)
@@ -4794,27 +4926,59 @@ def create_artifact_ref(
             )
             return
 
-    conn.execute(
-        """
-        insert into artifact_refs(
-          repo_id, cycle_pk, source_id, artifact_kind, path, exists_at_record_time,
-          size_bytes, sha256, observed_epoch, retained, details_json
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            repo_id,
-            cycle_pk,
-            source_id,
-            artifact_kind,
-            stored_path,
-            1 if exists else 0,
-            size,
-            digest_hmac,
-            observed_epoch,
-            1 if exists else 0,
-            json_dumps(stored_details),
-        ),
-    )
+    try:
+        conn.execute(
+            """
+            insert into artifact_refs(
+              repo_id, cycle_pk, source_id, artifact_kind, path, exists_at_record_time,
+              size_bytes, sha256, observed_epoch, retained, details_json
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                repo_id,
+                cycle_pk,
+                source_id,
+                artifact_kind,
+                stored_path,
+                1 if exists else 0,
+                size,
+                digest_hmac,
+                observed_epoch,
+                1 if exists else 0,
+                json_dumps(stored_details),
+            ),
+        )
+    except sqlite3.IntegrityError:
+        if not dedupe_identity:
+            raise
+        conn.execute(
+            """
+            update artifact_refs
+            set
+              cycle_pk = coalesce(?, cycle_pk),
+              source_id = coalesce(?, source_id),
+              exists_at_record_time = ?,
+              size_bytes = ?,
+              observed_epoch = ?,
+              retained = ?,
+              details_json = coalesce(?, details_json)
+            where repo_id = ? and artifact_kind = ? and path = ?
+              and coalesce(sha256, '') = coalesce(?, '')
+            """,
+            (
+                cycle_pk,
+                source_id,
+                1 if exists else 0,
+                size,
+                observed_epoch,
+                1 if exists else 0,
+                json_dumps(stored_details),
+                repo_id,
+                artifact_kind,
+                stored_path,
+                digest_hmac,
+            ),
+        )
 
 
 def command_record_cycle_finish(args: argparse.Namespace) -> int:

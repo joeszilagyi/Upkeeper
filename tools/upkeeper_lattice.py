@@ -1068,7 +1068,64 @@ def epoch_now() -> int:
 
 
 def safe_output_text(raw: str) -> str:
-    return raw.encode("utf-8", "backslashreplace").decode("utf-8")
+    return raw.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+
+
+def encode_path_text(raw: str) -> str:
+    pieces: list[str] = []
+    for ch in raw:
+        codepoint = ord(ch)
+        if ch == "\\":
+            pieces.append("\\\\")
+        elif 0xDC80 <= codepoint <= 0xDCFF:
+            pieces.append(f"\\x{codepoint - 0xDC00:02x}")
+        elif codepoint < 0x20 or codepoint == 0x7F:
+            pieces.append(f"\\x{codepoint:02x}")
+        else:
+            pieces.append(ch)
+    return "".join(pieces)
+
+
+def decode_path_text(raw: str) -> str:
+    decoded = bytearray()
+    i = 0
+    while i < len(raw):
+        ch = raw[i]
+        if ch != "\\":
+            decoded.extend(ch.encode("utf-8", "surrogateescape"))
+            i += 1
+            continue
+        if i + 1 >= len(raw):
+            decoded.append(ord("\\"))
+            i += 1
+            continue
+        nxt = raw[i + 1]
+        if nxt == "\\":
+            decoded.append(ord("\\"))
+            i += 2
+            continue
+        if nxt == "x" and i + 3 < len(raw):
+            hex_pair = raw[i + 2 : i + 4]
+            if re.fullmatch(r"[0-9A-Fa-f]{2}", hex_pair):
+                decoded.append(int(hex_pair, 16))
+                i += 4
+                continue
+        decoded.append(ord("\\"))
+        i += 1
+    return decoded.decode("utf-8", "surrogateescape")
+
+
+def stored_rel_path(path: str) -> str:
+    normalized = normalize_rel_path(path)
+    return encode_path_text(normalized) if normalized else ""
+
+
+def operational_rel_path(path: str) -> str:
+    return normalize_rel_path(decode_path_text(path))
+
+
+def external_rel_path(path: str) -> str:
+    return operational_rel_path(path)
 
 
 def sanitize_json_value(value: Any) -> Any:
@@ -1086,7 +1143,7 @@ def sanitize_json_value(value: Any) -> Any:
 
 
 def decode_git_output(raw: bytes) -> str:
-    return raw.decode("utf-8", "backslashreplace")
+    return raw.decode("utf-8", "surrogateescape")
 
 
 def json_dumps(value: Any) -> str:
@@ -1781,6 +1838,7 @@ def git_output(root: Path, args: list[str], default: str = "", strip: bool = Tru
 
 
 def git_porcelain_status_for_path(root: Path, rel_path: str) -> str:
+    rel_path = operational_rel_path(rel_path)
     try:
         raw = subprocess.check_output(
             ["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--", rel_path],
@@ -1972,7 +2030,7 @@ def git_ignored_paths(root: Path, paths: list[str]) -> set[str]:
     try:
         result = subprocess.run(
             ["git", "-C", str(root), "check-ignore", "-z", "--no-index", "--stdin"],
-            input=("\0".join(paths) + "\0").encode("utf-8", "backslashreplace"),
+            input=("\0".join(paths) + "\0").encode("utf-8", "surrogateescape"),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -1985,7 +2043,7 @@ def git_ignored_paths(root: Path, paths: list[str]) -> set[str]:
 
 
 def source_safe_parts(rel_path: str) -> list[str] | None:
-    rel_path = normalize_rel_path(rel_path)
+    rel_path = operational_rel_path(rel_path)
     if not rel_path or rel_path == "." or rel_path.startswith("../") or Path(rel_path).is_absolute():
         return None
     parts = rel_path.split("/")
@@ -1995,6 +2053,7 @@ def source_safe_parts(rel_path: str) -> list[str] | None:
 
 
 def source_safe_real_path(root: Path, rel_path: str) -> Path | None:
+    rel_path = operational_rel_path(rel_path)
     try:
         real = (root / rel_path).resolve(strict=True)
         real.relative_to(root.resolve())
@@ -2033,7 +2092,7 @@ def read_sample_no_follow(root: Path, parts: list[str], sample_size: int = 4096)
 
 
 def source_safe_file_stat(root: Path, rel_path: str, *, require_text: bool = False) -> tuple[os.stat_result | None, str]:
-    rel_path = normalize_rel_path(rel_path)
+    rel_path = operational_rel_path(rel_path)
     parts = source_safe_parts(rel_path)
     if parts is None:
         return None, "outside_repo"
@@ -2580,8 +2639,8 @@ def ensure_file(
     prefer_historical_match: bool = False,
 ) -> int:
     now = epoch_now()
-    path = normalize_rel_path(path)
-    canonical = normalize_rel_path(canonical_path or path)
+    path = stored_rel_path(path)
+    canonical = stored_rel_path(canonical_path or path)
     if not path:
         raise ValueError("empty path")
     row = None
@@ -2661,8 +2720,8 @@ def ensure_file_historical_only(
     source_id: int | None = None,
 ) -> int:
     now = epoch_now()
-    path = normalize_rel_path(path)
-    canonical = normalize_rel_path(canonical_path or path)
+    path = stored_rel_path(path)
+    canonical = stored_rel_path(canonical_path or path)
     if not path:
         raise ValueError("empty path")
     # Never rely on current_path for historical imports: current snapshots may have
@@ -2843,7 +2902,7 @@ def merge_file_lineage(
 
 
 def file_id_for_path(conn: sqlite3.Connection, repo_id: int, path: str) -> int | None:
-    path = normalize_rel_path(path)
+    path = stored_rel_path(external_rel_path(path))
     if not path:
         return None
     row = conn.execute(
@@ -3121,6 +3180,7 @@ def record_file_event(
     details: Any = None,
     event_epoch: int | None = None,
 ) -> None:
+    stored_path = stored_rel_path(path) if path else None
     conn.execute(
         """
         insert into file_events(repo_id, file_id, cycle_pk, source_id, event_kind, event_epoch, path, confidence, details_json)
@@ -3133,7 +3193,7 @@ def record_file_event(
             source_id,
             event_kind,
             event_epoch or epoch_now(),
-            path,
+            stored_path,
             confidence,
             json_dumps(details) if details is not None else None,
         ),
@@ -3141,8 +3201,8 @@ def record_file_event(
 
 
 def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
-    rel_path = normalize_rel_path(rel_path)
-    meta: dict[str, Any] = {"path": rel_path}
+    rel_path = operational_rel_path(rel_path)
+    meta: dict[str, Any] = {"path": stored_rel_path(rel_path)}
     st, safety_reason = source_safe_file_stat(root, rel_path)
     if st is not None:
         meta["mtime_epoch"] = int(st.st_mtime)
@@ -3203,6 +3263,7 @@ def insert_file_snapshot(
         file_id = ensure_file(conn, repo_id, rel_path, source_id=source_id)
     if not file_id:
         raise ValueError("file_id required for snapshot")
+    stored_path = stored_rel_path(rel_path)
     cur = conn.execute(
         """
         insert into file_snapshots(
@@ -3213,7 +3274,7 @@ def insert_file_snapshot(
         (
             file_id,
             repo_id,
-            rel_path,
+            stored_path,
             observed_epoch or epoch_now(),
             source_id,
             meta.get("git_status"),
@@ -3361,7 +3422,7 @@ def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper
         meta = live_file_metadata(root, rel)
         rows.append(
             {
-                "path": rel,
+                "path": stored_rel_path(rel),
                 "candidate_state": state,
                 "exclusion_reason": reason,
                 "mtime_epoch": meta.get("mtime_epoch"),
@@ -3381,7 +3442,7 @@ def current_scope_paths(conn: sqlite3.Connection, root: Path, repo_id: int, scop
         if not inside_git_repo(root):
             return []
         raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"])
-        return sorted(p for p in decode_git_output(raw).split("\0") if p)
+        return sorted(stored_rel_path(p) for p in decode_git_output(raw).split("\0") if p)
     if scope == "deleted":
         return [
             str(row["current_path"])
@@ -3425,15 +3486,20 @@ def format_rows(rows: list[dict[str, Any]], fmt: str) -> None:
             keys = list(rows[0].keys())
             print("\t".join(keys))
             for row in rows:
-                print("\t".join("" if row.get(k) is None else str(row.get(k)) for k in keys))
+                print("\t".join("" if row.get(k) is None else safe_output_text(str(row.get(k))) for k in keys))
         else:
             if not rows:
                 return
             keys = list(rows[0].keys())
-            widths = {key: max(len(key), *(len(str(row.get(key, ""))) for row in rows)) for key in keys}
+            widths = {key: max(len(key), *(len(safe_output_text(str(row.get(key, "")))) for row in rows)) for key in keys}
             print("  ".join(key.ljust(widths[key]) for key in keys))
             for row in rows:
-                print("  ".join(str(row.get(key, "") if row.get(key) is not None else "").ljust(widths[key]) for key in keys))
+                print(
+                    "  ".join(
+                        safe_output_text(str(row.get(key, "") if row.get(key) is not None else "")).ljust(widths[key])
+                        for key in keys
+                    )
+                )
     except BrokenPipeError:
         raise SystemExit(EXIT_SUCCESS)
 
@@ -3871,6 +3937,8 @@ def record_worktree_snapshot(
     for status_code, path, old_path in entries:
         file_id = ensure_file(conn, repo_id, path, state="active", source_id=source_id)
         meta = live_file_metadata(root, path)
+        stored_path = stored_rel_path(path)
+        stored_old_path = stored_rel_path(old_path) if old_path else None
         conn.execute(
             """
             insert into worktree_snapshot_paths(
@@ -3880,9 +3948,9 @@ def record_worktree_snapshot(
             (
                 snapshot_id,
                 file_id,
-                path,
+                stored_path,
                 status_code,
-                old_path,
+                stored_old_path,
                 meta.get("head_blob"),
                 meta.get("worktree_hash"),
                 meta.get("size_bytes"),
@@ -3940,7 +4008,7 @@ def worktree_snapshot_path_row(
         order by p.worktree_snapshot_path_id desc
         limit 1
         """,
-        (repo_id, snapshot_id, path),
+        (repo_id, snapshot_id, stored_rel_path(path)),
     ).fetchone()
 
 
@@ -3955,7 +4023,7 @@ def worktree_snapshot_path_map(conn: sqlite3.Connection, snapshot_id: int | None
         """,
         (snapshot_id,),
     ).fetchall()
-    return {str(row["path"]): row for row in rows}
+    return {operational_rel_path(str(row["path"])): row for row in rows}
 
 
 def worktree_snapshot(conn: sqlite3.Connection, snapshot_id: int | None) -> sqlite3.Row | None:
@@ -4099,7 +4167,8 @@ def command_record_preselect(args: argparse.Namespace) -> int:
             raw_storage_mode=raw_storage_mode,
         )
         cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
-        selected_path = normalize_rel_path(selection.get("path", ""))
+        selected_path = external_rel_path(selection.get("path", ""))
+        stored_selected_path = stored_rel_path(selected_path) if selected_path else ""
         selected_file_state = "active"
         if selected_path:
             _, selected_file_safety = source_safe_file_stat(root, selected_path)
@@ -4116,7 +4185,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         for index, row in enumerate(candidate_rows, start=1):
             if row.get("candidate_state") == "excluded":
                 excluded_count += 1
-            if normalize_rel_path(str(row.get("path", ""))) == selected_path:
+            if external_rel_path(str(row.get("path", ""))) == selected_path:
                 selected_rank = int(row.get("rank") or index)
         if selected_rank is None and selected_path:
             selected_rank = 1
@@ -4146,7 +4215,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                 0,
                 None,
                 selected_file_id,
-                selected_path or None,
+                stored_selected_path or None,
                 selected_rank,
                 json_dumps(selection),
             ),
@@ -4154,7 +4223,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         selection_run_id = int(cur.lastrowid)
         if candidate_rows:
             for index, row in enumerate(candidate_rows, start=1):
-                path = normalize_rel_path(str(row.get("path", "")))
+                path = external_rel_path(str(row.get("path", "")))
                 if not path:
                     continue
                 state = str(row.get("candidate_state", "eligible"))
@@ -4174,7 +4243,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                     (
                         selection_run_id,
                         file_id,
-                        path,
+                        stored_rel_path(path),
                         state,
                         rank,
                         row.get("mtime_epoch"),
@@ -4213,7 +4282,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                 (
                     selection_run_id,
                     selected_file_id,
-                    selected_path,
+                    stored_selected_path,
                     int(selection.get("epoch") or 0) or None,
                     selection.get("git_status"),
                     selection.get("content_state"),
@@ -4236,7 +4305,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
             )
             conn.execute(
                 "update cycles set selected_file_id=?, selected_path=?, selection_basis=? where cycle_pk=?",
-                (selected_file_id, selected_path, selection.get("selection_basis"), cycle_pk),
+                (selected_file_id, stored_selected_path, selection.get("selection_basis"), cycle_pk),
             )
             if selection.get("content_state") == "differs_from_head" or selection.get("git_status") not in {"", "clean", None}:
                 record_file_event(
@@ -4249,7 +4318,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                     path=selected_path,
                     details=selection,
                 )
-    print_json({"status": "ok", "selection_run_id": selection_run_id, "selected_path": selected_path})
+    print_json({"status": "ok", "selection_run_id": selection_run_id, "selected_path": stored_selected_path})
     return EXIT_SUCCESS
 
 
@@ -4586,7 +4655,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         parsed.pop("func", None)
         review = parse_review_summary_file(Path(args.last_message_file)) if args.last_message_file else {}
         review_outcome = args.review_outcome or review.get("review_outcome") or None
-        reported_selected = normalize_rel_path(args.review_selected_path or review.get("selected_file", ""))
+        reported_selected = external_rel_path(args.review_selected_path or review.get("selected_file", ""))
         source_id = ensure_source_record(
             conn,
             root,
@@ -4597,7 +4666,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
             raw_storage_mode=raw_storage_mode,
         )
         cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
-        selected_path = normalize_rel_path(args.selected_path or "")
+        selected_path = external_rel_path(args.selected_path or "")
         selected_file_id = ensure_file(conn, repo_id, selected_path, source_id=source_id) if selected_path else None
         cycle_selected_path = selected_path
         cycle_selected_file_id = selected_file_id
@@ -4650,7 +4719,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         if cycle_selected_file_id is not None:
             updates.append(("selected_file_id", cycle_selected_file_id))
         if cycle_selected_path:
-            updates.append(("selected_path", cycle_selected_path))
+            updates.append(("selected_path", stored_rel_path(cycle_selected_path)))
 
         if updates:
             set_clause = ", ".join(f"{key}=?" for key, _ in updates)
@@ -4742,7 +4811,7 @@ def sanitize_rejected_pass_result(
     fields = item.get("fields", {})
     if not isinstance(fields, dict):
         fields = {}
-    rejected_path = normalize_rel_path(str(fields.get("file", ""))) if fields.get("file") else ""
+    rejected_path = external_rel_path(str(fields.get("file", ""))) if fields.get("file") else ""
     payload: dict[str, Any] = {
         "line_number": int(item.get("line_number", 0) or 0),
         "rejection_kind": pass_result_rejection_kind(str(item.get("reason", "rejected"))),
@@ -4994,7 +5063,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
         planned.extend(args.planned_pass or [])
         seen: set[tuple[str, str]] = set()
         rejected_pairs: set[tuple[str, str]] = set()
-        trusted_selected_path = normalize_rel_path(args.selected_path or "")
+        trusted_selected_path = external_rel_path(args.selected_path or "")
         if args.from_file:
             accepted, rejected = parse_pass_result_lines(Path(args.from_file))
             for item in rejected:
@@ -5002,7 +5071,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 if isinstance(fields, dict):
                     rejected_pass = maybe_normalize_pass_code(fields.get("pass"))
                     rejected_path = trusted_selected_path or (
-                        normalize_rel_path(str(fields.get("file", ""))) if fields.get("file") else ""
+                        external_rel_path(str(fields.get("file", ""))) if fields.get("file") else ""
                     )
                     if rejected_pass and rejected_path:
                         rejected_pairs.add((rejected_pass, rejected_path))
@@ -5027,7 +5096,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 rejected_count += 1
             for item in accepted:
                 pass_code = normalize_pass_code(item["pass"])
-                reported_path = normalize_rel_path(item["file"])
+                reported_path = external_rel_path(item["file"])
                 if trusted_selected_path and reported_path != trusted_selected_path:
                     rejected_pairs.add((pass_code, trusted_selected_path))
                     ensure_source_record(
@@ -5078,7 +5147,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 recorded += 1
         elif args.pass_code and args.path:
             pass_code = normalize_pass_code(args.pass_code)
-            path = normalize_rel_path(args.path)
+            path = external_rel_path(args.path)
             attrs = parse_attribute_args(args.attribute)
             record_one_pass_result(
                 conn,
@@ -5098,7 +5167,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
             )
             seen.add((pass_code, path))
             recorded += 1
-        target_path = normalize_rel_path(args.path or args.selected_path or "")
+        target_path = external_rel_path(args.path or args.selected_path or "")
         for raw_pass in planned:
             pass_code = normalize_pass_code(raw_pass)
             if not target_path or (pass_code, target_path) in seen:
@@ -5458,6 +5527,8 @@ def command_import_git(args: argparse.Namespace) -> int:
                     if not path:
                         continue
                 canonical = old_path if status_code.startswith("R") and old_path else path
+                stored_path = stored_rel_path(path)
+                stored_old_path = stored_rel_path(old_path) if old_path else None
                 state = "deleted" if status_code.startswith("D") else ("renamed" if status_code.startswith("R") else "active")
                 if sha == head_sha:
                     file_id = ensure_file(
@@ -5486,7 +5557,7 @@ def command_import_git(args: argparse.Namespace) -> int:
                         order by case when canonical_path <> ? then 0 else 1 end, file_id
                         limit 1
                         """,
-                        (repo_id, path, path),
+                        (repo_id, stored_path, stored_path),
                     ).fetchone()
                     if current_row:
                         current_file_id = int(current_row["file_id"])
@@ -5504,8 +5575,8 @@ def command_import_git(args: argparse.Namespace) -> int:
                         commit_id,
                         file_id,
                         status_code,
-                        path,
-                        old_path,
+                        stored_path,
+                        stored_old_path,
                         None,
                         None,
                         int(at or 0) if str(at).isdigit() else None,
@@ -5538,8 +5609,8 @@ def command_import_git(args: argparse.Namespace) -> int:
                             commit_source_id,
                             repo_id,
                             commit_id,
-                            path,
-                            old_path or "",
+                            stored_path,
+                            stored_old_path or "",
                             status_code,
                         ),
                     )
@@ -6571,7 +6642,7 @@ def import_failure_markers(
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
-            target = normalize_rel_path(str(data.get("target_path", "")))
+            target = external_rel_path(str(data.get("target_path", "")))
             file_id = ensure_file(conn, repo_id, target) if target else None
             source_id = ensure_source_record(
                 conn,
@@ -6663,11 +6734,11 @@ def query_never_pass(conn: sqlite3.Connection, root: Path, repo_id: int, args: a
 
 
 def query_pass_counts(conn: sqlite3.Connection, root: Path, repo_id: int, args: argparse.Namespace) -> list[dict[str, Any]]:
-    return pass_counts_for_path(conn, repo_id, normalize_rel_path(args.path), args.pass_code)
+    return pass_counts_for_path(conn, repo_id, external_rel_path(args.path), args.pass_code)
 
 
 def query_file_history(conn: sqlite3.Connection, root: Path, repo_id: int, args: argparse.Namespace) -> list[dict[str, Any]]:
-    path = normalize_rel_path(args.path)
+    path = external_rel_path(args.path)
     file_id = file_id_for_path(conn, repo_id, path)
     if not file_id:
         return []
@@ -6972,7 +7043,7 @@ def query_explain_selection(conn: sqlite3.Connection, root: Path, repo_id: int, 
         params.append(args.cycle_id)
     if args.path:
         where += " and s.selected_path=?"
-        params.append(normalize_rel_path(args.path))
+        params.append(stored_rel_path(external_rel_path(args.path)))
     rows = []
     for row in conn.execute(
         f"""

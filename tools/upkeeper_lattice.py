@@ -4382,18 +4382,15 @@ def parse_review_summary_file(path: Path) -> dict[str, str]:
             continue
         md = re.search(r"\]\(([^)]+)\)", line)
         bt = re.search(r"`([^`]+)`", line)
-        candidate: str = ""
+        candidate = ""
         if md:
-            candidate = md.group(1).strip("<>")
+            candidate = normalize_change_note_ref(md.group(1).strip("<>"))
         elif bt:
-            candidate = bt.group(1)
+            candidate = normalize_change_note_ref(bt.group(1))
         elif ":" in line:
-            candidate = line.split(":", 1)[1].strip()
+            candidate = normalize_change_note_ref(line.split(":", 1)[1].strip())
         if candidate:
-            if re.match(r"^[A-Za-z][A-Za-z0-9+\-.]*://", candidate):
-                selected_file = ""
-            else:
-                selected_file = candidate
+            selected_file = candidate
         if selected_file:
             break
     return {"review_outcome": outcome, "selected_file": selected_file}
@@ -4418,29 +4415,45 @@ def probe_review_summary_parsing() -> dict[str, Any]:
     cases = {
         "report_only": (
             "selected file: `tools/upkeeper_lattice.py`\nREVIEWED_AND_REPORTED\n",
+            "tools/upkeeper_lattice.py",
             "REVIEWED_AND_REPORTED",
         ),
         "labeled_status": (
             "Selected file: `tools/upkeeper_lattice.py`\nReview outcome: REVIEWED_AND_REPORTED\n",
+            "tools/upkeeper_lattice.py",
             "REVIEWED_AND_REPORTED",
+        ),
+        "colon_bearing_path": (
+            "Selected file: pkg:tools/build.sh\nReview outcome: REVIEWED_AND_FIXED\n",
+            "pkg:tools/build.sh",
+            "REVIEWED_AND_FIXED",
+        ),
+        "markdown_scheme_rejected": (
+            "Selected file: [remote](https://example.invalid/file.sh)\nReview outcome: REVIEWED_CLEAN\n",
+            "",
+            "REVIEWED_CLEAN",
         ),
         "last_marker_wins": (
             "Allowed outcomes include REVIEWED_CLEAN and REVIEWED_AND_REPORTED.\n"
             "Final status: REVIEWED_AND_FIXED\n",
+            "",
             "REVIEWED_AND_FIXED",
         ),
     }
     results: dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-review-summary-") as tmpdir:
-        for name, (content, expected) in cases.items():
+        for name, (content, expected_selected, expected_outcome) in cases.items():
             path = Path(tmpdir) / f"{name}.txt"
             path.write_text(content, encoding="utf-8")
             parsed = parse_review_summary_file(path)
-            actual = parsed.get("review_outcome", "")
+            actual_selected = parsed.get("selected_file", "")
+            actual_outcome = parsed.get("review_outcome", "")
             results[name] = {
-                "expected": expected,
-                "actual": actual,
-                "ok": actual == expected,
+                "expected_selected_file": expected_selected,
+                "actual_selected_file": actual_selected,
+                "expected_review_outcome": expected_outcome,
+                "actual_review_outcome": actual_outcome,
+                "ok": actual_selected == expected_selected and actual_outcome == expected_outcome,
             }
     return results
 

@@ -12,27 +12,27 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
+Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.15
+Version: v1.2.21
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
   2. Logs current 5-hour and weekly used/left percentages for the current target model bucket.
   3. Projects one more run from recent observed deltas.
   4. If the projected next run would leave at or below:
-       - 0% left in a normal current-model 5-hour window,
+       - 5% left in a normal current-model 5-hour window,
        - 0% left in a Spark Codex 5-hour window, or
-       - 0% left in the current weekly/main window,
+       - 15% left in the current weekly/main window,
          plus any model-specific weekly safety buffer
      then it terminates the parent shell running the loop and exits without
      starting a new Codex run, unless fallback handoff is enabled.
   5. After selecting a review target and before compiling its prompt authority,
      creates the configured selected-target pre-contact backup.
-  6. Before launching Codex, verifies that $CODEX_HOME/sessions is a private,
-     user-owned writable directory, stale Codex arg0 temp shims can be cleaned
-     or quarantined, and Codex's shared bubblewrap temp registry is writable.
+  6. Before launching Codex, verifies that $CODEX_HOME/sessions is writable,
+     stale Codex arg0 temp shims can be cleaned or quarantined, and Codex's
+     shared bubblewrap temp registry is writable.
   7. Otherwise it runs exactly one codex exec cycle and exits.
   8. If the primary model fails, blocks, or exhausts its bucket, it can hand off
      to one stronger fallback cycle in the same outer-loop iteration.
@@ -166,7 +166,14 @@ Important:
     `UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE`, `UPKEEPER_MODEL_OVERRIDE`,
     `UPKEEPER_IGNORE_FAILURE_QUEUE`, `UPKEEPER_MAX_COVER`,
     `UPKEEPER_BUG_REPORT_ONLY`, and `UPKEEPER_FIX_NEXT_ISSUE`. They may also
+    source a trusted machine-local env file from `UPKEEPER_LOCAL_ENV_FILE`
+    after the selected config file unless `UPKEEPER_LOCAL_ENV_DISABLE=1`. Use
+    `tools/upkeeper_precontact_bootstrap.sh` to populate
+    `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` there without committing machine
+    setup into repo config. Config files may also
     set pre-contact backup defaults such as `UPKEEPER_PRECONTACT_BACKUP_MODE`,
+    `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED`,
+    `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT`,
     `UPKEEPER_PRECONTACT_BACKUP_ROOT`, and
     `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT`. They may also set selection defaults such as `UPKEEPER_SELECTION_SOURCE`,
     `UPKEEPER_SELECTION_ORDER`,
@@ -270,11 +277,20 @@ Prompt behavior:
     appended, Upkeeper creates a pre-contact backup when enabled. The default
     vault is outside the repository. Auto mode uses age encryption when
     `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` is set and `age` is available;
-    otherwise it uses plain local mode unless encrypted backup is required.
-    Plain mode is a recovery aid, not a same-user security boundary. Backup logs
-    and prompts include HMAC target identity, mode, encrypted,
-    `protected_from_backend`, and `path_redacted=1`; the vault path is not
-    prompt-visible. Restore a plain backup by id with:
+    otherwise the default contract fails closed before backend launch because
+    encrypted backup is required. Plain mode is a recovery aid, not a same-user
+    security boundary, and now requires both
+    `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0` and
+    `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1`. Plaintext backup
+    also rejects high-confidence private-key content even when that unsafe
+    override is set. Backup logs and prompts include HMAC target identity, mode,
+    encrypted, `protected_from_backend`, and `path_redacted=1`; the vault path
+    is not prompt-visible. On live apply-stage or normal repair cycles,
+    Upkeeper resolves required encrypted backup before issue selection; if the
+    machine lacks an age recipient, it stops with a machine-health obligation
+    and points at `tools/upkeeper_precontact_bootstrap.sh` instead of
+    attributing that local setup failure to whichever issue happened to be
+    next. Restore a plain backup by id with:
       `tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID`
   - A repo-root `.upkeeperignore`, or the file named by `UPKEEPER_IGNORE_FILE`,
     is a target-selection firewall. It uses simple Gitignore-style glob lines
@@ -335,7 +351,9 @@ Prompt behavior:
     discoveries into local tests or fixtures, and
     `prompts/p29-reuse-harvesting-review.md` for bounded reuse harvesting of
     helpers, fixtures, prompt language, documentation blocks, command idioms,
-    validation patterns, and local assets.
+    validation patterns, and local assets, and
+    `prompts/p30-stark-protocol-review.md` for permanent hardening and
+    non-regression barriers after useful failures or fragile recovery paths.
   - --config-file=PATH selects a shell-compatible config file for this invoked
     cycle. Use the equals form; spaced form is rejected.
   - --no-config disables the default config for this invoked cycle.
@@ -353,9 +371,11 @@ Prompt behavior:
     module for this invoked cycle.
   - --review-module=p29 appends the central P29 reuse harvesting review module
     for this invoked cycle.
-  - --review-modules=p24,p25,p26,p27,p28,p29 appends multiple modules in a single flag;
+  - --review-module=p30 appends the central P30 Stark Protocol permanent
+    hardening review module for this invoked cycle.
+  - --review-modules=p24,p25,p26,p27,p28,p29,p30 appends multiple modules in a single flag;
     repeated --review-module flags are also accepted and duplicate modules are ignored.
-  - --p24, --p25, --p26, --p27, --p28, and --p29 are shorthand aliases for the corresponding review modules.
+  - --p24, --p25, --p26, --p27, --p28, --p29, and --p30 are shorthand aliases for the corresponding review modules.
     Review module flags are one-cycle guidance only and do not persist to later
     loop iterations. They are not enabled by --prompt-pass=all unless requested.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5
@@ -382,7 +402,7 @@ Prompt behavior:
   - --manifest-file=PATH selects a different local manifest path for this cycle.
   - --include-glob=PATTERN and --exclude-glob=PATTERN add local path filters.
     --include-globs=a,b and --exclude-globs=a,b replace the configured lists.
-  - --selection-review-modules=p24,p25,p26,p27,p28,p29 filters candidates using
+  - --selection-review-modules=p24,p25,p26,p27,p28,p29,p30 filters candidates using
     deterministic local approximations for files likely relevant to those
     optional review modules. It is a selection filter, not a review-module
     prompt request; pair it with --review-module when you want both.
@@ -394,7 +414,7 @@ Prompt behavior:
   - --prompt-pass=all forces the selected target through all P1-P23 repertoire
     passes for this invoked cycle. Use the equals form; spaced form is rejected.
   - --max-cover is a one-cycle high-coverage mode. It sets --prompt-pass=all,
-    appends P24-P29, and asks Lattice for max-cover target ranking across
+    appends P24-P30, and asks Lattice for max-cover target ranking across
     current tracked source-safe text files. Explicit targets, startup anomaly
     gates, and active failure-queue markers still keep their existing priority.
   - --bug-report-only, also accepted as --file-bug-only or --report-bug-only,
@@ -467,10 +487,13 @@ Environment overrides:
   UPKEEPER_LATTICE_SELECTION_MODE Default: oldest-mtime
   UPKEEPER_LATTICE_RAW_STORAGE Default: limited
   UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE Default: delete
+  UPKEEPER_LOCAL_ENV_FILE      Default: ${XDG_CONFIG_HOME:-$HOME/.config}/upkeeper/local.env
+  UPKEEPER_LOCAL_ENV_DISABLE   Default: 0
   UPKEEPER_PRECONTACT_BACKUP_ENABLED Default: 1
   UPKEEPER_PRECONTACT_BACKUP_REQUIRED Default: 1
-  UPKEEPER_PRECONTACT_BACKUP_MODE Default: age
+  UPKEEPER_PRECONTACT_BACKUP_MODE Default: auto
   UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED Default: 1
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT Default: 0
   UPKEEPER_PRECONTACT_BACKUP_ROOT Default: ${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/precontact-vault
   UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE Default: 20
   UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT Default: empty
@@ -492,6 +515,7 @@ Environment overrides:
   CODEX_FALLBACK_SCREEN_CONTINUOUS   Default: 0
   CODEX_FALLBACK_SCREEN_MAX_CHILDREN Default: 1
   CODEX_FALLBACK_SCREEN_MAX_SECONDS  Default: 0
+  CODEX_FALLBACK_SCREEN_STAGE_ROOT   Default: ${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/tmp/fallback-screen
   CODEX_POSTMORTEM_ENABLED       Default: 1
   CODEX_POSTMORTEM_MODEL         Default: CODEX_FALLBACK_MODEL
   CODEX_POSTMORTEM_REASONING_EFFORT Default: CODEX_FALLBACK_REASONING_EFFORT
@@ -591,7 +615,7 @@ process can start. If the actionable queue is clean, it prints `high five yay`
 and exits 25. Otherwise it prefers security-class issues, then data-integrity
 issues, then the remaining queue ranked by containment title/tag signals,
 severity, and least-recently-touched age. The selected issue is handed to
-Upkeeper as `--fix-issue=NUMBER`, with `--prompt-pass=all` and all P24-P29
+Upkeeper as `--fix-issue=NUMBER`, with `--prompt-pass=all` and all P24-P30
 review modules enabled. Its default workflow runs separate comment, review, and
 apply stages with `--issue-workflow-stage=comment|review|apply`, so the first
 two stages are source read-only and run backend Codex in a read-only repository
@@ -621,34 +645,34 @@ Live ChimneySweep runs
 use the same full-burn launcher defaults as FlameOn: Lattice required,
 encrypted pre-contact backup required, quota guardrail stops bypassed, cooldown
 markers bypassed, quota stop floors set to `0`, and `--sandbox workspace-write`
-pinned. Set `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` before running it live.
+pinned. Run `tools/upkeeper_precontact_bootstrap.sh` before using it live.
 
-One-time setup for live full-burn launchers:
+Recommended one-time setup for live full-burn launchers:
 
 ```sh
 sudo apt-get update
 sudo apt-get install -y age
 
-mkdir -p "$HOME/.config/age"
-chmod 700 "$HOME/.config/age"
-age-keygen -o "$HOME/.config/age/upkeeper.txt"
-chmod 600 "$HOME/.config/age/upkeeper.txt"
-export UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT="$(age-keygen -y "$HOME/.config/age/upkeeper.txt")"
+tools/upkeeper_precontact_bootstrap.sh
 ```
 
-`UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` is public. Keep the private identity
-file out of prompts, logs, committed config, and backend-visible environments;
-use it only when manually restoring encrypted backup payloads.
+That writes the public `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` into
+`${XDG_CONFIG_HOME:-$HOME/.config}/upkeeper/local.env`. Keep the private
+identity file out of prompts, logs, committed config, and backend-visible
+environments; use it only when manually restoring encrypted backup payloads.
 
 ## Pre-Contact Backup Examples
 
 Plain local backup mode keeps a copy outside the repository. It is useful for
-manual recovery, but it is not protected from same-user deletion:
+manual recovery, but it is not protected from same-user deletion and now
+requires an explicit unsafe override:
 
 ```sh
 UPKEEPER_PRECONTACT_BACKUP_ENABLED=1
 UPKEEPER_PRECONTACT_BACKUP_REQUIRED=1
 UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
 UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE=20
 ```
 

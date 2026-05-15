@@ -18,7 +18,7 @@ test_flameon_help_documents_burn_contract() {
   grep -Fq "gpt-5.5 xhigh" <<<"$help" || fail "FlameOn help missing model/effort contract"
   grep -Fq -- "--model-override=SPEC" <<<"$help" || fail "FlameOn help missing model override flag"
   grep -Fq -- "--model MODEL" <<<"$help" || fail "FlameOn help missing model shortcut flag"
-  grep -Fq "all P1-P23 passes plus P24-P29" <<<"$help" || fail "FlameOn help missing all-pass contract"
+  grep -Fq "all P1-P23 passes plus P24-P30" <<<"$help" || fail "FlameOn help missing all-pass contract"
   grep -Fq "Lattice max-cover target ranking" <<<"$help" || fail "FlameOn help missing Lattice selection contract"
   grep -Fq -- "-backup_queue" <<<"$help" || fail "FlameOn help missing backup queue flag"
 }
@@ -76,6 +76,28 @@ write_open_obligation() {
 JSON
 }
 
+write_machine_obligation() {
+  local obligation_dir="$1"
+  mkdir -p "$obligation_dir/open"
+  cat >"$obligation_dir/open/machine-obligation-fixture.json" <<'JSON'
+{
+  "schema": 1,
+  "record_type": "automation_obligation",
+  "status": "open",
+  "id": "machine-obligation-fixture",
+  "created_at": "2026-05-10T00:00:00-0700",
+  "kind": "precontact_backup_prereq_missing",
+  "severity": "high",
+  "summary": "Machine-local backup bootstrap is required before normal automation can continue",
+  "target_scope": "machine",
+  "target_file": "",
+  "repair_target_file": "tools/upkeeper_precontact_bootstrap.sh",
+  "reason": "PRECONTACT_BACKUP_PREREQ_MISSING",
+  "required_resolution": ["bootstrap encrypted backup locally"]
+}
+JSON
+}
+
 test_flameon_dry_run_reconciles_obligations_first() {
   local output obligation_dir
 
@@ -89,6 +111,25 @@ test_flameon_dry_run_reconciles_obligations_first() {
   grep -Fq -- "--prompt-file" <<<"$output" || fail "FlameOn obligation run did not pass wrapper-generated prompt file"
   if grep -Fq -- "--bug-report-only" <<<"$output"; then
     fail "FlameOn obligation run stayed in bug-report-only mode instead of repair mode"
+  fi
+}
+
+test_flameon_stops_on_operator_action_required_obligation() {
+  local output obligation_dir rc
+
+  obligation_dir="$TEST_TMP_ROOT/flameon-machine-obligations"
+  write_machine_obligation "$obligation_dir"
+
+  set +e
+  output="$(UPKEEPER_OBLIGATION_DIR="$obligation_dir" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --silent 2>&1)"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 75 ]] || fail "FlameOn machine-health obligation exited $rc, expected 75"
+  grep -Fq "operator action required" <<<"$output" || fail "FlameOn did not report operator action requirement"
+  grep -Fq "tools/upkeeper_precontact_bootstrap.sh" <<<"$output" || fail "FlameOn did not point at the bootstrap helper"
+  if grep -Fq -- "--max-cover" <<<"$output"; then
+    fail "FlameOn should not continue into a dry-run burn when machine setup is required"
   fi
 }
 
@@ -171,6 +212,7 @@ test_flameon_help_documents_burn_contract
 test_flameon_dry_run_resolves_upkeeper_args
 test_flameon_model_shortcut_resolves_spark_override
 test_flameon_dry_run_reconciles_obligations_first
+test_flameon_stops_on_operator_action_required_obligation
 test_flameon_rejects_unsupported_inputs
 test_upkeeper_max_cover_flags_parse_before_version
 test_completion_script_loads_flameon_and_upkeeper

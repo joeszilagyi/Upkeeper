@@ -3,6 +3,177 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## P30 Stark Protocol Review Module
+
+Status: completed
+
+Goal:
+Add P30 as a first-class opt-in review module for permanent hardening: each
+observed weakness must either be removed, guarded by deterministic validation,
+documented as an invariant, or left as an explicit blocked follow-up instead of
+being allowed to fail the same way again.
+
+Constraints:
+- Treat P30 as public operator behavior, not just a local prompt file.
+- Keep it opt-in through review-module flags while including it in full-burn
+  and max-cover review-module bundles.
+- Preserve existing P24-P29 behavior and aliases.
+- Keep deterministic local validation no-quota and make P30 wiring
+  non-regressible through help, docs, prompt, Lattice, completion, launcher, and
+  test checks.
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `lib/upkeeper/help_selection.bash`
+- `lib/upkeeper/lattice.bash`
+- `tools/upkeeper_lattice.py`
+- `tools/validate_upkeeper.sh`
+- `tools/check_public_docs.sh`
+- `prompts/p30-stark-protocol-review.md`
+- `prompts/README.md`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `docs/public-documentation-policy.md`
+- `FlameOn`
+- `ChimneySweep`
+- `completions/upkeeper.bash`
+- `testruns/all_p_modules_once.sh`
+- `testruns/all_p_modules_600s.sh`
+- `tests/chimneysweep_test.bash`
+- `tests/flameon_test.bash`
+- `tests/lattice_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `./Upkeeper --help`
+- `./Upkeeper --version`
+- `git diff --check`
+
+## Pre-Contact Backup Machine Bootstrap And Fail-Closed Hardening
+
+Status: completed
+
+Goal:
+Keep selected-target pre-contact backup fail-closed by default unless encrypted
+backup is available, require an explicit unsafe operator override before any
+plaintext backup path can run, and add a portable machine-local bootstrap plus
+early preflight so missing age prerequisites stop live cycles before issue
+selection.
+
+Constraints:
+- Keep the patch focused on the pre-contact backup contract surfaced by issue
+  `#289` plus the resulting machine-health bootstrap gap.
+- Preserve encrypted age backups and existing restore behavior.
+- Allow plaintext backups only through an explicit unsafe opt-in, with an
+  additional high-confidence sensitive-content gate before writing `.bak`
+  artifacts.
+- Keep private age identities and machine-local recipients out of tracked repo
+  config while making the bootstrap path central for symlinked clients.
+- Fail live mutating cycles closed before issue selection when required backup
+  prerequisites are missing, and classify that state as machine-health/operator
+  setup instead of an in-progress target-file issue fix.
+- Update operator-visible defaults, bootstrap docs, compatibility notes, and
+  release notes in the same committed state because plain `./Upkeeper` runs
+  without `age` now stop before backend launch.
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/precontact_backup.bash`
+- `lib/upkeeper/automation_obligations.bash`
+- `lib/upkeeper/help_selection.bash`
+- `orchestration/backlog.sh`
+- `Upkeeper.conf`
+- `configurations/default.conf`
+- `tools/upkeeper_precontact_bootstrap.sh`
+- `tests/precontact_backup_test.bash`
+- `docs/scripts/upkeeper.md`
+- `docs/security.md`
+- `docs/dependencies.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/precontact_backup_test.bash`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `./Upkeeper --help`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Backlog Dirty-Worktree Autoshelve
+
+Status: completed
+
+Goal:
+Let `orchestration/backlog.sh` preserve unrelated local wrapper work
+automatically before issue work starts, so a live backlog loop can recover from
+operator-side dirty state without sweeping that state into the next issue
+commit.
+
+Constraints:
+- Preserve the per-cycle clean-baseline rule; no new issue run should begin on
+  top of an uncommitted dirty tree.
+- Do not auto-open a PR blindly from a backlog branch, because that can stack
+  unrelated backlog fixes into the wrong review.
+- Keep the preservation path local and explicit: capture the dirty state in a
+  dedicated shelve branch, then return to the original branch clean.
+- Add deterministic local validation for the autoshelve path.
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/backlog_loop.sh`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Lattice Export Privacy And Import Roundtrip
+
+Status: completed
+
+Goal:
+Keep the new privacy-default `export-jsonl` / `import-jsonl` contract for
+issues `#304` and `#305` without breaking deterministic local lattice
+roundtrip validation or leaving the backlog PR dirty against current `main`.
+
+Constraints:
+- Default exports should stay privacy-preserving for ordinary operator use.
+- Roundtrip/import-rebuild validation should explicitly request path disclosure
+  when it needs full-fidelity structural replay.
+- Structural classifier fields such as `source_kind` must not be path-redacted.
+- Refresh the focused lattice docs, release notes, and backlog branch state so
+  the PR no longer carries already-merged launcher churn.
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `docs/lattice.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/lattice_test.bash`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Backlog Interactive TTY Input Hardening
 
 Status: completed

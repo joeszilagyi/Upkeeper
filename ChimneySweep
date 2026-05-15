@@ -231,7 +231,7 @@ if [[ "$obligation_status" == "ok" ]]; then
   args=(
     "--model-override=$CHIMNEYSWEEP_MODEL_OVERRIDE"
     "--prompt-pass=all"
-    "--review-modules=p24,p25,p26,p27,p28,p29"
+    "--review-modules=p24,p25,p26,p27,p28,p29,p30"
     "--target-file=$obligation_repair_target"
     "--prompt-file"
     "$obligation_prompt_file"
@@ -259,6 +259,23 @@ if [[ "$obligation_status" == "ok" ]]; then
 
   upkeeper_launcher_report_full_burn "ChimneySweep"
   CODEX_TERMINAL_VERBOSITY="$CHIMNEYSWEEP_VERBOSITY" exec "$UPKEEPER_CMD" "${args[@]}"
+fi
+if [[ "$obligation_status" == "operator_action_required" ]]; then
+  obligation_id="$(automation_json_field "$obligation_json" id)"
+  obligation_kind="$(automation_json_field "$obligation_json" kind)"
+  obligation_summary="$(automation_json_field "$obligation_json" summary)"
+  obligation_repair_target="$(automation_json_field "$obligation_json" repair_target_file)"
+  obligation_reason="$(automation_json_field "$obligation_json" reason)"
+  printf 'ChimneySweep: operator action required before issue repair can continue\n' >&2
+  printf 'ChimneySweep: obligation id=%s kind=%s reason=%s\n' "$obligation_id" "$obligation_kind" "$obligation_reason" >&2
+  printf 'ChimneySweep: %s\n' "$obligation_summary" >&2
+  if [[ -n "$obligation_repair_target" ]]; then
+    printf 'ChimneySweep: run %s, then rerun ChimneySweep\n' "$obligation_repair_target" >&2
+  fi
+  if [[ "$CHIMNEYSWEEP_JSON" == "1" ]]; then
+    printf '%s\n' "$obligation_json"
+  fi
+  exit 75
 fi
 
 if ! command -v gh >/dev/null 2>&1; then
@@ -489,7 +506,7 @@ PY
 args=(
   "--model-override=$CHIMNEYSWEEP_MODEL_OVERRIDE"
   "--prompt-pass=all"
-  "--review-modules=p24,p25,p26,p27,p28,p29"
+  "--review-modules=p24,p25,p26,p27,p28,p29,p30"
   "--fix-issue=$issue_number"
 )
 

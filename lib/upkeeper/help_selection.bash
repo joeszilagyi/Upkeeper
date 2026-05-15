@@ -22,7 +22,7 @@ help_selection_path_hmac() {
 
 show_help() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
+Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: $UPKEEPER_VERSION
@@ -178,13 +178,22 @@ Important:
     basic profile template. Use --config-file=PATH to select one shell-compatible
     config file for this invocation, or --no-config to skip the default config.
     Relative config paths are resolved from the invocation repository root.
+    After the selected config file is sourced, Upkeeper also sources a trusted
+    machine-local env file from UPKEEPER_LOCAL_ENV_FILE when it exists, unless
+    UPKEEPER_LOCAL_ENV_DISABLE=1. Use
+    tools/upkeeper_precontact_bootstrap.sh to populate
+    UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT there without committing machine
+    setup into repo config.
     Config files may set CODEX_* runtime knobs and UPKEEPER_* flag defaults such
     as UPKEEPER_TARGET_FILE, UPKEEPER_REVIEW_MODULES, UPKEEPER_PROMPT_FILE,
     UPKEEPER_PROMPT, UPKEEPER_PROMPT_PASS, UPKEEPER_PROMPT_TRUST_ROOT,
     UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE, UPKEEPER_MODEL_OVERRIDE,
     UPKEEPER_IGNORE_FAILURE_QUEUE, UPKEEPER_BUG_REPORT_ONLY, and
     UPKEEPER_FIX_NEXT_ISSUE. They may also set pre-contact backup defaults such
-    as UPKEEPER_PRECONTACT_BACKUP_MODE, UPKEEPER_PRECONTACT_BACKUP_ROOT, and
+    as UPKEEPER_PRECONTACT_BACKUP_MODE,
+    UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED,
+    UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT,
+    UPKEEPER_PRECONTACT_BACKUP_ROOT, and
     UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT. They may also set selection
     defaults such as UPKEEPER_SELECTION_SOURCE, UPKEEPER_SELECTION_ORDER,
     UPKEEPER_FILE_MANIFEST_MODE, UPKEEPER_TARGET_ROOT,
@@ -279,11 +288,20 @@ Prompt behavior:
     appended, Upkeeper creates a pre-contact backup when enabled. The default
     vault is outside the repository. Auto mode uses age encryption when
     UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT is set and age is available;
-    otherwise it uses plain local mode unless encrypted backup is required.
-    Plain mode is a recovery aid, not a same-user security boundary. Backup
-    logs and prompts include mode, encrypted, protected_from_backend, and
-    path_redacted=1; the vault path is not
-    prompt-visible. Restore a plain backup by id with:
+    otherwise the default contract fails closed before backend launch because
+    encrypted backup is required. Plain mode is a recovery aid, not a same-user
+    security boundary, and now requires both
+    UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0 and
+    UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1. Plaintext backup also
+    rejects high-confidence private-key content even when that unsafe override
+    is set. Backup logs and prompts include mode, encrypted,
+    protected_from_backend, and path_redacted=1; the vault path is not
+    prompt-visible. On live apply-stage or normal repair cycles, Upkeeper
+    resolves required encrypted backup before issue selection; if the machine
+    lacks an age recipient, it stops with a machine-health obligation and points
+    at tools/upkeeper_precontact_bootstrap.sh instead of attributing that local
+    setup failure to whichever issue happened to be next. Restore a plain
+    backup by id with:
       tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID
   - A repo-root .upkeeperignore, or the file named by UPKEEPER_IGNORE_FILE,
     is a target-selection firewall. It uses simple Gitignore-style glob lines
@@ -341,9 +359,11 @@ Prompt behavior:
     module for this invoked cycle.
   - --review-module=p29 appends the central P29 reuse harvesting review module
     for this invoked cycle.
-  - --review-modules=p24,p25,p26,p27,p28,p29 appends multiple modules in a single flag;
+  - --review-module=p30 appends the central P30 Stark Protocol permanent
+    hardening review module for this invoked cycle.
+  - --review-modules=p24,p25,p26,p27,p28,p29,p30 appends multiple modules in a single flag;
     repeated --review-module flags are also accepted and duplicate modules are ignored.
-  - --p24, --p25, --p26, --p27, --p28, and --p29 are shorthand aliases for the corresponding review modules.
+  - --p24, --p25, --p26, --p27, --p28, --p29, and --p30 are shorthand aliases for the corresponding review modules.
     Review module flags are one-cycle guidance only and do not persist to later
     loop iterations. They are not enabled by --prompt-pass=all unless requested.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5
@@ -368,7 +388,7 @@ Prompt behavior:
   - --manifest-file=PATH selects a different local manifest path for this cycle.
   - --include-glob=PATTERN and --exclude-glob=PATTERN add local path filters;
     --include-globs=a,b and --exclude-globs=a,b replace the configured lists.
-  - --selection-review-modules=p24,p25,p26,p27,p28,p29 filters candidates using
+  - --selection-review-modules=p24,p25,p26,p27,p28,p29,p30 filters candidates using
     deterministic local approximations for files likely relevant to those
     optional review modules. It is a selection filter, not a review-module
     prompt request; pair it with --review-module when you want both.
@@ -380,7 +400,7 @@ Prompt behavior:
   - --prompt-pass=all forces the selected target through all P1-P23 repertoire
     passes for this invoked cycle. Use the equals form; spaced form is rejected.
   - --max-cover is a one-cycle high-coverage mode. It sets --prompt-pass=all,
-    appends P24-P29, and asks Lattice for max-cover target ranking across
+    appends P24-P30, and asks Lattice for max-cover target ranking across
     current tracked source-safe text files. Explicit targets, startup anomaly
     gates, and active failure-queue markers still keep their existing priority.
   - --bug-report-only, also accepted as --file-bug-only or --report-bug-only,
@@ -449,10 +469,13 @@ Environment overrides:
   UPKEEPER_LATTICE_SELECTION_MODE Default: oldest-mtime
   UPKEEPER_LATTICE_RAW_STORAGE Default: limited
   UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE Default: delete
+  UPKEEPER_LOCAL_ENV_FILE      Default: $UPKEEPER_LOCAL_ENV_FILE
+  UPKEEPER_LOCAL_ENV_DISABLE   Default: $UPKEEPER_LOCAL_ENV_DISABLE
   UPKEEPER_PRECONTACT_BACKUP_ENABLED Default: $UPKEEPER_PRECONTACT_BACKUP_ENABLED
   UPKEEPER_PRECONTACT_BACKUP_REQUIRED Default: $UPKEEPER_PRECONTACT_BACKUP_REQUIRED
   UPKEEPER_PRECONTACT_BACKUP_MODE Default: $UPKEEPER_PRECONTACT_BACKUP_MODE
   UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED Default: $UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT Default: $UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT
   UPKEEPER_PRECONTACT_BACKUP_ROOT Default: $UPKEEPER_PRECONTACT_BACKUP_ROOT
   UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE Default: $UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE
   UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT Default: empty
@@ -474,6 +497,7 @@ Environment overrides:
   CODEX_FALLBACK_SCREEN_CONTINUOUS   Default: 0
   CODEX_FALLBACK_SCREEN_MAX_CHILDREN Default: 1
   CODEX_FALLBACK_SCREEN_MAX_SECONDS  Default: 0
+  CODEX_FALLBACK_SCREEN_STAGE_ROOT   Default: $CODEX_FALLBACK_SCREEN_STAGE_ROOT
   CODEX_POSTMORTEM_ENABLED       Default: 1
   CODEX_POSTMORTEM_MODEL         Default: CODEX_FALLBACK_MODEL
   CODEX_POSTMORTEM_REASONING_EFFORT Default: CODEX_FALLBACK_REASONING_EFFORT
@@ -1003,6 +1027,40 @@ def module_filter_match(path: str, modules: set[str]) -> bool:
             or any(token in lowered for token in reuse_tokens)
         )
 
+    def p30() -> bool:
+        hardening_tokens = {
+            "backup",
+            "bootstrap",
+            "chimneysweep",
+            "compatibility",
+            "contract",
+            "fallback",
+            "flameon",
+            "hardening",
+            "health",
+            "lattice",
+            "manifest",
+            "obligation",
+            "preflight",
+            "quota",
+            "recovery",
+            "regression",
+            "restore",
+            "sandbox",
+            "security",
+            "selection",
+            "stress",
+            "validate",
+            "validation",
+        }
+        return (
+            path in {"Upkeeper", "FlameOn", "ChimneySweep", "Upkeeper.conf", "AGENTS.md"}
+            or lowered.startswith(("lib/upkeeper/", "tools/", "tests/", "testruns/", "docs/", "prompts/"))
+            or name in {"readme.md", "plans.md"}
+            or name.startswith("change_notes_")
+            or any(token in lowered for token in hardening_tokens)
+        )
+
     checks = {
         "p24": p24,
         "p25": p25,
@@ -1010,6 +1068,7 @@ def module_filter_match(path: str, modules: set[str]) -> bool:
         "p27": p27,
         "p28": p28,
         "p29": p29,
+        "p30": p30,
     }
     return any(checks[module]() for module in modules if module in checks)
 

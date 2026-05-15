@@ -68,8 +68,9 @@ configured Codex sandbox mode and the task it performs. Dry-run mode
 After Upkeeper selects a review target and before it appends the selected-target
 authority block to the compiled prompt, it creates a pre-contact backup when
 `UPKEEPER_PRECONTACT_BACKUP_ENABLED=1`. The default is required
-(`UPKEEPER_PRECONTACT_BACKUP_REQUIRED=1`), so backup creation failures stop the
-cycle before backend launch with `codex_exec_started=0`.
+(`UPKEEPER_PRECONTACT_BACKUP_REQUIRED=1`) and encrypted-required
+(`UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=1`), so backup creation failures
+stop the cycle before backend launch with `codex_exec_started=0`.
 
 The default vault root is outside the repository:
 
@@ -85,8 +86,12 @@ selected target HMAC, backup mode, encrypted flag, backend-protection flag, and
 Plain backup mode copies the selected file and a JSON sidecar. It is useful for
 quick recovery, but it is not a security boundary: a same-user backend process
 that can discover and access the vault through other means may be able to read
-or delete plain artifacts. Upkeeper therefore records plain backups as
-`encrypted=false` and `protected_from_backend=false`.
+or delete plain artifacts. Plain mode therefore requires an explicit unsafe
+operator opt-in with both `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0` and
+`UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1`, and Upkeeper rejects the
+plaintext path when the selected file contains high-confidence private-key
+material. Upkeeper records accepted plain backups as `encrypted=false` and
+`protected_from_backend=false`.
 
 Age mode encrypts the backup payload to a configured public recipient. Backup
 creation uses only the public recipient; it must not request, read, log, or
@@ -104,7 +109,9 @@ to `0`, bypass wrapper quota guardrail stops, and bypass persisted quota
 cooldown markers, so live launcher runs can spend the selected model bucket down
 to the provider floor. Live launcher runs therefore require `age` and an
 `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` before any backend Codex task can
-start.
+start. Upkeeper now resolves that prerequisite before issue selection on live
+apply-stage or normal repair cycles, and records the missing-recipient path as
+machine-local operator setup rather than as a target-file bug.
 
 ChimneySweep's default issue workflow is staged across separate backend
 instantiations: comment, review, then apply. The comment and review stages are
@@ -121,22 +128,20 @@ with blocker stubs. The apply stage is the stage that may edit source, but it
 still does not contact GitHub
 directly.
 
-Install and configure the public recipient outside the repository:
+Install `age`, then bootstrap the public recipient outside the repository:
 
 ```sh
 sudo apt-get update
 sudo apt-get install -y age
 
-mkdir -p "$HOME/.config/age"
-chmod 700 "$HOME/.config/age"
-age-keygen -o "$HOME/.config/age/upkeeper.txt"
-chmod 600 "$HOME/.config/age/upkeeper.txt"
-export UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT="$(age-keygen -y "$HOME/.config/age/upkeeper.txt")"
+tools/upkeeper_precontact_bootstrap.sh
 ```
 
-Only the exported recipient is public. The private identity path should be used
-for manual restore only and must not be passed into model prompts or committed
-configuration.
+That command creates or reuses the private age identity under
+`${XDG_CONFIG_HOME:-$HOME/.config}/age/upkeeper.txt` and writes only the public
+recipient to `${XDG_CONFIG_HOME:-$HOME/.config}/upkeeper/local.env`. The
+private identity path should be used for manual restore only and must not be
+passed into model prompts or committed configuration.
 
 Landlock, bubblewrap allowlists, root-owned or dedicated-user vaults, fs-verity,
 and immutable file attributes are separate hardening layers. They may be useful
@@ -161,9 +166,10 @@ unless disabled or stopped by quota/local-environment guardrails.
 
 ## Shell-Sourced Config Files
 
-`Upkeeper.conf`, `configurations/default.conf`, and files selected with
-`--config-file=PATH` are sourced by Bash. That means they are executable shell
-code, not passive key/value data.
+`Upkeeper.conf`, `configurations/default.conf`, files selected with
+`--config-file=PATH`, and the trusted machine-local env file named by
+`UPKEEPER_LOCAL_ENV_FILE` are sourced by Bash. That means they are executable
+shell code, not passive key/value data.
 
 Only use config files from trusted locations. Do not point `--config-file` at a
 file from an untrusted repo, issue attachment, shared writable directory, or

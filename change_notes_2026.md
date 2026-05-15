@@ -6,6 +6,32 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-15: v1.2.21 changes:
+	1. Hardened detached screen fallback staging so generated runner scripts live under a private owner-only state root instead of repo-local postmortem evidence, while mirrored status files remain available for normal operator inspection.
+	2. Preserved fallback-chain contracts, selected-target context, issue-fix context, failure-queue context, and prompt/module arguments across staged screen fallback children so recovery workers do not silently lose the parent run's workload boundary.
+	3. Added regression coverage for private screen runner staging, mirrored dry-run state, and fallback contract propagation, and documented the new `CODEX_FALLBACK_SCREEN_STAGE_ROOT` operator knob.
+
+2026-05-15: v1.2.18 changes:
+	1. Added P30 as the Stark Protocol review module for permanent hardening: useful failures must leave a guard, deterministic validation, documented invariant, automation obligation, or explicit blocked follow-up instead of relying on operator memory.
+	2. Extended `--review-module=p30`, `--review-modules=...`, `--p30`, review-module selection filters, Bash completion, Lattice pass metadata, max-cover mode, FlameOn, ChimneySweep, and all-P-module testruns to include P30.
+	3. Updated README, operator guide, compatibility docs, public documentation policy, prompt index, validation, and launcher tests so the P30 contract is public and non-regressible.
+	4. Hardened backlog dirty-worktree autoshelve so preservation runs after the `git` gate but before `gh`, `jq`, or `rg` dependency gates, allowing dirty local work to be shelved even on minimal validation hosts before the launcher reports missing workload dependencies.
+
+2026-05-14: v1.2.17 changes:
+	1. Added trusted machine-local env loading after the selected config file, with `UPKEEPER_LOCAL_ENV_FILE` and `UPKEEPER_LOCAL_ENV_DISABLE` as the operator-controlled surface for machine-only backup/bootstrap settings.
+	2. Added `tools/upkeeper_precontact_bootstrap.sh` so operators and symlinked clients can create or reuse a local age identity and write only the public `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` into machine-local state instead of tracked repo config.
+	3. Live apply-stage and normal repair cycles now preflight required encrypted backup before issue selection, record missing-recipient failures as machine-health obligations, and make FlameOn/ChimneySweep stop plainly for operator action instead of misclassifying the next issue target.
+
+2026-05-14: backlog dirty-worktree autoshelve:
+	1. `orchestration/backlog.sh` now preserves a dirty local wrapper worktree automatically by committing it onto a dedicated local `wip/backlog-autoshelve/...` branch before starting new issue work, then returning to the original branch clean.
+	2. The launcher still refuses to start issue work on top of a dirty tree, but it no longer forces the operator to hand-stash or hand-branch routine local wrapper edits first.
+	3. This preservation path stays local by default instead of auto-opening a PR, because a blind PR from an existing backlog branch can accidentally stack unrelated backlog fixes into the wrong review.
+
+2026-05-14: v1.2.16 changes:
+	1. Selected-target pre-contact backup now defaults to encrypted-required mode for ordinary `./Upkeeper` runs, so missing `age` or a missing public recipient stops the cycle before backend launch instead of silently falling back to plaintext.
+	2. Plaintext pre-contact backup is now available only through an explicit unsafe operator override (`UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0` plus `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1`), making the compatibility break and migration path explicit.
+	3. Added a high-confidence plaintext content gate that rejects private-key material before writing `.bak` artifacts, and refreshed local tests plus operator-facing help/docs for the tightened contract.
+
 2026-05-13: v1.2.15 changes:
 	1. Backlog batch runs now support safe interactive watch mode by default: `orchestration/backlog.sh` cuts off stdin, keeps live output visible in the current terminal, and mirrors that output to the private backlog loop log, while `orchestration/backlog_loop.sh` and `BACKLOG_INTERACTIVE_MODE=detach` remain available for fully detached looping.
 	2. Backlog runs default to quiet terminal verbosity, reducing live model chatter on unattended issue batches while preserving full transcripts under the backlog state directory.
@@ -17,6 +43,11 @@ Version numbering note:
 	1. `tools/upkeeper_lattice.py import-git` now stores contributor identity as a stable SHA-256 token by default and only preserves contributor name/email when `--include-contributor-pii` is explicitly requested.
 	2. Git commit imports now store a subject hash plus subject length by default, keep raw subjects only behind `--include-commit-subjects`, and scrub legacy non-opt-in rows on the next mutating lattice pass.
 	3. `query file-history` and `export-jsonl` now follow the same privacy contract so default operator-facing outputs no longer surface raw Git contributor PII or commit subjects from non-opt-in rows.
+
+2026-05-14: lattice export/import privacy defaults:
+	1. `tools/upkeeper_lattice.py export-jsonl` now redacts raw payload fields and path-bearing fields by default, with explicit `--include-raw`, `--include-paths`, and `--include-contributors` opt-ins for operators who need disclosure.
+	2. `tools/upkeeper_lattice.py import-jsonl` now defaults to redacting imported raw source lines, and replay-oriented roundtrip validation explicitly requests `--include-paths` when it needs full-fidelity structural reconstruction instead of the privacy-default export.
+	3. Structural lattice fields such as `source_kind` are no longer path-redacted, preventing privacy-default exports from corrupting source-record identity semantics.
 
 2026-05-13: v1.2.14 changes:
 	1. Cleared the deferred data-protection issue cluster by rejecting control characters in prompt-file paths, using central log key/value encoding for `run.start`, and removing the prompt-file path from compiled prompt prose.

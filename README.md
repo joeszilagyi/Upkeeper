@@ -96,9 +96,10 @@ On each cycle it:
   still track but Upkeeper should not spend model cycles reviewing
 - applies the P23 data-contract pass to validators, importers, exporters,
   registry loaders, config readers, data readers, and input-boundary CLIs
-- can append opt-in P24/P25/P26/P27/P28/P29 review modules for de-LLM-ing
+- can append opt-in P24/P25/P26/P27/P28/P29/P30 review modules for de-LLM-ing
   viability, contract/intent compliance, public documentation clarity,
-  educational debriefs, unit-test harvesting, and reuse harvesting
+  educational debriefs, unit-test harvesting, reuse harvesting, and permanent
+  hardening
 - provides `FlameOn`, a thin one-command launcher for the highest local
   max-cover smoke/burn cycle that defaults to filing/reporting bugs instead of
   patching source while preserving Upkeeper quota guardrails
@@ -223,7 +224,7 @@ prints `high five yay` and exits 25. Otherwise it keeps security-class issues
 ahead of data-integrity issues, keeps working that class until it is clear, and
 then ranks the remaining queue by containment title/tag signals, severity, and
 least-recently-touched age. The selected issue is passed to Upkeeper as
-`--fix-issue=NUMBER`, with `--prompt-pass=all` and all P24-P29 review modules.
+`--fix-issue=NUMBER`, with `--prompt-pass=all` and all P24-P30 review modules.
 By default, `ChimneySweep` runs three separate backend instantiations:
 `comment`, `review`, then `apply`. The comment stage leaves an
 `Upkeeper ChimneySweep proposal:` comment on the selected issue without
@@ -612,10 +613,10 @@ because pre-contact backup coverage is target-specific.
 
 Operators can narrow normal rotation with `--target-root=PATH`,
 `--target-depth=N`, `--include-glob=PATTERN`, `--exclude-glob=PATTERN`, and
-`--selection-review-modules=p24,p25,p26,p27,p28,p29`. `--selection-order=random`
+`--selection-review-modules=p24,p25,p26,p27,p28,p29,p30`. `--selection-order=random`
 or `--random-target` chooses a random eligible target within the filtered set.
 These filters shape target selection only; review-module prompts still require
-`--review-module`, `--review-modules`, or the `--p24` through `--p29` shorthands.
+`--review-module`, `--review-modules`, or the `--p24` through `--p30` shorthands.
 `--target-file=PATH` remains the strongest one-cycle pin and takes precedence
 over the failure queue and selection filters. Automatic rotation stays focused
 on script/tool candidates, but an explicit operator pin may target any
@@ -637,7 +638,7 @@ wants a different target for one cycle.
 
 Use `--max-cover` when the run should maximize review/pass coverage rather than
 stay on normal script/tool rotation. It enables `--prompt-pass=all`, appends
-P24 through P29, and asks Lattice for max-cover ranking across current tracked
+P24 through P30, and asks Lattice for max-cover ranking across current tracked
 source-safe text files. The ranking prefers the oldest file with any unrun pass,
 then files with the lowest per-pass coverage count, then oldest mtime. Explicit
 targets, startup anomaly gates, and open failure-queue markers still keep their
@@ -690,7 +691,7 @@ available as a standalone prompt file:
 ./Upkeeper.sh --prompt-file /work/tools/Upkeeper/prompts/p23-data-contract-negative-fixture-audit.md
 ```
 
-P24 through P29 are opt-in review modules. They are loaded from the central
+P24 through P30 are opt-in review modules. They are loaded from the central
 Upkeeper checkout, so symlinked clients can use the same flags without knowing
 absolute prompt-file paths.
 
@@ -728,6 +729,11 @@ template, or local asset instead of being rediscovered or rewritten in later
 cycles. It requires a stable contract, a clear owner, local verification, and a
 smaller or safer future maintenance path.
 
+P30 is the Stark Protocol pass for permanent hardening. It applies when a
+failure, near miss, or fragile recovery path should leave a guard, deterministic
+validation, documented invariant, automation obligation, or explicit blocked
+follow-up so the same weakness cannot silently recur.
+
 ```sh
 ./Upkeeper --review-module=p24
 ./Upkeeper --review-module=p25
@@ -735,10 +741,11 @@ smaller or safer future maintenance path.
 ./Upkeeper --review-module=p27
 ./Upkeeper --review-module=p28
 ./Upkeeper --review-module=p29
-./Upkeeper --review-modules=p24,p25,p26,p27,p28,p29
+./Upkeeper --review-module=p30
+./Upkeeper --review-modules=p24,p25,p26,p27,p28,p29,p30
 
 # Shorthand aliases are also available.
-./Upkeeper --p24 --p25 --p26 --p27 --p28 --p29
+./Upkeeper --p24 --p25 --p26 --p27 --p28 --p29 --p30
 ```
 
 Before the primary Codex response emits its final marker, the prompt now requires
@@ -842,7 +849,8 @@ test loop does not spend cycles on known low-value or generated material.
 |   |-- p26-public-documentation-review.md
 |   |-- p27-educational-debrief-review.md
 |   |-- p28-unit-test-harvesting-review.md
-|   `-- p29-reuse-harvesting-review.md
+|   |-- p29-reuse-harvesting-review.md
+|   `-- p30-stark-protocol-review.md
 |-- templates/
 |   |-- README.md
 |   `-- prompt-template.md
@@ -914,6 +922,8 @@ test loop does not spend cycles on known low-value or generated material.
   P28 review module for turning useful discoveries into local tests or fixtures
 - [prompts/p29-reuse-harvesting-review.md](prompts/p29-reuse-harvesting-review.md):
   P29 review module for extracting bounded reusable project knowledge
+- [prompts/p30-stark-protocol-review.md](prompts/p30-stark-protocol-review.md):
+  P30 review module for permanent hardening and non-regression barriers
 - [prompts/git_hard_clean.md](prompts/git_hard_clean.md): explicit branch and backup cleanup
   workflow notes
 - [templates/prompt-template.md](templates/prompt-template.md): starter format

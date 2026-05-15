@@ -131,6 +131,28 @@ write_runtime_fixture_obligation() {
 JSON
 }
 
+write_machine_fixture_obligation() {
+  local obligation_dir="$1"
+  mkdir -p "$obligation_dir/open"
+  cat >"$obligation_dir/open/machine-fixture-obligation.json" <<'JSON'
+{
+  "schema": 1,
+  "record_type": "automation_obligation",
+  "status": "open",
+  "id": "machine-fixture-obligation",
+  "created_at": "2026-05-10T00:00:00-0700",
+  "kind": "precontact_backup_prereq_missing",
+  "severity": "high",
+  "summary": "Machine-local backup bootstrap is required before issue repair can continue",
+  "target_scope": "machine",
+  "target_file": "",
+  "repair_target_file": "tools/upkeeper_precontact_bootstrap.sh",
+  "reason": "PRECONTACT_BACKUP_PREREQ_MISSING",
+  "required_resolution": ["bootstrap encrypted backup locally"]
+}
+JSON
+}
+
 test_chimneysweep_help_documents_fix_contract() {
   local help
 
@@ -176,7 +198,7 @@ test_chimneysweep_security_class_wins() {
   grep -Fq -- "--fix-issue=50" <<<"$output" || fail "security scenario did not lock oldest security issue"
   grep -Fq "class=security" <<<"$output" || fail "security scenario did not report class"
   grep -Fq -- "--prompt-pass=all" <<<"$output" || fail "security scenario did not request all prompt passes"
-  grep -Fq -- "--review-modules=p24\\,p25\\,p26\\,p27\\,p28\\,p29" <<<"$output" || fail "security scenario did not request all review modules"
+  grep -Fq -- "--review-modules=p24\\,p25\\,p26\\,p27\\,p28\\,p29\\,p30" <<<"$output" || fail "security scenario did not request all review modules"
   grep -Fq -- "--issue-workflow-stage=comment" <<<"$output" || fail "security scenario did not request comment stage"
   grep -Fq -- "--issue-workflow-stage=review" <<<"$output" || fail "security scenario did not request review stage"
   grep -Fq -- "--issue-workflow-stage=apply" <<<"$output" || fail "security scenario did not request apply stage"
@@ -233,6 +255,26 @@ test_chimneysweep_remaps_runtime_fixture_obligation_targets() {
   fi
 }
 
+test_chimneysweep_stops_on_operator_action_required_obligation() {
+  local output obligation_dir rc
+
+  obligation_dir="$TEST_TMP_ROOT/chimneysweep-machine-obligations"
+  write_machine_fixture_obligation "$obligation_dir"
+
+  set +e
+  output="$(UPKEEPER_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run --json 2>&1)"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 75 ]] || fail "ChimneySweep machine-health obligation exited $rc, expected 75"
+  grep -Fq "operator action required" <<<"$output" || fail "ChimneySweep did not report operator action requirement"
+  grep -Fq "tools/upkeeper_precontact_bootstrap.sh" <<<"$output" || fail "ChimneySweep did not point at the bootstrap helper"
+  grep -Fq '"status":"operator_action_required"' <<<"$output" || fail "ChimneySweep --json did not emit the machine-health obligation payload"
+  if grep -Fq -- "--fix-issue=50" <<<"$output"; then
+    fail "ChimneySweep should not rank issues when machine setup is required first"
+  fi
+}
+
 test_chimneysweep_data_integrity_after_security_clear() {
   local output
 
@@ -255,7 +297,7 @@ test_chimneysweep_exec_hands_locked_issue_to_upkeeper() {
   [[ "$(grep -c '^BEGIN$' "$TEST_TMP_ROOT/capture.txt")" -eq 3 ]] || fail "exec did not run three workflow stages"
   grep -Fxq -- "--model-override=5.5_xhigh" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not pass model override"
   grep -Fxq -- "--prompt-pass=all" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not pass all prompt pass"
-  grep -Fxq -- "--review-modules=p24,p25,p26,p27,p28,p29" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not pass all review modules"
+  grep -Fxq -- "--review-modules=p24,p25,p26,p27,p28,p29,p30" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not pass all review modules"
   grep -Fxq -- "--fix-issue=50" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not pass locked issue"
   grep -Fxq -- "--issue-workflow-stage=comment" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not run comment stage"
   grep -Fxq -- "--issue-workflow-stage=review" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not run review stage"
@@ -311,6 +353,7 @@ test_chimneysweep_security_class_wins
 test_chimneysweep_model_override_supports_spark
 test_chimneysweep_reconciles_obligations_before_github_queue
 test_chimneysweep_remaps_runtime_fixture_obligation_targets
+test_chimneysweep_stops_on_operator_action_required_obligation
 test_chimneysweep_data_integrity_after_security_clear
 test_chimneysweep_general_queue_prefers_containment_signal
 test_chimneysweep_exec_hands_locked_issue_to_upkeeper

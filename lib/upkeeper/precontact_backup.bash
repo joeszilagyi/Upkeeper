@@ -32,6 +32,10 @@ precontact_backup_required() {
   precontact_backup_enabled && precontact_backup_truthy "${UPKEEPER_PRECONTACT_BACKUP_REQUIRED:-1}"
 }
 
+precontact_backup_allow_unsafe_plaintext() {
+  precontact_backup_truthy "${UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT:-0}"
+}
+
 precontact_backup_set_reason() {
   PRECONTACT_BACKUP_LAST_REASON="$1"
   return 1
@@ -172,6 +176,43 @@ precontact_backup_sensitive_target_path() {
       ;;
   esac
   return 1
+}
+
+precontact_backup_validate_plaintext_target_content() {
+  local target_abs="$1"
+  local rc=0
+
+  python3 - "$target_abs" <<'PY' || rc=$?
+from pathlib import Path
+import sys
+
+data = Path(sys.argv[1]).read_bytes()
+markers = (
+    b"-----BEGIN OPENSSH PRIVATE KEY-----",
+    b"-----BEGIN RSA PRIVATE KEY-----",
+    b"-----BEGIN DSA PRIVATE KEY-----",
+    b"-----BEGIN EC PRIVATE KEY-----",
+    b"-----BEGIN PRIVATE KEY-----",
+    b"-----BEGIN PGP PRIVATE KEY BLOCK-----",
+)
+for marker in markers:
+    if marker in data:
+        raise SystemExit(2)
+PY
+
+  case "$rc" in
+    0)
+      return 0
+      ;;
+    2)
+      precontact_backup_set_reason "plaintext_sensitive_content_rejected"
+      return 1
+      ;;
+    *)
+      precontact_backup_set_reason "plaintext_content_scan_failed"
+      return 1
+      ;;
+  esac
 }
 
 precontact_backup_validate_target() {
@@ -355,7 +396,7 @@ precontact_backup_validate_root() {
 
 precontact_backup_resolve_mode() {
   local mode="${UPKEEPER_PRECONTACT_BACKUP_MODE:-auto}"
-  local require_encrypted="${UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED:-0}"
+  local require_encrypted="${UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED:-1}"
 
   PRECONTACT_BACKUP_RESOLVED_MODE=""
   mode="${mode,,}"
@@ -384,6 +425,10 @@ precontact_backup_resolve_mode() {
         precontact_backup_set_reason "age_missing"
         return 1
       fi
+      if ! precontact_backup_allow_unsafe_plaintext; then
+        precontact_backup_set_reason "plaintext_override_required"
+        return 1
+      fi
       PRECONTACT_BACKUP_RESOLVED_MODE="plain"
       ;;
     age)
@@ -402,6 +447,10 @@ precontact_backup_resolve_mode() {
         precontact_backup_set_reason "encrypted_required"
         return 1
       fi
+      if ! precontact_backup_allow_unsafe_plaintext; then
+        precontact_backup_set_reason "plaintext_override_required"
+        return 1
+      fi
       PRECONTACT_BACKUP_RESOLVED_MODE="plain"
       ;;
     *)
@@ -409,6 +458,63 @@ precontact_backup_resolve_mode() {
       return 1
       ;;
   esac
+}
+
+precontact_backup_local_env_file() {
+  printf '%s' "${UPKEEPER_LOCAL_ENV_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/upkeeper/local.env}"
+}
+
+precontact_backup_bootstrap_tool_path() {
+  printf '%s/tools/upkeeper_precontact_bootstrap.sh' "$ROOT_DIR"
+}
+
+precontact_backup_cycle_requires_machine_preflight() {
+  [[ "${UPKEEPER_DRY_RUN:-0}" != "1" ]] || return 1
+  case "${CODEX_ISSUE_WORKFLOW_STAGE:-apply}" in
+    comment|review)
+      return 1
+      ;;
+  esac
+  precontact_backup_required
+}
+
+precontact_backup_machine_preflight_or_exit() {
+  local bootstrap_path local_env_path reason hint
+
+  precontact_backup_cycle_requires_machine_preflight || return 0
+  if precontact_backup_resolve_mode; then
+    return 0
+  fi
+
+  reason="${PRECONTACT_BACKUP_LAST_REASON:-mode_unavailable}"
+  bootstrap_path="$(precontact_backup_bootstrap_tool_path)"
+  local_env_path="$(precontact_backup_local_env_file)"
+
+  case "$reason" in
+    recipient_missing)
+      hint="run $(shell_quote "$bootstrap_path") to create an age identity and write UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT into $(shell_quote "$local_env_path")"
+      ;;
+    age_missing)
+      hint="install age, then run $(shell_quote "$bootstrap_path") so encrypted pre-contact backup can proceed"
+      ;;
+    plaintext_override_required)
+      hint="either configure encrypted backup through $(shell_quote "$bootstrap_path") or explicitly opt into unsafe plaintext backup in machine-local config"
+      ;;
+    encrypted_required)
+      hint="configure an age recipient through $(shell_quote "$bootstrap_path") or explicitly relax the encrypted-backup requirement in machine-local config"
+      ;;
+    *)
+      hint="repair the pre-contact backup machine-local configuration before rerunning live mutating cycles"
+      ;;
+  esac
+
+  printf 'Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (%s)\n' "$reason" >&2
+  printf 'Upkeeper: %s\n' "$hint" >&2
+  if [[ "$reason" == "recipient_missing" || "$reason" == "age_missing" ]]; then
+    printf 'Upkeeper: expected machine-local env file: %s\n' "$local_env_path" >&2
+  fi
+  log_line "ERROR" "precontact_backup.preflight_blocked reason=$(shell_quote "$reason") bootstrap=$(shell_quote "$bootstrap_path") local_env_file=$(shell_quote "$local_env_path") action=$(shell_quote "$hint")"
+  finish_cycle 7 PRECONTACT_BACKUP_PREREQ_MISSING ERROR "codex_exec_started=0 preflight_reason=$(shell_quote "$reason") bootstrap=$(shell_quote "$bootstrap_path") local_env_file=$(shell_quote "$local_env_path")"
 }
 
 precontact_backup_copy_file() {
@@ -829,6 +935,10 @@ precontact_backup_selected_target_or_exit() {
   target_abs="$PRECONTACT_BACKUP_VALIDATED_ABS_PATH"
   if ! content_sha="$(precontact_backup_sha256_file "$target_abs")"; then
     precontact_backup_fail_or_continue "$rel_path" "target_hash_failed" 0
+    return 0
+  fi
+  if [[ "$resolved_mode" == "plain" ]] && ! precontact_backup_validate_plaintext_target_content "$target_abs"; then
+    precontact_backup_fail_or_continue "$rel_path" "${PRECONTACT_BACKUP_LAST_REASON:-plaintext_content_rejected}" 0
     return 0
   fi
   content_hmac="$(precontact_backup_content_hmac "$content_sha")"

@@ -221,6 +221,74 @@ automation_obligation_severity() {
   esac
 }
 
+automation_obligation_target_scope() {
+  local reason="$1"
+
+  case "$reason" in
+    PRECONTACT_BACKUP_PREREQ_MISSING)
+      printf 'machine'
+      ;;
+    *)
+      printf 'target'
+      ;;
+  esac
+}
+
+automation_obligation_summary() {
+  local reason="$1"
+  local exit_code="$2"
+
+  case "$reason" in
+    PRECONTACT_BACKUP_PREREQ_MISSING)
+      printf 'Upkeeper machine-health preflight blocked a live cycle before issue selection (exit %s)' "$exit_code"
+      ;;
+    *)
+      printf 'Upkeeper automation cycle exited with %s (exit %s)' "$reason" "$exit_code"
+      ;;
+  esac
+}
+
+automation_obligation_required_resolution_json() {
+  local reason="$1"
+
+  case "$reason" in
+    PRECONTACT_BACKUP_PREREQ_MISSING)
+      python3 - <<'PY'
+import json
+print(json.dumps([
+    "classify the missing encrypted backup prerequisite as machine-local operator setup",
+    "run tools/upkeeper_precontact_bootstrap.sh after installing age when needed",
+    "store only the public recipient in the trusted machine-local env file",
+    "rerun the affected launcher only after the pre-contact backup preflight exits cleanly",
+], separators=(",", ":")))
+PY
+      ;;
+    *)
+      python3 - <<'PY'
+import json
+print(json.dumps([
+    "reproduce or classify the source cycle failure",
+    "patch the wrapper or target behavior when applicable",
+    "add deterministic validation for the failure mode",
+    "rerun the affected launcher or stage until it exits cleanly",
+], separators=(",", ":")))
+PY
+      ;;
+  esac
+}
+
+automation_obligation_repair_target_hint() {
+  local reason="$1"
+
+  case "$reason" in
+    PRECONTACT_BACKUP_PREREQ_MISSING)
+      if [[ -f "$ROOT_DIR/tools/upkeeper_precontact_bootstrap.sh" ]]; then
+        printf '%s' "tools/upkeeper_precontact_bootstrap.sh"
+      fi
+      ;;
+  esac
+}
+
 automation_open_cycle_obligation() {
   local exit_code="$1"
   local reason="$2"
@@ -229,16 +297,23 @@ automation_open_cycle_obligation() {
   local codex_exit="$5"
   local codex_exec_started="$6"
   local selected_target="$7"
-  local severity kind summary id open_dir path payload now
+  local severity kind summary id open_dir path payload now target_scope repair_target_hint required_resolution_json
 
   automation_framework_enabled || return 0
   automation_cycle_exit_requires_obligation "$exit_code" "$reason" || return 0
 
   severity="$(automation_obligation_severity "$reason")"
   kind="$(printf '%s' "$reason" | tr '[:upper:]' '[:lower:]')"
-  summary="Upkeeper automation cycle exited with $reason (exit $exit_code)"
-  selected_target="${selected_target:-${RUN_SELECTED_REVIEW_PATH:-${CODEX_TARGET_FILE:-Upkeeper}}}"
-  [[ -n "$selected_target" ]] || selected_target="Upkeeper"
+  target_scope="$(automation_obligation_target_scope "$reason")"
+  summary="$(automation_obligation_summary "$reason" "$exit_code")"
+  repair_target_hint="$(automation_obligation_repair_target_hint "$reason")"
+  required_resolution_json="$(automation_obligation_required_resolution_json "$reason")"
+  if [[ "$target_scope" == "machine" ]]; then
+    selected_target=""
+  else
+    selected_target="${selected_target:-${RUN_SELECTED_REVIEW_PATH:-${CODEX_TARGET_FILE:-Upkeeper}}}"
+    [[ -n "$selected_target" ]] || selected_target="Upkeeper"
+  fi
   if [[ "${UPKEEPER_AUTOMATION_WORKFLOW:-}" == "obligation-repair" \
     && -n "${UPKEEPER_AUTOMATION_OBLIGATION_ID:-}" \
     && "$reason" == "TARGET_FILE_NOT_ELIGIBLE" \
@@ -249,7 +324,7 @@ automation_open_cycle_obligation() {
     fi
     return 0
   fi
-  id="$(printf '%s' "$kind|$CYCLE_ID|$CYCLE_RUN_HASH|$selected_target" | automation_hash_text)"
+  id="$(printf '%s' "$kind|$target_scope|$CYCLE_ID|$CYCLE_RUN_HASH|$selected_target|$repair_target_hint" | automation_hash_text)"
   open_dir="$(automation_obligation_root)/open"
   automation_private_dir "$open_dir" || return 1
   path="$open_dir/$id.json"
@@ -273,6 +348,9 @@ automation_open_cycle_obligation() {
       "${CODEX_ISSUE_FIX_NUMBER:-}" \
       "${CODEX_ISSUE_FIX_TITLE:-}" \
       "$selected_target" \
+      "$target_scope" \
+      "$repair_target_hint" \
+      "$required_resolution_json" \
       "$exit_code" \
       "$reason" \
       "$level" \
@@ -301,6 +379,9 @@ import sys
     issue_number,
     issue_title,
     selected_target,
+    target_scope,
+    repair_target_file,
+    required_resolution_json,
     exit_code,
     reason,
     level,
@@ -309,7 +390,13 @@ import sys
     codex_exec_started,
     run_record,
     transcript,
-) = sys.argv[1:25]
+    ) = sys.argv[1:28]
+try:
+    required_resolution = json.loads(required_resolution_json)
+except json.JSONDecodeError:
+    required_resolution = []
+if not isinstance(required_resolution, list):
+    required_resolution = [str(required_resolution)]
 
 print(
     json.dumps(
@@ -332,7 +419,9 @@ print(
             "stage": stage,
             "issue_number": issue_number,
             "issue_title": issue_title,
+            "target_scope": target_scope,
             "target_file": selected_target,
+            "repair_target_file": repair_target_file,
             "exit_code": exit_code,
             "reason": reason,
             "level": level,
@@ -341,12 +430,7 @@ print(
             "codex_exec_started": codex_exec_started,
             "run_record": run_record,
             "transcript": transcript,
-            "required_resolution": [
-                "reproduce or classify the source cycle failure",
-                "patch the wrapper or target behavior when applicable",
-                "add deterministic validation for the failure mode",
-                "rerun the affected launcher or stage until it exits cleanly",
-            ],
+            "required_resolution": required_resolution,
         },
         separators=(",", ":"),
     )
@@ -356,7 +440,7 @@ PY
 
   automation_write_json "$path" "$payload"
   if declare -F log_line >/dev/null 2>&1; then
-    log_line "WARN" "automation.obligation.open id=$id kind=$(automation_shell_quote "$kind") severity=$severity launcher=$(automation_shell_quote "${UPKEEPER_AUTOMATION_LAUNCHER:-$SCRIPT_NAME}") target=$(automation_shell_quote "$selected_target") reason=$(automation_shell_quote "$reason") path=$(automation_shell_quote "$path")"
+    log_line "WARN" "automation.obligation.open id=$id kind=$(automation_shell_quote "$kind") severity=$severity launcher=$(automation_shell_quote "${UPKEEPER_AUTOMATION_LAUNCHER:-$SCRIPT_NAME}") target_scope=$(automation_shell_quote "$target_scope") target=$(automation_shell_quote "${selected_target:-machine-local}") reason=$(automation_shell_quote "$reason") path=$(automation_shell_quote "$path")"
   fi
 }
 
@@ -432,9 +516,10 @@ if not open_dir.is_dir():
 severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 kind_rank = {
     "codex_session_store_unwritable": 0,
-    "precontact_backup_unavailable": 1,
-    "lattice_unavailable": 2,
-    "missing_status_marker": 3,
+    "precontact_backup_prereq_missing": 1,
+    "precontact_backup_unavailable": 2,
+    "lattice_unavailable": 3,
+    "missing_status_marker": 4,
 }
 
 
@@ -527,7 +612,40 @@ def key(item):
 
 
 selected = sorted(items, key=key)[0]
-target = str(selected.get("target_file") or "Upkeeper")
+target_scope = str(selected.get("target_scope", "target") or "target")
+target = str(selected.get("target_file") or "")
+repair_target_hint = normalized_repo_target(selected.get("repair_target_file", ""))
+
+if target_scope == "machine":
+    result = {
+        "status": "operator_action_required",
+        "open_count": len(items),
+        "id": str(selected.get("id", "")),
+        "path": selected["_path"],
+        "kind": str(selected.get("kind", "")),
+        "severity": str(selected.get("severity", "medium")),
+        "summary": str(selected.get("summary", "")),
+        "created_at": str(selected.get("created_at", "")),
+        "target_scope": target_scope,
+        "target_file": "",
+        "repair_target_file": repair_target_hint,
+        "repair_target_basis": "machine_prerequisite",
+        "repair_target_detail": "operator setup is required before normal automation can proceed",
+        "source_cycle_id": str(selected.get("source_cycle_id", "")),
+        "source_run_hash": str(selected.get("source_run_hash", "")),
+        "launcher": str(selected.get("launcher", "")),
+        "workflow": str(selected.get("workflow", "")),
+        "stage": str(selected.get("stage", "")),
+        "issue_number": str(selected.get("issue_number", "")),
+        "issue_title": str(selected.get("issue_title", "")),
+        "reason": str(selected.get("reason", "")),
+        "run_record": str(selected.get("run_record", "")),
+        "transcript": str(selected.get("transcript", "")),
+        "required_resolution": selected.get("required_resolution", []),
+    }
+    print(json.dumps(result, separators=(",", ":")))
+    raise SystemExit(0)
+
 if not target or target in (".", "none", "unknown", "null"):
     target = "Upkeeper"
 normalized_target = normalized_repo_target(target)
@@ -539,7 +657,7 @@ if target_error_detail:
         target_error_detail,
     )
 else:
-    repair_target = normalized_target
+    repair_target = repair_target_hint or normalized_target
     repair_target_basis = "obligation_target"
     repair_target_detail = ""
 
@@ -552,6 +670,7 @@ result = {
     "severity": str(selected.get("severity", "medium")),
     "summary": str(selected.get("summary", "")),
     "created_at": str(selected.get("created_at", "")),
+    "target_scope": target_scope,
     "target_file": target,
     "repair_target_file": repair_target,
     "repair_target_basis": repair_target_basis,
@@ -628,6 +747,7 @@ lines = [
     f"- stage: {data.get('stage', '')}",
     f"- issue_number: {data.get('issue_number', '')}",
     f"- issue_title: {data.get('issue_title', '')}",
+    f"- target_scope: {data.get('target_scope', 'target')}",
     f"- target_file: {data.get('target_file', '')}",
     f"- repair_target_file: {data.get('repair_target_file', data.get('target_file', ''))}",
     f"- repair_target_basis: {data.get('repair_target_basis', 'obligation_target')}",

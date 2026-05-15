@@ -165,6 +165,7 @@ export CODEX_QUOTA_COOLDOWN_BYPASS=0
 export UPKEEPER_LATTICE_REQUIRED=0
 export UPKEEPER_PRECONTACT_BACKUP_MODE=auto
 export UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+export UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
 export UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT=""
 
 require_command() {
@@ -304,6 +305,21 @@ check_backlog_launcher_contract() {
   grep -Fq 'another backlog run already owns this checkout' orchestration/backlog.sh || fail "backlog launcher does not explain active backlog ownership"
   grep -Fq 'active-owner.' orchestration/backlog.sh || fail "backlog launcher does not track an explicit repo-local active owner file"
   grep -Fq 'start_ticks' orchestration/backlog.sh || fail "backlog launcher does not guard against stale PID reuse in active owner tracking"
+  grep -Fq 'BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default dirty-worktree autoshelve on"
+  grep -Fq 'autoshelving local changes to' orchestration/backlog.sh || fail "backlog launcher does not explain dirty-worktree autoshelve"
+  python3 - <<'PY' || fail "backlog autoshelve no longer runs before gh/jq/rg dependency gates"
+from pathlib import Path
+
+text = Path("orchestration/backlog.sh").read_text(encoding="utf-8")
+text = text[text.index("main()"):]
+git_gate = text.index("require_command git")
+autoshelve = text.index("autoshelve_dirty_worktree_if_enabled")
+clean_gate = text.index("require_clean_worktree", autoshelve)
+gh_gate = text.index("require_command gh")
+jq_gate = text.index("require_command jq")
+rg_gate = text.index("require_command rg")
+assert git_gate < autoshelve < clean_gate < gh_gate < jq_gate < rg_gate
+PY
   [[ -x orchestration/backlog_loop.sh ]] || fail "backlog safe loop wrapper is not executable"
   grep -Fq 'CODEX_TERMINAL_VERBOSITY="${BACKLOG_CODEX_TERMINAL_VERBOSITY:-${CODEX_TERMINAL_VERBOSITY:-quiet}}"' orchestration/backlog.sh || fail "backlog launcher does not default to quiet terminal output"
   grep -Fq '</dev/null >>"$log_file" 2>&1' orchestration/backlog_loop.sh || fail "backlog loop wrapper does not detach stdin and redirect output"
@@ -318,6 +334,42 @@ check_backlog_launcher_contract() {
     grep -Fq '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to '"$temp_dir/loop.log" "$temp_dir/typescript" ||
       fail "backlog launcher did not explain interactive watch mode"
   fi
+}
+
+check_backlog_autoshelve_contract() {
+  local temp_dir output rc autoshelve_branch
+
+  log "checking backlog dirty-worktree autoshelve contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-backlog-autoshelve.XXXXXX)"
+  mkdir -p "$temp_dir/orchestration"
+  cp orchestration/backlog.sh "$temp_dir/orchestration/backlog.sh"
+  chmod +x "$temp_dir/orchestration/backlog.sh"
+
+  (
+    cd "$temp_dir"
+    git init -q -b main
+    git config user.name "Upkeeper Validation"
+    git config user.email "validation@example.invalid"
+    printf 'baseline\n' >README.md
+    git add README.md orchestration/backlog.sh
+    git commit -q -m "baseline"
+    printf 'dirty local work\n' >>README.md
+
+    set +e
+    output="$(BACKLOG_ALLOW_INTERACTIVE_STDIO=1 BACKLOG_AUTOSHELVE_PROBE=1 ./orchestration/backlog.sh 2>&1)"
+    rc=$?
+    set -e
+
+    [[ "$rc" -eq 0 ]] || fail "backlog autoshelve probe exited $rc output=$output"
+    [[ "$(git rev-parse --abbrev-ref HEAD)" == "main" ]] || fail "backlog autoshelve did not return to main"
+    [[ -z "$(git status --short)" ]] || fail "backlog autoshelve did not restore a clean worktree"
+    autoshelve_branch="$(git for-each-ref --format='%(refname:short)' 'refs/heads/wip/backlog-autoshelve/*' | sed -n '1p')"
+    [[ -n "$autoshelve_branch" ]] || fail "backlog autoshelve did not create a shelve branch"
+    grep -Fq "autoshelved local changes on $autoshelve_branch" <<<"$output" || fail "backlog autoshelve did not report the shelve branch"
+    git show "$autoshelve_branch:README.md" | grep -Fq 'dirty local work' || fail "backlog autoshelve branch did not preserve dirty work"
+  )
+
+  rm -r "$temp_dir"
 }
 
 check_version_consistency() {
@@ -372,12 +424,14 @@ check_prompt_template() {
   [[ -s prompts/p27-educational-debrief-review.md ]] || fail "P27 review module prompt is missing or empty"
   [[ -s prompts/p28-unit-test-harvesting-review.md ]] || fail "P28 review module prompt is missing or empty"
   [[ -s prompts/p29-reuse-harvesting-review.md ]] || fail "P29 review module prompt is missing or empty"
+  [[ -s prompts/p30-stark-protocol-review.md ]] || fail "P30 review module prompt is missing or empty"
   [[ -x tools/upkeeper_lattice.py ]] || fail "Lattice tool is missing or not executable"
   [[ -s lib/upkeeper/lattice.bash ]] || fail "Lattice wrapper module is missing or empty"
   [[ -s lib/upkeeper/precontact_backup.bash ]] || fail "pre-contact backup module is missing or empty"
   [[ -s tests/lattice_test.bash ]] || fail "Lattice test is missing or empty"
   [[ -s tests/precontact_backup_test.bash ]] || fail "pre-contact backup test is missing or empty"
   [[ -s docs/lattice.md ]] || fail "Lattice documentation is missing or empty"
+  [[ -x tools/upkeeper_precontact_bootstrap.sh ]] || fail "pre-contact bootstrap helper is missing or not executable"
   [[ -x tools/upkeeper_precontact_restore.sh ]] || fail "pre-contact restore helper is missing or not executable"
   [[ -x FlameOn ]] || fail "FlameOn launcher is missing or not executable"
   [[ -x ChimneySweep ]] || fail "ChimneySweep launcher is missing or not executable"
@@ -417,6 +471,12 @@ check_prompt_template() {
   grep -Fq "Registry Preference" prompts/p29-reuse-harvesting-review.md || fail "P29 registry preference missing"
   grep -Fq "Reuse Debt Output" prompts/p29-reuse-harvesting-review.md || fail "P29 reuse debt output missing"
   grep -Fq "ShellCheck Integration Policy" prompts/p29-reuse-harvesting-review.md || fail "P29 ShellCheck policy missing"
+  grep -Fq "# P30 Stark Protocol Review" prompts/p30-stark-protocol-review.md || fail "P30 prompt title missing"
+  grep -Fq "P30: not applicable" prompts/p30-stark-protocol-review.md || fail "P30 applicability gate missing"
+  grep -Fq "same weakness cannot get us twice" prompts/p30-stark-protocol-review.md || fail "P30 same-weakness rule missing"
+  grep -Fq "Permanent hardening test" prompts/p30-stark-protocol-review.md || fail "P30 hardening test missing"
+  grep -Fq "Non-regression evidence" prompts/p30-stark-protocol-review.md || fail "P30 non-regression evidence output missing"
+  grep -Fq "same weakness cannot silently recur" prompts/p30-stark-protocol-review.md || fail "P30 repeat-path boundary missing"
   grep -Fq "UPKEEPER_PASS_RESULT" prompts/default-review.md || fail "default prompt missing pass-result marker contract"
   grep -Fq "UPKEEPER_LATTICE_ENABLED" Upkeeper.conf || fail "root config missing Lattice defaults"
   grep -Fq "UPKEEPER_LATTICE_ENABLED" configurations/default.conf || fail "default profile missing Lattice defaults"
@@ -438,6 +498,7 @@ check_prompt_template() {
   grep -Fq "educational debrief" README.md || fail "README missing P27 summary"
   grep -Fq "unit-test harvesting" README.md || fail "README missing P28 summary"
   grep -Fq "reuse harvesting" README.md || fail "README missing P29 summary"
+  grep -Fq "Stark Protocol" README.md || fail "README missing P30 summary"
   grep -Fq "Upkeeper.conf" README.md || fail "README missing config file summary"
   grep -Fq "tools/stress_upkeeper_corpus.sh --local" README.md || fail "README missing stress corpus command"
   grep -Fq ".upkeeperignore" README.md || fail "README missing .upkeeperignore docs"
@@ -445,6 +506,10 @@ check_prompt_template() {
   grep -Fq ".upkeeperignore" docs/compatibility.md || fail "compatibility docs missing .upkeeperignore contract"
   grep -Fq ".upkeeperignore" docs/security.md || fail "security docs missing .upkeeperignore boundary"
   grep -Fq "pre-contact backup" docs/security.md || fail "security docs missing pre-contact backup boundary"
+  grep -Fq "tools/upkeeper_precontact_bootstrap.sh" docs/scripts/upkeeper.md || fail "operator guide missing pre-contact bootstrap helper"
+  grep -Fq "UPKEEPER_LOCAL_ENV_FILE" docs/scripts/upkeeper.md || fail "operator guide missing machine-local env contract"
+  grep -Fq "tools/upkeeper_precontact_bootstrap.sh" docs/security.md || fail "security docs missing pre-contact bootstrap helper"
+  grep -Fq "UPKEEPER_LOCAL_ENV_FILE" docs/security.md || fail "security docs missing machine-local env contract"
   grep -Fq "age" docs/dependencies.md || fail "dependency docs missing age optional dependency"
   grep -Fq "tools/upkeeper_precontact_restore.sh" docs/scripts/upkeeper.md || fail "operator guide missing pre-contact restore helper"
   grep -Fq "tools/stress_upkeeper_corpus.sh --local" docs/stress-corpus.md || fail "stress corpus docs missing implemented command"
@@ -472,6 +537,7 @@ check_help_and_diff() {
   grep -Fq -- "--review-module=p27" <<<"$help" || fail "help missing --review-module=p27"
   grep -Fq -- "--review-module=p28" <<<"$help" || fail "help missing --review-module=p28"
   grep -Fq -- "--review-module=p29" <<<"$help" || fail "help missing --review-module=p29"
+  grep -Fq -- "--review-module=p30" <<<"$help" || fail "help missing --review-module=p30"
   grep -Fq -- "--config-file=PATH" <<<"$help" || fail "help missing --config-file"
   grep -Fq -- "--no-config" <<<"$help" || fail "help missing --no-config"
   grep -Fq -- "--target-root=PATH" <<<"$help" || fail "help missing --target-root"
@@ -483,13 +549,14 @@ check_help_and_diff() {
   grep -Fq -- "--include-globs=a,b" <<<"$help" || fail "help missing --include-globs"
   grep -Fq -- "--exclude-glob=PATTERN" <<<"$help" || fail "help missing --exclude-glob"
   grep -Fq -- "--exclude-globs=a,b" <<<"$help" || fail "help missing --exclude-globs"
-  grep -Fq -- "--selection-review-modules=p24,p25,p26,p27,p28,p29" <<<"$help" || fail "help missing --selection-review-modules"
+  grep -Fq -- "--selection-review-modules=p24,p25,p26,p27,p28,p29,p30" <<<"$help" || fail "help missing --selection-review-modules"
   grep -Fq -- "--p24" <<<"$help" || fail "help missing --p24"
   grep -Fq -- "--p25" <<<"$help" || fail "help missing --p25"
   grep -Fq -- "--p26" <<<"$help" || fail "help missing --p26"
   grep -Fq -- "--p27" <<<"$help" || fail "help missing --p27"
   grep -Fq -- "--p28" <<<"$help" || fail "help missing --p28"
   grep -Fq -- "--p29" <<<"$help" || fail "help missing --p29"
+  grep -Fq -- "--p30" <<<"$help" || fail "help missing --p30"
   grep -Fq -- "--ignore-failure-queue" <<<"$help" || fail "help missing --ignore-failure-queue"
   grep -Fq -- "--backup-queue" <<<"$help" || fail "help missing --backup-queue"
   grep -Fq -- "--max-cover" <<<"$help" || fail "help missing --max-cover"
@@ -505,6 +572,8 @@ check_help_and_diff() {
   grep -Fq -- "UPKEEPER_FIX_NEXT_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_NEXT_ISSUE"
   grep -Fq -- "UPKEEPER_FIX_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_ISSUE"
   grep -Fq -- "UPKEEPER_ISSUE_WORKFLOW_STAGE" <<<"$help" || fail "help missing UPKEEPER_ISSUE_WORKFLOW_STAGE"
+  grep -Fq -- "UPKEEPER_LOCAL_ENV_FILE" <<<"$help" || fail "help missing UPKEEPER_LOCAL_ENV_FILE"
+  grep -Fq -- "tools/upkeeper_precontact_bootstrap.sh" <<<"$help" || fail "help missing pre-contact bootstrap helper"
   grep -Fq -- "UPKEEPER_PRECONTACT_BACKUP_ENABLED" <<<"$help" || fail "help missing UPKEEPER_PRECONTACT_BACKUP_ENABLED"
   grep -Fq -- "pre-contact backup" <<<"$help" || fail "help missing pre-contact backup summary"
   local flameon_cmd
@@ -1092,7 +1161,7 @@ check_arg0_tmp_cleanup_contract() {
 }
 
 check_automation_obligation_framework() {
-  local temp_dir run_record obligation_count obligation_file obligation_id resolved_file selected_json prompt_file
+  local temp_dir run_record obligation_count obligation_file obligation_id resolved_file selected_json prompt_file machine_file
 
   log "checking automation obligation framework"
   temp_dir="$(mktemp -d /tmp/upkeeper-automation-obligations.XXXXXX)"
@@ -1199,6 +1268,18 @@ JSON
       bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
   [[ "$(jq -r '.repair_target_file' <<<"$selected_json")" == "ChimneySweep" ]] || fail "automation obligation selector did not remap a poisoned runtime target to ChimneySweep"
+
+  machine_file="$temp_dir/obligations/open/precontact-machine.json"
+  cat >"$machine_file" <<'JSON'
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"precontact-machine","created_at":"2026-05-10T00:00:00-0700","kind":"precontact_backup_prereq_missing","severity":"high","summary":"Machine-local backup bootstrap is required before normal automation can continue","target_scope":"machine","target_file":"","repair_target_file":"tools/upkeeper_precontact_bootstrap.sh","reason":"PRECONTACT_BACKUP_PREREQ_MISSING","required_resolution":["bootstrap encrypted backup locally"]}
+JSON
+  selected_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
+      bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.status' <<<"$selected_json")" == "operator_action_required" ]] || fail "machine-health obligation selector did not stop normal automation"
+  [[ "$(jq -r '.repair_target_file' <<<"$selected_json")" == "tools/upkeeper_precontact_bootstrap.sh" ]] || fail "machine-health obligation selector lost bootstrap repair target"
+  [[ "$(jq -r '.target_scope' <<<"$selected_json")" == "machine" ]] || fail "machine-health obligation selector lost target_scope"
 
   rm -r "$temp_dir"
 }
@@ -1517,7 +1598,7 @@ check_review_module_flags() {
     CODEX_FALLBACK_SCREEN_ENABLED=0 \
     CODEX_POSTMORTEM_ENABLED=0 \
     UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25,p26,p27,p28,p29 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+    ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25,p26,p27,p28,p29,p30 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
 
   grep -Fq "review_modules_hash=" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules metadata"
   grep -Fq "review.module_prompt enabled module=p24" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P24"
@@ -1526,13 +1607,17 @@ check_review_module_flags() {
   grep -Fq "review.module_prompt enabled module=p27" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P27"
   grep -Fq "review.module_prompt enabled module=p28" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P28"
   grep -Fq "review.module_prompt enabled module=p29" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P29"
+  grep -Fq "review.module_prompt enabled module=p30" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P30"
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not finish cleanly"
 
-  output="$(./Upkeeper --p24 --p25 --p26 --p27 --p28 --p29 --version)"
+  output="$(./Upkeeper --p24 --p25 --p26 --p27 --p28 --p29 --p30 --version)"
   [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "review module shorthand flags broke --version"
 
   output="$(./Upkeeper --review-module=library-reuse --review-module=function-reuse --review-module=asset-reuse --version)"
   [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "P29 reuse aliases broke --version"
+
+  output="$(./Upkeeper --review-module=stark-protocol --review-module=permanent-hardening --review-module=non-regression --version)"
+  [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "P30 hardening aliases broke --version"
 
   set +e
   output="$(
@@ -1789,7 +1874,7 @@ check_file_manifest_selection() {
   grep -Fq "selection_mode=lattice_max_cover" "$temp_dir/max-cover.log" || fail "max-cover did not use Lattice max-cover selection"
   grep -Fq "prompt_pass=all" "$temp_dir/max-cover.log" || fail "max-cover did not force all prompt passes"
   if grep -Eq '(^| )review_modules_hash=none( |$)' "$temp_dir/max-cover.log"; then
-    fail "max-cover did not append P24-P29"
+    fail "max-cover did not append P24-P30"
   fi
   grep -Fq "max_cover=1" "$temp_dir/max-cover.log" || fail "max-cover was not recorded in cycle.start"
 
@@ -2089,16 +2174,17 @@ print(hashlib.sha1(b"lib/upkeeper/codex_io.bash").hexdigest()[:24])
 PY
 )"
   mkdir -p "$temp_dir/selection-failures/open"
-  python3 - "$temp_dir/selection-failures/open/$marker_id.json" <<'PY'
+  python3 - "$temp_dir/selection-failures/open/$marker_id.json" "$marker_id" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
+marker_id = sys.argv[2]
 path.write_text(json.dumps({
     "version": 1,
     "status": "open",
-    "marker_id": "selectionmarker",
+    "marker_id": marker_id,
     "target_path": "lib/upkeeper/codex_io.bash",
     "first_seen_epoch": 1,
     "first_seen_cycle": "validation-selection",
@@ -2107,6 +2193,7 @@ path.write_text(json.dumps({
     "first_failure_exit_line": "exited 1 in 0.1s",
 }, sort_keys=True) + "\n", encoding="utf-8")
 PY
+  chmod 600 "$temp_dir/selection-failures/open/$marker_id.json"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
 
   CODEX_HOME="$temp_dir/codex-home" \
@@ -3468,6 +3555,7 @@ run_check review_summary_parser check_review_summary_parser
 run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
 run_check backlog_launcher_contract check_backlog_launcher_contract
+run_check backlog_autoshelve_contract check_backlog_autoshelve_contract
 
 if [[ "$MODE" == "smoke" ]]; then
   log "$MODE validation passed"

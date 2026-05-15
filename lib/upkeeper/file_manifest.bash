@@ -1,8 +1,9 @@
 # File manifest cache for deterministic target selection.
 #
 # The manifest is local runtime state: it records source-visible files with
-# mtimes, sizes, and absolute paths so selection can work from a ready sorted
-# list instead of asking the backend model to rediscover repository shape.
+# mtimes, sizes, and repo-root-anchored absolute paths so selection can work
+# from a ready sorted list instead of asking the backend model to rediscover
+# repository shape.
 
 resolve_upkeeper_manifest_path() {
   local raw_path="$1"
@@ -34,6 +35,11 @@ ensure_file_manifest_for_selection() {
   manifest_dir="$(dirname -- "$manifest_path")"
   if ! mkdir -p "$manifest_dir"; then
     log_line "WARN" "file_manifest.skip reason=manifest_dir_unwritable path=$(shell_quote "$manifest_path") action=fall_back_to_enumerate"
+    CODEX_SELECTION_SOURCE="enumerate"
+    return 0
+  fi
+  if ! chmod 700 "$manifest_dir"; then
+    log_line "WARN" "file_manifest.skip reason=manifest_dir_unprotected path=$(shell_quote "$manifest_path") action=fall_back_to_enumerate"
     CODEX_SELECTION_SOURCE="enumerate"
     return 0
   fi
@@ -87,13 +93,11 @@ def root_relative(path: Path) -> str:
     return rel.as_posix()
 
 
-def real_path_within_root(path: Path) -> Path | None:
-    try:
-        real = path.resolve(strict=True)
-        real.relative_to(root)
-        return real
-    except (OSError, ValueError):
-        return None
+def manifest_abs_path(path: Path) -> str:
+    # Keep manifest paths anchored to the repo root without resolving through
+    # symlinks. This preserves the file contract while avoiding disclosure of a
+    # symlink target path outside the selected repository path itself.
+    return str(path)
 
 
 def load_upkeeperignore_patterns() -> list[tuple[bool, str]]:
@@ -205,14 +209,11 @@ def file_entry(rel_path: str) -> dict[str, object] | None:
         return None
     if stat.S_ISLNK(st.st_mode):
         return None
-    real = real_path_within_root(path)
-    if real is None:
-        return None
     if not stat.S_ISREG(st.st_mode):
         return None
     return {
         "rel_path": rel_path,
-        "abs_path": str(real),
+        "abs_path": manifest_abs_path(path),
         "mtime": int(st.st_mtime),
         "mtime_ns": int(st.st_mtime_ns),
         "size": int(st.st_size),
@@ -306,6 +307,7 @@ def existing_payload() -> dict[str, object] | None:
 
 def write_payload(payload: dict[str, object]) -> None:
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(manifest_path.parent, 0o700)
     fd, temp_name = tempfile.mkstemp(prefix=f".{manifest_path.name}.", suffix=".tmp", dir=str(manifest_path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

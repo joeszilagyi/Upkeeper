@@ -88,14 +88,19 @@ reset_env() {
   FINISH_CAPTURE="$TEST_TMP_ROOT/$name.finish"
   UPKEEPER_PRECONTACT_BACKUP_ENABLED=1
   UPKEEPER_PRECONTACT_BACKUP_REQUIRED=1
-  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
-  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+  UPKEEPER_PRECONTACT_BACKUP_MODE=auto
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=1
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=0
   UPKEEPER_PRECONTACT_BACKUP_ROOT="$TEST_TMP_ROOT/$name vault redacted"
   UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE=20
   UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT=""
   UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS=1
+  UPKEEPER_LOCAL_ENV_FILE="$TEST_TMP_ROOT/$name.local.env"
   UPKEEPER_REDACTION_KEY="precontact-test-key-$name"
+  UPKEEPER_DRY_RUN=0
   CODEX_TARGET_FILE=""
+  CODEX_BUG_REPORT_ONLY=0
+  CODEX_ISSUE_WORKFLOW_STAGE=""
   RUN_PRECONTACT_BACKUP_ID=""
   RUN_PRECONTACT_BACKUP_SHA256=""
   RUN_PRECONTACT_BACKUP_MODE=""
@@ -104,6 +109,25 @@ reset_env() {
   mkdir -p "$RUN_TMP_DIR"
   chmod 700 "$RUN_TMP_DIR"
   : >"$LOG_FILE"
+}
+
+test_machine_preflight_blocks_before_issue_selection() {
+  local repo="$TEST_TMP_ROOT/machine-preflight repo"
+  local rc
+
+  make_repo "$repo"
+  reset_env "$repo" machine-preflight
+
+  set +e
+  ( precontact_backup_machine_preflight_or_exit )
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 7 ]] || fail "machine preflight exited $rc, expected 7"
+  grep -Fq "reason=PRECONTACT_BACKUP_PREREQ_MISSING" "$FINISH_CAPTURE" || fail "machine preflight did not preserve prereq-missing reason"
+  grep -Fq "preflight_reason=recipient_missing" "$FINISH_CAPTURE" || fail "machine preflight did not preserve recipient-missing detail"
+  grep -Fq "local_env_file=$UPKEEPER_LOCAL_ENV_FILE" "$FINISH_CAPTURE" || fail "machine preflight did not name the local env file"
+  grep -Fq "precontact_backup.preflight_blocked" "$LOG_FILE" || fail "machine preflight block was not logged"
 }
 
 write_selection_file() {
@@ -138,6 +162,9 @@ test_plain_required_backup_succeeds() {
   reset_env "$repo" plain
   selection_file="$TEST_TMP_ROOT/plain-selection.env"
   write_selection_file "dir/space file.sh" "$selection_file"
+  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
 
   precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
 
@@ -341,6 +368,62 @@ test_required_encrypted_mode_fails_closed() {
   grep -Fq "recipient_missing" "$FINISH_CAPTURE" || fail "finish detail did not include recipient_missing"
 }
 
+test_default_auto_mode_fails_closed_without_age() {
+  local repo="$TEST_TMP_ROOT/default-auto repo"
+  local selection_file rc
+  make_repo "$repo"
+  reset_env "$repo" default-auto
+  selection_file="$TEST_TMP_ROOT/default-auto-selection.env"
+  write_selection_file "dir/space file.sh" "$selection_file"
+
+  set +e
+  ( precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file" )
+  rc=$?
+  set -e
+  [[ "$rc" -eq 7 ]] || fail "default auto backup without age exited $rc, expected 7"
+  grep -Fq "reason=recipient_missing" "$FINISH_CAPTURE" || fail "default auto failure did not report missing recipient"
+}
+
+test_plain_mode_requires_explicit_unsafe_override() {
+  local repo="$TEST_TMP_ROOT/plain-override repo"
+  local selection_file rc
+  make_repo "$repo"
+  reset_env "$repo" plain-override
+  selection_file="$TEST_TMP_ROOT/plain-override-selection.env"
+  write_selection_file "dir/space file.sh" "$selection_file"
+  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+
+  set +e
+  ( precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file" )
+  rc=$?
+  set -e
+  [[ "$rc" -eq 7 ]] || fail "plain mode without unsafe override exited $rc, expected 7"
+  grep -Fq "reason=plaintext_override_required" "$FINISH_CAPTURE" ||
+    fail "plain override failure did not report plaintext_override_required"
+}
+
+test_plain_mode_rejects_private_key_content() {
+  local repo="$TEST_TMP_ROOT/plain-sensitive-content repo"
+  local selection_file rc
+  make_repo "$repo"
+  reset_env "$repo" plain-sensitive-content
+  selection_file="$TEST_TMP_ROOT/plain-sensitive-selection.env"
+  write_selection_file "dir/plain-secret.sh" "$selection_file"
+  printf '%s\n' '-----BEGIN PRIVATE KEY-----' 'abc123' '-----END PRIVATE KEY-----' >"$repo/dir/plain-secret.sh"
+  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
+
+  set +e
+  ( precontact_backup_selected_target_or_exit "dir/plain-secret.sh" "$selection_file" )
+  rc=$?
+  set -e
+  [[ "$rc" -eq 7 ]] || fail "plain mode sensitive content exit was $rc, expected 7"
+  grep -Fq "reason=plaintext_sensitive_content_rejected" "$FINISH_CAPTURE" ||
+    fail "plain content gate did not preserve plaintext_sensitive_content_rejected"
+}
+
 assert_target_rejected() {
   local rel_path="$1"
   local expected_reason="$2"
@@ -415,6 +498,9 @@ test_prompt_redaction_and_replacement_rule() {
   local selected="dir/space file.sh"
   make_repo "$repo"
   reset_env "$repo" prompt
+  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
 
   preselect_review_target() {
     cat <<EOF
@@ -466,6 +552,9 @@ test_retention_prunes_only_same_path() {
   make_repo "$repo"
   reset_env "$repo" retention
   UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE=2
+  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
   selection_file="$TEST_TMP_ROOT/retention-selection.env"
 
   write_selection_file "dir/other.sh" "$selection_file"
@@ -496,6 +585,9 @@ test_plain_restore_and_unsafe_id() {
   reset_env "$repo" restore
   selection_file="$TEST_TMP_ROOT/restore-selection.env"
   write_selection_file "dir/space file.sh" "$selection_file"
+  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
   original_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
   precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
   backup_id="$RUN_PRECONTACT_BACKUP_ID"
@@ -525,6 +617,9 @@ test_restore_temp_stays_private_until_rename() {
   reset_env "$repo" restore-mode
   selection_file="$TEST_TMP_ROOT/restore-mode-selection.env"
   write_selection_file "dir/space file.sh" "$selection_file"
+  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
   chmod 644 "$repo/dir/space file.sh"
   precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
   backup_id="$RUN_PRECONTACT_BACKUP_ID"
@@ -554,6 +649,9 @@ test_plain_restore_temporary_directory_cleaned_on_failure() {
   reset_env "$repo" restore-cleanup
   selection_file="$TEST_TMP_ROOT/restore-cleanup-selection.env"
   write_selection_file "dir/space file.sh" "$selection_file"
+  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
   precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
   backup_id="$RUN_PRECONTACT_BACKUP_ID"
 
@@ -585,9 +683,24 @@ test_plain_restore_temporary_directory_cleaned_on_failure() {
   [[ "$tmp_count" == "0" ]] || fail "temporary restore directory not cleaned (found ${tmp_count})"
 }
 
+test_machine_preflight_skips_read_only_issue_stages() {
+  local repo="$TEST_TMP_ROOT/machine-preflight-review repo"
+
+  make_repo "$repo"
+  reset_env "$repo" machine-preflight-review
+  CODEX_ISSUE_WORKFLOW_STAGE="review"
+
+  precontact_backup_machine_preflight_or_exit
+}
+
 test_plain_required_backup_succeeds
 test_age_mode_uses_public_recipient_only
+test_machine_preflight_blocks_before_issue_selection
+test_machine_preflight_skips_read_only_issue_stages
 test_required_encrypted_mode_fails_closed
+test_default_auto_mode_fails_closed_without_age
+test_plain_mode_requires_explicit_unsafe_override
+test_plain_mode_rejects_private_key_content
 test_unsafe_target_rejection
 test_precontact_backup_validate_root_secure_private_dir
 test_prompt_redaction_and_replacement_rule

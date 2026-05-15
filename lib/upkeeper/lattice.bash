@@ -229,6 +229,7 @@ lattice_planned_passes_csv() {
       p27) passes+=(P27) ;;
       p28) passes+=(P28) ;;
       p29) passes+=(P29) ;;
+      p30) passes+=(P30) ;;
     esac
   done
 

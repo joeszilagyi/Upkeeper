@@ -44,7 +44,7 @@ _upkeeper_complete() {
   opts="
     --help --version --config-file= --no-config
     --prompt-file --prompt
-    --review-module= --review-modules= --p24 --p25 --p26 --p27 --p28 --p29
+    --review-module= --review-modules= --p24 --p25 --p26 --p27 --p28 --p29 --p30
     --model-override=
     --target-file= --target-root= --target-dir= --target-depth= --target-max-depth=
     --selection-source= --selection-order= --random-target
@@ -73,11 +73,11 @@ _upkeeper_complete() {
       return 0
       ;;
     --review-module=*)
-      _upkeeper_complete_csv_value "$cur" "p24 p25 p26 p27 p28 p29 de-llm contract docs educational-debrief unit-test-harvesting reuse library-reuse function-reuse asset-reuse"
+      _upkeeper_complete_csv_value "$cur" "p24 p25 p26 p27 p28 p29 p30 de-llm contract docs educational-debrief unit-test-harvesting reuse library-reuse function-reuse asset-reuse stark stark-protocol permanent-hardening hardening non-regression regression-proof no-repeat final-hardening"
       return 0
       ;;
     --review-modules=*|--selection-review-modules=*)
-      _upkeeper_complete_csv_value "$cur" "p24 p25 p26 p27 p28 p29 p24,p25,p26,p27,p28,p29"
+      _upkeeper_complete_csv_value "$cur" "p24 p25 p26 p27 p28 p29 p30 p24,p25,p26,p27,p28,p29,p30"
       return 0
       ;;
     --model-override=*)

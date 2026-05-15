@@ -35,7 +35,7 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--help`, `-h`, `--version`, `--config-file=...`, `--no-config`,
   `--prompt-file`, `--prompt`,
   `--review-module=...`, `--review-modules=...`, `--p24`, `--p25`, `--p26`,
-  `--p27`, `--p28`, `--p29`, `--model-override=...`, `--target-file=...`, and
+  `--p27`, `--p28`, `--p29`, `--p30`, `--model-override=...`, `--target-file=...`, and
   `--target-root=...`, `--target-depth=...`,
   `--selection-source=manifest|enumerate`,
   `--selection-order=oldest|newest|random`, `--refresh-manifest`,
@@ -62,7 +62,7 @@ Future changes should preserve this operator-visible surface as far as possible:
   handed to Upkeeper with `--fix-issue=NUMBER`. Its default workflow is
   comment, review, then apply across separate Upkeeper instantiations. The
   comment/review stages are source read-only and leave issue comments; the apply
-  stage works the bug. Each stage requests all prompt passes and all P24-P29
+  stage works the bug. Each stage requests all prompt passes and all P24-P30
   review modules for the locked issue target, and uses the same full-burn
   launcher protections and quota-bypass behavior as FlameOn.
 - The clean no-op path is a first-class contract. When automation health,
@@ -98,6 +98,19 @@ Future changes should preserve this operator-visible surface as far as possible:
   backup failures must stop before backend launch with `codex_exec_started=0`.
   The default vault is outside the repository, and wrapper-generated prompts,
   logs, and Lattice preselect evidence must not expose the vault root.
+- The central defaults now require encrypted pre-contact backup. Keeping the
+  old silent plaintext fallback was unsafe, so operators who intentionally need
+  plaintext recovery must explicitly set both
+  `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0` and
+  `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1`.
+- Trusted machine-local encrypted-backup bootstrap is now part of the stable
+  operator surface. `UPKEEPER_LOCAL_ENV_FILE` may provide
+  `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT`, and
+  `tools/upkeeper_precontact_bootstrap.sh` remains the central way to create or
+  refresh that machine-local recipient without tracked repo churn.
+- When encrypted backup is required for a live apply-stage or normal repair
+  cycle, missing machine-local recipient setup now fails before issue
+  selection and is reported as machine health, not as a target-file regression.
 - The central default config remains `Upkeeper.conf`, and named config profiles
   can be selected per invocation with `--config-file=PATH`.
 - Existing documented environment knobs keep their meaning unless a change note

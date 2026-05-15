@@ -24,11 +24,14 @@ tool_failure_queue_finalize_run() {
   local transcript_file="$2"
   local codex_exit="$3"
   local status_marker="$4"
-  local output rc line
+  local redaction_key target_path_hmac transcript_path_hmac output rc line
 
   tool_failure_queue_enabled || return 0
   [[ -n "$target_path" ]] || return 0
   [[ -n "$transcript_file" ]] || return 0
+  redaction_key="$(upkeeper_redaction_key_material)"
+  target_path_hmac="$(upkeeper_path_hmac "$target_path")"
+  transcript_path_hmac="$(upkeeper_path_hmac "$transcript_file")"
 
   set +e
   output="$(python3 - \
@@ -40,8 +43,10 @@ tool_failure_queue_finalize_run() {
     "$CYCLE_ID" \
     "$CYCLE_RUN_HASH" \
     "${RUN_SELECTED_FAILURE_MARKER_PATH:-}" \
-    "${CODEX_BUG_REPORT_ONLY:-0}" <<'PY'
+    "${CODEX_BUG_REPORT_ONLY:-0}" \
+    "$redaction_key" <<'PY'
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -49,12 +54,13 @@ import sys
 import time
 from pathlib import Path
 
-queue_dir_raw, target_path, transcript_raw, codex_exit, status_marker, cycle_id, run_hash, selected_marker_raw, bug_report_only_raw = sys.argv[1:10]
+queue_dir_raw, target_path, transcript_raw, codex_exit, status_marker, cycle_id, run_hash, selected_marker_raw, bug_report_only_raw, redaction_key = sys.argv[1:11]
 queue_dir = Path(queue_dir_raw)
 open_dir = queue_dir / "open"
 resolved_dir = queue_dir / "resolved"
 transcript_path = Path(transcript_raw)
 bug_report_only = str(bug_report_only_raw).strip().lower() in {"1", "true", "yes", "on"}
+redaction_key_bytes = redaction_key.encode("utf-8", "surrogateescape")
 
 
 def short(value: str, limit: int = 500) -> str:
@@ -64,8 +70,25 @@ def short(value: str, limit: int = 500) -> str:
     return value
 
 
-def failure_signature(kind: str, command: str, exit_line: str) -> str:
-    payload = f"{kind}\0{command}\0{exit_line}"
+def hmac_hex(namespace: str, value: str) -> str:
+    material = f"{namespace}\0{value}".encode("utf-8", "surrogateescape")
+    return hmac.new(redaction_key_bytes, material, hashlib.sha256).hexdigest()
+
+
+def path_hmac(value: str) -> str:
+    return f"path-hmac-sha256:{hmac_hex('path', value)}"
+
+
+def value_hmac(namespace: str, value: str) -> str:
+    return f"value-hmac-sha256:{hmac_hex(namespace, value)}"
+
+
+def transcript_id_for(path: Path) -> str:
+    return f"transcript-hmac-sha256:{hmac_hex('transcript', str(path))}"
+
+
+def failure_signature(kind: str, command_hash: str, exit_line: str) -> str:
+    payload = f"{kind}\0{command_hash}\0{exit_line}"
     return hashlib.sha256(payload.encode("utf-8", "surrogateescape")).hexdigest()
 
 
@@ -166,11 +189,19 @@ def transcript_failure_state(path: Path) -> tuple[list[dict[str, str]], bool]:
             failures.append(
                 {
                     "kind": current_kind,
-                    "command": short(current_command),
+                    "command_hash": value_hmac("command", short(current_command)),
                     "exit_line": short(stripped),
                 }
             )
     return failures, addressed_by_later_success
+
+
+def ensure_private_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
 
 
 def read_json(path: Path) -> dict:
@@ -187,12 +218,24 @@ def read_json(path: Path) -> dict:
 
 
 def write_json_atomic(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)
     tmp = path.with_name(path.name + f".tmp.{os.getpid()}")
-    with tmp.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2, sort_keys=True)
-        handle.write("\n")
-    os.replace(tmp, path)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def resolve_marker(path: Path, reason: str) -> Path:
@@ -208,7 +251,7 @@ def resolve_marker(path: Path, reason: str) -> Path:
             "last_status_marker": status_marker,
         }
     )
-    resolved_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(resolved_dir)
     resolved_path = resolved_dir / f"{path.stem}.{cycle_id}.json"
     write_json_atomic(resolved_path, data)
     try:
@@ -218,95 +261,116 @@ def resolve_marker(path: Path, reason: str) -> Path:
     return resolved_path
 
 
-marker_id = marker_id_for(target_path)
-marker_path = open_dir / f"{marker_id}.json"
-selected_marker_path = Path(selected_marker_raw) if selected_marker_raw else marker_path
-now = int(time.time())
-failures, addressed_by_later_success = transcript_failure_state(transcript_path)
+def main() -> None:
+    marker_id = marker_id_for(target_path)
+    marker_path = open_dir / f"{marker_id}.json"
+    selected_marker_path = Path(selected_marker_raw) if selected_marker_raw else marker_path
+    now = int(time.time())
+    failures, addressed_by_later_success = transcript_failure_state(transcript_path)
+    ensure_private_dir(queue_dir)
+    ensure_private_dir(open_dir)
+    ensure_private_dir(resolved_dir)
 
-if failures:
-    if marker_path.exists():
-        existing = read_json(marker_path)
-    elif selected_marker_path and selected_marker_path.exists():
-        existing = read_json(selected_marker_path)
+    if failures:
+        if marker_path.exists():
+            existing = read_json(marker_path)
+        elif selected_marker_path and selected_marker_path.exists():
+            existing = read_json(selected_marker_path)
+        else:
+            existing = {}
+        first = failures[0]
+        existing_signatures = existing.get("failure_signatures", [])
+        if not isinstance(existing_signatures, list):
+            existing_signatures = []
+        existing_signatures = [str(item) for item in existing_signatures if isinstance(item, str)]
+
+        existing_signature_lookup = set(existing_signatures)
+        unique_failures = []
+        for item in failures:
+            signature = failure_signature(item["kind"], item["command_hash"], item["exit_line"])
+            item["signature"] = signature
+            if signature not in existing_signature_lookup:
+                unique_failures.append(item)
+                existing_signature_lookup.add(signature)
+
+        first_failure = existing.get("first_failure_kind")
+        first_failure_command_hash = existing.get("first_failure_command_hash")
+        if not isinstance(first_failure_command_hash, str) or not first_failure_command_hash:
+            first_failure_command_hash = ""
+        if not first_failure_command_hash:
+            existing_first_failure_command = existing.get("first_failure_command")
+            if isinstance(existing_first_failure_command, str) and existing_first_failure_command:
+                first_failure_command_hash = value_hmac("command", existing_first_failure_command)
+        first_failure_exit_line = existing.get("first_failure_exit_line")
+        if not (first_failure and first_failure_command_hash and first_failure_exit_line):
+            first_failure = first["kind"]
+            first_failure_command_hash = first["command_hash"]
+            first_failure_exit_line = first["exit_line"]
+
+        last_failure = failures[-1]
+        failure_count = int(existing.get("failure_count", 0) or 0) + len(unique_failures)
+        signatures = existing_signatures.copy()
+        for item in unique_failures:
+            signatures.append(item["signature"])
+        data = {
+            "version": 2,
+            "status": "open",
+            "marker_id": marker_id,
+            "target_path": target_path,
+            "target_path_hmac": path_hmac(target_path),
+            "first_seen_epoch": int(existing.get("first_seen_epoch", now) or now),
+            "first_seen_cycle": existing.get("first_seen_cycle", cycle_id),
+            "first_seen_run_hash": existing.get("first_seen_run_hash", run_hash),
+            "last_seen_epoch": now,
+            "last_seen_cycle": cycle_id,
+            "last_seen_run_hash": run_hash,
+            "last_transcript_id": transcript_id_for(transcript_path),
+            "last_transcript_path_hmac": path_hmac(str(transcript_path)),
+            "last_codex_exit": codex_exit,
+            "last_status_marker": status_marker,
+            "failure_count": failure_count,
+            "failure_signatures": signatures,
+            "first_failure_kind": first_failure,
+            "first_failure_command_hash": first_failure_command_hash,
+            "first_failure_exit_line": first_failure_exit_line,
+            "last_failure_kind": last_failure["kind"],
+            "last_failure_command_hash": last_failure["command_hash"],
+            "last_failure_exit_line": last_failure["exit_line"],
+            "failure_samples": failures[:5],
+            "addressed_by_later_success": addressed_by_later_success,
+        }
+        write_json_atomic(marker_path, data)
+        if addressed_by_later_success and not bug_report_only:
+            reason = "work_done_after_detected_failure" if status_marker == "WORK_DONE" else "later_success_after_detected_failure"
+            resolved_path = resolve_marker(marker_path, reason)
+            print(f"action=resolved_same_run marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(resolved_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures={len(failures)} addressed_by_later_success=1")
+        else:
+            print(f"action=open marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(marker_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures={len(failures)} addressed_by_later_success={1 if addressed_by_later_success else 0} kind={field(first['kind'])} exit_line={field(first['exit_line'])}")
+        raise SystemExit(0)
+
+    if status_marker == "WORK_DONE" and selected_marker_path.exists() and bug_report_only:
+        print(f"action=preserved_report_only marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(selected_marker_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures=0")
+    elif status_marker == "WORK_DONE" and selected_marker_path.exists():
+        resolved_path = resolve_marker(selected_marker_path, "work_done_without_new_tool_failure")
+        print(f"action=resolved marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(resolved_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures=0")
     else:
-        existing = {}
-    first = failures[0]
-    existing_signatures = existing.get("failure_signatures", [])
-    if not isinstance(existing_signatures, list):
-        existing_signatures = []
-    existing_signatures = [str(item) for item in existing_signatures if isinstance(item, str)]
+        print(f"action=none marker_id={field(marker_id)} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures=0")
 
-    existing_signature_lookup = set(existing_signatures)
-    unique_failures = []
-    for item in failures:
-        signature = failure_signature(item["kind"], item["command"], item["exit_line"])
-        item["signature"] = signature
-        if signature not in existing_signature_lookup:
-            unique_failures.append(item)
-            existing_signature_lookup.add(signature)
 
-    first_failure = existing.get("first_failure_kind")
-    first_failure_command = existing.get("first_failure_command")
-    first_failure_exit_line = existing.get("first_failure_exit_line")
-    if not (first_failure and first_failure_command and first_failure_exit_line):
-        first_failure = first["kind"]
-        first_failure_command = first["command"]
-        first_failure_exit_line = first["exit_line"]
-
-    last_failure = failures[-1]
-    failure_count = int(existing.get("failure_count", 0) or 0) + len(unique_failures)
-    signatures = existing_signatures.copy()
-    for item in unique_failures:
-        signatures.append(item["signature"])
-    data = {
-        "version": 1,
-        "status": "open",
-        "marker_id": marker_id,
-        "target_path": target_path,
-        "first_seen_epoch": int(existing.get("first_seen_epoch", now) or now),
-        "first_seen_cycle": existing.get("first_seen_cycle", cycle_id),
-        "first_seen_run_hash": existing.get("first_seen_run_hash", run_hash),
-        "last_seen_epoch": now,
-        "last_seen_cycle": cycle_id,
-        "last_seen_run_hash": run_hash,
-        "last_transcript": str(transcript_path),
-        "last_codex_exit": codex_exit,
-        "last_status_marker": status_marker,
-        "failure_count": failure_count,
-        "failure_signatures": signatures,
-        "first_failure_kind": first_failure,
-        "first_failure_command": first_failure_command,
-        "first_failure_exit_line": first_failure_exit_line,
-        "last_failure_kind": last_failure["kind"],
-        "last_failure_command": last_failure["command"],
-        "last_failure_exit_line": last_failure["exit_line"],
-        "failure_samples": failures[:5],
-        "addressed_by_later_success": addressed_by_later_success,
-    }
-    write_json_atomic(marker_path, data)
-    if addressed_by_later_success and not bug_report_only:
-        reason = "work_done_after_detected_failure" if status_marker == "WORK_DONE" else "later_success_after_detected_failure"
-        resolved_path = resolve_marker(marker_path, reason)
-        print(f"action=resolved_same_run marker_id={field(marker_id)} marker_path={field(str(resolved_path))} target_path={field(target_path)} failures={len(failures)} addressed_by_later_success=1")
-    else:
-        print(f"action=open marker_id={field(marker_id)} marker_path={field(str(marker_path))} target_path={field(target_path)} failures={len(failures)} addressed_by_later_success={1 if addressed_by_later_success else 0} kind={field(first['kind'])} exit_line={field(first['exit_line'])}")
-    raise SystemExit(0)
-
-if status_marker == "WORK_DONE" and selected_marker_path.exists() and bug_report_only:
-    print(f"action=preserved_report_only marker_id={field(marker_id)} marker_path={field(str(selected_marker_path))} target_path={field(target_path)} failures=0")
-elif status_marker == "WORK_DONE" and selected_marker_path.exists():
-    resolved_path = resolve_marker(selected_marker_path, "work_done_without_new_tool_failure")
-    print(f"action=resolved marker_id={field(marker_id)} marker_path={field(str(resolved_path))} target_path={field(target_path)} failures=0")
-else:
-    print(f"action=none marker_id={field(marker_id)} target_path={field(target_path)} failures=0")
+try:
+    main()
+except SystemExit:
+    raise
+except Exception as exc:
+    print(f"action=error error_class={field(type(exc).__name__)} path_redacted=1")
+    raise SystemExit(1)
 PY
   )"
   rc=$?
   set -e
 
   if [[ "$rc" -ne 0 ]]; then
-    log_line "WARN" "tool_failure_queue.update_failed target=$(shell_quote "$target_path") transcript=$(shell_quote "$transcript_file") detail=$(shell_quote "$output")"
+    log_line "WARN" "tool_failure_queue.update_failed target_hmac=$target_path_hmac transcript_hmac=$transcript_path_hmac path_redacted=1 detail=$(shell_quote "$output")"
     return 0
   fi
 

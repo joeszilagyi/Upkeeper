@@ -6133,6 +6133,14 @@ def warn_sensitive_export_request(args: argparse.Namespace, output: Path) -> Non
     )
 
 
+def reject_nonfinite_json_constant(token: str) -> None:
+    raise ValueError(f"unsupported non-finite JSON constant: {token}")
+
+
+def load_strict_json(raw: str) -> Any:
+    return json.loads(raw, parse_constant=reject_nonfinite_json_constant)
+
+
 def sanitize_import_identity_payload(table: str, payload: dict[str, Any], context: tuple[str, str, str]) -> dict[str, Any]:
     if table == "repositories":
         return sanitize_repository_payload(payload, context)
@@ -6261,8 +6269,10 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
         if not raw:
             continue
         try:
-            row = json.loads(raw)
-        except json.JSONDecodeError:
+            row = load_strict_json(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(row, dict):
             continue
         if row.get("row_type") != "lattice_imports":
             continue
@@ -6290,15 +6300,19 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 continue
             rows_seen += 1
             try:
-                row = json.loads(raw)
-            except json.JSONDecodeError:
+                row = load_strict_json(raw)
+            except (TypeError, ValueError, json.JSONDecodeError):
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, "jsonl", f"line:{rows_seen}", "", "", "malformed_json")
+                continue
+            if not isinstance(row, dict):
+                conflicts += 1
+                record_import_conflict(conn, import_id, repo_id, "jsonl", f"line:{rows_seen}", "", "", "unsupported_row")
                 continue
             table = row.get("row_type")
             payload = row.get("payload")
             logical_key = str(row.get("logical_key", ""))
-            payload_hash = str(row.get("payload_sha256", ""))
+            declared_payload_hash = str(row.get("payload_sha256", ""))
             schema_version = row.get("schema_version")
             row_version = row.get("row_version")
             try:
@@ -6306,30 +6320,29 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     raise ValueError
             except (TypeError, ValueError):
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "schema_mismatch")
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "schema_mismatch")
                 continue
             try:
                 if int(row_version) != SCHEMA_ROW_VERSION:
                     raise ValueError
             except (TypeError, ValueError):
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "row_version_mismatch")
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "row_version_mismatch")
                 continue
             if not isinstance(payload, dict):
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "unsupported_row")
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "unsupported_row")
                 continue
             if has_redacted_path_token(payload):
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "redacted_path_payload")
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "redacted_path_payload")
                 continue
-            raw_payload_hash = sha256_text(json_dumps(payload))
-            if str(row.get("payload_sha256", "")) != raw_payload_hash:
+            incoming_raw_hash = sha256_text(json_dumps(payload))
+            if declared_payload_hash != incoming_raw_hash:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", raw_payload_hash, "payload_hash_mismatch")
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", incoming_raw_hash, "payload_hash_mismatch")
                 continue
             payload = sanitize_import_identity_payload(str(table), payload, context)
-            payload_hash = sha256_text(json_dumps(semantic_import_payload(str(table), payload)))
             if table == "lattice_unavailable" and isinstance(payload, dict):
                 # Recovery spool rows can contain DB paths and prior failure text;
                 # default imports keep only a hashed summary unless raw retention
@@ -6351,7 +6364,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 continue
             if table not in REQUIRED_TABLES:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", payload_hash, "unsupported_row")
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", incoming_raw_hash, "unsupported_row")
                 continue
             columns = table_columns(conn, table)
             pk = table_primary_key(conn, table)
@@ -6363,11 +6376,11 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     redact_raw=bool(getattr(args, "redact_raw", False)),
                     raw_storage_mode=raw_storage_mode,
                 )
-                payload_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
             if not filtered:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, table, logical_key, "", payload_hash, "empty_filtered_payload")
+                record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_raw_hash, "empty_filtered_payload")
                 continue
+            incoming_semantic_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
             existing = None
             if pk and filtered.get(pk) is not None:
                 existing = conn.execute(f"select * from {table} where {pk}=?", (filtered[pk],)).fetchone()
@@ -6377,11 +6390,11 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     continue
                 existing_payload = semantic_import_payload(table, {key: existing[key] for key in columns})
                 existing_hash = sha256_text(json_dumps(existing_payload))
-                if existing_hash == payload_hash:
+                if existing_hash == incoming_semantic_hash:
                     duplicates += 1
                     continue
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, table, logical_key, existing_hash, payload_hash, "kept_existing")
+                record_import_conflict(conn, import_id, repo_id, table, logical_key, existing_hash, incoming_semantic_hash, "kept_existing")
                 continue
             colnames = list(filtered.keys())
             placeholders = ",".join("?" for _ in colnames)
@@ -6393,7 +6406,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 rows_written += 1
             except sqlite3.IntegrityError as exc:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, table, logical_key, "", payload_hash, f"integrity_error:{exc}")
+                record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_semantic_hash, f"integrity_error:{exc}")
             else:
                 if table == "file_pass_runs":
                     refresh_pass_rollups = True

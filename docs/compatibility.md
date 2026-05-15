@@ -103,6 +103,14 @@ Future changes should preserve this operator-visible surface as far as possible:
   plaintext recovery must explicitly set both
   `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0` and
   `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1`.
+- Trusted machine-local encrypted-backup bootstrap is now part of the stable
+  operator surface. `UPKEEPER_LOCAL_ENV_FILE` may provide
+  `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT`, and
+  `tools/upkeeper_precontact_bootstrap.sh` remains the central way to create or
+  refresh that machine-local recipient without tracked repo churn.
+- When encrypted backup is required for a live apply-stage or normal repair
+  cycle, missing machine-local recipient setup now fails before issue
+  selection and is reported as machine health, not as a target-file regression.
 - The central default config remains `Upkeeper.conf`, and named config profiles
   can be selected per invocation with `--config-file=PATH`.
 - Existing documented environment knobs keep their meaning unless a change note

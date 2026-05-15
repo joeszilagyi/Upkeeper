@@ -178,6 +178,12 @@ Important:
     basic profile template. Use --config-file=PATH to select one shell-compatible
     config file for this invocation, or --no-config to skip the default config.
     Relative config paths are resolved from the invocation repository root.
+    After the selected config file is sourced, Upkeeper also sources a trusted
+    machine-local env file from UPKEEPER_LOCAL_ENV_FILE when it exists, unless
+    UPKEEPER_LOCAL_ENV_DISABLE=1. Use
+    tools/upkeeper_precontact_bootstrap.sh to populate
+    UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT there without committing machine
+    setup into repo config.
     Config files may set CODEX_* runtime knobs and UPKEEPER_* flag defaults such
     as UPKEEPER_TARGET_FILE, UPKEEPER_REVIEW_MODULES, UPKEEPER_PROMPT_FILE,
     UPKEEPER_PROMPT, UPKEEPER_PROMPT_PASS, UPKEEPER_PROMPT_TRUST_ROOT,
@@ -290,7 +296,12 @@ Prompt behavior:
     rejects high-confidence private-key content even when that unsafe override
     is set. Backup logs and prompts include mode, encrypted,
     protected_from_backend, and path_redacted=1; the vault path is not
-    prompt-visible. Restore a plain backup by id with:
+    prompt-visible. On live apply-stage or normal repair cycles, Upkeeper
+    resolves required encrypted backup before issue selection; if the machine
+    lacks an age recipient, it stops with a machine-health obligation and points
+    at tools/upkeeper_precontact_bootstrap.sh instead of attributing that local
+    setup failure to whichever issue happened to be next. Restore a plain
+    backup by id with:
       tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID
   - A repo-root .upkeeperignore, or the file named by UPKEEPER_IGNORE_FILE,
     is a target-selection firewall. It uses simple Gitignore-style glob lines
@@ -456,6 +467,8 @@ Environment overrides:
   UPKEEPER_LATTICE_SELECTION_MODE Default: oldest-mtime
   UPKEEPER_LATTICE_RAW_STORAGE Default: limited
   UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE Default: delete
+  UPKEEPER_LOCAL_ENV_FILE      Default: $UPKEEPER_LOCAL_ENV_FILE
+  UPKEEPER_LOCAL_ENV_DISABLE   Default: $UPKEEPER_LOCAL_ENV_DISABLE
   UPKEEPER_PRECONTACT_BACKUP_ENABLED Default: $UPKEEPER_PRECONTACT_BACKUP_ENABLED
   UPKEEPER_PRECONTACT_BACKUP_REQUIRED Default: $UPKEEPER_PRECONTACT_BACKUP_REQUIRED
   UPKEEPER_PRECONTACT_BACKUP_MODE Default: $UPKEEPER_PRECONTACT_BACKUP_MODE

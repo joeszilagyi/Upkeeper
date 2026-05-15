@@ -203,6 +203,20 @@ if [[ "$obligation_status" == "ok" ]]; then
   upkeeper_launcher_report_full_burn "FlameOn"
   CODEX_TERMINAL_VERBOSITY="$FLAMEON_VERBOSITY" exec "$UPKEEPER_CMD" "${args[@]}"
 fi
+if [[ "$obligation_status" == "operator_action_required" ]]; then
+  obligation_id="$(automation_json_field "$obligation_json" id)"
+  obligation_kind="$(automation_json_field "$obligation_json" kind)"
+  obligation_summary="$(automation_json_field "$obligation_json" summary)"
+  obligation_repair_target="$(automation_json_field "$obligation_json" repair_target_file)"
+  obligation_reason="$(automation_json_field "$obligation_json" reason)"
+  printf 'FlameOn: operator action required before normal burn work can continue\n' >&2
+  printf 'FlameOn: obligation id=%s kind=%s reason=%s\n' "$obligation_id" "$obligation_kind" "$obligation_reason" >&2
+  printf 'FlameOn: %s\n' "$obligation_summary" >&2
+  if [[ -n "$obligation_repair_target" ]]; then
+    printf 'FlameOn: run %s, then rerun FlameOn\n' "$obligation_repair_target" >&2
+  fi
+  exit 75
+fi
 
 args=(
   "--model-override=$FLAMEON_MODEL_OVERRIDE"

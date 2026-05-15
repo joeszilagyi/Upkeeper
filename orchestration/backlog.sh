@@ -17,6 +17,9 @@ BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-high}"
 BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
 BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-900}"
 BACKLOG_PER_BUG_VALIDATION_MODE="${BACKLOG_PER_BUG_VALIDATION_MODE:-light}"
+BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"
+BACKLOG_AUTOSHELVE_BRANCH_PREFIX="${BACKLOG_AUTOSHELVE_BRANCH_PREFIX:-wip/backlog-autoshelve/}"
+BACKLOG_AUTOSHELVE_PROBE="${BACKLOG_AUTOSHELVE_PROBE:-0}"
 BACKLOG_ALLOW_INTERACTIVE_STDIN="${BACKLOG_ALLOW_INTERACTIVE_STDIN:-0}"
 BACKLOG_ALLOW_INTERACTIVE_STDIO="${BACKLOG_ALLOW_INTERACTIVE_STDIO:-$BACKLOG_ALLOW_INTERACTIVE_STDIN}"
 BACKLOG_INTERACTIVE_MODE="${BACKLOG_INTERACTIVE_MODE:-watch}"
@@ -42,6 +45,10 @@ require_clean_worktree() {
   local status
   status="$(git status --short)"
   [[ -z "$status" ]] || fail "working tree is not clean; finish or stash local changes before running backlog.sh"
+}
+
+dirty_worktree_status() {
+  git status --short
 }
 
 backlog_state_root() {
@@ -281,6 +288,35 @@ deferred_issue_file() {
 cleanup_ephemeral_artifacts() {
   find "$ROOT_DIR" -type d -name '__pycache__' -prune -exec rm -rf -- {} + 2>/dev/null || true
   find "$ROOT_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true
+}
+
+autoshelve_dirty_worktree_if_enabled() {
+  local status current_branch current_head shelve_branch shellved_summary
+
+  status="$(dirty_worktree_status)"
+  [[ -n "$status" ]] || return 0
+  [[ "$BACKLOG_AUTOSHELVE_DIRTY_WORKTREE" == "1" ]] || return 0
+
+  current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  current_head="$(git rev-parse HEAD 2>/dev/null || printf '')"
+  [[ -n "$current_head" ]] || fail "cannot autoshelve dirty worktree without a current HEAD"
+  shelve_branch="${BACKLOG_AUTOSHELVE_BRANCH_PREFIX}$(date +%Y%m%d-%H%M%S)"
+
+  log "dirty worktree detected; autoshelving local changes to $shelve_branch before backlog issue work"
+  cleanup_ephemeral_artifacts
+  git checkout -b "$shelve_branch" >/dev/null
+  git add --all
+  git diff --cached --check
+  git commit -m "Preserve dirty backlog launcher worktree from ${current_branch}" >/dev/null
+  shellved_summary="$(git rev-parse --short HEAD 2>/dev/null || printf 'unknown')"
+  git checkout "$current_branch" >/dev/null
+  git reset --hard "$current_head" >/dev/null
+  require_clean_worktree
+  log "autoshelved local changes on $shelve_branch at $shellved_summary; backlog will continue on clean branch $current_branch"
+
+  if [[ "$BACKLOG_AUTOSHELVE_PROBE" == "1" ]]; then
+    exit 0
+  fi
 }
 
 prepare_backlog_runtime_env() {
@@ -682,6 +718,7 @@ main() {
   require_command jq
   require_command rg
 
+  autoshelve_dirty_worktree_if_enabled
   require_clean_worktree
   pr_info="$(current_backlog_pr)"
   if [[ -z "$pr_info" ]]; then

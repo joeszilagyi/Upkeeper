@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29] [--review-modules=p24,p25,p26,p27,p28,p29] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.16
+Version: v1.2.17
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -166,6 +166,11 @@ Important:
     `UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE`, `UPKEEPER_MODEL_OVERRIDE`,
     `UPKEEPER_IGNORE_FAILURE_QUEUE`, `UPKEEPER_MAX_COVER`,
     `UPKEEPER_BUG_REPORT_ONLY`, and `UPKEEPER_FIX_NEXT_ISSUE`. They may also
+    source a trusted machine-local env file from `UPKEEPER_LOCAL_ENV_FILE`
+    after the selected config file unless `UPKEEPER_LOCAL_ENV_DISABLE=1`. Use
+    `tools/upkeeper_precontact_bootstrap.sh` to populate
+    `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` there without committing machine
+    setup into repo config. Config files may also
     set pre-contact backup defaults such as `UPKEEPER_PRECONTACT_BACKUP_MODE`,
     `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED`,
     `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT`,
@@ -280,7 +285,12 @@ Prompt behavior:
     also rejects high-confidence private-key content even when that unsafe
     override is set. Backup logs and prompts include HMAC target identity, mode,
     encrypted, `protected_from_backend`, and `path_redacted=1`; the vault path
-    is not prompt-visible. Restore a plain backup by id with:
+    is not prompt-visible. On live apply-stage or normal repair cycles,
+    Upkeeper resolves required encrypted backup before issue selection; if the
+    machine lacks an age recipient, it stops with a machine-health obligation
+    and points at `tools/upkeeper_precontact_bootstrap.sh` instead of
+    attributing that local setup failure to whichever issue happened to be
+    next. Restore a plain backup by id with:
       `tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID`
   - A repo-root `.upkeeperignore`, or the file named by `UPKEEPER_IGNORE_FILE`,
     is a target-selection firewall. It uses simple Gitignore-style glob lines
@@ -473,6 +483,8 @@ Environment overrides:
   UPKEEPER_LATTICE_SELECTION_MODE Default: oldest-mtime
   UPKEEPER_LATTICE_RAW_STORAGE Default: limited
   UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE Default: delete
+  UPKEEPER_LOCAL_ENV_FILE      Default: ${XDG_CONFIG_HOME:-$HOME/.config}/upkeeper/local.env
+  UPKEEPER_LOCAL_ENV_DISABLE   Default: 0
   UPKEEPER_PRECONTACT_BACKUP_ENABLED Default: 1
   UPKEEPER_PRECONTACT_BACKUP_REQUIRED Default: 1
   UPKEEPER_PRECONTACT_BACKUP_MODE Default: auto
@@ -628,24 +640,21 @@ Live ChimneySweep runs
 use the same full-burn launcher defaults as FlameOn: Lattice required,
 encrypted pre-contact backup required, quota guardrail stops bypassed, cooldown
 markers bypassed, quota stop floors set to `0`, and `--sandbox workspace-write`
-pinned. Set `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` before running it live.
+pinned. Run `tools/upkeeper_precontact_bootstrap.sh` before using it live.
 
-One-time setup for live full-burn launchers:
+Recommended one-time setup for live full-burn launchers:
 
 ```sh
 sudo apt-get update
 sudo apt-get install -y age
 
-mkdir -p "$HOME/.config/age"
-chmod 700 "$HOME/.config/age"
-age-keygen -o "$HOME/.config/age/upkeeper.txt"
-chmod 600 "$HOME/.config/age/upkeeper.txt"
-export UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT="$(age-keygen -y "$HOME/.config/age/upkeeper.txt")"
+tools/upkeeper_precontact_bootstrap.sh
 ```
 
-`UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` is public. Keep the private identity
-file out of prompts, logs, committed config, and backend-visible environments;
-use it only when manually restoring encrypted backup payloads.
+That writes the public `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` into
+`${XDG_CONFIG_HOME:-$HOME/.config}/upkeeper/local.env`. Keep the private
+identity file out of prompts, logs, committed config, and backend-visible
+environments; use it only when manually restoring encrypted backup payloads.
 
 ## Pre-Contact Backup Examples
 

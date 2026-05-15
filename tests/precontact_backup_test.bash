@@ -95,8 +95,12 @@ reset_env() {
   UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE=20
   UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT=""
   UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS=1
+  UPKEEPER_LOCAL_ENV_FILE="$TEST_TMP_ROOT/$name.local.env"
   UPKEEPER_REDACTION_KEY="precontact-test-key-$name"
+  UPKEEPER_DRY_RUN=0
   CODEX_TARGET_FILE=""
+  CODEX_BUG_REPORT_ONLY=0
+  CODEX_ISSUE_WORKFLOW_STAGE=""
   RUN_PRECONTACT_BACKUP_ID=""
   RUN_PRECONTACT_BACKUP_SHA256=""
   RUN_PRECONTACT_BACKUP_MODE=""
@@ -105,6 +109,25 @@ reset_env() {
   mkdir -p "$RUN_TMP_DIR"
   chmod 700 "$RUN_TMP_DIR"
   : >"$LOG_FILE"
+}
+
+test_machine_preflight_blocks_before_issue_selection() {
+  local repo="$TEST_TMP_ROOT/machine-preflight repo"
+  local rc
+
+  make_repo "$repo"
+  reset_env "$repo" machine-preflight
+
+  set +e
+  ( precontact_backup_machine_preflight_or_exit )
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 7 ]] || fail "machine preflight exited $rc, expected 7"
+  grep -Fq "reason=PRECONTACT_BACKUP_PREREQ_MISSING" "$FINISH_CAPTURE" || fail "machine preflight did not preserve prereq-missing reason"
+  grep -Fq "preflight_reason=recipient_missing" "$FINISH_CAPTURE" || fail "machine preflight did not preserve recipient-missing detail"
+  grep -Fq "local_env_file=$UPKEEPER_LOCAL_ENV_FILE" "$FINISH_CAPTURE" || fail "machine preflight did not name the local env file"
+  grep -Fq "precontact_backup.preflight_blocked" "$LOG_FILE" || fail "machine preflight block was not logged"
 }
 
 write_selection_file() {
@@ -660,8 +683,20 @@ test_plain_restore_temporary_directory_cleaned_on_failure() {
   [[ "$tmp_count" == "0" ]] || fail "temporary restore directory not cleaned (found ${tmp_count})"
 }
 
+test_machine_preflight_skips_read_only_issue_stages() {
+  local repo="$TEST_TMP_ROOT/machine-preflight-review repo"
+
+  make_repo "$repo"
+  reset_env "$repo" machine-preflight-review
+  CODEX_ISSUE_WORKFLOW_STAGE="review"
+
+  precontact_backup_machine_preflight_or_exit
+}
+
 test_plain_required_backup_succeeds
 test_age_mode_uses_public_recipient_only
+test_machine_preflight_blocks_before_issue_selection
+test_machine_preflight_skips_read_only_issue_stages
 test_required_encrypted_mode_fails_closed
 test_default_auto_mode_fails_closed_without_age
 test_plain_mode_requires_explicit_unsafe_override

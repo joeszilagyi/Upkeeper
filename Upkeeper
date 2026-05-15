@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.16
+## Version: v1.2.17
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -39,6 +39,11 @@ UPKEEPER_CONFIG_DISABLE="${UPKEEPER_CONFIG_DISABLE:-0}"
 UPKEEPER_CONFIG_LOADED="0"
 UPKEEPER_CONFIG_SOURCE="none"
 UPKEEPER_CONFIG_SOURCE_HASH="none"
+UPKEEPER_LOCAL_ENV_FILE="${UPKEEPER_LOCAL_ENV_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/upkeeper/local.env}"
+UPKEEPER_LOCAL_ENV_DISABLE="${UPKEEPER_LOCAL_ENV_DISABLE:-0}"
+UPKEEPER_LOCAL_ENV_LOADED="0"
+UPKEEPER_LOCAL_ENV_SOURCE="none"
+UPKEEPER_LOCAL_ENV_SOURCE_HASH="none"
 
 upkeeper_config_fail() {
   printf 'Upkeeper: %s\n' "$*" >&2
@@ -202,6 +207,28 @@ load_upkeeper_config_file() {
   source "$config_path"
 }
 
+load_upkeeper_local_env_file() {
+  local local_env_path
+
+  [[ "$UPKEEPER_LOCAL_ENV_DISABLE" == "1" ]] && return 0
+  [[ -n "$UPKEEPER_LOCAL_ENV_FILE" ]] || return 0
+
+  local_env_path="$(resolve_upkeeper_config_path "$UPKEEPER_LOCAL_ENV_FILE")"
+  if [[ ! -e "$local_env_path" ]]; then
+    return 0
+  fi
+  [[ -f "$local_env_path" ]] || upkeeper_config_fail "local env file is not a regular file: $local_env_path"
+  [[ -r "$local_env_path" ]] || upkeeper_config_fail "local env file is not readable: $local_env_path"
+  upkeeper_config_assert_trusted_path "$local_env_path" "1"
+
+  UPKEEPER_LOCAL_ENV_FILE="$local_env_path"
+  UPKEEPER_LOCAL_ENV_LOADED="1"
+  UPKEEPER_LOCAL_ENV_SOURCE="$local_env_path"
+  UPKEEPER_LOCAL_ENV_SOURCE_HASH="$(upkeeper_config_content_hash "$local_env_path" || printf 'unknown')"
+  # shellcheck source=/dev/null
+  source "$local_env_path"
+}
+
 load_fallback_cycle_contract() {
   local contract_path="${CODEX_FALLBACK_CONTRACT_PATH:-}"
   local postmortem_root="${CODEX_POSTMORTEM_DIR:-${ROOT_DIR}/runtime/journals/upkeeper-postmortems}"
@@ -231,6 +258,7 @@ fi
 
 preparse_upkeeper_config_args "$@"
 load_upkeeper_config_file
+load_upkeeper_local_env_file
 
 LOG_FILE="${CODEX_LOG_FILE:-$ROOT_DIR/Upkeeper.log}"
 LOG_FILE_DIR="$(dirname -- "$LOG_FILE")"
@@ -241,7 +269,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.16"
+UPKEEPER_VERSION="v1.2.17"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -1277,6 +1305,7 @@ main() {
 
   log_line "INFO" "$(cycle_start_log_message "$direct_parent_pid" "$direct_parent_comm" "$direct_parent_start_fingerprint" "$loop_parent_pid" "$loop_parent_comm" "$loop_parent_start_fingerprint" "$loop_parent_override" "$wrapper_start_fingerprint")"
   automation_record_cycle_start || log_line "WARN" "automation.run_record.start_failed path=$(shell_quote "${RUN_AUTOMATION_RECORD_FILE:-unknown}")"
+  precontact_backup_machine_preflight_or_exit
   resolve_issue_fix_next_or_exit
   lattice_init_and_doctor_or_exit
   lattice_record_cycle_start

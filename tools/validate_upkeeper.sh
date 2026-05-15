@@ -305,6 +305,8 @@ check_backlog_launcher_contract() {
   grep -Fq 'another backlog run already owns this checkout' orchestration/backlog.sh || fail "backlog launcher does not explain active backlog ownership"
   grep -Fq 'active-owner.' orchestration/backlog.sh || fail "backlog launcher does not track an explicit repo-local active owner file"
   grep -Fq 'start_ticks' orchestration/backlog.sh || fail "backlog launcher does not guard against stale PID reuse in active owner tracking"
+  grep -Fq 'BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default dirty-worktree autoshelve on"
+  grep -Fq 'autoshelving local changes to' orchestration/backlog.sh || fail "backlog launcher does not explain dirty-worktree autoshelve"
   [[ -x orchestration/backlog_loop.sh ]] || fail "backlog safe loop wrapper is not executable"
   grep -Fq 'CODEX_TERMINAL_VERBOSITY="${BACKLOG_CODEX_TERMINAL_VERBOSITY:-${CODEX_TERMINAL_VERBOSITY:-quiet}}"' orchestration/backlog.sh || fail "backlog launcher does not default to quiet terminal output"
   grep -Fq '</dev/null >>"$log_file" 2>&1' orchestration/backlog_loop.sh || fail "backlog loop wrapper does not detach stdin and redirect output"
@@ -319,6 +321,42 @@ check_backlog_launcher_contract() {
     grep -Fq '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to '"$temp_dir/loop.log" "$temp_dir/typescript" ||
       fail "backlog launcher did not explain interactive watch mode"
   fi
+}
+
+check_backlog_autoshelve_contract() {
+  local temp_dir output rc autoshelve_branch
+
+  log "checking backlog dirty-worktree autoshelve contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-backlog-autoshelve.XXXXXX)"
+  mkdir -p "$temp_dir/orchestration"
+  cp orchestration/backlog.sh "$temp_dir/orchestration/backlog.sh"
+  chmod +x "$temp_dir/orchestration/backlog.sh"
+
+  (
+    cd "$temp_dir"
+    git init -q -b main
+    git config user.name "Upkeeper Validation"
+    git config user.email "validation@example.invalid"
+    printf 'baseline\n' >README.md
+    git add README.md orchestration/backlog.sh
+    git commit -q -m "baseline"
+    printf 'dirty local work\n' >>README.md
+
+    set +e
+    output="$(BACKLOG_ALLOW_INTERACTIVE_STDIO=1 BACKLOG_AUTOSHELVE_PROBE=1 ./orchestration/backlog.sh 2>&1)"
+    rc=$?
+    set -e
+
+    [[ "$rc" -eq 0 ]] || fail "backlog autoshelve probe exited $rc"
+    [[ "$(git rev-parse --abbrev-ref HEAD)" == "main" ]] || fail "backlog autoshelve did not return to main"
+    [[ -z "$(git status --short)" ]] || fail "backlog autoshelve did not restore a clean worktree"
+    autoshelve_branch="$(git for-each-ref --format='%(refname:short)' 'refs/heads/wip/backlog-autoshelve/*' | sed -n '1p')"
+    [[ -n "$autoshelve_branch" ]] || fail "backlog autoshelve did not create a shelve branch"
+    grep -Fq "autoshelved local changes on $autoshelve_branch" <<<"$output" || fail "backlog autoshelve did not report the shelve branch"
+    git show "$autoshelve_branch:README.md" | grep -Fq 'dirty local work' || fail "backlog autoshelve branch did not preserve dirty work"
+  )
+
+  rm -r "$temp_dir"
 }
 
 check_version_consistency() {
@@ -379,6 +417,7 @@ check_prompt_template() {
   [[ -s tests/lattice_test.bash ]] || fail "Lattice test is missing or empty"
   [[ -s tests/precontact_backup_test.bash ]] || fail "pre-contact backup test is missing or empty"
   [[ -s docs/lattice.md ]] || fail "Lattice documentation is missing or empty"
+  [[ -x tools/upkeeper_precontact_bootstrap.sh ]] || fail "pre-contact bootstrap helper is missing or not executable"
   [[ -x tools/upkeeper_precontact_restore.sh ]] || fail "pre-contact restore helper is missing or not executable"
   [[ -x FlameOn ]] || fail "FlameOn launcher is missing or not executable"
   [[ -x ChimneySweep ]] || fail "ChimneySweep launcher is missing or not executable"
@@ -446,6 +485,10 @@ check_prompt_template() {
   grep -Fq ".upkeeperignore" docs/compatibility.md || fail "compatibility docs missing .upkeeperignore contract"
   grep -Fq ".upkeeperignore" docs/security.md || fail "security docs missing .upkeeperignore boundary"
   grep -Fq "pre-contact backup" docs/security.md || fail "security docs missing pre-contact backup boundary"
+  grep -Fq "tools/upkeeper_precontact_bootstrap.sh" docs/scripts/upkeeper.md || fail "operator guide missing pre-contact bootstrap helper"
+  grep -Fq "UPKEEPER_LOCAL_ENV_FILE" docs/scripts/upkeeper.md || fail "operator guide missing machine-local env contract"
+  grep -Fq "tools/upkeeper_precontact_bootstrap.sh" docs/security.md || fail "security docs missing pre-contact bootstrap helper"
+  grep -Fq "UPKEEPER_LOCAL_ENV_FILE" docs/security.md || fail "security docs missing machine-local env contract"
   grep -Fq "age" docs/dependencies.md || fail "dependency docs missing age optional dependency"
   grep -Fq "tools/upkeeper_precontact_restore.sh" docs/scripts/upkeeper.md || fail "operator guide missing pre-contact restore helper"
   grep -Fq "tools/stress_upkeeper_corpus.sh --local" docs/stress-corpus.md || fail "stress corpus docs missing implemented command"
@@ -506,6 +549,8 @@ check_help_and_diff() {
   grep -Fq -- "UPKEEPER_FIX_NEXT_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_NEXT_ISSUE"
   grep -Fq -- "UPKEEPER_FIX_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_ISSUE"
   grep -Fq -- "UPKEEPER_ISSUE_WORKFLOW_STAGE" <<<"$help" || fail "help missing UPKEEPER_ISSUE_WORKFLOW_STAGE"
+  grep -Fq -- "UPKEEPER_LOCAL_ENV_FILE" <<<"$help" || fail "help missing UPKEEPER_LOCAL_ENV_FILE"
+  grep -Fq -- "tools/upkeeper_precontact_bootstrap.sh" <<<"$help" || fail "help missing pre-contact bootstrap helper"
   grep -Fq -- "UPKEEPER_PRECONTACT_BACKUP_ENABLED" <<<"$help" || fail "help missing UPKEEPER_PRECONTACT_BACKUP_ENABLED"
   grep -Fq -- "pre-contact backup" <<<"$help" || fail "help missing pre-contact backup summary"
   local flameon_cmd
@@ -1093,7 +1138,7 @@ check_arg0_tmp_cleanup_contract() {
 }
 
 check_automation_obligation_framework() {
-  local temp_dir run_record obligation_count obligation_file obligation_id resolved_file selected_json prompt_file
+  local temp_dir run_record obligation_count obligation_file obligation_id resolved_file selected_json prompt_file machine_file
 
   log "checking automation obligation framework"
   temp_dir="$(mktemp -d /tmp/upkeeper-automation-obligations.XXXXXX)"
@@ -1200,6 +1245,18 @@ JSON
       bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
   [[ "$(jq -r '.repair_target_file' <<<"$selected_json")" == "ChimneySweep" ]] || fail "automation obligation selector did not remap a poisoned runtime target to ChimneySweep"
+
+  machine_file="$temp_dir/obligations/open/precontact-machine.json"
+  cat >"$machine_file" <<'JSON'
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"precontact-machine","created_at":"2026-05-10T00:00:00-0700","kind":"precontact_backup_prereq_missing","severity":"high","summary":"Machine-local backup bootstrap is required before normal automation can continue","target_scope":"machine","target_file":"","repair_target_file":"tools/upkeeper_precontact_bootstrap.sh","reason":"PRECONTACT_BACKUP_PREREQ_MISSING","required_resolution":["bootstrap encrypted backup locally"]}
+JSON
+  selected_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
+      bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.status' <<<"$selected_json")" == "operator_action_required" ]] || fail "machine-health obligation selector did not stop normal automation"
+  [[ "$(jq -r '.repair_target_file' <<<"$selected_json")" == "tools/upkeeper_precontact_bootstrap.sh" ]] || fail "machine-health obligation selector lost bootstrap repair target"
+  [[ "$(jq -r '.target_scope' <<<"$selected_json")" == "machine" ]] || fail "machine-health obligation selector lost target_scope"
 
   rm -r "$temp_dir"
 }
@@ -3469,6 +3526,7 @@ run_check review_summary_parser check_review_summary_parser
 run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
 run_check backlog_launcher_contract check_backlog_launcher_contract
+run_check backlog_autoshelve_contract check_backlog_autoshelve_contract
 
 if [[ "$MODE" == "smoke" ]]; then
   log "$MODE validation passed"

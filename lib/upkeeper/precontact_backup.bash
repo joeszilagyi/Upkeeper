@@ -460,6 +460,63 @@ precontact_backup_resolve_mode() {
   esac
 }
 
+precontact_backup_local_env_file() {
+  printf '%s' "${UPKEEPER_LOCAL_ENV_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/upkeeper/local.env}"
+}
+
+precontact_backup_bootstrap_tool_path() {
+  printf '%s/tools/upkeeper_precontact_bootstrap.sh' "$ROOT_DIR"
+}
+
+precontact_backup_cycle_requires_machine_preflight() {
+  [[ "${UPKEEPER_DRY_RUN:-0}" != "1" ]] || return 1
+  case "${CODEX_ISSUE_WORKFLOW_STAGE:-apply}" in
+    comment|review)
+      return 1
+      ;;
+  esac
+  precontact_backup_required
+}
+
+precontact_backup_machine_preflight_or_exit() {
+  local bootstrap_path local_env_path reason hint
+
+  precontact_backup_cycle_requires_machine_preflight || return 0
+  if precontact_backup_resolve_mode; then
+    return 0
+  fi
+
+  reason="${PRECONTACT_BACKUP_LAST_REASON:-mode_unavailable}"
+  bootstrap_path="$(precontact_backup_bootstrap_tool_path)"
+  local_env_path="$(precontact_backup_local_env_file)"
+
+  case "$reason" in
+    recipient_missing)
+      hint="run $(shell_quote "$bootstrap_path") to create an age identity and write UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT into $(shell_quote "$local_env_path")"
+      ;;
+    age_missing)
+      hint="install age, then run $(shell_quote "$bootstrap_path") so encrypted pre-contact backup can proceed"
+      ;;
+    plaintext_override_required)
+      hint="either configure encrypted backup through $(shell_quote "$bootstrap_path") or explicitly opt into unsafe plaintext backup in machine-local config"
+      ;;
+    encrypted_required)
+      hint="configure an age recipient through $(shell_quote "$bootstrap_path") or explicitly relax the encrypted-backup requirement in machine-local config"
+      ;;
+    *)
+      hint="repair the pre-contact backup machine-local configuration before rerunning live mutating cycles"
+      ;;
+  esac
+
+  printf 'Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (%s)\n' "$reason" >&2
+  printf 'Upkeeper: %s\n' "$hint" >&2
+  if [[ "$reason" == "recipient_missing" || "$reason" == "age_missing" ]]; then
+    printf 'Upkeeper: expected machine-local env file: %s\n' "$local_env_path" >&2
+  fi
+  log_line "ERROR" "precontact_backup.preflight_blocked reason=$(shell_quote "$reason") bootstrap=$(shell_quote "$bootstrap_path") local_env_file=$(shell_quote "$local_env_path") action=$(shell_quote "$hint")"
+  finish_cycle 7 PRECONTACT_BACKUP_PREREQ_MISSING ERROR "codex_exec_started=0 preflight_reason=$(shell_quote "$reason") bootstrap=$(shell_quote "$bootstrap_path") local_env_file=$(shell_quote "$local_env_path")"
+}
+
 precontact_backup_copy_file() {
   local source_path="$1"
   local dest_path="$2"

@@ -6,6 +6,16 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-14: v1.2.17 changes:
+	1. Added trusted machine-local env loading after the selected config file, with `UPKEEPER_LOCAL_ENV_FILE` and `UPKEEPER_LOCAL_ENV_DISABLE` as the operator-controlled surface for machine-only backup/bootstrap settings.
+	2. Added `tools/upkeeper_precontact_bootstrap.sh` so operators and symlinked clients can create or reuse a local age identity and write only the public `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` into machine-local state instead of tracked repo config.
+	3. Live apply-stage and normal repair cycles now preflight required encrypted backup before issue selection, record missing-recipient failures as machine-health obligations, and make FlameOn/ChimneySweep stop plainly for operator action instead of misclassifying the next issue target.
+
+2026-05-14: backlog dirty-worktree autoshelve:
+	1. `orchestration/backlog.sh` now preserves a dirty local wrapper worktree automatically by committing it onto a dedicated local `wip/backlog-autoshelve/...` branch before starting new issue work, then returning to the original branch clean.
+	2. The launcher still refuses to start issue work on top of a dirty tree, but it no longer forces the operator to hand-stash or hand-branch routine local wrapper edits first.
+	3. This preservation path stays local by default instead of auto-opening a PR, because a blind PR from an existing backlog branch can accidentally stack unrelated backlog fixes into the wrong review.
+
 2026-05-14: v1.2.16 changes:
 	1. Selected-target pre-contact backup now defaults to encrypted-required mode for ordinary `./Upkeeper` runs, so missing `age` or a missing public recipient stops the cycle before backend launch instead of silently falling back to plaintext.
 	2. Plaintext pre-contact backup is now available only through an explicit unsafe operator override (`UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0` plus `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1`), making the compatibility break and migration path explicit.

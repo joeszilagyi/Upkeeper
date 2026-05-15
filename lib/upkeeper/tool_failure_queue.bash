@@ -87,6 +87,22 @@ def transcript_id_for(path: Path) -> str:
     return f"transcript-hmac-sha256:{hmac_hex('transcript', str(path))}"
 
 
+def scrub_marker_snapshot(data: dict, *, keep_target_path: bool) -> dict:
+    cleaned = {}
+    for key, value in data.items():
+        if key in {
+            "first_failure_command",
+            "last_failure_command",
+            "last_transcript_path",
+            "transcript_path",
+        }:
+            continue
+        if key == "target_path" and not keep_target_path:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
 def failure_signature(kind: str, command_hash: str, exit_line: str) -> str:
     payload = f"{kind}\0{command_hash}\0{exit_line}"
     return hashlib.sha256(payload.encode("utf-8", "surrogateescape")).hexdigest()
@@ -241,6 +257,7 @@ def write_json_atomic(path: Path, data: dict) -> None:
 def resolve_marker(path: Path, reason: str) -> Path:
     data = read_json(path)
     now = int(time.time())
+    data = scrub_marker_snapshot(data, keep_target_path=False)
     data.update(
         {
             "status": "resolved",

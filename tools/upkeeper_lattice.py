@@ -3439,10 +3439,11 @@ def current_scope_paths(conn: sqlite3.Connection, root: Path, repo_id: int, scop
     if scope == "current-eligible":
         return sorted(row["path"] for row in live_candidate_paths(root) if row["candidate_state"] == "eligible")
     if scope == "current-tracked":
-        if not inside_git_repo(root):
-            return []
-        raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"])
-        return sorted(stored_rel_path(p) for p in decode_git_output(raw).split("\0") if p)
+        return sorted(
+            row["path"]
+            for row in live_candidate_paths(root, candidate_scope="current-tracked")
+            if row["candidate_state"] == "eligible"
+        )
     if scope == "deleted":
         return [
             str(row["current_path"])

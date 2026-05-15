@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.21
+## Version: v1.2.22
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -269,7 +269,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.21"
+UPKEEPER_VERSION="v1.2.22"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -2659,13 +2659,20 @@ try:
 except (TypeError, ValueError):
     first_seen_epoch = 0
 
+try:
+    failure_count = int(data.get("failure_count", 0))
+    if failure_count < 0:
+        raise ValueError
+except (TypeError, ValueError):
+    failure_count = 0
+
 emit(
     "ok",
     marker_id=expected_marker_id,
     marker_path=str(marker_path),
     target_path=target_path,
     first_seen_epoch=str(first_seen_epoch),
-    failure_count=str(data.get("failure_count", "unknown")),
+    failure_count=str(failure_count),
     first_failure_kind_json=display_json(data.get("first_failure_kind", "unknown")),
     first_failure_exit_line_json=display_json(data.get("first_failure_exit_line", "unknown")),
 )

@@ -141,6 +141,7 @@ ARTIFACT_RETENTION_CLASSES = {
 }
 REDACTABLE_PATH_KEYS = {
     "path",
+    "paths",
     "old_path",
     "canonical_path",
     "current_path",
@@ -159,6 +160,8 @@ REDACTABLE_PATH_KEYS = {
     "source_uri",
     "repo_alias_id",
 }
+STRUCTURED_REDACTION_STRING_KEYS = {"raw_text", "details_json", "parsed_json"}
+CONTRIBUTOR_REDACT_KEYS = {"name", "email", "github_login"}
 UPKEEPER_LOG_SOURCE_SAFE_KEYS = {
     "timestamp",
     "level",
@@ -3357,19 +3360,35 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def has_redacted_path_token(payload: dict[str, Any]) -> bool:
+def key_requires_path_redaction(key: str | None) -> bool:
+    if not key:
+        return False
+    return key in REDACTABLE_PATH_KEYS or key == "selected_file" or key.endswith(("_path", "_paths", "_uri", "_uris"))
+
+
+def looks_like_json_container_string(value: str) -> bool:
+    stripped = value.strip()
+    return len(stripped) >= 2 and stripped[0] in "{[" and stripped[-1] in "}]"
+
+
+def has_redacted_path_token(payload: Any, current_key: str | None = None) -> bool:
     if isinstance(payload, dict):
         for key, value in payload.items():
-            if isinstance(value, dict) and has_redacted_path_token(value):
-                return True
-            if isinstance(value, list) and has_redacted_path_token(value):
-                return True
-            if key in REDACTABLE_PATH_KEYS and isinstance(value, str) and value.startswith(REDACTED_PATH_PREFIX):
+            if has_redacted_path_token(value, key):
                 return True
     elif isinstance(payload, list):
         for value in payload:
-            if has_redacted_path_token(value):
+            if has_redacted_path_token(value, current_key):
                 return True
+    elif isinstance(payload, str):
+        if key_requires_path_redaction(current_key) and payload.startswith(REDACTED_PATH_PREFIX):
+            return True
+        if looks_like_json_container_string(payload):
+            try:
+                parsed = json.loads(payload)
+            except (TypeError, json.JSONDecodeError):
+                return False
+            return has_redacted_path_token(parsed, current_key)
     return False
 
 
@@ -6039,37 +6058,46 @@ def redact_payload(payload: dict[str, Any], args: argparse.Namespace) -> dict[st
 
     raw_export_policy = getattr(args, "raw_export_policy", "full_redact")
 
-    def _redact(raw: Any) -> Any:
+    def _redact(raw: Any, current_key: str | None = None) -> Any:
         if isinstance(raw, dict):
             out: dict[str, Any] = {}
             for key, value in raw.items():
-                if key in ("raw_text", "details_json", "parsed_json") and raw_export_policy != "include":
+                if key in STRUCTURED_REDACTION_STRING_KEYS and raw_export_policy != "include":
                     if raw_export_policy != "structured_redact":
                         out[key] = "<redacted>"
                         continue
                     if isinstance(value, str):
-                        parsed = None
-                        try:
-                            parsed = json.loads(value)
-                        except (TypeError, json.JSONDecodeError):
+                        if looks_like_json_container_string(value):
+                            try:
+                                parsed = json.loads(value)
+                            except (TypeError, json.JSONDecodeError):
+                                parsed = None
+                        else:
                             parsed = None
-                        if parsed is not None:
-                            out[key] = json_dumps(_redact(parsed))
+                        if isinstance(parsed, (dict, list)):
+                            out[key] = json_dumps(_redact(parsed, key))
                         else:
                             out[key] = "<redacted>"
                     else:
                         out[key] = "<redacted>"
                     continue
-                if args.redact_paths and key in REDACTABLE_PATH_KEYS and isinstance(value, str):
-                    out[key] = REDACTED_PATH_PREFIX + sha256_text(value)
-                    continue
-                if args.redact_contributors and key in {"name", "email", "github_login"} and isinstance(value, str):
-                    out[key] = "<redacted>"
-                    continue
-                out[key] = _redact(value)
+                out[key] = _redact(value, key)
             return out
         if isinstance(raw, list):
-            return [_redact(item) for item in raw]
+            return [_redact(item, current_key) for item in raw]
+        if isinstance(raw, str):
+            if args.redact_paths and key_requires_path_redaction(current_key):
+                return REDACTED_PATH_PREFIX + sha256_text(raw)
+            if args.redact_contributors and current_key in CONTRIBUTOR_REDACT_KEYS:
+                return "<redacted>"
+            if (args.redact_paths or args.redact_contributors) and looks_like_json_container_string(raw):
+                try:
+                    parsed = json.loads(raw)
+                except (TypeError, json.JSONDecodeError):
+                    return raw
+                if isinstance(parsed, (dict, list)):
+                    redacted = _redact(parsed, current_key)
+                    return json_dumps(redacted) if redacted != parsed else raw
         return raw
 
     return _redact(payload)

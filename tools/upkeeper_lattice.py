@@ -2215,8 +2215,15 @@ def connect(
         chmod_private(db_path.parent, is_dir=True)
     if not db_path.parent.exists():
         fail(f"DB parent directory does not exist: {db_path.parent}", EXIT_DB_UNAVAILABLE)
+    connect_target = str(db_path)
+    connect_kwargs: dict[str, Any] = {}
+    if not create_if_missing:
+        # Fail closed when callers expect an existing DB so a missing file never
+        # becomes a newly created empty SQLite database during open-time races.
+        connect_target = f"{db_path.resolve().as_uri()}?mode=rw"
+        connect_kwargs["uri"] = True
     try:
-        conn = sqlite3.connect(str(db_path))
+        conn = sqlite3.connect(connect_target, **connect_kwargs)
     except sqlite3.Error as exc:
         fail(f"DB unavailable: {exc}", EXIT_DB_UNAVAILABLE)
     conn.row_factory = sqlite3.Row

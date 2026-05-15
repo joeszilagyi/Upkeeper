@@ -62,6 +62,19 @@ ALLOWED_OUTCOMES = {
     "regression_found",
     "unknown",
 }
+REVIEW_OUTCOME_MARKERS = (
+    "REVIEWED_AND_FIXED",
+    "REVIEWED_AND_REPORTED",
+    "REVIEWED_CLEAN",
+    "STOPPED_ON_BLOCKER",
+)
+REVIEW_OUTCOME_PATTERN = re.compile(r"\b(" + "|".join(REVIEW_OUTCOME_MARKERS) + r")\b")
+REVIEW_OUTCOME_LINE_PATTERN = re.compile(
+    r"^(?:[-*]\s*)?(?:final status|review outcome|outcome|status)\s*:?\s*("
+    + "|".join(REVIEW_OUTCOME_MARKERS)
+    + r")\s*$",
+    re.I,
+)
 
 SCRIPT_EXTS = {
     ".awk",
@@ -3739,6 +3752,11 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["raw_storage_effective"] = effective_lattice_raw_storage(configured_raw_storage)
         result["checks"]["raw_storage_valid"] = configured_raw_storage in RAW_STORAGE_COMPAT_MODES
         result["checks"]["raw_storage_enforcement"] = probe_raw_storage_enforcement(conn, root, ensure_repository(conn, root))
+        review_summary_probe = probe_review_summary_parsing()
+        result["checks"]["review_summary_parsing"] = review_summary_probe
+        if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
         if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
             result["status"] = "schema_mismatch"
             return result, EXIT_SCHEMA_MISMATCH
@@ -4328,10 +4346,7 @@ def parse_review_summary_file(path: Path) -> dict[str, str]:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
-    outcome = ""
-    for match in re.finditer(r"\b(REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", text):
-        outcome = match.group(1)
-        break
+    outcome = extract_review_outcome(text)
     selected_file = ""
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -4356,6 +4371,52 @@ def parse_review_summary_file(path: Path) -> dict[str, str]:
         if selected_file:
             break
     return {"review_outcome": outcome, "selected_file": selected_file}
+
+
+def extract_review_outcome(text: str) -> str:
+    labeled_outcome = ""
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        match = REVIEW_OUTCOME_LINE_PATTERN.match(line)
+        if match:
+            labeled_outcome = match.group(1)
+    if labeled_outcome:
+        return labeled_outcome
+    outcome = ""
+    for match in REVIEW_OUTCOME_PATTERN.finditer(text):
+        outcome = match.group(1)
+    return outcome
+
+
+def probe_review_summary_parsing() -> dict[str, Any]:
+    cases = {
+        "report_only": (
+            "selected file: `tools/upkeeper_lattice.py`\nREVIEWED_AND_REPORTED\n",
+            "REVIEWED_AND_REPORTED",
+        ),
+        "labeled_status": (
+            "Selected file: `tools/upkeeper_lattice.py`\nReview outcome: REVIEWED_AND_REPORTED\n",
+            "REVIEWED_AND_REPORTED",
+        ),
+        "last_marker_wins": (
+            "Allowed outcomes include REVIEWED_CLEAN and REVIEWED_AND_REPORTED.\n"
+            "Final status: REVIEWED_AND_FIXED\n",
+            "REVIEWED_AND_FIXED",
+        ),
+    }
+    results: dict[str, Any] = {}
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-review-summary-") as tmpdir:
+        for name, (content, expected) in cases.items():
+            path = Path(tmpdir) / f"{name}.txt"
+            path.write_text(content, encoding="utf-8")
+            parsed = parse_review_summary_file(path)
+            actual = parsed.get("review_outcome", "")
+            results[name] = {
+                "expected": expected,
+                "actual": actual,
+                "ok": actual == expected,
+            }
+    return results
 
 
 def snapshot_row_for_event(

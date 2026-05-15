@@ -307,6 +307,19 @@ check_backlog_launcher_contract() {
   grep -Fq 'start_ticks' orchestration/backlog.sh || fail "backlog launcher does not guard against stale PID reuse in active owner tracking"
   grep -Fq 'BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default dirty-worktree autoshelve on"
   grep -Fq 'autoshelving local changes to' orchestration/backlog.sh || fail "backlog launcher does not explain dirty-worktree autoshelve"
+  python3 - <<'PY' || fail "backlog autoshelve no longer runs before gh/jq/rg dependency gates"
+from pathlib import Path
+
+text = Path("orchestration/backlog.sh").read_text(encoding="utf-8")
+text = text[text.index("main()"):]
+git_gate = text.index("require_command git")
+autoshelve = text.index("autoshelve_dirty_worktree_if_enabled")
+clean_gate = text.index("require_clean_worktree", autoshelve)
+gh_gate = text.index("require_command gh")
+jq_gate = text.index("require_command jq")
+rg_gate = text.index("require_command rg")
+assert git_gate < autoshelve < clean_gate < gh_gate < jq_gate < rg_gate
+PY
   [[ -x orchestration/backlog_loop.sh ]] || fail "backlog safe loop wrapper is not executable"
   grep -Fq 'CODEX_TERMINAL_VERBOSITY="${BACKLOG_CODEX_TERMINAL_VERBOSITY:-${CODEX_TERMINAL_VERBOSITY:-quiet}}"' orchestration/backlog.sh || fail "backlog launcher does not default to quiet terminal output"
   grep -Fq '</dev/null >>"$log_file" 2>&1' orchestration/backlog_loop.sh || fail "backlog loop wrapper does not detach stdin and redirect output"
@@ -347,7 +360,7 @@ check_backlog_autoshelve_contract() {
     rc=$?
     set -e
 
-    [[ "$rc" -eq 0 ]] || fail "backlog autoshelve probe exited $rc"
+    [[ "$rc" -eq 0 ]] || fail "backlog autoshelve probe exited $rc output=$output"
     [[ "$(git rev-parse --abbrev-ref HEAD)" == "main" ]] || fail "backlog autoshelve did not return to main"
     [[ -z "$(git status --short)" ]] || fail "backlog autoshelve did not restore a clean worktree"
     autoshelve_branch="$(git for-each-ref --format='%(refname:short)' 'refs/heads/wip/backlog-autoshelve/*' | sed -n '1p')"

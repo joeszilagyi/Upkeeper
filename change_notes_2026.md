@@ -10,6 +10,7 @@ Version numbering note:
 	1. Added P30 as the Stark Protocol review module for permanent hardening: useful failures must leave a guard, deterministic validation, documented invariant, automation obligation, or explicit blocked follow-up instead of relying on operator memory.
 	2. Extended `--review-module=p30`, `--review-modules=...`, `--p30`, review-module selection filters, Bash completion, Lattice pass metadata, max-cover mode, FlameOn, ChimneySweep, and all-P-module testruns to include P30.
 	3. Updated README, operator guide, compatibility docs, public documentation policy, prompt index, validation, and launcher tests so the P30 contract is public and non-regressible.
+	4. Hardened backlog dirty-worktree autoshelve so preservation runs after the `git` gate but before `gh`, `jq`, or `rg` dependency gates, allowing dirty local work to be shelved even on minimal validation hosts before the launcher reports missing workload dependencies.
 
 2026-05-14: v1.2.17 changes:
 	1. Added trusted machine-local env loading after the selected config file, with `UPKEEPER_LOCAL_ENV_FILE` and `UPKEEPER_LOCAL_ENV_DISABLE` as the operator-controlled surface for machine-only backup/bootstrap settings.

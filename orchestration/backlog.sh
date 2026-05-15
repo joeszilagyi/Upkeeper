@@ -714,12 +714,13 @@ main() {
   trap clear_backlog_active_owner EXIT
 
   require_command git
+  autoshelve_dirty_worktree_if_enabled
+  require_clean_worktree
+
   require_command gh
   require_command jq
   require_command rg
 
-  autoshelve_dirty_worktree_if_enabled
-  require_clean_worktree
   pr_info="$(current_backlog_pr)"
   if [[ -z "$pr_info" ]]; then
     log "opening new backlog PR"

@@ -6388,6 +6388,11 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_raw_hash, "empty_filtered_payload")
                 continue
+            if table == "file_pass_runs":
+                # JSONL exports intentionally omit file_pass_rollups because they are
+                # derived state. Replayed pass rows still need a rollup refresh even
+                # when every imported row is a semantic duplicate of existing data.
+                refresh_pass_rollups = True
             incoming_semantic_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
             existing = None
             if pk and filtered.get(pk) is not None:
@@ -6415,9 +6420,6 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             except sqlite3.IntegrityError as exc:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_semantic_hash, f"integrity_error:{exc}")
-            else:
-                if table == "file_pass_runs":
-                    refresh_pass_rollups = True
         finish_import(
             conn,
             import_id,

@@ -711,6 +711,185 @@ resolve_prompt_file() {
   upkeeper_materialize_inline_prompt_file
 }
 
+upkeeper_internal_current_cycle_log_review_requested() {
+  config_truthy "${UPKEEPER_INTERNAL_CURRENT_CYCLE_LOG_REVIEW:-0}"
+}
+
+upkeeper_emit_sanitized_current_cycle_log_review() {
+  local review_cycle_id="${UPKEEPER_INTERNAL_CURRENT_CYCLE_ID:-${CYCLE_ID:-}}"
+
+  if [[ -z "$review_cycle_id" ]]; then
+    printf 'status=error\nreason=missing_cycle_id\n' >&2
+    return 2
+  fi
+  if [[ "$review_cycle_id" =~ [^A-Za-z0-9._:+-] ]]; then
+    printf 'status=error\nreason=invalid_cycle_id\n' >&2
+    return 2
+  fi
+  if [[ ! -r "$LOG_FILE" ]]; then
+    printf 'status=error\nreason=log_unreadable\n' >&2
+    return 2
+  fi
+
+  python3 - "$LOG_FILE" "$review_cycle_id" <<'PY'
+import hashlib
+import re
+import shlex
+import sys
+
+log_path, cycle_id = sys.argv[1:3]
+safe_keys = {
+    "action",
+    "anomalies",
+    "classification",
+    "codex_exit",
+    "coverage_gate_rc",
+    "detail_redacted",
+    "execution_origin",
+    "exit_code",
+    "final_exit",
+    "force_upkeeper",
+    "mode",
+    "owner_cycle",
+    "owner_pid",
+    "peer_cycle",
+    "peer_pid",
+    "phase",
+    "primary_decision",
+    "reason",
+    "reason_class",
+    "requested_parent_cycle",
+    "review_outcome",
+    "secondary_decision",
+    "session_end_state",
+    "stage",
+    "stale_seconds",
+    "state_id",
+    "status",
+    "status_marker",
+    "status_marker_source",
+    "task_complete_last_agent_message",
+    "trigger",
+}
+level_re = re.compile(r"^(\S+)\s+\[([A-Z]+)\]\s+(.*)$")
+cycle_fragment = f"cycle={cycle_id} "
+sanitized_lines = []
+
+with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+    for raw_line in handle:
+        if cycle_fragment not in raw_line:
+            continue
+        line = raw_line.rstrip("\n")
+        match = level_re.match(line)
+        if not match:
+            sanitized_lines.append("UNPARSED current_cycle_log_line")
+            continue
+        timestamp, level, payload = match.groups()
+        try:
+            tokens = shlex.split(payload)
+        except ValueError:
+            sanitized_lines.append(f"{timestamp} [{level}] parse_error")
+            continue
+
+        event = "log"
+        fields = []
+        for token in tokens:
+            if token.startswith("cycle=") or token.startswith("run_hash="):
+                continue
+            if "=" not in token and event == "log":
+                event = token
+                continue
+            if "=" not in token:
+                continue
+            key, value = token.split("=", 1)
+            if key not in safe_keys:
+                continue
+            if "/" in value or value.startswith("sha256:") or value.startswith("content-hmac-"):
+                value = "redacted"
+            if len(value) > 120:
+                value = value[:117] + "..."
+            fields.append(f"{key}={value}")
+
+        summary = f"{timestamp} [{level}] {event}"
+        if fields:
+          summary = f"{summary} {' '.join(fields)}"
+        sanitized_lines.append(summary)
+
+if len(sanitized_lines) > 200:
+    sanitized_lines = sanitized_lines[-200:]
+
+sanitized_text = "\n".join(sanitized_lines)
+digest = hashlib.sha256(sanitized_text.encode("utf-8", "surrogateescape")).hexdigest()
+anomalies = "listed" if any("[WARN]" in line or "[ERROR]" in line for line in sanitized_lines) else "none"
+
+print("status=ok")
+print(f"cycle_id={cycle_id}")
+print(f"anomalies={anomalies}")
+print(f"log_sha256={digest}")
+print(f"line_count={len(sanitized_lines)}")
+print("sanitized_log_begin")
+if sanitized_text:
+    print(sanitized_text)
+print("sanitized_log_end")
+PY
+}
+
+upkeeper_rewrite_compiled_prompt_log_review_block() {
+  local compiled_file="$1"
+  local helper_command="./$SCRIPT_NAME"
+
+  python3 - "$compiled_file" "$CYCLE_ID" "$helper_command" <<'PY'
+import sys
+from pathlib import Path
+
+compiled_path = Path(sys.argv[1])
+cycle_id = sys.argv[2]
+helper_command = sys.argv[3]
+text = compiled_path.read_text(encoding="utf-8")
+start_marker = "\nCurrent-cycle log self-review -- required final task before your final response:\n"
+end_marker = "\nWrapper control marker compatibility:\n"
+start = text.find(start_marker)
+end = text.find(end_marker, start + len(start_marker))
+if start == -1 or end == -1:
+    raise SystemExit("missing_log_review_prompt_block")
+
+replacement = f"""
+Current-cycle log self-review -- required final task before your final response:
+- After all selected-file review work, edits, touches, and verification are complete, inspect this cycle's wrapper state through the wrapper-provided sanitized helper instead of the raw log file.
+- Raw wrapper logs, raw log paths, prompt paths, transcript paths, and runtime control paths are withheld from the model by default.
+- Current cycle id: `{cycle_id}`
+- Preferred command: `UPKEEPER_INTERNAL_CURRENT_CYCLE_LOG_REVIEW=1 UPKEEPER_INTERNAL_CURRENT_CYCLE_ID={cycle_id} {helper_command}`
+- Review only the helper output for the current cycle. Do not inspect raw wrapper log files directly unless the operator explicitly changes this contract.
+- Check the helper output for wrapper/prompt/logging defects, unexpected ERROR/WARN lines, parser misses, environment preflight surprises, previous_run.anomaly lines, disk.preflight warnings, missing or irregular --MARK-- continuity, and any command failure from your own tool output that still needs explanation or correction.
+- If `startup_anomaly.gate` or `WRAPPER_STARTUP_ANOMALIES` is active, do not touch unrelated non-Upkeeper-suite files; the gate must be checked or remediated first.
+- If the helper output exposes a concrete Upkeeper wrapper/prompt/logging defect for the preselected file path, report it as a complete finding in your final response.
+- If the helper output exposes a concrete Upkeeper wrapper/prompt/logging defect outside the selected target path, leave that file unchanged in this cycle and report BLOCKED with the affected repo-relative path plus enough detail for a follow-up wrapper-selected run.
+- Do not apply any unselected-file or unrequested file edits during log-review self-verification.
+- Do not repair or edit any unselected Upkeeper control-plane file during log-review self-verification, even when the defect appears local and obvious.
+- If this is a symlinked client repo and the defect belongs to central Upkeeper behavior, do not patch a copied client wrapper; report the central fix needed unless the central Upkeeper checkout is the current repo.
+- If a suspicious line was expected negative-test output, say so briefly. If a one-off shell command failed, rerun the corrected check or state why it is irrelevant before final status.
+- Include exactly one machine-readable acknowledgment line before the final UPKEEPER_STATUS marker.
+- The helper prints `anomalies=<none|listed>` and `log_sha256=<64-hex>` for the sanitized current-cycle review view. Reuse those exact values when emitting `UPKEEPER_LOG_REVIEW`.
+- If the helper fails, report that failure in the human-readable log review summary and use `anomalies=listed`.
+- If no anomalies were found, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle={cycle_id} anomalies=none log_sha256=<64 hex digest>`
+- If anomalies were found or expected anomaly signals were present, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle={cycle_id} anomalies=listed log_sha256=<64 hex digest>`
+- Do not write the placeholder text `anomalies=none|listed`; choose one concrete value.
+- Put the machine-readable acknowledgment on its own raw line with no Markdown, punctuation, or trailing text. The wrapper parses that line directly.
+- You may also include a short human-readable current-cycle log review summary on separate lines.
+"""
+compiled_path.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
+PY
+}
+
+if declare -f compile_prompt >/dev/null 2>&1; then
+  eval "$(declare -f compile_prompt | sed '1s/^compile_prompt ()/upkeeper_compile_prompt_original ()/')"
+fi
+
+compile_prompt() {
+  upkeeper_compile_prompt_original "$@"
+  upkeeper_rewrite_compiled_prompt_log_review_block "$1"
+}
+
 direct_parent_details() {
   local ppid_now parent_comm parent_summary
 
@@ -3067,6 +3246,10 @@ main() {
   apply_configured_cli_defaults
   validate_codex_mode_args_or_exit
   parse_args "$@"
+  if upkeeper_internal_current_cycle_log_review_requested; then
+    upkeeper_emit_sanitized_current_cycle_log_review
+    return 0
+  fi
   ensure_log_parent
   ensure_log_writable_or_exit "startup"
   require_commands
@@ -3284,7 +3467,7 @@ main() {
 
   compile_prompt "$compiled_prompt_file"
   log_line "INFO" "run.compiled_prompt.ready $(log_kv path "$compiled_prompt_file") content_hmac=$(file_blob_hash "$compiled_prompt_file") size_bytes=$(file_size_bytes "$compiled_prompt_file")"
-  log_line "INFO" "run.log_self_review_required log_file=$(shell_quote "$LOG_FILE") target_cycle=$CYCLE_ID"
+  log_line "INFO" "run.log_self_review_required access=sanitized_helper_only path_redacted=1 target_cycle=$CYCLE_ID"
   capture_startup_anomaly_gate_baseline
 
   if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then

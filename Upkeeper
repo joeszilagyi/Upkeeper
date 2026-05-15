@@ -612,6 +612,458 @@ print(json.dumps(value))
 PY
 }
 
+if declare -f preselect_review_target >/dev/null 2>&1; then
+  eval "$(declare -f preselect_review_target | sed '1s/^preselect_review_target ()/upkeeper_preselect_review_target_original ()/')"
+fi
+if declare -f tool_failure_queue_finalize_run >/dev/null 2>&1; then
+  eval "$(declare -f tool_failure_queue_finalize_run | sed '1s/^tool_failure_queue_finalize_run ()/upkeeper_tool_failure_queue_finalize_run_original ()/')"
+fi
+
+upkeeper_preselect_output_field() {
+  local key="$1"
+  local raw="$2"
+
+  awk -v prefix="$key=" 'index($0, prefix) == 1 { print substr($0, length(prefix) + 1); exit }' <<<"$raw"
+}
+
+upkeeper_tool_failure_queue_prepare_secure_dirs() {
+  python3 - "$ROOT_DIR" "$CODEX_TOOL_FAILURE_QUEUE_DIR" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+root, raw_queue_dir = sys.argv[1:3]
+queue_dir = Path(raw_queue_dir).expanduser()
+if not queue_dir.is_absolute():
+    queue_dir = Path(os.path.abspath(Path(root) / queue_dir))
+else:
+    queue_dir = Path(os.path.abspath(queue_dir))
+uid = os.getuid()
+
+
+def emit(status: str, reason: str = "", path=None) -> None:
+    print(f"status={status}")
+    if reason:
+        print(f"reason={reason}")
+    if path is not None:
+        print(f"queue_dir={path}")
+
+
+def ensure_no_symlink_components(path: Path) -> tuple[bool, str]:
+    current = Path(path.anchor or os.sep)
+    for part in path.parts[1:]:
+        current /= part
+        try:
+            st = os.lstat(current)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            return False, f"queue_path_unreadable:{type(exc).__name__}"
+        if stat.S_ISLNK(st.st_mode):
+            return False, f"queue_path_contains_symlink:{current}"
+    return True, ""
+
+
+def ensure_private_owned_dir(path: Path) -> tuple[bool, str]:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return False, f"queue_dir_create_failed:{type(exc).__name__}"
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        return False, f"queue_dir_stat_failed:{type(exc).__name__}"
+    if not stat.S_ISDIR(st.st_mode):
+        return False, "queue_path_not_directory"
+    if stat.S_ISLNK(st.st_mode):
+        return False, "queue_dir_symlinked"
+    if st.st_uid != uid:
+        return False, "queue_dir_wrong_owner"
+    mode = stat.S_IMODE(st.st_mode)
+    if mode != 0o700:
+        try:
+            os.chmod(path, 0o700)
+            st = os.lstat(path)
+            mode = stat.S_IMODE(st.st_mode)
+        except OSError as exc:
+            return False, f"queue_dir_chmod_failed:{type(exc).__name__}"
+    if mode != 0o700:
+        return False, f"queue_dir_unprotected:{oct(mode)}"
+    return True, ""
+
+
+ok, reason = ensure_no_symlink_components(queue_dir)
+if not ok:
+    emit("unsafe", reason, queue_dir)
+    raise SystemExit(0)
+
+for path in (queue_dir, queue_dir / "open", queue_dir / "resolved"):
+    ok, reason = ensure_private_owned_dir(path)
+    if not ok:
+        emit("unsafe", reason, path)
+        raise SystemExit(0)
+    ok, reason = ensure_no_symlink_components(path)
+    if not ok:
+        emit("unsafe", reason, path)
+        raise SystemExit(0)
+
+emit("ok", path=queue_dir)
+PY
+}
+
+upkeeper_tool_failure_queue_validate_selected_marker() {
+  local marker_path="$1"
+
+  python3 - "$ROOT_DIR" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$marker_path" <<'PY'
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+from pathlib import Path
+
+root, raw_queue_dir, raw_marker_path = sys.argv[1:4]
+root_path = Path(root).resolve()
+queue_dir = Path(raw_queue_dir).expanduser()
+if not queue_dir.is_absolute():
+    queue_dir = Path(os.path.abspath(root_path / queue_dir))
+else:
+    queue_dir = Path(os.path.abspath(queue_dir))
+open_dir = queue_dir / "open"
+marker_path = Path(raw_marker_path).expanduser()
+if not marker_path.is_absolute():
+    marker_path = Path(os.path.abspath(root_path / marker_path))
+else:
+    marker_path = Path(os.path.abspath(marker_path))
+uid = os.getuid()
+
+
+def emit(status: str, **fields: str) -> None:
+    print(f"status={status}")
+    for key, value in fields.items():
+        print(f"{key}={value}")
+
+
+def ensure_no_symlink_components(path: Path) -> tuple[bool, str]:
+    current = Path(path.anchor or os.sep)
+    for part in path.parts[1:]:
+        current /= part
+        try:
+            st = os.lstat(current)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            return False, f"queue_path_unreadable:{type(exc).__name__}"
+        if stat.S_ISLNK(st.st_mode):
+            return False, f"queue_path_contains_symlink:{current}"
+    return True, ""
+
+
+def ensure_private_owned_dir(path: Path) -> tuple[bool, str]:
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        return False, f"queue_dir_stat_failed:{type(exc).__name__}"
+    if not stat.S_ISDIR(st.st_mode):
+        return False, "queue_path_not_directory"
+    if stat.S_ISLNK(st.st_mode):
+        return False, "queue_dir_symlinked"
+    if st.st_uid != uid:
+        return False, "queue_dir_wrong_owner"
+    mode = stat.S_IMODE(st.st_mode)
+    if mode != 0o700:
+        return False, f"queue_dir_unprotected:{oct(mode)}"
+    return True, ""
+
+
+def normalize_target(path_value: object) -> str:
+    if not isinstance(path_value, str):
+        return ""
+    value = path_value.strip()
+    if not value or "\0" in value or any(ord(char) < 32 for char in value):
+        return ""
+    if os.path.isabs(value):
+        try:
+            rel = Path(value).resolve().relative_to(root_path)
+        except (OSError, ValueError):
+            return ""
+        return rel.as_posix()
+    normalized = os.path.normpath(value).replace(os.sep, "/")
+    if normalized in {".", ""} or normalized.startswith("../") or os.path.isabs(normalized):
+        return ""
+    return normalized
+
+
+def marker_id_for(path_value: str) -> str:
+    return hashlib.sha1(path_value.encode("utf-8", "surrogateescape")).hexdigest()[:24]
+
+
+def display_json(value: object, limit: int = 500) -> str:
+    text = str(value if value is not None else "unknown")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > limit:
+        text = text[: limit - 15].rstrip() + "...<truncated>"
+    return json.dumps(text or "unknown")
+
+
+for path in (queue_dir, open_dir):
+    ok, reason = ensure_no_symlink_components(path)
+    if not ok:
+        emit("unsafe", reason=reason)
+        raise SystemExit(0)
+    ok, reason = ensure_private_owned_dir(path)
+    if not ok:
+        emit("unsafe", reason=reason)
+        raise SystemExit(0)
+
+ok, reason = ensure_no_symlink_components(marker_path)
+if not ok:
+    emit("unsafe", reason=reason)
+    raise SystemExit(0)
+
+try:
+    marker_relative = marker_path.relative_to(open_dir)
+except ValueError:
+    emit("unsafe", reason="marker_outside_open_dir")
+    raise SystemExit(0)
+
+if marker_relative.parent != Path("."):
+    emit("unsafe", reason="marker_nested_path")
+    raise SystemExit(0)
+
+try:
+    st = os.lstat(marker_path)
+except OSError as exc:
+    emit("unsafe", reason=f"marker_unreadable:{type(exc).__name__}")
+    raise SystemExit(0)
+
+if stat.S_ISLNK(st.st_mode):
+    emit("unsafe", reason="marker_symlinked")
+    raise SystemExit(0)
+if not stat.S_ISREG(st.st_mode):
+    emit("unsafe", reason="marker_not_regular")
+    raise SystemExit(0)
+if st.st_uid != uid:
+    emit("unsafe", reason="marker_wrong_owner")
+    raise SystemExit(0)
+
+try:
+    with marker_path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+except (OSError, json.JSONDecodeError) as exc:
+    emit("unsafe", reason=f"marker_json_invalid:{type(exc).__name__}")
+    raise SystemExit(0)
+
+if not isinstance(data, dict) or data.get("status") not in ("", None, "open"):
+    emit("unsafe", reason="marker_status_invalid")
+    raise SystemExit(0)
+
+target_path = normalize_target(data.get("target_path"))
+if not target_path:
+    emit("unsafe", reason="marker_target_invalid")
+    raise SystemExit(0)
+
+expected_marker_id = marker_id_for(target_path)
+stored_marker_id = str(data.get("marker_id", "") or "")
+if stored_marker_id != expected_marker_id:
+    emit("unsafe", reason="marker_id_mismatch")
+    raise SystemExit(0)
+if marker_path.stem != expected_marker_id:
+    emit("unsafe", reason="marker_filename_mismatch")
+    raise SystemExit(0)
+
+try:
+    first_seen_epoch = int(data.get("first_seen_epoch", data.get("last_seen_epoch", 0)) or 0)
+except (TypeError, ValueError):
+    first_seen_epoch = 0
+
+emit(
+    "ok",
+    marker_id=expected_marker_id,
+    marker_path=str(marker_path),
+    target_path=target_path,
+    first_seen_epoch=str(first_seen_epoch),
+    failure_count=str(data.get("failure_count", "unknown")),
+    first_failure_kind_json=display_json(data.get("first_failure_kind", "unknown")),
+    first_failure_exit_line_json=display_json(data.get("first_failure_exit_line", "unknown")),
+)
+PY
+}
+
+upkeeper_emit_canonical_preselect_output() {
+  local raw="$1"
+  local marker_meta="${2:-}"
+  local path epoch mtime age git_status content_state head_blob worktree_hash eligible_count
+  local selection_mode selection_source manifest_status selection_order target_root target_max_depth
+  local include_globs exclude_globs selection_review_modules self_review_threshold_days selection_basis
+  local failure_queue_selected failure_marker_id failure_marker_path failure_marker_first_seen_epoch
+  local failure_marker_failure_count failure_marker_first_failure_kind failure_marker_first_failure_exit_line
+
+  path="$(upkeeper_preselect_output_field path "$raw")"
+  epoch="$(upkeeper_preselect_output_field epoch "$raw")"
+  mtime="$(upkeeper_preselect_output_field mtime "$raw")"
+  age="$(upkeeper_preselect_output_field age "$raw")"
+  git_status="$(upkeeper_preselect_output_field git_status "$raw")"
+  content_state="$(upkeeper_preselect_output_field content_state "$raw")"
+  head_blob="$(upkeeper_preselect_output_field head_blob "$raw")"
+  worktree_hash="$(upkeeper_preselect_output_field worktree_hash "$raw")"
+  eligible_count="$(upkeeper_preselect_output_field eligible_count "$raw")"
+  selection_mode="$(upkeeper_preselect_output_field selection_mode "$raw")"
+  selection_source="$(upkeeper_preselect_output_field selection_source "$raw")"
+  manifest_status="$(upkeeper_preselect_output_field manifest_status "$raw")"
+  selection_order="$(upkeeper_preselect_output_field selection_order "$raw")"
+  target_root="$(upkeeper_preselect_output_field target_root "$raw")"
+  target_max_depth="$(upkeeper_preselect_output_field target_max_depth "$raw")"
+  include_globs="$(upkeeper_preselect_output_field include_globs "$raw")"
+  exclude_globs="$(upkeeper_preselect_output_field exclude_globs "$raw")"
+  selection_review_modules="$(upkeeper_preselect_output_field selection_review_modules "$raw")"
+  self_review_threshold_days="$(upkeeper_preselect_output_field self_review_threshold_days "$raw")"
+  selection_basis="$(upkeeper_preselect_output_field selection_basis "$raw")"
+  failure_queue_selected="$(upkeeper_preselect_output_field failure_queue_selected "$raw")"
+
+  printf 'path=%s\n' "$path"
+  printf 'epoch=%s\n' "${epoch:-0}"
+  printf 'mtime=%s\n' "$(upkeeper_prompt_safe_inline_value "${mtime:-unknown}" "unknown")"
+  printf 'age=%s\n' "$(upkeeper_prompt_safe_inline_value "${age:-unknown}" "unknown")"
+  printf 'git_status=%s\n' "${git_status:-unknown}"
+  printf 'content_state=%s\n' "${content_state:-unknown}"
+  printf 'head_blob=%s\n' "${head_blob:-unknown}"
+  printf 'worktree_hash=%s\n' "${worktree_hash:-unknown}"
+  printf 'eligible_count=%s\n' "${eligible_count:-0}"
+  printf 'selection_mode=%s\n' "${selection_mode:-unknown}"
+  printf 'selection_source=%s\n' "${selection_source:-unknown}"
+  printf 'manifest_status=%s\n' "${manifest_status:-unknown}"
+  printf 'selection_order=%s\n' "${selection_order:-unknown}"
+  printf 'target_root=%s\n' "$(upkeeper_prompt_safe_inline_value "${target_root:-none}" "none")"
+  printf 'target_max_depth=%s\n' "$(upkeeper_prompt_safe_inline_value "${target_max_depth:-none}" "none")"
+  printf 'include_globs=%s\n' "$(upkeeper_prompt_safe_inline_value "${include_globs:-none}" "none")"
+  printf 'exclude_globs=%s\n' "$(upkeeper_prompt_safe_inline_value "${exclude_globs:-none}" "none")"
+  printf 'selection_review_modules=%s\n' "$(upkeeper_prompt_safe_inline_value "${selection_review_modules:-none}" "none")"
+  printf 'self_review_threshold_days=%s\n' "${self_review_threshold_days:-7}"
+
+  if [[ "${failure_queue_selected:-0}" == "1" && -n "$marker_meta" ]]; then
+    failure_marker_id="$(upkeeper_preselect_output_field marker_id "$marker_meta")"
+    failure_marker_path="$(upkeeper_preselect_output_field marker_path "$marker_meta")"
+    failure_marker_first_seen_epoch="$(upkeeper_preselect_output_field first_seen_epoch "$marker_meta")"
+    failure_marker_failure_count="$(upkeeper_preselect_output_field failure_count "$marker_meta")"
+    failure_marker_first_failure_kind="$(upkeeper_preselect_output_field first_failure_kind_json "$marker_meta")"
+    failure_marker_first_failure_exit_line="$(upkeeper_preselect_output_field first_failure_exit_line_json "$marker_meta")"
+    printf 'failure_queue_selected=1\n'
+    printf 'failure_marker_id=%s\n' "$failure_marker_id"
+    printf 'failure_marker_path=%s\n' "$failure_marker_path"
+    printf 'failure_marker_first_seen_epoch=%s\n' "${failure_marker_first_seen_epoch:-0}"
+    printf 'failure_marker_failure_count=%s\n' "${failure_marker_failure_count:-unknown}"
+    printf 'failure_marker_first_failure_kind=%s\n' "${failure_marker_first_failure_kind:-\"unknown\"}"
+    printf 'failure_marker_first_failure_exit_line=%s\n' "${failure_marker_first_failure_exit_line:-\"unknown\"}"
+  else
+    printf 'failure_queue_selected=0\n'
+  fi
+
+  printf 'selection_basis=%s\n' "$(upkeeper_prompt_safe_inline_value "${selection_basis:-unknown}" "unknown")"
+}
+
+preselect_review_target() {
+  local original_output="" rc selection_mode="" failure_queue_selected="" failure_marker_path="" marker_meta="" marker_status=""
+  local marker_reason="" marker_target="" fallback_output="" original_bypass=""
+
+  set +e
+  original_output="$(upkeeper_preselect_review_target_original)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    printf '%s' "$original_output"
+    return "$rc"
+  fi
+  [[ -n "$original_output" ]] || return 0
+
+  selection_mode="$(upkeeper_preselect_output_field selection_mode "$original_output")"
+  failure_queue_selected="$(upkeeper_preselect_output_field failure_queue_selected "$original_output")"
+
+  if [[ "$selection_mode" == "failure_queue" && "$failure_queue_selected" == "1" ]]; then
+    failure_marker_path="$(upkeeper_preselect_output_field failure_marker_path "$original_output")"
+    marker_meta="$(upkeeper_tool_failure_queue_validate_selected_marker "$failure_marker_path")"
+    marker_status="$(upkeeper_preselect_output_field status "$marker_meta")"
+    if [[ "$marker_status" == "ok" ]]; then
+      marker_target="$(upkeeper_preselect_output_field target_path "$marker_meta")"
+      if [[ "$marker_target" != "$(upkeeper_preselect_output_field path "$original_output")" ]]; then
+        marker_status="unsafe"
+        marker_reason="marker_target_mismatch"
+      fi
+    fi
+    if [[ "$marker_status" != "ok" ]]; then
+      marker_reason="${marker_reason:-$(upkeeper_preselect_output_field reason "$marker_meta")}"
+      log_line "WARN" "tool_failure_queue.selection_ignored reason=$(shell_quote "${marker_reason:-unknown}") queue_dir=$(shell_quote "$CODEX_TOOL_FAILURE_QUEUE_DIR") marker_path=$(shell_quote "${failure_marker_path:-unknown}")"
+      original_bypass="${CODEX_TOOL_FAILURE_QUEUE_BYPASS:-0}"
+      CODEX_TOOL_FAILURE_QUEUE_BYPASS=1
+      set +e
+      fallback_output="$(upkeeper_preselect_review_target_original)"
+      rc=$?
+      set -e
+      CODEX_TOOL_FAILURE_QUEUE_BYPASS="$original_bypass"
+      if [[ "$rc" -ne 0 ]]; then
+        printf '%s' "$fallback_output"
+        return "$rc"
+      fi
+      [[ -n "$fallback_output" ]] || return 0
+      original_output="$fallback_output"
+      marker_meta=""
+    fi
+  fi
+
+  upkeeper_emit_canonical_preselect_output "$original_output" "$marker_meta"
+}
+
+tool_failure_queue_finalize_run() {
+  local target_path="$1"
+  local transcript_file="$2"
+  local codex_exit="$3"
+  local status_marker="$4"
+  local secure_queue_result secure_queue_status secure_queue_reason normalized_target_path
+
+  tool_failure_queue_enabled || return 0
+
+  secure_queue_result="$(upkeeper_tool_failure_queue_prepare_secure_dirs)"
+  secure_queue_status="$(upkeeper_preselect_output_field status "$secure_queue_result")"
+  if [[ "$secure_queue_status" != "ok" ]]; then
+    secure_queue_reason="$(upkeeper_preselect_output_field reason "$secure_queue_result")"
+    log_line "WARN" "tool_failure_queue.update_skipped reason=$(shell_quote "${secure_queue_reason:-unknown}") queue_dir=$(shell_quote "$CODEX_TOOL_FAILURE_QUEUE_DIR")"
+    return 0
+  fi
+
+  normalized_target_path="$(
+    python3 - "$ROOT_DIR" "$target_path" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+root, raw_path = sys.argv[1:3]
+root_path = Path(root).resolve()
+path = raw_path.strip()
+if not path or "\0" in path or any(ord(char) < 32 for char in path):
+    raise SystemExit(1)
+if os.path.isabs(path):
+    try:
+        print(Path(path).resolve().relative_to(root_path).as_posix())
+    except (OSError, ValueError):
+        raise SystemExit(1)
+else:
+    normalized = os.path.normpath(path).replace(os.sep, "/")
+    if normalized in {".", ""} or normalized.startswith("../") or os.path.isabs(normalized):
+        raise SystemExit(1)
+    print(normalized)
+PY
+  )" || normalized_target_path=""
+  if [[ -z "$normalized_target_path" ]]; then
+    log_line "WARN" "tool_failure_queue.update_skipped reason=target_path_invalid target_path=$(shell_quote "${target_path:-unknown}")"
+    return 0
+  fi
+
+  upkeeper_tool_failure_queue_finalize_run_original "$normalized_target_path" "$transcript_file" "$codex_exit" "$status_marker"
+}
+
 # Override the prompt-module helper locally so issue-fix compilation does not
 # rely on Markdown fences for untrusted GitHub text. The selected issue title,
 # URL, and labels also stay on single prompt lines so newline/control-character

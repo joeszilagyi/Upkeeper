@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.20
+## Version: v1.2.21
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -269,7 +269,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.20"
+UPKEEPER_VERSION="v1.2.21"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -331,6 +331,7 @@ CODEX_FALLBACK_SCREEN_POLL_SECONDS="${CODEX_FALLBACK_SCREEN_POLL_SECONDS:-60}"
 CODEX_FALLBACK_SCREEN_CONTINUOUS="${CODEX_FALLBACK_SCREEN_CONTINUOUS:-0}"
 CODEX_FALLBACK_SCREEN_MAX_CHILDREN="${CODEX_FALLBACK_SCREEN_MAX_CHILDREN:-1}"
 CODEX_FALLBACK_SCREEN_MAX_SECONDS="${CODEX_FALLBACK_SCREEN_MAX_SECONDS:-0}"
+CODEX_FALLBACK_SCREEN_STAGE_ROOT="${CODEX_FALLBACK_SCREEN_STAGE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/tmp/fallback-screen}"
 CODEX_POSTMORTEM_ENABLED="${CODEX_POSTMORTEM_ENABLED:-1}"
 CODEX_POSTMORTEM_MODEL="${CODEX_POSTMORTEM_MODEL:-$CODEX_FALLBACK_MODEL}"
 CODEX_POSTMORTEM_REASONING_EFFORT="${CODEX_POSTMORTEM_REASONING_EFFORT:-$CODEX_FALLBACK_REASONING_EFFORT}"
@@ -460,6 +461,7 @@ FALLBACK_SCREEN_TRANSCRIPT_PATH=""
 FALLBACK_SCREEN_EXIT_CODE=""
 FALLBACK_SCREEN_WATCH_ACTIVE="0"
 FALLBACK_SCREEN_TRIGGER=""
+FALLBACK_SCREEN_RUNNER_PATH=""
 RUN_COMPILED_PROMPT_FILE=""
 RUN_LAST_MESSAGE_FILE=""
 RUN_BUG_REPORT_DRAFT_FILE=""
@@ -618,6 +620,549 @@ fi
 if declare -f tool_failure_queue_finalize_run >/dev/null 2>&1; then
   eval "$(declare -f tool_failure_queue_finalize_run | sed '1s/^tool_failure_queue_finalize_run ()/upkeeper_tool_failure_queue_finalize_run_original ()/')"
 fi
+
+upkeeper_path_owner_uid() {
+  local path="$1"
+  local uid=""
+
+  if uid="$(stat -Lc '%u' "$path" 2>/dev/null)"; then
+    printf '%s' "$uid"
+    return 0
+  fi
+  if uid="$(stat -f '%u' "$path" 2>/dev/null)"; then
+    printf '%s' "$uid"
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$path" <<'PY'
+import os
+import sys
+
+print(os.lstat(sys.argv[1]).st_uid)
+PY
+    return $?
+  fi
+
+  return 1
+}
+
+upkeeper_assert_private_dir() {
+  local path="$1"
+  local exact_mode="${2:-}"
+  local mode="" uid="" current_uid=""
+
+  [[ "$path" == /* ]] || return 1
+  [[ -d "$path" ]] || return 1
+  [[ ! -L "$path" ]] || return 1
+
+  mode="$(upkeeper_config_path_mode "$path")" || return 1
+  uid="$(upkeeper_path_owner_uid "$path")" || return 1
+  current_uid="$(id -u)" || return 1
+  [[ "$uid" == "$current_uid" ]] || return 1
+  (( (8#$mode & 077) == 0 )) || return 1
+  if [[ -n "$exact_mode" && "$mode" != "$exact_mode" ]]; then
+    return 1
+  fi
+
+  return 0
+}
+
+upkeeper_assert_private_file() {
+  local path="$1"
+  local exact_mode="$2"
+  local mode="" uid="" current_uid=""
+
+  [[ "$path" == /* ]] || return 1
+  [[ -f "$path" ]] || return 1
+  [[ ! -L "$path" ]] || return 1
+
+  mode="$(upkeeper_config_path_mode "$path")" || return 1
+  uid="$(upkeeper_path_owner_uid "$path")" || return 1
+  current_uid="$(id -u)" || return 1
+  [[ "$uid" == "$current_uid" ]] || return 1
+  (( (8#$mode & 077) == 0 )) || return 1
+  [[ "$mode" == "$exact_mode" ]] || return 1
+
+  return 0
+}
+
+upkeeper_prepare_fallback_screen_stage_root() {
+  local stage_root="${CODEX_FALLBACK_SCREEN_STAGE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/tmp/fallback-screen}"
+  local parent_dir=""
+
+  [[ "$stage_root" == /* ]] || return 1
+  parent_dir="$(dirname -- "$stage_root")"
+  mkdir -p -- "$parent_dir" || return 1
+  upkeeper_assert_private_dir "$parent_dir" || return 1
+  mkdir -p -- "$stage_root" || return 1
+  chmod 700 "$stage_root" || return 1
+  upkeeper_assert_private_dir "$stage_root" 700 || return 1
+
+  printf '%s' "$stage_root"
+}
+
+upkeeper_create_private_screen_root() {
+  local stage_root="" cycle_tag="" screen_root=""
+
+  stage_root="$(upkeeper_prepare_fallback_screen_stage_root)" || return 1
+  cycle_tag="${CYCLE_ID//[^A-Za-z0-9._-]/_}"
+  screen_root="$(mktemp -d "$stage_root/${cycle_tag}-screen-XXXXXX")" || return 1
+  chmod 700 "$screen_root" || return 1
+  upkeeper_assert_private_dir "$screen_root" 700 || return 1
+
+  printf '%s' "$screen_root"
+}
+
+upkeeper_append_command_env_line() {
+  local target_var="$1"
+  local name="$2"
+  local value="${3-}"
+  local quoted=""
+
+  printf -v quoted '%q' "$value"
+  printf -v "$target_var" '%s%s=%s \\\n' "${!target_var}" "$name" "$quoted"
+}
+
+# Security hardening lives in the root launcher so detached fallback execution
+# always stages its executable runner in a private owner-only directory even
+# when operator evidence stays in a repo-local postmortem tree.
+launch_screen_fallback_loop() {
+  local trigger="$1"
+  shift
+  local detail_text="${*:-none}"
+  local loop_details loop_parent_pid loop_parent_comm loop_parent_args using_override
+  if ! loop_details="$(parent_shell_details)"; then
+    log_line "ERROR" "fallback.screen.start trigger=$trigger failed_to_resolve_loop_parent=1"
+    return 8
+  fi
+  IFS=$'\t' read -r loop_parent_pid loop_parent_comm loop_parent_args using_override <<<"$loop_details"
+
+  local screen_root visible_screen_root session_name runner_script transcript_file exit_file done_file last_cycle_exit_file
+  local child_id_file child_started_file child_status_file heartbeat_file completed_count_file stop_reason_file
+  local prompt_arg_snippet="" runner_env_lines=""
+  local self_q model_q effort_q mode_q root_q screen_root_q visible_screen_root_q transcript_q poll_q trigger_q
+  local loop_parent_pid_q loop_parent_comm_q loop_parent_args_q primary_model_q
+  local continuous_q max_children_q max_seconds_q
+  local review_module review_module_q
+  local fallback_chain_token
+  local contract_path_q
+
+  if ! screen_root="$(upkeeper_create_private_screen_root)"; then
+    log_line "ERROR" "fallback.screen.start trigger=$trigger private_stage_unavailable=1 stage_root=$(shell_quote "${CODEX_FALLBACK_SCREEN_STAGE_ROOT:-none}")"
+    return 8
+  fi
+
+  visible_screen_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen"
+  if ! mkdir -p -- "$visible_screen_root"; then
+    log_line "ERROR" "fallback.screen.start trigger=$trigger visible_state_root_unavailable=1 visible_root=$(shell_quote "$visible_screen_root")"
+    return 8
+  fi
+  chmod 700 "$visible_screen_root" 2>/dev/null || true
+
+  session_name="upkeeper-${CYCLE_ID//[^A-Za-z0-9]/_}"
+  runner_script="$(mktemp "$screen_root/run-screen-fallback.XXXXXX.sh")" || {
+    log_line "ERROR" "fallback.screen.start trigger=$trigger runner_create_failed=1 screen_root=$(shell_quote "$screen_root")"
+    return 8
+  }
+  transcript_file="$screen_root/transcript.log"
+  exit_file="$screen_root/final-exit-code.txt"
+  done_file="$screen_root/done.txt"
+  last_cycle_exit_file="$screen_root/last-cycle-exit-code.txt"
+  child_id_file="$screen_root/current-child-cycle-id.txt"
+  child_started_file="$screen_root/current-child-started-at.txt"
+  child_status_file="$screen_root/current-child-status.txt"
+  heartbeat_file="$screen_root/heartbeat.txt"
+  completed_count_file="$screen_root/completed-child-count.txt"
+  stop_reason_file="$screen_root/stop-reason.txt"
+
+  FALLBACK_SCREEN_SESSION_NAME="$session_name"
+  FALLBACK_SCREEN_TRANSCRIPT_PATH="$transcript_file"
+  FALLBACK_SCREEN_EXIT_CODE=""
+  FALLBACK_SCREEN_TRIGGER="$trigger"
+  FALLBACK_SCREEN_RUNNER_PATH="$runner_script"
+
+  printf -v root_q '%q' "$ROOT_DIR"
+  printf -v self_q '%q' "$SELF_INVOKE_PATH"
+  printf -v screen_root_q '%q' "$screen_root"
+  printf -v visible_screen_root_q '%q' "$visible_screen_root"
+  printf -v transcript_q '%q' "$transcript_file"
+  printf -v poll_q '%q' "$CODEX_FALLBACK_SCREEN_POLL_SECONDS"
+  printf -v continuous_q '%q' "$CODEX_FALLBACK_SCREEN_CONTINUOUS"
+  printf -v max_children_q '%q' "$CODEX_FALLBACK_SCREEN_MAX_CHILDREN"
+  printf -v max_seconds_q '%q' "$CODEX_FALLBACK_SCREEN_MAX_SECONDS"
+  printf -v model_q '%q' "$CODEX_FALLBACK_MODEL"
+  printf -v effort_q '%q' "$CODEX_FALLBACK_REASONING_EFFORT"
+  printf -v mode_q '%q' "$CODEX_FALLBACK_MODE"
+  printf -v trigger_q '%q' "$trigger"
+  printf -v loop_parent_pid_q '%q' "$loop_parent_pid"
+  printf -v loop_parent_comm_q '%q' "$loop_parent_comm"
+  printf -v loop_parent_args_q '%q' "$loop_parent_args"
+  printf -v primary_model_q '%q' "$CODEX_MODEL"
+  printf -v contract_path_q '%q' "${CODEX_FALLBACK_CONTRACT_PATH:-}"
+  fallback_chain_token="$(generate_fallback_chain_token)"
+
+  upkeeper_append_command_env_line runner_env_lines UPKEEPER_CONFIG_DISABLE "${UPKEEPER_CONFIG_DISABLE:-0}"
+  upkeeper_append_command_env_line runner_env_lines UPKEEPER_CONFIG_FILE "${UPKEEPER_CONFIG_FILE:-}"
+  upkeeper_append_command_env_line runner_env_lines UPKEEPER_CONFIG_FILE_EXPLICIT "${UPKEEPER_CONFIG_FILE_EXPLICIT:-0}"
+  upkeeper_append_command_env_line runner_env_lines UPKEEPER_CONFIG_LOADED "${UPKEEPER_CONFIG_LOADED:-0}"
+  upkeeper_append_command_env_line runner_env_lines UPKEEPER_CONFIG_SOURCE "${UPKEEPER_CONFIG_SOURCE:-none}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_TARGET_FILE "${CODEX_TARGET_FILE:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_SELECTION_SOURCE "${CODEX_SELECTION_SOURCE:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_SELECTION_ORDER "${CODEX_SELECTION_ORDER:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_FILE_MANIFEST_MODE "${CODEX_FILE_MANIFEST_MODE:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_FILE_MANIFEST_PATH "${CODEX_FILE_MANIFEST_PATH:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_TARGET_ROOT "${CODEX_TARGET_ROOT:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_TARGET_MAX_DEPTH "${CODEX_TARGET_MAX_DEPTH:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_SELECTION_INCLUDE_GLOBS "${CODEX_SELECTION_INCLUDE_GLOBS:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_SELECTION_EXCLUDE_GLOBS "${CODEX_SELECTION_EXCLUDE_GLOBS:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_SELECTION_REVIEW_MODULES "${CODEX_SELECTION_REVIEW_MODULES:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_SELECTION_RANDOM_SEED "${CODEX_SELECTION_RANDOM_SEED:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_MAX_COVER_MODE "${CODEX_MAX_COVER_MODE:-0}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_NEXT "${CODEX_ISSUE_FIX_NEXT:-0}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_REQUESTED_NUMBER "${CODEX_ISSUE_FIX_REQUESTED_NUMBER:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_WORKFLOW_STAGE "${CODEX_ISSUE_WORKFLOW_STAGE:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_NUMBER "${CODEX_ISSUE_FIX_NUMBER:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_SELECTED_LABEL "${CODEX_ISSUE_FIX_SELECTED_LABEL:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_LABELS "${CODEX_ISSUE_FIX_LABELS:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_TARGET_FILE "${CODEX_ISSUE_FIX_TARGET_FILE:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_TITLE "${CODEX_ISSUE_FIX_TITLE:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_URL "${CODEX_ISSUE_FIX_URL:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_CREATED_AT "${CODEX_ISSUE_FIX_CREATED_AT:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_BODY "${CODEX_ISSUE_FIX_BODY:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_COMMENTS_JSON "${CODEX_ISSUE_FIX_COMMENTS_JSON:-[]}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_TOOL_FAILURE_QUEUE_DIR "${CODEX_TOOL_FAILURE_QUEUE_DIR:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_TOOL_FAILURE_QUEUE_BYPASS "${CODEX_TOOL_FAILURE_QUEUE_BYPASS:-0}"
+  upkeeper_append_command_env_line runner_env_lines RUN_SELECTED_REVIEW_PATH "${RUN_SELECTED_REVIEW_PATH:-}"
+  upkeeper_append_command_env_line runner_env_lines RUN_SELECTED_REVIEW_BASIS "${RUN_SELECTED_REVIEW_BASIS:-}"
+  upkeeper_append_command_env_line runner_env_lines RUN_SELECTED_FROM_FAILURE_QUEUE "${RUN_SELECTED_FROM_FAILURE_QUEUE:-0}"
+  upkeeper_append_command_env_line runner_env_lines RUN_SELECTED_FAILURE_MARKER_ID "${RUN_SELECTED_FAILURE_MARKER_ID:-}"
+  upkeeper_append_command_env_line runner_env_lines RUN_SELECTED_FAILURE_MARKER_PATH "${RUN_SELECTED_FAILURE_MARKER_PATH:-}"
+  upkeeper_append_command_env_line runner_env_lines UPKEEPER_IGNORE_FAILURE_QUEUE "${UPKEEPER_IGNORE_FAILURE_QUEUE:-0}"
+
+  if [[ -n "$PROMPT_FILE" ]]; then
+    local prompt_file_q
+    printf -v prompt_file_q '%q' "$PROMPT_FILE"
+    prompt_arg_snippet="--prompt-file $prompt_file_q"
+  elif [[ -n "$INLINE_PROMPT" ]]; then
+    local inline_prompt_q
+    printf -v inline_prompt_q '%q' "$INLINE_PROMPT"
+    prompt_arg_snippet="--prompt $inline_prompt_q"
+  fi
+  for review_module in "${CODEX_REVIEW_MODULES[@]}"; do
+    printf -v review_module_q '%q' "$review_module"
+    prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--review-module=$review_module_q"
+  done
+  if [[ -n "$CODEX_TARGET_FILE" ]]; then
+    local target_file_q
+    printf -v target_file_q '%q' "$CODEX_TARGET_FILE"
+    prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--target-file=$target_file_q"
+  fi
+  if [[ -n "$CODEX_PROMPT_PASS" ]]; then
+    local prompt_pass_q
+    printf -v prompt_pass_q '%q' "$CODEX_PROMPT_PASS"
+    prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--prompt-pass=$prompt_pass_q"
+  fi
+  if upkeeper_bug_report_only_enabled; then
+    prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--bug-report-only"
+  fi
+
+  cat >"$runner_script" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+# Generated screen runner. Its executable payload stays in an owner-only stage
+# root even when operator evidence is mirrored into a repo-local postmortem
+# tree for later inspection.
+ROOT_DIR=$root_q
+SELF_INVOKE_PATH=$self_q
+SCREEN_ROOT=$screen_root_q
+VISIBLE_SCREEN_ROOT=$visible_screen_root_q
+TRANSCRIPT_FILE=$transcript_q
+
+state_file() {
+  printf '%s/%s' "\$SCREEN_ROOT" "\$1"
+}
+
+visible_state_file() {
+  printf '%s/%s' "\$VISIBLE_SCREEN_ROOT" "\$1"
+}
+
+write_state() {
+  local name="\$1"
+  local value="\$2"
+  local private_path visible_path
+
+  private_path="\$(state_file "\$name")"
+  printf '%s\n' "\$value" > "\$private_path"
+  chmod 600 "\$private_path" 2>/dev/null || true
+
+  visible_path="\$(visible_state_file "\$name")"
+  mkdir -p -- "\$VISIBLE_SCREEN_ROOT"
+  printf '%s\n' "\$value" > "\$visible_path"
+  chmod 600 "\$visible_path" 2>/dev/null || true
+}
+
+write_state_datetime() {
+  local name="\$1"
+  local now_text
+
+  now_text="\$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  write_state "\$name" "\$now_text"
+}
+
+fallback_parent_process_start() {
+  local pid="\$1"
+  local stat_text after_comm
+  if [[ -r "/proc/\$pid/stat" ]]; then
+    IFS= read -r stat_text <"/proc/\$pid/stat" || true
+    after_comm="\${stat_text##*) }"
+    set -- \$after_comm
+    if [[ \$# -ge 20 && -n "\${20:-}" ]]; then
+      printf 'proc_start_ticks=%s' "\${20}"
+      return 0
+    fi
+  fi
+  printf 'proc_start_ticks=unknown'
+}
+
+cd "\$ROOT_DIR"
+continuous=$continuous_q
+max_children=$max_children_q
+max_seconds=$max_seconds_q
+case "\$max_children" in ''|*[!0-9]*) max_children=1 ;; esac
+case "\$max_seconds" in ''|*[!0-9]*) max_seconds=0 ;; esac
+if [[ "\$max_children" -lt 1 ]]; then
+  max_children=1
+fi
+if [[ "\$continuous" != "1" ]]; then
+  max_children=1
+fi
+
+# Single-shot is the safe default. Continuous fallback must be explicitly opted
+# in because repeated recovery children can spend quota while an incident is in
+# progress.
+runner_started_epoch=\$(date '+%s')
+child_count=0
+rc=0
+stop_reason=unknown
+heartbeat_pid=""
+heartbeat_interval=$poll_q
+case "\$heartbeat_interval" in ''|*[!0-9]*) heartbeat_interval=30 ;; esac
+heartbeat_interval=\$((heartbeat_interval / 2))
+if [[ "\$heartbeat_interval" -lt 5 ]]; then
+  heartbeat_interval=5
+fi
+if [[ "\$heartbeat_interval" -gt 30 ]]; then
+  heartbeat_interval=30
+fi
+write_state 'completed-child-count.txt' 0
+write_state_datetime 'heartbeat.txt'
+
+stop_child_heartbeat() {
+  if [[ -n "\${heartbeat_pid:-}" ]]; then
+    kill "\$heartbeat_pid" >/dev/null 2>&1 || true
+    wait "\$heartbeat_pid" >/dev/null 2>&1 || true
+    heartbeat_pid=""
+  fi
+}
+
+cleanup() {
+  stop_child_heartbeat
+}
+trap cleanup EXIT
+
+start_child_heartbeat() {
+  stop_child_heartbeat
+  (
+    while true; do
+      write_state_datetime 'heartbeat.txt'
+      sleep "\$heartbeat_interval"
+    done
+  ) &
+  heartbeat_pid=\$!
+}
+
+mark_interrupted() {
+  # Make operator interrupts visible as data, not just a missing screen session.
+  stop_child_heartbeat
+  write_state 'current-child-status.txt' interrupted
+  write_state_datetime 'heartbeat.txt'
+  write_state 'stop-reason.txt' interrupted
+  write_state 'last-cycle-exit-code.txt' 130
+  write_state 'final-exit-code.txt' 130
+  write_state_datetime 'done.txt'
+  exit 130
+}
+trap mark_interrupted INT TERM HUP
+
+while true; do
+  child_count=\$((child_count + 1))
+  child_cycle_id="\$(date '+%Y%m%dT%H%M%S%z')-screen-child-\$child_count"
+  write_state 'current-child-cycle-id.txt' "\$child_cycle_id"
+  write_state_datetime 'current-child-started-at.txt'
+  write_state 'current-child-status.txt' running
+  write_state_datetime 'heartbeat.txt'
+  start_child_heartbeat
+  set +e
+  fallback_parent_pid="\$\$"
+  fallback_parent_start="\$(fallback_parent_process_start "\$fallback_parent_pid")"
+$runner_env_lines  CODEX_MODEL=$model_q \
+  CODEX_REASONING_EFFORT=$effort_q \
+  CODEX_MODE=$mode_q \
+  CODEX_FALLBACK_ENABLED=0 \
+  CODEX_FALLBACK_CHAIN_ACTIVE=1 \
+  CODEX_FALLBACK_PARENT_PID="\$fallback_parent_pid" \
+  CODEX_FALLBACK_PARENT_START="\$fallback_parent_start" \
+  CODEX_FALLBACK_CHAIN_TOKEN_FD=9 \
+  CODEX_FALLBACK_SCREEN_CONTINUOUS=$continuous_q \
+  CODEX_FALLBACK_SCREEN_MAX_CHILDREN=$max_children_q \
+  CODEX_FALLBACK_SCREEN_MAX_SECONDS=$max_seconds_q \
+  CODEX_ATTEMPT_ROLE=fallback \
+  CODEX_PRIMARY_MODEL_CONTEXT=$primary_model_q \
+  CODEX_FALLBACK_TRIGGER=$trigger_q \
+  CODEX_PARENT_CYCLE_ID=$(shell_quote "$CYCLE_ID") \
+  CODEX_FALLBACK_CONTRACT_PATH=$contract_path_q \
+  CODEX_SCREEN_FALLBACK_CHILD_ID="\$child_cycle_id" \
+  CODEX_LOOP_PARENT_PID=$loop_parent_pid_q \
+  CODEX_LOOP_PARENT_COMM=$loop_parent_comm_q \
+  CODEX_LOOP_PARENT_ARGS=$loop_parent_args_q \
+  CODEX_POSTMORTEM_ENABLED=0 \
+  CODEX_DISABLE_PARENT_STOP=1 \
+  CODEX_GUARDRAIL_STOP_EXIT_CODE=9 \
+  CODEX_EXECUTION_ORIGIN=screen \
+  "\$SELF_INVOKE_PATH" $prompt_arg_snippet >>"\$TRANSCRIPT_FILE" 2>&1
+  rc=\$?
+  stop_child_heartbeat
+  set -e
+  write_state 'last-cycle-exit-code.txt' "\$rc"
+  write_state 'completed-child-count.txt' "\$child_count"
+  write_state 'current-child-status.txt' finished
+  write_state_datetime 'heartbeat.txt'
+  if [[ "\$rc" -ne 0 ]]; then
+    stop_reason=child_exit_nonzero
+    break
+  fi
+  if [[ "\$child_count" -ge "\$max_children" ]]; then
+    stop_reason=child_limit_reached
+    break
+  fi
+  if [[ "\$max_seconds" -gt 0 ]]; then
+    now_epoch=\$(date '+%s')
+    if (( now_epoch - runner_started_epoch >= max_seconds )); then
+      stop_reason=wall_clock_limit_reached
+      break
+    fi
+  fi
+  sleep $poll_q
+done
+write_state 'stop-reason.txt' "\$stop_reason"
+write_state 'final-exit-code.txt' "\$rc"
+write_state_datetime 'done.txt'
+exit "\${rc:-0}"
+EOF
+  chmod 700 "$runner_script"
+  if ! upkeeper_assert_private_file "$runner_script" 700; then
+    log_line "ERROR" "fallback.screen.start trigger=$trigger runner_untrusted=1 runner_script=$(shell_quote "$runner_script")"
+    return 8
+  fi
+
+  screen_write_state() {
+    local name="$1"
+    local value="$2"
+    local visible_path="$visible_screen_root/$name"
+
+    printf '%s\n' "$value" >"$screen_root/$name"
+    chmod 600 "$screen_root/$name" 2>/dev/null || true
+    printf '%s\n' "$value" >"$visible_path"
+    chmod 600 "$visible_path" 2>/dev/null || true
+  }
+
+  screen_write_datetime_state() {
+    local name="$1"
+    local now_text
+
+    now_text="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+    screen_write_state "$name" "$now_text"
+  }
+
+  if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
+    log_line "INFO" "fallback.screen.start execution_origin=screen trigger=$trigger session_name=$session_name dry_run=1 detail=\"$detail_text\""
+    cat >"$transcript_file" <<EOF
+dry-run screen fallback transcript for cycle $CYCLE_ID trigger $trigger
+EOF
+    chmod 600 "$transcript_file" 2>/dev/null || true
+    screen_write_state 'last-cycle-exit-code.txt' 0
+    screen_write_state 'current-child-cycle-id.txt' 'dry-run-child'
+    screen_write_datetime_state 'current-child-started-at.txt'
+    screen_write_state 'current-child-status.txt' finished
+    screen_write_datetime_state 'heartbeat.txt'
+    screen_write_state 'completed-child-count.txt' 1
+    screen_write_state 'stop-reason.txt' dry_run
+    screen_write_state 'final-exit-code.txt' 0
+    screen_write_datetime_state 'done.txt'
+    return 0
+  fi
+
+  local launch_started_at launch_returned_at launch_rc launch_verified launch_probe_attempts
+  launch_started_at="$(timestamp_now)"
+  log_line "INFO" "fallback.screen.launch execution_origin=screen trigger=$trigger session_name=$session_name command=screen_-dmS launch_started_at=$launch_started_at stage_root=$(shell_quote "$screen_root") visible_root=$(shell_quote "$visible_screen_root")"
+  set +e
+  CODEX_FALLBACK_CHAIN_TOKEN_FD=9 \
+  9<<<"$fallback_chain_token" \
+  screen -dmS "$session_name" bash "$runner_script"
+  launch_rc=$?
+  set -e
+  launch_returned_at="$(timestamp_now)"
+  if [[ "$launch_rc" -ne 0 ]]; then
+    log_line "ERROR" "fallback.screen.launch_return execution_origin=screen trigger=$trigger session_name=$session_name launch_failed=1 launch_rc=$launch_rc launch_started_at=$launch_started_at launch_returned_at=$launch_returned_at"
+    return 8
+  fi
+  log_line "INFO" "fallback.screen.launch_return execution_origin=screen trigger=$trigger session_name=$session_name launch_rc=$launch_rc launch_started_at=$launch_started_at launch_returned_at=$launch_returned_at"
+  launch_verified=0
+  launch_probe_attempts=0
+  while (( launch_probe_attempts < 50 )); do
+    if screen_session_exists "$session_name" || [[ -f "$heartbeat_file" || -f "$done_file" ]]; then
+      launch_verified=1
+      break
+    fi
+    sleep 0.1
+    launch_probe_attempts=$((launch_probe_attempts + 1))
+  done
+  if [[ "$launch_verified" != "1" ]]; then
+    log_line "ERROR" "fallback.screen.launch_verify execution_origin=screen trigger=$trigger session_name=$session_name launch_unverified=1 launch_rc=$launch_rc heartbeat_missing=1 done_file_missing=1 probe_attempts=$launch_probe_attempts"
+    return 8
+  fi
+  log_line "INFO" "fallback.screen.launch_verify execution_origin=screen trigger=$trigger session_name=$session_name launch_verified=1 probe_attempts=$launch_probe_attempts"
+  log_line "INFO" "fallback.screen.start execution_origin=screen trigger=$trigger session_name=$session_name detail=\"$detail_text\" transcript=$transcript_file poll_seconds=$CODEX_FALLBACK_SCREEN_POLL_SECONDS continuous=$CODEX_FALLBACK_SCREEN_CONTINUOUS max_children=$CODEX_FALLBACK_SCREEN_MAX_CHILDREN max_seconds=$CODEX_FALLBACK_SCREEN_MAX_SECONDS"
+  return 0
+}
+
+terminate_fallback_screen_process_groups() {
+  local reason="${1:-manual_teardown}"
+  local runner_script="${FALLBACK_SCREEN_RUNNER_PATH:-$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen/run-screen-fallback.sh}"
+  local pgid
+  local -a pgids=()
+
+  mapfile -t pgids < <(fallback_screen_runner_process_groups "$runner_script")
+  [[ "${#pgids[@]}" -gt 0 ]] || return 0
+
+  for pgid in "${pgids[@]}"; do
+    [[ "$pgid" =~ ^[0-9]+$ ]] || continue
+    log_line "WARN" "fallback.screen.stop execution_origin=$CODEX_EXECUTION_ORIGIN reason=$reason action=process_group_term pgid=$pgid runner_script=$(shell_quote "$runner_script")"
+    kill -TERM -- "-$pgid" >/dev/null 2>&1 || true
+  done
+
+  sleep 1
+
+  for pgid in "${pgids[@]}"; do
+    [[ "$pgid" =~ ^[0-9]+$ ]] || continue
+    if fallback_screen_process_group_exists "$pgid"; then
+      log_line "WARN" "fallback.screen.stop execution_origin=$CODEX_EXECUTION_ORIGIN reason=$reason action=process_group_kill pgid=$pgid runner_script=$(shell_quote "$runner_script")"
+      kill -KILL -- "-$pgid" >/dev/null 2>&1 || true
+    fi
+  done
+}
 
 UPKEEPER_PRECONTACT_BACKUP_SECURE_TARGET_ABS=""
 
@@ -1309,11 +1854,26 @@ upkeeper_emit_canonical_preselect_output() {
 preselect_review_target() {
   local original_output="" rc selection_mode="" failure_queue_selected="" failure_marker_path="" marker_meta="" marker_status=""
   local marker_reason="" marker_target="" fallback_output="" original_bypass=""
+  local secure_queue_result="" secure_queue_status="" secure_queue_reason=""
+
+  if tool_failure_queue_active_for_selection; then
+    secure_queue_result="$(upkeeper_tool_failure_queue_prepare_secure_dirs)"
+    secure_queue_status="$(upkeeper_preselect_output_field status "$secure_queue_result")"
+    if [[ "$secure_queue_status" != "ok" ]]; then
+      secure_queue_reason="$(upkeeper_preselect_output_field reason "$secure_queue_result")"
+      log_line "WARN" "tool_failure_queue.selection_disabled reason=$(shell_quote "${secure_queue_reason:-unknown}") queue_dir=$(shell_quote "$CODEX_TOOL_FAILURE_QUEUE_DIR")"
+      original_bypass="${CODEX_TOOL_FAILURE_QUEUE_BYPASS:-0}"
+      CODEX_TOOL_FAILURE_QUEUE_BYPASS=1
+    fi
+  fi
 
   set +e
   original_output="$(upkeeper_preselect_review_target_original)"
   rc=$?
   set -e
+  if [[ -n "$original_bypass" ]]; then
+    CODEX_TOOL_FAILURE_QUEUE_BYPASS="$original_bypass"
+  fi
   if [[ "$rc" -ne 0 ]]; then
     printf '%s' "$original_output"
     return "$rc"

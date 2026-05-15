@@ -2174,16 +2174,17 @@ print(hashlib.sha1(b"lib/upkeeper/codex_io.bash").hexdigest()[:24])
 PY
 )"
   mkdir -p "$temp_dir/selection-failures/open"
-  python3 - "$temp_dir/selection-failures/open/$marker_id.json" <<'PY'
+  python3 - "$temp_dir/selection-failures/open/$marker_id.json" "$marker_id" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
+marker_id = sys.argv[2]
 path.write_text(json.dumps({
     "version": 1,
     "status": "open",
-    "marker_id": "selectionmarker",
+    "marker_id": marker_id,
     "target_path": "lib/upkeeper/codex_io.bash",
     "first_seen_epoch": 1,
     "first_seen_cycle": "validation-selection",
@@ -2192,6 +2193,7 @@ path.write_text(json.dumps({
     "first_failure_exit_line": "exited 1 in 0.1s",
 }, sort_keys=True) + "\n", encoding="utf-8")
 PY
+  chmod 600 "$temp_dir/selection-failures/open/$marker_id.json"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
 
   CODEX_HOME="$temp_dir/codex-home" \

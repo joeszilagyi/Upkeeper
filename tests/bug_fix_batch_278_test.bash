@@ -134,6 +134,78 @@ set -e
   require_field "run_selected_marker" "issue-278" "$(contract_field run_selected_marker "$child_output")"
 }
 
+test_screen_fallback_private_stage_preserves_contract() {
+  local postmortem_root stage_parent stage_root contract_file output runner_path visible_root contract_q mode
+
+  postmortem_root="$TEST_TMP_ROOT/postmortems"
+  stage_parent="$TEST_TMP_ROOT/private-stage"
+  stage_root="$stage_parent/fallback-screen"
+  mkdir -p "$postmortem_root/cycle-screen" "$stage_parent"
+  chmod 700 "$postmortem_root" "$postmortem_root/cycle-screen" "$stage_parent"
+
+  contract_file="$postmortem_root/cycle-screen/fallback.contract"
+  printf 'CODEX_TARGET_FILE=%q\n' "selected/from-contract.sh" >"$contract_file"
+  chmod 600 "$contract_file"
+
+  output="$(
+    UPKEEPER_CONFIG_DISABLE=1 \
+    CODEX_FALLBACK_CHAIN_ACTIVE=0 \
+    CODEX_POSTMORTEM_DIR="$postmortem_root" \
+    CODEX_FALLBACK_SCREEN_STAGE_ROOT="$stage_root" \
+    UPROOT="$PROJECT_ROOT" \
+    bash -s <<'SH'
+set -euo pipefail
+
+source "$UPROOT/Upkeeper"
+
+parent_shell_details() {
+  printf '123\tbash\twhile ./Upkeeper; do sleep 60; done\t0\n'
+}
+
+generate_fallback_chain_token() {
+  printf 'test-token'
+}
+
+CYCLE_ID="cycle-screen"
+ROOT_DIR="$UPROOT"
+SELF_INVOKE_PATH="$UPROOT/Upkeeper"
+UPKEEPER_DRY_RUN="1"
+CODEX_FALLBACK_MODEL="gpt-test"
+CODEX_FALLBACK_REASONING_EFFORT="low"
+CODEX_FALLBACK_MODE="--sandbox workspace-write"
+CODEX_MODEL="gpt-primary"
+CODEX_FALLBACK_CONTRACT_PATH="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/fallback.contract"
+PROMPT_FILE=""
+INLINE_PROMPT=""
+CODEX_TARGET_FILE=""
+CODEX_PROMPT_PASS=""
+CODEX_REVIEW_MODULES=()
+
+launch_screen_fallback_loop blocked test-detail
+printf 'runner=%s\n' "$FALLBACK_SCREEN_RUNNER_PATH"
+printf 'transcript=%s\n' "$FALLBACK_SCREEN_TRANSCRIPT_PATH"
+SH
+  )"
+
+  runner_path="$(contract_field runner "$output")"
+  [[ -n "$runner_path" ]] || fail "screen fallback did not report runner path"
+  [[ "$runner_path" == "$stage_root/"* ]] || fail "screen fallback runner was not staged under private root: $runner_path"
+  [[ "$runner_path" != "$postmortem_root/"* ]] || fail "screen fallback runner leaked into postmortem evidence root"
+  [[ -f "$runner_path" ]] || fail "screen fallback runner was not created"
+  mode="$(stat -Lc '%a' "$runner_path" 2>/dev/null || stat -f '%Lp' "$runner_path")"
+  [[ "$mode" == "700" ]] || fail "screen fallback runner mode expected 700 actual=$mode"
+  bash -n "$runner_path"
+
+  visible_root="$postmortem_root/cycle-screen/screen"
+  [[ "$(tr -d '[:space:]' <"$visible_root/final-exit-code.txt")" == "0" ]] || fail "dry-run screen fallback did not mirror final exit"
+  [[ "$(tr -d '[:space:]' <"$visible_root/done.txt")" != "" ]] || fail "dry-run screen fallback did not mirror done state"
+
+  printf -v contract_q '%q' "$contract_file"
+  grep -Fq "CODEX_FALLBACK_CONTRACT_PATH=$contract_q" "$runner_path" || fail "screen runner did not preserve fallback contract path"
+  ! grep -Fq "CODEX_FALLBACK_CONTRACT_PATH=''" "$runner_path" || fail "screen runner reset fallback contract path to empty"
+}
+
 test_fallback_child_inherits_effective_issue_fix_and_selection_contract
+test_screen_fallback_private_stage_preserves_contract
 
 printf 'bug_fix_batch_278_test: ok\n'

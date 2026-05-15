@@ -15,24 +15,24 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.18
+Version: v1.2.21
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
   2. Logs current 5-hour and weekly used/left percentages for the current target model bucket.
   3. Projects one more run from recent observed deltas.
   4. If the projected next run would leave at or below:
-       - 0% left in a normal current-model 5-hour window,
+       - 5% left in a normal current-model 5-hour window,
        - 0% left in a Spark Codex 5-hour window, or
-       - 0% left in the current weekly/main window,
+       - 15% left in the current weekly/main window,
          plus any model-specific weekly safety buffer
      then it terminates the parent shell running the loop and exits without
      starting a new Codex run, unless fallback handoff is enabled.
   5. After selecting a review target and before compiling its prompt authority,
      creates the configured selected-target pre-contact backup.
-  6. Before launching Codex, verifies that $CODEX_HOME/sessions is a private,
-     user-owned writable directory, stale Codex arg0 temp shims can be cleaned
-     or quarantined, and Codex's shared bubblewrap temp registry is writable.
+  6. Before launching Codex, verifies that $CODEX_HOME/sessions is writable,
+     stale Codex arg0 temp shims can be cleaned or quarantined, and Codex's
+     shared bubblewrap temp registry is writable.
   7. Otherwise it runs exactly one codex exec cycle and exits.
   8. If the primary model fails, blocks, or exhausts its bucket, it can hand off
      to one stronger fallback cycle in the same outer-loop iteration.
@@ -515,6 +515,7 @@ Environment overrides:
   CODEX_FALLBACK_SCREEN_CONTINUOUS   Default: 0
   CODEX_FALLBACK_SCREEN_MAX_CHILDREN Default: 1
   CODEX_FALLBACK_SCREEN_MAX_SECONDS  Default: 0
+  CODEX_FALLBACK_SCREEN_STAGE_ROOT   Default: ${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/tmp/fallback-screen
   CODEX_POSTMORTEM_ENABLED       Default: 1
   CODEX_POSTMORTEM_MODEL         Default: CODEX_FALLBACK_MODEL
   CODEX_POSTMORTEM_REASONING_EFFORT Default: CODEX_FALLBACK_REASONING_EFFORT

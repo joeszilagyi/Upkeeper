@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-15: v1.2.21 changes:
+	1. Hardened detached screen fallback staging so generated runner scripts live under a private owner-only state root instead of repo-local postmortem evidence, while mirrored status files remain available for normal operator inspection.
+	2. Preserved fallback-chain contracts, selected-target context, issue-fix context, failure-queue context, and prompt/module arguments across staged screen fallback children so recovery workers do not silently lose the parent run's workload boundary.
+	3. Added regression coverage for private screen runner staging, mirrored dry-run state, and fallback contract propagation, and documented the new `CODEX_FALLBACK_SCREEN_STAGE_ROOT` operator knob.
+
 2026-05-15: v1.2.18 changes:
 	1. Added P30 as the Stark Protocol review module for permanent hardening: useful failures must leave a guard, deterministic validation, documented invariant, automation obligation, or explicit blocked follow-up instead of relying on operator memory.
 	2. Extended `--review-module=p30`, `--review-modules=...`, `--p30`, review-module selection filters, Bash completion, Lattice pass metadata, max-cover mode, FlameOn, ChimneySweep, and all-P-module testruns to include P30.

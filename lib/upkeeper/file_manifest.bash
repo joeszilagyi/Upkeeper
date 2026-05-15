@@ -93,13 +93,6 @@ def root_relative(path: Path) -> str:
     return rel.as_posix()
 
 
-def manifest_abs_path(path: Path) -> str:
-    # Keep manifest paths anchored to the repo root without resolving through
-    # symlinks. This preserves the file contract while avoiding disclosure of a
-    # symlink target path outside the selected repository path itself.
-    return str(path)
-
-
 def load_upkeeperignore_patterns() -> list[tuple[bool, str]]:
     patterns: list[tuple[bool, str]] = []
     try:
@@ -213,7 +206,6 @@ def file_entry(rel_path: str) -> dict[str, object] | None:
         return None
     return {
         "rel_path": rel_path,
-        "abs_path": manifest_abs_path(path),
         "mtime": int(st.st_mtime),
         "mtime_ns": int(st.st_mtime_ns),
         "size": int(st.st_size),
@@ -277,6 +269,11 @@ def existing_payload() -> dict[str, object] | None:
 
     existing_files = payload.get("files") or []
     if isinstance(existing_files, list):
+        # Rebuild legacy manifests that persisted per-file absolute paths. The
+        # manifest consumer only needs repo-relative paths plus metadata, so the
+        # absolute-path field is retained nowhere in fresh payloads.
+        if any(isinstance(entry, dict) and "abs_path" in entry for entry in existing_files):
+            return None
         try:
             # Verify that existing payload entries still hash back to their own
             # fingerprint. This protects against model- or attacker-written

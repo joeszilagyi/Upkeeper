@@ -577,6 +577,115 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
 done
  unset upkeeper_module
 
+# Keep this backup override in the entrypoint so selected-target-only repair
+# cycles can harden encrypted pre-contact backup integrity without patching the
+# paired module file. The helper hashes the exact payload bytes written so age
+# backups fail closed if the target changes after metadata was derived.
+upkeeper_precontact_backup_write_payload_and_sha() {
+  local metadata_file="$1"
+  local target_file="$2"
+  local payload_file="$3"
+
+  python3 - "$metadata_file" "$target_file" "$payload_file" <<'PY'
+import hashlib
+import sys
+
+metadata_path, target_path, payload_path = sys.argv[1:4]
+digest = hashlib.sha256()
+
+with open(metadata_path, "rb") as handle:
+    metadata = handle.read()
+
+with open(payload_path, "wb") as output:
+    output.write(b"UPKEEPER_PRECONTACT_BACKUP_V1\n")
+    output.write(str(len(metadata)).encode("ascii") + b"\n")
+    output.write(metadata)
+    with open(target_path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+            output.write(chunk)
+
+print(digest.hexdigest())
+PY
+}
+
+precontact_backup_create_age() {
+  local target_abs="$1"
+  local path_dir="$2"
+  local backup_id="$3"
+  local metadata_file="$4"
+  local sidecar_file="$5"
+  local tmp_age tmp_json final_age final_json payload_file payload_sha expected_fingerprint actual_fingerprint
+
+  if ! mkdir -p -- "$path_dir"; then
+    precontact_backup_set_reason "mkdir_failed"
+    return 1
+  fi
+  chmod 700 "$path_dir" 2>/dev/null || true
+
+  if ! payload_file="$(run_mktemp precontact-backup-payload)"; then
+    precontact_backup_set_reason "payload_temp_failed"
+    return 1
+  fi
+  tmp_age="$path_dir/.${backup_id}.$$.age.tmp"
+  tmp_json="$path_dir/.${backup_id}.$$.json.tmp"
+  final_age="$path_dir/${backup_id}.age"
+  final_json="$path_dir/${backup_id}.json"
+  rm -f -- "$tmp_age" "$tmp_json"
+
+  if ! expected_fingerprint="$(precontact_backup_content_fingerprint_field "$metadata_file")"; then
+    rm -f -- "$payload_file" "$tmp_age" "$tmp_json"
+    precontact_backup_set_reason "metadata_read_failed"
+    return 1
+  fi
+  if ! payload_sha="$(upkeeper_precontact_backup_write_payload_and_sha "$metadata_file" "$target_abs" "$payload_file")"; then
+    rm -f -- "$payload_file" "$tmp_age" "$tmp_json"
+    precontact_backup_set_reason "payload_write_failed"
+    return 1
+  fi
+  case "$expected_fingerprint" in
+    content-hmac-sha256:*)
+      actual_fingerprint="$(precontact_backup_content_hmac "$payload_sha")"
+      ;;
+    *)
+      actual_fingerprint="$payload_sha"
+      ;;
+  esac
+  if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+    rm -f -- "$payload_file" "$tmp_age" "$tmp_json"
+    precontact_backup_set_reason "payload_hash_mismatch"
+    return 1
+  fi
+  if ! age --encrypt --recipient "$UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT" --output "$tmp_age" <"$payload_file"; then
+    rm -f -- "$payload_file" "$tmp_age" "$tmp_json"
+    precontact_backup_set_reason "age_failed"
+    return 1
+  fi
+  rm -f -- "$payload_file"
+  if [[ ! -s "$tmp_age" ]]; then
+    rm -f -- "$tmp_age" "$tmp_json"
+    precontact_backup_set_reason "age_empty_artifact"
+    return 1
+  fi
+  if ! precontact_backup_copy_file "$sidecar_file" "$tmp_json"; then
+    rm -f -- "$tmp_age" "$tmp_json"
+    precontact_backup_set_reason "metadata_copy_failed"
+    return 1
+  fi
+  chmod 600 "$tmp_age" "$tmp_json" 2>/dev/null || true
+  if ! mv -- "$tmp_age" "$final_age"; then
+    rm -f -- "$tmp_age" "$tmp_json"
+    precontact_backup_set_reason "backup_rename_failed"
+    return 1
+  fi
+  if ! mv -- "$tmp_json" "$final_json"; then
+    rm -f -- "$tmp_json"
+    precontact_backup_set_reason "metadata_rename_failed"
+    return 1
+  fi
+  return 0
+}
+
 # Keep these hardening overrides in the root entrypoint so startup-anomaly runs
 # can tighten auxiliary postmortem behavior without patching paired modules.
 upkeeper_postmortem_hardening_enabled() {

@@ -78,6 +78,7 @@ rotate_wrapper_log_if_needed() {
   local rotate_after_hours keep_hours rotate_after_seconds now_epoch oldest_epoch
   local archive_path archive_temp_path archive_timestamp rotation_line
   local archive_owner archive_mode archive_retained archive_reason
+  local live_log_hash archive_path_hash
 
   prune_wrapper_log_archives
 
@@ -108,6 +109,8 @@ rotate_wrapper_log_if_needed() {
   archive_temp_path="$archive_path.tmp.$$"
   archive_retained=0
   archive_reason="archive_parent_not_private"
+  live_log_hash="$(upkeeper_path_hmac "$LOG_FILE")"
+  archive_path_hash="$(upkeeper_path_hmac "$archive_path")"
 
   if wrapper_log_archive_parent_is_private; then
     archive_reason="zip_failed"
@@ -129,21 +132,21 @@ rotate_wrapper_log_if_needed() {
 
   if : > "$LOG_FILE" 2>/dev/null && chmod 600 "$LOG_FILE" 2>/dev/null; then
     if [[ "$archive_retained" -eq 1 ]]; then
-      rotation_line="$(printf '%s [INFO] cycle=%s run_hash=%s log.rotate live=%s archive=%s rotate_after_hours=%s keep_hours=%s oldest_entry_epoch=%s' \
-        "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$LOG_FILE" "$archive_path" "$rotate_after_hours" "$keep_hours" "$oldest_epoch")"
+      rotation_line="$(printf '%s [INFO] cycle=%s run_hash=%s log.rotate live_hash=%s archive_hash=%s path_redacted=1 rotate_after_hours=%s keep_hours=%s oldest_entry_epoch=%s' \
+        "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$live_log_hash" "$archive_path_hash" "$rotate_after_hours" "$keep_hours" "$oldest_epoch")"
       append_log_line_secure "$rotation_line" "log_rotate"
       printf '%s\n' "$rotation_line"
     else
       rm -f -- "$archive_path"
-      rotation_line="$(printf '%s [WARN] cycle=%s run_hash=%s log.rotate_unarchived live=%s archive=none rotate_after_hours=%s keep_hours=%s oldest_entry_epoch=%s reason=%s' \
-        "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$LOG_FILE" "$rotate_after_hours" "$keep_hours" "$oldest_epoch" "$archive_reason")"
+      rotation_line="$(printf '%s [WARN] cycle=%s run_hash=%s log.rotate_unarchived live_hash=%s attempted_archive_hash=%s path_redacted=1 rotate_after_hours=%s keep_hours=%s oldest_entry_epoch=%s reason=%s' \
+        "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$live_log_hash" "$archive_path_hash" "$rotate_after_hours" "$keep_hours" "$oldest_epoch" "$archive_reason")"
       append_log_line_secure "$rotation_line" "log_rotate_unarchived"
       printf '%s\n' "$rotation_line"
     fi
   else
     rm -f -- "$archive_temp_path" "$archive_path"
-    rotation_line="$(printf '%s [WARN] cycle=%s run_hash=%s log.rotate_failed live=%s attempted_archive=%s reason=truncate_failed archive_reason=%s' \
-      "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$LOG_FILE" "$archive_path" "$archive_reason")"
+    rotation_line="$(printf '%s [WARN] cycle=%s run_hash=%s log.rotate_failed live_hash=%s attempted_archive_hash=%s path_redacted=1 reason=truncate_failed archive_reason=%s' \
+      "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$live_log_hash" "$archive_path_hash" "$archive_reason")"
     append_log_line_secure "$rotation_line" "log_rotate_failed"
     printf '%s\n' "$rotation_line"
   fi

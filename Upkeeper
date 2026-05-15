@@ -2679,6 +2679,301 @@ emit(
 PY
 }
 
+upkeeper_tool_failure_queue_backfill_legacy_signatures() {
+  local target_path="$1"
+  local transcript_file="$2"
+  local selected_marker_path="${3:-}"
+  local redaction_key
+
+  redaction_key="$(upkeeper_redaction_key_material)"
+
+  python3 - "$ROOT_DIR" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$target_path" "$transcript_file" "$selected_marker_path" "$redaction_key" <<'PY'
+import hashlib
+import hmac
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+root, raw_queue_dir, target_path, transcript_raw, selected_marker_raw, redaction_key = sys.argv[1:7]
+root_path = Path(root).resolve()
+queue_dir = Path(raw_queue_dir).expanduser()
+if not queue_dir.is_absolute():
+    queue_dir = Path(os.path.abspath(root_path / queue_dir))
+else:
+    queue_dir = Path(os.path.abspath(queue_dir))
+open_dir = queue_dir / "open"
+transcript_path = Path(transcript_raw)
+redaction_key_bytes = redaction_key.encode("utf-8", "surrogateescape")
+
+
+def emit(action: str, **fields: str) -> None:
+    print(f"action={action}")
+    for key, value in fields.items():
+        print(f"{key}={value}")
+
+
+def short(value: str, limit: int = 500) -> str:
+    value = re.sub(r"\s+", " ", value.strip())
+    if len(value) > limit:
+        return value[: limit - 15].rstrip() + "...<truncated>"
+    return value
+
+
+def hmac_hex(namespace: str, value: str) -> str:
+    material = f"{namespace}\0{value}".encode("utf-8", "surrogateescape")
+    return hmac.new(redaction_key_bytes, material, hashlib.sha256).hexdigest()
+
+
+def value_hmac(namespace: str, value: str) -> str:
+    return f"value-hmac-sha256:{hmac_hex(namespace, value)}"
+
+
+def failure_signature(kind: str, command_hash: str, exit_line: str) -> str:
+    payload = f"{kind}\0{command_hash}\0{exit_line}"
+    return hashlib.sha256(payload.encode("utf-8", "surrogateescape")).hexdigest()
+
+
+def command_kind(line: str) -> str:
+    lowered = line.lower()
+    if re.search(r"\bbash\s+-n\b|\bdiff\s+--check\b|git\s+diff\s+--check|\bshellcheck\b|\bruff\b|\bmypy\b", lowered):
+        return "check"
+    if re.search(r"\btools/validate_[a-z0-9_.-]+(?:\.sh)?\b|validate_upkeeper\.sh", lowered):
+        return "validation"
+    if re.search(r"\b(pytest|bats)\b|\bpython[0-9.]*\s+-m\s+pytest\b|\bgo\s+test\b|\bcargo\s+test\b|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b|\bmake\s+(?:[^;&|]*\s+)?test\b", lowered):
+        return "tests"
+    if re.search(r"\b(npm|pnpm|yarn|node|make|cargo|go)\b", lowered):
+        return "build"
+    if re.search(r"\bcommand -v\s+", lowered):
+        return "command"
+    if re.search(r"\b(rg|grep|find|cat)\b|\bgit\s+(?:grep|ls-files|diff|show|status|log)\b|\bnl\s+-ba\b|\bsed\s+-n\b", lowered):
+        return "search"
+    if re.search(r"\bgit\b", lowered):
+        return "git"
+    return "command"
+
+
+def interesting_failure_kind(kind: str) -> bool:
+    return kind in {"tests", "validation", "check", "build"}
+
+
+def strip_initial_prompt_echo(raw_lines: list[str]) -> list[str]:
+    filtered = []
+    in_user_echo = False
+    saw_codex_marker = False
+    for item in raw_lines:
+        stripped = item.strip()
+        if not saw_codex_marker:
+            if in_user_echo:
+                if stripped == "codex":
+                    in_user_echo = False
+                    saw_codex_marker = True
+                continue
+            if stripped == "user":
+                in_user_echo = True
+                continue
+        filtered.append(item)
+    return filtered
+
+
+def transcript_failures(path: Path) -> list[dict[str, str]]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+    failures = []
+    expecting_command = False
+    current_command = ""
+    current_kind = "command"
+    in_diff_block = False
+    for line in strip_initial_prompt_echo(lines):
+        stripped = line.strip()
+        if stripped == "codex" or stripped.startswith("tokens used"):
+            expecting_command = False
+            current_command = ""
+            current_kind = "command"
+            in_diff_block = False
+            continue
+        if stripped == "exec":
+            expecting_command = True
+            current_command = ""
+            current_kind = "command"
+            in_diff_block = False
+            continue
+        if line.startswith("diff --git "):
+            in_diff_block = True
+            continue
+        if in_diff_block:
+            continue
+        if expecting_command and stripped:
+            expecting_command = False
+            current_command = stripped
+            current_kind = command_kind(stripped)
+            continue
+        if re.match(r"exited [1-9][0-9]* in ", stripped) and interesting_failure_kind(current_kind):
+            failures.append(
+                {
+                    "kind": current_kind,
+                    "command_hash": value_hmac("command", short(current_command)),
+                    "exit_line": short(stripped),
+                }
+            )
+    return failures
+
+
+def normalize_candidate(path_value: str) -> Path | None:
+    if not path_value:
+        return None
+    candidate = Path(path_value).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path(os.path.abspath(root_path / candidate))
+    else:
+        candidate = Path(os.path.abspath(candidate))
+    try:
+        candidate.relative_to(queue_dir)
+    except ValueError:
+        return None
+    return candidate
+
+
+def marker_id_for(path_value: str) -> str:
+    return hashlib.sha1(path_value.encode("utf-8", "surrogateescape")).hexdigest()[:24]
+
+
+def read_json(path: Path) -> dict:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_json_atomic(path: Path, data: dict) -> None:
+    tmp = path.with_name(path.name + f".tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def candidate_signatures(data: dict) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+
+    def add(kind: object, command_hash: object, exit_line: object) -> None:
+        if not isinstance(kind, str) or not kind:
+            return
+        if not isinstance(exit_line, str) or not exit_line:
+            return
+        normalized_hash = ""
+        if isinstance(command_hash, str) and command_hash:
+            normalized_hash = command_hash
+        if not normalized_hash:
+            return
+        signature = failure_signature(kind, normalized_hash, exit_line)
+        if signature not in seen:
+            seen.add(signature)
+            values.append(signature)
+
+    samples = data.get("failure_samples")
+    if isinstance(samples, list):
+        for sample in samples:
+            if not isinstance(sample, dict):
+                continue
+            command_hash = sample.get("command_hash")
+            if not command_hash and isinstance(sample.get("command"), str):
+                command_hash = value_hmac("command", short(sample["command"]))
+            add(sample.get("kind"), command_hash, sample.get("exit_line"))
+
+    first_command_hash = data.get("first_failure_command_hash")
+    if not first_command_hash and isinstance(data.get("first_failure_command"), str):
+        first_command_hash = value_hmac("command", short(data["first_failure_command"]))
+    add(data.get("first_failure_kind"), first_command_hash, data.get("first_failure_exit_line"))
+
+    last_command_hash = data.get("last_failure_command_hash")
+    if not last_command_hash and isinstance(data.get("last_failure_command"), str):
+        last_command_hash = value_hmac("command", short(data["last_failure_command"]))
+    add(data.get("last_failure_kind"), last_command_hash, data.get("last_failure_exit_line"))
+    return values
+
+
+def main() -> None:
+    marker_path = open_dir / f"{marker_id_for(target_path)}.json"
+    candidates = [marker_path]
+    selected_marker_path = normalize_candidate(selected_marker_raw)
+    if selected_marker_path is not None and selected_marker_path != marker_path:
+        candidates.append(selected_marker_path)
+
+    existing_path = next((path for path in candidates if path.exists()), None)
+    if existing_path is None:
+        emit("none", reason="marker_missing")
+        return
+
+    data = read_json(existing_path)
+    if not data:
+        emit("none", reason="marker_invalid")
+        return
+
+    existing_signatures = data.get("failure_signatures")
+    if isinstance(existing_signatures, list) and any(isinstance(item, str) and item for item in existing_signatures):
+        emit("present", marker_path=str(existing_path), signature_count=str(len(existing_signatures)))
+        return
+
+    failure_count = data.get("failure_count", 0)
+    try:
+        failure_count = int(failure_count)
+    except (TypeError, ValueError):
+        emit("none", reason="failure_count_invalid")
+        return
+    if failure_count <= 0:
+        emit("none", reason="failure_count_not_positive")
+        return
+
+    transcript_signature_values = [
+        failure_signature(item["kind"], item["command_hash"], item["exit_line"])
+        for item in transcript_failures(transcript_path)
+    ]
+    if len(transcript_signature_values) != failure_count:
+        emit(
+            "none",
+            reason="transcript_failure_count_mismatch",
+            marker_count=str(failure_count),
+            transcript_count=str(len(transcript_signature_values)),
+        )
+        return
+
+    known_signatures = candidate_signatures(data)
+    if known_signatures and not set(known_signatures).issubset(set(transcript_signature_values)):
+        emit("none", reason="transcript_signature_mismatch", marker_signatures=str(len(known_signatures)))
+        return
+
+    data["failure_signatures"] = transcript_signature_values
+    write_json_atomic(existing_path, data)
+    emit("backfilled", marker_path=str(existing_path), signature_count=str(len(transcript_signature_values)))
+
+
+try:
+    main()
+except Exception as exc:
+    emit("error", error_class=type(exc).__name__)
+PY
+}
+
 upkeeper_emit_canonical_preselect_output() {
   local raw="$1"
   local marker_meta="${2:-}"
@@ -2823,6 +3118,7 @@ tool_failure_queue_finalize_run() {
   local codex_exit="$3"
   local status_marker="$4"
   local secure_queue_result secure_queue_status secure_queue_reason normalized_target_path
+  local backfill_result backfill_action
 
   tool_failure_queue_enabled || return 0
 
@@ -2860,6 +3156,14 @@ PY
   if [[ -z "$normalized_target_path" ]]; then
     log_line "WARN" "tool_failure_queue.update_skipped reason=target_path_invalid target_path=$(shell_quote "${target_path:-unknown}")"
     return 0
+  fi
+
+  backfill_result="$(upkeeper_tool_failure_queue_backfill_legacy_signatures "$normalized_target_path" "$transcript_file" "${RUN_SELECTED_FAILURE_MARKER_PATH:-}")"
+  backfill_action="$(upkeeper_preselect_output_field action "$backfill_result")"
+  if [[ "$backfill_action" == "backfilled" ]]; then
+    log_line "INFO" "tool_failure_queue.legacy_signatures_repaired signature_count=$(shell_quote "$(upkeeper_preselect_output_field signature_count "$backfill_result")") path_redacted=1"
+  elif [[ "$backfill_action" == "error" ]]; then
+    log_line "WARN" "tool_failure_queue.legacy_signatures_repair_failed error_class=$(shell_quote "$(upkeeper_preselect_output_field error_class "$backfill_result")") path_redacted=1"
   fi
 
   upkeeper_tool_failure_queue_finalize_run_original "$normalized_target_path" "$transcript_file" "$codex_exit" "$status_marker"

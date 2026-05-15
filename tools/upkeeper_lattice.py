@@ -1853,6 +1853,28 @@ def git_output(root: Path, args: list[str], default: str = "", strip: bool = Tru
         return default
 
 
+def parse_git_porcelain_v1_z_entries(raw: bytes) -> list[tuple[str, str, str | None]]:
+    entries: list[tuple[str, str, str | None]] = []
+    parts = raw.split(b"\0") if raw else []
+    i = 0
+    while i < len(parts):
+        item = parts[i]
+        i += 1
+        # Git porcelain v1 -z uses the first two bytes as XY status, and a
+        # leading space is meaningful for unstaged-only worktree changes.
+        if not item or len(item) < 4 or item[2:3] != b" ":
+            continue
+        status_code = decode_git_output(item[:2])
+        path = decode_git_output(item[3:])
+        old_path = None
+        if status_code[0] in {"R", "C"} or status_code[1] in {"R", "C"}:
+            if i < len(parts):
+                old_path = decode_git_output(parts[i]) or None
+                i += 1
+        entries.append((status_code, path, old_path))
+    return entries
+
+
 def git_porcelain_status_for_path(root: Path, rel_path: str) -> str:
     rel_path = operational_rel_path(rel_path)
     try:
@@ -1862,8 +1884,8 @@ def git_porcelain_status_for_path(root: Path, rel_path: str) -> str:
         )
     except (OSError, subprocess.CalledProcessError):
         return ""
-    decoded = decode_git_output(raw)
-    return decoded[:2]
+    entries = parse_git_porcelain_v1_z_entries(raw)
+    return entries[0][0] if entries else ""
 
 
 def inside_git_repo(root: Path) -> bool:
@@ -3935,24 +3957,10 @@ def record_worktree_snapshot(
         raw = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--untracked-files=all"])
     except (OSError, subprocess.CalledProcessError):
         raw = b""
-    parts = decode_git_output(raw).split("\0") if raw else []
-    entries: list[tuple[str, str, str | None]] = []
-    i = 0
+    entries = parse_git_porcelain_v1_z_entries(raw)
     tracked = 0
     untracked = 0
-    while i < len(parts):
-        item = parts[i]
-        i += 1
-        if not item or len(item) < 4:
-            continue
-        status_code = item[:2]
-        path = item[3:]
-        old_path = None
-        if status_code[0] in {"R", "C"} or status_code[1] in {"R", "C"}:
-            if i < len(parts):
-                old_path = parts[i] or None
-                i += 1
-        entries.append((status_code, path, old_path))
+    for status_code, path, _old_path in entries:
         if status_code == "??":
             untracked += 1
         else:

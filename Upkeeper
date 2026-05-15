@@ -614,6 +614,272 @@ print(json.dumps(value))
 PY
 }
 
+upkeeper_materialize_inline_prompt_file() {
+  local prompt_path=""
+
+  [[ -n "${INLINE_PROMPT:-}" ]] || return 0
+  [[ -z "${PROMPT_FILE:-}" ]] || return 0
+
+  ensure_run_tmp_dir
+  prompt_path="$(run_mktemp inline-prompt)" || die "failed to allocate private inline prompt file"
+  if ! printf '%s' "$INLINE_PROMPT" >"$prompt_path"; then
+    rm -f -- "$prompt_path" 2>/dev/null || true
+    die "failed to write private inline prompt file"
+  fi
+  if ! chmod 600 "$prompt_path"; then
+    rm -f -- "$prompt_path" 2>/dev/null || true
+    die "failed to secure private inline prompt file"
+  fi
+
+  PROMPT_FILE="$prompt_path"
+  INLINE_PROMPT=""
+  log_line "INFO" "prompt.inline_materialized execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=$(shell_quote "$PROMPT_FILE") content_hmac=$(file_blob_hash "$PROMPT_FILE")"
+}
+
+upkeeper_parent_args_summary_field() {
+  local summary="${1:-}"
+  local key="$2"
+  local field=""
+
+  for field in $summary; do
+    case "$field" in
+      "$key"=*)
+        printf '%s' "${field#*=}"
+        return 0
+        ;;
+    esac
+  done
+
+  printf 'unknown'
+}
+
+upkeeper_parent_args_classification() {
+  local raw_args="${1:-}"
+  local compact_args=""
+
+  compact_args="$(printf '%s' "$raw_args" | compact_process_args)"
+  case "$compact_args" in
+    ""|unknown|unavailable|none)
+      printf 'unknown'
+      ;;
+    bash|-bash|/bin/bash|*/bash|sh|-sh|/bin/sh|*/sh|dash|-dash|zsh|-zsh|ksh|-ksh|fish|-fish)
+      printf 'interactive_shell'
+      ;;
+    *Upkeeper*|*upkeeper*)
+      printf 'upkeeper_loop'
+      ;;
+    *'while '*|*'for '*|*'; do '*)
+      printf 'loop_shell'
+      ;;
+    *)
+      printf 'other_shell_command'
+      ;;
+  esac
+}
+
+upkeeper_parent_args_summary() {
+  local raw_args="${1:-}"
+  local compact_args="" parent_class="" argv_hash=""
+
+  compact_args="$(printf '%s' "$raw_args" | compact_process_args)"
+  parent_class="$(upkeeper_parent_args_classification "$compact_args")"
+  case "$compact_args" in
+    ""|unknown|unavailable|none)
+      argv_hash="$parent_class"
+      ;;
+    *)
+      argv_hash="$(cycle_start_metadata_hash "$compact_args")"
+      ;;
+  esac
+  printf 'class=%s argv_hash=%s' "$parent_class" "$argv_hash"
+}
+
+upkeeper_parent_process_args_summary() {
+  local pid="$1"
+  local raw_args=""
+
+  raw_args="$(ps -o args= -p "$pid" | compact_process_args)"
+  upkeeper_parent_args_summary "$raw_args"
+}
+
+if declare -f resolve_prompt_file >/dev/null 2>&1; then
+  eval "$(declare -f resolve_prompt_file | sed '1s/^resolve_prompt_file ()/upkeeper_resolve_prompt_file_original ()/')"
+fi
+
+resolve_prompt_file() {
+  upkeeper_resolve_prompt_file_original "$@"
+  upkeeper_materialize_inline_prompt_file
+}
+
+direct_parent_details() {
+  local ppid_now parent_comm parent_summary
+
+  ppid_now="$(ps -o ppid= -p "$$" | tr -d ' ')"
+  parent_pid_is_stoppable "$ppid_now" || return 1
+  ps -p "$ppid_now" >/dev/null 2>&1 || return 1
+  parent_comm="$(ps -o comm= -p "$ppid_now" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  parent_summary="$(upkeeper_parent_process_args_summary "$ppid_now")"
+  printf '%s\t%s\t%s\n' "$ppid_now" "$parent_comm" "$parent_summary"
+}
+
+parent_shell_details() {
+  if [[ -n "$CODEX_LOOP_PARENT_PID" ]]; then
+    local target_pid target_comm target_summary
+    target_pid="$CODEX_LOOP_PARENT_PID"
+    parent_pid_is_stoppable "$target_pid" || return 1
+    if ps -p "$target_pid" >/dev/null 2>&1; then
+      target_comm="$(ps -o comm= -p "$target_pid" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+      target_summary="$(upkeeper_parent_process_args_summary "$target_pid")"
+    else
+      target_comm="${CODEX_LOOP_PARENT_COMM:-unknown}"
+      target_summary="class=unknown argv_hash=unavailable"
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$target_pid" "$target_comm" "$target_summary" "1"
+    return 0
+  fi
+
+  local direct_details
+  direct_details="$(direct_parent_details)" || return 1
+  printf '%s\t%s\n' "$direct_details" "0"
+}
+
+parent_stop_skip_reason() {
+  local parent_comm="$1"
+  local parent_summary="$2"
+  local using_override="$3"
+  local parent_class=""
+
+  parent_class="$(upkeeper_parent_args_summary_field "$parent_summary" class)"
+
+  if [[ "$CODEX_DISABLE_PARENT_STOP" == "1" ]]; then
+    printf 'disabled_by_env'
+    return 0
+  fi
+
+  if [[ "${using_override:-0}" == "1" ]]; then
+    return 1
+  fi
+
+  case "$parent_class" in
+    interactive_shell)
+      printf 'interactive_parent_shell'
+      return 0
+      ;;
+    upkeeper_loop|loop_shell)
+      return 1
+      ;;
+    *)
+      printf 'unrecognized_parent_shell_command'
+      return 0
+      ;;
+  esac
+}
+
+stop_parent_loop() {
+  local details
+  if ! details="$(parent_shell_details)"; then
+    log_line "ERROR" "could not resolve parent shell details for stop"
+    return 1
+  fi
+
+  local parent_pid parent_comm parent_summary using_override
+  local parent_args_class parent_args_hash
+  IFS=$'\t' read -r parent_pid parent_comm parent_summary using_override <<<"$details"
+  parent_args_class="$(upkeeper_parent_args_summary_field "$parent_summary" class)"
+  parent_args_hash="$(upkeeper_parent_args_summary_field "$parent_summary" argv_hash)"
+
+  if ! parent_pid_is_stoppable "$parent_pid"; then
+    log_line "ERROR" "refusing to stop unsafe parent_pid=$parent_pid parent_comm=$parent_comm using_override=${using_override:-0}"
+    return 1
+  fi
+
+  case "$parent_comm" in
+    bash|sh|dash|zsh|ksh|fish)
+      ;;
+    *)
+      log_line "ERROR" "refusing to stop non-shell parent_pid=$parent_pid parent_comm=$parent_comm"
+      return 1
+      ;;
+  esac
+
+  if ! kill -0 "$parent_pid" 2>/dev/null; then
+    PARENT_LOOP_STOP_OUTCOME="already_exited"
+    log_line "INFO" "loop parent already exited; parent_pid=$parent_pid parent_comm=$parent_comm using_override=${using_override:-0}"
+    return 0
+  fi
+
+  local skip_reason
+  if skip_reason="$(parent_stop_skip_reason "$parent_comm" "$parent_summary" "${using_override:-0}")"; then
+    PARENT_LOOP_STOP_OUTCOME="skipped_$skip_reason"
+    log_line "WARN" "parent loop stop skipped reason=$skip_reason execution_origin=$CODEX_EXECUTION_ORIGIN parent_pid=$parent_pid parent_comm=$parent_comm using_override=${using_override:-0} parent_args_class=$parent_args_class parent_args_hash=$parent_args_hash"
+    return 0
+  fi
+
+  PARENT_LOOP_STOP_OUTCOME="stopping"
+  log_line "WARN" "quota guardrail tripped; parent_pid=$parent_pid parent_comm=$parent_comm using_override=${using_override:-0} parent_args_class=$parent_args_class parent_args_hash=$parent_args_hash"
+
+  if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
+    PARENT_LOOP_STOP_OUTCOME="dry_run"
+    log_line "INFO" "dry-run active; would send SIGTERM to parent_pid=$parent_pid"
+    return 0
+  fi
+
+  if [[ "${using_override:-0}" != "1" ]]; then
+    local ppid_now
+    ppid_now="$(ps -o ppid= -p "$$" | tr -d ' ')"
+    if ! parent_pid_is_stoppable "$ppid_now" || [[ "$ppid_now" != "$parent_pid" ]]; then
+      log_line "ERROR" "parent PID changed before stop; expected=$parent_pid actual=$ppid_now"
+      return 1
+    fi
+  fi
+
+  if ! kill -TERM "$parent_pid" 2>/dev/null; then
+    if ! kill -0 "$parent_pid" 2>/dev/null; then
+      PARENT_LOOP_STOP_OUTCOME="already_exited"
+      log_line "INFO" "parent_pid=$parent_pid exited before SIGTERM could be delivered"
+      return 0
+    fi
+    PARENT_LOOP_STOP_OUTCOME="sigterm_failed"
+    log_line "ERROR" "failed to send SIGTERM to parent_pid=$parent_pid"
+    return 1
+  fi
+  log_line "WARN" "sent SIGTERM to parent_pid=$parent_pid"
+
+  local elapsed=0
+  while (( elapsed < CODEX_LOOP_STOP_GRACE_SECONDS * 10 )); do
+    if ! kill -0 "$parent_pid" 2>/dev/null; then
+      PARENT_LOOP_STOP_OUTCOME="stopped_sigterm"
+      log_line "INFO" "confirmed parent_pid=$parent_pid exited after SIGTERM"
+      return 0
+    fi
+    sleep 0.1
+    elapsed=$((elapsed + 1))
+  done
+
+  log_line "WARN" "parent_pid=$parent_pid still alive after ${CODEX_LOOP_STOP_GRACE_SECONDS}s; sending SIGKILL"
+  if ! kill -KILL "$parent_pid" 2>/dev/null; then
+    if ! kill -0 "$parent_pid" 2>/dev/null; then
+      PARENT_LOOP_STOP_OUTCOME="stopped_sigterm"
+      log_line "INFO" "parent_pid=$parent_pid exited before SIGKILL could be delivered"
+      return 0
+    fi
+    PARENT_LOOP_STOP_OUTCOME="sigkill_failed"
+    log_line "ERROR" "failed to send SIGKILL to parent_pid=$parent_pid"
+    return 1
+  fi
+  sleep 0.2
+
+  if kill -0 "$parent_pid" 2>/dev/null; then
+    PARENT_LOOP_STOP_OUTCOME="sigkill_failed"
+    log_line "ERROR" "parent_pid=$parent_pid still exists after SIGKILL"
+    return 1
+  fi
+
+  PARENT_LOOP_STOP_OUTCOME="stopped_sigkill"
+  log_line "INFO" "confirmed parent_pid=$parent_pid exited after SIGKILL"
+  return 0
+}
+
 if declare -f preselect_review_target >/dev/null 2>&1; then
   eval "$(declare -f preselect_review_target | sed '1s/^preselect_review_target ()/upkeeper_preselect_review_target_original ()/')"
 fi
@@ -730,18 +996,18 @@ launch_screen_fallback_loop() {
   local trigger="$1"
   shift
   local detail_text="${*:-none}"
-  local loop_details loop_parent_pid loop_parent_comm loop_parent_args using_override
+  local loop_details loop_parent_pid loop_parent_comm loop_parent_summary using_override
   if ! loop_details="$(parent_shell_details)"; then
     log_line "ERROR" "fallback.screen.start trigger=$trigger failed_to_resolve_loop_parent=1"
     return 8
   fi
-  IFS=$'\t' read -r loop_parent_pid loop_parent_comm loop_parent_args using_override <<<"$loop_details"
+  IFS=$'\t' read -r loop_parent_pid loop_parent_comm loop_parent_summary using_override <<<"$loop_details"
 
   local screen_root visible_screen_root session_name runner_script transcript_file exit_file done_file last_cycle_exit_file
   local child_id_file child_started_file child_status_file heartbeat_file completed_count_file stop_reason_file
   local prompt_arg_snippet="" runner_env_lines=""
   local self_q model_q effort_q mode_q root_q screen_root_q visible_screen_root_q transcript_q poll_q trigger_q
-  local loop_parent_pid_q loop_parent_comm_q loop_parent_args_q primary_model_q
+  local loop_parent_pid_q loop_parent_comm_q primary_model_q
   local continuous_q max_children_q max_seconds_q
   local review_module review_module_q
   local fallback_chain_token
@@ -796,7 +1062,6 @@ launch_screen_fallback_loop() {
   printf -v trigger_q '%q' "$trigger"
   printf -v loop_parent_pid_q '%q' "$loop_parent_pid"
   printf -v loop_parent_comm_q '%q' "$loop_parent_comm"
-  printf -v loop_parent_args_q '%q' "$loop_parent_args"
   printf -v primary_model_q '%q' "$CODEX_MODEL"
   printf -v contract_path_q '%q' "${CODEX_FALLBACK_CONTRACT_PATH:-}"
   fallback_chain_token="$(generate_fallback_chain_token)"
@@ -844,9 +1109,10 @@ launch_screen_fallback_loop() {
     printf -v prompt_file_q '%q' "$PROMPT_FILE"
     prompt_arg_snippet="--prompt-file $prompt_file_q"
   elif [[ -n "$INLINE_PROMPT" ]]; then
-    local inline_prompt_q
-    printf -v inline_prompt_q '%q' "$INLINE_PROMPT"
-    prompt_arg_snippet="--prompt $inline_prompt_q"
+    upkeeper_materialize_inline_prompt_file
+    local prompt_file_q
+    printf -v prompt_file_q '%q' "$PROMPT_FILE"
+    prompt_arg_snippet="--prompt-file $prompt_file_q"
   fi
   for review_module in "${CODEX_REVIEW_MODULES[@]}"; do
     printf -v review_module_q '%q' "$review_module"
@@ -1026,7 +1292,6 @@ $runner_env_lines  CODEX_MODEL=$model_q \
   CODEX_SCREEN_FALLBACK_CHILD_ID="\$child_cycle_id" \
   CODEX_LOOP_PARENT_PID=$loop_parent_pid_q \
   CODEX_LOOP_PARENT_COMM=$loop_parent_comm_q \
-  CODEX_LOOP_PARENT_ARGS=$loop_parent_args_q \
   CODEX_POSTMORTEM_ENABLED=0 \
   CODEX_DISABLE_PARENT_STOP=1 \
   CODEX_GUARDRAIL_STOP_EXIT_CODE=9 \

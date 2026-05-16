@@ -635,6 +635,124 @@ check_prompt_template() {
   grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 }
 
+check_fault_injection_registry_contract() {
+  local registry_path
+
+  log "checking fault-injection scenario registry contract"
+  registry_path="docs/fault-injection-scenarios.md"
+  [[ -s "$registry_path" ]] || fail "fault-injection scenario registry is missing or empty"
+  grep -Fq "docs/fault-injection-scenarios.md" README.md || fail "README missing fault-injection registry link"
+  grep -Fq "docs/fault-injection-scenarios.md" prompts/p31-fault-injection-review.md || fail "P31 prompt missing fault-injection registry link"
+
+  python3 - "$registry_path" <<'PY' || fail "fault-injection scenario registry contract failed"
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+
+required_columns = [
+    "scenario_id",
+    "module_or_file",
+    "fault_surface",
+    "injected_fault",
+    "expected_reason",
+    "expected_exit",
+    "expected_log_event",
+    "cleanup_required",
+    "recovery_run_required",
+    "validation_command",
+    "quick_or_full",
+    "lattice_ready_tags",
+    "severity",
+    "likelihood",
+    "detectability",
+    "fixture_cost",
+    "priority",
+]
+required_surfaces = {
+    "Review module wiring",
+    "Prompt compilation",
+    "Fake backend",
+    "Transcript artifacts",
+    "Status markers",
+    "Review summary parser",
+    "Quota/session JSONL",
+    "Active lock",
+    "Wrapper health",
+    "Fallback artifacts",
+    "Fallback orchestration",
+    "Screen fallback",
+    "Worktree state",
+    "Selection",
+    "Tool failure queue",
+    "Config/env",
+    "Dependency surface",
+    "Operator diagnostics",
+    "Cleanup",
+}
+
+lines = text.splitlines()
+try:
+    header_line = next(line for line in lines if line.startswith("| scenario_id |"))
+except StopIteration:
+    raise SystemExit("registry table header missing")
+
+headers = [cell.strip() for cell in header_line.strip().strip("|").split("|")]
+missing_columns = [column for column in required_columns if column not in headers]
+if missing_columns:
+    raise SystemExit(f"missing required columns: {', '.join(missing_columns)}")
+
+rows = []
+for line in lines:
+    if not re.match(r"^[|] FI-[0-9]{3} [|]", line):
+        continue
+    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    if len(cells) != len(headers):
+        raise SystemExit(f"row has {len(cells)} cells but header has {len(headers)}: {line}")
+    rows.append(dict(zip(headers, cells)))
+
+if not rows:
+    raise SystemExit("registry has no scenario rows")
+
+seen_ids = set()
+seen_surfaces = set()
+for row in rows:
+    scenario_id = row["scenario_id"]
+    if not re.fullmatch(r"FI-[0-9]{3}", scenario_id):
+        raise SystemExit(f"invalid scenario id: {scenario_id}")
+    if scenario_id in seen_ids:
+        raise SystemExit(f"duplicate scenario id: {scenario_id}")
+    seen_ids.add(scenario_id)
+    seen_surfaces.add(row["fault_surface"])
+
+    if row["quick_or_full"] not in {"quick", "full"}:
+        raise SystemExit(f"{scenario_id} has invalid quick_or_full: {row['quick_or_full']}")
+    if row["cleanup_required"] not in {"yes", "no"}:
+        raise SystemExit(f"{scenario_id} has invalid cleanup_required: {row['cleanup_required']}")
+    if row["recovery_run_required"] not in {"yes", "no"}:
+        raise SystemExit(f"{scenario_id} has invalid recovery_run_required: {row['recovery_run_required']}")
+    if row["priority"] not in {"high", "medium", "low", "deferred", "retired"}:
+        raise SystemExit(f"{scenario_id} has invalid priority: {row['priority']}")
+    if "surface:" not in row["lattice_ready_tags"] or "status:" not in row["lattice_ready_tags"]:
+        raise SystemExit(f"{scenario_id} lattice_ready_tags lack surface/status namespaces")
+
+missing_surfaces = sorted(required_surfaces - seen_surfaces)
+if missing_surfaces:
+    raise SystemExit(f"missing required surfaces: {', '.join(missing_surfaces)}")
+
+for required_section in [
+    "## Required Columns",
+    "## Priority Fields",
+    "## Initial Matrix",
+    "## Lattice Import Naming",
+]:
+    if required_section not in text:
+        raise SystemExit(f"missing section: {required_section}")
+PY
+}
+
 check_default_prompt_target_isolation_contract() {
   log "checking default prompt target isolation contract"
   if grep -Fq -- "- select the next oldest eligible file" "$ROOT_DIR/prompts/default-review.md"; then
@@ -3686,6 +3804,7 @@ run_check syntax check_syntax
 run_check version_consistency check_version_consistency
 run_check module_map check_module_map
 run_check prompt_template check_prompt_template
+run_check fault_injection_registry_contract check_fault_injection_registry_contract
 run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contract
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff

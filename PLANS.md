@@ -249,6 +249,57 @@ Validation:
 - `tools/validate_upkeeper.sh --quick`
 - `git diff --check`
 
+## Backlog Timestamped Watch Feed And Lattice Doctor Probe
+
+Status: completed
+
+Goal:
+Keep direct backlog loop watching human-readable and machine-safe by giving the
+live terminal/feed log a local ISO timestamp in column 1, while restoring
+`tools/upkeeper_lattice.py doctor` to a single JSON document after its internal
+probe started printing command JSON.
+
+Constraints:
+- Preserve safe interactive watch mode: stdin stays cut off, output stays live,
+  and the private loop log remains the followable source of truth.
+- Timestamp both wrapper-generated lines and raw child-process lines without
+  double-prefixing lines that already begin with an ISO timestamp.
+- Keep recent-activity parsing compatible with old raw loop logs and new
+  timestamped loop logs.
+- Keep `doctor` output machine-readable; internal self-probes must not leak
+  command output onto stdout.
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `orchestration/backlog_loop.sh`
+- `lib/upkeeper/file_manifest.bash`
+- `lib/upkeeper/help_selection.bash`
+- `tools/upkeeper_lattice.py`
+- `tools/validate_upkeeper.sh`
+- `tests/lattice_test.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/backlog_loop.sh`
+- `bash tests/lattice_test.bash`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Timestamped direct backlog watch notices and stream output, plus detached
+  loop-wrapper log output, while avoiding duplicate prefixes on existing
+  timestamped lines.
+- Updated backlog recent-activity parsing and validator probes for timestamped
+  loop logs.
+- Restored single-document Lattice `doctor` JSON output and aligned the
+  colon-bearing target test with the current rejected-substitution contract.
+- Refreshed operator-facing docs/help/release notes and the manifest validator
+  contract for repo-relative manifest paths.
+
 ## Disk Preflight Prompt and Log Redaction
 
 Status: completed

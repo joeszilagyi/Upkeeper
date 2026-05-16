@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import errno
 import fnmatch
 import hashlib
 import hmac
+import io
 import json
 import os
 import re
@@ -4677,7 +4679,8 @@ def probe_cycle_finish_target_mismatch() -> dict[str, Any]:
             snapshot_kind="after_codex",
             end_epoch=1234567890,
         )
-        command_record_cycle_finish(args)
+        with contextlib.redirect_stdout(io.StringIO()):
+            command_record_cycle_finish(args)
         conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True)
         try:
             cycle = conn.execute(

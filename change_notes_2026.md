@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-15: v1.2.23 changes:
+	1. Hardened Lattice cycle-finish recording so the wrapper-selected target remains authoritative; model-reported replacement targets are preserved as rejection evidence and convert the cycle to `STOPPED_ON_BLOCKER` instead of silently moving the selected file.
+	2. Improved Lattice path fidelity for unusual Git paths by using byte-preserving path encoding, `git status --porcelain=v1 -z` parsing, and artifact-reference deduplication/indexes that keep repeated local evidence rows from corrupting recovery state; fresh file manifests now keep repo-relative paths instead of checkout-local absolute paths.
+	3. Strengthened selected-target pre-contact backup publication with staged directory commits and payload-hash verification, and restored `doctor` to a single JSON document after its internal probes began exercising the cycle-finish command path.
+	4. Backlog watch and detached-loop feeds now timestamp mixed child-process output with a local `YYYY-MM-DDTHH:MM:SS` column-1 prefix while preserving recent-activity summaries across old raw logs and new timestamped logs.
+
 2026-05-15: v1.2.21 changes:
 	1. Hardened detached screen fallback staging so generated runner scripts live under a private owner-only state root instead of repo-local postmortem evidence, while mirrored status files remain available for normal operator inspection.
 	2. Preserved fallback-chain contracts, selected-target context, issue-fix context, failure-queue context, and prompt/module arguments across staged screen fallback children so recovery workers do not silently lose the parent run's workload boundary.

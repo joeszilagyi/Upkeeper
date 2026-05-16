@@ -1,9 +1,9 @@
 # File manifest cache for deterministic target selection.
 #
 # The manifest is local runtime state: it records source-visible files with
-# mtimes, sizes, and repo-root-anchored absolute paths so selection can work
-# from a ready sorted list instead of asking the backend model to rediscover
-# repository shape.
+# repo-relative paths, mtimes, and sizes so selection can work from a ready
+# sorted list without leaking checkout-local absolute paths or asking the
+# backend model to rediscover repository shape.
 
 resolve_upkeeper_manifest_path() {
   local raw_path="$1"

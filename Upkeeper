@@ -685,6 +685,327 @@ raise SystemExit(1)
 PY
 }
 
+# Keep this review-summary override in the entrypoint so selected-target-only
+# repair cycles can harden review outcome recovery without patching the paired
+# module files. Only a dedicated final outcome line near the machine markers is
+# trusted; free-text REVIEWED_* tokens in prose, quotes, bullets, and code
+# fences are rejected so missing status markers fail closed.
+review_report_summary_json() {
+  local last_message_file="$1"
+
+  python3 - "$last_message_file" <<'PY'
+import json
+import re
+import sys
+
+path = sys.argv[1]
+empty = {
+    "outcome": "",
+    "selected_file": "",
+    "findings": "",
+    "changes": "",
+    "verification": "",
+}
+
+OUTCOME_TOKEN_RE = re.compile(
+    r"^(REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)(?:\s+for\s+(.+))?$"
+)
+OUTCOME_FIELD_RE = re.compile(
+    r"^(?:Review outcome|Review status|Final status|Outcome):\s*"
+    r"(REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)"
+    r"(?:\s+for\s+(.+))?$"
+)
+MACHINE_MARKER_PREFIXES = (
+    "UPKEEPER_PASS_RESULT:",
+    "UPKEEPER_LOG_REVIEW:",
+    "UPKEEPER_STATUS:",
+    "CODEX_POSTMORTEM_STATUS:",
+)
+
+try:
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+except OSError:
+    print(json.dumps(empty, separators=(",", ":")))
+    raise SystemExit(0)
+
+
+def visible_lines_from_text(source_text):
+    visible = []
+    in_code_fence = False
+    for raw_line in source_text.splitlines():
+        line = raw_line.rstrip("\r\n")
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code_fence = not in_code_fence
+            continue
+        if in_code_fence or not stripped:
+            continue
+        visible.append(stripped)
+    return visible
+
+
+lines = visible_lines_from_text(text)
+
+
+def clean(value, max_len=700):
+    value = re.sub(r"\s+", " ", value.strip())
+    if len(value) > max_len:
+        value = value[: max_len - 15].rstrip() + "...<truncated>"
+    return value
+
+
+def normalized(line):
+    value = line.strip()
+    value = re.sub(r"^[#>*\-\d\.\s`]+", "", value)
+    value = value.strip("`*: ")
+    return re.sub(r"\s+", " ", value).lower()
+
+
+def compact_items(items, max_items=8, max_len=900):
+    cleaned = []
+    for item in items:
+        item = item.strip()
+        if not item:
+            continue
+        if item.startswith(MACHINE_MARKER_PREFIXES):
+            continue
+        item = re.sub(r"^[-*]\s+", "", item)
+        item = re.sub(r"^\d+[.)]\s+", "", item)
+        item = item.strip("` ")
+        if item:
+            cleaned.append(item)
+        if len(cleaned) >= max_items:
+            break
+    return clean("; ".join(cleaned), max_len=max_len)
+
+
+def no_change_summary(value):
+    value = re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+    if not value:
+        return False
+    return (
+        value in {"none", "n a", "not applicable"}
+        or value.startswith("no changes")
+        or value.startswith("no fixes")
+        or value.startswith("no code changes")
+        or value.startswith("nothing changed")
+    )
+
+
+def selected_file_from_source(source):
+    if not source:
+        return ""
+    markdown_link = re.search(r"\]\(([^)]+)\)", source)
+    backtick_path = re.search(r"`([^`]+)`", source)
+    if markdown_link:
+        value = markdown_link.group(1).strip("<>").split(":", 1)[0]
+    elif backtick_path:
+        value = backtick_path.group(1)
+    elif ":" in source:
+        value = source.split(":", 1)[1].strip()
+    else:
+        value = source.strip("- ")
+    value = clean(value, 240)
+    if re.fullmatch(r"\d+(?:\.\d+)?", value):
+        return ""
+    if re.match(r"^(epoch|age|mtime|hash)\b", value.lower()):
+        return ""
+    return value
+
+
+def dedicated_outcome(line):
+    match = OUTCOME_TOKEN_RE.fullmatch(line)
+    if match:
+        return match.group(1), selected_file_from_source(match.group(2) or "")
+    match = OUTCOME_FIELD_RE.fullmatch(line)
+    if match:
+        return match.group(1), selected_file_from_source(match.group(2) or "")
+    return "", ""
+
+
+def final_section_outcome():
+    marker_index = len(lines)
+    for index, line in enumerate(lines):
+        if line.startswith(MACHINE_MARKER_PREFIXES):
+            marker_index = index
+            break
+    window_start = max(0, marker_index - 12)
+    candidates = []
+    for line in lines[window_start:marker_index]:
+        outcome_token, outcome_selected_file = dedicated_outcome(line)
+        if outcome_token:
+            candidates.append((outcome_token, outcome_selected_file))
+    if not candidates:
+        return "", ""
+    unique_tokens = {token for token, _ in candidates}
+    if len(unique_tokens) != 1:
+        return "", ""
+    return candidates[-1]
+
+
+def capture_section(names):
+    known_headers = (
+        "review run",
+        "file selection",
+        "selected file",
+        "file selected",
+        "target file",
+        "prompts run",
+        "prompts applied",
+        "findings",
+        "fixes",
+        "fixes found",
+        "fixes implemented",
+        "fixes applied",
+        "implemented fix",
+        "implemented fixes",
+        "applied change",
+        "applied changes",
+        "changes applied",
+        "changes proposed",
+        "changes",
+        "test results",
+        "required persistence verification",
+        "verification",
+        "verification done",
+        "outcome",
+        "final status",
+        "final status marker",
+    )
+    capturing = False
+    items = []
+    for line in lines:
+        norm = normalized(line)
+        if any(norm.startswith(name) for name in names):
+            capturing = True
+            if ":" in line:
+                rest = line.split(":", 1)[1].strip()
+                if rest:
+                    items.append(rest)
+            continue
+        if not capturing:
+            continue
+        if not line:
+            continue
+        norm = normalized(line)
+        if re.match(r"p(?:[1-9]|1[0-9]|2[0-3])\b", norm):
+            break
+        if dedicated_outcome(line)[0]:
+            break
+        if any(norm.startswith(header) for header in known_headers):
+            break
+        if line.startswith(MACHINE_MARKER_PREFIXES):
+            break
+        items.append(line)
+        if len(items) >= 10:
+            break
+    return compact_items(items)
+
+
+outcome, selected_file = final_section_outcome()
+
+if not selected_file:
+    for index, line in enumerate(lines):
+        if selected_file:
+            break
+        norm = normalized(line)
+        if norm.startswith(("selected target baseline", "selected file baseline", "target baseline")):
+            continue
+        selected_label = norm.startswith(
+            (
+                "selected file",
+                "file selected",
+                "target file",
+                "selected target",
+                "target selected",
+                "review target",
+            )
+        ) or re.match(
+            r"selected\b.*\b(file|target)\b",
+            norm,
+        ) or re.match(
+            r"selected\s+[`[]",
+            line,
+            re.I,
+        )
+        if not selected_label:
+            continue
+        source = line
+        rest_after_colon = source.split(":", 1)[1].strip() if ":" in source else ""
+        has_inline_target = re.search(r"`[^`]+`|\]\([^)]+\)", source)
+        if not has_inline_target and (":" not in source or not rest_after_colon) and index + 1 < len(lines):
+            for candidate in lines[index + 1 : index + 5]:
+                if candidate:
+                    source = candidate
+                    break
+        selected_file = selected_file_from_source(source)
+        break
+
+findings = capture_section(("findings",))
+changes = capture_section(
+    (
+        "fixes",
+        "fixes found",
+        "fixes implemented",
+        "fixes applied",
+        "implemented fix",
+        "implemented fixes",
+        "applied change",
+        "applied changes",
+        "changes applied",
+        "bug report",
+        "bug reports",
+        "issue filed",
+        "issues filed",
+        "report filed",
+        "reports filed",
+    )
+)
+verification = capture_section(
+    (
+        "required persistence verification",
+        "test results",
+        "verification",
+    )
+)
+if outcome != "REVIEWED_AND_FIXED" and no_change_summary(changes):
+    changes = ""
+
+if outcome == "REVIEWED_AND_FIXED" and not changes:
+    fallback = []
+    for line in lines:
+        lowered = line.lower()
+        norm = normalized(line)
+        if line.startswith(MACHINE_MARKER_PREFIXES):
+            continue
+        if dedicated_outcome(line)[0]:
+            continue
+        if re.match(r"p(?:[1-9]|1[0-9]|2[0-3])\b", norm):
+            continue
+        if norm.startswith(("findings", "target selection", "verification", "prompt set outcomes")):
+            continue
+        if no_change_summary(line):
+            continue
+        if "fix" in lowered or "change" in lowered:
+            fallback.append(line)
+    changes = compact_items(fallback)
+
+print(
+    json.dumps(
+        {
+            "outcome": outcome,
+            "selected_file": selected_file,
+            "findings": findings,
+            "changes": changes,
+            "verification": verification,
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
 # Keep this backup override in the entrypoint so selected-target-only repair
 # cycles can harden encrypted pre-contact backup integrity without patching the
 # paired module file. The helper hashes the exact payload bytes written so age

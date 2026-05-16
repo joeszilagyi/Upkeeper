@@ -120,6 +120,7 @@ BRANCH_HMAC_PREFIX = "branch-hmac-sha256:"
 REMOTE_HMAC_PREFIX = "remote-hmac-sha256:"
 SSH_REMOTE_HMAC_PREFIX = "ssh-remote-hmac-sha256:"
 LOCAL_REMOTE_HMAC_PREFIX = "local-remote-hmac-sha256:"
+TOOL_FAILURE_MARKER_ID_HEX_LENGTH = 24
 UPKEEPER_VERBOSE_METADATA_ENV = "UPKEEPER_VERBOSE_METADATA"
 UPKEEPER_RAW_REPO_IDENTITY_ENV = "UPKEEPER_LATTICE_RAW_REPO_IDENTITY"
 SOURCE_RECORD_PATH_HMAC_KINDS = {
@@ -3173,6 +3174,23 @@ def normalize_repo_file_identity_ref(root: Path, path: str) -> str:
     except (OSError, RuntimeError, ValueError):
         return ""
     return normalized
+
+
+def tool_failure_marker_identity(marker_path: Path, payload: Any) -> tuple[str, str, str]:
+    raw_marker_id = marker_path.stem
+    if not isinstance(payload, dict):
+        return "", "", raw_marker_id
+    if isinstance(payload.get("marker_id"), str) and payload["marker_id"].strip():
+        raw_marker_id = payload["marker_id"].strip()
+    raw_target = payload.get("target_path")
+    if not isinstance(raw_target, str):
+        return "", "", raw_marker_id
+    target_path = external_rel_path(raw_target)
+    if not target_path:
+        return "", "", raw_marker_id
+    # Equivalent path spellings must collapse to one marker identity in Lattice.
+    digest = hashlib.sha1(target_path.encode("utf-8", "surrogateescape")).hexdigest()
+    return target_path, digest[:TOOL_FAILURE_MARKER_ID_HEX_LENGTH], raw_marker_id
 
 
 def ensure_cycle(
@@ -7181,15 +7199,17 @@ def import_failure_markers(
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
-            target = external_rel_path(str(data.get("target_path", "")))
-            file_id = ensure_file(conn, repo_id, target) if target else None
+            target, marker_id, raw_marker_id = tool_failure_marker_identity(path, data)
+            if not target or not marker_id:
+                continue
+            file_id = ensure_file(conn, repo_id, target)
             source_id = ensure_source_record(
                 conn,
                 root,
                 repo_id,
                 "tool_failure_marker",
                 source_path=str(path),
-                raw_ref=str(data.get("marker_id", path.stem)),
+                raw_ref=raw_marker_id,
                 parsed=data,
                 raw_storage_mode=raw_storage_mode,
             )
@@ -7203,7 +7223,7 @@ def import_failure_markers(
                 (
                     repo_id,
                     file_id,
-                    str(data.get("marker_id", path.stem)),
+                    marker_id,
                     str(data.get("status", "open")),
                     int(data.get("first_seen_epoch") or 0) or None,
                     int(data.get("last_seen_epoch") or 0) or None,

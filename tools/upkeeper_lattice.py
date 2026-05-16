@@ -4786,7 +4786,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
-def parse_review_summary_file(path: Path) -> dict[str, str]:
+def parse_review_summary_file(path: Path, repo_root: Path | None = None) -> dict[str, str]:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -4803,11 +4803,11 @@ def parse_review_summary_file(path: Path) -> dict[str, str]:
         bt = re.search(r"`([^`]+)`", line)
         candidate = ""
         if md:
-            candidate = normalize_change_note_ref(md.group(1).strip("<>"))
+            candidate = normalize_review_summary_target(md.group(1), repo_root)
         elif bt:
-            candidate = normalize_change_note_ref(bt.group(1))
+            candidate = normalize_review_summary_target(bt.group(1), repo_root)
         elif ":" in line:
-            candidate = normalize_change_note_ref(line.split(":", 1)[1].strip())
+            candidate = normalize_review_summary_target(line.split(":", 1)[1], repo_root)
         if candidate:
             selected_file = candidate
         if selected_file:
@@ -4830,8 +4830,44 @@ def extract_review_outcome(text: str) -> str:
     return outcome
 
 
+def normalize_review_summary_target(raw_target: str, repo_root: Path | None = None) -> str:
+    text = raw_target.strip().strip("<>")
+    if not text:
+        return ""
+    normalized = normalize_change_note_ref(text)
+    if normalized:
+        return normalized
+    if re.search(r"^[A-Za-z][A-Za-z0-9+\-.]*://", text):
+        return ""
+
+    candidates = [text]
+    line_match = re.fullmatch(r"(.+):([0-9]+)", text)
+    if line_match:
+        candidates.append(line_match.group(1))
+
+    if repo_root is None:
+        return ""
+
+    repo_root = repo_root.resolve()
+    for candidate_text in candidates:
+        candidate_path = Path(candidate_text)
+        if not candidate_path.is_absolute() or not candidate_path.exists():
+            continue
+        try:
+            repo_relative = candidate_path.resolve(strict=False).relative_to(repo_root)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        # Clickable local file links may append a :line suffix, but the repo
+        # identity must remain the existing file path rather than a truncated
+        # or synthetic colon split.
+        normalized = normalize_change_note_ref(repo_relative.as_posix())
+        if normalized:
+            return normalized
+    return ""
+
+
 def probe_review_summary_parsing() -> dict[str, Any]:
-    cases = {
+    cases: dict[str, tuple[str, str, str]] = {
         "report_only": (
             "selected file: `tools/upkeeper_lattice.py`\nREVIEWED_AND_REPORTED\n",
             "tools/upkeeper_lattice.py",
@@ -4861,10 +4897,19 @@ def probe_review_summary_parsing() -> dict[str, Any]:
     }
     results: dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-review-summary-") as tmpdir:
+        root = Path(tmpdir)
+        (root / "pkg:tools").mkdir(parents=True, exist_ok=True)
+        absolute_line_target = root / "pkg:tools" / "build.sh"
+        absolute_line_target.write_text("#!/bin/sh\n", encoding="utf-8")
+        cases["markdown_absolute_line_suffix"] = (
+            f"Selected file: [pkg:tools/build.sh]({absolute_line_target}:12)\nReview outcome: REVIEWED_AND_FIXED\n",
+            "pkg:tools/build.sh",
+            "REVIEWED_AND_FIXED",
+        )
         for name, (content, expected_selected, expected_outcome) in cases.items():
-            path = Path(tmpdir) / f"{name}.txt"
+            path = root / f"{name}.txt"
             path.write_text(content, encoding="utf-8")
-            parsed = parse_review_summary_file(path)
+            parsed = parse_review_summary_file(path, root)
             actual_selected = parsed.get("selected_file", "")
             actual_outcome = parsed.get("review_outcome", "")
             results[name] = {
@@ -5570,7 +5615,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         repo_id = ensure_repository(conn, root)
         parsed = vars(args).copy()
         parsed.pop("func", None)
-        review = parse_review_summary_file(Path(args.last_message_file)) if args.last_message_file else {}
+        review = parse_review_summary_file(Path(args.last_message_file), root) if args.last_message_file else {}
         review_outcome = args.review_outcome or review.get("review_outcome") or None
         reported_selected = external_rel_path(args.review_selected_path or review.get("selected_file", ""))
         status_marker = args.status_marker

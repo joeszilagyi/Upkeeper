@@ -1,34 +1,34 @@
 
 
- 
+
 
 Read this FULL prompt before starting in
 
- 
 
- 
 
- 
 
- 
 
- 
 
- 
+
+
+
+
+
+
 
 ABSOLUTE RULE — NO SKIPPING SELECTED FILES
 
- 
+
 
 YOU MAY NOT SKIP A FILE.
 
- 
+
 
 The entire point is to behave like each iteration of this prompt,
 
 each invocation of it, is a fresh clean-eyes review.
 
- 
+
 
 You — the LLM instantiation reading this — have never seen this file.
 
@@ -36,11 +36,11 @@ You did not exist a minute ago.
 
 Prior review history is irrelevant.
 
- 
+
 
 If the timestamp-selection rule selects a file, you MUST review that file.
 
- 
+
 
 You may not skip files because:
 
@@ -58,7 +58,7 @@ You may not skip files because:
 
 - the file seems boring, trivial, or already clean
 
- 
+
 
 A selected file may only be bypassed if it is physically impossible or unsafe to review:
 
@@ -70,7 +70,7 @@ A selected file may only be bypassed if it is physically impossible or unsafe to
 
 4. reviewing the file would violate a hard safety constraint
 
- 
+
 
 If one of those physical/safety exceptions applies:
 
@@ -84,7 +84,7 @@ If one of those physical/safety exceptions applies:
 
 - complete the execution on that replacement file
 
- 
+
 
 “No findings” is not a skip.
 
@@ -92,7 +92,7 @@ If one of those physical/safety exceptions applies:
 
 “Already reviewed” is forbidden as a skip reason.
 
- 
+
 
 If no fixes are found:
 
@@ -106,41 +106,41 @@ If no fixes are found:
 
 - count the execution as completed
 
- 
 
- 
 
- 
 
- 
 
- 
 
- 
+
+
+
+
+
+
 
 To be clear:
 
- 
+
 
 You are looking for the ===ONE=== oldest file that is a script or tool that you can update and improve.
 
- 
+
 
 Find the ===ONE=== oldest that has not been looked at, and look at it. Examine it.
 
 If every relevant file has been touched in the past 24 hours pick the oldest one and that is your target.
 
- 
+
 
 Don't limit to just shell or just py. It may even be another language.
 
- 
+
 
 Is it a script? It it oldest? It counts.
 
- 
 
- 
+
+
 
 Show us the epoch of the file but ALSO in human readable date/time for update
 
@@ -148,13 +148,13 @@ AND:
 
 How many hours/minutes since last updated
 
- 
 
- 
 
- 
 
- 
+
+
+
+
 
 Once the file is selected, run ALL prompts from the repertoire below that are applicable to that file type:
 
@@ -170,175 +170,175 @@ Once the file is selected, run ALL prompts from the repertoire below that are ap
 
 - For data/input-boundary files: also run P23 when the selected file is a validator, parser, importer, exporter, registry loader, schema/profile helper, config/manifest reader, JSON/JSONL/YAML/CSV/SQLite reader, path-resolving shell helper, or CLI that consumes external/operator input or emits machine-readable output
 
- 
+
 
 Skip prompts that don't apply to the selected file type.
 
- 
+
 
 Every single time this prompt is ran you MAY have something to fix!
 
- 
+
 
 DO EACH TASK AS A FRESH CLEAN EYES RUN
 
 AS IF YOU HAVE NEVER DONE IT BEFORE
 
- 
+
 
 Then come back up here to top to begin
 
- 
+
 
 Note the time you began and the time you ended and elapsed time when done as well.
 
- 
+
 
 Detail all fixes found/implemented and why for each.
 
- 
 
- 
 
- 
 
- 
+
+
+
+
 
 ##########
 
- 
 
- 
 
- 
+
+
+
 
 Background Review Prompt Repertoire
 
- 
+
 
 Spare-Cycle Automation — 23 Prompts
 
- 
+
 
 Designed for: while [agent] --prompt=$(rand from this set)
 
- 
+
 
 Each prompt is self-contained, model-agnostic, and safe to run on rotation. Selection rule is timestamp-based throughout: oldest last-modified file wins. Ties broken alphabetically. Every prompt ends with a touch to record the review.
 
- 
 
- 
 
- 
 
- 
+
+
+
+
 
 ########
 
- 
 
- 
 
- 
 
- 
+
+
+
+
 
 NOTE:
 
 Time began: 2026-04-30 06:32 UTC
 
- 
+
 
 File selected: tools/api/core/repositories/search_repository.py (next oldest file, timestamp: 11:01 April 28, 2026)
 
- 
+
 
 {EXAMPLE} of a prior run. This is the preferred way to show the age of the selected file.
 
- 
 
- 
 
- 
 
- 
 
- 
+
+
+
+
+
 
 ##########
 
- 
+
 
 ===WHAT TOOL TO WRITE TO DISK WITH===
 
- 
+
 
 0. Always save file prior/live contents in memory first.
 
- 
+
 
 1. Always direct file ---> your "edit" tool is substandard and fails often.
 
- 
+
 
 Example:
 
- 
+
 
 "I'll try using write_to_file instead of edit to persist the changes, which may work better:"
 
- 
+
 
 2. write_to_file always first
 
- 
+
 
 2a. Try alternatives -- this is Linux, there's always a way.
 
- 
 
- 
 
- 
 
- 
 
- 
+
+
+
+
+
 
 Issues like this are unacceptable
 
- 
+
 
 "The changes I made during the review cycle were not persisted to disk. Let me re-apply all the fixes and commit them:"
 
- 
+
 
 You MUST MUST confirm and double check all fixes are applied WHEN DONE and saved to disk.
 
- 
+
 
 Fail to update files and confirm after file saved and time stamp updated via the TOUCH... is blocker condition that must be addressed.
 
- 
+
 
 For example, this was a Windsurf explanation once:
 
- 
+
 
 "The edit tool reported successful changes and displayed updated file views, but the modifications were not actually written to the filesystem. When I read the files back after editing, they contained the original code without the logging and error handling fixes. This indicates the edit tool is not persisting changes to disk despite reporting success. This is a system issue with the edit tool - it appears to apply changes in memory but fails to write them to the actual files."
 
- 
 
- 
 
- 
 
- 
+
+
+
+
 
 Once you have done the test-- or your tool claims that
 
- 
+
 
 ---> verify time changed
 
@@ -346,7 +346,7 @@ Once you have done the test-- or your tool claims that
 
 ---> if not try to fix
 
- 
+
 
 ---> verify time changed
 
@@ -354,7 +354,7 @@ Once you have done the test-- or your tool claims that
 
 ---> if not try to fix again
 
- 
+
 
 ---> verify time changed
 
@@ -362,7 +362,7 @@ Once you have done the test-- or your tool claims that
 
 ---> if not try to fix again
 
- 
+
 
 ---> verify time changed
 
@@ -370,33 +370,33 @@ Once you have done the test-- or your tool claims that
 
 ---> if not explain critical failure
 
- 
 
- 
 
- 
 
- 
 
- 
 
-All Git commits etc derived of this should clearly and properly explain what was fixed and why. 
 
- 
 
- 
 
- 
 
- 
+
+All Git commits etc derived of this should clearly and properly explain what was fixed and why.
+
+
+
+
+
+
+
+
 
 ________________________________________
 
- 
+
 
 P1 — Comprehensive Code Review (Broad Pass)
 
- 
+
 
 Covers workflow, simplification, portability, and documentation in one sweep.
 
@@ -406,11 +406,11 @@ clean-eyed evaluation with no assumptions carried from prior passes. A pass
 
 with no findings is a valid and acceptable result.
 
- 
+
 
 GLOBAL RULES (apply to all passes):
 
- 
+
 
 - Every proposed change must represent a genuine, demonstrable improvement.
 
@@ -420,7 +420,7 @@ GLOBAL RULES (apply to all passes):
 
 - Output format per finding: [File] | [Location] | [Issue] | [Proposed fix] | [Rationale]
 
- 
+
 
 PASS 1 — WORKFLOW AND EFFICIENCY
 
@@ -430,7 +430,7 @@ that produces overhead without benefit. Flag only real problems -- do not
 
 manufacture findings.
 
- 
+
 
 PASS 2 — SIMPLIFICATION
 
@@ -442,7 +442,7 @@ readability, or maintainability. Target: minimum necessary complexity, no dead
 
 code, no unnecessary indirection.
 
- 
+
 
 PASS 3 — PORTABILITY
 
@@ -456,7 +456,7 @@ and interpreter-specific features where a portable equivalent exists at no
 
 material cost to correctness or performance.
 
- 
+
 
 PASS 4 — DOCUMENTATION
 
@@ -472,11 +472,11 @@ present in the code itself.
 
 ________________________________________
 
- 
+
 
 P2 — Branch and PR Housekeeping
 
- 
+
 
 Repo-level. Run on a slower cadence (weekly or less). Goal: sustainably clean.
 
@@ -484,7 +484,7 @@ Perform a branch and pull request housekeeping review. Goal: sustainably clean
 
 repository. Treat this as a fresh pass with no assumed prior state.
 
- 
+
 
 GLOBAL RULES:
 
@@ -494,7 +494,7 @@ GLOBAL RULES:
 
 - If a task yields no honest findings, state that and move on.
 
- 
+
 
 TASK 1 — BRANCH AUDIT
 
@@ -508,7 +508,7 @@ For each non-main branch, determine:
 
   with explicit rationale
 
- 
+
 
 TASK 2 — DEPENDENCY MAPPING
 
@@ -520,7 +520,7 @@ or close would enable an entire category of subsequent work to proceed
 
 more cleanly.
 
- 
+
 
 TASK 3 — CHURN DETECTION
 
@@ -532,7 +532,7 @@ as a smaller, focused branch from current main. Prefer small, single-purpose
 
 branches for all future work.
 
- 
+
 
 TASK 4 — HIGHEST-LEVERAGE ACTION
 
@@ -544,21 +544,21 @@ OUTPUT: Structured findings per task, then a prioritized action list ordered
 
 by impact.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P3 — Targeted Single-Script Deep Dive
 
- 
+
 
 Timestamp-selected. Deepest per-file review in the set.
 
 This is a targeted improvement pass on a single script.
 
- 
+
 
 SELECTION RULE
 
@@ -568,7 +568,7 @@ with the oldest last-modified timestamp. If timestamps are tied or unavailable,
 
 select alphabetically first. State which file was selected and why.
 
- 
+
 
 REVIEW CATEGORIES (run all against the selected script):
 
@@ -588,7 +588,7 @@ REVIEW CATEGORIES (run all against the selected script):
 
    it does, why, and how
 
- 
+
 
 PROCESS
 
@@ -602,7 +602,7 @@ PROCESS
 
 4. Record results of each test cycle explicitly.
 
- 
+
 
 COMPLETION
 
@@ -610,13 +610,13 @@ Whether or not any changes were made, update the file's modification timestamp:
 
   touch <filename>
 
- 
+
 
 OUTPUT: file selected and rationale | findings per category | changes applied
 
 | test results | final status
 
- 
+
 
 RULES
 
@@ -626,21 +626,21 @@ RULES
 
   state it and touch the file.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P4 — Security and Secrets Scan
 
- 
+
 
 Covers what no other prompt touches. High value, always safe to run.
 
 Perform a security and secrets hygiene pass on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -648,7 +648,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -674,7 +674,7 @@ REVIEW CATEGORIES:
 
    or passed as command-line arguments where they appear in process listings?
 
- 
+
 
 PROCESS
 
@@ -684,7 +684,7 @@ Flag each finding: [File] | [Line] | [Category] | [Issue] | [Recommended remedia
 
 After review, touch the file to update its timestamp.
 
- 
+
 
 RULES
 
@@ -692,21 +692,21 @@ No busy work. A clean file is a valid result -- state it and touch the file.
 
 Do not generate false positives to appear thorough.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P5 — Dead Code Elimination
 
- 
+
 
 Static reachability pass. Distinct from simplification -- this is code that cannot be reached or is never used, not code that is merely redundant.
 
 Perform a dead code detection pass on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -714,7 +714,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -734,7 +734,7 @@ REVIEW CATEGORIES:
 
    surrounding context; duplicate checks; operations whose result is never used
 
- 
+
 
 PROCESS
 
@@ -750,7 +750,7 @@ PROCESS
 
 4. Touch the file when done.
 
- 
+
 
 RULES
 
@@ -758,21 +758,21 @@ No busy work. No removals made out of aesthetic preference.
 
 If nothing qualifies for removal, state that and touch the file.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P6 — Error Handling Audit
 
- 
+
 
 Silently swallowed errors are one of the most common sources of mysterious failures in shell and scripting environments.
 
 Perform an error handling audit on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -780,7 +780,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -808,7 +808,7 @@ REVIEW CATEGORIES:
 
    that warrant different responses
 
- 
+
 
 PROCESS
 
@@ -820,7 +820,7 @@ Test: normal operation, injected failure at each identified error surface.
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -828,21 +828,21 @@ No busy work. No changes made to satisfy a category that doesn't apply.
 
 Unclear cases: flag for human review, do not guess.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P7 — Configuration and Magic Values
 
- 
+
 
 Hardcoded values are a portability and maintainability tax that accumulates silently over time.
 
 Perform a configuration hygiene pass on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -850,7 +850,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -876,13 +876,13 @@ REVIEW CATEGORIES:
 
    multiple places; changing it requires finding every instance
 
- 
+
 
 For each finding, propose: a named constant, environment variable, config key,
 
 or parameter that would replace the hardcoded value. Show the before and after.
 
- 
+
 
 PROCESS
 
@@ -890,7 +890,7 @@ Propose all changes before applying. Apply only unambiguous cases.
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -898,21 +898,21 @@ No busy work. Not every literal is a magic value -- obvious counts like 0 and 1
 
 in loop logic are not findings unless their meaning is genuinely unclear.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P8 — Test Gap Analysis
 
- 
+
 
 Only useful if the project has a test suite. Drop from the random pool if not.
 
 Perform a test coverage gap analysis on a single source file.
 
- 
+
 
 SELECTION RULE
 
@@ -920,7 +920,7 @@ Select the source file (non-test file) with the oldest last-modified timestamp.
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -944,7 +944,7 @@ REVIEW CATEGORIES:
 
    rather than behavior)
 
- 
+
 
 OUTPUT
 
@@ -954,27 +954,27 @@ Do not write the tests unless explicitly asked. This pass identifies gaps only.
 
 Touch the source file when done to record the review timestamp.
 
- 
+
 
 RULES
 
 No busy work. If coverage is genuinely solid, say so and touch the file.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P9 — Observability and Logging Review
 
- 
+
 
 Easy to skip during development. Surprisingly high value in production and long-running scripts where reconstructing what happened matters.
 
 Perform a logging and observability review on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -982,7 +982,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -1012,7 +1012,7 @@ REVIEW CATEGORIES:
 
    log output, not error propagation)
 
- 
+
 
 PROCESS
 
@@ -1020,7 +1020,7 @@ Propose additions and changes. Apply only unambiguous improvements.
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -1028,21 +1028,21 @@ No busy work. Not every function needs a log line.
 
 The goal is that an operator can understand what the system did from logs alone.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P10 — Idempotency Review
 
- 
+
 
 Probably the most important prompt for automation scripts specifically. Can this script be run twice? What is the blast radius of a double-run?
 
 Perform an idempotency review on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -1050,7 +1050,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -1082,13 +1082,13 @@ REVIEW CATEGORIES:
 
    state that may not exist on re-run?
 
- 
+
 
 For each finding: [File] | [Location] | [Issue] | [What happens on double-run] | [Fix]
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -1098,21 +1098,21 @@ and touch the file. The question is whether the design is intentional and
 
 documented.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P11 — Signal Handling and Cleanup
 
- 
+
 
 Shell scripts especially are notorious for leaving temp files, locks, and partial state when killed. Easy to audit, high operational value.
 
 Perform a signal handling and cleanup audit on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -1120,11 +1120,11 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
- 
+
 
 1. Missing trap handlers -- scripts that create temporary files, acquire locks,
 
@@ -1150,13 +1150,13 @@ REVIEW CATEGORIES:
 
    the happy path and is skipped on error exit
 
- 
+
 
 For each finding: [File] | [Location] | [Resource at risk] | [Signal not handled] | [Fix]
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -1164,15 +1164,15 @@ No busy work. Short stateless scripts may need no trap handling -- note that
 
 explicitly rather than manufacturing findings.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P12 — DRY Violations / Copy-Paste Detection
 
- 
+
 
 Distinct from dead code (P5). This is live code that exists in multiple places and should be one thing.
 
@@ -1180,7 +1180,7 @@ Perform a duplication and DRY (Don't Repeat Yourself) audit on a single file,
 
 or across a small set of closely related files if the file has known siblings.
 
- 
+
 
 SELECTION RULE
 
@@ -1188,7 +1188,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -1212,7 +1212,7 @@ REVIEW CATEGORIES:
 
    to be intentional
 
- 
+
 
 For each finding:
 
@@ -1224,11 +1224,11 @@ For each finding:
 
 - Note any meaningful differences that would need to be preserved as parameters
 
- 
+
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -1238,21 +1238,21 @@ Only flag cases where a shared abstraction would be simpler and more maintainabl
 
 than the current duplication, without introducing indirection for its own sake.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P13 — External Call Resilience
 
- 
+
 
 API calls, service calls, subprocess calls -- does anything handle the other side being unavailable?
 
 Perform an external call resilience audit on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -1260,7 +1260,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -1290,13 +1290,13 @@ REVIEW CATEGORIES:
 
    without size limits, risking OOM on unexpectedly large payloads
 
- 
+
 
 For each finding: [File] | [Call site] | [Service or target] | [Risk] | [Recommended fix]
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -1304,21 +1304,21 @@ No busy work. Internal calls between trusted local components may not need
 
 the same treatment as external network calls -- distinguish clearly.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P14 — Naming Consistency Audit
 
- 
+
 
 Convention drift is invisible until you are onboarding someone or debugging at 2am.
 
 Perform a naming consistency audit on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -1326,7 +1326,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -1350,7 +1350,7 @@ REVIEW CATEGORIES:
 
 5. Verb/noun role mismatch -- functions named as nouns, variables named as verbs
 
- 
+
 
 This audit does not require renaming everything -- it identifies drift from
 
@@ -1358,11 +1358,11 @@ whatever convention is dominant in the file. The dominant convention wins.
 
 For each finding: [File] | [Identifier] | [Current name] | [Issue] | [Suggested name]
 
- 
+
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -1372,21 +1372,21 @@ with a clear dominant convention are not findings unless they cause genuine
 
 confusion.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P15 — Assumption Documentation
 
- 
+
 
 The most dangerous code is code whose assumptions are invisible. This prompt surfaces them without changing any logic.
 
 Perform an assumption documentation pass on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -1394,7 +1394,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -1428,17 +1428,17 @@ REVIEW CATEGORIES:
 
    already run (a migration, an init, a connection being established)
 
- 
+
 
 For each finding: add a comment at the relevant location stating the assumption
 
 explicitly. Do not change the logic -- only surface what is already true.
 
- 
+
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -1448,21 +1448,21 @@ findings. Target assumptions that would surprise a competent engineer
 
 encountering the code for the first time.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P16 — Dependency Audit
 
- 
+
 
 Manifest-level. Run on a slower cadence (weekly or less). Not a per-file pass.
 
 Perform a dependency audit on the project's dependency manifest(s).
 
- 
+
 
 SCOPE
 
@@ -1470,7 +1470,7 @@ Package manifests, lockfiles, requirements files, vendor directories,
 
 or import blocks -- whatever dependency declaration mechanism the project uses.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -1500,11 +1500,11 @@ REVIEW CATEGORIES:
 
    the version in use
 
- 
+
 
 For each finding: [Package] | [Category] | [Current version] | [Issue] | [Recommended action]
 
- 
+
 
 RULES
 
@@ -1514,21 +1514,21 @@ Do not recommend upgrading a dependency without noting the migration cost or
 
 breaking change risk.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P17 — Atomicity and Partial Failure
 
- 
+
 
 Different from idempotency (P10). This is about what the world looks like if the script dies mid-write -- the state left behind, not the re-run behavior.
 
 Perform an atomicity and partial failure audit on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -1536,7 +1536,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -1570,15 +1570,15 @@ REVIEW CATEGORIES:
 
    on unexpected shutdown
 
- 
+
 
 For each finding: [File] | [Location] | [Risk] | [Failure scenario] | [Fix]
 
- 
+
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -1588,21 +1588,21 @@ where partial failure would produce a result worse than a clean failure with
 
 no side effects.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P18 — Concurrency and Race Conditions
 
- 
+
 
 Any script that touches shared files, shared state, or runs parallel jobs needs this review. Completely distinct from the other passes.
 
 Perform a concurrency and race condition audit on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -1610,7 +1610,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -1636,15 +1636,15 @@ REVIEW CATEGORIES:
 
    by the main execution path without protection
 
- 
+
 
 For each finding: [File] | [Location] | [Shared resource] | [Race scenario] | [Fix]
 
- 
+
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -1652,21 +1652,21 @@ No busy work. Single-process, single-run scripts with no parallelism need
 
 minimal review here -- note that and touch the file.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P19 — Exit Code and Output Contract
 
- 
+
 
 Critical for pipeline use and completely distinct from error handling (P6). Scripts that do not honor exit code conventions silently break everything downstream.
 
 Perform an exit code and output contract audit on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -1674,7 +1674,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -1706,15 +1706,15 @@ REVIEW CATEGORIES:
 
    parsing its output?
 
- 
+
 
 For each finding: [File] | [Location] | [Issue] | [Impact on callers] | [Fix]
 
- 
+
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -1722,21 +1722,21 @@ No busy work. A script that is never used in a pipeline or called by another
 
 process has different requirements -- note the usage context.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P20 — Resource Exhaustion and Bounds
 
- 
+
 
 The script works fine in dev and silently destroys production. Disk, memory, file descriptors.
 
 Perform a resource exhaustion and bounds audit on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -1744,7 +1744,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -1774,15 +1774,15 @@ REVIEW CATEGORIES:
 
    risking indefinite resource consumption
 
- 
+
 
 For each finding: [File] | [Location] | [Resource] | [Exhaustion scenario] | [Fix]
 
- 
+
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -1790,21 +1790,21 @@ No busy work. Short scripts processing known-bounded inputs need minimal review
 
 here -- note that and touch the file.
 
- 
+
 
 ________________________________________
 
- 
+
 
 P21 — Documentation Drift
 
- 
+
 
 Different from P1 documentation quality pass and P15 assumption surfacing. This is specifically about comments that were once true and are no longer.
 
 Perform a documentation drift audit on a single file.
 
- 
+
 
 SELECTION RULE
 
@@ -1812,7 +1812,7 @@ Select the file with the oldest last-modified timestamp among all files in scope
 
 On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
@@ -1838,17 +1838,17 @@ REVIEW CATEGORIES:
 
    specific versions of dependencies or runtimes that are no longer in use
 
- 
+
 
 For each finding: [File] | [Location] | [Comment] | [What has drifted] | [Correction]
 
 Apply corrections directly -- these are documentation fixes, not logic changes.
 
- 
+
 
 Touch the file when done.
 
- 
+
 
 RULES
 
@@ -1856,33 +1856,33 @@ No busy work. A file whose comments accurately reflect its code is a valid and
 
 good result. State that and touch the file.
 
- 
 
- 
 
- 
 
- 
 
- 
 
- 
 
- 
 
-________________________________________
 
- 
 
- 
+
+
+
+
 
 ________________________________________
 
- 
+
+
+
+
+________________________________________
+
+
 
 P22 — Tool Serviceability and Supportability
 
- 
+
 
 A tool is not done when it works once. A tool is done when an engineer who did
 
@@ -1892,7 +1892,7 @@ guessing. This pass verifies that the file is serviceable as an operational
 
 artifact, not merely correct code.
 
- 
+
 
 SCOPE
 
@@ -1912,7 +1912,7 @@ parts only:
 
 - Is the file clean of accumulated cruft?
 
- 
+
 
 SELECTION RULE
 
@@ -1920,11 +1920,11 @@ Select the file with the oldest last-modified timestamp among all files in
 
 scope. On ties, select alphabetically first. State selection and reason.
 
- 
+
 
 REVIEW CATEGORIES:
 
- 
+
 
 1. Purpose and operator intent
 
@@ -1938,13 +1938,13 @@ REVIEW CATEGORIES:
 
    - what systems, files, APIs, databases, or external services it may affect
 
- 
+
 
    For scripts/tools, this should usually be stated in a top-level docstring,
 
    header comment, --help output, README, or paired documentation file.
 
- 
+
 
    Findings:
 
@@ -1956,7 +1956,7 @@ REVIEW CATEGORIES:
 
    - Comments saying what code does but not why it does it
 
- 
+
 
 2. Local explainability at point of action
 
@@ -1964,7 +1964,7 @@ REVIEW CATEGORIES:
 
    the point where the work occurs.
 
- 
+
 
    Examples of meaningful work:
 
@@ -1986,7 +1986,7 @@ REVIEW CATEGORIES:
 
    - intentionally ignores or suppresses errors
 
- 
+
 
    Findings:
 
@@ -1998,7 +1998,7 @@ REVIEW CATEGORIES:
 
    - Comments too far away from the code they explain
 
- 
+
 
    Fix:
 
@@ -2006,7 +2006,7 @@ REVIEW CATEGORIES:
 
    not a noisy restatement of syntax.
 
- 
+
 
 3. Built-in test/debug affordance
 
@@ -2014,7 +2014,7 @@ REVIEW CATEGORIES:
 
    without damaging real data or external systems.
 
- 
+
 
    Review whether the tool has one or more of:
 
@@ -2040,7 +2040,7 @@ REVIEW CATEGORIES:
 
    - unit tests dedicated to the tool
 
- 
+
 
    Findings:
 
@@ -2054,7 +2054,7 @@ REVIEW CATEGORIES:
 
    - Tool can affect external systems but cannot show planned actions first
 
- 
+
 
    Fix:
 
@@ -2068,13 +2068,13 @@ REVIEW CATEGORIES:
 
    - document existing tests if they already exist
 
- 
+
 
    Any new test/debug option must be documented in --help or file documentation.
 
    Any new test/debug option must be exercised before final report.
 
- 
+
 
 4. Dry-run and blast-radius control
 
@@ -2086,7 +2086,7 @@ REVIEW CATEGORIES:
 
    - explicitly document why dry-run is not practical and what safeguards exist
 
- 
+
 
    Findings:
 
@@ -2100,7 +2100,7 @@ REVIEW CATEGORIES:
 
    - File writes with no output path disclosure before writing
 
- 
+
 
    Fix:
 
@@ -2108,7 +2108,7 @@ REVIEW CATEGORIES:
 
    Otherwise add explicit documentation of safeguards and limitations.
 
- 
+
 
 5. Paired documentation discoverability
 
@@ -2116,7 +2116,7 @@ REVIEW CATEGORIES:
 
    documentation file.
 
- 
+
 
    A paired doc is recommended when:
 
@@ -2136,7 +2136,7 @@ REVIEW CATEGORIES:
 
    - the tool has important safety rules
 
- 
+
 
    Findings:
 
@@ -2148,7 +2148,7 @@ REVIEW CATEGORIES:
 
    - No instruction that tool changes must update paired docs
 
- 
+
 
    Fix:
 
@@ -2162,11 +2162,11 @@ REVIEW CATEGORIES:
 
      review if creating it would be broad
 
- 
+
 
    Do not create large documentation files unless the tool truly needs it.
 
- 
+
 
 6. Debug/man-style introspection
 
@@ -2174,7 +2174,7 @@ REVIEW CATEGORIES:
 
    without reading source.
 
- 
+
 
    Preferred affordances:
 
@@ -2196,7 +2196,7 @@ REVIEW CATEGORIES:
 
    - examples in help text
 
- 
+
 
    Findings:
 
@@ -2212,7 +2212,7 @@ REVIEW CATEGORIES:
 
    - Operators cannot see resolved paths/config before mutation
 
- 
+
 
    Fix:
 
@@ -2220,7 +2220,7 @@ REVIEW CATEGORIES:
 
    Do not add flags for aesthetics.
 
- 
+
 
 7. Cruft, detritus, and unnecessary action removal
 
@@ -2252,7 +2252,7 @@ REVIEW CATEGORIES:
 
    - overly verbose logic that obscures intent
 
- 
+
 
    Also look for small simplifications:
 
@@ -2266,7 +2266,7 @@ REVIEW CATEGORIES:
 
    - Can a needless helper be inlined?
 
- 
+
 
    Rules:
 
@@ -2280,7 +2280,7 @@ REVIEW CATEGORIES:
 
    - Remove cruft only when removal is high-confidence.
 
- 
+
 
 8. Support handoff readiness
 
@@ -2288,7 +2288,7 @@ REVIEW CATEGORIES:
 
    safely answer these questions in under five minutes:
 
- 
+
 
    - What does this do?
 
@@ -2314,7 +2314,7 @@ REVIEW CATEGORIES:
 
    - What concurrency/idempotency assumptions exist?
 
- 
+
 
    Findings:
 
@@ -2326,13 +2326,13 @@ REVIEW CATEGORIES:
 
    - Any answer is only implicit in code
 
- 
+
 
    Fix:
 
    Add concise documentation, help text, comments, or references where needed.
 
- 
+
 
 PROCESS:
 
@@ -2364,7 +2364,7 @@ PROCESS:
 
    - tests/checks relevant to the file pass or were not applicable
 
- 
+
 
 OUTPUT:
 
@@ -2394,7 +2394,7 @@ OUTPUT:
 
   STOPPED_ON_BLOCKER
 
- 
+
 
 RULES:
 
@@ -2517,7 +2517,7 @@ the contract is ambiguous.
 ________________________________________
 ________________________________________
 
- 
+
 
 Summary Table
 
@@ -2569,8 +2569,8 @@ P22       Service and docs         Per file Random pool
 
 P23       Data contract and negative fixtures     Per file*        Random pool
 
- 
+
 
 *P8: drop from random pool if the project has no test suite. P23 applies only to selected files that touch data or operator-input boundaries. P2 and P16: run on their own slower schedule, not in the per-file rotation.
 
- 
+

@@ -3,6 +3,38 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## jq Dependency Guidance
+
+Status: completed
+
+Goal:
+Fix issue `#86` by making the `jq` dependency decision explicit, adding
+portable install guidance, and pointing missing-dependency diagnostics at the
+tracked dependency docs.
+
+Constraints:
+- Keep `jq` required for now because runtime JSON bridge code and validation
+  fixtures still use it directly.
+- Do not refactor JSON assignment bridges to Python in this patch.
+- Preserve no-quota validation behavior.
+
+Files likely touched:
+- `docs/dependencies.md`
+- `docs/security.md`
+- `README.md`
+- `lib/upkeeper/codex_io.bash`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --deps`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Fault-Injection Injector Catalog
 
 Status: completed

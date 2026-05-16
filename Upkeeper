@@ -577,6 +577,114 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
 done
  unset upkeeper_module
 
+# Keep this review-parser override in the entrypoint so selected-target-only
+# repair cycles can harden startup anomaly acknowledgment parsing without
+# patching the paired module file. The gate only accepts the strict final marker
+# section: the log-review marker must be the last non-fenced content line before
+# the final UPKEEPER_STATUS marker, and duplicate raw acknowledgments elsewhere
+# are treated as ambiguous rather than accepted.
+current_cycle_log_review_present() {
+  local last_message_file="$1"
+  local current_cycle="${2:-$CYCLE_ID}"
+  local log_path="${3:-$LOG_FILE}"
+  local reasons="${4:-$STARTUP_ANOMALY_REASONS}"
+
+  [[ -f "$last_message_file" ]] || return 1
+
+  python3 - "$last_message_file" "$current_cycle" "$log_path" "$reasons" <<'PY'
+import hashlib
+import re
+import sys
+
+try:
+    message_path, current_cycle, log_path, reasons = sys.argv[1:5]
+    text = open(message_path, "r", encoding="utf-8", errors="replace").read()
+except OSError:
+    raise SystemExit(1)
+
+anomalies_expectation = "listed" if reasons and reasons != "unknown" else "none"
+cycle_pattern = re.compile(r"\bcycle={}\b".format(re.escape(current_cycle)))
+status_pattern = re.compile(r"^UPKEEPER_STATUS: (WORK_DONE|NO_CHANGES|NO_BACKEND_TASK|BLOCKED)$")
+review_pattern = re.compile(
+    r"^UPKEEPER_LOG_REVIEW: CHECKED cycle=([^\s`]+) anomalies=(none|listed) log_sha256=([0-9a-f]{64})$"
+)
+
+cycle_log_lines = []
+cycle_start_seen = False
+cycle_exit_seen = False
+run_start_seen = False
+run_finish_seen = False
+
+try:
+    with open(log_path, "r", encoding="utf-8", errors="replace") as log_file:
+        for line in log_file:
+            if not cycle_pattern.search(line):
+                continue
+            cycle_log_lines.append(line)
+            if "cycle.start" in line:
+                cycle_start_seen = True
+            if "cycle.exit" in line:
+                cycle_exit_seen = True
+            if "run.start" in line:
+                run_start_seen = True
+            if "run.finish" in line:
+                run_finish_seen = True
+except OSError:
+    raise SystemExit(1)
+
+if not cycle_log_lines:
+    raise SystemExit(1)
+if not (cycle_start_seen and cycle_exit_seen and run_start_seen and run_finish_seen):
+    raise SystemExit(1)
+
+cycle_log_sha = hashlib.sha256("".join(cycle_log_lines).encode("utf-8", "surrogateescape")).hexdigest()
+
+visible_lines = []
+in_code_fence = False
+for index, raw_line in enumerate(text.splitlines(), start=1):
+    line = raw_line.rstrip("\r\n").strip()
+    if line.startswith("```"):
+        in_code_fence = not in_code_fence
+        continue
+    if in_code_fence or not line:
+        continue
+    visible_lines.append((index, line))
+
+if len(visible_lines) < 2:
+    raise SystemExit(1)
+
+status_index, status_line = visible_lines[-1]
+if not status_pattern.fullmatch(status_line):
+    raise SystemExit(1)
+
+review_index, review_line = visible_lines[-2]
+review_match = review_pattern.fullmatch(review_line)
+if not review_match:
+    raise SystemExit(1)
+
+matching_review_lines = [
+    (index, line)
+    for index, line in visible_lines
+    if review_pattern.fullmatch(line)
+]
+if len(matching_review_lines) != 1:
+    raise SystemExit(1)
+if matching_review_lines[0][0] != review_index:
+    raise SystemExit(1)
+if review_index >= status_index:
+    raise SystemExit(1)
+
+if (
+    review_match.group(1) == current_cycle
+    and review_match.group(2) == anomalies_expectation
+    and review_match.group(3) == cycle_log_sha
+):
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
 # Keep this backup override in the entrypoint so selected-target-only repair
 # cycles can harden encrypted pre-contact backup integrity without patching the
 # paired module file. The helper hashes the exact payload bytes written so age

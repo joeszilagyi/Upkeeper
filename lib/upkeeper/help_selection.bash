@@ -657,6 +657,7 @@ preselect_review_target() {
 import datetime
 import errno
 import fnmatch
+import hashlib
 import json
 import os
 import random
@@ -1094,10 +1095,19 @@ def manifest_paths(path: str) -> tuple[list[tuple[float, str]], str]:
             payload = json.load(handle)
     except (OSError, json.JSONDecodeError):
         return [], "manifest_unreadable"
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+    if not isinstance(payload, dict):
         return [], "manifest_invalid"
-    if payload.get("root") != os.path.realpath(root):
-        return [], "manifest_root_mismatch"
+    schema_version = payload.get("schema_version")
+    real_root = os.path.realpath(root)
+    if schema_version == 1:
+        if payload.get("root") != real_root:
+            return [], "manifest_root_mismatch"
+    elif schema_version == 2:
+        expected_root_hash = hashlib.sha256(real_root.encode("utf-8", "surrogateescape")).hexdigest()
+        if payload.get("root_hash") != expected_root_hash:
+            return [], "manifest_root_mismatch"
+    else:
+        return [], "manifest_invalid"
     files = payload.get("files")
     if not isinstance(files, list):
         return [], "manifest_invalid_files"

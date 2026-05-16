@@ -26,6 +26,7 @@ from typing import Any, Iterable
 
 SCHEMA_VERSION = 1
 SCHEMA_ROW_VERSION = 1
+TEXT_SAMPLE_SIZE = 4096
 
 EXIT_SUCCESS = 0
 EXIT_NO_MATCH = 1
@@ -165,6 +166,9 @@ REDACTABLE_PATH_KEYS = {
 }
 STRUCTURED_REDACTION_STRING_KEYS = {"raw_text", "details_json", "parsed_json"}
 CONTRIBUTOR_REDACT_KEYS = {"name", "email", "github_login"}
+INLINE_ASSIGNMENT_PATTERN = re.compile(
+    r"(?P<prefix>(?:^|\s))(?P<key>[A-Za-z0-9_.-]+)=(?P<quote>['\"]?)(?P<value>.*?)(?P=quote)(?=(?:\s+[A-Za-z0-9_.-]+=)|$)"
+)
 UPKEEPER_LOG_SOURCE_SAFE_KEYS = {
     "timestamp",
     "level",
@@ -1169,6 +1173,51 @@ def decode_git_output(raw: bytes) -> str:
     return raw.decode("utf-8", "surrogateescape")
 
 
+# JSONL imports must canonicalize repo-relative path columns through the same
+# byte-safe storage encoding used by live Git ingestion.
+IMPORTED_STORED_REL_PATH_COLUMNS: dict[str, dict[str, bool]] = {
+    "cycles": {"selected_path": False},
+    "file_events": {"path": False},
+    "file_paths": {"path": True},
+    "file_snapshots": {"path": True},
+    "files": {"canonical_path": True, "current_path": True},
+    "git_file_changes": {"path": True, "old_path": False},
+    "selection_candidates": {"path": True},
+    "selection_runs": {"selected_path": False},
+    "worktree_snapshot_paths": {"path": True, "old_path": False},
+}
+
+
+def normalize_imported_stored_rel_path_payload(table: str, payload: dict[str, Any]) -> dict[str, Any]:
+    columns = IMPORTED_STORED_REL_PATH_COLUMNS.get(table)
+    if not columns:
+        return payload
+    updated = dict(payload)
+    for column, required in columns.items():
+        if column not in updated:
+            continue
+        value = updated[column]
+        if value is None:
+            if required:
+                raise ValueError(f"missing_repo_relative_path:{column}")
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"invalid_repo_relative_path_type:{column}")
+        if not value:
+            if required:
+                raise ValueError(f"empty_repo_relative_path:{column}")
+            updated[column] = None
+            continue
+        normalized = stored_rel_path(external_rel_path(value))
+        if normalized:
+            updated[column] = normalized
+            continue
+        if required:
+            raise ValueError(f"invalid_repo_relative_path:{column}")
+        updated[column] = None
+    return updated
+
+
 def json_dumps(value: Any) -> str:
     return json.dumps(
         sanitize_json_value(value),
@@ -1256,6 +1305,51 @@ def sanitize_upkeeper_log_parsed(parsed: dict[str, Any]) -> dict[str, Any]:
     return filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_SOURCE_SAFE_KEYS)
 
 
+def sanitize_quota_log_fields(root: Path | None, fields: dict[str, Any]) -> dict[str, Any]:
+    sanitized = filter_upkeeper_log_fields(fields, UPKEEPER_LOG_SOURCE_SAFE_KEYS)
+    if root is None:
+        return sanitized
+    for key, value in fields.items():
+        if key in {"timestamp", "level", "event"} or not has_meaningful_value(value):
+            continue
+        normalized_key = normalized_metadata_key(key)
+        hashed = ""
+        if normalized_key in {"source", "source_uri"} or cycle_start_key_is_path_like(normalized_key):
+            hashed = artifact_path_hmac(root, str(value))
+        elif normalized_key.endswith("limit_id") or normalized_key.endswith("limit_name"):
+            hashed = metadata_value_hmac(root, normalized_key, str(value))
+        if hashed:
+            sanitized[f"{key}_hmac"] = hashed
+    return sanitized
+
+
+def sanitize_nonverbose_upkeeper_log_fields(root: Path | None, fields: dict[str, Any]) -> dict[str, Any]:
+    event = str(fields.get("event", "")).strip()
+    if event == "cycle.start":
+        return sanitize_cycle_start_fields(root, fields) if root is not None else filter_upkeeper_log_fields(fields, CYCLE_START_SAFE_KEYS)
+    if event.startswith("quota."):
+        return sanitize_quota_log_fields(root, fields)
+    return fields
+
+
+def sanitize_upkeeper_log_raw_text(
+    root: Path | None,
+    raw_text: str | None,
+    parsed: dict[str, Any] | None = None,
+) -> str | None:
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return raw_text
+    if verbose_metadata_enabled():
+        return raw_text
+    parsed_fields = parsed if isinstance(parsed, dict) else parse_upkeeper_log_line(raw_text)
+    if not isinstance(parsed_fields, dict):
+        return None
+    sanitized_fields = sanitize_nonverbose_upkeeper_log_fields(root, parsed_fields)
+    if sanitized_fields is parsed_fields:
+        return raw_text
+    return render_upkeeper_log_line(sanitized_fields)
+
+
 def sanitize_source_record_payload(
     payload: dict[str, Any],
     *,
@@ -1270,13 +1364,18 @@ def sanitize_source_record_payload(
     if source_kind != "local_git":
         if source_kind == "upkeeper_log":
             parsed_json = updated.get("parsed_json")
+            parsed_payload: dict[str, Any] | None = None
             if isinstance(parsed_json, str) and parsed_json.strip():
                 try:
                     parsed = json.loads(parsed_json)
                 except (TypeError, json.JSONDecodeError):
-                    return updated
+                    parsed = None
                 if isinstance(parsed, dict):
+                    parsed_payload = parsed
                     updated["parsed_json"] = json_dumps(sanitize_upkeeper_log_parsed(parsed))
+            raw_text = updated.get("raw_text")
+            if isinstance(raw_text, str):
+                updated["raw_text"] = sanitize_upkeeper_log_raw_text(root, raw_text, parsed_payload)
         return updated
     parsed_json = updated.get("parsed_json")
     if not isinstance(parsed_json, str) or not parsed_json.strip():
@@ -1822,9 +1921,21 @@ def print_json(value: Any) -> None:
     print(json.dumps(sanitize_json_value(value), sort_keys=True, indent=2))
 
 
+class LatticeCommandError(Exception):
+    def __init__(self, message: str, code: int, *, emitted: bool) -> None:
+        super().__init__(message)
+        self.code = code
+        self.emitted = emitted
+
+
+def raise_command_error(message: str, code: int, *, emit: bool = True) -> None:
+    if emit:
+        print(f"upkeeper_lattice: {message}", file=sys.stderr)
+    raise LatticeCommandError(message, code, emitted=emit)
+
+
 def fail(message: str, code: int) -> None:
-    print(f"upkeeper_lattice: {message}", file=sys.stderr)
-    raise SystemExit(code)
+    raise_command_error(message, code)
 
 
 def run_git(
@@ -2107,7 +2218,11 @@ def source_safe_real_path(root: Path, rel_path: str) -> Path | None:
         return None
 
 
-def read_sample_no_follow(root: Path, parts: list[str], sample_size: int = 4096) -> bytes | None:
+def read_fd_sample(file_fd: int, sample_size: int) -> bytes:
+    return os.read(file_fd, sample_size)
+
+
+def read_sample_no_follow(root: Path, parts: list[str], sample_size: int = TEXT_SAMPLE_SIZE) -> bytes | None:
     open_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     dir_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
     nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
@@ -2122,7 +2237,9 @@ def read_sample_no_follow(root: Path, parts: list[str], sample_size: int = 4096)
         file_fd = os.open(parts[-1], open_flags | nofollow_flag, dir_fd=dir_fd)
         if not stat.S_ISREG(os.fstat(file_fd).st_mode):
             return None
-        return os.read(file_fd, sample_size)
+        # Read only the requested sample so candidate scans never load the full file just
+        # to decide whether a path looks like text.
+        return read_fd_sample(file_fd, sample_size)
     except OSError as exc:
         if exc.errno == errno.ELOOP:
             return None
@@ -2219,31 +2336,40 @@ def connect(
     *,
     create_parent: bool = False,
     create_if_missing: bool = False,
+    emit_errors: bool = True,
 ) -> sqlite3.Connection:
     try:
         existing = db_path.lstat()
     except FileNotFoundError:
         existing = None
     except OSError as exc:
-        fail(f"DB path not stat-able: {db_path} ({exc})", EXIT_DB_UNAVAILABLE)
+        raise_command_error(f"DB path not stat-able: {db_path} ({exc})", EXIT_DB_UNAVAILABLE, emit=emit_errors)
 
     if existing is not None:
         if stat.S_ISLNK(existing.st_mode):
-            fail(f"DB path is a symlink: {db_path}", EXIT_DB_UNAVAILABLE)
+            raise_command_error(f"DB path is a symlink: {db_path}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
         if not stat.S_ISREG(existing.st_mode):
-            fail(f"DB path is not regular: {db_path}", EXIT_DB_UNAVAILABLE)
+            raise_command_error(f"DB path is not regular: {db_path}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
         if existing.st_uid != os.geteuid():
-            fail(f"DB path owner mismatch: {db_path} expected_uid={os.geteuid()} actual_uid={existing.st_uid}", EXIT_DB_UNAVAILABLE)
+            raise_command_error(
+                f"DB path owner mismatch: {db_path} expected_uid={os.geteuid()} actual_uid={existing.st_uid}",
+                EXIT_DB_UNAVAILABLE,
+                emit=emit_errors,
+            )
         if getattr(existing, "st_nlink", 1) != 1:
-            fail(f"DB path has multiple links: {db_path} nlink={existing.st_nlink}", EXIT_DB_UNAVAILABLE)
+            raise_command_error(
+                f"DB path has multiple links: {db_path} nlink={existing.st_nlink}",
+                EXIT_DB_UNAVAILABLE,
+                emit=emit_errors,
+            )
     elif not create_if_missing:
-        fail(f"DB path missing: {db_path}", EXIT_DB_UNAVAILABLE)
+        raise_command_error(f"DB path missing: {db_path}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
 
     if create_parent:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         chmod_private(db_path.parent, is_dir=True)
     if not db_path.parent.exists():
-        fail(f"DB parent directory does not exist: {db_path.parent}", EXIT_DB_UNAVAILABLE)
+        raise_command_error(f"DB parent directory does not exist: {db_path.parent}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
     connect_target = str(db_path)
     connect_kwargs: dict[str, Any] = {}
     if not create_if_missing:
@@ -2254,7 +2380,7 @@ def connect(
     try:
         conn = sqlite3.connect(connect_target, **connect_kwargs)
     except sqlite3.Error as exc:
-        fail(f"DB unavailable: {exc}", EXIT_DB_UNAVAILABLE)
+        raise_command_error(f"DB unavailable: {exc}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -2265,7 +2391,11 @@ def connect(
         conn.execute(f"PRAGMA journal_mode={requested}")
     except sqlite3.Error as exc:
         conn.close()
-        fail(f"cannot set SQLite journal mode {requested}: {exc}", EXIT_DB_UNAVAILABLE)
+        raise_command_error(
+            f"cannot set SQLite journal mode {requested}: {exc}",
+            EXIT_DB_UNAVAILABLE,
+            emit=emit_errors,
+        )
     return conn
 
 
@@ -3568,6 +3698,37 @@ def looks_like_json_container_string(value: str) -> bool:
     return len(stripped) >= 2 and stripped[0] in "{[" and stripped[-1] in "}]"
 
 
+def redact_inline_assignment_string(
+    raw: str,
+    *,
+    redact_paths: bool,
+    redact_contributors: bool,
+) -> str:
+    if not raw or (not redact_paths and not redact_contributors):
+        return raw
+
+    def _replace(match: re.Match[str]) -> str:
+        key = match.group("key")
+        value = match.group("value")
+        replacement = value
+        if redact_paths and key_requires_path_redaction(key):
+            replacement = REDACTED_PATH_PREFIX + sha256_text(value)
+        elif redact_contributors and key in CONTRIBUTOR_REDACT_KEYS:
+            replacement = "<redacted>"
+        else:
+            return match.group(0)
+        return f"{match.group('prefix')}{key}={match.group('quote')}{replacement}{match.group('quote')}"
+
+    return INLINE_ASSIGNMENT_PATTERN.sub(_replace, raw)
+
+
+def has_redacted_inline_assignment_string(raw: str) -> bool:
+    for match in INLINE_ASSIGNMENT_PATTERN.finditer(raw):
+        if key_requires_path_redaction(match.group("key")) and match.group("value").startswith(REDACTED_PATH_PREFIX):
+            return True
+    return False
+
+
 def has_redacted_path_token(payload: Any, current_key: str | None = None) -> bool:
     if isinstance(payload, dict):
         for key, value in payload.items():
@@ -3584,8 +3745,9 @@ def has_redacted_path_token(payload: Any, current_key: str | None = None) -> boo
             try:
                 parsed = json.loads(payload)
             except (TypeError, json.JSONDecodeError):
-                return False
+                return has_redacted_inline_assignment_string(payload)
             return has_redacted_path_token(parsed, current_key)
+        return has_redacted_inline_assignment_string(payload)
     return False
 
 
@@ -3783,12 +3945,24 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
         "primary_used": "91%",
         "primary_reset": "2026-05-13 01:00:00 -0700",
     }
+    replayed_quota_raw_line = render_upkeeper_log_line(replayed_quota_payload)
+    sanitized_quota_raw_line = sanitize_upkeeper_log_raw_text(root, replayed_quota_raw_line, replayed_quota_payload) or ""
     unsafe_selection_payload = {"selection": {"path": "secret.txt"}, "candidate_count": 1}
     imported_source_payload = {
         "source_kind": "wrapper_observed",
         "raw_ref": "preselect",
         "raw_text": '{"path":"secret.txt"}',
         "parsed_json": json_dumps(unsafe_selection_payload),
+        "parse_status": "parsed",
+        "fact_confidence": "observed",
+    }
+    imported_quota_source_payload = {
+        "source_kind": "upkeeper_log",
+        "source_path": "/home/joe/.codex/sessions/2026/05/session.jsonl",
+        "source_uri": "file:///home/joe/.codex/sessions/2026/05/session.jsonl",
+        "raw_ref": "quota.current",
+        "raw_text": replayed_quota_raw_line,
+        "parsed_json": json_dumps(replayed_quota_payload),
         "parse_status": "parsed",
         "fact_confidence": "observed",
     }
@@ -3851,6 +4025,12 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
                 redact_raw=False,
                 raw_storage_mode=mode,
             )
+            imported_quota_source_record = sanitize_imported_source_record_row(
+                imported_quota_source_payload,
+                root=root,
+                redact_raw=False,
+                raw_storage_mode=mode,
+            )
             safe_row = conn.execute(
                 "select raw_text, parsed_json from source_records where source_id=?",
                 (safe_id,),
@@ -3904,6 +4084,30 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
                         )
                     ),
                 },
+                "replayed_upkeeper_log_raw": {
+                    "source_hashed": "source_hmac=" in sanitized_quota_raw_line,
+                    "limit_ids_hashed": "limit_id_hmac=" in sanitized_quota_raw_line and "limit_name_hmac=" in sanitized_quota_raw_line,
+                    "quota_fields_removed": not any(
+                        key in sanitized_quota_raw_line
+                        for key in (
+                            "source=/home/joe/.codex/sessions/2026/05/session.jsonl",
+                            "limit_id=plan-123",
+                            "limit_name='Example Plan'",
+                            "plan_type=paid",
+                            "snapshot_model_hint=gpt-5.5",
+                            "primary_used='91%'",
+                            "primary_reset='2026-05-13 01:00:00 -0700'",
+                        )
+                    ),
+                },
+                "imported_quota_source_record": {
+                    "raw_text_stored": bool(imported_quota_source_record.get("raw_text")),
+                    "source_path_hashed": str(imported_quota_source_record.get("source_path") or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX),
+                    "source_uri_hashed": str(imported_quota_source_record.get("source_uri") or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX),
+                    "raw_text_redacted": "source_hmac=" in str(imported_quota_source_record.get("raw_text") or "")
+                    and "limit_id_hmac=" in str(imported_quota_source_record.get("raw_text") or "")
+                    and "snapshot_model_hint" not in str(imported_quota_source_record.get("raw_text") or ""),
+                },
             }
         finally:
             conn.execute(f"ROLLBACK TO raw_storage_{mode}")
@@ -3935,7 +4139,12 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     if not db_path.parent.exists():
         result["status"] = "db_unavailable"
         return result, EXIT_DB_UNAVAILABLE
-    conn = connect_checked(root, db_path, journal_mode, allow_unsafe_db=args.allow_unsafe_db)
+    try:
+        conn = connect(db_path, journal_mode, emit_errors=False)
+    except LatticeCommandError as exc:
+        result["status"] = "db_unavailable"
+        result["checks"]["open_error"] = str(exc)
+        return result, exc.code
     try:
         result["checks"]["db_readable"] = True
         try:
@@ -3961,6 +4170,15 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if fk_enabled != 1:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
+        table_names = {row["name"] for row in conn.execute("select name from sqlite_master where type='table'")}
+        missing_tables = [table for table in REQUIRED_TABLES if table not in table_names]
+        result["checks"]["required_tables_missing"] = missing_tables
+        index_names = {row["name"] for row in conn.execute("select name from sqlite_master where type='index'")}
+        missing_indexes = [index for index in REQUIRED_INDEXES if index not in index_names]
+        result["checks"]["required_indexes_missing"] = missing_indexes
+        if missing_tables or missing_indexes:
+            result["status"] = "schema_mismatch"
+            return result, EXIT_SCHEMA_MISMATCH
         meta = conn.execute("select value from schema_meta where key='schema_version'").fetchone()
         result["checks"]["schema_meta_version"] = meta["value"] if meta else None
         configured_raw_storage = configured_lattice_raw_storage()
@@ -3972,27 +4190,38 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["review_summary_parsing"] = review_summary_probe
         cycle_finish_probe = probe_cycle_finish_target_mismatch()
         result["checks"]["cycle_finish_target_mismatch"] = cycle_finish_probe
+        report_only_cycle_probe = probe_cycle_finish_report_only_outcome()
+        result["checks"]["cycle_finish_report_only_outcome"] = report_only_cycle_probe
         change_note_ref_probe = probe_change_note_file_identity_validation()
         result["checks"]["change_note_file_identity_validation"] = change_note_ref_probe
+        candidate_symlink_probe = probe_candidate_symlink_exclusion()
+        result["checks"]["candidate_symlink_exclusion"] = candidate_symlink_probe
+        candidate_text_sample_probe = probe_candidate_text_sample_limit()
+        result["checks"]["candidate_text_sample_limit"] = candidate_text_sample_probe
+        export_redaction_probe = probe_export_redaction()
+        result["checks"]["export_redaction"] = export_redaction_probe
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(cycle_finish_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
+        if not bool(report_only_cycle_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
         if not all(bool(item.get("ok")) for item in change_note_ref_probe.values()):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
+        if not bool(candidate_symlink_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(candidate_text_sample_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(export_redaction_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
         if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
-            result["status"] = "schema_mismatch"
-            return result, EXIT_SCHEMA_MISMATCH
-        table_names = {row["name"] for row in conn.execute("select name from sqlite_master where type='table'")}
-        missing_tables = [table for table in REQUIRED_TABLES if table not in table_names]
-        result["checks"]["required_tables_missing"] = missing_tables
-        index_names = {row["name"] for row in conn.execute("select name from sqlite_master where type='index'")}
-        missing_indexes = [index for index in REQUIRED_INDEXES if index not in index_names]
-        result["checks"]["required_indexes_missing"] = missing_indexes
-        if missing_tables or missing_indexes:
             result["status"] = "schema_mismatch"
             return result, EXIT_SCHEMA_MISMATCH
         fk_rows = [dict(row) for row in conn.execute("PRAGMA foreign_key_check")]
@@ -4009,6 +4238,10 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             backup_path = create_backup(conn, root, db_path, output=args.backup_output, allow_overwrite=True)
             result["checks"]["backup_path"] = str(backup_path)
             result["checks"]["backup_created"] = backup_path.exists()
+    except sqlite3.Error as exc:
+        result["status"] = "integrity_failure"
+        result["checks"]["db_error"] = str(exc)
+        return result, EXIT_INTEGRITY
     finally:
         conn.close()
     return result, EXIT_SUCCESS
@@ -4553,7 +4786,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
-def parse_review_summary_file(path: Path) -> dict[str, str]:
+def parse_review_summary_file(path: Path, repo_root: Path | None = None) -> dict[str, str]:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -4570,11 +4803,11 @@ def parse_review_summary_file(path: Path) -> dict[str, str]:
         bt = re.search(r"`([^`]+)`", line)
         candidate = ""
         if md:
-            candidate = normalize_change_note_ref(md.group(1).strip("<>"))
+            candidate = normalize_review_summary_target(md.group(1), repo_root)
         elif bt:
-            candidate = normalize_change_note_ref(bt.group(1))
+            candidate = normalize_review_summary_target(bt.group(1), repo_root)
         elif ":" in line:
-            candidate = normalize_change_note_ref(line.split(":", 1)[1].strip())
+            candidate = normalize_review_summary_target(line.split(":", 1)[1], repo_root)
         if candidate:
             selected_file = candidate
         if selected_file:
@@ -4597,8 +4830,44 @@ def extract_review_outcome(text: str) -> str:
     return outcome
 
 
+def normalize_review_summary_target(raw_target: str, repo_root: Path | None = None) -> str:
+    text = raw_target.strip().strip("<>")
+    if not text:
+        return ""
+    normalized = normalize_change_note_ref(text)
+    if normalized:
+        return normalized
+    if re.search(r"^[A-Za-z][A-Za-z0-9+\-.]*://", text):
+        return ""
+
+    candidates = [text]
+    line_match = re.fullmatch(r"(.+):([0-9]+)", text)
+    if line_match:
+        candidates.append(line_match.group(1))
+
+    if repo_root is None:
+        return ""
+
+    repo_root = repo_root.resolve()
+    for candidate_text in candidates:
+        candidate_path = Path(candidate_text)
+        if not candidate_path.is_absolute() or not candidate_path.exists():
+            continue
+        try:
+            repo_relative = candidate_path.resolve(strict=False).relative_to(repo_root)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        # Clickable local file links may append a :line suffix, but the repo
+        # identity must remain the existing file path rather than a truncated
+        # or synthetic colon split.
+        normalized = normalize_change_note_ref(repo_relative.as_posix())
+        if normalized:
+            return normalized
+    return ""
+
+
 def probe_review_summary_parsing() -> dict[str, Any]:
-    cases = {
+    cases: dict[str, tuple[str, str, str]] = {
         "report_only": (
             "selected file: `tools/upkeeper_lattice.py`\nREVIEWED_AND_REPORTED\n",
             "tools/upkeeper_lattice.py",
@@ -4628,10 +4897,19 @@ def probe_review_summary_parsing() -> dict[str, Any]:
     }
     results: dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-review-summary-") as tmpdir:
+        root = Path(tmpdir)
+        (root / "pkg:tools").mkdir(parents=True, exist_ok=True)
+        absolute_line_target = root / "pkg:tools" / "build.sh"
+        absolute_line_target.write_text("#!/bin/sh\n", encoding="utf-8")
+        cases["markdown_absolute_line_suffix"] = (
+            f"Selected file: [pkg:tools/build.sh]({absolute_line_target}:12)\nReview outcome: REVIEWED_AND_FIXED\n",
+            "pkg:tools/build.sh",
+            "REVIEWED_AND_FIXED",
+        )
         for name, (content, expected_selected, expected_outcome) in cases.items():
-            path = Path(tmpdir) / f"{name}.txt"
+            path = root / f"{name}.txt"
             path.write_text(content, encoding="utf-8")
-            parsed = parse_review_summary_file(path)
+            parsed = parse_review_summary_file(path, root)
             actual_selected = parsed.get("selected_file", "")
             actual_outcome = parsed.get("review_outcome", "")
             results[name] = {
@@ -4748,6 +5026,89 @@ def probe_cycle_finish_target_mismatch() -> dict[str, Any]:
     }
 
 
+def probe_cycle_finish_report_only_outcome() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-cycle-finish-report-only-") as tmpdir:
+        root = Path(tmpdir)
+        selected_path = "tools/report-only.py"
+        try:
+            subprocess.run(
+                ["git", "init", "-q", str(root)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        (root / "tools").mkdir(parents=True, exist_ok=True)
+        (root / selected_path).write_text("print('report only')\n", encoding="utf-8")
+        review_path = root / "last-message.txt"
+        review_path.write_text(
+            "Selected file: `tools/report-only.py`\nREVIEWED_AND_REPORTED\n",
+            encoding="utf-8",
+        )
+        db_path = root / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True, create_parent=True, create_if_missing=True)
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+        finally:
+            conn.close()
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="wal",
+            allow_unsafe_db=True,
+            raw_storage_mode="minimal",
+            cycle_id="cycle-report-only",
+            run_hash="run-report-only",
+            status_marker="WORK_DONE",
+            review_outcome=None,
+            review_selected_path=None,
+            codex_exit=0,
+            wrapper_exit=0,
+            finish_reason="work_done",
+            finish_level="info",
+            codex_exec_started=1,
+            dry_run="1",
+            selected_path=selected_path,
+            last_message_file=str(review_path),
+            transcript_path=None,
+            compiled_prompt_path=None,
+            log_path=None,
+            snapshot_kind="after_codex",
+            end_epoch=1234567890,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            command_record_cycle_finish(args)
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True)
+        try:
+            cycle = conn.execute(
+                """
+                select status_marker, review_outcome, finish_reason, finish_level, selected_path
+                  from cycles
+                 where cycle_id=? and run_hash=?
+                """,
+                ("cycle-report-only", "run-report-only"),
+            ).fetchone()
+        finally:
+            conn.close()
+    ok = bool(cycle)
+    if cycle:
+        ok = ok and cycle["status_marker"] == "WORK_DONE"
+        ok = ok and cycle["review_outcome"] == "REVIEWED_AND_REPORTED"
+        ok = ok and cycle["finish_reason"] == "work_done"
+        ok = ok and cycle["finish_level"] == "info"
+        ok = ok and cycle["selected_path"] == selected_path
+    return {
+        "selected_path": selected_path,
+        "status_marker": cycle["status_marker"] if cycle else None,
+        "review_outcome": cycle["review_outcome"] if cycle else None,
+        "finish_reason": cycle["finish_reason"] if cycle else None,
+        "finish_level": cycle["finish_level"] if cycle else None,
+        "actual_selected_path": cycle["selected_path"] if cycle else None,
+        "ok": ok,
+    }
+
+
 def probe_change_note_file_identity_validation() -> dict[str, Any]:
     results: dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-change-note-ref-") as repo_dir:
@@ -4789,6 +5150,141 @@ def probe_change_note_file_identity_validation() -> dict[str, Any]:
                     "ok": actual == "",
                 }
     return results
+
+
+def probe_candidate_symlink_exclusion() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-symlink-candidate-") as repo_dir:
+        root = Path(repo_dir).resolve()
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "probe@example.com"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "Probe User"], cwd=root, check=True)
+        target = root / "real.py"
+        target.write_text("print('real')\n", encoding="utf-8")
+        link = root / "linked.py"
+        try:
+            link.symlink_to(target.name)
+        except OSError as exc:
+            return {
+                "supported": False,
+                "error": safe_output_text(str(exc)),
+                "ok": True,
+            }
+        subprocess.run(["git", "add", target.name, link.name], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "probe"], cwd=root, check=True)
+        eligible_rows = {row["path"]: row for row in live_candidate_paths(root)}
+        tracked_rows = {row["path"]: row for row in live_candidate_paths(root, candidate_scope="current-tracked")}
+        link_meta = live_file_metadata(root, link.name)
+        eligible_link = eligible_rows.get(link.name, {})
+        tracked_link = tracked_rows.get(link.name, {})
+        result = {
+            "supported": True,
+            "eligible_candidate_state": eligible_link.get("candidate_state"),
+            "eligible_exclusion_reason": eligible_link.get("exclusion_reason"),
+            "eligible_content_state": eligible_link.get("content_state"),
+            "eligible_git_status": eligible_link.get("git_status"),
+            "tracked_candidate_state": tracked_link.get("candidate_state"),
+            "tracked_exclusion_reason": tracked_link.get("exclusion_reason"),
+            "tracked_content_state": tracked_link.get("content_state"),
+            "tracked_git_status": tracked_link.get("git_status"),
+            "metadata_content_state": link_meta.get("content_state"),
+            "metadata_git_status": link_meta.get("git_status"),
+            "metadata_worktree_hash": link_meta.get("worktree_hash"),
+            "metadata_head_blob": link_meta.get("head_blob"),
+        }
+        result["ok"] = all(
+            (
+                result["eligible_candidate_state"] == "excluded",
+                result["eligible_exclusion_reason"] == "symlink",
+                result["eligible_content_state"] == "symlink",
+                result["eligible_git_status"] == "symlink",
+                result["tracked_candidate_state"] == "excluded",
+                result["tracked_exclusion_reason"] == "symlink",
+                result["tracked_content_state"] == "symlink",
+                result["tracked_git_status"] == "symlink",
+                result["metadata_content_state"] == "symlink",
+                result["metadata_git_status"] == "symlink",
+                result["metadata_worktree_hash"] == "unavailable",
+                result["metadata_head_blob"] == "none",
+            )
+        )
+        return result
+
+
+def probe_candidate_text_sample_limit() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-text-sample-") as repo_dir:
+        root = Path(repo_dir).resolve()
+        candidate = root / "large.py"
+        candidate.write_bytes(b"# probe\n" + (b"x" * (TEXT_SAMPLE_SIZE * 8)))
+        read_sizes: list[int] = []
+        original_read = read_fd_sample
+
+        def recording_read(fd: int, size: int) -> bytes:
+            read_sizes.append(size)
+            return original_read(fd, size)
+
+        try:
+            globals()["read_fd_sample"] = recording_read
+            rows = {row["path"]: row for row in live_candidate_paths(root)}
+        finally:
+            globals()["read_fd_sample"] = original_read
+        row = rows.get(candidate.name, {})
+        result = {
+            "candidate_state": row.get("candidate_state"),
+            "exclusion_reason": row.get("exclusion_reason"),
+            "read_sizes": read_sizes,
+            "max_read_size": max(read_sizes) if read_sizes else None,
+        }
+        result["ok"] = (
+            result["candidate_state"] == "eligible"
+            and result["exclusion_reason"] == ""
+            and bool(read_sizes)
+            and all(size == TEXT_SAMPLE_SIZE for size in read_sizes)
+        )
+        return result
+
+
+def probe_export_redaction() -> dict[str, Any]:
+    args = argparse.Namespace(
+        redact_paths=True,
+        redact_contributors=True,
+        raw_export_policy="include",
+    )
+    selected_path = "tools/secret.py"
+    local_remote = "file:///Users/alice/Secret Vault/upkeeper.git"
+    payload = {
+        "selected_path": selected_path,
+        "remote_url": local_remote,
+        "raw_text": f"selected_path={selected_path} remote_url='{local_remote}' email=alice@example.com",
+        "details_json": json_dumps({"preselected_path": selected_path, "reported_selected_path": "docs/other.md"}),
+        "parsed_json": json_dumps(
+            {
+                "selected_path": selected_path,
+                "remote_url": local_remote,
+                "nested": {"selected_path": selected_path},
+            }
+        ),
+    }
+    redacted = redact_payload(payload, args)
+    raw_text = str(redacted.get("raw_text") or "")
+    return {
+        "ok": (
+            str(redacted.get("selected_path") or "").startswith(REDACTED_PATH_PREFIX)
+            and str(redacted.get("remote_url") or "").startswith(REDACTED_PATH_PREFIX)
+            and selected_path not in json_dumps(redacted)
+            and local_remote not in json_dumps(redacted)
+            and "alice@example.com" not in raw_text
+            and "email=<redacted>" in raw_text
+            and "selected_path=path-sha256:" in raw_text
+            and "remote_url='path-sha256:" in raw_text
+            and has_redacted_path_token(redacted)
+        ),
+        "raw_text": raw_text,
+        "selected_path_redacted": str(redacted.get("selected_path") or "").startswith(REDACTED_PATH_PREFIX),
+        "remote_url_redacted": str(redacted.get("remote_url") or "").startswith(REDACTED_PATH_PREFIX),
+        "details_json_redacted": selected_path not in str(redacted.get("details_json") or ""),
+        "parsed_json_redacted": local_remote not in str(redacted.get("parsed_json") or ""),
+        "redacted_payload_detected": has_redacted_path_token(redacted),
+    }
 
 
 def snapshot_row_for_event(
@@ -5119,7 +5615,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         repo_id = ensure_repository(conn, root)
         parsed = vars(args).copy()
         parsed.pop("func", None)
-        review = parse_review_summary_file(Path(args.last_message_file)) if args.last_message_file else {}
+        review = parse_review_summary_file(Path(args.last_message_file), root) if args.last_message_file else {}
         review_outcome = args.review_outcome or review.get("review_outcome") or None
         reported_selected = external_rel_path(args.review_selected_path or review.get("selected_file", ""))
         status_marker = args.status_marker
@@ -6222,8 +6718,8 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                 continue
             safe_parsed = sanitize_upkeeper_log_parsed(parsed)
             stored_raw_line = raw_line if args.raw else None
-            if stored_raw_line is not None and str(parsed.get("event", "")) == "cycle.start" and not verbose_metadata_enabled():
-                stored_raw_line = render_upkeeper_log_line(sanitize_cycle_start_fields(root, parsed))
+            if stored_raw_line is not None:
+                stored_raw_line = sanitize_upkeeper_log_raw_text(root, stored_raw_line, parsed)
             source_id = ensure_source_record(
                 conn,
                 root,
@@ -6550,6 +7046,13 @@ def redact_payload(payload: dict[str, Any], args: argparse.Namespace) -> dict[st
                 if isinstance(parsed, (dict, list)):
                     redacted = _redact(parsed, current_key)
                     return json_dumps(redacted) if redacted != parsed else raw
+            inline_redacted = redact_inline_assignment_string(
+                raw,
+                redact_paths=bool(args.redact_paths),
+                redact_contributors=bool(args.redact_contributors),
+            )
+            if inline_redacted != raw:
+                return inline_redacted
         return raw
 
     return _redact(payload)
@@ -6808,6 +7311,12 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     redact_raw=bool(getattr(args, "redact_raw", False)),
                     raw_storage_mode=raw_storage_mode,
                 )
+            try:
+                filtered = normalize_imported_stored_rel_path_payload(str(table), filtered)
+            except ValueError as exc:
+                conflicts += 1
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", incoming_raw_hash, str(exc))
+                continue
             if not filtered:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_raw_hash, "empty_filtered_payload")
@@ -8111,6 +8620,10 @@ def main(argv: list[str] | None = None) -> int:
         os.environ[UPKEEPER_RAW_REPO_IDENTITY_ENV] = "1"
     try:
         return int(args.func(args))
+    except LatticeCommandError as exc:
+        if not exc.emitted:
+            print(f"upkeeper_lattice: {exc}", file=sys.stderr)
+        return int(exc.code)
     except sqlite3.IntegrityError as exc:
         print(f"upkeeper_lattice: integrity failure: {exc}", file=sys.stderr)
         return EXIT_INTEGRITY

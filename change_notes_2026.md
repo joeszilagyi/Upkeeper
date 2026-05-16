@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-16: v1.2.24 changes:
+	1. Hardened tool-failure queue markers with a machine-local signing key so stale or fabricated queue entries cannot steer later wrapper selection without authentication.
+	2. Removed inherited parent argv text from the live wrapper environment after loop classification, keeping quota-loop diagnostics useful without preserving raw launcher command text for child phases.
+	3. Tightened auxiliary post-mortem hardening so every hardening pass remains explicitly opt-in and treats prior model-written reports as untrusted structure, with sanitized incident context as the only trusted evidence.
+	4. Advanced the file-manifest cache to schema version 2 with a hashed repo-root identifier instead of a stored checkout path, and fixed JSONL replay import of storage-encoded Lattice paths so encoded control-character filenames remain idempotent across export/import.
+
 2026-05-15: v1.2.23 changes:
 	1. Hardened Lattice cycle-finish recording so the wrapper-selected target remains authoritative; model-reported replacement targets are preserved as rejection evidence and convert the cycle to `STOPPED_ON_BLOCKER` instead of silently moving the selected file.
 	2. Improved Lattice path fidelity for unusual Git paths by using byte-preserving path encoding, `git status --porcelain=v1 -z` parsing, and artifact-reference deduplication/indexes that keep repeated local evidence rows from corrupting recovery state; fresh file manifests now keep repo-relative paths instead of checkout-local absolute paths.

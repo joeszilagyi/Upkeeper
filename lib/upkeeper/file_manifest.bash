@@ -1,9 +1,9 @@
 # File manifest cache for deterministic target selection.
 #
 # The manifest is local runtime state: it records source-visible files with
-# repo-relative paths, mtimes, and sizes so selection can work from a ready
-# sorted list without leaking checkout-local absolute paths or asking the
-# backend model to rediscover repository shape.
+# repo-relative paths, mtimes, sizes, and a hashed repo-root identifier so
+# selection can work from a ready sorted list without leaking checkout-local
+# absolute paths or asking the backend model to rediscover repository shape.
 
 resolve_upkeeper_manifest_path() {
   local raw_path="$1"
@@ -67,6 +67,8 @@ try:
     max_age_seconds = max(0, int(sys.argv[4]))
 except ValueError:
     max_age_seconds = 300
+
+root_hash = hashlib.sha256(str(root).encode("utf-8", "surrogateescape")).hexdigest()
 
 
 def emit(**fields: object) -> None:
@@ -240,9 +242,9 @@ def build_payload() -> tuple[dict[str, object], str]:
             git_status_hash = "unknown"
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_epoch": int(time.time()),
-        "root": str(root),
+        "root_hash": root_hash,
         "source": source,
         "fingerprint": fingerprint,
         "git_head": git_head,
@@ -262,7 +264,7 @@ def existing_payload() -> dict[str, object] | None:
         return None
     if not isinstance(payload, dict):
         return None
-    if payload.get("schema_version") != 1 or payload.get("root") != str(root):
+    if payload.get("schema_version") != 2 or payload.get("root_hash") != root_hash:
         return None
     if not isinstance(payload.get("files"), list):
         return None

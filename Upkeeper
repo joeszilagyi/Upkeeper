@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.25
+## Version: v1.2.26
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -209,6 +209,7 @@ upkeeper_load_assignment_file() {
     printf -v "$variable_name" '%s' "$parsed_value"
     [[ "$export_requested" == "1" ]] && export "$variable_name"
   done < "$file_path"
+  return 0
 }
 
 upkeeper_config_assert_trusted_path() {
@@ -358,7 +359,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.25"
+UPKEEPER_VERSION="v1.2.26"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"

@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-16: v1.2.26 changes:
+	1. Minimized quota/session metadata in normal logs, cooldown markers, postmortem incident context, and Lattice-facing validation by hashing local session sources and quota identity fields unless explicit verbose local diagnostics are requested.
+	2. Hardened config-file sourcing with filesystem trust checks and fixed the assignment-file parser so a valid config no longer exits silently at EOF under `set -e`.
+	3. Tightened manifest cache reuse by invalidating legacy payloads that still carry raw checkout-root fields, forcing regeneration into the hashed-root schema.
+	4. Cleared raw inline prompt environment variables once a prompt file is authoritative and before screen fallback children launch, reducing descendant exposure of sensitive inline prompt text.
+
 2026-05-16: v1.2.25 changes:
 	1. Backlog loops now hibernate locally when quota preflight sees a stop-level quota state or active primary quota block marker, printing the blocked bucket, reset time, wake time, branch, and recent activity before sleeping without backend model work until the reset grace passes.
 	2. Added deterministic fake-clock validation for backlog quota hibernation and malformed hibernation input so valid quota stops no longer require manual loop restarts.

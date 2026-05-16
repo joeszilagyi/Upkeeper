@@ -15,9 +15,9 @@ try:
 except ValueError:
     scan_minutes = 240
 cutoff = time.time() - (scan_minutes * 60)
-cycle_re = re.compile(r"\bcycle=([^ ]+)")
-run_hash_re = re.compile(r"\brun_hash=([^ ]+)")
-boot_id_re = re.compile(r"\bboot_id=([^ ]+)")
+cycle_re = re.compile(r"\bcycle=([^ \t\r\n]+)")
+run_hash_re = re.compile(r"\brun_hash=([^ \t\r\n]+)")
+boot_id_re = re.compile(r"\bboot_id=([^ \t\r\n]+)")
 cycles = {}
 latest_previous_run_ack_epoch = None
 
@@ -139,10 +139,80 @@ if acknowledged:
 PY
 }
 
+previous_run_anomaly_details_enabled() {
+  if declare -F terminal_wants_verbose_output >/dev/null 2>&1 && terminal_wants_verbose_output; then
+    return 0
+  fi
+  if declare -F terminal_wants_full_output >/dev/null 2>&1 && terminal_wants_full_output; then
+    return 0
+  fi
+  return 1
+}
+
+previous_run_anomaly_summary_line() {
+  local anomaly_input
+  anomaly_input="$(cat)"
+  UPKEEPER_PREVIOUS_RUN_ANOMALY_INPUT="$anomaly_input" python3 - <<'PY'
+import collections
+import os
+import re
+
+lines = [line.rstrip("\n") for line in os.environ.get("UPKEEPER_PREVIOUS_RUN_ANOMALY_INPUT", "").splitlines() if line.strip()]
+
+
+def field(line, name):
+    match = re.search(rf"(?:^| ){re.escape(name)}=([^ ]+)", line)
+    if not match:
+        return ""
+    return match.group(1)
+
+
+def safe(value, fallback="unknown"):
+    text = str(value or fallback)
+    text = re.sub(r"[^A-Za-z0-9_.:@%+=,-]", "_", text)
+    return text[:200] or fallback
+
+
+cycle_count = 0
+state_count = 0
+reason_counts = collections.Counter()
+epochs = []
+
+for line in lines:
+    is_state = "reason=startup_anomaly_gate_unresolved_state" in line or bool(field(line, "state_id"))
+    if is_state:
+        state_count += 1
+        reason = field(line, "reason_class") or field(line, "reason") or "unknown"
+        epoch = field(line, "updated_epoch") or field(line, "created_epoch")
+    else:
+        cycle_count += 1
+        reason = field(line, "reason") or "unknown"
+        epoch = field(line, "last_epoch")
+    reason_counts[safe(reason)] += 1
+    if epoch.isdecimal():
+        epochs.append(int(epoch))
+
+reason_text = ",".join(f"{key}={reason_counts[key]}" for key in sorted(reason_counts)) or "none"
+oldest = str(min(epochs)) if epochs else "unknown"
+newest = str(max(epochs)) if epochs else "unknown"
+print(
+    f"listed_total={len(lines)} "
+    f"prior_cycle_count={cycle_count} "
+    f"state_count={state_count} "
+    f"reason_counts={reason_text} "
+    f"oldest_epoch={oldest} "
+    f"newest_epoch={newest} "
+    "details=local_log_state_and_prompt "
+    "action=force_upkeeper_self_review"
+)
+PY
+}
+
 scan_previous_run_anomalies() {
   local -a anomalies=()
   local -a state_anomalies=()
   local anomaly
+  local detail_level summary_line
   PREVIOUS_RUN_ANOMALIES=""
   mapfile -t anomalies < <(previous_run_anomaly_lines || true)
   mapfile -t state_anomalies < <(startup_anomaly_state_lines || true)
@@ -162,9 +232,15 @@ scan_previous_run_anomalies() {
     return 0
   fi
 
+  summary_line="$(printf '%s\n' "${anomalies[@]}" | previous_run_anomaly_summary_line)"
+  log_line "WARN" "previous_run.anomaly_summary scan_minutes=$CODEX_PREVIOUS_RUN_SCAN_MINUTES $summary_line boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
+  detail_level="INFO"
+  if previous_run_anomaly_details_enabled; then
+    detail_level="WARN"
+  fi
   for anomaly in "${anomalies[@]}"; do
     [[ -n "$anomaly" ]] || continue
-    log_line "WARN" "previous_run.anomaly $anomaly boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
+    log_line "$detail_level" "previous_run.anomaly_detail $anomaly boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
     PREVIOUS_RUN_ANOMALIES+="- $anomaly"$'\n'
   done
   STARTUP_ANOMALY_GATE="1"

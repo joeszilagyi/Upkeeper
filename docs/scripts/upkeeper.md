@@ -235,8 +235,10 @@ Important:
     continuity can be detected even when both the primary process and a future
     watchdog fail.
   - Startup scans the recent live log for prior cycles that started but never
-    wrote cycle.exit/run.finish, logs previous_run.anomaly lines, and injects
-    those findings into the prompt for the next healthy run.
+    wrote cycle.exit/run.finish, logs one `previous_run.anomaly_summary` for
+    ordinary operator output, preserves `previous_run.anomaly_detail` records in
+    local evidence, and injects those findings into the prompt for the next
+    healthy run.
   - Startup also logs disk.preflight lines for repo, log, Codex home/session,
     temp, bwrap, arg0, and runtime paths. Path and mount fields are hashed in
     normal logs and switch to raw shell-quoted values only in `debug1` or
@@ -773,7 +775,8 @@ prompts, backup log lines, or Lattice preselect evidence.
 - Local sample-repo stress testing is documented in `docs/stress-corpus.md`;
   those checks default to no real backend Codex work and keep model-backed
   sample runs behind explicit future opt-in commands.
-- Startup-anomaly scans suppress older log-only `previous_run.anomaly` entries
+- Startup-anomaly scans suppress older log-only `previous_run.anomaly_detail`
+  entries
   after a later `startup_anomaly.gate_resolved` has acknowledged
   `previous_run_anomaly`; unresolved gate state files still trigger the gate.
 - Startup-anomaly self-review gates require a repo-local regular Upkeeper file
@@ -823,8 +826,9 @@ prompts, backup log lines, or Lattice preselect evidence.
   refresh dry-runs, and enumerate/random selector dry-runs. Validate them with
   `bash -n testruns/*.sh` before changing loop behavior.
 - Log continuity is now script-visible before Codex starts: `previous_run.scan`,
-  `previous_run.anomaly`, `disk.preflight`, and `--MARK--` lines are primary
-  evidence for follow-up self-repair.
+  `previous_run.anomaly_summary`, `previous_run.anomaly_detail`,
+  `disk.preflight`, and `--MARK--` lines are primary evidence for follow-up
+  self-repair.
 - If a startup anomaly gate is active and the final response omits the required
   raw-line `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=none log_sha256=<64-hex>` or
   `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=listed log_sha256=<64-hex>`

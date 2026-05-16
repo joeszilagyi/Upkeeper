@@ -15,6 +15,7 @@ Tracked prompts:
 - [`p28-unit-test-harvesting-review.md`](p28-unit-test-harvesting-review.md) - P28 opt-in review module for turning useful discoveries into local tests or fixtures.
 - [`p29-reuse-harvesting-review.md`](p29-reuse-harvesting-review.md) - P29 opt-in review module for extracting bounded reusable helpers, fixtures, prompt language, docs, and validation patterns.
 - [`p30-stark-protocol-review.md`](p30-stark-protocol-review.md) - P30 opt-in review module for permanent hardening and non-regression barriers.
+- [`p31-fault-injection-review.md`](p31-fault-injection-review.md) - reserved future P31 contract for deterministic fault-injection scenarios with explicit oracles and recovery proof; not wired as a `--review-module` flag yet.
 
 Numbering compatibility:
 
@@ -22,7 +23,8 @@ Numbering compatibility:
   that meaning.
 - P30 remains the Stark Protocol permanent-hardening module.
 - Fault-injection review is reserved for future P31 work, or for a later named
-  module with an explicit non-breaking alias plan.
+  module with an explicit non-breaking alias plan. The tracked P31 prompt
+  defines the contract before wiring.
 
 Guidelines:
 

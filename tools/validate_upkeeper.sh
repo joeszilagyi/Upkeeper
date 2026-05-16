@@ -2229,6 +2229,8 @@ check_file_manifest_selection() {
       CODEX_FILE_MANIFEST_PATH="$manifest_path" \
       CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
       CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
+      UPKEEPER_PRECONTACT_BACKUP_ENABLED=0 \
+      UPKEEPER_SELECTION_RANDOM_SEED=validation-file-manifest-selection \
       UPKEEPER_LATTICE_DB="$lattice_db_path" \
       UPKEEPER_DRY_RUN=1 \
       ./Upkeeper "$@" >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"

@@ -3,6 +3,36 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Fault-Injection Review Contract
+
+Status: completed
+
+Goal:
+Fix issue `#82` by adding the future P31 fault-injection review contract as a
+tracked prompt artifact with explicit fault model, oracle, containment, and
+recovery-proof requirements.
+
+Constraints:
+- Do not wire `--review-module=p31` in this patch; that is separate
+  implementation work after the numbering decision.
+- Keep the prompt deterministic and bounded: not fuzzing, not mutation testing,
+  and not source-mutating test-the-tests behavior.
+- Add validator coverage for the mandatory contract terms so the design does
+  not drift before wiring.
+
+Files likely touched:
+- `prompts/p31-fault-injection-review.md`
+- `prompts/README.md`
+- `README.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Review Module Numbering Compatibility
 
 Status: completed

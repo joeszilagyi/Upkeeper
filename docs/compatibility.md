@@ -196,6 +196,8 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Review-module numbering remains compatible: P29 is reuse harvesting, P30 is
   Stark Protocol hardening, and fault-injection review is reserved for future
   P31 work or a later named module with an explicit non-breaking alias plan.
+  The tracked `prompts/p31-fault-injection-review.md` file defines that future
+  contract before any `--review-module=p31` CLI wiring exists.
 - Local unaddressed tool-failure markers can prioritize the next eligible target
   without changing tracked source; operator `--target-file` and
   `--ignore-failure-queue` still override that local queue for one cycle.

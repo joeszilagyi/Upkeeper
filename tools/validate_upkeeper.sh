@@ -489,6 +489,8 @@ check_module_map() {
 }
 
 check_prompt_template() {
+  local p31_term
+
   log "checking prompt templates"
   [[ -s prompts/default-review.md ]] || fail "prompts/default-review.md is missing or empty"
   [[ -s prompts/p23-data-contract-negative-fixture-audit.md ]] || fail "P23 standalone prompt is missing or empty"
@@ -499,6 +501,7 @@ check_prompt_template() {
   [[ -s prompts/p28-unit-test-harvesting-review.md ]] || fail "P28 review module prompt is missing or empty"
   [[ -s prompts/p29-reuse-harvesting-review.md ]] || fail "P29 review module prompt is missing or empty"
   [[ -s prompts/p30-stark-protocol-review.md ]] || fail "P30 review module prompt is missing or empty"
+  [[ -s prompts/p31-fault-injection-review.md ]] || fail "P31 fault-injection contract prompt is missing or empty"
   [[ -x tools/upkeeper_lattice.py ]] || fail "Lattice tool is missing or not executable"
   [[ -s lib/upkeeper/lattice.bash ]] || fail "Lattice wrapper module is missing or empty"
   [[ -s lib/upkeeper/precontact_backup.bash ]] || fail "pre-contact backup module is missing or empty"
@@ -551,6 +554,43 @@ check_prompt_template() {
   grep -Fq "Permanent hardening test" prompts/p30-stark-protocol-review.md || fail "P30 hardening test missing"
   grep -Fq "Non-regression evidence" prompts/p30-stark-protocol-review.md || fail "P30 non-regression evidence output missing"
   grep -Fq "same weakness cannot silently recur" prompts/p30-stark-protocol-review.md || fail "P30 repeat-path boundary missing"
+  grep -Fq "# P31 Fault-Injection Review" prompts/p31-fault-injection-review.md || fail "P31 prompt title missing"
+  grep -Fq "P31: not applicable" prompts/p31-fault-injection-review.md || fail "P31 applicability gate missing"
+  for p31_term in \
+    "Component:" \
+    "Function protected:" \
+    "Assumption challenged:" \
+    "Injected fault:" \
+    "Fault trigger:" \
+    "Expected internal error state:" \
+    "Expected externally visible behavior:" \
+    "Containment behavior:" \
+    "Operator diagnostic:" \
+    "Cleanup expectation:" \
+    "Recovery expectation:" \
+    "Oracle classes:" \
+    "Control run:" \
+    "Injection run:" \
+    "Recovery run:" \
+    "Scenario registry action:" \
+    "Fault: the injected broken condition" \
+    "Error: invalid internal state" \
+    "Failure: externally visible wrong behavior" \
+    "Containment: behavior that prevents operator damage" \
+    "Exit oracle" \
+    "Reason oracle" \
+    "Log oracle" \
+    "Terminal oracle" \
+    "Artifact oracle" \
+    "Mutation oracle" \
+    "Cleanup oracle" \
+    "Recovery oracle" \
+    "Non-oracle declaration" \
+    "no oracle is invalid" \
+    "next invocation is not poisoned" \
+    "not fuzzing, mutation testing"; do
+    grep -Fq "$p31_term" prompts/p31-fault-injection-review.md || fail "P31 contract missing required term: $p31_term"
+  done
   grep -Fq "UPKEEPER_PASS_RESULT" prompts/default-review.md || fail "default prompt missing pass-result marker contract"
   grep -Fq "UPKEEPER_LATTICE_ENABLED" Upkeeper.conf || fail "root config missing Lattice defaults"
   grep -Fq "UPKEEPER_LATTICE_ENABLED" configurations/default.conf || fail "default profile missing Lattice defaults"

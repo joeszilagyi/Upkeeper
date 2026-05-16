@@ -738,7 +738,9 @@ follow-up so the same weakness cannot silently recur.
 Fault-injection review is reserved for future P31 work, or for a later named
 module with a non-breaking alias plan. P29 remains the public reuse-harvesting
 contract and P30 remains Stark Protocol hardening; existing P29 aliases are not
-renamed or repurposed.
+renamed or repurposed. The tracked
+[`prompts/p31-fault-injection-review.md`](prompts/p31-fault-injection-review.md)
+file defines the future P31 contract before CLI wiring exists.
 
 ```sh
 ./Upkeeper --review-module=p24
@@ -932,6 +934,9 @@ test loop does not spend cycles on known low-value or generated material.
   P30 review module for permanent hardening and non-regression barriers
 - Fault-injection review is reserved for future P31 work so P29 reuse
   harvesting and P30 Stark Protocol aliases remain backward compatible.
+- [prompts/p31-fault-injection-review.md](prompts/p31-fault-injection-review.md):
+  reserved future P31 contract for deterministic fault-injection scenarios with
+  explicit oracles and recovery proof; not wired as a review-module flag yet
 - [prompts/git_hard_clean.md](prompts/git_hard_clean.md): explicit branch and backup cleanup
   workflow notes
 - [templates/prompt-template.md](templates/prompt-template.md): starter format

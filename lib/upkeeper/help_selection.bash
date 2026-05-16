@@ -120,6 +120,15 @@ Loop stop semantics:
 
 Important:
   - Run the loop in a dedicated shell or terminal tab.
+  - Run backlog batches with orchestration/backlog_loop.sh, or call
+    orchestration/backlog.sh directly for safe interactive watch mode: it cuts
+    off stdin, keeps live output in the current terminal, and mirrors that
+    output to the private backlog loop log. Set BACKLOG_INTERACTIVE_MODE=detach
+    or use orchestration/backlog_loop.sh when you want a fully detached
+    background-style loop instead. Backlog launcher notices are shell-comment
+    lines so accidental terminal input feedback stays a no-op, and live/feed-log
+    lines use a local YYYY-MM-DDTHH:MM:SS timestamp in column 1 for loose
+    terminal watching.
   - The living repo-local operator guide is:
       $(resolved_operator_guide_path)
     If that guide is missing, normal startup bootstraps it once from this help

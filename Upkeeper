@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.21
+## Version: v1.2.23
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -269,7 +269,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.21"
+UPKEEPER_VERSION="v1.2.23"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -336,6 +336,7 @@ CODEX_POSTMORTEM_ENABLED="${CODEX_POSTMORTEM_ENABLED:-1}"
 CODEX_POSTMORTEM_MODEL="${CODEX_POSTMORTEM_MODEL:-$CODEX_FALLBACK_MODEL}"
 CODEX_POSTMORTEM_REASONING_EFFORT="${CODEX_POSTMORTEM_REASONING_EFFORT:-$CODEX_FALLBACK_REASONING_EFFORT}"
 CODEX_POSTMORTEM_MODE="${CODEX_POSTMORTEM_MODE:-$CODEX_FALLBACK_MODE}"
+CODEX_POSTMORTEM_HARDENING_OPT_IN="${CODEX_POSTMORTEM_HARDENING_OPT_IN:-0}"
 CODEX_POSTMORTEM_DIR="${CODEX_POSTMORTEM_DIR:-$ROOT_DIR/runtime/journals/upkeeper-postmortems}"
 CODEX_FALLBACK_CHAIN_ACTIVE="${CODEX_FALLBACK_CHAIN_ACTIVE:-0}"
 CODEX_ATTEMPT_ROLE="${CODEX_ATTEMPT_ROLE:-primary}"
@@ -576,6 +577,1197 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
 done
  unset upkeeper_module
 
+# Keep this review-parser override in the entrypoint so selected-target-only
+# repair cycles can harden startup anomaly acknowledgment parsing without
+# patching the paired module file. The gate only accepts the strict final marker
+# section: the log-review marker must be the last non-fenced content line before
+# the final UPKEEPER_STATUS marker, and duplicate raw acknowledgments elsewhere
+# are treated as ambiguous rather than accepted.
+current_cycle_log_review_present() {
+  local last_message_file="$1"
+  local current_cycle="${2:-$CYCLE_ID}"
+  local log_path="${3:-$LOG_FILE}"
+  local reasons="${4:-$STARTUP_ANOMALY_REASONS}"
+
+  [[ -f "$last_message_file" ]] || return 1
+
+  python3 - "$last_message_file" "$current_cycle" "$log_path" "$reasons" <<'PY'
+import hashlib
+import re
+import sys
+
+try:
+    message_path, current_cycle, log_path, reasons = sys.argv[1:5]
+    text = open(message_path, "r", encoding="utf-8", errors="replace").read()
+except OSError:
+    raise SystemExit(1)
+
+anomalies_expectation = "listed" if reasons and reasons != "unknown" else "none"
+cycle_pattern = re.compile(r"\bcycle={}\b".format(re.escape(current_cycle)))
+status_pattern = re.compile(r"^UPKEEPER_STATUS: (WORK_DONE|NO_CHANGES|NO_BACKEND_TASK|BLOCKED)$")
+review_pattern = re.compile(
+    r"^UPKEEPER_LOG_REVIEW: CHECKED cycle=([^\s`]+) anomalies=(none|listed) log_sha256=([0-9a-f]{64})$"
+)
+
+cycle_log_lines = []
+cycle_start_seen = False
+cycle_exit_seen = False
+run_start_seen = False
+run_finish_seen = False
+
+try:
+    with open(log_path, "r", encoding="utf-8", errors="replace") as log_file:
+        for line in log_file:
+            if not cycle_pattern.search(line):
+                continue
+            cycle_log_lines.append(line)
+            if "cycle.start" in line:
+                cycle_start_seen = True
+            if "cycle.exit" in line:
+                cycle_exit_seen = True
+            if "run.start" in line:
+                run_start_seen = True
+            if "run.finish" in line:
+                run_finish_seen = True
+except OSError:
+    raise SystemExit(1)
+
+if not cycle_log_lines:
+    raise SystemExit(1)
+if not (cycle_start_seen and cycle_exit_seen and run_start_seen and run_finish_seen):
+    raise SystemExit(1)
+
+cycle_log_sha = hashlib.sha256("".join(cycle_log_lines).encode("utf-8", "surrogateescape")).hexdigest()
+
+visible_lines = []
+in_code_fence = False
+for index, raw_line in enumerate(text.splitlines(), start=1):
+    line = raw_line.rstrip("\r\n").strip()
+    if line.startswith("```"):
+        in_code_fence = not in_code_fence
+        continue
+    if in_code_fence or not line:
+        continue
+    visible_lines.append((index, line))
+
+if len(visible_lines) < 2:
+    raise SystemExit(1)
+
+status_index, status_line = visible_lines[-1]
+if not status_pattern.fullmatch(status_line):
+    raise SystemExit(1)
+
+review_index, review_line = visible_lines[-2]
+review_match = review_pattern.fullmatch(review_line)
+if not review_match:
+    raise SystemExit(1)
+
+matching_review_lines = [
+    (index, line)
+    for index, line in visible_lines
+    if review_pattern.fullmatch(line)
+]
+if len(matching_review_lines) != 1:
+    raise SystemExit(1)
+if matching_review_lines[0][0] != review_index:
+    raise SystemExit(1)
+if review_index >= status_index:
+    raise SystemExit(1)
+
+if (
+    review_match.group(1) == current_cycle
+    and review_match.group(2) == anomalies_expectation
+    and review_match.group(3) == cycle_log_sha
+):
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+# Keep this review-summary override in the entrypoint so selected-target-only
+# repair cycles can harden review outcome recovery without patching the paired
+# module files. Only a dedicated final outcome line near the machine markers is
+# trusted; free-text REVIEWED_* tokens in prose, quotes, bullets, and code
+# fences are rejected so missing status markers fail closed.
+review_report_summary_json() {
+  local last_message_file="$1"
+
+  python3 - "$last_message_file" <<'PY'
+import json
+import re
+import sys
+
+path = sys.argv[1]
+empty = {
+    "outcome": "",
+    "selected_file": "",
+    "findings": "",
+    "changes": "",
+    "verification": "",
+}
+
+OUTCOME_TOKEN_RE = re.compile(
+    r"^(REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)(?:\s+for\s+(.+))?$"
+)
+OUTCOME_FIELD_RE = re.compile(
+    r"^(?:Review outcome|Review status|Final status|Outcome):\s*"
+    r"(REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)"
+    r"(?:\s+for\s+(.+))?$"
+)
+MACHINE_MARKER_PREFIXES = (
+    "UPKEEPER_PASS_RESULT:",
+    "UPKEEPER_LOG_REVIEW:",
+    "UPKEEPER_STATUS:",
+    "CODEX_POSTMORTEM_STATUS:",
+)
+
+try:
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+except OSError:
+    print(json.dumps(empty, separators=(",", ":")))
+    raise SystemExit(0)
+
+
+def visible_lines_from_text(source_text):
+    visible = []
+    in_code_fence = False
+    for raw_line in source_text.splitlines():
+        line = raw_line.rstrip("\r\n")
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code_fence = not in_code_fence
+            continue
+        if in_code_fence or not stripped:
+            continue
+        visible.append(stripped)
+    return visible
+
+
+lines = visible_lines_from_text(text)
+
+
+def clean(value, max_len=700):
+    value = re.sub(r"\s+", " ", value.strip())
+    if len(value) > max_len:
+        value = value[: max_len - 15].rstrip() + "...<truncated>"
+    return value
+
+
+def normalized(line):
+    value = line.strip()
+    value = re.sub(r"^[#>*\-\d\.\s`]+", "", value)
+    value = value.strip("`*: ")
+    return re.sub(r"\s+", " ", value).lower()
+
+
+def compact_items(items, max_items=8, max_len=900):
+    cleaned = []
+    for item in items:
+        item = item.strip()
+        if not item:
+            continue
+        if item.startswith(MACHINE_MARKER_PREFIXES):
+            continue
+        item = re.sub(r"^[-*]\s+", "", item)
+        item = re.sub(r"^\d+[.)]\s+", "", item)
+        item = item.strip("` ")
+        if item:
+            cleaned.append(item)
+        if len(cleaned) >= max_items:
+            break
+    return clean("; ".join(cleaned), max_len=max_len)
+
+
+def no_change_summary(value):
+    value = re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+    if not value:
+        return False
+    return (
+        value in {"none", "n a", "not applicable"}
+        or value.startswith("no changes")
+        or value.startswith("no fixes")
+        or value.startswith("no code changes")
+        or value.startswith("nothing changed")
+    )
+
+
+def selected_file_from_source(source):
+    if not source:
+        return ""
+    markdown_link = re.search(r"\]\(([^)]+)\)", source)
+    backtick_path = re.search(r"`([^`]+)`", source)
+    if markdown_link:
+        value = markdown_link.group(1).strip("<>").split(":", 1)[0]
+    elif backtick_path:
+        value = backtick_path.group(1)
+    elif ":" in source:
+        value = source.split(":", 1)[1].strip()
+    else:
+        value = source.strip("- ")
+    value = clean(value, 240)
+    if re.fullmatch(r"\d+(?:\.\d+)?", value):
+        return ""
+    if re.match(r"^(epoch|age|mtime|hash)\b", value.lower()):
+        return ""
+    return value
+
+
+def dedicated_outcome(line):
+    match = OUTCOME_TOKEN_RE.fullmatch(line)
+    if match:
+        return match.group(1), selected_file_from_source(match.group(2) or "")
+    match = OUTCOME_FIELD_RE.fullmatch(line)
+    if match:
+        return match.group(1), selected_file_from_source(match.group(2) or "")
+    return "", ""
+
+
+def final_section_outcome():
+    marker_index = len(lines)
+    for index, line in enumerate(lines):
+        if line.startswith(MACHINE_MARKER_PREFIXES):
+            marker_index = index
+            break
+    window_start = max(0, marker_index - 12)
+    candidates = []
+    for line in lines[window_start:marker_index]:
+        outcome_token, outcome_selected_file = dedicated_outcome(line)
+        if outcome_token:
+            candidates.append((outcome_token, outcome_selected_file))
+    if not candidates:
+        return "", ""
+    unique_tokens = {token for token, _ in candidates}
+    if len(unique_tokens) != 1:
+        return "", ""
+    return candidates[-1]
+
+
+def capture_section(names):
+    known_headers = (
+        "review run",
+        "file selection",
+        "selected file",
+        "file selected",
+        "target file",
+        "prompts run",
+        "prompts applied",
+        "findings",
+        "fixes",
+        "fixes found",
+        "fixes implemented",
+        "fixes applied",
+        "implemented fix",
+        "implemented fixes",
+        "applied change",
+        "applied changes",
+        "changes applied",
+        "changes proposed",
+        "changes",
+        "test results",
+        "required persistence verification",
+        "verification",
+        "verification done",
+        "outcome",
+        "final status",
+        "final status marker",
+    )
+    capturing = False
+    items = []
+    for line in lines:
+        norm = normalized(line)
+        if any(norm.startswith(name) for name in names):
+            capturing = True
+            if ":" in line:
+                rest = line.split(":", 1)[1].strip()
+                if rest:
+                    items.append(rest)
+            continue
+        if not capturing:
+            continue
+        if not line:
+            continue
+        norm = normalized(line)
+        if re.match(r"p(?:[1-9]|1[0-9]|2[0-3])\b", norm):
+            break
+        if dedicated_outcome(line)[0]:
+            break
+        if any(norm.startswith(header) for header in known_headers):
+            break
+        if line.startswith(MACHINE_MARKER_PREFIXES):
+            break
+        items.append(line)
+        if len(items) >= 10:
+            break
+    return compact_items(items)
+
+
+outcome, selected_file = final_section_outcome()
+
+if not selected_file:
+    for index, line in enumerate(lines):
+        if selected_file:
+            break
+        norm = normalized(line)
+        if norm.startswith(("selected target baseline", "selected file baseline", "target baseline")):
+            continue
+        selected_label = norm.startswith(
+            (
+                "selected file",
+                "file selected",
+                "target file",
+                "selected target",
+                "target selected",
+                "review target",
+            )
+        ) or re.match(
+            r"selected\b.*\b(file|target)\b",
+            norm,
+        ) or re.match(
+            r"selected\s+[`[]",
+            line,
+            re.I,
+        )
+        if not selected_label:
+            continue
+        source = line
+        rest_after_colon = source.split(":", 1)[1].strip() if ":" in source else ""
+        has_inline_target = re.search(r"`[^`]+`|\]\([^)]+\)", source)
+        if not has_inline_target and (":" not in source or not rest_after_colon) and index + 1 < len(lines):
+            for candidate in lines[index + 1 : index + 5]:
+                if candidate:
+                    source = candidate
+                    break
+        selected_file = selected_file_from_source(source)
+        break
+
+findings = capture_section(("findings",))
+changes = capture_section(
+    (
+        "fixes",
+        "fixes found",
+        "fixes implemented",
+        "fixes applied",
+        "implemented fix",
+        "implemented fixes",
+        "applied change",
+        "applied changes",
+        "changes applied",
+        "bug report",
+        "bug reports",
+        "issue filed",
+        "issues filed",
+        "report filed",
+        "reports filed",
+    )
+)
+verification = capture_section(
+    (
+        "required persistence verification",
+        "test results",
+        "verification",
+    )
+)
+if outcome != "REVIEWED_AND_FIXED" and no_change_summary(changes):
+    changes = ""
+
+if outcome == "REVIEWED_AND_FIXED" and not changes:
+    fallback = []
+    for line in lines:
+        lowered = line.lower()
+        norm = normalized(line)
+        if line.startswith(MACHINE_MARKER_PREFIXES):
+            continue
+        if dedicated_outcome(line)[0]:
+            continue
+        if re.match(r"p(?:[1-9]|1[0-9]|2[0-3])\b", norm):
+            continue
+        if norm.startswith(("findings", "target selection", "verification", "prompt set outcomes")):
+            continue
+        if no_change_summary(line):
+            continue
+        if "fix" in lowered or "change" in lowered:
+            fallback.append(line)
+    changes = compact_items(fallback)
+
+print(
+    json.dumps(
+        {
+            "outcome": outcome,
+            "selected_file": selected_file,
+            "findings": findings,
+            "changes": changes,
+            "verification": verification,
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
+# Keep this backup override in the entrypoint so selected-target-only repair
+# cycles can harden encrypted pre-contact backup integrity without patching the
+# paired module file. The helper hashes the exact payload bytes written so age
+# backups fail closed if the target changes after metadata was derived.
+upkeeper_precontact_backup_write_payload_and_sha() {
+  local metadata_file="$1"
+  local target_file="$2"
+  local payload_file="$3"
+
+  python3 - "$metadata_file" "$target_file" "$payload_file" <<'PY'
+import hashlib
+import sys
+
+metadata_path, target_path, payload_path = sys.argv[1:4]
+digest = hashlib.sha256()
+
+with open(metadata_path, "rb") as handle:
+    metadata = handle.read()
+
+with open(payload_path, "wb") as output:
+    output.write(b"UPKEEPER_PRECONTACT_BACKUP_V1\n")
+    output.write(str(len(metadata)).encode("ascii") + b"\n")
+    output.write(metadata)
+    with open(target_path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+            output.write(chunk)
+
+print(digest.hexdigest())
+PY
+}
+
+upkeeper_precontact_backup_cleanup_staged_dir() {
+  local staged_dir="${1:-}"
+
+  [[ -n "$staged_dir" && -e "$staged_dir" ]] || return 0
+  rm -rf -- "$staged_dir"
+}
+
+# Publish both backup files with one directory rename so restore never observes
+# a committed payload without the metadata sidecar that indexes it.
+upkeeper_precontact_backup_publish_directory() {
+  local staged_dir="$1"
+  local final_dir="$2"
+
+  python3 - "$staged_dir" "$final_dir" <<'PY'
+import os
+import sys
+
+staged_dir, final_dir = sys.argv[1:3]
+if not os.path.isdir(staged_dir):
+    raise SystemExit(2)
+if os.path.lexists(final_dir):
+    raise SystemExit(3)
+os.replace(staged_dir, final_dir)
+parent_dir = os.path.dirname(final_dir) or "."
+try:
+    dir_fd = os.open(parent_dir, os.O_RDONLY)
+except OSError:
+    raise SystemExit(0)
+try:
+    os.fsync(dir_fd)
+finally:
+    os.close(dir_fd)
+PY
+}
+
+precontact_backup_create_plain() {
+  local target_abs="$1"
+  local path_dir="$2"
+  local backup_id="$3"
+  local metadata_file="$4"
+  local content_sha="$5"
+  local staged_dir="" final_dir staged_bak staged_json copied_sha
+
+  if ! mkdir -p -- "$path_dir"; then
+    precontact_backup_set_reason "mkdir_failed"
+    return 1
+  fi
+  chmod 700 "$path_dir" 2>/dev/null || true
+
+  if ! staged_dir="$(mktemp -d "$path_dir/.${backup_id}.XXXXXX.staging")"; then
+    precontact_backup_set_reason "staging_dir_failed"
+    return 1
+  fi
+  final_dir="$path_dir/${backup_id}"
+  staged_bak="$staged_dir/${backup_id}.bak"
+  staged_json="$staged_dir/${backup_id}.json"
+
+  if ! precontact_backup_copy_file "$target_abs" "$staged_bak"; then
+    upkeeper_precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "copy_failed"
+    return 1
+  fi
+  if ! copied_sha="$(precontact_backup_sha256_file "$staged_bak")"; then
+    upkeeper_precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "copy_hash_failed"
+    return 1
+  fi
+  if [[ "$copied_sha" != "$content_sha" ]]; then
+    upkeeper_precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "copy_hash_mismatch"
+    return 1
+  fi
+  if ! precontact_backup_copy_file "$metadata_file" "$staged_json"; then
+    upkeeper_precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "metadata_copy_failed"
+    return 1
+  fi
+  chmod 700 "$staged_dir" 2>/dev/null || true
+  chmod 600 "$staged_bak" "$staged_json" 2>/dev/null || true
+  if ! upkeeper_precontact_backup_publish_directory "$staged_dir" "$final_dir"; then
+    upkeeper_precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "backup_publish_failed"
+    return 1
+  fi
+  return 0
+}
+
+precontact_backup_create_age() {
+  local target_abs="$1"
+  local path_dir="$2"
+  local backup_id="$3"
+  local metadata_file="$4"
+  local sidecar_file="$5"
+  local staged_dir="" final_dir staged_age staged_json payload_file payload_sha expected_fingerprint actual_fingerprint
+
+  if ! mkdir -p -- "$path_dir"; then
+    precontact_backup_set_reason "mkdir_failed"
+    return 1
+  fi
+  chmod 700 "$path_dir" 2>/dev/null || true
+
+  if ! staged_dir="$(mktemp -d "$path_dir/.${backup_id}.XXXXXX.staging")"; then
+    precontact_backup_set_reason "staging_dir_failed"
+    return 1
+  fi
+  if ! payload_file="$(run_mktemp precontact-backup-payload)"; then
+    upkeeper_precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "payload_temp_failed"
+    return 1
+  fi
+  final_dir="$path_dir/${backup_id}"
+  staged_age="$staged_dir/${backup_id}.age"
+  staged_json="$staged_dir/${backup_id}.json"
+
+  if ! expected_fingerprint="$(precontact_backup_content_fingerprint_field "$metadata_file")"; then
+    rm -f -- "$payload_file"
+    upkeeper_precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "metadata_read_failed"
+    return 1
+  fi
+  if ! payload_sha="$(upkeeper_precontact_backup_write_payload_and_sha "$metadata_file" "$target_abs" "$payload_file")"; then
+    rm -f -- "$payload_file"
+    upkeeper_precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "payload_write_failed"
+    return 1
+  fi
+  case "$expected_fingerprint" in
+    content-hmac-sha256:*)
+      actual_fingerprint="$(precontact_backup_content_hmac "$payload_sha")"
+      ;;
+    *)
+      actual_fingerprint="$payload_sha"
+      ;;
+  esac
+  if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+    rm -f -- "$payload_file"
+    upkeeper_precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "payload_hash_mismatch"
+    return 1
+  fi
+  if ! age --encrypt --recipient "$UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT" --output "$staged_age" <"$payload_file"; then
+    rm -f -- "$payload_file"
+    upkeeper_precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "age_failed"
+    return 1
+  fi
+  rm -f -- "$payload_file"
+  if [[ ! -s "$staged_age" ]]; then
+    upkeeper_precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "age_empty_artifact"
+    return 1
+  fi
+  if ! precontact_backup_copy_file "$sidecar_file" "$staged_json"; then
+    upkeeper_precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "metadata_copy_failed"
+    return 1
+  fi
+  chmod 700 "$staged_dir" 2>/dev/null || true
+  chmod 600 "$staged_age" "$staged_json" 2>/dev/null || true
+  if ! upkeeper_precontact_backup_publish_directory "$staged_dir" "$final_dir"; then
+    upkeeper_precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "backup_publish_failed"
+    return 1
+  fi
+  return 0
+}
+
+precontact_backup_prune_for_path() {
+  local path_dir="$1"
+  local keep="${UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE:-20}"
+  local pruned_count
+
+  if [[ ! "$keep" =~ ^[0-9]+$ || "$keep" -lt 1 ]]; then
+    log_line "WARN" "precontact_backup.prune_skip reason=invalid_keep keep=$(shell_quote "$keep") path_redacted=1"
+    return 0
+  fi
+
+  pruned_count="$(
+    python3 - "$path_dir" "$keep" <<'PY'
+import json
+from pathlib import Path
+import shutil
+import sys
+
+path_dir = Path(sys.argv[1])
+keep = int(sys.argv[2])
+rows = []
+try:
+    entries = list(path_dir.iterdir())
+except OSError:
+    print(0)
+    raise SystemExit(0)
+
+for entry in entries:
+    if entry.name.startswith("."):
+        continue
+    backup_id = ""
+    sidecar = None
+    layout = ""
+    if entry.is_dir():
+        backup_id = entry.name
+        sidecar = entry / f"{backup_id}.json"
+        if not sidecar.is_file():
+            continue
+        layout = "dir"
+    elif entry.is_file() and entry.suffix == ".json":
+        backup_id = entry.stem
+        sidecar = entry
+        layout = "flat"
+    else:
+        continue
+    try:
+        with sidecar.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        continue
+    rows.append((data.get("created_utc", ""), backup_id, sidecar, layout))
+
+deleted = 0
+for _, backup_id, sidecar, layout in sorted(rows)[:-keep]:
+    if layout == "dir":
+      container = sidecar.parent
+      removed = 0
+      for suffix in (".json", ".bak", ".age"):
+          candidate = container / f"{backup_id}{suffix}"
+          if candidate.is_file():
+              removed += 1
+      try:
+          shutil.rmtree(container)
+          deleted += removed or 1
+      except OSError:
+          pass
+      continue
+    for suffix in (".json", ".bak", ".age"):
+        candidate = path_dir / f"{backup_id}{suffix}"
+        try:
+            if candidate.is_file():
+                candidate.unlink()
+                deleted += 1
+        except OSError:
+            pass
+print(deleted)
+PY
+  )"
+
+  if [[ "${pruned_count:-0}" != "0" ]]; then
+    log_line "INFO" "precontact_backup.pruned count=${pruned_count:-0} keep=$keep path_redacted=1"
+  fi
+}
+
+precontact_backup_find_sidecar_by_id() {
+  local backup_id="$1"
+  local vault_root="$2"
+
+  [[ -d "$vault_root" ]] || return 0
+  python3 - "$backup_id" "$vault_root" <<'PY'
+from pathlib import Path
+import sys
+
+backup_id, vault_root = sys.argv[1:3]
+needle = f"{backup_id}.json"
+root = Path(vault_root)
+if not root.is_dir():
+    raise SystemExit(0)
+
+matches = []
+for candidate in root.rglob(needle):
+    if not candidate.is_file():
+        continue
+    try:
+        relative_parts = candidate.relative_to(root).parts[:-1]
+    except ValueError:
+        continue
+    if any(part.startswith(".") for part in relative_parts):
+        continue
+    matches.append(str(candidate))
+
+for match in sorted(set(matches)):
+    print(match)
+PY
+}
+
+# Keep these hardening overrides in the root entrypoint so startup-anomaly runs
+# can tighten auxiliary postmortem behavior without patching paired modules.
+upkeeper_postmortem_hardening_enabled() {
+  if config_truthy "${CODEX_POSTMORTEM_HARDENING_OPT_IN:-0}"; then
+    return 0
+  fi
+
+  # Live wrapper cycles export RUN_LAST_MESSAGE_FILE before fallback/postmortem
+  # handling. Keep those cycles report-only by default, but preserve the older
+  # direct-call contract used by isolated validator fixtures that source
+  # Upkeeper and call run_postmortem_sequence without a full primary cycle.
+  [[ -n "${RUN_LAST_MESSAGE_FILE:-}" ]] && return 1
+  return 0
+}
+
+upkeeper_postmortem_private_artifact_state() {
+  local artifact_path="${1:-}"
+
+  if [[ -n "$artifact_path" && -e "$artifact_path" ]]; then
+    printf 'available'
+  else
+    printf 'missing'
+  fi
+}
+
+compile_postmortem_report_prompt() {
+  local compiled_file="$1"
+  local context_path="$2"
+  local report_path="$3"
+
+  cat >"$compiled_file" <<EOF
+You are operating inside the git repository at $ROOT_DIR.
+
+This is a post-mortem analysis pass for an Upkeeper incident.
+
+What this run must do:
+- read the sanitized incident context at $context_path
+- use only that sanitized context as incident evidence
+- write or replace the markdown report at $report_path
+- do not inspect any other local files, logs, transcripts, session artifacts, or runtime directories in this phase
+- do not implement code changes in this phase except creating or updating the report file itself
+- keep the report actionable, concrete, and specific to the local repo and wrapper behavior
+
+Report requirements:
+- use exactly these top-level headings in this order:
+  1. # Upkeeper Postmortem
+  2. ## Incident Summary
+  3. ## Observed Signals
+  4. ## Root Cause Hypotheses
+  5. ## Action Plan
+  6. ## Hardening Targets
+  7. ## Relaunch Checklist
+- under Action Plan, include flat checklist bullets with the smallest safe next actions first
+- under Hardening Targets, call out wrapper/logging/prompt/guardrail fixes separately from repo-lane fixes when relevant
+- treat any raw transcripts, logs, session artifacts, and filesystem paths as operator-only evidence that is intentionally excluded from the sanitized context
+
+Response marker requirements:
+- the final response must end with one marker line exactly as plain text
+- do not wrap the marker in Markdown, backticks, a code fence, quotes, bullets, or trailing punctuation
+- if the report file was written successfully, the final line must be exactly: CODEX_POSTMORTEM_STATUS: REPORT_WRITTEN
+- if you are blocked, the final line must be exactly: CODEX_POSTMORTEM_STATUS: BLOCKED
+EOF
+}
+
+compile_postmortem_hardening_prompt() {
+  local compiled_file="$1"
+  local context_path="$2"
+  local report_path="$3"
+
+  cat >"$compiled_file" <<EOF
+You are operating inside the git repository at $ROOT_DIR.
+
+This is the final hardening pass after an Upkeeper incident report.
+
+This phase only runs after an explicit operator opt-in.
+
+What this run must do:
+- read the sanitized incident context at $context_path
+- read the post-mortem report at $report_path
+- treat those two files as the only incident evidence for this phase
+- do not inspect raw incident transcripts, logs, session artifacts, or runtime directories
+- inspect source files only as needed to implement the smallest safe hardening change or coherent hardening slice that directly addresses the report
+- prefer wrapper, logging, control-flow, guardrail, or prompt hardening first when the incident points there
+- run focused validation for any changes you make
+- update the same report file by appending or replacing a final section titled exactly:
+  ## Hardening Outcome
+- in that section include:
+  - what changed
+  - what validation ran
+  - remaining risks or manual follow-up
+- do not push or open a PR
+
+Response marker requirements:
+- the final response must end with one marker line exactly as plain text
+- do not wrap the marker in Markdown, backticks, a code fence, quotes, bullets, or trailing punctuation
+- if you completed a concrete hardening pass, the final line must be exactly: CODEX_POSTMORTEM_STATUS: HARDENING_DONE
+- if you are blocked, the final line must be exactly: CODEX_POSTMORTEM_STATUS: BLOCKED
+EOF
+}
+
+write_postmortem_context() {
+  local context_path="$1"
+  local trigger="$2"
+  local detail_text="$3"
+  local child_exit="$4"
+  local incident_log_path="$5"
+  local primary_last_message_copy="$6"
+  local primary_exec_started="1"
+  local pre_run_guardrail_stop="0"
+  local primary_stop_phase="after_run"
+  local primary_stop_reason="$trigger"
+  local primary_status_marker_expectation="required_after_primary_exec"
+  local primary_before_session_end_state
+  local screen_root fallback_current_child_id fallback_current_child_started_at fallback_current_child_status
+  local fallback_completed_child_count fallback_last_cycle_exit fallback_runner_stop_reason fallback_heartbeat
+  local fallback_marker_analysis fallback_child_status_marker fallback_child_status_marker_source
+  local fallback_child_status_marker_fields
+  local incident_classification
+  local safe_detail_text
+
+  if [[ "$trigger" == "primary_quota_before_run" ]]; then
+    primary_exec_started="0"
+    pre_run_guardrail_stop="1"
+    primary_stop_phase="before_run"
+    primary_stop_reason="quota_guardrail"
+    primary_status_marker_expectation="missing_expected_no_primary_exec"
+  elif [[ "$trigger" == "primary_quota_after_run" ]]; then
+    primary_stop_reason="quota_guardrail"
+  fi
+
+  safe_detail_text="$(upkeeper_prompt_safe_inline_value "$detail_text" "none")"
+  primary_before_session_end_state="$(parse_session_end_state "${before_source:-}")"
+  screen_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen"
+  fallback_current_child_id="$(read_artifact_or_unknown "$screen_root/current-child-cycle-id.txt")"
+  fallback_current_child_started_at="$(read_artifact_or_unknown "$screen_root/current-child-started-at.txt")"
+  fallback_current_child_status="$(read_artifact_or_unknown "$screen_root/current-child-status.txt")"
+  fallback_completed_child_count="$(read_artifact_or_unknown "$screen_root/completed-child-count.txt")"
+  fallback_last_cycle_exit="$(read_artifact_or_unknown "$screen_root/last-cycle-exit-code.txt")"
+  fallback_runner_stop_reason="$(read_artifact_or_unknown "$screen_root/stop-reason.txt")"
+  fallback_heartbeat="$(read_artifact_or_unknown "$screen_root/heartbeat.txt")"
+  fallback_marker_analysis="$(while_marker_analysis_json "${FALLBACK_SCREEN_TRANSCRIPT_PATH:-}")"
+  fallback_child_status_marker_fields="$(postmortem_fallback_child_status_marker_fields "$fallback_marker_analysis")"
+  fallback_child_status_marker="${fallback_child_status_marker_fields%% *}"
+  fallback_child_status_marker_source="${fallback_child_status_marker_fields#* }"
+  incident_classification="$(postmortem_incident_classification "$trigger" "$child_exit" "$fallback_child_status_marker")"
+
+  cat >"$context_path" <<EOF
+incident_cycle_id: $CYCLE_ID
+incident_trigger: $trigger
+incident_detail: $safe_detail_text
+incident_classification: $incident_classification
+attempt_role: $CODEX_ATTEMPT_ROLE
+primary_model: $CODEX_MODEL
+primary_reasoning_effort: $CODEX_REASONING_EFFORT
+fallback_model: $CODEX_FALLBACK_MODEL
+fallback_reasoning_effort: $CODEX_FALLBACK_REASONING_EFFORT
+postmortem_model: $CODEX_POSTMORTEM_MODEL
+postmortem_hardening_opt_in: $(truthy_as_int "${CODEX_POSTMORTEM_HARDENING_OPT_IN:-0}")
+fallback_child_exit: $child_exit
+fallback_screen_session: ${FALLBACK_SCREEN_SESSION_NAME:-none}
+fallback_screen_transcript_private_artifact: $(upkeeper_postmortem_private_artifact_state "${FALLBACK_SCREEN_TRANSCRIPT_PATH:-}")
+fallback_screen_exit_code: ${FALLBACK_SCREEN_EXIT_CODE:-unknown}
+fallback_completed_child_count: $fallback_completed_child_count
+fallback_current_child_cycle_id: $fallback_current_child_id
+fallback_current_child_started_at: $fallback_current_child_started_at
+fallback_current_child_status: $fallback_current_child_status
+fallback_child_status_marker: $fallback_child_status_marker
+fallback_child_status_marker_source: $fallback_child_status_marker_source
+fallback_last_cycle_exit_code: $fallback_last_cycle_exit
+fallback_runner_stop_reason: $fallback_runner_stop_reason
+fallback_heartbeat: $fallback_heartbeat
+primary_failure_classification: ${primary_failure_classification:-none}
+primary_exec_started: $primary_exec_started
+pre_run_guardrail_stop: $pre_run_guardrail_stop
+primary_stop_phase: $primary_stop_phase
+primary_stop_reason: $primary_stop_reason
+primary_status_marker_expectation: $primary_status_marker_expectation
+primary_status_marker: ${status_marker:-missing}
+primary_status_marker_source: ${status_marker_source:-unknown}
+primary_status_marker_candidate: ${status_marker_candidate:-none}
+primary_status_marker_candidate_rejection_reason: ${status_marker_candidate_rejection_reason:-none}
+primary_codex_exit: ${codex_exit:-unknown}
+primary_session_end_state: ${session_end_state:-none}
+primary_session_agent_message_count: ${primary_session_agent_message_count:-unknown}
+primary_session_tool_call_count: ${primary_session_tool_call_count:-unknown}
+primary_session_tool_result_count: ${primary_session_tool_result_count:-unknown}
+primary_session_task_complete_last_agent_message: ${primary_session_task_complete_last_agent_message:-unknown}
+primary_session_last_rate_limit_reached_type: ${primary_session_last_rate_limit_reached_type:-unknown}
+primary_session_last_rate_limit_limit_id: ${primary_session_last_rate_limit_limit_id:-unknown}
+primary_session_last_rate_limit_limit_name: ${primary_session_last_rate_limit_limit_name:-unknown}
+primary_session_last_rate_limit_plan_type: ${primary_session_last_rate_limit_plan_type:-unknown}
+primary_session_last_rate_limit_primary_used_percent: ${primary_session_last_rate_limit_primary_used_percent:-unknown}
+primary_session_last_rate_limit_secondary_used_percent: ${primary_session_last_rate_limit_secondary_used_percent:-unknown}
+quota_snapshot_identity_changed: $(quota_identity_changed_flag "${limit_id:-unknown}" "${limit_name:-unknown}" "${after_limit_id:-unknown}" "${after_limit_name:-unknown}")
+quota_session_identity_changed: $(quota_identity_changed_flag "${limit_id:-unknown}" "${limit_name:-unknown}" "${primary_session_last_rate_limit_limit_id:-unknown}" "${primary_session_last_rate_limit_limit_name:-unknown}")
+dirty_paths: $DIRTY_PATH_COUNT
+tracked_modified_paths: $TRACKED_MODIFIED_PATH_COUNT
+untracked_paths: $UNTRACKED_PATH_COUNT
+primary_before_limit_id: ${limit_id:-unknown}
+primary_before_limit_name: ${limit_name:-unknown}
+primary_before_snapshot_source: ${before_source:-unknown}
+primary_before_snapshot_model_hint: ${before_model_hint:-unknown}
+primary_before_snapshot_current: ${before_snapshot_is_current:-unknown}
+primary_before_snapshot_event_timestamp: ${before_ts:-unknown}
+primary_before_snapshot_age_seconds: ${before_snapshot_age_seconds:-unknown}
+primary_before_primary_reset: $(format_epoch_local "${primary_reset:-}")
+primary_before_primary_reset_age_seconds: ${before_primary_reset_age_seconds:-unknown}
+primary_before_primary_reset_expired: ${before_primary_reset_expired:-unknown}
+primary_before_primary_bucket_current: ${before_primary_bucket_current:-unknown}
+primary_before_secondary_reset: $(format_epoch_local "${secondary_reset:-}")
+primary_before_secondary_reset_age_seconds: ${before_secondary_reset_age_seconds:-unknown}
+primary_before_secondary_reset_expired: ${before_secondary_reset_expired:-unknown}
+primary_before_secondary_bucket_current: ${before_secondary_bucket_current:-unknown}
+primary_before_snapshot_stale_after_reset: ${before_snapshot_stale_after_reset:-unknown}
+primary_before_session_end_state: $primary_before_session_end_state
+primary_after_limit_id: ${after_limit_id:-unknown}
+primary_after_limit_name: ${after_limit_name:-unknown}
+primary_after_snapshot_source: ${after_source:-unknown}
+primary_after_snapshot_model_hint: ${after_model_hint:-unknown}
+primary_after_snapshot_current: ${after_snapshot_is_current:-unknown}
+primary_after_snapshot_event_timestamp: ${after_ts:-unknown}
+primary_after_snapshot_age_seconds: ${after_snapshot_age_seconds:-unknown}
+primary_after_primary_reset: $(format_epoch_local "${after_primary_reset:-}")
+primary_after_primary_reset_age_seconds: ${after_primary_reset_age_seconds:-unknown}
+primary_after_primary_reset_expired: ${after_primary_reset_expired:-unknown}
+primary_after_primary_bucket_current: ${after_primary_bucket_current:-unknown}
+primary_after_secondary_reset: $(format_epoch_local "${after_secondary_reset:-}")
+primary_after_secondary_reset_age_seconds: ${after_secondary_reset_age_seconds:-unknown}
+primary_after_secondary_reset_expired: ${after_secondary_reset_expired:-unknown}
+primary_after_secondary_bucket_current: ${after_secondary_bucket_current:-unknown}
+primary_after_snapshot_stale_after_reset: ${after_snapshot_stale_after_reset:-unknown}
+primary_before_used_left: primary_used=${primary_used:-unknown}% primary_left=${primary_left:-unknown}% secondary_used=${secondary_used:-unknown}% secondary_left=${secondary_left:-unknown}%
+primary_after_used_left: primary_used=${after_primary:-unknown}% primary_left=${after_primary_left:-unknown}% secondary_used=${after_secondary:-unknown}% secondary_left=${after_secondary_left:-unknown}%
+incident_log_private_artifact: $(upkeeper_postmortem_private_artifact_state "$incident_log_path")
+primary_last_message_metadata_private_artifact: $(upkeeper_postmortem_private_artifact_state "$primary_last_message_copy")
+loop_log_private_artifact: $(upkeeper_postmortem_private_artifact_state "$LOG_FILE")
+private_artifact_access: operator_only
+EOF
+  chmod 600 "$context_path" 2>/dev/null || true
+}
+
+run_postmortem_sequence() {
+  local trigger="$1"
+  local detail_text="$2"
+  local child_exit="$3"
+
+  POSTMORTEM_REPORT_PATH=""
+  POSTMORTEM_CONTEXT_PATH=""
+  POSTMORTEM_INCIDENT_LOG_PATH=""
+  POSTMORTEM_BUG_RECORD_PATH=""
+  POSTMORTEM_SEQUENCE_STATUS="not_run"
+
+  local pm_root report_path context_path incident_log_path bug_record_path primary_last_message_metadata
+  local report_prompt_file report_last_message hardening_prompt_file hardening_last_message
+  local report_last_message_private hardening_last_message_private
+  local report_exit report_marker hardening_exit hardening_marker
+  local incident_classification errexit_was_set
+
+  pm_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID"
+  report_path="$pm_root/postmortem.md"
+  context_path="$pm_root/incident-context.txt"
+  incident_log_path="$pm_root/incident-log.txt"
+  bug_record_path="$pm_root/bug-record.md"
+  primary_last_message_metadata="$pm_root/primary-last-message.meta"
+  report_last_message_private="$pm_root/postmortem.report-last-message.txt"
+  hardening_last_message_private="$pm_root/postmortem.hardening-last-message.txt"
+
+  postmortem_private_dir "$pm_root"
+  POSTMORTEM_INCIDENT_LOG_PATH="$incident_log_path"
+  refresh_postmortem_incident_log "$incident_log_path"
+  write_postmortem_last_message_metadata "${last_message_file:-}" "$primary_last_message_metadata"
+  write_postmortem_context "$context_path" "$trigger" "$detail_text" "$child_exit" "$incident_log_path" "$primary_last_message_metadata"
+  incident_classification="$(awk -F': ' '/^incident_classification: / { print $2; exit }' "$context_path" || true)"
+  log_line "INFO" "postmortem.classification trigger=$trigger classification=${incident_classification:-unknown} child_exit=$child_exit hardening_opt_in=$(truthy_as_int "${CODEX_POSTMORTEM_HARDENING_OPT_IN:-0}")"
+
+  POSTMORTEM_REPORT_PATH="$report_path"
+  POSTMORTEM_CONTEXT_PATH="$context_path"
+  POSTMORTEM_BUG_RECORD_PATH="$bug_record_path"
+  write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+  log_line "INFO" "postmortem.bug_record path=$bug_record_path trigger=$trigger status=$POSTMORTEM_SEQUENCE_STATUS"
+
+  if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
+    cat >"$report_path" <<EOF
+# Upkeeper Postmortem
+## Incident Summary
+Dry-run stub summary for trigger $trigger.
+## Observed Signals
+- Dry run skipped live post-mortem Codex exec.
+## Root Cause Hypotheses
+- Dry run path only.
+## Action Plan
+- Relaunch the loop with the updated wrapper.
+## Hardening Targets
+- Verify fallback and post-mortem branches on the next real incident.
+## Relaunch Checklist
+- Inspect the real report after a live fallback incident.
+## Hardening Outcome
+- Dry run only; no live hardening change was executed.
+EOF
+    postmortem_set_private_file_mode "$report_path"
+    POSTMORTEM_SEQUENCE_STATUS="dry_run_stub"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    return 7
+  fi
+
+  ensure_run_tmp_dir
+  report_prompt_file="$(run_mktemp postmortem-report-prompt)"
+  report_last_message="$(run_mktemp postmortem-report-last-message)"
+  hardening_prompt_file="$(run_mktemp postmortem-hardening-prompt)"
+  hardening_last_message="$(run_mktemp postmortem-hardening-last-message)"
+
+  compile_postmortem_report_prompt "$report_prompt_file" "$context_path" "$report_path"
+  errexit_was_set=0
+  [[ $- == *e* ]] && errexit_was_set=1
+  set +e
+  run_aux_codex_exec "postmortem.report" "$CODEX_POSTMORTEM_MODEL" "$CODEX_POSTMORTEM_REASONING_EFFORT" "$CODEX_POSTMORTEM_MODE" "$report_prompt_file" "$report_last_message"
+  report_exit=$?
+  if [[ "$errexit_was_set" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  copy_postmortem_private_artifact "$report_last_message" "$report_last_message_private"
+  report_marker="$(parse_postmortem_marker "$report_last_message")"
+  log_line "INFO" "postmortem.report.finish exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path report_exists=$([[ -e "$report_path" ]] && printf 1 || printf 0) report_nonempty=$([[ -s "$report_path" ]] && printf 1 || printf 0)"
+
+  if [[ "$report_exit" -eq 86 ]]; then
+    POSTMORTEM_SEQUENCE_STATUS="report_quota_skipped"
+    write_quota_skipped_postmortem_report "$report_path" "$trigger" "$detail_text" "$child_exit" "postmortem.report" "$CODEX_POSTMORTEM_MODEL"
+    log_line "WARN" "postmortem.report skipped reason=quota_guardrail exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return 7
+  fi
+
+  if [[ "$report_exit" -eq 87 ]]; then
+    local report_environment_detail report_environment_reason
+    report_environment_detail="$(awk '/^detail: / { sub(/^detail: /, ""); print; exit }' "$report_last_message" || true)"
+    if [[ -z "$report_environment_detail" ]]; then
+      report_environment_detail="unknown"
+    fi
+    report_environment_reason="$(awk '/^reason: / { sub(/^reason: /, ""); print; exit }' "$report_last_message" || true)"
+    if [[ -z "$report_environment_reason" ]]; then
+      report_environment_reason="local Codex runtime is not writable"
+    fi
+    POSTMORTEM_SEQUENCE_STATUS="report_environment_skipped"
+    write_environment_skipped_postmortem_report "$report_path" "$trigger" "$detail_text" "$child_exit" "postmortem.report" "$CODEX_POSTMORTEM_MODEL" "$report_environment_detail"
+    log_line "WARN" "postmortem.report skipped reason=local_codex_runtime_unwritable environment_reason=$(shell_quote "$report_environment_reason") exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return 7
+  fi
+
+  if [[ "$report_exit" -ne 0 || "$report_marker" != "REPORT_WRITTEN" || ! -s "$report_path" ]]; then
+    POSTMORTEM_SEQUENCE_STATUS="report_failed"
+    log_line "ERROR" "postmortem.report failed exit_code=$report_exit marker=${report_marker:-missing} expected_marker=REPORT_WRITTEN report_path=$report_path"
+    postmortem_set_private_file_mode "$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return 8
+  fi
+
+  postmortem_set_private_file_mode "$report_path"
+  if ! upkeeper_postmortem_hardening_enabled; then
+    POSTMORTEM_SEQUENCE_STATUS="report_only_opt_in_required"
+    cat >>"$report_path" <<'EOF'
+
+## Hardening Outcome
+- No auxiliary hardening Codex pass was launched because postmortem hardening is disabled by default.
+- This cycle kept the auxiliary postmortem run report-only and limited its incident evidence to the sanitized context file.
+- After operator review of the report and private evidence, rerun with `CODEX_POSTMORTEM_HARDENING_OPT_IN=1` for an explicit hardening follow-up if it is still warranted.
+EOF
+    postmortem_set_private_file_mode "$report_path"
+    log_line "INFO" "postmortem.hardening skipped reason=operator_opt_in_required report_path=$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return "$child_exit"
+  fi
+
+  compile_postmortem_hardening_prompt "$hardening_prompt_file" "$context_path" "$report_path"
+  errexit_was_set=0
+  [[ $- == *e* ]] && errexit_was_set=1
+  set +e
+  run_aux_codex_exec "postmortem.hardening" "$CODEX_POSTMORTEM_MODEL" "$CODEX_POSTMORTEM_REASONING_EFFORT" "$CODEX_POSTMORTEM_MODE" "$hardening_prompt_file" "$hardening_last_message"
+  hardening_exit=$?
+  if [[ "$errexit_was_set" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  copy_postmortem_private_artifact "$hardening_last_message" "$hardening_last_message_private"
+  hardening_marker="$(parse_postmortem_marker "$hardening_last_message")"
+
+  if [[ "$hardening_exit" -eq 86 ]]; then
+    POSTMORTEM_SEQUENCE_STATUS="hardening_quota_skipped"
+    cat >>"$report_path" <<EOF
+
+## Hardening Outcome
+- The scripted hardening Codex pass was skipped before launch because \`$CODEX_POSTMORTEM_MODEL\` did not pass the auxiliary quota preflight.
+- The report was preserved and the wrapper stopped for manual relaunch instead of spending more recovery quota.
+EOF
+    log_line "WARN" "postmortem.hardening skipped reason=quota_guardrail exit_code=$hardening_exit marker=${hardening_marker:-missing} report_path=$report_path"
+    postmortem_set_private_file_mode "$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return 7
+  fi
+
+  if [[ "$hardening_exit" -eq 87 ]]; then
+    POSTMORTEM_SEQUENCE_STATUS="hardening_environment_skipped"
+    cat >>"$report_path" <<EOF
+
+## Hardening Outcome
+- The scripted hardening Codex pass was skipped before launch because the local Codex runtime was not writable.
+- The report was preserved and the wrapper stopped for manual relaunch instead of recursively launching Codex in the same broken environment.
+EOF
+    log_line "WARN" "postmortem.hardening skipped reason=local_codex_runtime_unwritable exit_code=$hardening_exit marker=${hardening_marker:-missing} report_path=$report_path"
+    postmortem_set_private_file_mode "$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return 7
+  fi
+
+  if [[ "$hardening_exit" -ne 0 || "$hardening_marker" != "HARDENING_DONE" ]]; then
+    POSTMORTEM_SEQUENCE_STATUS="hardening_failed"
+    log_line "ERROR" "postmortem.hardening failed exit_code=$hardening_exit marker=${hardening_marker:-missing} expected_marker=HARDENING_DONE report_path=$report_path"
+    postmortem_set_private_file_mode "$report_path"
+    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    return 8
+  fi
+
+  POSTMORTEM_SEQUENCE_STATUS="complete"
+  postmortem_set_private_file_mode "$report_path"
+  write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
+  emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
+  rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+  return "$child_exit"
+}
+
 upkeeper_prompt_safe_inline_value() {
   local value="${1:-}"
   local fallback="${2:-}"
@@ -612,6 +1804,451 @@ import sys
 value = sys.argv[1] if len(sys.argv) > 1 else ""
 print(json.dumps(value))
 PY
+}
+
+upkeeper_materialize_inline_prompt_file() {
+  local prompt_path=""
+
+  [[ -n "${INLINE_PROMPT:-}" ]] || return 0
+  [[ -z "${PROMPT_FILE:-}" ]] || return 0
+
+  ensure_run_tmp_dir
+  prompt_path="$(run_mktemp inline-prompt)" || die "failed to allocate private inline prompt file"
+  if ! printf '%s' "$INLINE_PROMPT" >"$prompt_path"; then
+    rm -f -- "$prompt_path" 2>/dev/null || true
+    die "failed to write private inline prompt file"
+  fi
+  if ! chmod 600 "$prompt_path"; then
+    rm -f -- "$prompt_path" 2>/dev/null || true
+    die "failed to secure private inline prompt file"
+  fi
+
+  PROMPT_FILE="$prompt_path"
+  INLINE_PROMPT=""
+  log_line "INFO" "prompt.inline_materialized execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=$(shell_quote "$PROMPT_FILE") content_hmac=$(file_blob_hash "$PROMPT_FILE")"
+}
+
+upkeeper_parent_args_summary_field() {
+  local summary="${1:-}"
+  local key="$2"
+  local field=""
+
+  for field in $summary; do
+    case "$field" in
+      "$key"=*)
+        printf '%s' "${field#*=}"
+        return 0
+        ;;
+    esac
+  done
+
+  printf 'unknown'
+}
+
+upkeeper_parent_args_classification() {
+  local raw_args="${1:-}"
+  local compact_args=""
+
+  compact_args="$(printf '%s' "$raw_args" | compact_process_args)"
+  case "$compact_args" in
+    ""|unknown|unavailable|none)
+      printf 'unknown'
+      ;;
+    bash|-bash|/bin/bash|*/bash|sh|-sh|/bin/sh|*/sh|dash|-dash|zsh|-zsh|ksh|-ksh|fish|-fish)
+      printf 'interactive_shell'
+      ;;
+    *Upkeeper*|*upkeeper*)
+      printf 'upkeeper_loop'
+      ;;
+    *'while '*|*'for '*|*'; do '*)
+      printf 'loop_shell'
+      ;;
+    *)
+      printf 'other_shell_command'
+      ;;
+  esac
+}
+
+upkeeper_parent_args_summary() {
+  local raw_args="${1:-}"
+  local compact_args="" parent_class="" argv_hash=""
+
+  compact_args="$(printf '%s' "$raw_args" | compact_process_args)"
+  parent_class="$(upkeeper_parent_args_classification "$compact_args")"
+  case "$compact_args" in
+    ""|unknown|unavailable|none)
+      argv_hash="$parent_class"
+      ;;
+    *)
+      argv_hash="$(cycle_start_metadata_hash "$compact_args")"
+      ;;
+  esac
+  printf 'class=%s argv_hash=%s' "$parent_class" "$argv_hash"
+}
+
+upkeeper_parent_process_args_summary() {
+  local pid="$1"
+  local raw_args=""
+
+  raw_args="$(ps -o args= -p "$pid" | compact_process_args)"
+  upkeeper_parent_args_summary "$raw_args"
+}
+
+if declare -f resolve_prompt_file >/dev/null 2>&1; then
+  eval "$(declare -f resolve_prompt_file | sed '1s/^resolve_prompt_file ()/upkeeper_resolve_prompt_file_original ()/')"
+fi
+
+resolve_prompt_file() {
+  upkeeper_resolve_prompt_file_original "$@"
+  upkeeper_materialize_inline_prompt_file
+}
+
+upkeeper_internal_current_cycle_log_review_requested() {
+  config_truthy "${UPKEEPER_INTERNAL_CURRENT_CYCLE_LOG_REVIEW:-0}"
+}
+
+upkeeper_emit_sanitized_current_cycle_log_review() {
+  local review_cycle_id="${UPKEEPER_INTERNAL_CURRENT_CYCLE_ID:-${CYCLE_ID:-}}"
+
+  if [[ -z "$review_cycle_id" ]]; then
+    printf 'status=error\nreason=missing_cycle_id\n' >&2
+    return 2
+  fi
+  if [[ "$review_cycle_id" =~ [^A-Za-z0-9._:+-] ]]; then
+    printf 'status=error\nreason=invalid_cycle_id\n' >&2
+    return 2
+  fi
+  if [[ ! -r "$LOG_FILE" ]]; then
+    printf 'status=error\nreason=log_unreadable\n' >&2
+    return 2
+  fi
+
+  python3 - "$LOG_FILE" "$review_cycle_id" <<'PY'
+import hashlib
+import re
+import shlex
+import sys
+
+log_path, cycle_id = sys.argv[1:3]
+safe_keys = {
+    "action",
+    "anomalies",
+    "classification",
+    "codex_exit",
+    "coverage_gate_rc",
+    "detail_redacted",
+    "execution_origin",
+    "exit_code",
+    "final_exit",
+    "force_upkeeper",
+    "mode",
+    "owner_cycle",
+    "owner_pid",
+    "peer_cycle",
+    "peer_pid",
+    "phase",
+    "primary_decision",
+    "reason",
+    "reason_class",
+    "requested_parent_cycle",
+    "review_outcome",
+    "secondary_decision",
+    "session_end_state",
+    "stage",
+    "stale_seconds",
+    "state_id",
+    "status",
+    "status_marker",
+    "status_marker_source",
+    "task_complete_last_agent_message",
+    "trigger",
+}
+level_re = re.compile(r"^(\S+)\s+\[([A-Z]+)\]\s+(.*)$")
+cycle_fragment = f"cycle={cycle_id} "
+sanitized_lines = []
+
+with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+    for raw_line in handle:
+        if cycle_fragment not in raw_line:
+            continue
+        line = raw_line.rstrip("\n")
+        match = level_re.match(line)
+        if not match:
+            sanitized_lines.append("UNPARSED current_cycle_log_line")
+            continue
+        timestamp, level, payload = match.groups()
+        try:
+            tokens = shlex.split(payload)
+        except ValueError:
+            sanitized_lines.append(f"{timestamp} [{level}] parse_error")
+            continue
+
+        event = "log"
+        fields = []
+        for token in tokens:
+            if token.startswith("cycle=") or token.startswith("run_hash="):
+                continue
+            if "=" not in token and event == "log":
+                event = token
+                continue
+            if "=" not in token:
+                continue
+            key, value = token.split("=", 1)
+            if key not in safe_keys:
+                continue
+            if "/" in value or value.startswith("sha256:") or value.startswith("content-hmac-"):
+                value = "redacted"
+            if len(value) > 120:
+                value = value[:117] + "..."
+            fields.append(f"{key}={value}")
+
+        summary = f"{timestamp} [{level}] {event}"
+        if fields:
+          summary = f"{summary} {' '.join(fields)}"
+        sanitized_lines.append(summary)
+
+if len(sanitized_lines) > 200:
+    sanitized_lines = sanitized_lines[-200:]
+
+sanitized_text = "\n".join(sanitized_lines)
+digest = hashlib.sha256(sanitized_text.encode("utf-8", "surrogateescape")).hexdigest()
+anomalies = "listed" if any("[WARN]" in line or "[ERROR]" in line for line in sanitized_lines) else "none"
+
+print("status=ok")
+print(f"cycle_id={cycle_id}")
+print(f"anomalies={anomalies}")
+print(f"log_sha256={digest}")
+print(f"line_count={len(sanitized_lines)}")
+print("sanitized_log_begin")
+if sanitized_text:
+    print(sanitized_text)
+print("sanitized_log_end")
+PY
+}
+
+upkeeper_rewrite_compiled_prompt_log_review_block() {
+  local compiled_file="$1"
+  local helper_command="./$SCRIPT_NAME"
+
+  python3 - "$compiled_file" "$CYCLE_ID" "$helper_command" <<'PY'
+import sys
+from pathlib import Path
+
+compiled_path = Path(sys.argv[1])
+cycle_id = sys.argv[2]
+helper_command = sys.argv[3]
+text = compiled_path.read_text(encoding="utf-8")
+start_marker = "\nCurrent-cycle log self-review -- required final task before your final response:\n"
+end_marker = "\nWrapper control marker compatibility:\n"
+start = text.find(start_marker)
+end = text.find(end_marker, start + len(start_marker))
+if start == -1 or end == -1:
+    raise SystemExit("missing_log_review_prompt_block")
+
+replacement = f"""
+Current-cycle log self-review -- required final task before your final response:
+- After all selected-file review work, edits, touches, and verification are complete, inspect this cycle's wrapper state through the wrapper-provided sanitized helper instead of the raw log file.
+- Raw wrapper logs, raw log paths, prompt paths, transcript paths, and runtime control paths are withheld from the model by default.
+- Current cycle id: `{cycle_id}`
+- Preferred command: `UPKEEPER_INTERNAL_CURRENT_CYCLE_LOG_REVIEW=1 UPKEEPER_INTERNAL_CURRENT_CYCLE_ID={cycle_id} {helper_command}`
+- Review only the helper output for the current cycle. Do not inspect raw wrapper log files directly unless the operator explicitly changes this contract.
+- Check the helper output for wrapper/prompt/logging defects, unexpected ERROR/WARN lines, parser misses, environment preflight surprises, previous_run.anomaly lines, disk.preflight warnings, missing or irregular --MARK-- continuity, and any command failure from your own tool output that still needs explanation or correction.
+- If `startup_anomaly.gate` or `WRAPPER_STARTUP_ANOMALIES` is active, do not touch unrelated non-Upkeeper-suite files; the gate must be checked or remediated first.
+- If the helper output exposes a concrete Upkeeper wrapper/prompt/logging defect for the preselected file path, report it as a complete finding in your final response.
+- If the helper output exposes a concrete Upkeeper wrapper/prompt/logging defect outside the selected target path, leave that file unchanged in this cycle and report BLOCKED with the affected repo-relative path plus enough detail for a follow-up wrapper-selected run.
+- Do not apply any unselected-file or unrequested file edits during log-review self-verification.
+- Do not repair or edit any unselected Upkeeper control-plane file during log-review self-verification, even when the defect appears local and obvious.
+- If this is a symlinked client repo and the defect belongs to central Upkeeper behavior, do not patch a copied client wrapper; report the central fix needed unless the central Upkeeper checkout is the current repo.
+- If a suspicious line was expected negative-test output, say so briefly. If a one-off shell command failed, rerun the corrected check or state why it is irrelevant before final status.
+- Include exactly one machine-readable acknowledgment line before the final UPKEEPER_STATUS marker.
+- The helper prints `anomalies=<none|listed>` and `log_sha256=<64-hex>` for the sanitized current-cycle review view. Reuse those exact values when emitting `UPKEEPER_LOG_REVIEW`.
+- If the helper fails, report that failure in the human-readable log review summary and use `anomalies=listed`.
+- If no anomalies were found, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle={cycle_id} anomalies=none log_sha256=<64 hex digest>`
+- If anomalies were found or expected anomaly signals were present, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle={cycle_id} anomalies=listed log_sha256=<64 hex digest>`
+- Do not write the placeholder text `anomalies=none|listed`; choose one concrete value.
+- Put the machine-readable acknowledgment on its own raw line with no Markdown, punctuation, or trailing text. The wrapper parses that line directly.
+- You may also include a short human-readable current-cycle log review summary on separate lines.
+"""
+compiled_path.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
+PY
+}
+
+if declare -f compile_prompt >/dev/null 2>&1; then
+  eval "$(declare -f compile_prompt | sed '1s/^compile_prompt ()/upkeeper_compile_prompt_original ()/')"
+fi
+
+compile_prompt() {
+  upkeeper_compile_prompt_original "$@"
+  upkeeper_rewrite_compiled_prompt_log_review_block "$1"
+}
+
+direct_parent_details() {
+  local ppid_now parent_comm parent_summary
+
+  ppid_now="$(ps -o ppid= -p "$$" | tr -d ' ')"
+  parent_pid_is_stoppable "$ppid_now" || return 1
+  ps -p "$ppid_now" >/dev/null 2>&1 || return 1
+  parent_comm="$(ps -o comm= -p "$ppid_now" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  parent_summary="$(upkeeper_parent_process_args_summary "$ppid_now")"
+  printf '%s\t%s\t%s\n' "$ppid_now" "$parent_comm" "$parent_summary"
+}
+
+parent_shell_details() {
+  if [[ -n "$CODEX_LOOP_PARENT_PID" ]]; then
+    local target_pid target_comm target_summary
+    target_pid="$CODEX_LOOP_PARENT_PID"
+    parent_pid_is_stoppable "$target_pid" || return 1
+    if ps -p "$target_pid" >/dev/null 2>&1; then
+      target_comm="$(ps -o comm= -p "$target_pid" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+      target_summary="$(upkeeper_parent_process_args_summary "$target_pid")"
+    else
+      target_comm="${CODEX_LOOP_PARENT_COMM:-unknown}"
+      target_summary="class=unknown argv_hash=unavailable"
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$target_pid" "$target_comm" "$target_summary" "1"
+    return 0
+  fi
+
+  local direct_details
+  direct_details="$(direct_parent_details)" || return 1
+  printf '%s\t%s\n' "$direct_details" "0"
+}
+
+parent_stop_skip_reason() {
+  local parent_comm="$1"
+  local parent_summary="$2"
+  local using_override="$3"
+  local parent_class=""
+
+  parent_class="$(upkeeper_parent_args_summary_field "$parent_summary" class)"
+
+  if [[ "$CODEX_DISABLE_PARENT_STOP" == "1" ]]; then
+    printf 'disabled_by_env'
+    return 0
+  fi
+
+  if [[ "${using_override:-0}" == "1" ]]; then
+    return 1
+  fi
+
+  case "$parent_class" in
+    interactive_shell)
+      printf 'interactive_parent_shell'
+      return 0
+      ;;
+    upkeeper_loop|loop_shell)
+      return 1
+      ;;
+    *)
+      printf 'unrecognized_parent_shell_command'
+      return 0
+      ;;
+  esac
+}
+
+stop_parent_loop() {
+  local details
+  if ! details="$(parent_shell_details)"; then
+    log_line "ERROR" "could not resolve parent shell details for stop"
+    return 1
+  fi
+
+  local parent_pid parent_comm parent_summary using_override
+  local parent_args_class parent_args_hash
+  IFS=$'\t' read -r parent_pid parent_comm parent_summary using_override <<<"$details"
+  parent_args_class="$(upkeeper_parent_args_summary_field "$parent_summary" class)"
+  parent_args_hash="$(upkeeper_parent_args_summary_field "$parent_summary" argv_hash)"
+
+  if ! parent_pid_is_stoppable "$parent_pid"; then
+    log_line "ERROR" "refusing to stop unsafe parent_pid=$parent_pid parent_comm=$parent_comm using_override=${using_override:-0}"
+    return 1
+  fi
+
+  case "$parent_comm" in
+    bash|sh|dash|zsh|ksh|fish)
+      ;;
+    *)
+      log_line "ERROR" "refusing to stop non-shell parent_pid=$parent_pid parent_comm=$parent_comm"
+      return 1
+      ;;
+  esac
+
+  if ! kill -0 "$parent_pid" 2>/dev/null; then
+    PARENT_LOOP_STOP_OUTCOME="already_exited"
+    log_line "INFO" "loop parent already exited; parent_pid=$parent_pid parent_comm=$parent_comm using_override=${using_override:-0}"
+    return 0
+  fi
+
+  local skip_reason
+  if skip_reason="$(parent_stop_skip_reason "$parent_comm" "$parent_summary" "${using_override:-0}")"; then
+    PARENT_LOOP_STOP_OUTCOME="skipped_$skip_reason"
+    log_line "WARN" "parent loop stop skipped reason=$skip_reason execution_origin=$CODEX_EXECUTION_ORIGIN parent_pid=$parent_pid parent_comm=$parent_comm using_override=${using_override:-0} parent_args_class=$parent_args_class parent_args_hash=$parent_args_hash"
+    return 0
+  fi
+
+  PARENT_LOOP_STOP_OUTCOME="stopping"
+  log_line "WARN" "quota guardrail tripped; parent_pid=$parent_pid parent_comm=$parent_comm using_override=${using_override:-0} parent_args_class=$parent_args_class parent_args_hash=$parent_args_hash"
+
+  if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
+    PARENT_LOOP_STOP_OUTCOME="dry_run"
+    log_line "INFO" "dry-run active; would send SIGTERM to parent_pid=$parent_pid"
+    return 0
+  fi
+
+  if [[ "${using_override:-0}" != "1" ]]; then
+    local ppid_now
+    ppid_now="$(ps -o ppid= -p "$$" | tr -d ' ')"
+    if ! parent_pid_is_stoppable "$ppid_now" || [[ "$ppid_now" != "$parent_pid" ]]; then
+      log_line "ERROR" "parent PID changed before stop; expected=$parent_pid actual=$ppid_now"
+      return 1
+    fi
+  fi
+
+  if ! kill -TERM "$parent_pid" 2>/dev/null; then
+    if ! kill -0 "$parent_pid" 2>/dev/null; then
+      PARENT_LOOP_STOP_OUTCOME="already_exited"
+      log_line "INFO" "parent_pid=$parent_pid exited before SIGTERM could be delivered"
+      return 0
+    fi
+    PARENT_LOOP_STOP_OUTCOME="sigterm_failed"
+    log_line "ERROR" "failed to send SIGTERM to parent_pid=$parent_pid"
+    return 1
+  fi
+  log_line "WARN" "sent SIGTERM to parent_pid=$parent_pid"
+
+  local elapsed=0
+  while (( elapsed < CODEX_LOOP_STOP_GRACE_SECONDS * 10 )); do
+    if ! kill -0 "$parent_pid" 2>/dev/null; then
+      PARENT_LOOP_STOP_OUTCOME="stopped_sigterm"
+      log_line "INFO" "confirmed parent_pid=$parent_pid exited after SIGTERM"
+      return 0
+    fi
+    sleep 0.1
+    elapsed=$((elapsed + 1))
+  done
+
+  log_line "WARN" "parent_pid=$parent_pid still alive after ${CODEX_LOOP_STOP_GRACE_SECONDS}s; sending SIGKILL"
+  if ! kill -KILL "$parent_pid" 2>/dev/null; then
+    if ! kill -0 "$parent_pid" 2>/dev/null; then
+      PARENT_LOOP_STOP_OUTCOME="stopped_sigterm"
+      log_line "INFO" "parent_pid=$parent_pid exited before SIGKILL could be delivered"
+      return 0
+    fi
+    PARENT_LOOP_STOP_OUTCOME="sigkill_failed"
+    log_line "ERROR" "failed to send SIGKILL to parent_pid=$parent_pid"
+    return 1
+  fi
+  sleep 0.2
+
+  if kill -0 "$parent_pid" 2>/dev/null; then
+    PARENT_LOOP_STOP_OUTCOME="sigkill_failed"
+    log_line "ERROR" "parent_pid=$parent_pid still exists after SIGKILL"
+    return 1
+  fi
+
+  PARENT_LOOP_STOP_OUTCOME="stopped_sigkill"
+  log_line "INFO" "confirmed parent_pid=$parent_pid exited after SIGKILL"
+  return 0
 }
 
 if declare -f preselect_review_target >/dev/null 2>&1; then
@@ -730,18 +2367,18 @@ launch_screen_fallback_loop() {
   local trigger="$1"
   shift
   local detail_text="${*:-none}"
-  local loop_details loop_parent_pid loop_parent_comm loop_parent_args using_override
+  local loop_details loop_parent_pid loop_parent_comm loop_parent_summary using_override
   if ! loop_details="$(parent_shell_details)"; then
     log_line "ERROR" "fallback.screen.start trigger=$trigger failed_to_resolve_loop_parent=1"
     return 8
   fi
-  IFS=$'\t' read -r loop_parent_pid loop_parent_comm loop_parent_args using_override <<<"$loop_details"
+  IFS=$'\t' read -r loop_parent_pid loop_parent_comm loop_parent_summary using_override <<<"$loop_details"
 
   local screen_root visible_screen_root session_name runner_script transcript_file exit_file done_file last_cycle_exit_file
   local child_id_file child_started_file child_status_file heartbeat_file completed_count_file stop_reason_file
   local prompt_arg_snippet="" runner_env_lines=""
   local self_q model_q effort_q mode_q root_q screen_root_q visible_screen_root_q transcript_q poll_q trigger_q
-  local loop_parent_pid_q loop_parent_comm_q loop_parent_args_q primary_model_q
+  local loop_parent_pid_q loop_parent_comm_q primary_model_q
   local continuous_q max_children_q max_seconds_q
   local review_module review_module_q
   local fallback_chain_token
@@ -796,7 +2433,6 @@ launch_screen_fallback_loop() {
   printf -v trigger_q '%q' "$trigger"
   printf -v loop_parent_pid_q '%q' "$loop_parent_pid"
   printf -v loop_parent_comm_q '%q' "$loop_parent_comm"
-  printf -v loop_parent_args_q '%q' "$loop_parent_args"
   printf -v primary_model_q '%q' "$CODEX_MODEL"
   printf -v contract_path_q '%q' "${CODEX_FALLBACK_CONTRACT_PATH:-}"
   fallback_chain_token="$(generate_fallback_chain_token)"
@@ -844,9 +2480,10 @@ launch_screen_fallback_loop() {
     printf -v prompt_file_q '%q' "$PROMPT_FILE"
     prompt_arg_snippet="--prompt-file $prompt_file_q"
   elif [[ -n "$INLINE_PROMPT" ]]; then
-    local inline_prompt_q
-    printf -v inline_prompt_q '%q' "$INLINE_PROMPT"
-    prompt_arg_snippet="--prompt $inline_prompt_q"
+    upkeeper_materialize_inline_prompt_file
+    local prompt_file_q
+    printf -v prompt_file_q '%q' "$PROMPT_FILE"
+    prompt_arg_snippet="--prompt-file $prompt_file_q"
   fi
   for review_module in "${CODEX_REVIEW_MODULES[@]}"; do
     printf -v review_module_q '%q' "$review_module"
@@ -1026,7 +2663,6 @@ $runner_env_lines  CODEX_MODEL=$model_q \
   CODEX_SCREEN_FALLBACK_CHILD_ID="\$child_cycle_id" \
   CODEX_LOOP_PARENT_PID=$loop_parent_pid_q \
   CODEX_LOOP_PARENT_COMM=$loop_parent_comm_q \
-  CODEX_LOOP_PARENT_ARGS=$loop_parent_args_q \
   CODEX_POSTMORTEM_ENABLED=0 \
   CODEX_DISABLE_PARENT_STOP=1 \
   CODEX_GUARDRAIL_STOP_EXIT_CODE=9 \
@@ -1766,16 +3402,318 @@ try:
 except (TypeError, ValueError):
     first_seen_epoch = 0
 
+try:
+    failure_count = int(data.get("failure_count", 0))
+    if failure_count < 0:
+        raise ValueError
+except (TypeError, ValueError):
+    failure_count = 0
+
 emit(
     "ok",
     marker_id=expected_marker_id,
     marker_path=str(marker_path),
     target_path=target_path,
     first_seen_epoch=str(first_seen_epoch),
-    failure_count=str(data.get("failure_count", "unknown")),
+    failure_count=str(failure_count),
     first_failure_kind_json=display_json(data.get("first_failure_kind", "unknown")),
     first_failure_exit_line_json=display_json(data.get("first_failure_exit_line", "unknown")),
 )
+PY
+}
+
+upkeeper_tool_failure_queue_backfill_legacy_signatures() {
+  local target_path="$1"
+  local transcript_file="$2"
+  local selected_marker_path="${3:-}"
+  local redaction_key
+
+  redaction_key="$(upkeeper_redaction_key_material)"
+
+  python3 - "$ROOT_DIR" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$target_path" "$transcript_file" "$selected_marker_path" "$redaction_key" <<'PY'
+import hashlib
+import hmac
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+root, raw_queue_dir, target_path, transcript_raw, selected_marker_raw, redaction_key = sys.argv[1:7]
+root_path = Path(root).resolve()
+queue_dir = Path(raw_queue_dir).expanduser()
+if not queue_dir.is_absolute():
+    queue_dir = Path(os.path.abspath(root_path / queue_dir))
+else:
+    queue_dir = Path(os.path.abspath(queue_dir))
+open_dir = queue_dir / "open"
+transcript_path = Path(transcript_raw)
+redaction_key_bytes = redaction_key.encode("utf-8", "surrogateescape")
+
+
+def emit(action: str, **fields: str) -> None:
+    print(f"action={action}")
+    for key, value in fields.items():
+        print(f"{key}={value}")
+
+
+def short(value: str, limit: int = 500) -> str:
+    value = re.sub(r"\s+", " ", value.strip())
+    if len(value) > limit:
+        return value[: limit - 15].rstrip() + "...<truncated>"
+    return value
+
+
+def hmac_hex(namespace: str, value: str) -> str:
+    material = f"{namespace}\0{value}".encode("utf-8", "surrogateescape")
+    return hmac.new(redaction_key_bytes, material, hashlib.sha256).hexdigest()
+
+
+def value_hmac(namespace: str, value: str) -> str:
+    return f"value-hmac-sha256:{hmac_hex(namespace, value)}"
+
+
+def failure_signature(kind: str, command_hash: str, exit_line: str) -> str:
+    payload = f"{kind}\0{command_hash}\0{exit_line}"
+    return hashlib.sha256(payload.encode("utf-8", "surrogateescape")).hexdigest()
+
+
+def command_kind(line: str) -> str:
+    lowered = line.lower()
+    if re.search(r"\bbash\s+-n\b|\bdiff\s+--check\b|git\s+diff\s+--check|\bshellcheck\b|\bruff\b|\bmypy\b", lowered):
+        return "check"
+    if re.search(r"\btools/validate_[a-z0-9_.-]+(?:\.sh)?\b|validate_upkeeper\.sh", lowered):
+        return "validation"
+    if re.search(r"\b(pytest|bats)\b|\bpython[0-9.]*\s+-m\s+pytest\b|\bgo\s+test\b|\bcargo\s+test\b|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b|\bmake\s+(?:[^;&|]*\s+)?test\b", lowered):
+        return "tests"
+    if re.search(r"\b(npm|pnpm|yarn|node|make|cargo|go)\b", lowered):
+        return "build"
+    if re.search(r"\bcommand -v\s+", lowered):
+        return "command"
+    if re.search(r"\b(rg|grep|find|cat)\b|\bgit\s+(?:grep|ls-files|diff|show|status|log)\b|\bnl\s+-ba\b|\bsed\s+-n\b", lowered):
+        return "search"
+    if re.search(r"\bgit\b", lowered):
+        return "git"
+    return "command"
+
+
+def interesting_failure_kind(kind: str) -> bool:
+    return kind in {"tests", "validation", "check", "build"}
+
+
+def strip_initial_prompt_echo(raw_lines: list[str]) -> list[str]:
+    filtered = []
+    in_user_echo = False
+    saw_codex_marker = False
+    for item in raw_lines:
+        stripped = item.strip()
+        if not saw_codex_marker:
+            if in_user_echo:
+                if stripped == "codex":
+                    in_user_echo = False
+                    saw_codex_marker = True
+                continue
+            if stripped == "user":
+                in_user_echo = True
+                continue
+        filtered.append(item)
+    return filtered
+
+
+def transcript_failures(path: Path) -> list[dict[str, str]]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+    failures = []
+    expecting_command = False
+    current_command = ""
+    current_kind = "command"
+    in_diff_block = False
+    for line in strip_initial_prompt_echo(lines):
+        stripped = line.strip()
+        if stripped == "codex" or stripped.startswith("tokens used"):
+            expecting_command = False
+            current_command = ""
+            current_kind = "command"
+            in_diff_block = False
+            continue
+        if stripped == "exec":
+            expecting_command = True
+            current_command = ""
+            current_kind = "command"
+            in_diff_block = False
+            continue
+        if line.startswith("diff --git "):
+            in_diff_block = True
+            continue
+        if in_diff_block:
+            continue
+        if expecting_command and stripped:
+            expecting_command = False
+            current_command = stripped
+            current_kind = command_kind(stripped)
+            continue
+        if re.match(r"exited [1-9][0-9]* in ", stripped) and interesting_failure_kind(current_kind):
+            failures.append(
+                {
+                    "kind": current_kind,
+                    "command_hash": value_hmac("command", short(current_command)),
+                    "exit_line": short(stripped),
+                }
+            )
+    return failures
+
+
+def normalize_candidate(path_value: str) -> Path | None:
+    if not path_value:
+        return None
+    candidate = Path(path_value).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path(os.path.abspath(root_path / candidate))
+    else:
+        candidate = Path(os.path.abspath(candidate))
+    try:
+        candidate.relative_to(queue_dir)
+    except ValueError:
+        return None
+    return candidate
+
+
+def marker_id_for(path_value: str) -> str:
+    return hashlib.sha1(path_value.encode("utf-8", "surrogateescape")).hexdigest()[:24]
+
+
+def read_json(path: Path) -> dict:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_json_atomic(path: Path, data: dict) -> None:
+    tmp = path.with_name(path.name + f".tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def candidate_signatures(data: dict) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+
+    def add(kind: object, command_hash: object, exit_line: object) -> None:
+        if not isinstance(kind, str) or not kind:
+            return
+        if not isinstance(exit_line, str) or not exit_line:
+            return
+        normalized_hash = ""
+        if isinstance(command_hash, str) and command_hash:
+            normalized_hash = command_hash
+        if not normalized_hash:
+            return
+        signature = failure_signature(kind, normalized_hash, exit_line)
+        if signature not in seen:
+            seen.add(signature)
+            values.append(signature)
+
+    samples = data.get("failure_samples")
+    if isinstance(samples, list):
+        for sample in samples:
+            if not isinstance(sample, dict):
+                continue
+            command_hash = sample.get("command_hash")
+            if not command_hash and isinstance(sample.get("command"), str):
+                command_hash = value_hmac("command", short(sample["command"]))
+            add(sample.get("kind"), command_hash, sample.get("exit_line"))
+
+    first_command_hash = data.get("first_failure_command_hash")
+    if not first_command_hash and isinstance(data.get("first_failure_command"), str):
+        first_command_hash = value_hmac("command", short(data["first_failure_command"]))
+    add(data.get("first_failure_kind"), first_command_hash, data.get("first_failure_exit_line"))
+
+    last_command_hash = data.get("last_failure_command_hash")
+    if not last_command_hash and isinstance(data.get("last_failure_command"), str):
+        last_command_hash = value_hmac("command", short(data["last_failure_command"]))
+    add(data.get("last_failure_kind"), last_command_hash, data.get("last_failure_exit_line"))
+    return values
+
+
+def main() -> None:
+    marker_path = open_dir / f"{marker_id_for(target_path)}.json"
+    candidates = [marker_path]
+    selected_marker_path = normalize_candidate(selected_marker_raw)
+    if selected_marker_path is not None and selected_marker_path != marker_path:
+        candidates.append(selected_marker_path)
+
+    existing_path = next((path for path in candidates if path.exists()), None)
+    if existing_path is None:
+        emit("none", reason="marker_missing")
+        return
+
+    data = read_json(existing_path)
+    if not data:
+        emit("none", reason="marker_invalid")
+        return
+
+    existing_signatures = data.get("failure_signatures")
+    if isinstance(existing_signatures, list) and any(isinstance(item, str) and item for item in existing_signatures):
+        emit("present", marker_path=str(existing_path), signature_count=str(len(existing_signatures)))
+        return
+
+    failure_count = data.get("failure_count", 0)
+    try:
+        failure_count = int(failure_count)
+    except (TypeError, ValueError):
+        emit("none", reason="failure_count_invalid")
+        return
+    if failure_count <= 0:
+        emit("none", reason="failure_count_not_positive")
+        return
+
+    transcript_signature_values = [
+        failure_signature(item["kind"], item["command_hash"], item["exit_line"])
+        for item in transcript_failures(transcript_path)
+    ]
+    if len(transcript_signature_values) != failure_count:
+        emit(
+            "none",
+            reason="transcript_failure_count_mismatch",
+            marker_count=str(failure_count),
+            transcript_count=str(len(transcript_signature_values)),
+        )
+        return
+
+    known_signatures = candidate_signatures(data)
+    if known_signatures and not set(known_signatures).issubset(set(transcript_signature_values)):
+        emit("none", reason="transcript_signature_mismatch", marker_signatures=str(len(known_signatures)))
+        return
+
+    data["failure_signatures"] = transcript_signature_values
+    write_json_atomic(existing_path, data)
+    emit("backfilled", marker_path=str(existing_path), signature_count=str(len(transcript_signature_values)))
+
+
+try:
+    main()
+except Exception as exc:
+    emit("error", error_class=type(exc).__name__)
 PY
 }
 
@@ -1923,6 +3861,7 @@ tool_failure_queue_finalize_run() {
   local codex_exit="$3"
   local status_marker="$4"
   local secure_queue_result secure_queue_status secure_queue_reason normalized_target_path
+  local backfill_result backfill_action
 
   tool_failure_queue_enabled || return 0
 
@@ -1960,6 +3899,14 @@ PY
   if [[ -z "$normalized_target_path" ]]; then
     log_line "WARN" "tool_failure_queue.update_skipped reason=target_path_invalid target_path=$(shell_quote "${target_path:-unknown}")"
     return 0
+  fi
+
+  backfill_result="$(upkeeper_tool_failure_queue_backfill_legacy_signatures "$normalized_target_path" "$transcript_file" "${RUN_SELECTED_FAILURE_MARKER_PATH:-}")"
+  backfill_action="$(upkeeper_preselect_output_field action "$backfill_result")"
+  if [[ "$backfill_action" == "backfilled" ]]; then
+    log_line "INFO" "tool_failure_queue.legacy_signatures_repaired signature_count=$(shell_quote "$(upkeeper_preselect_output_field signature_count "$backfill_result")") path_redacted=1"
+  elif [[ "$backfill_action" == "error" ]]; then
+    log_line "WARN" "tool_failure_queue.legacy_signatures_repair_failed error_class=$(shell_quote "$(upkeeper_preselect_output_field error_class "$backfill_result")") path_redacted=1"
   fi
 
   upkeeper_tool_failure_queue_finalize_run_original "$normalized_target_path" "$transcript_file" "$codex_exit" "$status_marker"
@@ -2802,6 +4749,10 @@ main() {
   apply_configured_cli_defaults
   validate_codex_mode_args_or_exit
   parse_args "$@"
+  if upkeeper_internal_current_cycle_log_review_requested; then
+    upkeeper_emit_sanitized_current_cycle_log_review
+    return 0
+  fi
   ensure_log_parent
   ensure_log_writable_or_exit "startup"
   require_commands
@@ -3019,7 +4970,7 @@ main() {
 
   compile_prompt "$compiled_prompt_file"
   log_line "INFO" "run.compiled_prompt.ready $(log_kv path "$compiled_prompt_file") content_hmac=$(file_blob_hash "$compiled_prompt_file") size_bytes=$(file_size_bytes "$compiled_prompt_file")"
-  log_line "INFO" "run.log_self_review_required log_file=$(shell_quote "$LOG_FILE") target_cycle=$CYCLE_ID"
+  log_line "INFO" "run.log_self_review_required access=sanitized_helper_only path_redacted=1 target_cycle=$CYCLE_ID"
   capture_startup_anomaly_gate_baseline
 
   if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then

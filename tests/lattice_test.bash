@@ -1372,7 +1372,8 @@ EOF
     --selected-path "README.md" \
     --last-message-file "$TEST_TMP_ROOT/review-summary.txt" >"$TEST_TMP_ROOT/review-finish.json"
 
-  python3 - "$DB" <<'PY' || fail "review summary parser did not preserve colon-bearing target"
+  python3 - "$DB" <<'PY' || fail "review summary parser did not preserve colon-bearing target in rejection evidence"
+import json
 import sqlite3
 import sys
 
@@ -1385,29 +1386,34 @@ row = conn.execute(
 if row is None:
     raise AssertionError("review cycle not recorded")
 cycle_pk, review_outcome = row
-if review_outcome != "REVIEWED_AND_REPORTED":
+if review_outcome != "STOPPED_ON_BLOCKER":
     raise AssertionError(f"review_outcome={review_outcome}")
 row = conn.execute(
-    "select path from file_events where cycle_pk=? and event_kind='target_substituted'",
+    "select path, details_json from file_events where cycle_pk=? and event_kind='target_substitution_rejected'",
     (cycle_pk,),
 ).fetchone()
 if row is None:
-    raise AssertionError("target substitution event missing for review parser mismatch")
-if row[0] != "reviewed/with:colon/path.sh":
-    raise AssertionError(f"target_substituted path mismatch: {row[0]}")
+    raise AssertionError("target substitution rejection event missing for review parser mismatch")
+if row[0] != "README.md":
+    raise AssertionError(f"target_substitution_rejected path mismatch: {row[0]}")
+details = json.loads(row[1])
+if details.get("preselected_path") != "README.md":
+    raise AssertionError(f"preselected_path mismatch: {details}")
+if details.get("reported_selected_path") != "reviewed/with:colon/path.sh":
+    raise AssertionError(f"reported_selected_path mismatch: {details}")
 
 row = conn.execute(
     "select selected_path from cycles where cycle_pk=?",
     (cycle_pk,),
 ).fetchone()
-if row is None or row[0] != "reviewed/with:colon/path.sh":
-    raise AssertionError(f"cycle selected_path did not follow substitution: {None if row is None else row[0]}")
+if row is None or row[0] != "README.md":
+    raise AssertionError(f"cycle selected_path did not preserve preselected target: {None if row is None else row[0]}")
 
 row = conn.execute(
     "select f.canonical_path from cycles c join files f on f.file_id=c.selected_file_id where c.cycle_pk=?",
     (cycle_pk,),
 ).fetchone()
-if row is None or row[0] != "reviewed/with:colon/path.sh":
+if row is None or row[0] != "README.md":
     raise AssertionError(f"cycle selected_file_id mismatch: {None if row is None else row[0]}")
 PY
 

@@ -43,15 +43,45 @@ refresh_worktree_counts() {
 
 write_git_status_snapshot_json() {
   local output_file="$1"
-  python3 - "$ROOT_DIR" "$output_file" <<'PY'
+  local hmac_key
+  ensure_run_tmp_dir
+  hmac_key="$(worktree_redaction_key_material)"
+  # Persist redacted path identities because the gate only needs stable joins, not raw filenames.
+  python3 - "$ROOT_DIR" "$output_file" "$RUN_TMP_DIR" "$hmac_key" <<'PY'
+import hashlib
+import hmac
 import json
+import os
+import re
 import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 root = Path(sys.argv[1])
 output = Path(sys.argv[2])
+run_tmp_dir = Path(sys.argv[3]).resolve()
+hmac_key = sys.argv[4].encode("utf-8", "surrogateescape")
+
+allowed_exact = {
+    "Upkeeper",
+    "Upkeeper.conf",
+    "README.md",
+    "change_notes_2026.md",
+    "docs/compatibility.md",
+    "docs/dependencies.md",
+    "docs/scripts/upkeeper.md",
+    "docs/stress-corpus.md",
+    "tools/validate_upkeeper.sh",
+}
+allowed_prefixes = (
+    "configurations/",
+    "lib/upkeeper/",
+    "prompts/",
+    "templates/",
+    "launcher_examples/",
+)
 
 
 def git(args):
@@ -73,6 +103,27 @@ def git_text(args):
         return "unknown"
 
 
+def fail(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def validated_output_path(path):
+    try:
+        resolved = path.resolve(strict=False)
+    except OSError as exc:
+        fail(f"snapshot output path is unreadable: {path} ({exc})")
+    try:
+        resolved.relative_to(run_tmp_dir)
+    except ValueError:
+        fail(f"snapshot output path escapes run temp directory: {path}")
+
+    parent = resolved.parent
+    if not parent.is_dir():
+        fail(f"snapshot output parent directory is unavailable: {parent}")
+    return resolved
+
+
 def worktree_hash(rel_path):
     path = root / rel_path
     try:
@@ -87,7 +138,93 @@ def worktree_hash(rel_path):
         return "unknown"
 
 
+def hmac_value(namespace, value):
+    material = f"{namespace}\0{value}".encode("utf-8", "surrogateescape")
+    return hmac.new(hmac_key, material, hashlib.sha256).hexdigest()
+
+
+def path_hmac(path):
+    return "path-hmac-sha256:" + hmac_value("path", path)
+
+
+def extension_class(path):
+    suffix = Path(path).suffix.lower()
+    if not suffix:
+        return "none"
+    if not re.fullmatch(r"[.][a-z0-9_+-]{1,24}", suffix):
+        return "other"
+    return suffix
+
+
+def coarse_path_class(path):
+    lower = path.lower()
+    name = Path(lower).name
+    suffix = Path(lower).suffix
+    if lower.startswith(".git/"):
+        return "git"
+    if lower.startswith("runtime/"):
+        return "runtime"
+    if "test" in lower.split("/"):
+        return "test"
+    if suffix in {".bash", ".sh", ".py", ".js", ".ts", ".mjs", ".cjs"} or name in {"upkeeper", "chimneysweep", "flameon"}:
+        return "script"
+    if suffix in {".md", ".rst", ".txt"}:
+        return "documentation"
+    if suffix in {".conf", ".json", ".yaml", ".yml", ".toml", ".ini"}:
+        return "configuration"
+    if suffix:
+        return "source"
+    return "no_extension"
+
+
+def allowed(path):
+    return (
+        path in allowed_exact
+        or re.fullmatch(r"change_notes_[0-9]{4}\.md", path) is not None
+        or any(path.startswith(prefix) for prefix in allowed_prefixes)
+    )
+
+
+def snapshot_record(rel_path, status_code):
+    return {
+        "status": status_code,
+        "hash": worktree_hash(rel_path),
+        "allowed": 1 if allowed(rel_path) else 0,
+        "path_class": coarse_path_class(rel_path),
+        "extension": extension_class(rel_path),
+    }
+
+
+def atomic_write_json(path, payload):
+    temp_fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(temp_fd, "w", encoding="utf-8", newline="") as handle:
+            json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+        try:
+            parent_fd = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    except BaseException:
+        try:
+            Path(temp_name).unlink()
+        except OSError:
+            pass
+        raise
+
+
 raw = git(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+output = validated_output_path(output)
 parts = raw.decode("utf-8", "surrogateescape").split("\0")
 items = {
     "__meta__": {
@@ -95,7 +232,8 @@ items = {
         "branch": git_text(["symbolic-ref", "--short", "-q", "HEAD"]),
         "index_tree": git_text(["write-tree"]),
         "status_lines": str(len(raw)),
-    }
+    },
+    "__paths__": {},
 }
 i = 0
 while i < len(parts):
@@ -107,24 +245,15 @@ while i < len(parts):
     rel_path = entry[3:]
     if not rel_path:
         continue
-    items[rel_path] = {
-        "status": status_code,
-        "hash": worktree_hash(rel_path),
-    }
+    items["__paths__"][path_hmac(rel_path)] = snapshot_record(rel_path, status_code)
     if status_code[0] in {"R", "C"} or status_code[1] in {"R", "C"}:
         if i < len(parts):
             old_path = parts[i]
             i += 1
             if old_path:
-                items.setdefault(
-                    old_path,
-                    {
-                        "status": "old",
-                        "hash": worktree_hash(old_path),
-                    },
-                )
+                items["__paths__"].setdefault(path_hmac(old_path), snapshot_record(old_path, "old"))
 
-output.write_text(json.dumps(items, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+atomic_write_json(output, items)
 PY
 }
 
@@ -233,56 +362,89 @@ def record_diagnostic(kind, payload):
     diagnostics.append({"kind": kind, **payload})
 
 
+def normalize_snapshot(snapshot):
+    if not isinstance(snapshot, dict):
+        return {}, {}
+    meta = snapshot.get("__meta__", {})
+    meta = meta if isinstance(meta, dict) else {}
+    redacted_paths = snapshot.get("__paths__")
+    if isinstance(redacted_paths, dict):
+        normalized = {}
+        for key, value in redacted_paths.items():
+            if isinstance(value, dict):
+                normalized[str(key)] = dict(value)
+        return meta, normalized
+
+    normalized = {}
+    for path, value in snapshot.items():
+        if path == "__meta__" or not isinstance(value, dict):
+            continue
+        normalized[path_hmac(path)] = {
+            "status": value.get("status", "unknown"),
+            "hash": value.get("hash", "unknown"),
+            "allowed": 1 if allowed(path) else 0,
+            "path_class": coarse_path_class(path),
+            "extension": extension_class(path),
+            "legacy_path": path,
+        }
+    return meta, normalized
+
+
 def emit_control_change(key, before_value, after_value):
     record_diagnostic("control_state_changed", {"key": key, "before": before_value, "after": after_value})
     print(f"control_state_changed key={key!r} changed=1 values_redacted=1")
 
 
-def emit_path_change(path, before_state, after_state):
+def emit_path_change(path_key, before_state, after_state):
     before_status = before_state.get("status", "unknown")
     after_status = after_state.get("status", "unknown")
     before_hash = before_state.get("hash", "unknown")
     after_hash = after_state.get("hash", "unknown")
+    path_token = before_state.get("path_hmac") or after_state.get("path_hmac") or path_key
+    path_class = before_state.get("path_class") or after_state.get("path_class") or "unknown"
+    extension = before_state.get("extension") or after_state.get("extension") or "unknown"
     content_changed = 1 if before_hash != after_hash else 0
     status_changed = 1 if before_status != after_status else 0
-    record_diagnostic(
-        "changed_path",
-        {
-            "path": path,
-            "before_status": before_status,
-            "before_hash": before_hash,
-            "after_status": after_status,
-            "after_hash": after_hash,
-            "content_changed": content_changed,
-            "status_changed": status_changed,
-        },
-    )
+    diagnostic = {
+        "before_status": before_status,
+        "before_hash": before_hash,
+        "after_status": after_status,
+        "after_hash": after_hash,
+        "content_changed": content_changed,
+        "status_changed": status_changed,
+    }
+    raw_path = before_state.get("legacy_path") or after_state.get("legacy_path")
+    if raw_path:
+        diagnostic["path"] = raw_path
+    else:
+        diagnostic["path_hmac"] = path_token
+        diagnostic["path_class"] = path_class
+        diagnostic["extension"] = extension
+    record_diagnostic("changed_path", diagnostic)
     print(
-        f"changed_path path_hmac={path_hmac(path)} "
-        f"path_class={coarse_path_class(path)} extension={extension_class(path)} "
+        f"changed_path path_hmac={path_token} "
+        f"path_class={path_class} extension={extension} "
         f"before_status={before_status} after_status={after_status} "
         f"content_changed={content_changed} status_changed={status_changed}"
     )
 
 
-before_meta = before.get("__meta__", {})
-after_meta = after.get("__meta__", {})
+before_meta, before_paths = normalize_snapshot(before)
+after_meta, after_paths = normalize_snapshot(after)
 for key in sorted(set(before_meta) | set(after_meta)):
     if before_meta.get(key) == after_meta.get(key):
         continue
     emit_control_change(key, before_meta.get(key, "missing"), after_meta.get(key, "missing"))
 
 
-for path in sorted(set(before) | set(after)):
-    if path == "__meta__":
+for path_key in sorted(set(before_paths) | set(after_paths)):
+    before_state = before_paths.get(path_key, {"status": "clean", "hash": "clean"})
+    after_state = after_paths.get(path_key, {"status": "clean", "hash": "clean"})
+    if before_state == after_state:
         continue
-    if allowed(path):
+    if before_state.get("allowed") == 1 or after_state.get("allowed") == 1:
         continue
-    if before.get(path) == after.get(path):
-        continue
-    before_state = before.get(path, {"status": "clean", "hash": "clean"})
-    after_state = after.get(path, {"status": "clean", "hash": "clean"})
-    emit_path_change(path, before_state, after_state)
+    emit_path_change(path_key, before_state, after_state)
 
 if diagnostics_path and diagnostics:
     try:
@@ -341,18 +503,44 @@ def extension_class(path):
     return suffix if suffix else "none"
 
 
-for path in sorted(set(before) | set(after)):
-    if path == "__meta__":
+def normalize_snapshot(snapshot):
+    if not isinstance(snapshot, dict):
+        return {}
+    redacted_paths = snapshot.get("__paths__")
+    if isinstance(redacted_paths, dict):
+        normalized = {}
+        for key, value in redacted_paths.items():
+            if isinstance(value, dict):
+                normalized[str(key)] = dict(value)
+        return normalized
+
+    normalized = {}
+    for path, value in snapshot.items():
+        if path == "__meta__" or not isinstance(value, dict):
+            continue
+        normalized[path_hmac(path)] = {
+            "status": value.get("status", "unknown"),
+            "hash": value.get("hash", "unknown"),
+            "extension": extension_class(path),
+        }
+    return normalized
+
+
+before_paths = normalize_snapshot(before)
+after_paths = normalize_snapshot(after)
+selected_path_hmac = path_hmac(selected_path)
+
+for path_key in sorted(set(before_paths) | set(after_paths)):
+    if before_paths.get(path_key) == after_paths.get(path_key):
         continue
-    if before.get(path) == after.get(path):
-        continue
-    if path != selected_path:
-        before_state = before.get(path, {"status": "clean", "hash": "clean"})
-        after_state = after.get(path, {"status": "clean", "hash": "clean"})
+    if path_key != selected_path_hmac:
+        before_state = before_paths.get(path_key, {"status": "clean", "hash": "clean"})
+        after_state = after_paths.get(path_key, {"status": "clean", "hash": "clean"})
         before_hash = before_state.get("hash", "unknown")
         after_hash = after_state.get("hash", "unknown")
+        extension = before_state.get("extension") or after_state.get("extension") or "none"
         print(
-            f"changed_path path_hmac={path_hmac(path)} extension={extension_class(path)} "
+            f"changed_path path_hmac={path_key} extension={extension} "
             f"before_status={before_state.get('status', 'unknown')} "
             f"after_status={after_state.get('status', 'unknown')} "
             f"content_changed={1 if before_hash != after_hash else 0}"

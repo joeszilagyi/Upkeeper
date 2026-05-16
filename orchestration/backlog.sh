@@ -28,13 +28,46 @@ BACKLOG_STDIO_AUTODETACHED="${BACKLOG_STDIO_AUTODETACHED:-0}"
 BACKLOG_STDIO_WATCHED="${BACKLOG_STDIO_WATCHED:-0}"
 BACKLOG_ACTIVE_OWNER_START_TICKS=""
 
+backlog_timestamp() {
+  date '+%Y-%m-%dT%H:%M:%S'
+}
+
+backlog_line_starts_with_timestamp() {
+  local line="$1"
+
+  case "$line" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+backlog_timestamp_stream() {
+  local line
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if backlog_line_starts_with_timestamp "$line"; then
+      printf '%s\n' "$line"
+    else
+      printf '%s %s\n' "$(backlog_timestamp)" "$line"
+    fi
+  done
+}
+
 log() {
-  printf 'backlog: %s\n' "$*" >&2
+  printf '%s backlog: %s\n' "$(backlog_timestamp)" "$*" >&2
 }
 
 fail() {
-  printf 'backlog: ERROR: %s\n' "$*" >&2
+  printf '%s backlog: ERROR: %s\n' "$(backlog_timestamp)" "$*" >&2
   exit 1
+}
+
+backlog_notice() {
+  printf '%s # backlog: %s\n' "$(backlog_timestamp)" "$*" >&2
 }
 
 require_command() {
@@ -72,7 +105,13 @@ backlog_recent_log_summary() {
 
   [[ -f "$log_file" ]] || return 0
   awk '
-    /^backlog: running Upkeeper for issue #[0-9]+/ { line=$0 }
+    {
+      candidate=$0
+      sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] /, "", candidate)
+      if (candidate ~ /^backlog: running Upkeeper for issue #[0-9]+/) {
+        line=candidate
+      }
+    }
     END {
       if (line != "") {
         sub(/^backlog: /, "", line)
@@ -165,12 +204,12 @@ print_stdio_watch_notice() {
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
   summary="$(backlog_recent_log_summary "$log_file")"
 
-  printf '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to %s\n' "$log_file" >&2
-  printf '# backlog: current branch: %s\n' "$branch" >&2
+  backlog_notice "interactive stdin detected; keeping output in this terminal and mirroring to $log_file"
+  backlog_notice "current branch: $branch"
   if [[ -n "$summary" ]]; then
-    printf '# backlog: recent activity: %s\n' "$summary" >&2
+    backlog_notice "recent activity: $summary"
   fi
-  printf '# backlog: follow progress with: tail -f %s\n' "$log_file" >&2
+  backlog_notice "follow progress with: tail -f $log_file"
 }
 
 print_stdio_detach_notice() {
@@ -180,12 +219,12 @@ print_stdio_detach_notice() {
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
   summary="$(backlog_recent_log_summary "$log_file")"
 
-  printf '# backlog: interactive stdio detected; redirecting this run to %s\n' "$log_file" >&2
-  printf '# backlog: current branch: %s\n' "$branch" >&2
+  backlog_notice "interactive stdio detected; redirecting this run to $log_file"
+  backlog_notice "current branch: $branch"
   if [[ -n "$summary" ]]; then
-    printf '# backlog: recent activity: %s\n' "$summary" >&2
+    backlog_notice "recent activity: $summary"
   fi
-  printf '# backlog: follow progress with: tail -f %s\n' "$log_file" >&2
+  backlog_notice "follow progress with: tail -f $log_file"
 }
 
 follow_active_backlog_output() {
@@ -197,14 +236,14 @@ follow_active_backlog_output() {
   owner_branch="$(backlog_owner_field "$owner_file" branch 2>/dev/null || true)"
 
   summary="$(backlog_recent_log_summary "$log_file")"
-  printf '# backlog: another backlog run already owns this checkout (pid=%s)\n' "$pid" >&2
+  backlog_notice "another backlog run already owns this checkout (pid=$pid)"
   if [[ -n "$owner_branch" ]]; then
-    printf '# backlog: active branch: %s\n' "$owner_branch" >&2
+    backlog_notice "active branch: $owner_branch"
   fi
   if [[ -n "$summary" ]]; then
-    printf '# backlog: current activity: %s\n' "$summary" >&2
+    backlog_notice "current activity: $summary"
   fi
-  printf '# backlog: attaching to %s until pid %s exits\n' "$log_file" "$pid" >&2
+  backlog_notice "attaching to $log_file until pid $pid exits"
   if [[ -f "$log_file" ]]; then
     tail -n "$BACKLOG_ACTIVE_ATTACH_LINES" -f --pid="$pid" "$log_file" || true
   else
@@ -257,12 +296,12 @@ redirect_interactive_stdio() {
     watch)
       print_stdio_watch_notice "$log_file"
       export BACKLOG_STDIO_WATCHED=1
-      exec "$SCRIPT_PATH" "$@" </dev/null > >(tee -a "$log_file") 2>&1
+      exec "$SCRIPT_PATH" "$@" </dev/null > >(backlog_timestamp_stream | tee -a "$log_file") 2>&1
       ;;
     detach)
       print_stdio_detach_notice "$log_file"
       export BACKLOG_STDIO_AUTODETACHED=1
-      exec "$SCRIPT_PATH" "$@" </dev/null >>"$log_file" 2>&1
+      exec "$SCRIPT_PATH" "$@" </dev/null > >(backlog_timestamp_stream >>"$log_file") 2>&1
       ;;
     *)
       fail "unsupported BACKLOG_INTERACTIVE_MODE: $BACKLOG_INTERACTIVE_MODE"

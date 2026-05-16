@@ -2,7 +2,7 @@
 #
 # Open markers live under runtime and affect only local target selection. They
 # are resolved locally after WORK_DONE when no unaddressed same-target tool
-# failure remains in the new transcript.
+# failure remains in the new transcript or open marker state.
 tool_failure_queue_open_dir() {
   printf '%s/open' "$CODEX_TOOL_FAILURE_QUEUE_DIR"
 }
@@ -87,9 +87,46 @@ def transcript_id_for(path: Path) -> str:
     return f"transcript-hmac-sha256:{hmac_hex('transcript', str(path))}"
 
 
+def scrub_marker_snapshot(data: dict, *, keep_target_path: bool) -> dict:
+    cleaned = {}
+    for key, value in data.items():
+        if key in {
+            "first_failure_command",
+            "last_failure_command",
+            "last_transcript_path",
+            "transcript_path",
+        }:
+            continue
+        if key == "target_path" and not keep_target_path:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
 def failure_signature(kind: str, command_hash: str, exit_line: str) -> str:
     payload = f"{kind}\0{command_hash}\0{exit_line}"
     return hashlib.sha256(payload.encode("utf-8", "surrogateescape")).hexdigest()
+
+
+def command_signature(kind: str, command_hash: str) -> str:
+    payload = f"{kind}\0{command_hash}"
+    return hashlib.sha256(payload.encode("utf-8", "surrogateescape")).hexdigest()
+
+
+def normalize_failure_item(kind: object, command_hash: object, exit_line: object) -> dict[str, str] | None:
+    if not isinstance(kind, str) or not kind:
+        return None
+    if not isinstance(command_hash, str) or not command_hash:
+        return None
+    if not isinstance(exit_line, str) or not exit_line:
+        return None
+    return {
+        "kind": kind,
+        "command_hash": command_hash,
+        "command_signature": command_signature(kind, command_hash),
+        "exit_line": exit_line,
+        "signature": failure_signature(kind, command_hash, exit_line),
+    }
 
 
 def field(value: str) -> str:
@@ -142,17 +179,18 @@ def strip_initial_prompt_echo(raw_lines: list[str]) -> list[str]:
     return filtered
 
 
-def transcript_failure_state(path: Path) -> tuple[list[dict[str, str]], bool]:
+def transcript_failure_state(path: Path) -> tuple[list[dict[str, str]], list[dict[str, str]], set[str]]:
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return [], False
+        return [], [], set()
 
     failures = []
-    last_failure_kind = ""
-    addressed_by_later_success = False
+    unresolved_failures = []
+    successful_command_signatures = set()
     expecting_command = False
     current_command = ""
+    current_command_hash = ""
     current_kind = "command"
     in_diff_block = False
     for line in strip_initial_prompt_echo(lines):
@@ -160,12 +198,14 @@ def transcript_failure_state(path: Path) -> tuple[list[dict[str, str]], bool]:
         if stripped == "codex" or stripped.startswith("tokens used"):
             expecting_command = False
             current_command = ""
+            current_command_hash = ""
             current_kind = "command"
             in_diff_block = False
             continue
         if stripped == "exec":
             expecting_command = True
             current_command = ""
+            current_command_hash = ""
             current_kind = "command"
             in_diff_block = False
             continue
@@ -178,22 +218,54 @@ def transcript_failure_state(path: Path) -> tuple[list[dict[str, str]], bool]:
             expecting_command = False
             current_command = stripped
             current_kind = command_kind(stripped)
+            current_command_hash = value_hmac("command", short(current_command))
             continue
         if re.match(r"succeeded in [0-9]+", stripped) and interesting_failure_kind(current_kind):
-            if last_failure_kind == current_kind:
-                addressed_by_later_success = True
+            if current_command_hash:
+                current_command_signature = command_signature(current_kind, current_command_hash)
+                successful_command_signatures.add(current_command_signature)
+                unresolved_failures = [
+                    item for item in unresolved_failures if item["command_signature"] != current_command_signature
+                ]
             continue
         if re.match(r"exited [1-9][0-9]* in ", stripped) and interesting_failure_kind(current_kind):
-            last_failure_kind = current_kind
-            addressed_by_later_success = False
-            failures.append(
-                {
-                    "kind": current_kind,
-                    "command_hash": value_hmac("command", short(current_command)),
-                    "exit_line": short(stripped),
-                }
-            )
-    return failures, addressed_by_later_success
+            failure = normalize_failure_item(current_kind, current_command_hash, short(stripped))
+            if failure is not None:
+                failures.append(failure)
+                unresolved_failures.append(failure)
+    return failures, unresolved_failures, successful_command_signatures
+
+
+def marker_unresolved_failures(data: dict) -> list[dict[str, str]]:
+    collected = []
+    seen = set()
+
+    def add(kind: object, command_hash: object, exit_line: object) -> None:
+        failure = normalize_failure_item(kind, command_hash, exit_line)
+        if failure is None or failure["signature"] in seen:
+            return
+        seen.add(failure["signature"])
+        collected.append(failure)
+
+    unresolved = data.get("unresolved_failures")
+    if isinstance(unresolved, list):
+        for item in unresolved:
+            if not isinstance(item, dict):
+                continue
+            add(item.get("kind"), item.get("command_hash"), item.get("exit_line"))
+        if collected:
+            return collected
+
+    samples = data.get("failure_samples")
+    if isinstance(samples, list):
+        for item in samples:
+            if not isinstance(item, dict):
+                continue
+            add(item.get("kind"), item.get("command_hash"), item.get("exit_line"))
+
+    add(data.get("first_failure_kind"), data.get("first_failure_command_hash"), data.get("first_failure_exit_line"))
+    add(data.get("last_failure_kind"), data.get("last_failure_command_hash"), data.get("last_failure_exit_line"))
+    return collected
 
 
 def ensure_private_dir(path: Path) -> None:
@@ -241,6 +313,7 @@ def write_json_atomic(path: Path, data: dict) -> None:
 def resolve_marker(path: Path, reason: str) -> Path:
     data = read_json(path)
     now = int(time.time())
+    data = scrub_marker_snapshot(data, keep_target_path=False)
     data.update(
         {
             "status": "resolved",
@@ -266,7 +339,7 @@ def main() -> None:
     marker_path = open_dir / f"{marker_id}.json"
     selected_marker_path = Path(selected_marker_raw) if selected_marker_raw else marker_path
     now = int(time.time())
-    failures, addressed_by_later_success = transcript_failure_state(transcript_path)
+    failures, unresolved_failures, successful_command_signatures = transcript_failure_state(transcript_path)
     ensure_private_dir(queue_dir)
     ensure_private_dir(open_dir)
     ensure_private_dir(resolved_dir)
@@ -279,6 +352,11 @@ def main() -> None:
         else:
             existing = {}
         first = failures[0]
+        remaining_existing_unresolved = [
+            item
+            for item in marker_unresolved_failures(existing)
+            if item["command_signature"] not in successful_command_signatures
+        ]
         existing_signatures = existing.get("failure_signatures", [])
         if not isinstance(existing_signatures, list):
             existing_signatures = []
@@ -287,11 +365,9 @@ def main() -> None:
         existing_signature_lookup = set(existing_signatures)
         unique_failures = []
         for item in failures:
-            signature = failure_signature(item["kind"], item["command_hash"], item["exit_line"])
-            item["signature"] = signature
-            if signature not in existing_signature_lookup:
+            if item["signature"] not in existing_signature_lookup:
                 unique_failures.append(item)
-                existing_signature_lookup.add(signature)
+                existing_signature_lookup.add(item["signature"])
 
         first_failure = existing.get("first_failure_kind")
         first_failure_command_hash = existing.get("first_failure_command_hash")
@@ -312,6 +388,14 @@ def main() -> None:
         signatures = existing_signatures.copy()
         for item in unique_failures:
             signatures.append(item["signature"])
+        unresolved_signature_lookup = set()
+        unresolved_combined = []
+        for item in remaining_existing_unresolved + unresolved_failures:
+            if item["signature"] in unresolved_signature_lookup:
+                continue
+            unresolved_signature_lookup.add(item["signature"])
+            unresolved_combined.append(item)
+        addressed_by_later_success = bool(failures) and not unresolved_combined
         data = {
             "version": 2,
             "status": "open",
@@ -337,15 +421,17 @@ def main() -> None:
             "last_failure_command_hash": last_failure["command_hash"],
             "last_failure_exit_line": last_failure["exit_line"],
             "failure_samples": failures[:5],
+            "unresolved_failure_count": len(unresolved_combined),
+            "unresolved_failures": unresolved_combined,
             "addressed_by_later_success": addressed_by_later_success,
         }
         write_json_atomic(marker_path, data)
         if addressed_by_later_success and not bug_report_only:
             reason = "work_done_after_detected_failure" if status_marker == "WORK_DONE" else "later_success_after_detected_failure"
             resolved_path = resolve_marker(marker_path, reason)
-            print(f"action=resolved_same_run marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(resolved_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures={len(failures)} addressed_by_later_success=1")
+            print(f"action=resolved_same_run marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(resolved_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures={len(failures)} unresolved_failures=0 addressed_by_later_success=1")
         else:
-            print(f"action=open marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(marker_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures={len(failures)} addressed_by_later_success={1 if addressed_by_later_success else 0} kind={field(first['kind'])} exit_line={field(first['exit_line'])}")
+            print(f"action=open marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(marker_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures={len(failures)} unresolved_failures={len(unresolved_combined)} addressed_by_later_success={1 if addressed_by_later_success else 0} kind={field(last_failure['kind'])} exit_line={field(last_failure['exit_line'])}")
         raise SystemExit(0)
 
     if status_marker == "WORK_DONE" and selected_marker_path.exists() and bug_report_only:

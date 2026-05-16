@@ -298,8 +298,10 @@ check_backlog_launcher_contract() {
   log "checking backlog launcher safety contract"
   grep -Fq 'BACKLOG_ALLOW_INTERACTIVE_STDIO' orchestration/backlog.sh || fail "backlog launcher missing interactive-stdio override"
   grep -Fq 'BACKLOG_INTERACTIVE_MODE="${BACKLOG_INTERACTIVE_MODE:-watch}"' orchestration/backlog.sh || fail "backlog launcher does not default interactive use to watch mode"
-  grep -Fq 'exec "$SCRIPT_PATH" "$@" </dev/null > >(tee -a "$log_file") 2>&1' orchestration/backlog.sh || fail "backlog launcher does not keep interactive watch output visible while cutting off stdin"
-  grep -Fq 'exec "$SCRIPT_PATH" "$@" </dev/null >>"$log_file" 2>&1' orchestration/backlog.sh || fail "backlog launcher no longer exposes explicit detach mode"
+  grep -Fq 'backlog_timestamp_stream | tee -a "$log_file"' orchestration/backlog.sh || fail "backlog launcher does not keep timestamped interactive watch output visible while cutting off stdin"
+  grep -Fq 'backlog_timestamp_stream >>"$log_file"' orchestration/backlog.sh || fail "backlog launcher no longer exposes explicit timestamped detach mode"
+  grep -Fq 'backlog_line_starts_with_timestamp' orchestration/backlog.sh || fail "backlog launcher does not avoid double-prefixing timestamped lines"
+  grep -Fq 'sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] /' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not understand timestamped loop logs"
   grep -Fq 'interactive stdio remained attached after backlog auto-detach' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed auto-detach"
   grep -Fq 'interactive stdin remained attached after backlog watch-mode reexec' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed watch-mode reexec"
   grep -Fq 'another backlog run already owns this checkout' orchestration/backlog.sh || fail "backlog launcher does not explain active backlog ownership"
@@ -322,17 +324,22 @@ assert git_gate < autoshelve < clean_gate < gh_gate < jq_gate < rg_gate
 PY
   [[ -x orchestration/backlog_loop.sh ]] || fail "backlog safe loop wrapper is not executable"
   grep -Fq 'CODEX_TERMINAL_VERBOSITY="${BACKLOG_CODEX_TERMINAL_VERBOSITY:-${CODEX_TERMINAL_VERBOSITY:-quiet}}"' orchestration/backlog.sh || fail "backlog launcher does not default to quiet terminal output"
-  grep -Fq '</dev/null >>"$log_file" 2>&1' orchestration/backlog_loop.sh || fail "backlog loop wrapper does not detach stdin and redirect output"
+  grep -Fq 'backlog_loop_timestamp_stream >>"$log_file"' orchestration/backlog_loop.sh || fail "backlog loop wrapper does not detach stdin and record timestamped output"
   grep -Fq 'ineligible_explicit_issue_target' lib/upkeeper/codex_io.bash || fail "issue target handoff does not reject ineligible explicit targets before preselection"
   if command -v script >/dev/null 2>&1; then
     temp_dir="$VALIDATION_TMP_ROOT/backlog-stdio"
     mkdir -p "$temp_dir"
+    printf '2026-05-15T17:21:47 backlog: running Upkeeper for issue #999 with gpt-5.4/high target=tools/example.sh\n' >"$temp_dir/loop.log"
     status=0
     BACKLOG_STDIO_AUTODETACH_PROBE=1 BACKLOG_LOOP_LOG_FILE="$temp_dir/loop.log" \
       script -qfec ./orchestration/backlog.sh "$temp_dir/typescript" >/dev/null 2>&1 || status="$?"
     [[ "$status" == "0" ]] || fail "backlog launcher interactive stdio auto-detach probe exited $status"
     grep -Fq '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to '"$temp_dir/loop.log" "$temp_dir/typescript" ||
       fail "backlog launcher did not explain interactive watch mode"
+    grep -Eq '^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] # backlog: interactive stdin detected;' "$temp_dir/typescript" ||
+      fail "backlog launcher watch notice is not timestamped in column 1"
+    grep -Fq '# backlog: recent activity: running Upkeeper for issue #999 with gpt-5.4/high target=tools/example.sh' "$temp_dir/typescript" ||
+      fail "backlog launcher did not parse timestamped recent activity"
   fi
 }
 
@@ -1771,7 +1778,7 @@ check_file_manifest_selection() {
   grep -Fq "target_root=lib/upkeeper" "$temp_dir/manifest.log" || fail "manifest target root was not logged"
   grep -Fq "target_depth=1" "$temp_dir/manifest.log" || fail "manifest target depth was not logged"
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/manifest.log" || fail "manifest dry-run did not finish cleanly"
-  jq -e '.schema_version == 1 and (.files | length) > 0 and (.files[0].abs_path | length > 0)' "$manifest_path" >/dev/null || fail "manifest JSON contract is invalid"
+  jq -e '.schema_version == 1 and (.files | length) > 0 and ((.files[0].rel_path // "") | length > 0) and ([.files[] | select(has("abs_path"))] | length == 0)' "$manifest_path" >/dev/null || fail "manifest JSON contract is invalid"
 
   run_manifest_dry_run "$temp_dir/newest.log" \
     --target-root=lib/upkeeper \

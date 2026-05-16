@@ -166,6 +166,9 @@ REDACTABLE_PATH_KEYS = {
 }
 STRUCTURED_REDACTION_STRING_KEYS = {"raw_text", "details_json", "parsed_json"}
 CONTRIBUTOR_REDACT_KEYS = {"name", "email", "github_login"}
+INLINE_ASSIGNMENT_PATTERN = re.compile(
+    r"(?P<prefix>(?:^|\s))(?P<key>[A-Za-z0-9_.-]+)=(?P<quote>['\"]?)(?P<value>.*?)(?P=quote)(?=(?:\s+[A-Za-z0-9_.-]+=)|$)"
+)
 UPKEEPER_LOG_SOURCE_SAFE_KEYS = {
     "timestamp",
     "level",
@@ -3670,6 +3673,37 @@ def looks_like_json_container_string(value: str) -> bool:
     return len(stripped) >= 2 and stripped[0] in "{[" and stripped[-1] in "}]"
 
 
+def redact_inline_assignment_string(
+    raw: str,
+    *,
+    redact_paths: bool,
+    redact_contributors: bool,
+) -> str:
+    if not raw or (not redact_paths and not redact_contributors):
+        return raw
+
+    def _replace(match: re.Match[str]) -> str:
+        key = match.group("key")
+        value = match.group("value")
+        replacement = value
+        if redact_paths and key_requires_path_redaction(key):
+            replacement = REDACTED_PATH_PREFIX + sha256_text(value)
+        elif redact_contributors and key in CONTRIBUTOR_REDACT_KEYS:
+            replacement = "<redacted>"
+        else:
+            return match.group(0)
+        return f"{match.group('prefix')}{key}={match.group('quote')}{replacement}{match.group('quote')}"
+
+    return INLINE_ASSIGNMENT_PATTERN.sub(_replace, raw)
+
+
+def has_redacted_inline_assignment_string(raw: str) -> bool:
+    for match in INLINE_ASSIGNMENT_PATTERN.finditer(raw):
+        if key_requires_path_redaction(match.group("key")) and match.group("value").startswith(REDACTED_PATH_PREFIX):
+            return True
+    return False
+
+
 def has_redacted_path_token(payload: Any, current_key: str | None = None) -> bool:
     if isinstance(payload, dict):
         for key, value in payload.items():
@@ -3686,8 +3720,9 @@ def has_redacted_path_token(payload: Any, current_key: str | None = None) -> boo
             try:
                 parsed = json.loads(payload)
             except (TypeError, json.JSONDecodeError):
-                return False
+                return has_redacted_inline_assignment_string(payload)
             return has_redacted_path_token(parsed, current_key)
+        return has_redacted_inline_assignment_string(payload)
     return False
 
 
@@ -4124,6 +4159,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["candidate_symlink_exclusion"] = candidate_symlink_probe
         candidate_text_sample_probe = probe_candidate_text_sample_limit()
         result["checks"]["candidate_text_sample_limit"] = candidate_text_sample_probe
+        export_redaction_probe = probe_export_redaction()
+        result["checks"]["export_redaction"] = export_redaction_probe
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
@@ -4140,6 +4177,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(candidate_text_sample_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(export_redaction_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
@@ -5122,6 +5162,50 @@ def probe_candidate_text_sample_limit() -> dict[str, Any]:
             and all(size == TEXT_SAMPLE_SIZE for size in read_sizes)
         )
         return result
+
+
+def probe_export_redaction() -> dict[str, Any]:
+    args = argparse.Namespace(
+        redact_paths=True,
+        redact_contributors=True,
+        raw_export_policy="include",
+    )
+    selected_path = "tools/secret.py"
+    local_remote = "file:///Users/alice/Secret Vault/upkeeper.git"
+    payload = {
+        "selected_path": selected_path,
+        "remote_url": local_remote,
+        "raw_text": f"selected_path={selected_path} remote_url='{local_remote}' email=alice@example.com",
+        "details_json": json_dumps({"preselected_path": selected_path, "reported_selected_path": "docs/other.md"}),
+        "parsed_json": json_dumps(
+            {
+                "selected_path": selected_path,
+                "remote_url": local_remote,
+                "nested": {"selected_path": selected_path},
+            }
+        ),
+    }
+    redacted = redact_payload(payload, args)
+    raw_text = str(redacted.get("raw_text") or "")
+    return {
+        "ok": (
+            str(redacted.get("selected_path") or "").startswith(REDACTED_PATH_PREFIX)
+            and str(redacted.get("remote_url") or "").startswith(REDACTED_PATH_PREFIX)
+            and selected_path not in json_dumps(redacted)
+            and local_remote not in json_dumps(redacted)
+            and "alice@example.com" not in raw_text
+            and "email=<redacted>" in raw_text
+            and "selected_path=path-sha256:" in raw_text
+            and "remote_url='path-sha256:" in raw_text
+            and has_redacted_path_token(redacted)
+        ),
+        "raw_text": raw_text,
+        "selected_path_redacted": str(redacted.get("selected_path") or "").startswith(REDACTED_PATH_PREFIX),
+        "remote_url_redacted": str(redacted.get("remote_url") or "").startswith(REDACTED_PATH_PREFIX),
+        "details_json_redacted": selected_path not in str(redacted.get("details_json") or ""),
+        "parsed_json_redacted": local_remote not in str(redacted.get("parsed_json") or ""),
+        "redacted_payload_detected": has_redacted_path_token(redacted),
+    }
 
 
 def snapshot_row_for_event(
@@ -6883,6 +6967,13 @@ def redact_payload(payload: dict[str, Any], args: argparse.Namespace) -> dict[st
                 if isinstance(parsed, (dict, list)):
                     redacted = _redact(parsed, current_key)
                     return json_dumps(redacted) if redacted != parsed else raw
+            inline_redacted = redact_inline_assignment_string(
+                raw,
+                redact_paths=bool(args.redact_paths),
+                redact_contributors=bool(args.redact_contributors),
+            )
+            if inline_redacted != raw:
+                return inline_redacted
         return raw
 
     return _redact(payload)

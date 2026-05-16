@@ -1256,6 +1256,51 @@ def sanitize_upkeeper_log_parsed(parsed: dict[str, Any]) -> dict[str, Any]:
     return filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_SOURCE_SAFE_KEYS)
 
 
+def sanitize_quota_log_fields(root: Path | None, fields: dict[str, Any]) -> dict[str, Any]:
+    sanitized = filter_upkeeper_log_fields(fields, UPKEEPER_LOG_SOURCE_SAFE_KEYS)
+    if root is None:
+        return sanitized
+    for key, value in fields.items():
+        if key in {"timestamp", "level", "event"} or not has_meaningful_value(value):
+            continue
+        normalized_key = normalized_metadata_key(key)
+        hashed = ""
+        if normalized_key in {"source", "source_uri"} or cycle_start_key_is_path_like(normalized_key):
+            hashed = artifact_path_hmac(root, str(value))
+        elif normalized_key.endswith("limit_id") or normalized_key.endswith("limit_name"):
+            hashed = metadata_value_hmac(root, normalized_key, str(value))
+        if hashed:
+            sanitized[f"{key}_hmac"] = hashed
+    return sanitized
+
+
+def sanitize_nonverbose_upkeeper_log_fields(root: Path | None, fields: dict[str, Any]) -> dict[str, Any]:
+    event = str(fields.get("event", "")).strip()
+    if event == "cycle.start":
+        return sanitize_cycle_start_fields(root, fields) if root is not None else filter_upkeeper_log_fields(fields, CYCLE_START_SAFE_KEYS)
+    if event.startswith("quota."):
+        return sanitize_quota_log_fields(root, fields)
+    return fields
+
+
+def sanitize_upkeeper_log_raw_text(
+    root: Path | None,
+    raw_text: str | None,
+    parsed: dict[str, Any] | None = None,
+) -> str | None:
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return raw_text
+    if verbose_metadata_enabled():
+        return raw_text
+    parsed_fields = parsed if isinstance(parsed, dict) else parse_upkeeper_log_line(raw_text)
+    if not isinstance(parsed_fields, dict):
+        return None
+    sanitized_fields = sanitize_nonverbose_upkeeper_log_fields(root, parsed_fields)
+    if sanitized_fields is parsed_fields:
+        return raw_text
+    return render_upkeeper_log_line(sanitized_fields)
+
+
 def sanitize_source_record_payload(
     payload: dict[str, Any],
     *,
@@ -1270,13 +1315,18 @@ def sanitize_source_record_payload(
     if source_kind != "local_git":
         if source_kind == "upkeeper_log":
             parsed_json = updated.get("parsed_json")
+            parsed_payload: dict[str, Any] | None = None
             if isinstance(parsed_json, str) and parsed_json.strip():
                 try:
                     parsed = json.loads(parsed_json)
                 except (TypeError, json.JSONDecodeError):
-                    return updated
+                    parsed = None
                 if isinstance(parsed, dict):
+                    parsed_payload = parsed
                     updated["parsed_json"] = json_dumps(sanitize_upkeeper_log_parsed(parsed))
+            raw_text = updated.get("raw_text")
+            if isinstance(raw_text, str):
+                updated["raw_text"] = sanitize_upkeeper_log_raw_text(root, raw_text, parsed_payload)
         return updated
     parsed_json = updated.get("parsed_json")
     if not isinstance(parsed_json, str) or not parsed_json.strip():
@@ -3783,12 +3833,24 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
         "primary_used": "91%",
         "primary_reset": "2026-05-13 01:00:00 -0700",
     }
+    replayed_quota_raw_line = render_upkeeper_log_line(replayed_quota_payload)
+    sanitized_quota_raw_line = sanitize_upkeeper_log_raw_text(root, replayed_quota_raw_line, replayed_quota_payload) or ""
     unsafe_selection_payload = {"selection": {"path": "secret.txt"}, "candidate_count": 1}
     imported_source_payload = {
         "source_kind": "wrapper_observed",
         "raw_ref": "preselect",
         "raw_text": '{"path":"secret.txt"}',
         "parsed_json": json_dumps(unsafe_selection_payload),
+        "parse_status": "parsed",
+        "fact_confidence": "observed",
+    }
+    imported_quota_source_payload = {
+        "source_kind": "upkeeper_log",
+        "source_path": "/home/joe/.codex/sessions/2026/05/session.jsonl",
+        "source_uri": "file:///home/joe/.codex/sessions/2026/05/session.jsonl",
+        "raw_ref": "quota.current",
+        "raw_text": replayed_quota_raw_line,
+        "parsed_json": json_dumps(replayed_quota_payload),
         "parse_status": "parsed",
         "fact_confidence": "observed",
     }
@@ -3851,6 +3913,12 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
                 redact_raw=False,
                 raw_storage_mode=mode,
             )
+            imported_quota_source_record = sanitize_imported_source_record_row(
+                imported_quota_source_payload,
+                root=root,
+                redact_raw=False,
+                raw_storage_mode=mode,
+            )
             safe_row = conn.execute(
                 "select raw_text, parsed_json from source_records where source_id=?",
                 (safe_id,),
@@ -3903,6 +3971,30 @@ def probe_raw_storage_enforcement(conn: sqlite3.Connection, root: Path, repo_id:
                             "primary_reset",
                         )
                     ),
+                },
+                "replayed_upkeeper_log_raw": {
+                    "source_hashed": "source_hmac=" in sanitized_quota_raw_line,
+                    "limit_ids_hashed": "limit_id_hmac=" in sanitized_quota_raw_line and "limit_name_hmac=" in sanitized_quota_raw_line,
+                    "quota_fields_removed": not any(
+                        key in sanitized_quota_raw_line
+                        for key in (
+                            "source=/home/joe/.codex/sessions/2026/05/session.jsonl",
+                            "limit_id=plan-123",
+                            "limit_name='Example Plan'",
+                            "plan_type=paid",
+                            "snapshot_model_hint=gpt-5.5",
+                            "primary_used='91%'",
+                            "primary_reset='2026-05-13 01:00:00 -0700'",
+                        )
+                    ),
+                },
+                "imported_quota_source_record": {
+                    "raw_text_stored": bool(imported_quota_source_record.get("raw_text")),
+                    "source_path_hashed": str(imported_quota_source_record.get("source_path") or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX),
+                    "source_uri_hashed": str(imported_quota_source_record.get("source_uri") or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX),
+                    "raw_text_redacted": "source_hmac=" in str(imported_quota_source_record.get("raw_text") or "")
+                    and "limit_id_hmac=" in str(imported_quota_source_record.get("raw_text") or "")
+                    and "snapshot_model_hint" not in str(imported_quota_source_record.get("raw_text") or ""),
                 },
             }
         finally:
@@ -6222,8 +6314,8 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                 continue
             safe_parsed = sanitize_upkeeper_log_parsed(parsed)
             stored_raw_line = raw_line if args.raw else None
-            if stored_raw_line is not None and str(parsed.get("event", "")) == "cycle.start" and not verbose_metadata_enabled():
-                stored_raw_line = render_upkeeper_log_line(sanitize_cycle_start_fields(root, parsed))
+            if stored_raw_line is not None:
+                stored_raw_line = sanitize_upkeeper_log_raw_text(root, stored_raw_line, parsed)
             source_id = ensure_source_record(
                 conn,
                 root,

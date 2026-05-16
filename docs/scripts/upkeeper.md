@@ -146,6 +146,17 @@ Important:
     is unsupported.
     The executable module load order is the `UPKEEPER_MODULES` array in root
     `Upkeeper`; the module contract is documented in `lib/upkeeper/README.md`.
+  - Client symlink lifecycle helpers live in the central checkout:
+    `tools/install_client_link.sh --repo=CLIENT`,
+    `tools/update_client_link.sh --repo=CLIENT --force`,
+    `tools/uninstall_client_link.sh --repo=CLIENT`, and
+    `tools/doctor_upkeeper.sh --repo=CLIENT`.
+    Install and update write local ignore entries to the client repo's
+    `.git/info/exclude`; they do not edit tracked client files unless an
+    operator explicitly forces replacement of an existing tracked link path.
+    The doctor command checks the central modules, symlink target, dependencies,
+    ignored local artifacts, and `UPKEEPER_DRY_RUN=1` startup without launching
+    real backend Codex work.
   - The large default review prompt lives at `prompts/default-review.md` beside
     the resolved central Upkeeper file. Symlinked clients share that central
     prompt and central review modules; local prompt files are only needed for

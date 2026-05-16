@@ -52,6 +52,10 @@ Version numbering note:
 	1. Added tracked ownership, decision-log, and risk-register docs for Upkeeper product behavior, shell architecture, prompts, validation, security, compatibility, releases, baseline contracts, and high-impact risks.
 	2. Linked the governance entry points from README and added validator coverage so these project-control surfaces stay discoverable.
 
+2026-05-15: client link helpers:
+	1. Added no-backend install, update, uninstall, and doctor helpers for central-first client symlinks, with local `.git/info/exclude` setup and forced-overwrite guardrails.
+	2. Documented the helper workflow in README and the operator guide, and added focused tests plus validator coverage for the helper contract.
+
 2026-05-15: startup anomaly watch summary:
 	1. Startup anomaly scans now emit one `previous_run.anomaly_summary` warning for ordinary terminal/watch output instead of replaying every prior anomaly as a warning burst.
 	2. Per-anomaly `previous_run.anomaly_detail` records are still preserved in local logs and prompt context, and diagnostic terminal modes can still surface the details directly.

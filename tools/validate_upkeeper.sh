@@ -1778,7 +1778,7 @@ check_file_manifest_selection() {
   grep -Fq "target_root=lib/upkeeper" "$temp_dir/manifest.log" || fail "manifest target root was not logged"
   grep -Fq "target_depth=1" "$temp_dir/manifest.log" || fail "manifest target depth was not logged"
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/manifest.log" || fail "manifest dry-run did not finish cleanly"
-  jq -e '.schema_version == 1 and (.files | length) > 0 and ((.files[0].rel_path // "") | length > 0) and ([.files[] | select(has("abs_path"))] | length == 0)' "$manifest_path" >/dev/null || fail "manifest JSON contract is invalid"
+  jq -e '.schema_version == 2 and ((.root_hash // "") | length == 64) and (has("root") | not) and (.files | length) > 0 and ((.files[0].rel_path // "") | length > 0) and ([.files[] | select(has("abs_path"))] | length == 0)' "$manifest_path" >/dev/null || fail "manifest JSON contract is invalid"
 
   run_manifest_dry_run "$temp_dir/newest.log" \
     --target-root=lib/upkeeper \
@@ -2035,12 +2035,13 @@ EOF
 }
 
 check_tool_failure_queue() {
-  local temp_dir transcript addressed_transcript clean_transcript marker_path open_count resolved_count marker_id
+  local temp_dir transcript addressed_transcript clean_transcript marker_path open_count resolved_count marker_id tool_failure_queue_signing_key
 
   log "checking tool failure queue"
   temp_dir="$(mktemp -d /tmp/upkeeper-tool-failure-queue.XXXXXX)"
   transcript="$temp_dir/failure-transcript.log"
   clean_transcript="$temp_dir/clean-transcript.log"
+  tool_failure_queue_signing_key="validation-tool-failure-queue-key"
 
   cat >"$transcript" <<'EOF'
 codex
@@ -2181,14 +2182,17 @@ print(hashlib.sha1(b"lib/upkeeper/codex_io.bash").hexdigest()[:24])
 PY
 )"
   mkdir -p "$temp_dir/selection-failures/open"
-  python3 - "$temp_dir/selection-failures/open/$marker_id.json" "$marker_id" <<'PY'
+  python3 - "$temp_dir/selection-failures/open/$marker_id.json" "$marker_id" "$tool_failure_queue_signing_key" <<'PY'
+import hashlib
+import hmac
 import json
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
 marker_id = sys.argv[2]
-path.write_text(json.dumps({
+signing_key = sys.argv[3].encode("utf-8", "surrogateescape")
+payload = {
     "version": 1,
     "status": "open",
     "marker_id": marker_id,
@@ -2198,7 +2202,10 @@ path.write_text(json.dumps({
     "failure_count": 2,
     "first_failure_kind": "validation",
     "first_failure_exit_line": "exited 1 in 0.1s",
-}, sort_keys=True) + "\n", encoding="utf-8")
+}
+encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8", "surrogateescape")
+payload["marker_auth_hmac"] = f"hmac-sha256:{hmac.new(signing_key, encoded, hashlib.sha256).hexdigest()}"
+path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
 PY
   chmod 600 "$temp_dir/selection-failures/open/$marker_id.json"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
@@ -2210,6 +2217,7 @@ PY
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
     CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/selection-failures" \
+    UPKEEPER_TOOL_FAILURE_QUEUE_SIGNING_KEY="$tool_failure_queue_signing_key" \
     CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
     CODEX_TERMINAL_VERBOSITY=quiet \
     CODEX_MODEL=gpt-5.5 \
@@ -2231,6 +2239,7 @@ PY
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health-bypass" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates-bypass" \
     CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/selection-failures" \
+    UPKEEPER_TOOL_FAILURE_QUEUE_SIGNING_KEY="$tool_failure_queue_signing_key" \
     CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
     CODEX_TERMINAL_VERBOSITY=quiet \
     CODEX_MODEL=gpt-5.5 \
@@ -2710,6 +2719,12 @@ check_postmortem_sequence_marker_contract() {
         cd "$1"
         case_dir="$2"
         case_name="$3"
+
+        if [[ "$case_name" == "report_missing_marker" ]]; then
+          export CODEX_POSTMORTEM_HARDENING_OPT_IN=0
+        else
+          export CODEX_POSTMORTEM_HARDENING_OPT_IN=1
+        fi
 
         source ./Upkeeper
 

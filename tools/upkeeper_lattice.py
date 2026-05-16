@@ -1208,7 +1208,7 @@ def normalize_imported_stored_rel_path_payload(table: str, payload: dict[str, An
                 raise ValueError(f"empty_repo_relative_path:{column}")
             updated[column] = None
             continue
-        normalized = stored_rel_path(value)
+        normalized = stored_rel_path(external_rel_path(value))
         if normalized:
             updated[column] = normalized
             continue

@@ -71,7 +71,9 @@ test_install_and_doctor_client_link() {
     fail "installed symlink target mismatch: $link_target"
   assert_local_ignores "$repo"
 
-  PATH="$TEST_TMP_ROOT/bin:$PATH" "$PROJECT_ROOT/tools/doctor_upkeeper.sh" --repo="$repo" >/dev/null
+  PATH="$TEST_TMP_ROOT/bin:$PATH" \
+    CODEX_HOME="$TEST_TMP_ROOT/missing-codex-home" \
+    "$PROJECT_ROOT/tools/doctor_upkeeper.sh" --repo="$repo" >/dev/null
   "$PROJECT_ROOT/tools/install_client_link.sh" --repo="$repo" >/dev/null
   [[ -L "$repo/Upkeeper.sh" ]] || fail "idempotent reinstall removed symlink"
 }

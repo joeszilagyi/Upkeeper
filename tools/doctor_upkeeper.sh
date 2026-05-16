@@ -22,6 +22,54 @@ Checks:
 EOF
 }
 
+doctor_write_quota_snapshot() {
+  local session_file="$1"
+  local model="$2"
+
+  python3 - "$session_file" "$model" <<'PY'
+import json
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+model = sys.argv[2]
+path.parent.mkdir(parents=True, exist_ok=True)
+now = int(time.time())
+event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
+rows = [
+    {"type": "turn_context", "payload": {"model": model}},
+    {
+        "timestamp": event_timestamp,
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "rate_limits": {
+                "limit_id": f"doctor-{model}",
+                "limit_name": f"{model} doctor",
+                "plan_type": "doctor",
+                "rate_limit_reached_type": None,
+                "primary": {
+                    "used_percent": 1.0,
+                    "window_minutes": 300,
+                    "resets_at": now + 3600,
+                },
+                "secondary": {
+                    "used_percent": 1.0,
+                    "window_minutes": 10080,
+                    "resets_at": now + 86400,
+                },
+            },
+        },
+    },
+]
+with path.open("w", encoding="utf-8") as handle:
+    for row in rows:
+        print(json.dumps(row, separators=(",", ":")), file=handle)
+PY
+}
+
 REPO_ARG="."
 LINK_NAME="$UPKEEPER_CLIENT_LINK_DEFAULT_NAME"
 SKIP_DEPS=0
@@ -95,9 +143,14 @@ if [[ "$SKIP_DRY_RUN" != "1" ]]; then
   trap 'rm -r "$DOCTOR_TMP_DIR" 2>/dev/null || true' EXIT
   DOCTOR_STDOUT="$DOCTOR_TMP_DIR/stdout.txt"
   DOCTOR_STDERR="$DOCTOR_TMP_DIR/stderr.txt"
+  DOCTOR_CODEX_HOME="$DOCTOR_TMP_DIR/codex-home"
+  DOCTOR_MODEL="${CODEX_MODEL:-gpt-5.3-codex-spark}"
+  doctor_write_quota_snapshot "$DOCTOR_CODEX_HOME/sessions/2026/05/07/fake-session.jsonl" "$DOCTOR_MODEL"
   (
     cd "$REPO_ROOT"
     UPKEEPER_DRY_RUN=1 \
+      CODEX_HOME="$DOCTOR_CODEX_HOME" \
+      CODEX_MODEL="$DOCTOR_MODEL" \
       CODEX_QUOTA_GUARDRAIL_BYPASS=1 \
       CODEX_QUOTA_COOLDOWN_BYPASS=1 \
       UPKEEPER_PRECONTACT_BACKUP_MODE=off \

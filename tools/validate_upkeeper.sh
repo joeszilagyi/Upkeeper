@@ -1213,6 +1213,8 @@ check_client_link_tools_contract() {
     fail "doctor helper does not enforce dry-run startup"
   grep -Fq "CODEX_QUOTA_GUARDRAIL_BYPASS=1" tools/doctor_upkeeper.sh ||
     fail "doctor helper does not keep dry-run quota-free"
+  grep -Fq 'CODEX_HOME="$DOCTOR_CODEX_HOME"' tools/doctor_upkeeper.sh ||
+    fail "doctor helper does not isolate dry-run quota evidence"
   grep -Fq "UPKEEPER_PRECONTACT_BACKUP_MODE=off" tools/doctor_upkeeper.sh ||
     fail "doctor helper does not keep link diagnostics out of backup custody"
 }

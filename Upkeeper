@@ -120,6 +120,97 @@ PY
   return 1
 }
 
+upkeeper_config_trim_whitespace() {
+  local value="$1"
+
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+upkeeper_config_safe_value_expr() {
+  local expr="$1"
+  local context="$2"
+
+  case "$expr" in
+    *$'\n'*|*$'\r'*|*'`'*|*'$('*|*';'*|*'&'*|*'|'*|*'<'*|*'>'*|*'\\'*|*'"'*|*':='*)
+      upkeeper_config_fail "unsupported config expression in $context"
+      ;;
+  esac
+}
+
+upkeeper_config_expand_safe_value() {
+  local expr="$1"
+  local context="$2"
+  local expanded=""
+
+  upkeeper_config_safe_value_expr "$expr" "$context"
+  eval "expanded=\"$expr\"" || upkeeper_config_fail "unable to expand config expression in $context"
+  printf '%s' "$expanded"
+}
+
+upkeeper_config_parse_assignment_value() {
+  local raw_value="$1"
+  local context="$2"
+
+  if [[ "$raw_value" =~ ^\"(.*)\"$ ]]; then
+    upkeeper_config_expand_safe_value "${BASH_REMATCH[1]}" "$context"
+    return 0
+  fi
+  if [[ "$raw_value" =~ ^\'(.*)\'$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  upkeeper_config_expand_safe_value "$raw_value" "$context"
+}
+
+upkeeper_load_assignment_file() {
+  local file_path="$1"
+  local file_label="$2"
+  local line=""
+  local trimmed=""
+  local value_context=""
+  local line_number=0
+  local variable_name=""
+  local raw_value=""
+  local parsed_value=""
+  local export_requested="0"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line_number=$((line_number + 1))
+    trimmed="$(upkeeper_config_trim_whitespace "$line")"
+    [[ -z "$trimmed" || "${trimmed:0:1}" == "#" ]] && continue
+
+    value_context="$file_label line=$line_number path=$file_path"
+    if [[ "$trimmed" =~ ^:[[:space:]]*\"\$\{([A-Za-z_][A-Za-z0-9_]*)\:\=(.*)\}\"[[:space:]]*$ ]]; then
+      variable_name="${BASH_REMATCH[1]}"
+      raw_value="${BASH_REMATCH[2]}"
+      if ! [[ -v "$variable_name" ]] || [[ -z "${!variable_name-}" ]]; then
+        parsed_value="$(upkeeper_config_parse_assignment_value "$raw_value" "$value_context")"
+        printf -v "$variable_name" '%s' "$parsed_value"
+      fi
+      continue
+    fi
+
+    export_requested="0"
+    if [[ "$trimmed" =~ ^export[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      export_requested="1"
+      variable_name="${BASH_REMATCH[1]}"
+      raw_value="${BASH_REMATCH[2]}"
+    elif [[ "$trimmed" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      variable_name="${BASH_REMATCH[1]}"
+      raw_value="${BASH_REMATCH[2]}"
+    else
+      upkeeper_config_fail "unsupported config syntax in $file_label line=$line_number path=$file_path"
+    fi
+
+    parsed_value="$(upkeeper_config_parse_assignment_value "$raw_value" "$value_context")"
+    printf -v "$variable_name" '%s' "$parsed_value"
+    [[ "$export_requested" == "1" ]] && export "$variable_name"
+  done < "$file_path"
+}
+
 upkeeper_config_assert_trusted_path() {
   local config_path="$1"
   local reject_group_writable="${2:-1}"
@@ -203,8 +294,7 @@ load_upkeeper_config_file() {
   UPKEEPER_CONFIG_LOADED="1"
   UPKEEPER_CONFIG_SOURCE="$config_path"
   UPKEEPER_CONFIG_SOURCE_HASH="$(upkeeper_config_content_hash "$config_path" || printf 'unknown')"
-  # shellcheck source=/dev/null
-  source "$config_path"
+  upkeeper_load_assignment_file "$config_path" "config file"
 }
 
 load_upkeeper_local_env_file() {
@@ -225,8 +315,7 @@ load_upkeeper_local_env_file() {
   UPKEEPER_LOCAL_ENV_LOADED="1"
   UPKEEPER_LOCAL_ENV_SOURCE="$local_env_path"
   UPKEEPER_LOCAL_ENV_SOURCE_HASH="$(upkeeper_config_content_hash "$local_env_path" || printf 'unknown')"
-  # shellcheck source=/dev/null
-  source "$local_env_path"
+  upkeeper_load_assignment_file "$local_env_path" "local env file"
 }
 
 load_fallback_cycle_contract() {
@@ -4792,6 +4881,7 @@ cycle_start_log_message() {
   fields+=("verbose_metadata=$(truthy_as_int "${UPKEEPER_VERBOSE_METADATA:-0}")")
   fields+=("execution_origin=$(shell_quote "$CODEX_EXECUTION_ORIGIN")")
   fields+=("config_loaded=$UPKEEPER_CONFIG_LOADED")
+  fields+=("local_env_loaded=$UPKEEPER_LOCAL_ENV_LOADED")
   fields+=("model=$(shell_quote "$CODEX_MODEL")")
   fields+=("effort=$(shell_quote "$CODEX_REASONING_EFFORT")")
   fields+=("bug_report_only=$(truthy_as_int "${CODEX_BUG_REPORT_ONLY:-0}")")
@@ -4823,6 +4913,8 @@ cycle_start_log_message() {
     fields+=("loop_parent_override=$loop_parent_override")
     fields+=("config_file=$(shell_quote "$UPKEEPER_CONFIG_SOURCE")")
     fields+=("config_file_hash=$(shell_quote "${UPKEEPER_CONFIG_SOURCE_HASH:-none}")")
+    fields+=("local_env_file=$(shell_quote "$UPKEEPER_LOCAL_ENV_SOURCE")")
+    fields+=("local_env_file_hash=$(shell_quote "${UPKEEPER_LOCAL_ENV_SOURCE_HASH:-none}")")
     fields+=("mode=$(shell_quote "$CODEX_MODE_STRING")")
     fields+=("model_override=$(shell_quote "${CODEX_MODEL_OVERRIDE_SPEC:-none}")")
     fields+=("model_override_applied=$CODEX_MODEL_OVERRIDE_APPLIED")
@@ -4855,6 +4947,7 @@ cycle_start_log_message() {
     fields+=("parent_process_hash=$(shell_quote "$(cycle_start_process_hash "$direct_parent_pid" "$direct_parent_comm" "$direct_parent_start_fingerprint")")")
     fields+=("loop_parent_process_hash=$(shell_quote "$(cycle_start_process_hash "$loop_parent_pid" "$loop_parent_comm" "$loop_parent_start_fingerprint")")")
     fields+=("config_file_hash=$(shell_quote "${UPKEEPER_CONFIG_SOURCE_HASH:-$(cycle_start_metadata_hash "$UPKEEPER_CONFIG_SOURCE")}")")
+    fields+=("local_env_file_hash=$(shell_quote "${UPKEEPER_LOCAL_ENV_SOURCE_HASH:-$(cycle_start_metadata_hash "$UPKEEPER_LOCAL_ENV_SOURCE")}")")
     fields+=("target_file_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_TARGET_FILE:-none}")")")
     fields+=("target_root_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_TARGET_ROOT:-none}")")")
     fields+=("issue_priority_labels_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_ISSUE_PRIORITY_LABELS:-none}")")")

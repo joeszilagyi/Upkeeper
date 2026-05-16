@@ -305,8 +305,8 @@ pushes to `main`. The workflow installs required tools including `jq` and
 
 - docs-only changes: `tools/check_public_docs.sh --quick` plus
   `tools/validate_upkeeper.sh --smoke`
-- broader changes: shell syntax checks, `tests/*.bash`,
-  `tools/check_public_docs.sh --quick`, and
+- broader changes: shell syntax checks, unit tests invoked with Bash from
+  `tests/*.bash`, `tools/check_public_docs.sh --quick`, and
   `tools/validate_upkeeper.sh --full`
 
 It does not launch real Codex backend work and does not upload runtime

@@ -338,6 +338,27 @@ check_syntax() {
   bash -n orchestration/*.sh
 }
 
+check_test_invocation_mode_contract() {
+  local bad_modes
+
+  log "checking test invocation mode contract"
+  bad_modes="$(
+    find tests -maxdepth 1 -type f -name '*.bash' -perm /111 -print |
+      sort
+  )"
+  [[ -z "$bad_modes" ]] ||
+    fail "tests/*.bash must be non-executable and invoked with bash: $bad_modes"
+
+  grep -Fq 'bash "$test_script"' .github/workflows/ci.yml ||
+    fail "CI no longer invokes tests through bash"
+  grep -Fq 'unit tests invoked with Bash from' README.md ||
+    fail "README no longer documents Bash-invoked tests"
+  grep -Fq 'for test_script in tests/*.bash; do bash "$test_script"; done' docs/dependencies.md ||
+    fail "dependencies docs no longer show Bash-invoked tests"
+  grep -Fq 'for test_script in tests/*.bash; do bash "$test_script"; done' AGENTS.md ||
+    fail "agent contract no longer shows Bash-invoked tests"
+}
+
 check_backlog_launcher_contract() {
   local temp_dir status
 
@@ -3625,6 +3646,7 @@ run_check default_prompt_target_isolation_contract check_default_prompt_target_i
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
+run_check test_invocation_mode_contract check_test_invocation_mode_contract
 run_check wrapper_contract_tests check_wrapper_contract_tests
 run_check public_docs_policy check_public_docs_policy
 run_check private_artifact_umask_contract check_private_artifact_umask_contract

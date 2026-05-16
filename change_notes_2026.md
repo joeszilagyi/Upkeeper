@@ -36,6 +36,10 @@ Version numbering note:
 	1. Added a reusable `tools/check_upkeeper_log_invariants.py` checker for wrapper `cycle.start`, `run.finish`, and `cycle.exit` evidence.
 	2. Added the first no-quota full-validation fault-injection scenarios for missing review-module prompts, fake backends that exit zero with empty output, stale non-empty active locks, and missing `cycle.exit` log evidence.
 
+2026-05-15: fault-injection injector catalog:
+	1. Documented the P31 injector catalog, flakiness bans, and the boundary between focused fault-injection scenarios and the multi-repo stress corpus.
+	2. Extended validator coverage so the P31 prompt, Scenario registry, and stress-corpus docs keep the required control/injection/recovery, oracle, not-applicable, and boundary terms.
+
 2026-05-15: startup anomaly watch summary:
 	1. Startup anomaly scans now emit one `previous_run.anomaly_summary` warning for ordinary terminal/watch output instead of replaying every prior anomaly as a warning burst.
 	2. Per-anomaly `previous_run.anomaly_detail` records are still preserved in local logs and prompt context, and diagnostic terminal modes can still surface the details directly.

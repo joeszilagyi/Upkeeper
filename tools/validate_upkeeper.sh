@@ -649,6 +649,14 @@ check_fault_injection_registry_contract() {
   [[ -s "$registry_path" ]] || fail "fault-injection scenario registry is missing or empty"
   grep -Fq "docs/fault-injection-scenarios.md" README.md || fail "README missing fault-injection registry link"
   grep -Fq "docs/fault-injection-scenarios.md" prompts/p31-fault-injection-review.md || fail "P31 prompt missing fault-injection registry link"
+  grep -Fq "## Injector Catalog" "$registry_path" || fail "fault-injection registry missing injector catalog"
+  grep -Fq "## Flakiness Bans And Restrictions" "$registry_path" || fail "fault-injection registry missing flakiness rules"
+  grep -Fq "## Injector Catalog" prompts/p31-fault-injection-review.md || fail "P31 prompt missing injector catalog"
+  grep -Fq "## Flakiness Bans And Restrictions" prompts/p31-fault-injection-review.md || fail "P31 prompt missing flakiness rules"
+  grep -Fq "P31: not applicable" prompts/p31-fault-injection-review.md || fail "P31 prompt missing not-applicable line"
+  grep -Fq "## Fault-Injection Boundary" docs/stress-corpus.md || fail "stress corpus docs missing fault-injection boundary"
+  grep -Fq "Scenario registry" docs/stress-corpus.md || fail "stress corpus docs missing scenario registry boundary"
+  grep -Fq "Oracle classes" docs/stress-corpus.md || fail "stress corpus docs missing oracle classes boundary"
 
   python3 - "$registry_path" <<'PY' || fail "fault-injection scenario registry contract failed"
 import re
@@ -762,6 +770,8 @@ if missing_surfaces:
 for required_section in [
     "## Required Columns",
     "## Priority Fields",
+    "## Injector Catalog",
+    "## Flakiness Bans And Restrictions",
     "## Initial Matrix",
     "## Implemented Local Scenarios",
     "## Lattice Import Naming",
@@ -769,7 +779,7 @@ for required_section in [
     if required_section not in text:
         raise SystemExit(f"missing section: {required_section}")
 
-for required_term in ["Control run", "Injection run", "Recovery run", "Oracle classes"]:
+for required_term in ["Control run", "Injection run", "Recovery run", "Oracle classes", "Scenario registry"]:
     if required_term not in text:
         raise SystemExit(f"missing implemented scenario term: {required_term}")
 PY

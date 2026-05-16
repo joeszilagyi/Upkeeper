@@ -6,6 +6,9 @@ surface, not an executable harness. Rows may start as `deferred`, but each row
 must keep a stable id and enough structure for a future test, stress-corpus
 case, or Lattice import to consume without guessing.
 
+The Scenario registry is the binding naming surface for proposed, implemented,
+rejected, and retired P31 fault-injection scenarios.
+
 Stable ids use `FI-###` and never get reused. If a scenario is replaced, keep
 the original id with `priority=retired` and add a new row for the replacement.
 
@@ -35,6 +38,56 @@ the original id with `priority=retired` and add a new row for the replacement.
 - `priority`: `high`, `medium`, `low`, `deferred`, or `retired`. A scenario is
   usually high priority when severity is high, detectability is low, and fixture
   cost is low.
+
+## Injector Catalog
+
+P31 scenarios should use deterministic local injectors. These are the approved
+starting mechanisms:
+
+- Temp implementation tree: copy the central wrapper, modules, prompts, and
+  minimum docs into a private temp checkout, then remove or corrupt one fixture
+  surface.
+- Temp client repo: create a tiny Git repository that invokes the central
+  wrapper through a local symlink.
+- Fake `codex` in temp `PATH`: shadow backend execution without real Codex or
+  quota spend.
+- Fake `CODEX_HOME`: provide controlled session JSONL and isolate backend state.
+- Fake runtime dirs: set temp transcript, active-lock, health, startup-gate,
+  queue, postmortem, and obligation paths.
+- Directory-where-file-expected: replace an expected file with a directory to
+  prove path handling fails closed.
+- Empty file: provide a zero-byte transcript, prompt, state, or marker file.
+- Malformed file: provide syntactically invalid JSONL, state, marker, config,
+  or summary input.
+- Invalid env/config: set unsupported mode values, unsafe paths, or invalid
+  toggles.
+- Crafted final message: write controlled final-response text with or without
+  status markers.
+- Crafted transcript: feed parser/filter checks with known transcript lines.
+- Git temp repo: create tracked, untracked, ignored, symlink, dirty, rename, or
+  missing-file states without touching the real checkout.
+- Shell function override inside helper-level sourced tests: replace a narrow
+  helper dependency while testing sourced functions, not the whole wrapper.
+
+## Flakiness Bans And Restrictions
+
+Do not accept a P31 scenario that depends on any of these as the only proof:
+
+- `chmod` unreadable behavior when validation may run as root.
+- Uncontrolled sleep races or timing assumptions without a deterministic
+  heartbeat/state oracle.
+- Real `/proc` PID reuse assumptions.
+- Real disk-full behavior.
+- Real network access.
+- Real Codex execution.
+- Real quota exhaustion.
+- Real user `CODEX_HOME`.
+- Real `screen` sessions in quick mode.
+- Unbounded random mutation or fuzzing.
+- Mutation testing against tracked source.
+
+Restricted mechanisms need an explicit reason, bounded runtime, and a cleanup or
+recovery oracle before they can be promoted out of `deferred`.
 
 ## Initial Matrix
 

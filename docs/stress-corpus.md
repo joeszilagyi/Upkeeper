@@ -39,6 +39,25 @@ real Codex work.
   behind explicit opt-in commands.
 - Preserve evidence from failed corpus jobs in the printed temp directory.
 
+## Fault-Injection Boundary
+
+P31 fault injection and the stress corpus are related, but they own different
+jobs:
+
+- Fault-injection scenarios own focused single-surface control, injection, and
+  recovery proof. They use the Scenario registry in
+  [docs/fault-injection-scenarios.md](fault-injection-scenarios.md), declare
+  Oracle classes, and must remain runnable without the full corpus.
+- The stress corpus owns multi-repo shape coverage: symlinked clients, language
+  layouts, ignored/generated paths, dirty worktrees, terminal modes, and parser
+  evidence across representative repositories.
+- Corpus scenarios may reference stable `FI-###` ids when they exercise a
+  registered fault surface, but the registry remains the primary source for
+  fault-injection scenario ids and oracle expectations.
+- The corpus must not become the only way to run a focused fault-injection
+  scenario. A single-surface injected fault should still have a direct validator
+  or test entry point.
+
 ## Current Local Shape
 
 The current harness generates this temp layout:

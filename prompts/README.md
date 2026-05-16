@@ -16,6 +16,14 @@ Tracked prompts:
 - [`p29-reuse-harvesting-review.md`](p29-reuse-harvesting-review.md) - P29 opt-in review module for extracting bounded reusable helpers, fixtures, prompt language, docs, and validation patterns.
 - [`p30-stark-protocol-review.md`](p30-stark-protocol-review.md) - P30 opt-in review module for permanent hardening and non-regression barriers.
 
+Numbering compatibility:
+
+- P29 remains the public reuse-harvesting review module and its aliases keep
+  that meaning.
+- P30 remains the Stark Protocol permanent-hardening module.
+- Fault-injection review is reserved for future P31 work, or for a later named
+  module with an explicit non-breaking alias plan.
+
 Guidelines:
 
 - Keep one prompt per file.

@@ -44,21 +44,25 @@ refresh_worktree_counts() {
 write_git_status_snapshot_json() {
   local output_file="$1"
   local hmac_key
+  ensure_run_tmp_dir
   hmac_key="$(worktree_redaction_key_material)"
   # Persist redacted path identities because the gate only needs stable joins, not raw filenames.
-  python3 - "$ROOT_DIR" "$output_file" "$hmac_key" <<'PY'
+  python3 - "$ROOT_DIR" "$output_file" "$RUN_TMP_DIR" "$hmac_key" <<'PY'
 import hashlib
 import hmac
 import json
+import os
 import re
 import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 root = Path(sys.argv[1])
 output = Path(sys.argv[2])
-hmac_key = sys.argv[3].encode("utf-8", "surrogateescape")
+run_tmp_dir = Path(sys.argv[3]).resolve()
+hmac_key = sys.argv[4].encode("utf-8", "surrogateescape")
 
 allowed_exact = {
     "Upkeeper",
@@ -97,6 +101,27 @@ def git_text(args):
         )
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def validated_output_path(path):
+    try:
+        resolved = path.resolve(strict=False)
+    except OSError as exc:
+        fail(f"snapshot output path is unreadable: {path} ({exc})")
+    try:
+        resolved.relative_to(run_tmp_dir)
+    except ValueError:
+        fail(f"snapshot output path escapes run temp directory: {path}")
+
+    parent = resolved.parent
+    if not parent.is_dir():
+        fail(f"snapshot output parent directory is unavailable: {parent}")
+    return resolved
 
 
 def worktree_hash(rel_path):
@@ -170,7 +195,36 @@ def snapshot_record(rel_path, status_code):
     }
 
 
+def atomic_write_json(path, payload):
+    temp_fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(temp_fd, "w", encoding="utf-8", newline="") as handle:
+            json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+        try:
+            parent_fd = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    except BaseException:
+        try:
+            Path(temp_name).unlink()
+        except OSError:
+            pass
+        raise
+
+
 raw = git(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+output = validated_output_path(output)
 parts = raw.decode("utf-8", "surrogateescape").split("\0")
 items = {
     "__meta__": {
@@ -199,7 +253,7 @@ while i < len(parts):
             if old_path:
                 items["__paths__"].setdefault(path_hmac(old_path), snapshot_record(old_path, "old"))
 
-output.write_text(json.dumps(items, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+atomic_write_json(output, items)
 PY
 }
 

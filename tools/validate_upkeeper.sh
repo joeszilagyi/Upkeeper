@@ -1138,6 +1138,46 @@ check_release_readiness_docs_contract() {
     fail "known issues missing major risk section"
 }
 
+check_governance_docs_contract() {
+  log "checking governance docs contract"
+
+  for doc_path in \
+    docs/ownership.md \
+    docs/decisions/README.md \
+    docs/risk-register.md; do
+    [[ -s "$doc_path" ]] || fail "governance doc missing or empty: $doc_path"
+    grep -Fq "$doc_path" README.md || fail "README missing governance doc link: $doc_path"
+  done
+  [[ -s docs/decisions/0001-upkeeper-baseline-contracts.md ]] ||
+    fail "governance decision missing or empty: docs/decisions/0001-upkeeper-baseline-contracts.md"
+  grep -Fq "0001-upkeeper-baseline-contracts.md" docs/decisions/README.md ||
+    fail "decision log index missing baseline decision link"
+
+  grep -Fq "Product behavior" docs/ownership.md || fail "ownership doc missing product behavior area"
+  grep -Fq "Shell architecture" docs/ownership.md || fail "ownership doc missing shell architecture area"
+  grep -Fq "Prompts and review modules" docs/ownership.md || fail "ownership doc missing prompt area"
+  grep -Fq "Validation" docs/ownership.md || fail "ownership doc missing validation area"
+  grep -Fq "Security and privacy" docs/ownership.md || fail "ownership doc missing security area"
+  grep -Fq "Compatibility" docs/ownership.md || fail "ownership doc missing compatibility area"
+  grep -Fq "Releases" docs/ownership.md || fail "ownership doc missing release area"
+  grep -Fq "Shell-sourced config is trusted local input only" docs/decisions/0001-upkeeper-baseline-contracts.md ||
+    fail "baseline decision missing trusted config contract"
+  grep -Fq "central-first symlink model" docs/decisions/0001-upkeeper-baseline-contracts.md ||
+    fail "baseline decision missing symlink model"
+  grep -Fq "Validation does not run real Codex backend work by default" docs/decisions/0001-upkeeper-baseline-contracts.md ||
+    fail "baseline decision missing no-backend validation contract"
+  grep -Fq "Local runtime evidence is ignored by Git" docs/decisions/0001-upkeeper-baseline-contracts.md ||
+    fail "baseline decision missing runtime evidence contract"
+  grep -Fq "Fallback and postmortem" docs/decisions/0001-upkeeper-baseline-contracts.md ||
+    fail "baseline decision missing fallback/postmortem contract"
+  grep -Fq "Quota snapshots are parsed from local" docs/decisions/0001-upkeeper-baseline-contracts.md ||
+    fail "baseline decision missing quota snapshot contract"
+  grep -Fq "Lattice integrity blockers" docs/risk-register.md ||
+    fail "risk register missing Lattice integrity risk"
+  grep -Fq "Parallel worker collisions" docs/risk-register.md ||
+    fail "risk register missing parallel worker risk"
+}
+
 check_validation_mode_boundary_contract() {
   log "checking validation mode boundary contract"
 
@@ -4141,6 +4181,7 @@ run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
 run_check dependency_guidance_contract check_dependency_guidance_contract
 run_check release_readiness_docs_contract check_release_readiness_docs_contract
+run_check governance_docs_contract check_governance_docs_contract
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
 run_check test_invocation_mode_contract check_test_invocation_mode_contract
 run_check wrapper_contract_tests check_wrapper_contract_tests

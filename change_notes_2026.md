@@ -48,6 +48,10 @@ Version numbering note:
 	1. Added first-class product requirements, roadmap, release checklist, and known-issues docs so release decisions are visible from tracked source.
 	2. Linked the release-readiness docs from README and added validator coverage so the entry points remain present.
 
+2026-05-15: governance docs:
+	1. Added tracked ownership, decision-log, and risk-register docs for Upkeeper product behavior, shell architecture, prompts, validation, security, compatibility, releases, baseline contracts, and high-impact risks.
+	2. Linked the governance entry points from README and added validator coverage so these project-control surfaces stay discoverable.
+
 2026-05-15: startup anomaly watch summary:
 	1. Startup anomaly scans now emit one `previous_run.anomaly_summary` warning for ordinary terminal/watch output instead of replaying every prior anomaly as a warning burst.
 	2. Per-anomaly `previous_run.anomaly_detail` records are still preserved in local logs and prompt context, and diagnostic terminal modes can still surface the details directly.

@@ -1928,7 +1928,10 @@ upkeeper_materialize_inline_prompt_file() {
   local prompt_path=""
 
   [[ -n "${INLINE_PROMPT:-}" ]] || return 0
-  [[ -z "${PROMPT_FILE:-}" ]] || return 0
+  if [[ -n "${PROMPT_FILE:-}" ]]; then
+    unset INLINE_PROMPT UPKEEPER_PROMPT
+    return 0
+  fi
 
   ensure_run_tmp_dir
   prompt_path="$(run_mktemp inline-prompt)" || die "failed to allocate private inline prompt file"
@@ -1942,7 +1945,7 @@ upkeeper_materialize_inline_prompt_file() {
   fi
 
   PROMPT_FILE="$prompt_path"
-  INLINE_PROMPT=""
+  unset INLINE_PROMPT UPKEEPER_PROMPT
   log_line "INFO" "prompt.inline_materialized execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=$(shell_quote "$PROMPT_FILE") content_hmac=$(file_blob_hash "$PROMPT_FILE")"
 }
 
@@ -2785,6 +2788,8 @@ $runner_env_lines  CODEX_MODEL=$model_q \
   CODEX_DISABLE_PARENT_STOP=1 \
   CODEX_GUARDRAIL_STOP_EXIT_CODE=9 \
   CODEX_EXECUTION_ORIGIN=screen \
+  INLINE_PROMPT='' \
+  UPKEEPER_PROMPT='' \
   "\$SELF_INVOKE_PATH" $prompt_arg_snippet >>"\$TRANSCRIPT_FILE" 2>&1
   rc=\$?
   stop_child_heartbeat

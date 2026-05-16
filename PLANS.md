@@ -3,6 +3,37 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Review Module Numbering Compatibility
+
+Status: completed
+
+Goal:
+Fix issue `#81` by documenting that P29 remains reuse harvesting, P30 remains
+Stark Protocol hardening, and future fault-injection work should use P31 or a
+new non-breaking named module instead of reusing the public P29 flag.
+
+Constraints:
+- Preserve existing `--p29`, `--review-module=p29`, and reuse-harvesting aliases.
+- Do not implement the fault-injection module in this decision patch.
+- Keep README, operator guide, prompt index, compatibility docs, validation,
+  and release notes aligned.
+
+Files likely touched:
+- `README.md`
+- `docs/compatibility.md`
+- `docs/scripts/upkeeper.md`
+- `prompts/README.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `./Upkeeper --help`
+- `git diff --check`
+
 ## Wrapper Contract Focused Tests
 
 Status: completed

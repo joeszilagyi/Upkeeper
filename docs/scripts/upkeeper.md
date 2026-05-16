@@ -357,6 +357,9 @@ Prompt behavior:
     validation patterns, and local assets, and
     `prompts/p30-stark-protocol-review.md` for permanent hardening and
     non-regression barriers after useful failures or fragile recovery paths.
+    Fault-injection review is reserved for future P31 work or a later named
+    module with an explicit non-breaking alias plan; P29 remains reuse
+    harvesting and P30 remains Stark Protocol hardening.
   - --config-file=PATH selects a shell-compatible config file for this invoked
     cycle. Use the equals form; spaced form is rejected.
   - --no-config disables the default config for this invoked cycle.
@@ -376,6 +379,8 @@ Prompt behavior:
     for this invoked cycle.
   - --review-module=p30 appends the central P30 Stark Protocol permanent
     hardening review module for this invoked cycle.
+  - Fault-injection review is reserved for future P31 work rather than
+    repurposing the public P29 reuse-harvesting flag.
   - --review-modules=p24,p25,p26,p27,p28,p29,p30 appends multiple modules in a single flag;
     repeated --review-module flags are also accepted and duplicate modules are ignored.
   - --p24, --p25, --p26, --p27, --p28, --p29, and --p30 are shorthand aliases for the corresponding review modules.

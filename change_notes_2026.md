@@ -20,6 +20,10 @@ Version numbering note:
 	1. Standardized tracked `tests/*.bash` files as non-executable test fixtures invoked through `bash`, matching CI, validation docs, and the agent contract.
 	2. Added validator coverage so future executable-bit drift in focused Bash tests fails locally instead of leaving fresh checkouts ambiguous.
 
+2026-05-15: review-module numbering compatibility:
+	1. Documented that P29 remains the public reuse-harvesting module and P30 remains Stark Protocol hardening; fault-injection review is reserved for future P31 work or a later named module with a non-breaking alias plan.
+	2. Added validation coverage so README, prompt index, compatibility docs, and the operator guide keep that numbering decision aligned.
+
 2026-05-15: startup anomaly watch summary:
 	1. Startup anomaly scans now emit one `previous_run.anomaly_summary` warning for ordinary terminal/watch output instead of replaying every prior anomaly as a warning burst.
 	2. Per-anomaly `previous_run.anomaly_detail` records are still preserved in local logs and prompt context, and diagnostic terminal modes can still surface the details directly.

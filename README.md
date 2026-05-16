@@ -735,6 +735,11 @@ failure, near miss, or fragile recovery path should leave a guard, deterministic
 validation, documented invariant, automation obligation, or explicit blocked
 follow-up so the same weakness cannot silently recur.
 
+Fault-injection review is reserved for future P31 work, or for a later named
+module with a non-breaking alias plan. P29 remains the public reuse-harvesting
+contract and P30 remains Stark Protocol hardening; existing P29 aliases are not
+renamed or repurposed.
+
 ```sh
 ./Upkeeper --review-module=p24
 ./Upkeeper --review-module=p25
@@ -925,6 +930,8 @@ test loop does not spend cycles on known low-value or generated material.
   P29 review module for extracting bounded reusable project knowledge
 - [prompts/p30-stark-protocol-review.md](prompts/p30-stark-protocol-review.md):
   P30 review module for permanent hardening and non-regression barriers
+- Fault-injection review is reserved for future P31 work so P29 reuse
+  harvesting and P30 Stark Protocol aliases remain backward compatible.
 - [prompts/git_hard_clean.md](prompts/git_hard_clean.md): explicit branch and backup cleanup
   workflow notes
 - [templates/prompt-template.md](templates/prompt-template.md): starter format

@@ -347,6 +347,10 @@ CODEX_SCREEN_FALLBACK_CHILD_ID="${CODEX_SCREEN_FALLBACK_CHILD_ID:-}"
 CODEX_LOOP_PARENT_PID="${CODEX_LOOP_PARENT_PID:-}"
 CODEX_LOOP_PARENT_COMM="${CODEX_LOOP_PARENT_COMM:-}"
 CODEX_LOOP_PARENT_ARGS="${CODEX_LOOP_PARENT_ARGS:-}"
+if [[ -n "$CODEX_LOOP_PARENT_ARGS" ]]; then
+  # Do not preserve inherited parent argv text in the launcher environment.
+  CODEX_LOOP_PARENT_ARGS="redacted"
+fi
 CODEX_MODEL_OVERRIDE_SPEC=""
 CODEX_MODEL_OVERRIDE_APPLIED="0"
 CODEX_TARGET_FILE="${CODEX_TARGET_FILE:-$UPKEEPER_TARGET_FILE}"
@@ -4767,25 +4771,25 @@ main() {
   rotate_wrapper_log_if_needed
   refresh_worktree_counts
 
-  local direct_parent_pid direct_parent_comm direct_parent_args
+  local direct_parent_pid direct_parent_comm direct_parent_summary
   if details="$(direct_parent_details)"; then
-    IFS=$'\t' read -r direct_parent_pid direct_parent_comm direct_parent_args <<<"$details"
+    IFS=$'\t' read -r direct_parent_pid direct_parent_comm direct_parent_summary <<<"$details"
   else
     direct_parent_pid="unknown"
     direct_parent_comm="unknown"
-    direct_parent_args="unknown"
+    direct_parent_summary="unknown"
   fi
   local wrapper_start_fingerprint direct_parent_start_fingerprint
   wrapper_start_fingerprint="$(process_start_fingerprint "$$")"
   direct_parent_start_fingerprint="$(process_start_fingerprint "$direct_parent_pid")"
 
-  local loop_parent_pid loop_parent_comm loop_parent_args loop_parent_override
+  local loop_parent_pid loop_parent_comm loop_parent_summary loop_parent_override
   if details="$(parent_shell_details)"; then
-    IFS=$'\t' read -r loop_parent_pid loop_parent_comm loop_parent_args loop_parent_override <<<"$details"
+    IFS=$'\t' read -r loop_parent_pid loop_parent_comm loop_parent_summary loop_parent_override <<<"$details"
   else
     loop_parent_pid="unknown"
     loop_parent_comm="unknown"
-    loop_parent_args="unknown"
+    loop_parent_summary="unknown"
     loop_parent_override="0"
   fi
   local loop_parent_start_fingerprint

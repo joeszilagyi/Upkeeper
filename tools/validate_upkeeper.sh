@@ -641,6 +641,31 @@ check_prompt_template() {
   grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 }
 
+check_prompt_public_lint_contract() {
+  local prompt_path
+
+  log "checking public prompt lint contract"
+
+  for prompt_path in prompts/default-review.md prompts/caretaking_23_items.md; do
+    [[ -s "$prompt_path" ]] || fail "prompt missing or empty: $prompt_path"
+    if grep -Fq "Read this FULL prompt before starting in" "$prompt_path"; then
+      fail "prompt contains incomplete startup sentence: $prompt_path"
+    fi
+    if grep -Fq "It it oldest" "$prompt_path"; then
+      fail "prompt contains known oldest-selection typo: $prompt_path"
+    fi
+    if grep -Eq 'Random poo([^l]|$)' "$prompt_path"; then
+      fail "prompt contains known random-pool typo: $prompt_path"
+    fi
+    grep -Fq "Read this FULL prompt before starting." "$prompt_path" ||
+      fail "prompt missing corrected startup sentence: $prompt_path"
+    grep -Fq "Is it a script? Is it the oldest? It counts." "$prompt_path" ||
+      fail "prompt missing corrected oldest-selection wording: $prompt_path"
+    grep -Fq "Dependency audit        Manifest        Random pool" "$prompt_path" ||
+      fail "prompt missing corrected dependency-audit pool wording: $prompt_path"
+  done
+}
+
 check_fault_injection_registry_contract() {
   local registry_path
 
@@ -4215,6 +4240,7 @@ run_check syntax check_syntax
 run_check version_consistency check_version_consistency
 run_check module_map check_module_map
 run_check prompt_template check_prompt_template
+run_check prompt_public_lint_contract check_prompt_public_lint_contract
 run_check fault_injection_registry_contract check_fault_injection_registry_contract
 run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contract
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract

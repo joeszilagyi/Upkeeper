@@ -3,6 +3,31 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Prompt Rough Edge Lint
+
+Status: completed
+
+Goal:
+Fix issue `#91` by cleaning known public prompt rough edges and adding a
+deterministic banned-phrase guard.
+
+Constraints:
+- Keep the patch narrow to prompt wording and local validation.
+- Do not restructure the large prompt files in this pass.
+- Preserve prompt behavior while removing obvious incomplete/typo text.
+
+Files likely touched:
+- `prompts/default-review.md`
+- `prompts/caretaking_23_items.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Client Link Tools
 
 Status: completed

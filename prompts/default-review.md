@@ -1,5 +1,5 @@
 
-Read this FULL prompt before starting in
+Read this FULL prompt before starting.
 
 ABSOLUTE RULE -- NO SKIPPING SELECTED FILES
 
@@ -129,7 +129,7 @@ If every relevant file has been touched in the past 24 hours pick the oldest one
 
 Don't limit to just shell or just py. It may even be another language.
 
-Is it a script? It it oldest? It counts.
+Is it a script? Is it the oldest? It counts.
 
 Show us the epoch of the file but ALSO in human readable date/time for update
 
@@ -1575,7 +1575,7 @@ P12     DRY violations / copy-paste     Per file        Random pool
 P13     External call resilience        Per file        Random pool
 P14     Naming consistency      Per file        Random pool
 P15     Assumption documentation        Per file        Random pool
-P16     Dependency audit        Manifest        Random poo
+P16     Dependency audit        Manifest        Random pool
 P17     Atomicity and partial failure   Per file        Random pool
 P18     Concurrency and race conditions Per file        Random pool
 P19     Exit code and output contract   Per file        Random pool

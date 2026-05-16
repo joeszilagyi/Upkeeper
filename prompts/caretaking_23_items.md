@@ -2,7 +2,7 @@
 
 
 
-Read this FULL prompt before starting in
+Read this FULL prompt before starting.
 
 
 
@@ -136,7 +136,7 @@ Don't limit to just shell or just py. It may even be another language.
 
 
 
-Is it a script? It it oldest? It counts.
+Is it a script? Is it the oldest? It counts.
 
 
 
@@ -2553,7 +2553,7 @@ P14     Naming consistency      Per file        Random pool
 
 P15     Assumption documentation        Per file        Random pool
 
-P16     Dependency audit        Manifest        Random poo
+P16     Dependency audit        Manifest        Random pool
 
 P17     Atomicity and partial failure   Per file        Random pool
 
@@ -2572,5 +2572,4 @@ P23       Data contract and negative fixtures     Per file*        Random pool
 
 
 *P8: drop from random pool if the project has no test suite. P23 applies only to selected files that touch data or operator-input boundaries. P2 and P16: run on their own slower schedule, not in the per-file rotation.
-
 

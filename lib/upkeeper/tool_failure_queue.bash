@@ -362,7 +362,7 @@ def main() -> None:
             resolved_path = resolve_marker(marker_path, reason)
             print(f"action=resolved_same_run marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(resolved_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures={len(failures)} addressed_by_later_success=1")
         else:
-            print(f"action=open marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(marker_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures={len(failures)} addressed_by_later_success={1 if addressed_by_later_success else 0} kind={field(first['kind'])} exit_line={field(first['exit_line'])}")
+            print(f"action=open marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(marker_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures={len(failures)} addressed_by_later_success={1 if addressed_by_later_success else 0} kind={field(last_failure['kind'])} exit_line={field(last_failure['exit_line'])}")
         raise SystemExit(0)
 
     if status_marker == "WORK_DONE" and selected_marker_path.exists() and bug_report_only:

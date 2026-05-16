@@ -4116,6 +4116,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["review_summary_parsing"] = review_summary_probe
         cycle_finish_probe = probe_cycle_finish_target_mismatch()
         result["checks"]["cycle_finish_target_mismatch"] = cycle_finish_probe
+        report_only_cycle_probe = probe_cycle_finish_report_only_outcome()
+        result["checks"]["cycle_finish_report_only_outcome"] = report_only_cycle_probe
         change_note_ref_probe = probe_change_note_file_identity_validation()
         result["checks"]["change_note_file_identity_validation"] = change_note_ref_probe
         candidate_symlink_probe = probe_candidate_symlink_exclusion()
@@ -4126,6 +4128,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(cycle_finish_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(report_only_cycle_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not all(bool(item.get("ok")) for item in change_note_ref_probe.values()):
@@ -4898,6 +4903,89 @@ def probe_cycle_finish_target_mismatch() -> dict[str, Any]:
         "target_substituted_count": substituted_count,
         "rejected_event_kind": rejected["event_kind"] if rejected else None,
         "rejected_event_path": rejected["path"] if rejected else None,
+        "ok": ok,
+    }
+
+
+def probe_cycle_finish_report_only_outcome() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-cycle-finish-report-only-") as tmpdir:
+        root = Path(tmpdir)
+        selected_path = "tools/report-only.py"
+        try:
+            subprocess.run(
+                ["git", "init", "-q", str(root)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        (root / "tools").mkdir(parents=True, exist_ok=True)
+        (root / selected_path).write_text("print('report only')\n", encoding="utf-8")
+        review_path = root / "last-message.txt"
+        review_path.write_text(
+            "Selected file: `tools/report-only.py`\nREVIEWED_AND_REPORTED\n",
+            encoding="utf-8",
+        )
+        db_path = root / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True, create_parent=True, create_if_missing=True)
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+        finally:
+            conn.close()
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="wal",
+            allow_unsafe_db=True,
+            raw_storage_mode="minimal",
+            cycle_id="cycle-report-only",
+            run_hash="run-report-only",
+            status_marker="WORK_DONE",
+            review_outcome=None,
+            review_selected_path=None,
+            codex_exit=0,
+            wrapper_exit=0,
+            finish_reason="work_done",
+            finish_level="info",
+            codex_exec_started=1,
+            dry_run="1",
+            selected_path=selected_path,
+            last_message_file=str(review_path),
+            transcript_path=None,
+            compiled_prompt_path=None,
+            log_path=None,
+            snapshot_kind="after_codex",
+            end_epoch=1234567890,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            command_record_cycle_finish(args)
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True)
+        try:
+            cycle = conn.execute(
+                """
+                select status_marker, review_outcome, finish_reason, finish_level, selected_path
+                  from cycles
+                 where cycle_id=? and run_hash=?
+                """,
+                ("cycle-report-only", "run-report-only"),
+            ).fetchone()
+        finally:
+            conn.close()
+    ok = bool(cycle)
+    if cycle:
+        ok = ok and cycle["status_marker"] == "WORK_DONE"
+        ok = ok and cycle["review_outcome"] == "REVIEWED_AND_REPORTED"
+        ok = ok and cycle["finish_reason"] == "work_done"
+        ok = ok and cycle["finish_level"] == "info"
+        ok = ok and cycle["selected_path"] == selected_path
+    return {
+        "selected_path": selected_path,
+        "status_marker": cycle["status_marker"] if cycle else None,
+        "review_outcome": cycle["review_outcome"] if cycle else None,
+        "finish_reason": cycle["finish_reason"] if cycle else None,
+        "finish_level": cycle["finish_level"] if cycle else None,
+        "actual_selected_path": cycle["selected_path"] if cycle else None,
         "ok": ok,
     }
 

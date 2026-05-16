@@ -336,6 +336,12 @@ check_syntax() {
   bash -n tests/*.bash
   bash -n testruns/*.sh
   bash -n orchestration/*.sh
+  python3 - <<'PY'
+from pathlib import Path
+
+path = Path("tools/check_upkeeper_log_invariants.py")
+compile(path.read_text(encoding="utf-8"), str(path), "exec")
+PY
 }
 
 check_test_invocation_mode_contract() {
@@ -737,6 +743,17 @@ for row in rows:
         raise SystemExit(f"{scenario_id} has invalid priority: {row['priority']}")
     if "surface:" not in row["lattice_ready_tags"] or "status:" not in row["lattice_ready_tags"]:
         raise SystemExit(f"{scenario_id} lattice_ready_tags lack surface/status namespaces")
+    if "oracle:" not in row["lattice_ready_tags"]:
+        raise SystemExit(f"{scenario_id} lattice_ready_tags lack oracle namespace")
+
+covered_full = {
+    row["scenario_id"]
+    for row in rows
+    if "status:covered-by-full-validation" in row["lattice_ready_tags"]
+}
+for scenario_id in ["FI-020", "FI-021", "FI-022", "FI-023"]:
+    if scenario_id not in covered_full:
+        raise SystemExit(f"{scenario_id} must be marked covered by full validation")
 
 missing_surfaces = sorted(required_surfaces - seen_surfaces)
 if missing_surfaces:
@@ -746,10 +763,15 @@ for required_section in [
     "## Required Columns",
     "## Priority Fields",
     "## Initial Matrix",
+    "## Implemented Local Scenarios",
     "## Lattice Import Naming",
 ]:
     if required_section not in text:
         raise SystemExit(f"missing section: {required_section}")
+
+for required_term in ["Control run", "Injection run", "Recovery run", "Oracle classes"]:
+    if required_term not in text:
+        raise SystemExit(f"missing implemented scenario term: {required_term}")
 PY
 }
 
@@ -3788,6 +3810,261 @@ PY
   rm -r "$temp_dir"
 }
 
+check_upkeeper_log_invariants() {
+  python3 tools/check_upkeeper_log_invariants.py "$@"
+}
+
+write_fault_injection_fake_codex() {
+  local bin_dir="$1"
+
+  mkdir -p "$bin_dir"
+  cat >"$bin_dir/codex" <<'SH'
+#!/usr/bin/env bash
+mode="${UPKEEPER_FAKE_CODEX_MODE:-success}"
+out_file=""
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    -o)
+      out_file="${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+case "$mode" in
+  success)
+    if [[ -n "$out_file" ]]; then
+      printf 'UPKEEPER_STATUS: WORK_DONE\n' >"$out_file"
+    fi
+    printf 'UPKEEPER_STATUS: WORK_DONE\n'
+    exit 0
+    ;;
+  empty-zero)
+    if [[ -n "$out_file" ]]; then
+      : >"$out_file"
+    fi
+    exit 0
+    ;;
+  *)
+    printf 'unknown fake codex mode: %s\n' "$mode" >&2
+    exit 101
+    ;;
+esac
+SH
+  chmod +x "$bin_dir/codex"
+}
+
+prepare_fault_injection_wrapper_tree() {
+  local temp_dir="$1"
+
+  cp Upkeeper "$temp_dir/Upkeeper"
+  chmod +x "$temp_dir/Upkeeper"
+  cp -R lib "$temp_dir/lib"
+  cp -R prompts "$temp_dir/prompts"
+  mkdir -p "$temp_dir/docs/scripts"
+  cp docs/scripts/upkeeper.md "$temp_dir/docs/scripts/upkeeper.md"
+  git -C "$temp_dir" init -q
+  cat >"$temp_dir/tool.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'fixture\n'
+SH
+  chmod +x "$temp_dir/tool.sh"
+}
+
+run_fault_injection_dry_run() {
+  local fixture_dir="$1"
+  local phase="$2"
+  shift 2
+
+  (
+    cd "$fixture_dir"
+    CODEX_HOME="$fixture_dir/codex-home" \
+      CODEX_LOG_FILE="$fixture_dir/$phase.log" \
+      CODEX_TRANSCRIPT_DIR="$fixture_dir/transcripts" \
+      CODEX_ACTIVE_LOCK_DIR="$fixture_dir/active.lock" \
+      CODEX_WRAPPER_HEALTH_STATE_DIR="$fixture_dir/health" \
+      CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$fixture_dir/startup-gates" \
+      CODEX_TOOL_FAILURE_QUEUE_DIR="$fixture_dir/failures" \
+      CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+      CODEX_TERMINAL_VERBOSITY=quiet \
+      CODEX_MODEL=gpt-5.5 \
+      CODEX_REASONING_EFFORT=xhigh \
+      CODEX_FALLBACK_ENABLED=0 \
+      CODEX_FALLBACK_SCREEN_ENABLED=0 \
+      CODEX_POSTMORTEM_ENABLED=0 \
+      UPKEEPER_DRY_RUN=1 \
+      ./Upkeeper "$@" >"$fixture_dir/$phase.out" 2>"$fixture_dir/$phase.err"
+  )
+}
+
+run_fault_injection_fake_backend() {
+  local fixture_dir="$1"
+  local phase="$2"
+  local fake_mode="$3"
+  shift 3
+
+  PATH="$fixture_dir/bin:$PATH" \
+    UPKEEPER_FAKE_CODEX_MODE="$fake_mode" \
+    CODEX_HOME="$fixture_dir/codex-home" \
+    CODEX_LOG_FILE="$fixture_dir/$phase.log" \
+    CODEX_TRANSCRIPT_DIR="$fixture_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$fixture_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$fixture_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$fixture_dir/startup-gates" \
+    CODEX_TOOL_FAILURE_QUEUE_DIR="$fixture_dir/failures" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    "$ROOT_DIR/Upkeeper" "$@" >"$fixture_dir/$phase.out" 2>"$fixture_dir/$phase.err"
+}
+
+run_fault_injection_root_dry_run() {
+  local fixture_dir="$1"
+  local phase="$2"
+  shift 2
+
+  CODEX_HOME="$fixture_dir/codex-home" \
+    CODEX_LOG_FILE="$fixture_dir/$phase.log" \
+    CODEX_TRANSCRIPT_DIR="$fixture_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$fixture_dir/active.lock" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$fixture_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$fixture_dir/startup-gates" \
+    CODEX_TOOL_FAILURE_QUEUE_DIR="$fixture_dir/failures" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    UPKEEPER_DRY_RUN=1 \
+    "$ROOT_DIR/Upkeeper" "$@" >"$fixture_dir/$phase.out" 2>"$fixture_dir/$phase.err"
+}
+
+check_fault_injection_first_scenarios() {
+  local temp_dir fixture_dir rc lock_dir stale_epoch
+
+  log "checking first deterministic fault-injection scenarios"
+  temp_dir="$(mktemp -d /tmp/upkeeper-fault-injection.XXXXXX)"
+  chmod 700 "$temp_dir" 2>/dev/null || true
+
+  fixture_dir="$temp_dir/review-module-prompt"
+  mkdir -p "$fixture_dir"
+  chmod 700 "$fixture_dir" 2>/dev/null || true
+  prepare_fault_injection_wrapper_tree "$fixture_dir"
+  write_validation_quota_snapshot "$fixture_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
+
+  run_fault_injection_dry_run "$fixture_dir" control --target-file=tool.sh --review-module=p29
+  grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$fixture_dir/control.log" || fail "FI-020 control dry-run did not finish cleanly"
+  check_upkeeper_log_invariants "$fixture_dir/control.log" --scan "$fixture_dir/control.out" --scan "$fixture_dir/control.err"
+
+  rm "$fixture_dir/prompts/p29-reuse-harvesting-review.md"
+  set +e
+  run_fault_injection_dry_run "$fixture_dir" injection --target-file=tool.sh --review-module=p29
+  rc=$?
+  set -e
+  [[ "$rc" -eq 70 ]] || fail "FI-020 injection exited $rc, expected 70"
+  grep -Fq "review.module_prompt_missing module=p29" "$fixture_dir/injection.log" || fail "FI-020 did not log missing review module prompt"
+  grep -Fq "cycle.exit exit_code=70 reason=REVIEW_MODULE_PROMPT_MISSING codex_exec_started=0" "$fixture_dir/injection.log" || fail "FI-020 did not fail closed before backend launch"
+  check_upkeeper_log_invariants "$fixture_dir/injection.log" --scan "$fixture_dir/injection.out" --scan "$fixture_dir/injection.err"
+
+  cp "$ROOT_DIR/prompts/p29-reuse-harvesting-review.md" "$fixture_dir/prompts/p29-reuse-harvesting-review.md"
+  run_fault_injection_dry_run "$fixture_dir" recovery --target-file=tool.sh --review-module=p29
+  grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$fixture_dir/recovery.log" || fail "FI-020 recovery dry-run did not finish cleanly"
+  check_upkeeper_log_invariants "$fixture_dir/recovery.log" --scan "$fixture_dir/recovery.out" --scan "$fixture_dir/recovery.err"
+
+  fixture_dir="$temp_dir/fake-backend-empty-zero"
+  mkdir -p "$fixture_dir"
+  chmod 700 "$fixture_dir" 2>/dev/null || true
+  write_fault_injection_fake_codex "$fixture_dir/bin"
+  write_validation_quota_snapshot "$fixture_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
+
+  run_fault_injection_fake_backend "$fixture_dir" control success --target-file=launcher_examples/spark_5.3_burn_out_xhigh.sh
+  grep -Fq "cycle.exit exit_code=0 reason=WORK_DONE" "$fixture_dir/control.log" || fail "FI-021 control fake backend did not finish cleanly"
+  check_upkeeper_log_invariants "$fixture_dir/control.log" --scan "$fixture_dir/control.out" --scan "$fixture_dir/control.err"
+
+  set +e
+  run_fault_injection_fake_backend "$fixture_dir" injection empty-zero --target-file=launcher_examples/spark_5.3_burn_out_xhigh.sh
+  rc=$?
+  set -e
+  [[ "$rc" -eq 3 ]] || fail "FI-021 injection exited $rc, expected 3"
+  grep -Fq "run.finish execution_origin=primary codex_exit=0" "$fixture_dir/injection.log" || fail "FI-021 did not record a zero-exit backend finish"
+  grep -Fq "transcript_bytes=0 transcript_lines=0" "$fixture_dir/injection.log" || fail "FI-021 did not record empty transcript evidence"
+  grep -Fq "cycle.exit exit_code=3 reason=MISSING_STATUS_MARKER" "$fixture_dir/injection.log" || fail "FI-021 did not reject empty successful backend output"
+  check_upkeeper_log_invariants "$fixture_dir/injection.log" --scan "$fixture_dir/injection.out" --scan "$fixture_dir/injection.err"
+
+  run_fault_injection_fake_backend "$fixture_dir" recovery success --target-file=launcher_examples/spark_5.3_burn_out_xhigh.sh
+  grep -Fq "cycle.exit exit_code=0 reason=WORK_DONE" "$fixture_dir/recovery.log" || fail "FI-021 recovery fake backend did not finish cleanly"
+  check_upkeeper_log_invariants "$fixture_dir/recovery.log" --scan "$fixture_dir/recovery.out" --scan "$fixture_dir/recovery.err"
+
+  fixture_dir="$temp_dir/active-lock-stale-not-empty"
+  mkdir -p "$fixture_dir"
+  chmod 700 "$fixture_dir" 2>/dev/null || true
+  write_validation_quota_snapshot "$fixture_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
+
+  run_fault_injection_root_dry_run "$fixture_dir" control --target-file=Upkeeper
+  grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$fixture_dir/control.log" || fail "FI-022 control dry-run did not finish cleanly"
+  check_upkeeper_log_invariants "$fixture_dir/control.log" --scan "$fixture_dir/control.out" --scan "$fixture_dir/control.err"
+
+  lock_dir="$fixture_dir/active.lock"
+  mkdir -p "$lock_dir"
+  {
+    printf 'cycle_id=stale-fixture\n'
+    printf 'run_hash=stale-fixture\n'
+    printf 'pid=999999999\n'
+    printf 'wrapper_start=stale-fixture\n'
+    printf 'boot_id=unknown\n'
+  } >"$lock_dir/state"
+  printf 'unexpected child\n' >"$lock_dir/unexpected-child"
+  stale_epoch="$(($(date '+%s') - 120))"
+  python3 - "$lock_dir" "$stale_epoch" <<'PY'
+import os
+import sys
+
+path = sys.argv[1]
+epoch = int(sys.argv[2])
+os.utime(path, (epoch, epoch))
+PY
+
+  set +e
+  run_fault_injection_root_dry_run "$fixture_dir" injection --target-file=Upkeeper
+  rc=$?
+  set -e
+  [[ "$rc" -eq 7 ]] || fail "FI-022 injection exited $rc, expected 7"
+  grep -Fq "active_lock.failed" "$fixture_dir/injection.log" || fail "FI-022 did not log active lock failure"
+  grep -Fq "reason=stale_lock_not_empty" "$fixture_dir/injection.log" || fail "FI-022 did not report stale_lock_not_empty"
+  grep -Fq "cycle.exit exit_code=7 reason=UPKEEPER_ACTIVE_LOCK_FAILED codex_exec_started=0" "$fixture_dir/injection.log" || fail "FI-022 did not fail closed before backend launch"
+  check_upkeeper_log_invariants "$fixture_dir/injection.log" --scan "$fixture_dir/injection.out" --scan "$fixture_dir/injection.err"
+
+  rm -rf "$lock_dir"
+  run_fault_injection_root_dry_run "$fixture_dir" recovery --target-file=Upkeeper
+  grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$fixture_dir/recovery.log" || fail "FI-022 recovery dry-run did not finish cleanly"
+  check_upkeeper_log_invariants "$fixture_dir/recovery.log" --scan "$fixture_dir/recovery.out" --scan "$fixture_dir/recovery.err"
+
+  fixture_dir="$temp_dir/log-invariants"
+  mkdir -p "$fixture_dir"
+  chmod 700 "$fixture_dir" 2>/dev/null || true
+  cat >"$fixture_dir/bad.log" <<'EOF'
+2026-05-15T00:00:00-0700 [INFO] cycle=fi-log run_hash=fi-log cycle.start model=gpt-5.5
+EOF
+  set +e
+  check_upkeeper_log_invariants "$fixture_dir/bad.log" >"$fixture_dir/bad.out" 2>"$fixture_dir/bad.err"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 1 ]] || fail "FI-023 bad log exited $rc, expected 1"
+  grep -Fq "cycle fi-log has 1 cycle.start events and 0 cycle.exit events" "$fixture_dir/bad.err" || fail "FI-023 did not report missing cycle.exit"
+
+  rm -r "$temp_dir"
+}
+
 check_stress_corpus_harness() {
   log "checking local stress corpus harness"
   tools/stress_upkeeper_corpus.sh --local
@@ -3870,6 +4147,7 @@ if [[ "$MODE" == "full" ]]; then
   run_bounded_check missing_module_failure "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_missing_module_failure
   run_bounded_check missing_prompt_failure "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_missing_prompt_failure
   run_bounded_check empty_transcript_failure "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_empty_transcript_failure
+  run_bounded_check fault_injection_first_scenarios "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_fault_injection_first_scenarios
   run_bounded_check stress_corpus_harness "$VALIDATION_FULL_TIMEOUT_SECONDS" check_stress_corpus_harness
 fi
 

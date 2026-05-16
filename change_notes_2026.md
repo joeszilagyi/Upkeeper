@@ -32,6 +32,10 @@ Version numbering note:
 	1. Added `docs/fault-injection-scenarios.md` with stable `FI-###` ids, required registry columns, FMEA-style priority fields, Lattice-ready tag naming, and initial deferred rows for the major Upkeeper fault surfaces.
 	2. Added validator coverage so the registry keeps required columns, sections, id format, quick/full classification, cleanup/recovery flags, surface coverage, and tag namespaces.
 
+2026-05-15: first fault-injection fixtures:
+	1. Added a reusable `tools/check_upkeeper_log_invariants.py` checker for wrapper `cycle.start`, `run.finish`, and `cycle.exit` evidence.
+	2. Added the first no-quota full-validation fault-injection scenarios for missing review-module prompts, fake backends that exit zero with empty output, stale non-empty active locks, and missing `cycle.exit` log evidence.
+
 2026-05-15: startup anomaly watch summary:
 	1. Startup anomaly scans now emit one `previous_run.anomaly_summary` warning for ordinary terminal/watch output instead of replaying every prior anomaly as a warning burst.
 	2. Per-anomaly `previous_run.anomaly_detail` records are still preserved in local logs and prompt context, and diagnostic terminal modes can still surface the details directly.

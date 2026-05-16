@@ -84,6 +84,9 @@ The tracked harness currently covers:
 - Review-summary parsing from a final-message fixture.
 - Transcript filtering that keeps prompt/search noise out of runtime evidence
   while surfacing a real test failure and status marker.
+- Fault-injection fixture ownership stays in `tools/validate_upkeeper.sh --full`;
+  the corpus may reference `FI-###` scenario ids later, but it does not own the
+  first single-surface injections.
 
 ## Future Coverage
 

@@ -38,6 +38,36 @@ Validation:
 - `tools/validate_upkeeper.sh --quick`
 - `git diff --check`
 
+## Quota Hibernation For Backlog Loops
+
+Status: completed
+
+Goal:
+Fix issue `#383` by making the backlog launcher hibernate on valid quota
+guardrail stops instead of letting a quota-constrained Upkeeper child terminate
+the parent loop.
+
+Constraints:
+- Keep the behavior deterministic and no-backend while hibernating.
+- Preserve fail-closed behavior for malformed or unsafe hibernation inputs.
+- Keep operator output plain: blocked bucket, reset time, wake time, and reason.
+- Do not touch the live `/main` backlog checkout; this work is isolated in a
+  separate worktree.
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- focused backlog quota hibernation validation
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Prompt Rough Edge Lint
 
 Status: completed

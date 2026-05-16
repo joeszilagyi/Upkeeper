@@ -26,6 +26,10 @@ BACKLOG_INTERACTIVE_MODE="${BACKLOG_INTERACTIVE_MODE:-watch}"
 BACKLOG_ACTIVE_ATTACH_LINES="${BACKLOG_ACTIVE_ATTACH_LINES:-20}"
 BACKLOG_STDIO_AUTODETACHED="${BACKLOG_STDIO_AUTODETACHED:-0}"
 BACKLOG_STDIO_WATCHED="${BACKLOG_STDIO_WATCHED:-0}"
+BACKLOG_QUOTA_HIBERNATE="${BACKLOG_QUOTA_HIBERNATE:-1}"
+BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS="${BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS:-60}"
+BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS="${BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS:-60}"
+BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS="${BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS:-0}"
 BACKLOG_ACTIVE_OWNER_START_TICKS=""
 
 backlog_timestamp() {
@@ -72,6 +76,137 @@ backlog_notice() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "required command missing: $1"
+}
+
+backlog_nonnegative_integer() {
+  [[ "${1:-}" =~ ^[0-9]+$ ]]
+}
+
+backlog_positive_integer_or_default() {
+  local value="$1"
+  local default_value="$2"
+
+  if backlog_nonnegative_integer "$value" && [[ "$value" -gt 0 ]]; then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "$default_value"
+  fi
+}
+
+backlog_now_epoch() {
+  if [[ -n "${BACKLOG_TEST_NOW_EPOCH:-}" ]]; then
+    backlog_nonnegative_integer "$BACKLOG_TEST_NOW_EPOCH" || return 1
+    printf '%s\n' "$BACKLOG_TEST_NOW_EPOCH"
+    return 0
+  fi
+  date '+%s'
+}
+
+backlog_format_epoch() {
+  local epoch="$1"
+
+  if backlog_nonnegative_integer "$epoch"; then
+    date -d "@$epoch" '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null && return 0
+  fi
+  printf 'unknown'
+}
+
+backlog_sleep_seconds() {
+  local seconds="$1"
+
+  backlog_nonnegative_integer "$seconds" || return 1
+  [[ "$seconds" -gt 0 ]] || return 0
+
+  if [[ "${BACKLOG_TEST_FAKE_SLEEP:-0}" == "1" ]]; then
+    if [[ -n "${BACKLOG_TEST_SLEEP_LOG:-}" ]]; then
+      printf '%s\n' "$seconds" >>"$BACKLOG_TEST_SLEEP_LOG"
+    fi
+    if [[ -n "${BACKLOG_TEST_NOW_EPOCH:-}" ]]; then
+      BACKLOG_TEST_NOW_EPOCH=$((BACKLOG_TEST_NOW_EPOCH + seconds))
+      export BACKLOG_TEST_NOW_EPOCH
+    fi
+    return 0
+  fi
+
+  sleep "$seconds"
+}
+
+backlog_marker_field() {
+  local path="$1"
+  local key="$2"
+
+  [[ -r "$path" ]] || return 0
+  awk -v key="$key" '
+    index($0, key ":") == 1 {
+      sub("^[^:]*:[[:space:]]*", "")
+      print
+      exit
+    }
+  ' "$path" 2>/dev/null || return 0
+}
+
+backlog_hibernate_until_epoch() {
+  local blocked_until_epoch="$1"
+  local blocked_bucket="$2"
+  local reason="$3"
+  local source="$4"
+  local grace poll max_sleep now_epoch wake_epoch wait_seconds chunk
+  local blocked_until_text wake_text
+  local branch summary log_file
+
+  if [[ "$BACKLOG_QUOTA_HIBERNATE" != "1" ]]; then
+    log "quota preflight: quota blocked bucket=$blocked_bucket; hibernation disabled; deferring this cycle"
+    return 3
+  fi
+  if ! backlog_nonnegative_integer "$blocked_until_epoch" || [[ "$blocked_until_epoch" -le 0 ]]; then
+    log "quota preflight: hibernation unavailable; invalid blocked_until_epoch=${blocked_until_epoch:-missing} source=$source"
+    return 4
+  fi
+  if ! now_epoch="$(backlog_now_epoch)"; then
+    log "quota preflight: hibernation unavailable; invalid current time source=$source"
+    return 4
+  fi
+
+  grace="$(backlog_positive_integer_or_default "$BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS" 60)"
+  poll="$(backlog_positive_integer_or_default "$BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS" 60)"
+  max_sleep="${BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS:-0}"
+  backlog_nonnegative_integer "$max_sleep" || max_sleep=0
+  wake_epoch=$((blocked_until_epoch + grace))
+
+  if [[ "$wake_epoch" -le "$now_epoch" ]]; then
+    log "quota preflight: quota block already expired bucket=$blocked_bucket wake=$(backlog_format_epoch "$wake_epoch"); retrying this cycle"
+    return 0
+  fi
+
+  wait_seconds=$((wake_epoch - now_epoch))
+  if [[ "$max_sleep" -gt 0 && "$wait_seconds" -gt "$max_sleep" ]]; then
+    log "quota preflight: hibernation unavailable; wait_seconds=$wait_seconds exceeds max=$max_sleep bucket=$blocked_bucket source=$source"
+    return 4
+  fi
+
+  blocked_until_text="$(backlog_format_epoch "$blocked_until_epoch")"
+  wake_text="$(backlog_format_epoch "$wake_epoch")"
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  log_file="${BACKLOG_LOOP_LOG_FILE:-$(backlog_state_root)/loop.log}"
+  summary="$(backlog_recent_log_summary "$log_file" 2>/dev/null || true)"
+  if [[ -n "$summary" ]]; then
+    log "quota preflight: quota blocked bucket=$blocked_bucket until=$blocked_until_text wake=$wake_text wait_seconds=$wait_seconds branch=$branch recent_activity=$summary source=$source reason=$reason"
+  else
+    log "quota preflight: quota blocked bucket=$blocked_bucket until=$blocked_until_text wake=$wake_text wait_seconds=$wait_seconds branch=$branch source=$source reason=$reason"
+  fi
+
+  while true; do
+    now_epoch="$(backlog_now_epoch)" || return 4
+    [[ "$now_epoch" -lt "$wake_epoch" ]] || break
+    chunk=$((wake_epoch - now_epoch))
+    if [[ "$chunk" -gt "$poll" ]]; then
+      chunk="$poll"
+    fi
+    backlog_sleep_seconds "$chunk"
+  done
+
+  log "quota preflight: quota hibernation complete; next backlog cycle may retry without backend work"
+  return 3
 }
 
 require_clean_worktree() {
@@ -404,11 +539,23 @@ quota_preflight_allows_backlog_run() {
   local quota_json primary_bucket_current secondary_bucket_current
   local primary_projected_left secondary_projected_left
   local primary_decision secondary_decision
+  local marker_path marker_epoch marker_bucket marker_reason
+  local blocked_bucket blocked_until_epoch
+  local primary_reset
+  local secondary_reset
 
   prepare_backlog_runtime_env
   source "$ROOT_DIR/lib/upkeeper/config_validation.bash"
   source "$ROOT_DIR/lib/upkeeper/quota_state.bash"
   source "$ROOT_DIR/lib/upkeeper/quota_guardrails.bash"
+  source "$ROOT_DIR/lib/upkeeper/quota_block_markers.bash"
+
+  if marker_path="$(latest_active_primary_quota_block_marker "$CODEX_MODEL" 2>/dev/null)"; then
+    marker_epoch="$(backlog_marker_field "$marker_path" "blocked_until_epoch")"
+    marker_bucket="$(backlog_marker_field "$marker_path" "blocked_bucket")"
+    marker_reason="$(backlog_marker_field "$marker_path" "reason")"
+    backlog_hibernate_until_epoch "$marker_epoch" "${marker_bucket:-primary}" "${marker_reason:-active quota marker}" "quota_marker" || return "$?"
+  fi
 
   quota_json="$(quota_state_json "$CODEX_MODEL")" || return 0
   [[ -n "$quota_json" ]] || return 0
@@ -422,6 +569,26 @@ quota_preflight_allows_backlog_run() {
   secondary_projected_left="$(jq -r '100 - ((.snapshot.secondary_used_percent // 0) + (.projection.secondary_delta // 0))' <<<"$quota_json")"
   primary_decision="$(quota_bucket_decision "$primary_bucket_current" "$primary_projected_left" "$(quota_5h_stop_percent_for_model "$CODEX_MODEL")")"
   secondary_decision="$(quota_bucket_decision "$secondary_bucket_current" "$secondary_projected_left" "$(quota_week_stop_percent_for_model "$CODEX_MODEL")")"
+
+  if [[ "$primary_decision" == "stop" || "$secondary_decision" == "stop" ]]; then
+    blocked_bucket=""
+    blocked_until_epoch=0
+    if [[ "$primary_decision" == "stop" ]]; then
+      blocked_bucket="${blocked_bucket:+$blocked_bucket,}primary"
+      primary_reset="$(jq -r '.snapshot.primary_resets_at // 0' <<<"$quota_json")"
+      if backlog_nonnegative_integer "$primary_reset" && [[ "$primary_reset" -gt "$blocked_until_epoch" ]]; then
+        blocked_until_epoch="$primary_reset"
+      fi
+    fi
+    if [[ "$secondary_decision" == "stop" ]]; then
+      blocked_bucket="${blocked_bucket:+$blocked_bucket,}secondary"
+      secondary_reset="$(jq -r '.snapshot.secondary_resets_at // 0' <<<"$quota_json")"
+      if backlog_nonnegative_integer "$secondary_reset" && [[ "$secondary_reset" -gt "$blocked_until_epoch" ]]; then
+        blocked_until_epoch="$secondary_reset"
+      fi
+    fi
+    backlog_hibernate_until_epoch "$blocked_until_epoch" "$blocked_bucket" "primary=$primary_decision projected_left=${primary_projected_left} secondary=$secondary_decision projected_left=${secondary_projected_left}" "quota_snapshot" || return "$?"
+  fi
 
   if [[ "$primary_decision" == "defer" || "$secondary_decision" == "defer" ]]; then
     log "quota preflight: deferring backlog run this cycle (primary=$primary_decision secondary=$secondary_decision)"
@@ -834,4 +1001,6 @@ main() {
   fi
 }
 
-main "$@"
+if [[ "${BACKLOG_SOURCE_ONLY:-0}" != "1" ]]; then
+  main "$@"
+fi

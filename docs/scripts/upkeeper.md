@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.24
+Version: v1.2.25
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -124,6 +124,12 @@ Important:
     launcher notices are shell-comment lines so accidental terminal input
     feedback stays a no-op, and live/feed-log lines use a local
     `YYYY-MM-DDTHH:MM:SS` timestamp in column 1 for loose terminal watching.
+  - The backlog launcher hibernates by default when its quota preflight sees a
+    stop-level quota state or an active primary quota block marker. It prints
+    the blocked bucket, reset time, wake time, branch, and recent activity when
+    available, sleeps locally without backend model work until the reset grace
+    passes, then lets the next backlog cycle retry. Set
+    `BACKLOG_QUOTA_HIBERNATE=0` to restore one-cycle deferral instead.
   - The living repo-local operator guide is:
       docs/scripts/upkeeper.md
     If that guide is missing, normal startup bootstraps it once from this help

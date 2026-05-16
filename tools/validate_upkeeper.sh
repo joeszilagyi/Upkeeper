@@ -2229,6 +2229,8 @@ check_file_manifest_selection() {
       CODEX_FILE_MANIFEST_PATH="$manifest_path" \
       CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
       CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
+      UPKEEPER_PRECONTACT_BACKUP_ENABLED=0 \
+      UPKEEPER_SELECTION_RANDOM_SEED=validation-file-manifest-selection \
       UPKEEPER_LATTICE_DB="$lattice_db_path" \
       UPKEEPER_DRY_RUN=1 \
       ./Upkeeper "$@" >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
@@ -3198,11 +3200,13 @@ check_postmortem_context_marker_classification() {
   : >"$primary_last_message_copy"
 
   (
+    source lib/upkeeper/runtime_foundation.bash
     source lib/upkeeper/runtime_format_json.bash
     source lib/upkeeper/report_analysis.bash
     source lib/upkeeper/fallback_artifacts.bash
     source lib/upkeeper/status_session.bash
     source lib/upkeeper/quota_guardrails.bash
+    source lib/upkeeper/quota_state.bash
     source lib/upkeeper/postmortem_context.bash
 
     CYCLE_ID=validation
@@ -3236,6 +3240,10 @@ check_postmortem_context_marker_classification() {
   grep -Fq "incident_classification: CONTROLLED_QUOTA_HANDOFF" "$context_path" || fail "context did not classify recovered fallback marker as controlled handoff"
   grep -Fq "fallback_child_status_marker: WORK_DONE" "$context_path" || fail "context did not record recovered fallback marker"
   grep -Fq "fallback_child_status_marker_source: recovered_malformed_candidate" "$context_path" || fail "context did not record recovered marker source"
+  grep -Fq "primary_before_snapshot_source_hmac:" "$context_path" || fail "context did not redact snapshot source"
+  if grep -Fq "primary_before_snapshot_source: " "$context_path"; then
+    fail "context retained raw snapshot source in non-debug mode"
+  fi
   grep -Fq -- "- incident_classification: CONTROLLED_QUOTA_HANDOFF" "$bug_record_path" || fail "bug record did not classify recovered fallback marker as controlled handoff"
   grep -Fq -- "- fallback_child_status_marker: WORK_DONE" "$bug_record_path" || fail "bug record did not record recovered fallback marker"
   grep -Fq -- "- fallback_child_status_marker_source: recovered_malformed_candidate" "$bug_record_path" || fail "bug record did not record recovered marker source"

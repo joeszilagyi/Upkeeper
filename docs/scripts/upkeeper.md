@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.25
+Version: v1.2.26
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -741,6 +741,11 @@ prompts, backup log lines, or Lattice preselect evidence.
   current exact-model snapshots. Upkeeper treats small reset-epoch jitter as the
   same quota window and logs `quota.reset_jitter` at INFO instead of emitting a
   non-authoritative `quota.jump` warning.
+- Default quota logging is privacy-minimized: session-source paths and quota
+  identity fields are hashed in normal loop logs, cooldown markers keep only
+  enforcement-critical fields, and the fuller quota/session diagnostics remain
+  behind explicit `UPKEEPER_VERBOSE_METADATA=1` plus private local artifact
+  permissions.
 - `--prompt-pass=all` final reports must include parseable `P<N>:` lines for
   P1 through P23. Upkeeper logs `review.pass_coverage` so all-pass cycles are
   auditable from machine logs, not only from prose. The parser accepts common

@@ -44,19 +44,19 @@ quota_block_copy_marker_to_private_store() {
   local marker_private_path="$marker_pm_root/primary-quota-blocked-until.txt"
 
   if ! quota_block_validate_private_marker_root "$marker_root"; then
-    log_line "WARN" "quota.blocked_marker_private_store_untrusted path=$(shell_quote "$marker_root")"
+    log_line "WARN" "quota.blocked_marker_private_store_untrusted$(quota_hashed_path_log_field path "$marker_root")$(quota_sensitive_log_field path "$marker_root")"
     return 0
   fi
   if ! mkdir -p -- "$marker_pm_root"; then
-    log_line "WARN" "quota.blocked_marker_private_store_failed path=$(shell_quote "$marker_private_path") reason=mkdir_failed"
+    log_line "WARN" "quota.blocked_marker_private_store_failed$(quota_hashed_path_log_field path "$marker_private_path")$(quota_sensitive_log_field path "$marker_private_path") reason=mkdir_failed"
     return 0
   fi
   if ! chmod 700 "$marker_pm_root"; then
-    log_line "WARN" "quota.blocked_marker_private_store_failed path=$(shell_quote "$marker_private_path") reason=chmod_failed"
+    log_line "WARN" "quota.blocked_marker_private_store_failed$(quota_hashed_path_log_field path "$marker_private_path")$(quota_sensitive_log_field path "$marker_private_path") reason=chmod_failed"
     return 0
   fi
   if ! cp -- "$marker_path" "$marker_private_path"; then
-    log_line "WARN" "quota.blocked_marker_private_store_failed path=$(shell_quote "$marker_private_path") reason=copy_failed"
+    log_line "WARN" "quota.blocked_marker_private_store_failed$(quota_hashed_path_log_field path "$marker_private_path")$(quota_sensitive_log_field path "$marker_private_path") reason=copy_failed"
     return 0
   fi
   return 0
@@ -129,7 +129,7 @@ write_primary_quota_blocked_marker() {
   local marker_primary_used marker_primary_left marker_secondary_used marker_secondary_left
   local marker_primary_reset marker_secondary_reset
   local marker_primary_bucket_current marker_secondary_bucket_current
-  local marker_identity_changed
+  local marker_identity_changed marker_reason
 
   if [[ "$marker_source_phase" == "after_run" ]]; then
     marker_primary_decision="${after_primary_guardrail_decision:-defer}"
@@ -158,6 +158,7 @@ write_primary_quota_blocked_marker() {
   primary_reset_value="$marker_primary_reset"
   secondary_reset_value="$marker_secondary_reset"
   marker_identity_changed="$(quota_identity_changed_flag "${limit_id:-unknown}" "${limit_name:-unknown}" "${after_limit_id:-unknown}" "${after_limit_name:-unknown}")"
+  marker_reason="$(quota_public_stop_reason "$stop_reason")"
 
   blocked_buckets=""
   blocked_until_epoch=0
@@ -181,7 +182,7 @@ write_primary_quota_blocked_marker() {
   recommended_action="wait_until_reset_or_switch_primary_model"
 
   if ! mkdir -p -- "$pm_root"; then
-    log_line "ERROR" "quota.blocked_marker_failed path=$(shell_quote "$marker_path") reason=mkdir_failed"
+    log_line "ERROR" "quota.blocked_marker_failed$(quota_hashed_path_log_field path "$marker_path")$(quota_sensitive_log_field path "$marker_path") reason=mkdir_failed"
     return 0
   fi
   marker_tmp_path="$marker_path.tmp.$$"
@@ -194,49 +195,23 @@ primary_model: $CODEX_MODEL
 blocked_bucket: $blocked_buckets
 blocked_until_epoch: $blocked_until_epoch
 blocked_until: $(format_epoch_local "$blocked_until_epoch")
-reason: $stop_reason
-before_limit_id: ${limit_id:-unknown}
-before_limit_name: ${limit_name:-unknown}
-after_limit_id: ${after_limit_id:-unknown}
-after_limit_name: ${after_limit_name:-unknown}
+reason: $marker_reason
 quota_identity_changed: $marker_identity_changed
-before_primary_reset_epoch: ${primary_reset:-unknown}
-before_primary_reset: $(format_epoch_local "${primary_reset:-}")
-before_secondary_reset_epoch: ${secondary_reset:-unknown}
-before_secondary_reset: $(format_epoch_local "${secondary_reset:-}")
-after_primary_reset_epoch: ${after_primary_reset:-unknown}
-after_primary_reset: $(format_epoch_local "${after_primary_reset:-}")
-after_secondary_reset_epoch: ${after_secondary_reset:-unknown}
-after_secondary_reset: $(format_epoch_local "${after_secondary_reset:-}")
-primary_used: ${marker_primary_used:-unknown}%
-primary_left: ${marker_primary_left:-unknown}%
-primary_bucket_current: ${marker_primary_bucket_current:-unknown}
-primary_projected_left: ${primary_projected_left:-unknown}%
-primary_threshold: ${five_hour_threshold:-unknown}%
-primary_reset_epoch: ${marker_primary_reset:-unknown}
-primary_reset: $(format_epoch_local "${marker_primary_reset:-}")
-secondary_used: ${marker_secondary_used:-unknown}%
-secondary_left: ${marker_secondary_left:-unknown}%
-secondary_bucket_current: ${marker_secondary_bucket_current:-unknown}
-secondary_projected_left: ${secondary_projected_left:-unknown}%
-secondary_threshold: ${week_threshold:-unknown}%
-secondary_reset_epoch: ${marker_secondary_reset:-unknown}
-secondary_reset: $(format_epoch_local "${marker_secondary_reset:-}")
 recommended_operator_action: $recommended_action
 EOF
   } >"$marker_tmp_path"; then
     rm -f -- "$marker_tmp_path"
-    log_line "ERROR" "quota.blocked_marker_failed path=$(shell_quote "$marker_path") reason=write_failed"
+    log_line "ERROR" "quota.blocked_marker_failed$(quota_hashed_path_log_field path "$marker_path")$(quota_sensitive_log_field path "$marker_path") reason=write_failed"
     return 0
   fi
   if ! mv -f -- "$marker_tmp_path" "$marker_path"; then
     rm -f -- "$marker_tmp_path"
-    log_line "ERROR" "quota.blocked_marker_failed path=$(shell_quote "$marker_path") reason=rename_failed"
+    log_line "ERROR" "quota.blocked_marker_failed$(quota_hashed_path_log_field path "$marker_path")$(quota_sensitive_log_field path "$marker_path") reason=rename_failed"
     return 0
   fi
   quota_block_copy_marker_to_private_store "$marker_path" "$(quota_block_marker_root)"
 
-  log_line "WARN" "quota.blocked_marker path=$(shell_quote "$marker_path") target_model=$CODEX_MODEL marker_source_phase=$marker_source_phase blocked_bucket=$blocked_buckets blocked_until=$(format_epoch_local "$blocked_until_epoch") quota_identity_changed=$marker_identity_changed"
+  log_line "WARN" "quota.blocked_marker target_model=$CODEX_MODEL marker_source_phase=$marker_source_phase blocked_bucket=$blocked_buckets quota_identity_changed=$marker_identity_changed$(quota_hashed_path_log_field path "$marker_path")$(quota_sensitive_log_field path "$marker_path")$(quota_sensitive_log_field blocked_until "$(format_epoch_local "$blocked_until_epoch")")"
 }
 
 enforce_primary_quota_block_marker() {
@@ -249,7 +224,6 @@ enforce_primary_quota_block_marker() {
   fi
 
   local marker_path blocked_until_epoch blocked_until blocked_bucket reason source_cycle recommended_action
-  local marker_path_q reason_q blocked_until_q
   if ! marker_path="$(latest_active_primary_quota_block_marker "$CODEX_MODEL")"; then
     return 0
   fi
@@ -261,9 +235,6 @@ enforce_primary_quota_block_marker() {
   source_cycle="$(marker_field "$marker_path" "incident_cycle_id")"
   recommended_action="$(marker_field "$marker_path" "recommended_operator_action")"
 
-  marker_path_q="$(shell_quote "$marker_path")"
-  reason_q="$(shell_quote "${reason:-unknown}")"
-  blocked_until_q="$(shell_quote "${blocked_until:-unknown}")"
-  log_line "WARN" "quota.cooldown active target_model=$CODEX_MODEL blocked_bucket=${blocked_bucket:-unknown} blocked_until=$blocked_until_q blocked_until_epoch=${blocked_until_epoch:-unknown} source_cycle=${source_cycle:-unknown} marker_path=$marker_path_q reason=$reason_q recommended_operator_action=${recommended_action:-wait_until_reset_or_switch_primary_model}"
-  finish_cycle 7 QUOTA_HANDOFF_COOLDOWN INFO "codex_exec_started=0 target_model=$CODEX_MODEL blocked_until=$blocked_until_q marker_path=$marker_path_q"
+  log_line "WARN" "quota.cooldown active target_model=$CODEX_MODEL blocked_bucket=${blocked_bucket:-unknown} source_cycle=${source_cycle:-unknown}$(quota_hashed_path_log_field marker_path "$marker_path")$(quota_sensitive_log_field marker_path "$marker_path")$(quota_sensitive_log_field blocked_until "${blocked_until:-unknown}")$(quota_sensitive_log_field blocked_until_epoch "${blocked_until_epoch:-unknown}")$(quota_sensitive_log_field reason "${reason:-unknown}") recommended_operator_action=${recommended_action:-wait_until_reset_or_switch_primary_model}"
+  finish_cycle 7 QUOTA_HANDOFF_COOLDOWN INFO "codex_exec_started=0 target_model=$CODEX_MODEL$(quota_hashed_path_log_field marker_path "$marker_path")"
 }

@@ -264,16 +264,20 @@ def existing_payload() -> dict[str, object] | None:
         return None
     if not isinstance(payload, dict):
         return None
-    if payload.get("schema_version") != 2 or payload.get("root_hash") != root_hash:
+    if (
+        payload.get("schema_version") != 2
+        or payload.get("root_hash") != root_hash
+        or "root" in payload
+    ):
         return None
     if not isinstance(payload.get("files"), list):
         return None
 
     existing_files = payload.get("files") or []
     if isinstance(existing_files, list):
-        # Rebuild legacy manifests that persisted per-file absolute paths. The
-        # manifest consumer only needs repo-relative paths plus metadata, so the
-        # absolute-path field is retained nowhere in fresh payloads.
+        # Rebuild legacy manifests that persisted raw checkout roots or per-file
+        # absolute paths. The manifest consumer only needs repo-relative paths
+        # plus metadata, so those fields are retained nowhere in fresh payloads.
         if any(isinstance(entry, dict) and "abs_path" in entry for entry in existing_files):
             return None
         try:

@@ -3,6 +3,41 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Quota Metadata Redaction
+
+Status: completed
+
+Goal:
+Fix issue `#300` by reducing quota/session metadata exposure in operator logs,
+quota cooldown markers, postmortem context, and related Lattice-facing
+validation.
+
+Constraints:
+- Keep the patch narrow to quota/privacy surfaces and deterministic local
+  validation.
+- Preserve quota guardrail decisions and startup-anomaly review behavior.
+- Default behavior should minimize durable quota/account detail exposure, while
+  explicit verbose/debug mode may retain fuller protected local diagnostics.
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/quota_block_markers.bash`
+- `lib/upkeeper/postmortem_context.bash`
+- `lib/upkeeper/aux_codex.bash`
+- `tests/quota_block_markers_test.bash`
+- `tests/lattice_test.bash`
+- `docs/scripts/upkeeper.md`
+- `docs/security.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Quota Hibernation For Backlog Loops
 
 Status: completed

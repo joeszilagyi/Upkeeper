@@ -161,6 +161,14 @@ assert data["checks"]["foreign_keys"] == 1, data
 assert data["checks"]["quick_check"] == "ok", data
 assert data["checks"]["required_tables_missing"] == [], data
 assert data["checks"]["required_indexes_missing"] == [], data
+raw_checks = data["checks"]["raw_storage_enforcement"]
+for mode in ("minimal", "limited", "full"):
+    assert raw_checks[mode]["replayed_upkeeper_log_raw"]["source_hashed"], raw_checks
+    assert raw_checks[mode]["replayed_upkeeper_log_raw"]["limit_ids_hashed"], raw_checks
+    assert raw_checks[mode]["replayed_upkeeper_log_raw"]["quota_fields_removed"], raw_checks
+    assert raw_checks[mode]["imported_quota_source_record"]["source_path_hashed"], raw_checks
+    assert raw_checks[mode]["imported_quota_source_record"]["source_uri_hashed"], raw_checks
+assert raw_checks["full"]["imported_quota_source_record"]["raw_text_redacted"], raw_checks
 PY
 
   lattice record-cycle-start \

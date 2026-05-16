@@ -240,6 +240,13 @@ must be treated as potentially sensitive. Keep `Upkeeper.log` and `runtime/`
 ignored unless a repo has a deliberate, reviewed policy for publishing specific
 sanitized artifacts.
 
+Quota/session evidence is now privacy-minimized by default. Normal quota log
+lines store hashed session-source and quota-identity fields instead of raw
+session paths or limit names, and persisted cooldown markers keep only the
+fields needed for enforcement. Full quota diagnostics are reserved for explicit
+`UPKEEPER_VERBOSE_METADATA=1` runs and chmod-protected local postmortem
+artifacts.
+
 Upkeeper refuses unsafe live log paths before its first wrapper log write. A
 repo-local `Upkeeper.log` that is a symlink, non-regular file, hard-linked file,
 or owned by another user is rejected before Codex launch; a symlink log parent

@@ -3,6 +3,37 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## First Fault-Injection Fixtures
+
+Status: completed
+
+Goal:
+Fix issue `#84` by adding the first deterministic no-quota fault-injection
+fixtures and a reusable wrapper log-invariant checker.
+
+Constraints:
+- Do not run real backend Codex or spend quota.
+- Keep scenarios in local validation, with explicit control/injection/recovery
+  shape and oracle classes.
+- Avoid live backlog PR overlap in `Upkeeper`, `lib/upkeeper/file_manifest.bash`,
+  and `tools/upkeeper_lattice.py`.
+
+Files likely touched:
+- `tools/validate_upkeeper.sh`
+- `tools/check_upkeeper_log_invariants.py`
+- `docs/fault-injection-scenarios.md`
+- `docs/stress-corpus.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `git diff --check`
+
 ## Fault-Injection Scenario Registry
 
 Status: completed

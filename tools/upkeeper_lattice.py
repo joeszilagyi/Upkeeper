@@ -4111,6 +4111,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["cycle_finish_target_mismatch"] = cycle_finish_probe
         change_note_ref_probe = probe_change_note_file_identity_validation()
         result["checks"]["change_note_file_identity_validation"] = change_note_ref_probe
+        candidate_symlink_probe = probe_candidate_symlink_exclusion()
+        result["checks"]["candidate_symlink_exclusion"] = candidate_symlink_probe
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
@@ -4118,6 +4120,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not all(bool(item.get("ok")) for item in change_note_ref_probe.values()):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(candidate_symlink_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
@@ -4926,6 +4931,64 @@ def probe_change_note_file_identity_validation() -> dict[str, Any]:
                     "ok": actual == "",
                 }
     return results
+
+
+def probe_candidate_symlink_exclusion() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-symlink-candidate-") as repo_dir:
+        root = Path(repo_dir).resolve()
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "probe@example.com"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "Probe User"], cwd=root, check=True)
+        target = root / "real.py"
+        target.write_text("print('real')\n", encoding="utf-8")
+        link = root / "linked.py"
+        try:
+            link.symlink_to(target.name)
+        except OSError as exc:
+            return {
+                "supported": False,
+                "error": safe_output_text(str(exc)),
+                "ok": True,
+            }
+        subprocess.run(["git", "add", target.name, link.name], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "probe"], cwd=root, check=True)
+        eligible_rows = {row["path"]: row for row in live_candidate_paths(root)}
+        tracked_rows = {row["path"]: row for row in live_candidate_paths(root, candidate_scope="current-tracked")}
+        link_meta = live_file_metadata(root, link.name)
+        eligible_link = eligible_rows.get(link.name, {})
+        tracked_link = tracked_rows.get(link.name, {})
+        result = {
+            "supported": True,
+            "eligible_candidate_state": eligible_link.get("candidate_state"),
+            "eligible_exclusion_reason": eligible_link.get("exclusion_reason"),
+            "eligible_content_state": eligible_link.get("content_state"),
+            "eligible_git_status": eligible_link.get("git_status"),
+            "tracked_candidate_state": tracked_link.get("candidate_state"),
+            "tracked_exclusion_reason": tracked_link.get("exclusion_reason"),
+            "tracked_content_state": tracked_link.get("content_state"),
+            "tracked_git_status": tracked_link.get("git_status"),
+            "metadata_content_state": link_meta.get("content_state"),
+            "metadata_git_status": link_meta.get("git_status"),
+            "metadata_worktree_hash": link_meta.get("worktree_hash"),
+            "metadata_head_blob": link_meta.get("head_blob"),
+        }
+        result["ok"] = all(
+            (
+                result["eligible_candidate_state"] == "excluded",
+                result["eligible_exclusion_reason"] == "symlink",
+                result["eligible_content_state"] == "symlink",
+                result["eligible_git_status"] == "symlink",
+                result["tracked_candidate_state"] == "excluded",
+                result["tracked_exclusion_reason"] == "symlink",
+                result["tracked_content_state"] == "symlink",
+                result["tracked_git_status"] == "symlink",
+                result["metadata_content_state"] == "symlink",
+                result["metadata_git_status"] == "symlink",
+                result["metadata_worktree_hash"] == "unavailable",
+                result["metadata_head_blob"] == "none",
+            )
+        )
+        return result
 
 
 def snapshot_row_for_event(

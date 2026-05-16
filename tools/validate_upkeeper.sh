@@ -2624,6 +2624,84 @@ check_startup_anomaly_state_parser_contract() {
   rm -r "$temp_dir"
 }
 
+check_previous_run_anomaly_summary_contract() {
+  local temp_dir state_dir log_file stamp basic_output debug_output
+
+  log "checking previous-run anomaly summary contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-previous-run-summary.XXXXXX)"
+  state_dir="$temp_dir/states"
+  log_file="$temp_dir/Upkeeper.log"
+  mkdir -p "$state_dir"
+  stamp="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  cat >"$log_file" <<EOF
+$stamp [INFO] cycle=prior-missing run_hash=aaa111 cycle.start selected_file=Upkeeper boot_id=boot-prior
+$stamp [INFO] cycle=prior-missing run_hash=aaa111 run.start role=primary boot_id=boot-prior
+$stamp [WARN] cycle=prior-gate run_hash=bbb222 startup_anomaly.gate_unresolved reason=missing_log_review boot_id=boot-prior
+EOF
+  cat >"$state_dir/unresolved.state" <<'EOF'
+cycle_id=state-cycle
+run_hash=state-hash
+status=unresolved
+reason=changed path violation
+created_epoch=123
+updated_epoch=456
+EOF
+
+  run_summary_fixture() {
+    local mode="$1"
+    cd "$ROOT_DIR"
+    CODEX_TERMINAL_VERBOSITY="$mode" \
+      CODEX_PREVIOUS_RUN_SCAN_MINUTES=240 \
+      CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$state_dir" \
+      LOG_FILE="$log_file" \
+      CYCLE_ID=current-cycle \
+      bash <<'BASH'
+system_boot_id() { printf 'boot-current'; }
+system_uptime_seconds() { printf '123.45'; }
+log_line() { printf '%s %s\n' "$1" "$2"; }
+append_startup_anomaly_reason() {
+  STARTUP_ANOMALY_REASONS="${STARTUP_ANOMALY_REASONS:+$STARTUP_ANOMALY_REASONS,}$1"
+}
+terminal_wants_verbose_output() {
+  [[ "${CODEX_TERMINAL_VERBOSITY:-basic}" == "verbose" || "${CODEX_TERMINAL_VERBOSITY:-basic}" == "debug1" ]]
+}
+terminal_wants_full_output() {
+  [[ "${CODEX_TERMINAL_VERBOSITY:-basic}" == "full" ]]
+}
+source lib/upkeeper/startup_anomaly_state.bash
+source lib/upkeeper/previous_run_anomalies.bash
+scan_previous_run_anomalies
+printf 'GATE=%s\n' "${STARTUP_ANOMALY_GATE:-}"
+printf 'REASONS=%s\n' "${STARTUP_ANOMALY_REASONS:-}"
+printf 'PROMPT_DETAILS<<%s>>\n' "$PREVIOUS_RUN_ANOMALIES"
+BASH
+  }
+
+  basic_output="$(run_summary_fixture basic)"
+  grep -Fq 'WARN previous_run.anomaly_summary ' <<<"$basic_output" || fail "previous-run anomaly summary missing"
+  grep -Fq 'listed_total=3' <<<"$basic_output" || fail "previous-run anomaly summary count missing"
+  grep -Fq 'prior_cycle_count=2' <<<"$basic_output" || fail "previous-run anomaly prior-cycle count missing"
+  grep -Fq 'state_count=1' <<<"$basic_output" || fail "previous-run anomaly state count missing"
+  grep -Fq 'details=local_log_state_and_prompt' <<<"$basic_output" || fail "previous-run anomaly summary evidence pointer missing"
+  grep -Fq 'action=force_upkeeper_self_review' <<<"$basic_output" || fail "previous-run anomaly summary action missing"
+  grep -Fq 'INFO previous_run.anomaly_detail previous_cycle=prior-missing' <<<"$basic_output" || fail "previous-run anomaly detail was not preserved in local log stream"
+  grep -Fq 'PROMPT_DETAILS<<- previous_cycle=prior-missing' <<<"$basic_output" || fail "previous-run anomaly prompt detail missing"
+  grep -Fq 'state_id=state-hmac-sha256:' <<<"$basic_output" || fail "previous-run anomaly state detail missing"
+  grep -Fq 'GATE=1' <<<"$basic_output" || fail "previous-run anomaly gate was not activated"
+  grep -Fq 'REASONS=previous_run_anomaly' <<<"$basic_output" || fail "previous-run anomaly gate reason missing"
+  if grep -Fq 'WARN previous_run.anomaly_detail previous_cycle=' <<<"$basic_output"; then
+    fail "normal previous-run anomaly output would still burst warning details"
+  fi
+  if grep -Fq 'WARN previous_run.anomaly previous_cycle=' <<<"$basic_output"; then
+    fail "normal previous-run anomaly output still emits legacy warning details"
+  fi
+
+  debug_output="$(run_summary_fixture debug1)"
+  grep -Fq 'WARN previous_run.anomaly_detail previous_cycle=prior-missing' <<<"$debug_output" || fail "debug previous-run anomaly detail missing"
+
+  rm -r "$temp_dir"
+}
+
 check_postmortem_context_marker_classification() {
   local temp_dir transcript_path context_path bug_record_path incident_log_path report_path primary_last_message_copy
 
@@ -3554,6 +3632,7 @@ run_check public_docs_policy check_public_docs_policy
 run_check private_artifact_umask_contract check_private_artifact_umask_contract
 run_check runtime_format_json_helpers check_runtime_format_json_helpers
 run_check startup_anomaly_state_parser_contract check_startup_anomaly_state_parser_contract
+run_check previous_run_anomaly_summary_contract check_previous_run_anomaly_summary_contract
 run_check postmortem_context_marker_classification check_postmortem_context_marker_classification
 run_check postmortem_sequence_marker_contract check_postmortem_sequence_marker_contract
 run_check postmortem_privacy_contract check_postmortem_privacy_contract

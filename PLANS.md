@@ -3,6 +3,42 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Startup Anomaly Watch Summary
+
+Status: completed
+
+Goal:
+Replace normal terminal bursts of repeated `previous_run.anomaly` warnings with
+one operator-readable startup anomaly summary while preserving detailed prior-run
+and state evidence for prompt context and diagnostic verbosity.
+
+Constraints:
+- Keep startup anomaly gating fail-closed; this is an output-shaping fix, not a
+  demotion of machine-health obligations.
+- Preserve full local evidence in existing logs/state files and in
+  `PREVIOUS_RUN_ANOMALIES` so the self-review prompt still receives concrete
+  anomaly detail.
+- Emit per-anomaly replays only for diagnostic terminal modes, not ordinary
+  backlog watch output.
+- Add deterministic validation so the same warning-burst regression cannot come
+  back unnoticed.
+
+Files likely touched:
+- `lib/upkeeper/previous_run_anomalies.bash`
+- `tools/validate_upkeeper.sh`
+- `tools/stress_upkeeper_corpus.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/stress_upkeeper_corpus.sh --local`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## P30 Stark Protocol Review Module
 
 Status: completed

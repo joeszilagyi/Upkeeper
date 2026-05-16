@@ -12,6 +12,11 @@ Version numbering note:
 	3. Strengthened selected-target pre-contact backup publication with staged directory commits and payload-hash verification, and restored `doctor` to a single JSON document after its internal probes began exercising the cycle-finish command path.
 	4. Backlog watch and detached-loop feeds now timestamp mixed child-process output with a local `YYYY-MM-DDTHH:MM:SS` column-1 prefix while preserving recent-activity summaries across old raw logs and new timestamped logs.
 
+2026-05-15: startup anomaly watch summary:
+	1. Startup anomaly scans now emit one `previous_run.anomaly_summary` warning for ordinary terminal/watch output instead of replaying every prior anomaly as a warning burst.
+	2. Per-anomaly `previous_run.anomaly_detail` records are still preserved in local logs and prompt context, and diagnostic terminal modes can still surface the details directly.
+	3. Added quick validation so normal output cannot regress to flooding the backlog watch feed with repeated historical anomaly lines.
+
 2026-05-15: v1.2.21 changes:
 	1. Hardened detached screen fallback staging so generated runner scripts live under a private owner-only state root instead of repo-local postmortem evidence, while mirrored status files remain available for normal operator inspection.
 	2. Preserved fallback-chain contracts, selected-target context, issue-fix context, failure-queue context, and prompt/module arguments across staged screen fallback children so recovery workers do not silently lose the parent run's workload boundary.

@@ -568,7 +568,8 @@ check_historical_log_sample() {
   repo="$(create_historical_log_sample)"
   log_file="$repo/Upkeeper.log"
   run_upkeeper_dry historical-log "$repo" basic 0 "$log_file" >/dev/null
-  assert_file_contains "$log_file" "previous_run.anomaly" "historical log sample did not detect prior incomplete cycle"
+  assert_file_contains "$log_file" "previous_run.anomaly_summary" "historical log sample did not summarize prior incomplete cycle"
+  assert_file_contains "$log_file" "previous_run.anomaly_detail" "historical log sample did not preserve prior incomplete cycle detail"
   assert_file_contains "$log_file" "previous_cycle=stress-prior" "historical log sample did not name the prior cycle"
   assert_file_contains "$log_file" "startup_anomaly.gate_target status=eligible path=Upkeeper" "historical log sample did not use repo-local regular Upkeeper gate target"
   assert_file_contains "$log_file" "selection_mode=startup_anomaly_gate" "historical log sample did not force startup anomaly selection mode"

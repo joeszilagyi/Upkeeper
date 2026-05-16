@@ -252,8 +252,10 @@ Important:
     continuity can be detected even when both the primary process and a future
     watchdog fail.
   - Startup scans the recent live log for prior cycles that started but never
-    wrote cycle.exit/run.finish, logs previous_run.anomaly lines, and injects
-    those findings into the prompt for the next healthy run.
+    wrote cycle.exit/run.finish, logs one previous_run.anomaly_summary for
+    ordinary operator output, preserves previous_run.anomaly_detail records in
+    local evidence, and injects those findings into the prompt for the next
+    healthy run.
   - Startup also logs disk.preflight lines for repo, log, Codex home/session,
     temp, bwrap, arg0, and runtime paths. Path and mount fields are hashed in
     normal logs and switch to raw shell-quoted values only in debug1 or

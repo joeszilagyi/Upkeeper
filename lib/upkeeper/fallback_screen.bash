@@ -28,6 +28,31 @@ screen_session_exists() {
   screen -list | grep -F ".$session_name" >/dev/null 2>&1
 }
 
+screen_write_state_atomic() {
+  local path="$1"
+  local value="$2"
+  local tmp_path=""
+
+  tmp_path="$(mktemp "${path}.tmp.XXXXXX")" || return 1
+  if ! printf '%s\n' "$value" >"$tmp_path"; then
+    rm -f "$tmp_path"
+    return 1
+  fi
+  chmod 600 "$tmp_path" 2>/dev/null || true
+  if ! mv -f "$tmp_path" "$path"; then
+    rm -f "$tmp_path"
+    return 1
+  fi
+}
+
+screen_write_datetime_state_atomic() {
+  local path="$1"
+  local now_text
+
+  now_text="$(date '+%Y-%m-%dT%H:%M:%S%z')" || return 1
+  screen_write_state_atomic "$path" "$now_text"
+}
+
 launch_screen_fallback_loop() {
   local trigger="$1"
   shift
@@ -132,12 +157,27 @@ state_file() {
 write_state() {
   local name="\$1"
   local value="\$2"
-  printf '%s\n' "\$value" > "\$(state_file "\$name")"
+  local path tmp_path
+
+  path="\$(state_file "\$name")"
+  tmp_path="\$(mktemp "\${path}.tmp.XXXXXX")"
+  if ! printf '%s\n' "\$value" >"\$tmp_path"; then
+    rm -f "\$tmp_path"
+    return 1
+  fi
+  chmod 600 "\$tmp_path" 2>/dev/null || true
+  if ! mv -f "\$tmp_path" "\$path"; then
+    rm -f "\$tmp_path"
+    return 1
+  fi
 }
 
 write_state_datetime() {
   local name="\$1"
-  date '+%Y-%m-%dT%H:%M:%S%z' > "\$(state_file "\$name")"
+  local now_text
+
+  now_text="\$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  write_state "\$name" "\$now_text"
 }
 
 fallback_parent_process_start() {
@@ -297,15 +337,15 @@ EOF
     cat >"$transcript_file" <<EOF
 dry-run screen fallback transcript for cycle $CYCLE_ID trigger $trigger
 EOF
-    printf '0\n' >"$last_cycle_exit_file"
-    printf 'dry-run-child\n' >"$child_id_file"
-    date '+%Y-%m-%dT%H:%M:%S%z' >"$child_started_file"
-    printf 'finished\n' >"$child_status_file"
-    date '+%Y-%m-%dT%H:%M:%S%z' >"$heartbeat_file"
-    printf '1\n' >"$completed_count_file"
-    printf 'dry_run\n' >"$stop_reason_file"
-    printf '0\n' >"$exit_file"
-    date '+%Y-%m-%dT%H:%M:%S%z' >"$done_file"
+    screen_write_state_atomic "$last_cycle_exit_file" 0
+    screen_write_state_atomic "$child_id_file" 'dry-run-child'
+    screen_write_datetime_state_atomic "$child_started_file"
+    screen_write_state_atomic "$child_status_file" finished
+    screen_write_datetime_state_atomic "$heartbeat_file"
+    screen_write_state_atomic "$completed_count_file" 1
+    screen_write_state_atomic "$stop_reason_file" dry_run
+    screen_write_state_atomic "$exit_file" 0
+    screen_write_datetime_state_atomic "$done_file"
     return 0
   fi
 
@@ -399,7 +439,7 @@ wait_for_screen_fallback_loop() {
       missing_status="fallback_interrupted_after_successful_cycles"
     fi
     if [[ "$current_child_status" == "running" ]]; then
-      printf 'interrupted\n' >"$status_file"
+      screen_write_state_atomic "$status_file" interrupted
       current_child_status="interrupted"
     fi
     log_line "WARN" "fallback.screen.wait execution_origin=screen trigger=$trigger session_name=$session_name status=$missing_status done_file_missing=1 current_child_id=$current_child_id current_child_status=$current_child_status completed_children=$completed_count last_cycle_exit=$last_cycle_exit stop_reason=$stop_reason heartbeat=$heartbeat"

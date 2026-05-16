@@ -838,12 +838,17 @@ test loop does not spend cycles on known low-value or generated material.
 |   `-- upkeeper.bash
 |-- docs/
 |   |-- compatibility.md
+|   |-- decisions/
+|   |   |-- README.md
+|   |   `-- 0001-upkeeper-baseline-contracts.md
 |   |-- dependencies.md
 |   |-- fault-injection-scenarios.md
 |   |-- known-issues.md
+|   |-- ownership.md
 |   |-- prd.md
 |   |-- public-documentation-policy.md
 |   |-- release-checklist.md
+|   |-- risk-register.md
 |   |-- roadmap.md
 |   |-- security.md
 |   |-- stress-corpus.md
@@ -906,6 +911,12 @@ test loop does not spend cycles on known low-value or generated material.
   validation, docs, merge, and cleanup checklist
 - [docs/known-issues.md](docs/known-issues.md): tracked release-relevant risks
   and operational caveats
+- [docs/ownership.md](docs/ownership.md): responsibility areas for product,
+  shell, prompts, docs, validation, security, compatibility, and releases
+- [docs/decisions/README.md](docs/decisions/README.md): durable architecture
+  and product decision log
+- [docs/risk-register.md](docs/risk-register.md): high-impact risk register
+  with current mitigations
 - [docs/public-documentation-policy.md](docs/public-documentation-policy.md):
   public-by-default documentation, comment, release-note, and help-text policy
 - [docs/security.md](docs/security.md): local trust boundaries, safety model,

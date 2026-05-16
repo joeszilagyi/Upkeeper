@@ -1,0 +1,21 @@
+# Upkeeper Decision Log
+
+This directory records durable product and architecture choices. Decision files
+should be short, dated when useful, and linked from related docs when the choice
+changes operator behavior.
+
+## Format
+
+Each decision should include:
+
+- Status: proposed, accepted, superseded, or retired.
+- Context: what pressure or ambiguity caused the decision.
+- Decision: the chosen contract.
+- Consequences: compatibility, validation, security, or operator impact.
+
+## Current Decisions
+
+- [0001 Upkeeper baseline contracts](0001-upkeeper-baseline-contracts.md):
+  trusted shell-sourced config, central-first symlink model, no real backend in
+  validation by default, ignored local runtime evidence, fallback/postmortem
+  safety boundaries, and local quota snapshot parsing.

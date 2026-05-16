@@ -3,6 +3,34 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Governance Docs
+
+Status: completed
+
+Goal:
+Fix issue `#88` by adding tracked governance docs for ownership, durable
+decisions, and high-impact risks.
+
+Constraints:
+- Documentation-only; no runtime behavior changes.
+- Keep roles lightweight and suitable for a maintainer-led project.
+- Capture the seed decisions and risks from the issue in tracked source.
+
+Files likely touched:
+- `docs/ownership.md`
+- `docs/decisions/README.md`
+- `docs/decisions/0001-upkeeper-baseline-contracts.md`
+- `docs/risk-register.md`
+- `README.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Release-Readiness Docs
 
 Status: completed

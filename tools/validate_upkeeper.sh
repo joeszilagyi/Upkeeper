@@ -382,6 +382,11 @@ check_backlog_launcher_contract() {
   grep -Fq 'start_ticks' orchestration/backlog.sh || fail "backlog launcher does not guard against stale PID reuse in active owner tracking"
   grep -Fq 'BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default dirty-worktree autoshelve on"
   grep -Fq 'autoshelving local changes to' orchestration/backlog.sh || fail "backlog launcher does not explain dirty-worktree autoshelve"
+  grep -Fq 'BACKLOG_QUOTA_HIBERNATE="${BACKLOG_QUOTA_HIBERNATE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default quota hibernation on"
+  grep -Fq 'backlog_hibernate_until_epoch' orchestration/backlog.sh || fail "backlog launcher is missing quota hibernation helper"
+  grep -Fq 'quota preflight: quota blocked bucket=' orchestration/backlog.sh || fail "backlog launcher does not explain quota hibernation"
+  grep -Fq 'latest_active_primary_quota_block_marker' orchestration/backlog.sh || fail "backlog launcher does not honor active quota block markers"
+  grep -Fq 'BACKLOG_SOURCE_ONLY' orchestration/backlog.sh || fail "backlog launcher cannot be source-tested without running main"
   python3 - <<'PY' || fail "backlog autoshelve no longer runs before gh/jq/rg dependency gates"
 from pathlib import Path
 
@@ -414,6 +419,65 @@ PY
     grep -Fq '# backlog: recent activity: running Upkeeper for issue #999 with gpt-5.4/high target=tools/example.sh' "$temp_dir/typescript" ||
       fail "backlog launcher did not parse timestamped recent activity"
   fi
+}
+
+check_backlog_quota_hibernation_contract() {
+  local temp_dir status output
+
+  log "checking backlog quota hibernation contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-backlog-quota-hibernate.XXXXXX)"
+
+  if ! BACKLOG_SOURCE_ONLY=1 \
+    BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS=60 \
+    BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS=600 \
+    BACKLOG_TEST_NOW_EPOCH=1000 \
+    BACKLOG_TEST_FAKE_SLEEP=1 \
+    BACKLOG_TEST_SLEEP_LOG="$temp_dir/sleeps.log" \
+    BACKLOG_LOOP_LOG_FILE="$temp_dir/loop.log" \
+    bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./orchestration/backlog.sh
+      status=0
+      backlog_hibernate_until_epoch 1300 primary "projected 5-hour left 0.0 <= 0" quota_snapshot || status="$?"
+      [[ "$status" == "3" ]] || {
+        printf "unexpected hibernation status: %s\n" "$status" >&2
+        exit 1
+      }
+      [[ "$BACKLOG_TEST_NOW_EPOCH" == "1360" ]] || {
+        printf "fake clock did not advance to wake time: %s\n" "$BACKLOG_TEST_NOW_EPOCH" >&2
+        exit 1
+      }
+      [[ "$(cat "$2/sleeps.log")" == "360" ]] || {
+        printf "unexpected sleep log: %s\n" "$(cat "$2/sleeps.log")" >&2
+        exit 1
+      }
+    ' bash "$ROOT_DIR" "$temp_dir" >"$temp_dir/hibernate.out" 2>"$temp_dir/hibernate.err"; then
+    cat "$temp_dir/hibernate.err" >&2
+    fail "backlog quota hibernation fake-clock check failed"
+  fi
+
+  grep -Fq "quota preflight: quota blocked bucket=primary" "$temp_dir/hibernate.err" ||
+    fail "backlog quota hibernation did not explain the blocked bucket"
+  grep -Fq "wake=" "$temp_dir/hibernate.err" ||
+    fail "backlog quota hibernation did not report the wake time"
+  grep -Fq "quota hibernation complete" "$temp_dir/hibernate.err" ||
+    fail "backlog quota hibernation did not report completion"
+
+  set +e
+  output="$(BACKLOG_SOURCE_ONLY=1 BACKLOG_TEST_NOW_EPOCH=1000 bash -lc '
+    set -euo pipefail
+    cd "$1"
+    source ./orchestration/backlog.sh
+    backlog_hibernate_until_epoch 1e999 primary malformed quota_marker
+  ' bash "$ROOT_DIR" 2>&1)"
+  status=$?
+  set -e
+  [[ "$status" -eq 4 ]] || fail "malformed quota hibernation input exited $status output=$output"
+  grep -Fq "hibernation unavailable; invalid blocked_until_epoch=1e999" <<<"$output" ||
+    fail "malformed quota hibernation input did not fail closed plainly"
+
+  rm -r "$temp_dir"
 }
 
 check_backlog_autoshelve_contract() {
@@ -4281,6 +4345,7 @@ run_check review_summary_parser check_review_summary_parser
 run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
 run_check backlog_launcher_contract check_backlog_launcher_contract
+run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract
 
 if [[ "$MODE" == "smoke" ]]; then

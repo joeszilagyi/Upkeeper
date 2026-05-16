@@ -129,6 +129,12 @@ Important:
     lines so accidental terminal input feedback stays a no-op, and live/feed-log
     lines use a local YYYY-MM-DDTHH:MM:SS timestamp in column 1 for loose
     terminal watching.
+  - The backlog launcher hibernates by default when its quota preflight sees a
+    stop-level quota state or an active primary quota block marker. It prints
+    the blocked bucket, reset time, wake time, branch, and recent activity when
+    available, sleeps locally without backend model work until the reset grace
+    passes, then lets the next backlog cycle retry. Set
+    BACKLOG_QUOTA_HIBERNATE=0 to restore one-cycle deferral instead.
   - The living repo-local operator guide is:
       $(resolved_operator_guide_path)
     If that guide is missing, normal startup bootstraps it once from this help

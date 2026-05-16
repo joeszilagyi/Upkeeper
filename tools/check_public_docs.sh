@@ -125,7 +125,7 @@ grep -Fq "p30-stark-protocol-review.md" README.md || fail "README does not link 
 [[ -s .github/workflows/ci.yml ]] || fail "CI workflow is missing"
 grep -Fq ".github/workflows/ci.yml" README.md || fail "README does not mention the CI workflow"
 grep -Fq "tools/validate_upkeeper.sh --smoke" .github/workflows/ci.yml || fail "CI workflow does not run smoke validation for docs-only changes"
-grep -Fq "tools/validate_upkeeper.sh --quick" .github/workflows/ci.yml || fail "CI workflow does not run quick validation for broader changes"
+grep -Fq "tools/validate_upkeeper.sh --full" .github/workflows/ci.yml || fail "CI workflow does not run full validation for broader changes"
 grep -Fq "tools/check_public_docs.sh --quick" .github/workflows/ci.yml || fail "CI workflow does not run public docs check"
 grep -Fq "tests/*.bash" .github/workflows/ci.yml || fail "CI workflow does not run unit tests"
 grep -Fq "bash -n FlameOn" .github/workflows/ci.yml || fail "CI workflow does not syntax-check FlameOn"

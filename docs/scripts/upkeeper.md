@@ -745,19 +745,20 @@ prompts, backup log lines, or Lattice preselect evidence.
   root `change_notes_YYYY.md`; version bumps should keep that file current.
 - The central checkout has a tracked validation harness at
   `tools/validate_upkeeper.sh`. Use `--deps` for runtime/tool dependency
-  status, `--smoke` for the fast local edit loop, `--quick` for the broad
-  deterministic integration gate, and `--full` before release or after touching
-  module order, prompt packaging, symlink behavior, or failure-path guardrails.
+  status, `--smoke` for the fast local edit loop, `--quick` for bounded
+  static/fixture checks, and `--full` for the broad deterministic integration
+  gate before release or after touching module order, prompt packaging,
+  symlink behavior, or failure-path guardrails.
   Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
-  heavier config and review-module dry-run fixtures stay in quick mode. Add
-  `--profile` to validation runs to print per-check elapsed timings without
-  changing coverage. Full validation uses dry-runs plus a local fake `codex`
-  binary; it does not launch real backend work.
+  heavier config, manifest, Lattice, and review-module dry-run fixtures stay in
+  full mode. Add `--profile` to validation runs to print per-check elapsed
+  timings without changing coverage. Full validation uses bounded dry-runs plus
+  a local fake `codex` binary; it does not launch real backend work.
   GitHub Actions runs the no-quota CI path in `.github/workflows/ci.yml` on
   pull requests and on pushes to `main`. It installs required tools including
   `jq` and `age`, classifies the change scope, and then runs either the
   docs-only path (`tools/check_public_docs.sh --quick` plus
-  `tools/validate_upkeeper.sh --smoke`) or the broader shell/tests/docs/quick
+  `tools/validate_upkeeper.sh --smoke`) or the broader shell/tests/docs/full
   validation path.
   Sample-repo stress coverage is available without backend quota with
   `tools/stress_upkeeper_corpus.sh --local`; full validation runs that local

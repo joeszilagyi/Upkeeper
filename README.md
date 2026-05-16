@@ -740,7 +740,9 @@ module with a non-breaking alias plan. P29 remains the public reuse-harvesting
 contract and P30 remains Stark Protocol hardening; existing P29 aliases are not
 renamed or repurposed. The tracked
 [`prompts/p31-fault-injection-review.md`](prompts/p31-fault-injection-review.md)
-file defines the future P31 contract before CLI wiring exists.
+file defines the future P31 contract before CLI wiring exists, and
+[`docs/fault-injection-scenarios.md`](docs/fault-injection-scenarios.md)
+tracks candidate scenarios with stable ids and priority fields.
 
 ```sh
 ./Upkeeper --review-module=p24
@@ -937,6 +939,8 @@ test loop does not spend cycles on known low-value or generated material.
 - [prompts/p31-fault-injection-review.md](prompts/p31-fault-injection-review.md):
   reserved future P31 contract for deterministic fault-injection scenarios with
   explicit oracles and recovery proof; not wired as a review-module flag yet
+- [docs/fault-injection-scenarios.md](docs/fault-injection-scenarios.md):
+  tracked P31 scenario registry and priority matrix with stable `FI-###` ids
 - [prompts/git_hard_clean.md](prompts/git_hard_clean.md): explicit branch and backup cleanup
   workflow notes
 - [templates/prompt-template.md](templates/prompt-template.md): starter format

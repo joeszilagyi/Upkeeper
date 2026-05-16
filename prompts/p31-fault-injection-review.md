@@ -119,6 +119,9 @@ Every accepted scenario must leave one of these registry actions:
 
 Unregistered fault ideas are not P31 output. They are notes.
 
+The tracked scenario registry is `docs/fault-injection-scenarios.md`. Use its
+stable `FI-###` ids when adding, proposing, rejecting, or retiring scenarios.
+
 ## Output Contract
 
 When P31 applies, include this block in the review summary:

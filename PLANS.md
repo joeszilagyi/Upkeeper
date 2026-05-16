@@ -3,6 +3,35 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Fault-Injection Scenario Registry
+
+Status: completed
+
+Goal:
+Fix issue `#83` by adding a tracked fault-injection scenario registry with
+stable ids, required registry columns, FMEA-style priority fields, and deferred
+initial rows for the major Upkeeper fault surfaces.
+
+Constraints:
+- Keep this as a documentation/registry contract, not executable injection
+  implementation.
+- Use stable ids that a future Lattice import can consume without guessing.
+- Add validator checks for required columns, priority fields, and required
+  surface coverage.
+
+Files likely touched:
+- `docs/fault-injection-scenarios.md`
+- `README.md`
+- `prompts/p31-fault-injection-review.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Fault-Injection Review Contract
 
 Status: completed

@@ -56,6 +56,10 @@ Version numbering note:
 	1. Added no-backend install, update, uninstall, and doctor helpers for central-first client symlinks, with local `.git/info/exclude` setup and forced-overwrite guardrails.
 	2. Documented the helper workflow in README and the operator guide, and added focused tests plus validator coverage for the helper contract.
 
+2026-05-15: prompt public lint:
+	1. Corrected known public rough edges in the default and caretaking prompt files without restructuring the prompt contracts.
+	2. Added quick validator coverage for the banned incomplete sentence and typo phrases so they cannot silently regress.
+
 2026-05-15: startup anomaly watch summary:
 	1. Startup anomaly scans now emit one `previous_run.anomaly_summary` warning for ordinary terminal/watch output instead of replaying every prior anomaly as a warning burst.
 	2. Per-anomaly `previous_run.anomaly_detail` records are still preserved in local logs and prompt context, and diagnostic terminal modes can still surface the details directly.

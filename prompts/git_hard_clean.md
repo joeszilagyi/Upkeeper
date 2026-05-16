@@ -98,7 +98,7 @@ PHASE 0 — PRE-FLIGHT AUDIT (MANDATORY, NEVER SKIP)
 
    Save these for reference and proceed automatically.
 
- 
+
 
 2. **Audit unmerged branches:** Run:
 
@@ -120,7 +120,7 @@ PHASE 0 — PRE-FLIGHT AUDIT (MANDATORY, NEVER SKIP)
 
      unique, unpushed work. Otherwise, proceed automatically.
 
- 
+
 
 2.5. **Branch accumulation warning:** Run:
 
@@ -132,7 +132,7 @@ PHASE 0 — PRE-FLIGHT AUDIT (MANDATORY, NEVER SKIP)
 
      them), then return here before proceeding to step 3.
 
- 
+
 
 3. **Audit stranded commits on current branch:** Run:
 
@@ -144,7 +144,7 @@ PHASE 0 — PRE-FLIGHT AUDIT (MANDATORY, NEVER SKIP)
 
      work is made live. Record decision in Session Memory and proceed.
 
- 
+
 
 4. **Verify expected files exist:** If I have mentioned specific files
 
@@ -184,7 +184,7 @@ PHASE 1 — BRANCH CREATION (PRESERVE CONTEXT)
 
       Nothing to back up. Exiting workflow."
 
- 
+
 
 6. **Branch from current HEAD (NOT from main):** Run:
 
@@ -192,7 +192,7 @@ PHASE 1 — BRANCH CREATION (PRESERVE CONTEXT)
 
    This preserves your current working state INCLUDING any local commits.
 
- 
+
 
 7. **Confirm branch state:** Run `git log --oneline -n 10` to internally
 
@@ -214,7 +214,7 @@ PHASE 2 — STAGING & COMMIT
 
    - If working tree is clean but unpushed commits exist, skip to Phase 3.
 
- 
+
 
 9. **Sensitive file check:** Before staging, scan for and EXCLUDE:
 
@@ -230,11 +230,11 @@ PHASE 2 — STAGING & COMMIT
 
    then STOP and ask).
 
- 
+
 
 10. **Stage:** Run `git add -A` (excluding sensitive files identified above).
 
- 
+
 
 11. **Analyze and Generate Commit Message:** Use Conventional Commits format.
 
@@ -260,7 +260,7 @@ PHASE 3 — SYNC WITH MAIN
 
 12. **Fetch latest main:** Run `git fetch origin main`
 
- 
+
 
 13. **Rebase onto latest main:** Run `git rebase origin/main`
 
@@ -270,7 +270,7 @@ PHASE 3 — SYNC WITH MAIN
 
       DO NOT attempt to resolve conflicts automatically.
 
- 
+
 
 14. **Verify nothing was lost:** Run `git log --oneline -n 15` to securely
 
@@ -284,7 +284,7 @@ PHASE 4 — PUSH & MERGE REQUEST
 
 15. **Push branch:** Run `git push -u origin HEAD`
 
- 
+
 
 16. **Create Merge Request:** Use the GitLab API. Capture both the
 
@@ -316,7 +316,7 @@ PHASE 4 — PUSH & MERGE REQUEST
 
     - If MR_IID is empty, STOP and show me the full response.
 
- 
+
 
 17. **Wait for mergeability:** Poll every 5 seconds, max 6 attempts:
 
@@ -342,7 +342,7 @@ PHASE 4 — PUSH & MERGE REQUEST
 
     ```
 
- 
+
 
 18. **Merge the MR:** Accept via API:
 
@@ -372,13 +372,13 @@ PHASE 5 — POST-MERGE VERIFICATION (MANDATORY)
 
     `git pull origin main`
 
- 
+
 
 20. **Display Session Memory:** Output the full Session Memory contents
 
     for audit logging, then PROCEED AUTOMATICALLY to checks.
 
- 
+
 
 21. **Verify expected files exist on main:** For every file you committed:
 
@@ -386,7 +386,7 @@ PHASE 5 — POST-MERGE VERIFICATION (MANDATORY)
 
     - If ANY expected file is missing from main, STOP and report immediately.
 
- 
+
 
 22. **Verify no orphaned branches (Session-Memory-aware):** Run:
 
@@ -396,7 +396,7 @@ PHASE 5 — POST-MERGE VERIFICATION (MANDATORY)
 
       branches exist, STOP and ask what to do.
 
- 
+
 
 23. **Clean up local branch:**
 
@@ -416,7 +416,7 @@ PHASE 5.5 — AUTO-PRUNE STALE BACKUP BRANCHES
 
 git branch --merged main | grep '^  backup/' > /tmp/prunable_backup.txt
 
- 
+
 
 # Optional: Add timeout-protected second check for branches behind main
 
@@ -432,7 +432,7 @@ timeout 10 bash -c '
 
 ' >> /tmp/prunable_backup.txt 2>/dev/null || true
 
- 
+
 
 # Deduplicate and exclude current branch just merged
 
@@ -442,7 +442,7 @@ sort -u /tmp/prunable_backup.txt | grep -v "backup/2026-04-30-1052" > /tmp/pruna
 
     - Combine both lists (deduplicated). Exclude current branch just merged.
 
- 
+
 
 25. **Execute automated pruning:** To maintain a completely caught-up, healthy,
 
@@ -464,7 +464,7 @@ sort -u /tmp/prunable_backup.txt | grep -v "backup/2026-04-30-1052" > /tmp/pruna
 
     - Record all deletions in Session Memory.
 
- 
+
 
 26. **Verify prune results:** Run `git branch -a` to confirm they are gone.
 
@@ -484,13 +484,13 @@ PHASE 6 — FINAL REPORT
 
     <git log --oneline -n 10>
 
- 
+
 
     All branches (local + remote):
 
     <git branch -a>
 
- 
+
 
     Files committed in this backup:
 
@@ -502,7 +502,7 @@ PHASE 6 — FINAL REPORT
 
     MR URL: https://gitlab.dell.com/.../merge_requests/<MR_IID>
 
- 
+
 
     === BRANCH HYGIENE SCORE ===
 
@@ -512,7 +512,7 @@ PHASE 6 — FINAL REPORT
 
     Status: CLEAN
 
- 
+
 
     === SESSION MEMORY FINAL STATE ===
 
@@ -520,11 +520,11 @@ PHASE 6 — FINAL REPORT
 
     ```
 
- 
 
- 
 
- 
+
+
+
 
 ═══════════════════════════════════════════════════════════════
 

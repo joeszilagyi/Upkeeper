@@ -316,6 +316,9 @@ Runtime/tool dependencies are tracked in [`docs/dependencies.md`](docs/dependenc
 GitHub's dependency graph should stay enabled, but it is expected to show no
 package dependencies until the repo adds a real supported manifest, workflow, or
 dependency submission.
+`jq` is intentionally still a required runtime dependency for the current Bash
+JSON bridge surface; install commands and the future removal condition are
+tracked in the dependency document.
 
 The backward-compatibility contract is tracked in
 [`docs/compatibility.md`](docs/compatibility.md). Existing operator-visible

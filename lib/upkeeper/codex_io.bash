@@ -1587,7 +1587,7 @@ require_commands() {
   local cmd
   for cmd in awk cat chmod cut date df env find git grep jq ln mkdir mktemp mv ps python3 rm rmdir sed sort tail tee tr wc; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
-      log_line "ERROR" "required command missing: $cmd"
+      log_line "ERROR" "required command missing: $cmd docs=docs/dependencies.md action=install_dependency"
       missing=1
     fi
   done

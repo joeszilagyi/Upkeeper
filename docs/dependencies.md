@@ -105,6 +105,37 @@ These commands are required by normal Upkeeper startup/runtime paths:
 - `tr`
 - `wc`
 
+## jq Decision And Install Commands
+
+`jq` remains a required runtime and validation dependency for the current
+wrapper line. Upkeeper already requires Python 3, but the Bash runtime still
+uses `jq` directly for JSON assignment bridges, status/session parsing,
+automation-obligation checks, manifest validation, and local test fixtures.
+Removing `jq` is allowed only in a future patch that replaces those bridges with
+Python-backed helpers and adds deterministic compatibility tests for the same
+JSON shapes.
+
+Install `jq` with the package manager for the target machine:
+
+```sh
+# Debian/Ubuntu, including GitHub Actions ubuntu-latest
+sudo apt-get update
+sudo apt-get install -y jq
+
+# Fedora/RHEL family
+sudo dnf install -y jq
+
+# Arch Linux
+sudo pacman -S --needed jq
+
+# macOS with Homebrew
+brew install jq
+```
+
+The validator and wrapper missing-command diagnostics point back to this file.
+Use `tools/validate_upkeeper.sh --deps` after installation to confirm the local
+dependency surface before running broader validation.
+
 ## Backend Dependency
 
 - `codex` is required for non-dry-run backend cycles.

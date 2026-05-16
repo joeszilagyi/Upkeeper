@@ -154,6 +154,9 @@ launcher.
 The wrapper itself runs local shell commands needed for startup, validation,
 selection, quota parsing, and cleanup. Examples include `git`, `find`, `jq`,
 `python3`, `df`, `ps`, `sed`, `awk`, and related standard tools.
+`docs/dependencies.md` is the tracked source for the current dependency
+decision and install commands; `jq` remains required until the runtime JSON
+bridges are replaced by tested Python-backed helpers.
 
 In non-dry-run mode, Upkeeper launches:
 

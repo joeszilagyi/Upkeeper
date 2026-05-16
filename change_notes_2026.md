@@ -40,6 +40,10 @@ Version numbering note:
 	1. Documented the P31 injector catalog, flakiness bans, and the boundary between focused fault-injection scenarios and the multi-repo stress corpus.
 	2. Extended validator coverage so the P31 prompt, Scenario registry, and stress-corpus docs keep the required control/injection/recovery, oracle, not-applicable, and boundary terms.
 
+2026-05-15: jq dependency guidance:
+	1. Documented that `jq` remains a required runtime and validation dependency until the Bash JSON bridges have tested Python-backed replacements.
+	2. Added portable `jq` install commands and updated wrapper/validator missing-command diagnostics to point operators at `docs/dependencies.md`.
+
 2026-05-15: startup anomaly watch summary:
 	1. Startup anomaly scans now emit one `previous_run.anomaly_summary` warning for ordinary terminal/watch output instead of replaying every prior anomaly as a warning burst.
 	2. Per-anomaly `previous_run.anomaly_detail` records are still preserved in local logs and prompt context, and diagnostic terminal modes can still surface the details directly.

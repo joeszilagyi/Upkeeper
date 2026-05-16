@@ -216,7 +216,7 @@ export UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT=""
 
 require_command() {
   local command_name="$1"
-  command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name"
+  command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name; see docs/dependencies.md"
 }
 
 require_commands() {
@@ -281,8 +281,8 @@ check_dependencies() {
     esac
   done
 
-  [[ "$missing_required" -eq 0 ]] || fail "one or more required wrapper dependencies are missing"
-  [[ "$missing_launcher_required" -eq 0 ]] || fail "one or more full-burn launcher dependencies are missing"
+  [[ "$missing_required" -eq 0 ]] || fail "one or more required wrapper dependencies are missing; see docs/dependencies.md"
+  [[ "$missing_launcher_required" -eq 0 ]] || fail "one or more full-burn launcher dependencies are missing; see docs/dependencies.md"
 }
 
 check_private_artifact_umask_contract() {
@@ -1093,6 +1093,31 @@ check_validation_environment_isolation() {
   [[ -z "$UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT" ]] || fail "validation inherited UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT"
   [[ "$UPKEEPER_AUTOMATION_LEDGER_DIR" == "$VALIDATION_TMP_ROOT/automation-ledger" ]] || fail "validation automation ledger is not isolated: $UPKEEPER_AUTOMATION_LEDGER_DIR"
   [[ "$UPKEEPER_OBLIGATION_DIR" == "$VALIDATION_TMP_ROOT/automation-obligations" ]] || fail "validation obligation root is not isolated: $UPKEEPER_OBLIGATION_DIR"
+}
+
+check_dependency_guidance_contract() {
+  log "checking dependency guidance contract"
+
+  grep -Fq '`jq` remains a required runtime and validation dependency' docs/dependencies.md ||
+    fail "dependency docs missing explicit jq decision"
+  grep -Fq 'sudo apt-get install -y jq' docs/dependencies.md ||
+    fail "dependency docs missing Debian/Ubuntu jq install command"
+  grep -Fq 'sudo dnf install -y jq' docs/dependencies.md ||
+    fail "dependency docs missing Fedora/RHEL jq install command"
+  grep -Fq 'sudo pacman -S --needed jq' docs/dependencies.md ||
+    fail "dependency docs missing Arch jq install command"
+  grep -Fq 'brew install jq' docs/dependencies.md ||
+    fail "dependency docs missing Homebrew jq install command"
+  grep -Fq 'JSON assignment bridges' docs/dependencies.md ||
+    fail "dependency docs missing future jq removal condition"
+  grep -Fq 'docs=docs/dependencies.md action=install_dependency' lib/upkeeper/codex_io.bash ||
+    fail "runtime missing-command diagnostics do not point at dependency docs"
+  grep -Fq 'missing required command: $command_name; see docs/dependencies.md' tools/validate_upkeeper.sh ||
+    fail "validator missing-command diagnostics do not point at dependency docs"
+  grep -Fq '`jq` is intentionally still a required runtime dependency' README.md ||
+    fail "README missing explicit jq dependency decision"
+  grep -Fq 'jq` remains required' docs/security.md ||
+    fail "security docs missing jq dependency decision"
 }
 
 check_validation_mode_boundary_contract() {
@@ -4096,6 +4121,7 @@ run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contr
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
+run_check dependency_guidance_contract check_dependency_guidance_contract
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
 run_check test_invocation_mode_contract check_test_invocation_mode_contract
 run_check wrapper_contract_tests check_wrapper_contract_tests

@@ -3,6 +3,44 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Quick Validation Boundary
+
+Status: completed
+
+Goal:
+Fix issue `#68` by making `tools/validate_upkeeper.sh --quick` a fast bounded
+static/fixture gate instead of running the heavier wrapper dry-run integration
+suite, while keeping full no-quota coverage available under `--full`.
+
+Constraints:
+- Preserve `--full` as the deterministic release/CI integration gate with no
+  real backend Codex calls.
+- Keep `--quick` useful for local edit-loop/release preflight work and free of
+  unbounded wrapper dry-runs.
+- Add explicit bounded-check support so timeout failures name the specific
+  validation check that exceeded its budget.
+- Update CI/docs/help/release notes so operators know which mode is fast and
+  which mode is comprehensive.
+
+Files likely touched:
+- `tools/validate_upkeeper.sh`
+- `.github/workflows/ci.yml`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/dependencies.md`
+- `docs/stress-corpus.md`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Startup Anomaly Watch Summary
 
 Status: completed

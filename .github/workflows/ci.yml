@@ -17,7 +17,7 @@ jobs:
   local-validation:
     name: Local validation
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     # Start with Ubuntu. Add macos-latest after GNU/BSD portability issues are
     # handled in the wrapper and validation harness.
@@ -123,6 +123,6 @@ jobs:
         if: steps.scope.outputs.docs_only == '1'
         run: tools/validate_upkeeper.sh --smoke
 
-      - name: Quick validation
+      - name: Full validation
         if: steps.scope.outputs.docs_only != '1'
-        run: tools/validate_upkeeper.sh --quick
+        run: tools/validate_upkeeper.sh --full

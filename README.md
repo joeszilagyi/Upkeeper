@@ -288,14 +288,15 @@ tools/validate_upkeeper.sh --full
 
 Smoke validation is the fast local edit-loop path: syntax, version/module-map
 contracts, prompt packaging, help/docs/diff checks, parser helpers, and launcher
-argument contracts. Heavier integration fixtures, including config-file support
-and review-module dry-runs, stay in `--quick`. Quick validation remains the
-broad deterministic local integration gate. Add `--profile` to any
+argument contracts. Quick validation adds bounded static/fixture checks and
+stays out of wrapper dry-run integration paths such as manifest selection,
+Lattice selection, and config-file startup. Add `--profile` to any
 non-dependency validation mode to print per-check timings and find the next
 local bottleneck without changing coverage.
-The full validation mode still avoids real backend Codex work. It runs Upkeeper
-with `UPKEEPER_DRY_RUN=1` for startup checks, then uses a local fake `codex`
-binary to exercise launch/capture failure classification without spending quota.
+The full validation mode remains the broad deterministic local integration gate
+without real backend Codex work. It runs bounded Upkeeper dry-run startup
+checks, then uses a local fake `codex` binary to exercise launch/capture
+failure classification without spending quota.
 
 GitHub Actions runs the no-quota CI path in
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on pull requests and on
@@ -306,7 +307,7 @@ pushes to `main`. The workflow installs required tools including `jq` and
   `tools/validate_upkeeper.sh --smoke`
 - broader changes: shell syntax checks, `tests/*.bash`,
   `tools/check_public_docs.sh --quick`, and
-  `tools/validate_upkeeper.sh --quick`
+  `tools/validate_upkeeper.sh --full`
 
 It does not launch real Codex backend work and does not upload runtime
 artifacts by default.

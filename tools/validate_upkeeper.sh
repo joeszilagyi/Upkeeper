@@ -7,6 +7,8 @@ ROOT_DIR="$(cd -- "$TOOLS_DIR/.." && pwd)"
 
 MODE="quick"
 VALIDATION_PROFILE="0"
+VALIDATION_INTEGRATION_TIMEOUT_SECONDS="${VALIDATION_INTEGRATION_TIMEOUT_SECONDS:-300}"
+VALIDATION_FULL_TIMEOUT_SECONDS="${VALIDATION_FULL_TIMEOUT_SECONDS:-420}"
 
 WRAPPER_REQUIRED_COMMANDS=(
   awk
@@ -65,9 +67,11 @@ Modes:
   --smoke   Run the fast local edit-loop checks: syntax, version, module map,
             prompt templates, help/docs/diff, parser helpers, and launcher
             argument contracts.
-  --quick   Run syntax, version, module-map, prompt-template, help, and diff checks.
-  --full    Run quick checks plus safe dry-runs, symlink behavior, the local
-            stress corpus, and failure paths.
+  --quick   Run smoke plus bounded static/fixture checks. Quick mode does not
+            run wrapper dry-run integration paths such as manifest or Lattice
+            selection.
+  --full    Run quick checks plus bounded safe dry-runs, symlink behavior, the
+            local stress corpus, and failure paths.
 
 Flags:
   --profile Print elapsed time for each validation check.
@@ -95,16 +99,44 @@ validation_now_us() {
   date +%s%6N
 }
 
-run_check() {
+validation_run_check() {
   local name="$1"
+  local timeout_seconds="$2"
+  shift
   shift
   local start_us end_us elapsed_us
+  local pid rc elapsed
 
   if [[ "$VALIDATION_PROFILE" == "1" ]]; then
     start_us="$(validation_now_us)"
   fi
 
-  "$@"
+  if [[ "$timeout_seconds" =~ ^[0-9]+$ && "$timeout_seconds" -gt 0 ]]; then
+    set +e
+    "$@" &
+    pid=$!
+    elapsed=0
+    while kill -0 "$pid" 2>/dev/null; do
+      if ((elapsed >= timeout_seconds)); then
+        kill "$pid" 2>/dev/null || true
+        sleep 1
+        kill -KILL "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        set -e
+        fail "check $name exceeded ${timeout_seconds}s timeout"
+      fi
+      sleep 1
+      elapsed=$((elapsed + 1))
+    done
+    wait "$pid"
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 0 ]]; then
+      return "$rc"
+    fi
+  else
+    "$@"
+  fi
 
   if [[ "$VALIDATION_PROFILE" == "1" ]]; then
     end_us="$(validation_now_us)"
@@ -112,6 +144,20 @@ run_check() {
     printf 'validate_upkeeper: timing check=%s elapsed=%d.%03ds\n' \
       "$name" "$((elapsed_us / 1000000))" "$(((elapsed_us % 1000000) / 1000))"
   fi
+}
+
+run_check() {
+  local name="$1"
+  shift
+  validation_run_check "$name" 0 "$@"
+}
+
+run_bounded_check() {
+  local name="$1"
+  local timeout_seconds="$2"
+  shift
+  shift
+  validation_run_check "$name" "$timeout_seconds" "$@"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -831,6 +877,36 @@ check_validation_environment_isolation() {
   [[ -z "$UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT" ]] || fail "validation inherited UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT"
   [[ "$UPKEEPER_AUTOMATION_LEDGER_DIR" == "$VALIDATION_TMP_ROOT/automation-ledger" ]] || fail "validation automation ledger is not isolated: $UPKEEPER_AUTOMATION_LEDGER_DIR"
   [[ "$UPKEEPER_OBLIGATION_DIR" == "$VALIDATION_TMP_ROOT/automation-obligations" ]] || fail "validation obligation root is not isolated: $UPKEEPER_OBLIGATION_DIR"
+}
+
+check_validation_mode_boundary_contract() {
+  log "checking validation mode boundary contract"
+
+  python3 - "$ROOT_DIR/tools/validate_upkeeper.sh" <<'PY' || fail "validation mode boundary contract is not enforced"
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+quick_exit = text.rindex('\nif [[ "$MODE" == "quick" ]]; then')
+full_gate = text.rindex('\nif [[ "$MODE" == "full" ]]; then')
+heavy_checks = [
+    "review_module_flags",
+    "config_file_support",
+    "cycle_start_log_contract",
+    "file_manifest_selection",
+    "tool_failure_queue",
+    "lattice_contract",
+]
+for name in heavy_checks:
+    marker = f"run_bounded_check {name}"
+    pos = text.index(marker)
+    if pos < quick_exit:
+        raise SystemExit(f"{name} runs before quick exit")
+    if pos > full_gate:
+        raise SystemExit(f"{name} is not in the integration block before full-only extras")
+if 'fail "check $name exceeded ${timeout_seconds}s timeout"' not in text:
+    raise SystemExit("bounded timeout failure diagnostic missing")
+PY
 }
 
 check_codex_mode_validation() {
@@ -3627,6 +3703,7 @@ run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contr
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
+run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
 run_check codex_mode_validation check_codex_mode_validation
 run_check public_docs_policy check_public_docs_policy
 run_check private_artifact_umask_contract check_private_artifact_umask_contract
@@ -3648,41 +3725,46 @@ if [[ "$MODE" == "smoke" ]]; then
   exit 0
 fi
 
-run_check review_module_flags check_review_module_flags
-run_check config_file_support check_config_file_support
-run_check gitignore_contract check_gitignore_contract
-run_check force_added_gitignored_target_selection check_force_added_gitignored_target_selection
-run_check symlink_target_selection_guard check_symlink_target_selection_guard
-run_check cycle_start_log_contract check_cycle_start_log_contract
-run_check log_path_symlink_guard check_log_path_symlink_guard
-run_check disk_preflight_log_contract check_disk_preflight_log_contract
-run_check disk_preflight_prompt_note_contract check_disk_preflight_prompt_note_contract
-run_check arg0_tmp_cleanup_contract check_arg0_tmp_cleanup_contract
-run_check automation_obligation_framework check_automation_obligation_framework
-run_check session_store_preflight_contract check_session_store_preflight_contract
-run_check bwrap_tmp_preflight_contract check_bwrap_tmp_preflight_contract
-run_check wrapper_health_log_quoting check_wrapper_health_log_quoting
-run_check operator_guide_bootstrap_race check_operator_guide_bootstrap_race
-run_check active_lock_incomplete_guard check_active_lock_incomplete_guard
-run_check quota_fallback_exit_contract check_quota_fallback_exit_contract
-run_check file_manifest_selection check_file_manifest_selection
-run_check issue_workflow_comment_relay check_issue_workflow_comment_relay
-run_check issue_workflow_backend_mode_contract check_issue_workflow_backend_mode_contract
-run_check genie_protocol_backend_boundary check_genie_protocol_backend_boundary
-run_check prompt_pass_coverage_enforcement check_prompt_pass_coverage_enforcement
-run_check log_self_review_target_boundary check_log_self_review_target_boundary
-run_check tool_failure_queue check_tool_failure_queue
-run_check lattice_contract check_lattice_contract
-run_check fallback_artifact_helpers check_fallback_artifact_helpers
-run_check startup_anomaly_gate_allowlist check_startup_anomaly_gate_allowlist
+if [[ "$MODE" == "quick" ]]; then
+  log "$MODE validation passed"
+  exit 0
+fi
+
+run_bounded_check review_module_flags "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_review_module_flags
+run_bounded_check config_file_support "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_config_file_support
+run_bounded_check gitignore_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_gitignore_contract
+run_bounded_check force_added_gitignored_target_selection "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_force_added_gitignored_target_selection
+run_bounded_check symlink_target_selection_guard "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_symlink_target_selection_guard
+run_bounded_check cycle_start_log_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_cycle_start_log_contract
+run_bounded_check log_path_symlink_guard "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_log_path_symlink_guard
+run_bounded_check disk_preflight_log_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_disk_preflight_log_contract
+run_bounded_check disk_preflight_prompt_note_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_disk_preflight_prompt_note_contract
+run_bounded_check arg0_tmp_cleanup_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_arg0_tmp_cleanup_contract
+run_bounded_check automation_obligation_framework "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_automation_obligation_framework
+run_bounded_check session_store_preflight_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_session_store_preflight_contract
+run_bounded_check bwrap_tmp_preflight_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_bwrap_tmp_preflight_contract
+run_bounded_check wrapper_health_log_quoting "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_wrapper_health_log_quoting
+run_bounded_check operator_guide_bootstrap_race "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_operator_guide_bootstrap_race
+run_bounded_check active_lock_incomplete_guard "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_active_lock_incomplete_guard
+run_bounded_check quota_fallback_exit_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_quota_fallback_exit_contract
+run_bounded_check file_manifest_selection "$VALIDATION_FULL_TIMEOUT_SECONDS" check_file_manifest_selection
+run_bounded_check issue_workflow_comment_relay "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_issue_workflow_comment_relay
+run_bounded_check issue_workflow_backend_mode_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_issue_workflow_backend_mode_contract
+run_bounded_check genie_protocol_backend_boundary "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_genie_protocol_backend_boundary
+run_bounded_check prompt_pass_coverage_enforcement "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_prompt_pass_coverage_enforcement
+run_bounded_check log_self_review_target_boundary "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_log_self_review_target_boundary
+run_bounded_check tool_failure_queue "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_tool_failure_queue
+run_bounded_check lattice_contract "$VALIDATION_FULL_TIMEOUT_SECONDS" check_lattice_contract
+run_bounded_check fallback_artifact_helpers "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_fallback_artifact_helpers
+run_bounded_check startup_anomaly_gate_allowlist "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_startup_anomaly_gate_allowlist
 
 if [[ "$MODE" == "full" ]]; then
-  run_check central_dry_runs check_central_dry_runs
-  run_check symlinked_client check_symlinked_client
-  run_check missing_module_failure check_missing_module_failure
-  run_check missing_prompt_failure check_missing_prompt_failure
-  run_check empty_transcript_failure check_empty_transcript_failure
-  run_check stress_corpus_harness check_stress_corpus_harness
+  run_bounded_check central_dry_runs "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_central_dry_runs
+  run_bounded_check symlinked_client "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_symlinked_client
+  run_bounded_check missing_module_failure "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_missing_module_failure
+  run_bounded_check missing_prompt_failure "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_missing_prompt_failure
+  run_bounded_check empty_transcript_failure "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_empty_transcript_failure
+  run_bounded_check stress_corpus_harness "$VALIDATION_FULL_TIMEOUT_SECONDS" check_stress_corpus_harness
 fi
 
 log "$MODE validation passed"

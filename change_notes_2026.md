@@ -17,6 +17,11 @@ Version numbering note:
 	2. Per-anomaly `previous_run.anomaly_detail` records are still preserved in local logs and prompt context, and diagnostic terminal modes can still surface the details directly.
 	3. Added quick validation so normal output cannot regress to flooding the backlog watch feed with repeated historical anomaly lines.
 
+2026-05-15: validation mode boundary cleanup:
+	1. `tools/validate_upkeeper.sh --quick` now stops before wrapper dry-run integration checks such as manifest selection, Lattice validation, config startup, and review-module dry-runs.
+	2. Those heavier no-quota checks now run under bounded `--full` validation, with timeout failures naming the specific check that exceeded its budget.
+	3. CI keeps broad code-change coverage by running full validation for non-doc changes while docs-only changes keep the cheaper public-docs plus smoke-validation path.
+
 2026-05-15: v1.2.21 changes:
 	1. Hardened detached screen fallback staging so generated runner scripts live under a private owner-only state root instead of repo-local postmortem evidence, while mirrored status files remain available for normal operator inspection.
 	2. Preserved fallback-chain contracts, selected-target context, issue-fix context, failure-queue context, and prompt/module arguments across staged screen fallback children so recovery workers do not silently lose the parent run's workload boundary.

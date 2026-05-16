@@ -18,13 +18,15 @@ Upkeeper's real dependency surface here and validate it locally with:
 ```sh
 tools/validate_upkeeper.sh --deps
 tools/validate_upkeeper.sh --smoke
+tools/validate_upkeeper.sh --quick
 tools/validate_upkeeper.sh --full
 ```
 
 `--deps` reports command availability. `--smoke` runs the fast local edit-loop
-checks without backend work. `--full` runs the release guardrails with
-`UPKEEPER_DRY_RUN=1` for startup checks and a local fake `codex` binary for
-launch/capture failure classification, including central startup,
+checks without backend work. `--quick` adds bounded static/fixture checks while
+staying out of wrapper dry-run integration paths. `--full` runs the release
+guardrails with `UPKEEPER_DRY_RUN=1` for startup checks and a local fake `codex`
+binary for launch/capture failure classification, including central startup,
 symlinked-client startup, missing-module failure, missing prompt-template
 failure, and empty-transcript failure.
 
@@ -37,7 +39,7 @@ broader changes runs:
 bash -n Upkeeper Upkeeper.conf configurations/default.conf lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh
 for test_script in tests/*.bash; do bash "$test_script"; done
 tools/check_public_docs.sh --quick
-tools/validate_upkeeper.sh --quick
+tools/validate_upkeeper.sh --full
 ```
 
 For docs-only changes, the workflow takes the cheaper path:

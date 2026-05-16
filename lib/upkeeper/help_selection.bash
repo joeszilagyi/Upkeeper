@@ -157,13 +157,14 @@ Important:
     local prompt files are only needed for explicit --prompt-file overrides.
   - The central checkout can be validated without launching real Codex work with:
       tools/validate_upkeeper.sh --deps
+      tools/validate_upkeeper.sh --smoke
       tools/validate_upkeeper.sh --quick
       tools/validate_upkeeper.sh --full
-    Full validation uses dry-runs plus a local fake codex binary, not real
-    backend work.
+    Quick validation is the bounded static/fixture gate; full validation adds
+    bounded dry-runs plus a local fake codex binary, not real backend work.
     GitHub Actions runs the no-quota CI path in .github/workflows/ci.yml on
     pushes and pull requests: shell syntax, tests/*.bash, public docs, and
-    tools/validate_upkeeper.sh --quick.
+    tools/validate_upkeeper.sh --full.
     Sample-repo stress coverage is available without backend quota with:
       tools/stress_upkeeper_corpus.sh --local
     Full validation runs that local stress corpus after the central wrapper

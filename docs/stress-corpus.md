@@ -143,7 +143,8 @@ evidence only when requested or when a check fails.
 A stress-corpus implementation is ready to trust when:
 
 - It is invoked by tracked `tools/stress_upkeeper_corpus.sh`.
-- `tools/validate_upkeeper.sh --quick` does not require real backend work.
+- `tools/validate_upkeeper.sh --quick` does not require real backend work and
+  does not run wrapper dry-run integration paths.
 - `tools/validate_upkeeper.sh --full` runs the local corpus without backend
   quota.
 - Corpus local mode can run repeatedly without tracked file churn.

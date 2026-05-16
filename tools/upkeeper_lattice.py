@@ -26,6 +26,7 @@ from typing import Any, Iterable
 
 SCHEMA_VERSION = 1
 SCHEMA_ROW_VERSION = 1
+TEXT_SAMPLE_SIZE = 4096
 
 EXIT_SUCCESS = 0
 EXIT_NO_MATCH = 1
@@ -2202,7 +2203,11 @@ def source_safe_real_path(root: Path, rel_path: str) -> Path | None:
         return None
 
 
-def read_sample_no_follow(root: Path, parts: list[str], sample_size: int = 4096) -> bytes | None:
+def read_fd_sample(file_fd: int, sample_size: int) -> bytes:
+    return os.read(file_fd, sample_size)
+
+
+def read_sample_no_follow(root: Path, parts: list[str], sample_size: int = TEXT_SAMPLE_SIZE) -> bytes | None:
     open_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     dir_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
     nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
@@ -2217,7 +2222,9 @@ def read_sample_no_follow(root: Path, parts: list[str], sample_size: int = 4096)
         file_fd = os.open(parts[-1], open_flags | nofollow_flag, dir_fd=dir_fd)
         if not stat.S_ISREG(os.fstat(file_fd).st_mode):
             return None
-        return os.read(file_fd, sample_size)
+        # Read only the requested sample so candidate scans never load the full file just
+        # to decide whether a path looks like text.
+        return read_fd_sample(file_fd, sample_size)
     except OSError as exc:
         if exc.errno == errno.ELOOP:
             return None
@@ -4113,6 +4120,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["change_note_file_identity_validation"] = change_note_ref_probe
         candidate_symlink_probe = probe_candidate_symlink_exclusion()
         result["checks"]["candidate_symlink_exclusion"] = candidate_symlink_probe
+        candidate_text_sample_probe = probe_candidate_text_sample_limit()
+        result["checks"]["candidate_text_sample_limit"] = candidate_text_sample_probe
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
@@ -4123,6 +4132,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(candidate_symlink_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(candidate_text_sample_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
@@ -4987,6 +4999,39 @@ def probe_candidate_symlink_exclusion() -> dict[str, Any]:
                 result["metadata_worktree_hash"] == "unavailable",
                 result["metadata_head_blob"] == "none",
             )
+        )
+        return result
+
+
+def probe_candidate_text_sample_limit() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-text-sample-") as repo_dir:
+        root = Path(repo_dir).resolve()
+        candidate = root / "large.py"
+        candidate.write_bytes(b"# probe\n" + (b"x" * (TEXT_SAMPLE_SIZE * 8)))
+        read_sizes: list[int] = []
+        original_read = read_fd_sample
+
+        def recording_read(fd: int, size: int) -> bytes:
+            read_sizes.append(size)
+            return original_read(fd, size)
+
+        try:
+            globals()["read_fd_sample"] = recording_read
+            rows = {row["path"]: row for row in live_candidate_paths(root)}
+        finally:
+            globals()["read_fd_sample"] = original_read
+        row = rows.get(candidate.name, {})
+        result = {
+            "candidate_state": row.get("candidate_state"),
+            "exclusion_reason": row.get("exclusion_reason"),
+            "read_sizes": read_sizes,
+            "max_read_size": max(read_sizes) if read_sizes else None,
+        }
+        result["ok"] = (
+            result["candidate_state"] == "eligible"
+            and result["exclusion_reason"] == ""
+            and bool(read_sizes)
+            and all(size == TEXT_SAMPLE_SIZE for size in read_sizes)
         )
         return result
 

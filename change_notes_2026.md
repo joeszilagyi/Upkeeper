@@ -44,6 +44,10 @@ Version numbering note:
 	1. Documented that `jq` remains a required runtime and validation dependency until the Bash JSON bridges have tested Python-backed replacements.
 	2. Added portable `jq` install commands and updated wrapper/validator missing-command diagnostics to point operators at `docs/dependencies.md`.
 
+2026-05-15: release-readiness docs:
+	1. Added first-class product requirements, roadmap, release checklist, and known-issues docs so release decisions are visible from tracked source.
+	2. Linked the release-readiness docs from README and added validator coverage so the entry points remain present.
+
 2026-05-15: startup anomaly watch summary:
 	1. Startup anomaly scans now emit one `previous_run.anomaly_summary` warning for ordinary terminal/watch output instead of replaying every prior anomaly as a warning burst.
 	2. Per-anomaly `previous_run.anomaly_detail` records are still preserved in local logs and prompt context, and diagnostic terminal modes can still surface the details directly.

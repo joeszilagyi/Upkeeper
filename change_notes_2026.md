@@ -6,6 +6,10 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-16: v1.2.25 changes:
+	1. Backlog loops now hibernate locally when quota preflight sees a stop-level quota state or active primary quota block marker, printing the blocked bucket, reset time, wake time, branch, and recent activity before sleeping without backend model work until the reset grace passes.
+	2. Added deterministic fake-clock validation for backlog quota hibernation and malformed hibernation input so valid quota stops no longer require manual loop restarts.
+
 2026-05-16: v1.2.24 changes:
 	1. Hardened tool-failure queue markers with a machine-local signing key so stale or fabricated queue entries cannot steer later wrapper selection without authentication.
 	2. Removed inherited parent argv text from the live wrapper environment after loop classification, keeping quota-loop diagnostics useful without preserving raw launcher command text for child phases.

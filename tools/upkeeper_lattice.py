@@ -1169,6 +1169,51 @@ def decode_git_output(raw: bytes) -> str:
     return raw.decode("utf-8", "surrogateescape")
 
 
+# JSONL imports must canonicalize repo-relative path columns through the same
+# byte-safe storage encoding used by live Git ingestion.
+IMPORTED_STORED_REL_PATH_COLUMNS: dict[str, dict[str, bool]] = {
+    "cycles": {"selected_path": False},
+    "file_events": {"path": False},
+    "file_paths": {"path": True},
+    "file_snapshots": {"path": True},
+    "files": {"canonical_path": True, "current_path": True},
+    "git_file_changes": {"path": True, "old_path": False},
+    "selection_candidates": {"path": True},
+    "selection_runs": {"selected_path": False},
+    "worktree_snapshot_paths": {"path": True, "old_path": False},
+}
+
+
+def normalize_imported_stored_rel_path_payload(table: str, payload: dict[str, Any]) -> dict[str, Any]:
+    columns = IMPORTED_STORED_REL_PATH_COLUMNS.get(table)
+    if not columns:
+        return payload
+    updated = dict(payload)
+    for column, required in columns.items():
+        if column not in updated:
+            continue
+        value = updated[column]
+        if value is None:
+            if required:
+                raise ValueError(f"missing_repo_relative_path:{column}")
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"invalid_repo_relative_path_type:{column}")
+        if not value:
+            if required:
+                raise ValueError(f"empty_repo_relative_path:{column}")
+            updated[column] = None
+            continue
+        normalized = stored_rel_path(value)
+        if normalized:
+            updated[column] = normalized
+            continue
+        if required:
+            raise ValueError(f"invalid_repo_relative_path:{column}")
+        updated[column] = None
+    return updated
+
+
 def json_dumps(value: Any) -> str:
     return json.dumps(
         sanitize_json_value(value),
@@ -6900,6 +6945,12 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     redact_raw=bool(getattr(args, "redact_raw", False)),
                     raw_storage_mode=raw_storage_mode,
                 )
+            try:
+                filtered = normalize_imported_stored_rel_path_payload(str(table), filtered)
+            except ValueError as exc:
+                conflicts += 1
+                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", incoming_raw_hash, str(exc))
+                continue
             if not filtered:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_raw_hash, "empty_filtered_payload")

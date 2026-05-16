@@ -1178,6 +1178,47 @@ check_governance_docs_contract() {
     fail "risk register missing parallel worker risk"
 }
 
+check_client_link_tools_contract() {
+  log "checking client link tools contract"
+
+  for tool_path in \
+    tools/install_client_link.sh \
+    tools/update_client_link.sh \
+    tools/uninstall_client_link.sh \
+    tools/doctor_upkeeper.sh \
+    tools/upkeeper_client_link_common.sh; do
+    [[ -x "$tool_path" ]] || fail "client link helper missing or not executable: $tool_path"
+  done
+
+  for tool_path in \
+    tools/install_client_link.sh \
+    tools/update_client_link.sh \
+    tools/uninstall_client_link.sh \
+    tools/doctor_upkeeper.sh; do
+    grep -Fq "$tool_path" README.md || fail "README missing client link helper link: $tool_path"
+  done
+
+  [[ -s tests/client_link_tools_test.bash ]] || fail "client link focused test missing"
+  grep -Fq "doctor_upkeeper.sh" tests/client_link_tools_test.bash ||
+    fail "client link test does not exercise doctor helper"
+  grep -Fq "install_client_link.sh --repo=CLIENT" docs/scripts/upkeeper.md ||
+    fail "operator guide missing install helper workflow"
+  grep -Fq "doctor_upkeeper.sh --repo=CLIENT" docs/scripts/upkeeper.md ||
+    fail "operator guide missing doctor helper workflow"
+  grep -Fq "git-path info/exclude" tools/upkeeper_client_link_common.sh ||
+    fail "client link helpers do not use local Git exclude state"
+  grep -Fq "docs/scripts/upkeeper.md" tools/upkeeper_client_link_common.sh ||
+    fail "client link helpers do not ignore operator guide state"
+  grep -Fq "UPKEEPER_DRY_RUN=1" tools/doctor_upkeeper.sh ||
+    fail "doctor helper does not enforce dry-run startup"
+  grep -Fq "CODEX_QUOTA_GUARDRAIL_BYPASS=1" tools/doctor_upkeeper.sh ||
+    fail "doctor helper does not keep dry-run quota-free"
+  grep -Fq 'CODEX_HOME="$DOCTOR_CODEX_HOME"' tools/doctor_upkeeper.sh ||
+    fail "doctor helper does not isolate dry-run quota evidence"
+  grep -Fq "UPKEEPER_PRECONTACT_BACKUP_MODE=off" tools/doctor_upkeeper.sh ||
+    fail "doctor helper does not keep link diagnostics out of backup custody"
+}
+
 check_validation_mode_boundary_contract() {
   log "checking validation mode boundary contract"
 
@@ -4182,6 +4223,7 @@ run_check validation_environment_isolation check_validation_environment_isolatio
 run_check dependency_guidance_contract check_dependency_guidance_contract
 run_check release_readiness_docs_contract check_release_readiness_docs_contract
 run_check governance_docs_contract check_governance_docs_contract
+run_check client_link_tools_contract check_client_link_tools_contract
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
 run_check test_invocation_mode_contract check_test_invocation_mode_contract
 run_check wrapper_contract_tests check_wrapper_contract_tests

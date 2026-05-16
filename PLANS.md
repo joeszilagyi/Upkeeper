@@ -3,6 +3,40 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Client Link Tools
+
+Status: completed
+
+Goal:
+Fix issue `#89` by adding safe client install, update, uninstall, and doctor
+helpers for the central-first symlink workflow.
+
+Constraints:
+- Keep helpers no-backend and deterministic.
+- Refuse overwriting existing client files unless the operator explicitly opts
+  into the unsafe action.
+- Prefer local `.git/info/exclude` ignores over tracked client-repo churn.
+- Avoid touching the root wrapper while the active backlog PR is touching it.
+
+Files likely touched:
+- `tools/upkeeper_client_link_common.sh`
+- `tools/install_client_link.sh`
+- `tools/update_client_link.sh`
+- `tools/uninstall_client_link.sh`
+- `tools/doctor_upkeeper.sh`
+- `tests/client_link_tools_test.bash`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Governance Docs
 
 Status: completed

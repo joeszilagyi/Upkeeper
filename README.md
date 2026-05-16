@@ -468,10 +468,10 @@ client-local prompt files are only needed when you pass an explicit
 Sanitized example:
 
 ```sh
+/work/tools/Upkeeper/tools/install_client_link.sh --repo=/work/repos/example-index
 cd /work/repos/example-index
-ln -s /work/tools/Upkeeper/Upkeeper ./Upkeeper.sh
 ./Upkeeper.sh --version
-UPKEEPER_DRY_RUN=1 ./Upkeeper.sh
+/work/tools/Upkeeper/tools/doctor_upkeeper.sh --repo=.
 ```
 
 With a symlink, fixes made in the central Upkeeper repo are picked up by every
@@ -480,12 +480,20 @@ wrapper instead of a symlink, it will drift: missing flags, stale prompt rules,
 old guardrail behavior, or missing `lib/upkeeper` modules are all signs that
 the client wrapper should be refreshed or replaced with a link. Copying only the
 root launcher without the paired module tree is unsupported.
+Use `tools/update_client_link.sh --repo=CLIENT --force` to repoint a stale
+client symlink, and `tools/uninstall_client_link.sh --repo=CLIENT` to remove a
+central Upkeeper link. Install and update refuse existing client paths unless
+`--force` is supplied; replacing a tracked client path also requires
+`--replace-tracked`.
 
-In client repositories, keep Upkeeper's local artifacts ignored:
+The install and update helpers write local ignore entries to the client repo's
+`.git/info/exclude` instead of editing tracked client files. The effective
+client local artifacts are:
 
 ```gitignore
 Upkeeper.sh
 Upkeeper.log
+runtime/
 docs/scripts/upkeeper.md
 ```
 
@@ -881,7 +889,11 @@ test loop does not spend cycles on known low-value or generated material.
 |   `-- *.sh
 |-- tools/
 |   |-- check_public_docs.sh
+|   |-- doctor_upkeeper.sh
+|   |-- install_client_link.sh
 |   |-- stress_upkeeper_corpus.sh
+|   |-- uninstall_client_link.sh
+|   |-- update_client_link.sh
 |   `-- validate_upkeeper.sh
 |-- Upkeeper
 |-- Upkeeper.conf
@@ -930,6 +942,11 @@ test loop does not spend cycles on known low-value or generated material.
 - [tools/validate_upkeeper.sh](tools/validate_upkeeper.sh): local validation
   harness for dependencies, syntax, module map, prompts, dry-runs, symlink
   behavior, launch/capture classification, and fail-fast guardrails
+- [tools/install_client_link.sh](tools/install_client_link.sh),
+  [tools/update_client_link.sh](tools/update_client_link.sh),
+  [tools/uninstall_client_link.sh](tools/uninstall_client_link.sh), and
+  [tools/doctor_upkeeper.sh](tools/doctor_upkeeper.sh): no-backend client
+  symlink install, refresh, removal, and diagnostics helpers
 - [tools/stress_upkeeper_corpus.sh](tools/stress_upkeeper_corpus.sh): local
   no-quota sample-repo stress harness; run
   `tools/stress_upkeeper_corpus.sh --local`

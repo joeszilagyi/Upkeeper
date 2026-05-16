@@ -105,6 +105,35 @@ scenario is valid.
 - Non-oracle declaration: intentionally unasserted behavior with a reason. This
   never satisfies the minimum oracle requirement by itself.
 
+## Injector Catalog
+
+Prefer deterministic local injectors from the Scenario registry docs:
+
+- Temp implementation tree.
+- Temp client repo.
+- Fake `codex` in temp `PATH`.
+- Fake `CODEX_HOME`.
+- Fake runtime dirs.
+- Directory-where-file-expected.
+- Empty file.
+- Malformed file.
+- Invalid env/config.
+- Crafted final message.
+- Crafted transcript.
+- Git temp repo.
+- Shell function override inside helper-level sourced tests.
+
+If a proposed injector is not in that catalog, either add it to the registry
+docs with a flakiness analysis or mark the P31 idea as not ready.
+
+## Flakiness Bans And Restrictions
+
+P31 must not rely on uncontrolled sleep races, real network, real Codex, real
+quota exhaustion, real user `CODEX_HOME`, real disk-full behavior, real `/proc`
+PID reuse assumptions, real `screen` sessions in quick mode, unbounded random
+mutation, or mutation testing against tracked source. `chmod` unreadable checks
+cannot be the only proof when validation may run as root.
+
 ## Scenario Registry Rule
 
 Every accepted scenario must leave one of these registry actions:

@@ -3,6 +3,34 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Fault-Injection Injector Catalog
+
+Status: completed
+
+Goal:
+Fix issue `#85` by documenting deterministic injector mechanisms, flakiness
+bans, and the stress-corpus boundary for P31 fault-injection work.
+
+Constraints:
+- Documentation-only behavior clarification; no new runtime injection harness in
+  this patch.
+- Keep P31 reserved and unwired as a review module.
+- Preserve the split between focused single-surface fault injection and
+  multi-repo stress-corpus shape coverage.
+
+Files likely touched:
+- `docs/fault-injection-scenarios.md`
+- `docs/stress-corpus.md`
+- `prompts/p31-fault-injection-review.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## First Fault-Injection Fixtures
 
 Status: completed

@@ -1120,6 +1120,24 @@ check_dependency_guidance_contract() {
     fail "security docs missing jq dependency decision"
 }
 
+check_release_readiness_docs_contract() {
+  log "checking release-readiness docs contract"
+
+  for doc_path in docs/prd.md docs/roadmap.md docs/release-checklist.md docs/known-issues.md; do
+    [[ -s "$doc_path" ]] || fail "release-readiness doc missing or empty: $doc_path"
+    grep -Fq "$doc_path" README.md || fail "README missing release-readiness doc link: $doc_path"
+  done
+
+  grep -Fq "Product Goal" docs/prd.md || fail "PRD missing product goal"
+  grep -Fq "Non-Goals" docs/prd.md || fail "PRD missing non-goals"
+  grep -Fq "## Now" docs/roadmap.md || fail "roadmap missing Now section"
+  grep -Fq "## Next" docs/roadmap.md || fail "roadmap missing Next section"
+  grep -Fq "tools/validate_upkeeper.sh --full" docs/release-checklist.md ||
+    fail "release checklist missing full validation command"
+  grep -Fq "Current Major Risk Areas" docs/known-issues.md ||
+    fail "known issues missing major risk section"
+}
+
 check_validation_mode_boundary_contract() {
   log "checking validation mode boundary contract"
 
@@ -4122,6 +4140,7 @@ run_check default_prompt_target_isolation_contract check_default_prompt_target_i
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
 run_check dependency_guidance_contract check_dependency_guidance_contract
+run_check release_readiness_docs_contract check_release_readiness_docs_contract
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
 run_check test_invocation_mode_contract check_test_invocation_mode_contract
 run_check wrapper_contract_tests check_wrapper_contract_tests

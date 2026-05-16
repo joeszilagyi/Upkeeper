@@ -3,6 +3,35 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Release-Readiness Docs
+
+Status: completed
+
+Goal:
+Fix issue `#87` by adding first-class tracked release-readiness entry points:
+product requirements, roadmap, release checklist, and known issues.
+
+Constraints:
+- Keep this documentation-only; do not change runtime behavior.
+- Link release/readiness docs from README so future runs can find them without
+  private chat history.
+- Add cheap validator coverage for document presence and README links.
+
+Files likely touched:
+- `docs/prd.md`
+- `docs/roadmap.md`
+- `docs/release-checklist.md`
+- `docs/known-issues.md`
+- `README.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## jq Dependency Guidance
 
 Status: completed

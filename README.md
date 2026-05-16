@@ -839,7 +839,12 @@ test loop does not spend cycles on known low-value or generated material.
 |-- docs/
 |   |-- compatibility.md
 |   |-- dependencies.md
+|   |-- fault-injection-scenarios.md
+|   |-- known-issues.md
+|   |-- prd.md
 |   |-- public-documentation-policy.md
+|   |-- release-checklist.md
+|   |-- roadmap.md
 |   |-- security.md
 |   |-- stress-corpus.md
 |   `-- scripts/
@@ -893,6 +898,14 @@ test loop does not spend cycles on known low-value or generated material.
   operator-visible feature surface
 - [docs/dependencies.md](docs/dependencies.md): runtime/tool dependency surface
   and GitHub dependency-graph expectations
+- [docs/prd.md](docs/prd.md): product requirements, user model, required
+  capabilities, and non-goals
+- [docs/roadmap.md](docs/roadmap.md): tracked near/next/later direction without
+  relying on chat history
+- [docs/release-checklist.md](docs/release-checklist.md): release-readiness
+  validation, docs, merge, and cleanup checklist
+- [docs/known-issues.md](docs/known-issues.md): tracked release-relevant risks
+  and operational caveats
 - [docs/public-documentation-policy.md](docs/public-documentation-policy.md):
   public-by-default documentation, comment, release-note, and help-text policy
 - [docs/security.md](docs/security.md): local trust boundaries, safety model,

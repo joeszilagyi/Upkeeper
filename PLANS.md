@@ -3,6 +3,38 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Wrapper Contract Focused Tests
+
+Status: completed
+
+Goal:
+Fix issue `#76` by moving several critical wrapper contracts into focused,
+independently runnable no-backend tests instead of relying only on the monolithic
+validator body.
+
+Constraints:
+- Avoid files currently owned by the live backlog branch (`Upkeeper`,
+  `lib/upkeeper/file_manifest.bash`, and `tools/upkeeper_lattice.py`).
+- Keep new tests runnable through `bash tests/*.bash` without backend quota,
+  network, or wrapper dry-runs.
+- Preserve validator coverage while delegating covered contracts to the focused
+  test script.
+
+Files likely touched:
+- `tests/wrapper_contract_test.bash`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/wrapper_contract_test.bash`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Quick Validation Boundary
 
 Status: completed

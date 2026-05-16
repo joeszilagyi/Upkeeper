@@ -909,45 +909,9 @@ if 'fail "check $name exceeded ${timeout_seconds}s timeout"' not in text:
 PY
 }
 
-check_codex_mode_validation() {
-  local output rc
-
-  log "checking CODEX_MODE validation"
-
-  set +e
-  output="$(CODEX_MODE='sandbox workspace-write' ./Upkeeper --version 2>&1)"
-  rc=$?
-  set -e
-  [[ "$rc" -eq 2 ]] || fail "missing-dash CODEX_MODE exited $rc, expected 2"
-  grep -Eqq "invalid CODEX_MODE (first token sandbox|token sandbox)" <<<"$output" || fail "missing-dash CODEX_MODE error was not clear"
-
-  set +e
-  output="$(CODEX_MODE='---sandbox workspace-write' ./Upkeeper --version 2>&1)"
-  rc=$?
-  set -e
-  [[ "$rc" -eq 2 ]] || fail "triple-hyphen CODEX_MODE exited $rc, expected 2"
-  grep -Eqq "invalid CODEX_MODE (first token ---sandbox|token ---sandbox)" <<<"$output" || fail "triple-hyphen CODEX_MODE error was not clear"
-
-  set +e
-  output="$(CODEX_MODE='--sandbox danger-full-access' ./Upkeeper --version 2>&1)"
-  rc=$?
-  set -e
-  [[ "$rc" -eq 2 ]] || fail "danger-full-access CODEX_MODE exited $rc, expected 2"
-  grep -Fq "Genie Protocol requires sandboxed backend Codex execution" <<<"$output" || fail "danger-full-access CODEX_MODE error was not clear"
-
-  set +e
-  output="$(CODEX_MODE='--dangerously-bypass-approvals-and-sandbox' ./Upkeeper --version 2>&1)"
-  rc=$?
-  set -e
-  [[ "$rc" -eq 2 ]] || fail "dangerously-bypass CODEX_MODE exited $rc, expected 2"
-  grep -Fq "Genie Protocol requires sandboxed backend Codex execution" <<<"$output" || fail "dangerously-bypass CODEX_MODE error was not clear"
-
-  set +e
-  output="$(CODEX_MODE='--sandbox workspace-write --foo=bar' ./Upkeeper --version 2>&1)"
-  rc=$?
-  set -e
-  [[ "$rc" -eq 2 ]] || fail "extra-token CODEX_MODE exited $rc, expected 2"
-  grep -Fq "CODEX_MODE only supports --sandbox workspace-write or --sandbox read-only" <<<"$output" || fail "extra-token CODEX_MODE error was not clear"
+check_wrapper_contract_tests() {
+  log "checking focused wrapper contract tests"
+  bash tests/wrapper_contract_test.bash
 }
 
 write_validation_quota_snapshot() {
@@ -3417,49 +3381,6 @@ check_process_control_guards() {
   rm -r "$temp_dir"
 }
 
-check_startup_anomaly_gate_allowlist() {
-  local temp_dir before_file after_file output
-
-  log "checking startup anomaly gate changed-path allowlist"
-  temp_dir="$(mktemp -d /tmp/upkeeper-gate-allowlist.XXXXXX)"
-  before_file="$temp_dir/before.json"
-  after_file="$temp_dir/after.json"
-
-  cat >"$before_file" <<'JSON'
-{
-  "Upkeeper": {"status": "clean", "hash": "old"},
-  "change_notes_2026.md": {"status": "clean", "hash": "old"},
-  "docs/scripts/upkeeper.md": {"status": "clean", "hash": "old"},
-  "lib/upkeeper/worktree_state.bash": {"status": "clean", "hash": "old"},
-  "tools/validate_upkeeper.sh": {"status": "clean", "hash": "old"},
-  "unrelated.txt": {"status": "clean", "hash": "old"}
-}
-JSON
-  cat >"$after_file" <<'JSON'
-{
-  "Upkeeper": {"status": "modified", "hash": "new"},
-  "change_notes_2026.md": {"status": "modified", "hash": "new"},
-  "docs/scripts/upkeeper.md": {"status": "modified", "hash": "new"},
-  "lib/upkeeper/worktree_state.bash": {"status": "modified", "hash": "new"},
-  "tools/validate_upkeeper.sh": {"status": "modified", "hash": "new"},
-  "unrelated.txt": {"status": "modified", "hash": "new"}
-}
-JSON
-
-  output="$(bash -lc 'cd "$1"; source lib/upkeeper/worktree_state.bash; startup_anomaly_gate_changed_path_violations "$2" "$3"' bash "$ROOT_DIR" "$before_file" "$after_file")"
-  grep -Fq "changed_path path_hmac=path-hmac-sha256:" <<<"$output" || fail "gate allowlist did not report unrelated changed path HMAC"
-  grep -Fq "extension=.txt" <<<"$output" || fail "gate allowlist did not report unrelated changed path extension"
-  grep -Fq "content_changed=1" <<<"$output" || fail "gate allowlist did not report changed content boolean"
-  if grep -Fq "unrelated.txt" <<<"$output"; then
-    fail "gate allowlist emitted raw unrelated path: $output"
-  fi
-  if grep -Eq "Upkeeper|change_notes|docs/scripts|lib/upkeeper|tools/validate" <<<"$output"; then
-    fail "gate allowlist reported an allowed Upkeeper-suite path: $output"
-  fi
-
-  rm -r "$temp_dir"
-}
-
 check_central_dry_runs() {
   local temp_dir
 
@@ -3704,7 +3625,7 @@ run_check default_prompt_target_isolation_contract check_default_prompt_target_i
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
-run_check codex_mode_validation check_codex_mode_validation
+run_check wrapper_contract_tests check_wrapper_contract_tests
 run_check public_docs_policy check_public_docs_policy
 run_check private_artifact_umask_contract check_private_artifact_umask_contract
 run_check runtime_format_json_helpers check_runtime_format_json_helpers
@@ -3756,7 +3677,6 @@ run_bounded_check log_self_review_target_boundary "$VALIDATION_INTEGRATION_TIMEO
 run_bounded_check tool_failure_queue "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_tool_failure_queue
 run_bounded_check lattice_contract "$VALIDATION_FULL_TIMEOUT_SECONDS" check_lattice_contract
 run_bounded_check fallback_artifact_helpers "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_fallback_artifact_helpers
-run_bounded_check startup_anomaly_gate_allowlist "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_startup_anomaly_gate_allowlist
 
 if [[ "$MODE" == "full" ]]; then
   run_bounded_check central_dry_runs "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_central_dry_runs

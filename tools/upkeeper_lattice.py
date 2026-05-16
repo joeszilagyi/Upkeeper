@@ -1921,9 +1921,21 @@ def print_json(value: Any) -> None:
     print(json.dumps(sanitize_json_value(value), sort_keys=True, indent=2))
 
 
+class LatticeCommandError(Exception):
+    def __init__(self, message: str, code: int, *, emitted: bool) -> None:
+        super().__init__(message)
+        self.code = code
+        self.emitted = emitted
+
+
+def raise_command_error(message: str, code: int, *, emit: bool = True) -> None:
+    if emit:
+        print(f"upkeeper_lattice: {message}", file=sys.stderr)
+    raise LatticeCommandError(message, code, emitted=emit)
+
+
 def fail(message: str, code: int) -> None:
-    print(f"upkeeper_lattice: {message}", file=sys.stderr)
-    raise SystemExit(code)
+    raise_command_error(message, code)
 
 
 def run_git(
@@ -2324,31 +2336,40 @@ def connect(
     *,
     create_parent: bool = False,
     create_if_missing: bool = False,
+    emit_errors: bool = True,
 ) -> sqlite3.Connection:
     try:
         existing = db_path.lstat()
     except FileNotFoundError:
         existing = None
     except OSError as exc:
-        fail(f"DB path not stat-able: {db_path} ({exc})", EXIT_DB_UNAVAILABLE)
+        raise_command_error(f"DB path not stat-able: {db_path} ({exc})", EXIT_DB_UNAVAILABLE, emit=emit_errors)
 
     if existing is not None:
         if stat.S_ISLNK(existing.st_mode):
-            fail(f"DB path is a symlink: {db_path}", EXIT_DB_UNAVAILABLE)
+            raise_command_error(f"DB path is a symlink: {db_path}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
         if not stat.S_ISREG(existing.st_mode):
-            fail(f"DB path is not regular: {db_path}", EXIT_DB_UNAVAILABLE)
+            raise_command_error(f"DB path is not regular: {db_path}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
         if existing.st_uid != os.geteuid():
-            fail(f"DB path owner mismatch: {db_path} expected_uid={os.geteuid()} actual_uid={existing.st_uid}", EXIT_DB_UNAVAILABLE)
+            raise_command_error(
+                f"DB path owner mismatch: {db_path} expected_uid={os.geteuid()} actual_uid={existing.st_uid}",
+                EXIT_DB_UNAVAILABLE,
+                emit=emit_errors,
+            )
         if getattr(existing, "st_nlink", 1) != 1:
-            fail(f"DB path has multiple links: {db_path} nlink={existing.st_nlink}", EXIT_DB_UNAVAILABLE)
+            raise_command_error(
+                f"DB path has multiple links: {db_path} nlink={existing.st_nlink}",
+                EXIT_DB_UNAVAILABLE,
+                emit=emit_errors,
+            )
     elif not create_if_missing:
-        fail(f"DB path missing: {db_path}", EXIT_DB_UNAVAILABLE)
+        raise_command_error(f"DB path missing: {db_path}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
 
     if create_parent:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         chmod_private(db_path.parent, is_dir=True)
     if not db_path.parent.exists():
-        fail(f"DB parent directory does not exist: {db_path.parent}", EXIT_DB_UNAVAILABLE)
+        raise_command_error(f"DB parent directory does not exist: {db_path.parent}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
     connect_target = str(db_path)
     connect_kwargs: dict[str, Any] = {}
     if not create_if_missing:
@@ -2359,7 +2380,7 @@ def connect(
     try:
         conn = sqlite3.connect(connect_target, **connect_kwargs)
     except sqlite3.Error as exc:
-        fail(f"DB unavailable: {exc}", EXIT_DB_UNAVAILABLE)
+        raise_command_error(f"DB unavailable: {exc}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -2370,7 +2391,11 @@ def connect(
         conn.execute(f"PRAGMA journal_mode={requested}")
     except sqlite3.Error as exc:
         conn.close()
-        fail(f"cannot set SQLite journal mode {requested}: {exc}", EXIT_DB_UNAVAILABLE)
+        raise_command_error(
+            f"cannot set SQLite journal mode {requested}: {exc}",
+            EXIT_DB_UNAVAILABLE,
+            emit=emit_errors,
+        )
     return conn
 
 
@@ -4114,7 +4139,12 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     if not db_path.parent.exists():
         result["status"] = "db_unavailable"
         return result, EXIT_DB_UNAVAILABLE
-    conn = connect_checked(root, db_path, journal_mode, allow_unsafe_db=args.allow_unsafe_db)
+    try:
+        conn = connect(db_path, journal_mode, emit_errors=False)
+    except LatticeCommandError as exc:
+        result["status"] = "db_unavailable"
+        result["checks"]["open_error"] = str(exc)
+        return result, exc.code
     try:
         result["checks"]["db_readable"] = True
         try:
@@ -4140,6 +4170,15 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if fk_enabled != 1:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
+        table_names = {row["name"] for row in conn.execute("select name from sqlite_master where type='table'")}
+        missing_tables = [table for table in REQUIRED_TABLES if table not in table_names]
+        result["checks"]["required_tables_missing"] = missing_tables
+        index_names = {row["name"] for row in conn.execute("select name from sqlite_master where type='index'")}
+        missing_indexes = [index for index in REQUIRED_INDEXES if index not in index_names]
+        result["checks"]["required_indexes_missing"] = missing_indexes
+        if missing_tables or missing_indexes:
+            result["status"] = "schema_mismatch"
+            return result, EXIT_SCHEMA_MISMATCH
         meta = conn.execute("select value from schema_meta where key='schema_version'").fetchone()
         result["checks"]["schema_meta_version"] = meta["value"] if meta else None
         configured_raw_storage = configured_lattice_raw_storage()
@@ -4185,15 +4224,6 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
             result["status"] = "schema_mismatch"
             return result, EXIT_SCHEMA_MISMATCH
-        table_names = {row["name"] for row in conn.execute("select name from sqlite_master where type='table'")}
-        missing_tables = [table for table in REQUIRED_TABLES if table not in table_names]
-        result["checks"]["required_tables_missing"] = missing_tables
-        index_names = {row["name"] for row in conn.execute("select name from sqlite_master where type='index'")}
-        missing_indexes = [index for index in REQUIRED_INDEXES if index not in index_names]
-        result["checks"]["required_indexes_missing"] = missing_indexes
-        if missing_tables or missing_indexes:
-            result["status"] = "schema_mismatch"
-            return result, EXIT_SCHEMA_MISMATCH
         fk_rows = [dict(row) for row in conn.execute("PRAGMA foreign_key_check")]
         result["checks"]["foreign_key_check_rows"] = fk_rows
         if fk_rows:
@@ -4208,6 +4238,10 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             backup_path = create_backup(conn, root, db_path, output=args.backup_output, allow_overwrite=True)
             result["checks"]["backup_path"] = str(backup_path)
             result["checks"]["backup_created"] = backup_path.exists()
+    except sqlite3.Error as exc:
+        result["status"] = "integrity_failure"
+        result["checks"]["db_error"] = str(exc)
+        return result, EXIT_INTEGRITY
     finally:
         conn.close()
     return result, EXIT_SUCCESS
@@ -8541,6 +8575,10 @@ def main(argv: list[str] | None = None) -> int:
         os.environ[UPKEEPER_RAW_REPO_IDENTITY_ENV] = "1"
     try:
         return int(args.func(args))
+    except LatticeCommandError as exc:
+        if not exc.emitted:
+            print(f"upkeeper_lattice: {exc}", file=sys.stderr)
+        return int(exc.code)
     except sqlite3.IntegrityError as exc:
         print(f"upkeeper_lattice: integrity failure: {exc}", file=sys.stderr)
         return EXIT_INTEGRITY

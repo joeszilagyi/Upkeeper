@@ -428,6 +428,8 @@ CODEX_ACTIVE_LOCK_DIR="${CODEX_ACTIVE_LOCK_DIR:-$ROOT_DIR/runtime/upkeeper-activ
 CODEX_WRAPPER_HEALTH_STATE_DIR="${CODEX_WRAPPER_HEALTH_STATE_DIR:-$CODEX_HOME_DIR/upkeeper/active-wrapper-runs}"
 CODEX_WRAPPER_HEALTH_ARCHIVE_DIR="${CODEX_WRAPPER_HEALTH_ARCHIVE_DIR:-$CODEX_HOME_DIR/upkeeper/retired-wrapper-runs}"
 UPKEEPER_DRY_RUN="${UPKEEPER_DRY_RUN:-0}"
+UPKEEPER_TOOL_FAILURE_QUEUE_SIGNING_KEY_FILE="${UPKEEPER_TOOL_FAILURE_QUEUE_SIGNING_KEY_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/tool-failure-queue.key}"
+UPKEEPER_TOOL_FAILURE_QUEUE_SIGNING_KEY="${UPKEEPER_TOOL_FAILURE_QUEUE_SIGNING_KEY:-}"
 
 declare -a CODEX_MODE_ARGS=()
 
@@ -3147,6 +3149,47 @@ upkeeper_preselect_output_field() {
   awk -v prefix="$key=" 'index($0, prefix) == 1 { print substr($0, length(prefix) + 1); exit }' <<<"$raw"
 }
 
+upkeeper_tool_failure_queue_signing_key_material() {
+  local key_file="${UPKEEPER_TOOL_FAILURE_QUEUE_SIGNING_KEY_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/tool-failure-queue.key}"
+  local key_dir="" key_value="" token=""
+
+  if [[ -n "${UPKEEPER_TOOL_FAILURE_QUEUE_SIGNING_KEY:-}" ]]; then
+    printf '%s' "$UPKEEPER_TOOL_FAILURE_QUEUE_SIGNING_KEY"
+    return 0
+  fi
+
+  if [[ -r "$key_file" ]]; then
+    IFS= read -r key_value <"$key_file" || key_value=""
+    if [[ -n "$key_value" ]]; then
+      printf '%s' "$key_value"
+      return 0
+    fi
+  fi
+
+  key_dir="$(dirname -- "$key_file")"
+  mkdir -p -- "$key_dir" 2>/dev/null || return 1
+  chmod 700 "$key_dir" 2>/dev/null || true
+  if [[ -r /dev/urandom ]]; then
+    token="$(od -An -N 32 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+  fi
+  if [[ -z "$token" ]] && command -v python3 >/dev/null 2>&1; then
+    token="$(python3 - "$key_file" <<'PY'
+import hashlib
+import os
+import sys
+import time
+
+seed = f"{sys.argv[1]}|{os.getpid()}|{time.time_ns()}".encode("utf-8", "surrogateescape")
+print(hashlib.sha256(seed).hexdigest())
+PY
+)"
+  fi
+  [[ -n "$token" ]] || return 1
+  printf '%s\n' "$token" >"$key_file" 2>/dev/null || return 1
+  chmod 600 "$key_file" 2>/dev/null || true
+  printf '%s' "$token"
+}
+
 upkeeper_tool_failure_queue_prepare_secure_dirs() {
   python3 - "$ROOT_DIR" "$CODEX_TOOL_FAILURE_QUEUE_DIR" <<'PY'
 import os
@@ -3235,9 +3278,13 @@ PY
 
 upkeeper_tool_failure_queue_validate_selected_marker() {
   local marker_path="$1"
+  local signing_key=""
 
-  python3 - "$ROOT_DIR" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$marker_path" <<'PY'
+  signing_key="$(upkeeper_tool_failure_queue_signing_key_material)" || signing_key=""
+
+  python3 - "$ROOT_DIR" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$marker_path" "$signing_key" <<'PY'
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -3245,7 +3292,7 @@ import stat
 import sys
 from pathlib import Path
 
-root, raw_queue_dir, raw_marker_path = sys.argv[1:4]
+root, raw_queue_dir, raw_marker_path, signing_key = sys.argv[1:5]
 root_path = Path(root).resolve()
 queue_dir = Path(raw_queue_dir).expanduser()
 if not queue_dir.is_absolute():
@@ -3259,6 +3306,7 @@ if not marker_path.is_absolute():
 else:
     marker_path = Path(os.path.abspath(marker_path))
 uid = os.getuid()
+signing_key_bytes = signing_key.encode("utf-8", "surrogateescape")
 
 
 def emit(status: str, **fields: str) -> None:
@@ -3319,6 +3367,12 @@ def normalize_target(path_value: object) -> str:
 
 def marker_id_for(path_value: str) -> str:
     return hashlib.sha1(path_value.encode("utf-8", "surrogateescape")).hexdigest()[:24]
+
+
+def marker_auth_hmac(data: dict) -> str:
+    payload = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    digest = hmac.new(signing_key_bytes, payload.encode("utf-8", "surrogateescape"), hashlib.sha256).hexdigest()
+    return f"hmac-sha256:{digest}"
 
 
 def display_json(value: object, limit: int = 500) -> str:
@@ -3395,6 +3449,20 @@ if stored_marker_id != expected_marker_id:
 if marker_path.stem != expected_marker_id:
     emit("unsafe", reason="marker_filename_mismatch")
     raise SystemExit(0)
+if not signing_key_bytes:
+    emit("unsafe", reason="marker_auth_key_unavailable")
+    raise SystemExit(0)
+
+stored_auth = data.get("marker_auth_hmac")
+if not isinstance(stored_auth, str) or not stored_auth:
+    emit("unsafe", reason="marker_auth_missing")
+    raise SystemExit(0)
+
+auth_payload = dict(data)
+auth_payload.pop("marker_auth_hmac", None)
+if stored_auth != marker_auth_hmac(auth_payload):
+    emit("unsafe", reason="marker_auth_mismatch")
+    raise SystemExit(0)
 
 try:
     first_seen_epoch = int(data.get("first_seen_epoch", data.get("last_seen_epoch", 0)) or 0)
@@ -3418,6 +3486,76 @@ emit(
     first_failure_kind_json=display_json(data.get("first_failure_kind", "unknown")),
     first_failure_exit_line_json=display_json(data.get("first_failure_exit_line", "unknown")),
 )
+PY
+}
+
+upkeeper_tool_failure_queue_sign_open_marker() {
+  local target_path="$1"
+  local signing_key=""
+
+  signing_key="$(upkeeper_tool_failure_queue_signing_key_material)" || return 1
+
+  python3 - "$ROOT_DIR" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$target_path" "$signing_key" <<'PY'
+import hashlib
+import hmac
+import json
+import os
+import sys
+from pathlib import Path
+
+root, raw_queue_dir, target_path, signing_key = sys.argv[1:5]
+root_path = Path(root).resolve()
+queue_dir = Path(raw_queue_dir).expanduser()
+if not queue_dir.is_absolute():
+    queue_dir = Path(os.path.abspath(root_path / queue_dir))
+else:
+    queue_dir = Path(os.path.abspath(queue_dir))
+open_dir = queue_dir / "open"
+signing_key_bytes = signing_key.encode("utf-8", "surrogateescape")
+
+
+def marker_id_for(path_value: str) -> str:
+    return hashlib.sha1(path_value.encode("utf-8", "surrogateescape")).hexdigest()[:24]
+
+
+def marker_auth_hmac(data: dict) -> str:
+    payload = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    digest = hmac.new(signing_key_bytes, payload.encode("utf-8", "surrogateescape"), hashlib.sha256).hexdigest()
+    return f"hmac-sha256:{digest}"
+
+
+def write_json_atomic(path: Path, data: dict) -> None:
+    tmp = path.with_name(path.name + f".tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+marker_path = open_dir / f"{marker_id_for(target_path)}.json"
+if not marker_path.exists():
+    print("status=missing")
+    raise SystemExit(0)
+
+with marker_path.open("r", encoding="utf-8") as handle:
+    data = json.load(handle)
+if not isinstance(data, dict):
+    print("status=invalid")
+    raise SystemExit(0)
+
+data.pop("marker_auth_hmac", None)
+data["marker_auth_hmac"] = marker_auth_hmac(data)
+write_json_atomic(marker_path, data)
+print("status=signed")
 PY
 }
 
@@ -3776,7 +3914,7 @@ upkeeper_emit_canonical_preselect_output() {
     failure_marker_first_failure_exit_line="$(upkeeper_preselect_output_field first_failure_exit_line_json "$marker_meta")"
     printf 'failure_queue_selected=1\n'
     printf 'failure_marker_id=%s\n' "$failure_marker_id"
-    printf 'failure_marker_path=%s\n' "$failure_marker_path"
+    printf 'failure_marker_path=%s\n' "$(upkeeper_prompt_safe_inline_value "$failure_marker_path" "unknown")"
     printf 'failure_marker_first_seen_epoch=%s\n' "${failure_marker_first_seen_epoch:-0}"
     printf 'failure_marker_failure_count=%s\n' "${failure_marker_failure_count:-unknown}"
     printf 'failure_marker_first_failure_kind=%s\n' "${failure_marker_first_failure_kind:-\"unknown\"}"
@@ -3860,7 +3998,7 @@ tool_failure_queue_finalize_run() {
   local codex_exit="$3"
   local status_marker="$4"
   local secure_queue_result secure_queue_status secure_queue_reason normalized_target_path
-  local backfill_result backfill_action
+  local backfill_result backfill_action marker_sign_result marker_sign_status
 
   tool_failure_queue_enabled || return 0
 
@@ -3909,6 +4047,15 @@ PY
   fi
 
   upkeeper_tool_failure_queue_finalize_run_original "$normalized_target_path" "$transcript_file" "$codex_exit" "$status_marker"
+
+  if marker_sign_result="$(upkeeper_tool_failure_queue_sign_open_marker "$normalized_target_path")"; then
+    marker_sign_status="$(upkeeper_preselect_output_field status "$marker_sign_result")"
+    if [[ "$marker_sign_status" == "signed" ]]; then
+      log_line "INFO" "tool_failure_queue.marker_auth_signed path_redacted=1"
+    fi
+  else
+    log_line "WARN" "tool_failure_queue.marker_auth_sign_failed reason=signing_key_unavailable path_redacted=1"
+  fi
 }
 
 # Override the prompt-module helper locally so issue-fix compilation does not

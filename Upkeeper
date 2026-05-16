@@ -1440,6 +1440,9 @@ write_postmortem_context() {
   local fallback_child_status_marker_fields
   local incident_classification
   local safe_detail_text
+  local primary_session_limit_id_hmac primary_session_limit_name_hmac
+  local primary_before_limit_id_hmac primary_before_limit_name_hmac primary_before_source_hmac
+  local primary_after_limit_id_hmac primary_after_limit_name_hmac primary_after_source_hmac
 
   if [[ "$trigger" == "primary_quota_before_run" ]]; then
     primary_exec_started="0"
@@ -1466,6 +1469,14 @@ write_postmortem_context() {
   fallback_child_status_marker="${fallback_child_status_marker_fields%% *}"
   fallback_child_status_marker_source="${fallback_child_status_marker_fields#* }"
   incident_classification="$(postmortem_incident_classification "$trigger" "$child_exit" "$fallback_child_status_marker")"
+  primary_session_limit_id_hmac="$(quota_metadata_value_hmac session_limit_id "${primary_session_last_rate_limit_limit_id:-unknown}")"
+  primary_session_limit_name_hmac="$(quota_metadata_value_hmac session_limit_name "${primary_session_last_rate_limit_limit_name:-unknown}")"
+  primary_before_limit_id_hmac="$(quota_metadata_value_hmac before_limit_id "${limit_id:-unknown}")"
+  primary_before_limit_name_hmac="$(quota_metadata_value_hmac before_limit_name "${limit_name:-unknown}")"
+  primary_before_source_hmac="$(quota_metadata_path_hmac "${before_source:-unknown}")"
+  primary_after_limit_id_hmac="$(quota_metadata_value_hmac after_limit_id "${after_limit_id:-unknown}")"
+  primary_after_limit_name_hmac="$(quota_metadata_value_hmac after_limit_name "${after_limit_name:-unknown}")"
+  primary_after_source_hmac="$(quota_metadata_path_hmac "${after_source:-unknown}")"
 
   cat >"$context_path" <<EOF
 incident_cycle_id: $CYCLE_ID
@@ -1509,56 +1520,73 @@ primary_session_tool_call_count: ${primary_session_tool_call_count:-unknown}
 primary_session_tool_result_count: ${primary_session_tool_result_count:-unknown}
 primary_session_task_complete_last_agent_message: ${primary_session_task_complete_last_agent_message:-unknown}
 primary_session_last_rate_limit_reached_type: ${primary_session_last_rate_limit_reached_type:-unknown}
-primary_session_last_rate_limit_limit_id: ${primary_session_last_rate_limit_limit_id:-unknown}
-primary_session_last_rate_limit_limit_name: ${primary_session_last_rate_limit_limit_name:-unknown}
-primary_session_last_rate_limit_plan_type: ${primary_session_last_rate_limit_plan_type:-unknown}
-primary_session_last_rate_limit_primary_used_percent: ${primary_session_last_rate_limit_primary_used_percent:-unknown}
-primary_session_last_rate_limit_secondary_used_percent: ${primary_session_last_rate_limit_secondary_used_percent:-unknown}
+primary_session_last_rate_limit_limit_id_hmac: $primary_session_limit_id_hmac
+primary_session_last_rate_limit_limit_name_hmac: $primary_session_limit_name_hmac
+primary_session_last_rate_limit_usage: withheld_nondebug
 quota_snapshot_identity_changed: $(quota_identity_changed_flag "${limit_id:-unknown}" "${limit_name:-unknown}" "${after_limit_id:-unknown}" "${after_limit_name:-unknown}")
 quota_session_identity_changed: $(quota_identity_changed_flag "${limit_id:-unknown}" "${limit_name:-unknown}" "${primary_session_last_rate_limit_limit_id:-unknown}" "${primary_session_last_rate_limit_limit_name:-unknown}")
 dirty_paths: $DIRTY_PATH_COUNT
 tracked_modified_paths: $TRACKED_MODIFIED_PATH_COUNT
 untracked_paths: $UNTRACKED_PATH_COUNT
-primary_before_limit_id: ${limit_id:-unknown}
-primary_before_limit_name: ${limit_name:-unknown}
-primary_before_snapshot_source: ${before_source:-unknown}
-primary_before_snapshot_model_hint: ${before_model_hint:-unknown}
+primary_before_limit_id_hmac: $primary_before_limit_id_hmac
+primary_before_limit_name_hmac: $primary_before_limit_name_hmac
+primary_before_snapshot_source_hmac: $primary_before_source_hmac
 primary_before_snapshot_current: ${before_snapshot_is_current:-unknown}
-primary_before_snapshot_event_timestamp: ${before_ts:-unknown}
+primary_before_snapshot_event_timestamp: withheld_nondebug
 primary_before_snapshot_age_seconds: ${before_snapshot_age_seconds:-unknown}
-primary_before_primary_reset: $(format_epoch_local "${primary_reset:-}")
 primary_before_primary_reset_age_seconds: ${before_primary_reset_age_seconds:-unknown}
 primary_before_primary_reset_expired: ${before_primary_reset_expired:-unknown}
 primary_before_primary_bucket_current: ${before_primary_bucket_current:-unknown}
-primary_before_secondary_reset: $(format_epoch_local "${secondary_reset:-}")
 primary_before_secondary_reset_age_seconds: ${before_secondary_reset_age_seconds:-unknown}
 primary_before_secondary_reset_expired: ${before_secondary_reset_expired:-unknown}
 primary_before_secondary_bucket_current: ${before_secondary_bucket_current:-unknown}
 primary_before_snapshot_stale_after_reset: ${before_snapshot_stale_after_reset:-unknown}
 primary_before_session_end_state: $primary_before_session_end_state
-primary_after_limit_id: ${after_limit_id:-unknown}
-primary_after_limit_name: ${after_limit_name:-unknown}
-primary_after_snapshot_source: ${after_source:-unknown}
-primary_after_snapshot_model_hint: ${after_model_hint:-unknown}
+primary_after_limit_id_hmac: $primary_after_limit_id_hmac
+primary_after_limit_name_hmac: $primary_after_limit_name_hmac
+primary_after_snapshot_source_hmac: $primary_after_source_hmac
 primary_after_snapshot_current: ${after_snapshot_is_current:-unknown}
-primary_after_snapshot_event_timestamp: ${after_ts:-unknown}
+primary_after_snapshot_event_timestamp: withheld_nondebug
 primary_after_snapshot_age_seconds: ${after_snapshot_age_seconds:-unknown}
-primary_after_primary_reset: $(format_epoch_local "${after_primary_reset:-}")
 primary_after_primary_reset_age_seconds: ${after_primary_reset_age_seconds:-unknown}
 primary_after_primary_reset_expired: ${after_primary_reset_expired:-unknown}
 primary_after_primary_bucket_current: ${after_primary_bucket_current:-unknown}
-primary_after_secondary_reset: $(format_epoch_local "${after_secondary_reset:-}")
 primary_after_secondary_reset_age_seconds: ${after_secondary_reset_age_seconds:-unknown}
 primary_after_secondary_reset_expired: ${after_secondary_reset_expired:-unknown}
 primary_after_secondary_bucket_current: ${after_secondary_bucket_current:-unknown}
 primary_after_snapshot_stale_after_reset: ${after_snapshot_stale_after_reset:-unknown}
-primary_before_used_left: primary_used=${primary_used:-unknown}% primary_left=${primary_left:-unknown}% secondary_used=${secondary_used:-unknown}% secondary_left=${secondary_left:-unknown}%
-primary_after_used_left: primary_used=${after_primary:-unknown}% primary_left=${after_primary_left:-unknown}% secondary_used=${after_secondary:-unknown}% secondary_left=${after_secondary_left:-unknown}%
+primary_before_used_left: withheld_nondebug
+primary_after_used_left: withheld_nondebug
 incident_log_private_artifact: $(upkeeper_postmortem_private_artifact_state "$incident_log_path")
 primary_last_message_metadata_private_artifact: $(upkeeper_postmortem_private_artifact_state "$primary_last_message_copy")
 loop_log_private_artifact: $(upkeeper_postmortem_private_artifact_state "$LOG_FILE")
 private_artifact_access: operator_only
 EOF
+  if quota_metadata_debug_enabled; then
+    cat >>"$context_path" <<EOF
+debug_primary_session_last_rate_limit_limit_id: ${primary_session_last_rate_limit_limit_id:-unknown}
+debug_primary_session_last_rate_limit_limit_name: ${primary_session_last_rate_limit_limit_name:-unknown}
+debug_primary_session_last_rate_limit_plan_type: ${primary_session_last_rate_limit_plan_type:-unknown}
+debug_primary_session_last_rate_limit_primary_used_percent: ${primary_session_last_rate_limit_primary_used_percent:-unknown}
+debug_primary_session_last_rate_limit_secondary_used_percent: ${primary_session_last_rate_limit_secondary_used_percent:-unknown}
+debug_primary_before_limit_id: ${limit_id:-unknown}
+debug_primary_before_limit_name: ${limit_name:-unknown}
+debug_primary_before_snapshot_source: ${before_source:-unknown}
+debug_primary_before_snapshot_model_hint: ${before_model_hint:-unknown}
+debug_primary_before_snapshot_event_timestamp: ${before_ts:-unknown}
+debug_primary_before_primary_reset: $(format_epoch_local "${primary_reset:-}")
+debug_primary_before_secondary_reset: $(format_epoch_local "${secondary_reset:-}")
+debug_primary_after_limit_id: ${after_limit_id:-unknown}
+debug_primary_after_limit_name: ${after_limit_name:-unknown}
+debug_primary_after_snapshot_source: ${after_source:-unknown}
+debug_primary_after_snapshot_model_hint: ${after_model_hint:-unknown}
+debug_primary_after_snapshot_event_timestamp: ${after_ts:-unknown}
+debug_primary_after_primary_reset: $(format_epoch_local "${after_primary_reset:-}")
+debug_primary_after_secondary_reset: $(format_epoch_local "${after_secondary_reset:-}")
+debug_primary_before_used_left: primary_used=${primary_used:-unknown}% primary_left=${primary_left:-unknown}% secondary_used=${secondary_used:-unknown}% secondary_left=${secondary_left:-unknown}%
+debug_primary_after_used_left: primary_used=${after_primary:-unknown}% primary_left=${after_primary_left:-unknown}% secondary_used=${after_secondary:-unknown}% secondary_left=${after_secondary_left:-unknown}%
+EOF
+  fi
   chmod 600 "$context_path" 2>/dev/null || true
 }
 
@@ -5046,11 +5074,11 @@ main() {
     fi
   fi
 
-  log_line "INFO" "quota.current execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL snapshot_selection=$before_selection snapshot_current=$before_snapshot_is_current snapshot_stale_after_reset=$before_snapshot_stale_after_reset primary_reset_expired=$before_primary_reset_expired secondary_reset_expired=$before_secondary_reset_expired primary_bucket_current=$before_primary_bucket_current secondary_bucket_current=$before_secondary_bucket_current matching_snapshot_count=$before_matching_snapshot_count expected_quota_identity=$expected_quota_identity quota_identity_status=$quota_identity_status limit_id=$limit_id limit_name=$(shell_quote "$limit_name") plan_type=$plan_type source=$before_source snapshot_model_hint=$before_model_hint event_timestamp=$before_ts snapshot_age_seconds=$before_snapshot_age_seconds primary_used=${primary_used}% primary_left=${primary_left}% primary_window=${primary_window}m primary_reset=$(format_epoch_local "$primary_reset") primary_reset_age_seconds=$before_primary_reset_age_seconds secondary_used=${secondary_used}% secondary_left=${secondary_left}% secondary_window=${secondary_window}m secondary_reset=$(format_epoch_local "$secondary_reset") secondary_reset_age_seconds=$before_secondary_reset_age_seconds"
-  log_line "INFO" "quota.projection execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL basis=$projected_basis expected_quota_identity=$expected_quota_identity quota_identity_status=$quota_identity_status projected_primary_delta_used=${projected_primary_delta}% projected_primary_used=${primary_projected_used}% projected_primary_left=${primary_projected_left}% primary_decision=$primary_guardrail_decision projected_secondary_delta_used=${projected_secondary_delta}% projected_secondary_used=${secondary_projected_used}% projected_secondary_left=${secondary_projected_left}% secondary_decision=$secondary_guardrail_decision left_thresholds=(${five_hour_threshold}%/${week_threshold}%) weekly_base_threshold=${CODEX_WEEK_STOP_PERCENT}% weekly_buffer=${week_buffer}%"
+  log_line "INFO" "quota.current execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL snapshot_selection=$before_selection snapshot_current=$before_snapshot_is_current snapshot_stale_after_reset=$before_snapshot_stale_after_reset primary_reset_expired=$before_primary_reset_expired secondary_reset_expired=$before_secondary_reset_expired primary_bucket_current=$before_primary_bucket_current secondary_bucket_current=$before_secondary_bucket_current matching_snapshot_count=$before_matching_snapshot_count expected_quota_identity=$expected_quota_identity quota_identity_status=$quota_identity_status$(quota_hashed_log_field limit_id "$limit_id")$(quota_hashed_log_field limit_name "$limit_name")$(quota_hashed_path_log_field source "$before_source")$(quota_sensitive_log_field limit_id "$limit_id")$(quota_sensitive_log_field limit_name "$limit_name")$(quota_sensitive_log_field plan_type "$plan_type")$(quota_sensitive_log_field source "$before_source")$(quota_sensitive_log_field snapshot_model_hint "$before_model_hint")$(quota_sensitive_log_field event_timestamp "$before_ts")$(quota_sensitive_log_field snapshot_age_seconds "$before_snapshot_age_seconds")$(quota_sensitive_log_field primary_used "${primary_used}%")$(quota_sensitive_log_field primary_left "${primary_left}%")$(quota_sensitive_log_field primary_window "${primary_window}m")$(quota_sensitive_log_field primary_reset "$(format_epoch_local "$primary_reset")")$(quota_sensitive_log_field primary_reset_age_seconds "$before_primary_reset_age_seconds")$(quota_sensitive_log_field secondary_used "${secondary_used}%")$(quota_sensitive_log_field secondary_left "${secondary_left}%")$(quota_sensitive_log_field secondary_window "${secondary_window}m")$(quota_sensitive_log_field secondary_reset "$(format_epoch_local "$secondary_reset")")$(quota_sensitive_log_field secondary_reset_age_seconds "$before_secondary_reset_age_seconds")"
+  log_line "INFO" "quota.projection execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL basis=$projected_basis expected_quota_identity=$expected_quota_identity quota_identity_status=$quota_identity_status primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision$(quota_sensitive_log_field projected_primary_delta_used "${projected_primary_delta}%")$(quota_sensitive_log_field projected_primary_used "${primary_projected_used}%")$(quota_sensitive_log_field projected_primary_left "${primary_projected_left}%")$(quota_sensitive_log_field projected_secondary_delta_used "${projected_secondary_delta}%")$(quota_sensitive_log_field projected_secondary_used "${secondary_projected_used}%")$(quota_sensitive_log_field projected_secondary_left "${secondary_projected_left}%")$(quota_sensitive_log_field left_thresholds "${five_hour_threshold}%/${week_threshold}%")$(quota_sensitive_log_field weekly_base_threshold "${CODEX_WEEK_STOP_PERCENT}%")$(quota_sensitive_log_field weekly_buffer "${week_buffer}%")"
 
   if [[ "$before_selection" != "exact_model" ]]; then
-    log_line "WARN" "quota.current target_model=$CODEX_MODEL using snapshot_selection=$before_selection snapshot_model_hint=$before_model_hint"
+    log_line "WARN" "quota.current target_model=$CODEX_MODEL using snapshot_selection=$before_selection$(quota_sensitive_log_field snapshot_model_hint "$before_model_hint")"
   fi
 
   local should_stop=0
@@ -5058,8 +5086,8 @@ main() {
   if [[ "$before_selection" == "exact_model" ]]; then
     if [[ "$quota_identity_guardrail_decision" == "stop" ]]; then
       should_stop=1
-      stop_reason="unsafe Spark quota identity ${quota_identity_status} limit_id=${limit_id} limit_name=${limit_name}; expected ${expected_quota_identity}"
-      log_line "WARN" "quota.identity_guardrail target_model=$CODEX_MODEL decision=stop expected_quota_identity=$expected_quota_identity quota_identity_status=$quota_identity_status limit_id=$limit_id limit_name=$(shell_quote "$limit_name") source=$before_source"
+      stop_reason="unsafe Spark quota identity ${quota_identity_status}; expected ${expected_quota_identity}"
+      log_line "WARN" "quota.identity_guardrail target_model=$CODEX_MODEL decision=stop expected_quota_identity=$expected_quota_identity quota_identity_status=$quota_identity_status$(quota_hashed_log_field limit_id "$limit_id")$(quota_hashed_log_field limit_name "$limit_name")$(quota_hashed_path_log_field source "$before_source")$(quota_sensitive_log_field limit_id "$limit_id")$(quota_sensitive_log_field limit_name "$limit_name")$(quota_sensitive_log_field source "$before_source")"
     fi
     if [[ "$primary_guardrail_decision" == "stop" ]]; then
       should_stop=1
@@ -5081,7 +5109,7 @@ main() {
         stop_reason="$stop_reason; "
       fi
       stop_reason="${stop_reason}quota snapshot stale after reset for all buckets; exact model snapshot is not current"
-      log_line "WARN" "quota.guardrails target_model=$CODEX_MODEL deferred reason=stale_snapshot_after_reset snapshot_current=$before_snapshot_is_current snapshot_stale_after_reset=$before_snapshot_stale_after_reset primary_bucket_current=$before_primary_bucket_current secondary_bucket_current=$before_secondary_bucket_current primary_reset=$(format_epoch_local "$primary_reset") primary_reset_age_seconds=$before_primary_reset_age_seconds secondary_reset=$(format_epoch_local "$secondary_reset") secondary_reset_age_seconds=$before_secondary_reset_age_seconds"
+      log_line "WARN" "quota.guardrails target_model=$CODEX_MODEL deferred reason=stale_snapshot_after_reset snapshot_current=$before_snapshot_is_current snapshot_stale_after_reset=$before_snapshot_stale_after_reset primary_bucket_current=$before_primary_bucket_current secondary_bucket_current=$before_secondary_bucket_current$(quota_sensitive_log_field primary_reset "$(format_epoch_local "$primary_reset")")$(quota_sensitive_log_field primary_reset_age_seconds "$before_primary_reset_age_seconds")$(quota_sensitive_log_field secondary_reset "$(format_epoch_local "$secondary_reset")")$(quota_sensitive_log_field secondary_reset_age_seconds "$before_secondary_reset_age_seconds")"
     elif [[ "$primary_guardrail_decision" == "defer" || "$secondary_guardrail_decision" == "defer" ]]; then
       should_stop=1
       if [[ -n "$stop_reason" ]]; then
@@ -5095,12 +5123,12 @@ main() {
     if [[ -n "$stop_reason" ]]; then
       stop_reason="$stop_reason; "
     fi
-    stop_reason="${stop_reason}quota snapshot is not exact for target model; snapshot_selection=$before_selection snapshot_model_hint=$before_model_hint"
+    stop_reason="${stop_reason}quota snapshot is not exact for target model; snapshot_selection=$before_selection"
     log_line "WARN" "quota.guardrails target_model=$CODEX_MODEL deferred until an exact model snapshot exists"
   fi
 
   if [[ "$should_stop" -eq 1 && "${CODEX_QUOTA_GUARDRAIL_BYPASS:-0}" == "1" ]]; then
-    log_line "WARN" "quota.guardrails bypassed=1 phase=before_run target_model=$CODEX_MODEL reason=$(shell_quote "$stop_reason") primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision identity_decision=$quota_identity_guardrail_decision"
+    log_line "WARN" "quota.guardrails bypassed=1 phase=before_run target_model=$CODEX_MODEL reason=$(shell_quote "$(quota_public_stop_reason "$stop_reason")") primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision identity_decision=$quota_identity_guardrail_decision"
     should_stop=0
   fi
 
@@ -5108,10 +5136,10 @@ main() {
     write_primary_quota_blocked_marker "$stop_reason"
     if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
       local fallback_exit=0
-      run_locked_fallback_cycle "primary_quota_before_run" "$stop_reason" || fallback_exit=$?
+      run_locked_fallback_cycle "primary_quota_before_run" "$(quota_public_stop_reason "$stop_reason")" || fallback_exit=$?
       finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=primary_quota_before_run final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
     fi
-    log_line "WARN" "quota.stop reason=\"$stop_reason\""
+    log_line "WARN" "quota.stop reason=\"$(quota_public_stop_reason "$stop_reason")\""
     if stop_parent_loop; then
       guardrail_stop_exit_code="$CODEX_GUARDRAIL_STOP_EXIT_CODE"
       guardrail_stop_reason="QUOTA_GUARDRAIL_STOP"
@@ -5229,7 +5257,7 @@ main() {
       after_primary_guardrail_decision="$(quota_bucket_decision "$after_primary_bucket_current" "$after_primary_left" "$five_hour_threshold")"
       after_secondary_guardrail_decision="$(quota_bucket_decision "$after_secondary_bucket_current" "$after_secondary_left" "$week_threshold")"
     fi
-    log_line "INFO" "quota.after execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL snapshot_selection=$after_selection snapshot_current=$after_snapshot_is_current snapshot_stale_after_reset=$after_snapshot_stale_after_reset primary_reset_expired=$after_primary_reset_expired secondary_reset_expired=$after_secondary_reset_expired primary_bucket_current=$after_primary_bucket_current secondary_bucket_current=$after_secondary_bucket_current limit_id=$after_limit_id limit_name=$(shell_quote "$after_limit_name") plan_type=$after_plan_type source=$after_source snapshot_model_hint=$after_model_hint event_timestamp=$after_ts snapshot_age_seconds=$after_snapshot_age_seconds primary_used=${after_primary}% primary_left=${after_primary_left}% primary_decision=$after_primary_guardrail_decision primary_reset_age_seconds=$after_primary_reset_age_seconds secondary_used=${after_secondary}% secondary_left=${after_secondary_left}% secondary_decision=$after_secondary_guardrail_decision secondary_reset_age_seconds=$after_secondary_reset_age_seconds"
+    log_line "INFO" "quota.after execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL snapshot_selection=$after_selection snapshot_current=$after_snapshot_is_current snapshot_stale_after_reset=$after_snapshot_stale_after_reset primary_reset_expired=$after_primary_reset_expired secondary_reset_expired=$after_secondary_reset_expired primary_bucket_current=$after_primary_bucket_current secondary_bucket_current=$after_secondary_bucket_current$(quota_hashed_log_field limit_id "$after_limit_id")$(quota_hashed_log_field limit_name "$after_limit_name")$(quota_hashed_path_log_field source "$after_source") primary_decision=$after_primary_guardrail_decision secondary_decision=$after_secondary_guardrail_decision$(quota_sensitive_log_field limit_id "$after_limit_id")$(quota_sensitive_log_field limit_name "$after_limit_name")$(quota_sensitive_log_field plan_type "$after_plan_type")$(quota_sensitive_log_field source "$after_source")$(quota_sensitive_log_field snapshot_model_hint "$after_model_hint")$(quota_sensitive_log_field event_timestamp "$after_ts")$(quota_sensitive_log_field snapshot_age_seconds "$after_snapshot_age_seconds")$(quota_sensitive_log_field primary_used "${after_primary}%")$(quota_sensitive_log_field primary_left "${after_primary_left}%")$(quota_sensitive_log_field primary_reset_age_seconds "$after_primary_reset_age_seconds")$(quota_sensitive_log_field secondary_used "${after_secondary}%")$(quota_sensitive_log_field secondary_left "${after_secondary_left}%")$(quota_sensitive_log_field secondary_reset_age_seconds "$after_secondary_reset_age_seconds")"
   else
     after_primary=""
     after_secondary=""
@@ -5264,7 +5292,7 @@ main() {
     observed_primary_delta="unavailable"
     observed_secondary_delta="unavailable"
     observed_delta_status="reset_changed"
-    log_line "WARN" "quota.jump execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL status=non_authoritative observed_delta_status=$observed_delta_status quota_identity_changed=$quota_snapshot_identity_changed before_limit_id=${limit_id:-unknown} after_limit_id=${after_limit_id:-unknown} before_limit_name=$(shell_quote "${limit_name:-unknown}") after_limit_name=$(shell_quote "${after_limit_name:-unknown}") $(quota_transition_fields "$primary_used" "$primary_left" "$secondary_used" "$secondary_left" "$after_primary" "$after_primary_left" "$after_secondary" "$after_secondary_left") before_primary_reset=$(format_epoch_local "$primary_reset") after_primary_reset=$(format_epoch_local "$after_primary_reset") before_secondary_reset=$(format_epoch_local "$secondary_reset") after_secondary_reset=$(format_epoch_local "$after_secondary_reset") before_source=${before_source:-unknown} after_source=${after_source:-unknown}"
+    log_line "WARN" "quota.jump execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL status=non_authoritative observed_delta_status=$observed_delta_status quota_identity_changed=$quota_snapshot_identity_changed$(quota_hashed_log_field before_limit_id "${limit_id:-unknown}")$(quota_hashed_log_field after_limit_id "${after_limit_id:-unknown}")$(quota_hashed_log_field before_limit_name "${limit_name:-unknown}")$(quota_hashed_log_field after_limit_name "${after_limit_name:-unknown}")$(quota_hashed_path_log_field before_source "${before_source:-unknown}")$(quota_hashed_path_log_field after_source "${after_source:-unknown}")$(quota_sensitive_log_field before_limit_id "${limit_id:-unknown}")$(quota_sensitive_log_field after_limit_id "${after_limit_id:-unknown}")$(quota_sensitive_log_field before_limit_name "${limit_name:-unknown}")$(quota_sensitive_log_field after_limit_name "${after_limit_name:-unknown}")$(quota_sensitive_log_fragment "$(quota_transition_fields "$primary_used" "$primary_left" "$secondary_used" "$secondary_left" "$after_primary" "$after_primary_left" "$after_secondary" "$after_secondary_left")")$(quota_sensitive_log_field before_primary_reset "$(format_epoch_local "$primary_reset")")$(quota_sensitive_log_field after_primary_reset "$(format_epoch_local "$after_primary_reset")")$(quota_sensitive_log_field before_secondary_reset "$(format_epoch_local "$secondary_reset")")$(quota_sensitive_log_field after_secondary_reset "$(format_epoch_local "$after_secondary_reset")")$(quota_sensitive_log_field before_source "${before_source:-unknown}")$(quota_sensitive_log_field after_source "${after_source:-unknown}")"
   else
     observed_primary_delta="unavailable"
     observed_secondary_delta="unavailable"
@@ -5298,7 +5326,7 @@ main() {
   status_marker_candidate_rejection_reason="$marker_candidate_rejection_reason"
   primary_session_diagnostics_source="${after_source:-}"
   if [[ "$codex_empty_transcript" == "1" ]]; then
-    log_line "WARN" "codex.session_diagnostics_ignored reason=empty_transcript codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE") transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines ignored_session_source=${after_source:-unknown}"
+    log_line "WARN" "codex.session_diagnostics_ignored reason=empty_transcript codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE") transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines$(quota_hashed_path_log_field ignored_session_source "${after_source:-unknown}")$(quota_sensitive_log_field ignored_session_source "${after_source:-unknown}")"
     primary_session_diagnostics_source=""
     session_end_state="codex_no_output"
   else
@@ -5411,14 +5439,14 @@ main() {
       post_run_stop_reason="${post_run_stop_reason}post-run weekly left ${after_secondary_left}% <= ${week_threshold}% (base ${CODEX_WEEK_STOP_PERCENT}% + buffer ${week_buffer}%)"
     fi
     if [[ "$after_primary_guardrail_decision" == "defer" && "$after_secondary_guardrail_decision" == "defer" ]]; then
-      log_line "WARN" "quota.guardrails phase=after_run target_model=$CODEX_MODEL deferred reason=stale_snapshot_after_reset snapshot_current=$after_snapshot_is_current snapshot_stale_after_reset=${after_snapshot_stale_after_reset:-unknown} primary_bucket_current=${after_primary_bucket_current:-unknown} secondary_bucket_current=${after_secondary_bucket_current:-unknown} primary_reset=$(format_epoch_local "$after_primary_reset") primary_reset_age_seconds=${after_primary_reset_age_seconds:-unknown} secondary_reset=$(format_epoch_local "$after_secondary_reset") secondary_reset_age_seconds=${after_secondary_reset_age_seconds:-unknown}"
+      log_line "WARN" "quota.guardrails phase=after_run target_model=$CODEX_MODEL deferred reason=stale_snapshot_after_reset snapshot_current=$after_snapshot_is_current snapshot_stale_after_reset=${after_snapshot_stale_after_reset:-unknown} primary_bucket_current=${after_primary_bucket_current:-unknown} secondary_bucket_current=${after_secondary_bucket_current:-unknown}$(quota_sensitive_log_field primary_reset "$(format_epoch_local "$after_primary_reset")")$(quota_sensitive_log_field primary_reset_age_seconds "${after_primary_reset_age_seconds:-unknown}")$(quota_sensitive_log_field secondary_reset "$(format_epoch_local "$after_secondary_reset")")$(quota_sensitive_log_field secondary_reset_age_seconds "${after_secondary_reset_age_seconds:-unknown}")"
     elif [[ "$after_primary_guardrail_decision" == "defer" || "$after_secondary_guardrail_decision" == "defer" ]]; then
       log_line "WARN" "quota.guardrails phase=after_run target_model=$CODEX_MODEL partial_decision primary_decision=$after_primary_guardrail_decision secondary_decision=$after_secondary_guardrail_decision primary_bucket_current=${after_primary_bucket_current:-unknown} secondary_bucket_current=${after_secondary_bucket_current:-unknown} primary_reset_expired=${after_primary_reset_expired:-unknown} secondary_reset_expired=${after_secondary_reset_expired:-unknown}"
     fi
   fi
 
   if [[ "$post_run_should_stop" -eq 1 && "${CODEX_QUOTA_GUARDRAIL_BYPASS:-0}" == "1" ]]; then
-    log_line "WARN" "quota.guardrails bypassed=1 phase=after_run target_model=$CODEX_MODEL reason=$(shell_quote "$post_run_stop_reason") primary_decision=$after_primary_guardrail_decision secondary_decision=$after_secondary_guardrail_decision codex_exit=$codex_exit status_marker=${status_marker:-missing}"
+    log_line "WARN" "quota.guardrails bypassed=1 phase=after_run target_model=$CODEX_MODEL reason=$(shell_quote "$(quota_public_stop_reason "$post_run_stop_reason")") primary_decision=$after_primary_guardrail_decision secondary_decision=$after_secondary_guardrail_decision codex_exit=$codex_exit status_marker=${status_marker:-missing}"
     post_run_should_stop=0
   fi
 
@@ -5430,13 +5458,13 @@ main() {
     fi
     if [[ "$codex_exit" -ne 0 && -z "$status_marker" && "$session_end_state" == "no_agent_message" ]]; then
       primary_failure_classification="PRIMARY_NO_AGENT_MESSAGE_AFTER_QUOTA_EXHAUSTION"
-      log_line "WARN" "primary.failure_classification classification=$primary_failure_classification phase=after_run codex_exit=$codex_exit status_marker=missing session_end_state=$session_end_state agent_messages=$primary_session_agent_message_count tool_calls=$primary_session_tool_call_count quota_identity_changed=$quota_session_identity_changed before_limit_id=${limit_id:-unknown} after_limit_id=${after_limit_id:-unknown} session_limit_id=$primary_session_last_rate_limit_limit_id $(quota_transition_fields "$primary_used" "$primary_left" "$secondary_used" "$secondary_left" "$after_primary" "$after_primary_left" "$after_secondary" "$after_secondary_left") observed_delta_status=$observed_delta_status rate_limit_reached_type=$primary_session_last_rate_limit_reached_type"
-      log_line "WARN" "primary.no_agent_quota_exhausted classification=$primary_failure_classification phase=after_run codex_exit=$codex_exit status_marker=missing session_end_state=$session_end_state session_source=${after_source:-unknown} quota_identity_changed=$quota_session_identity_changed before_limit_id=${limit_id:-unknown} after_limit_id=${after_limit_id:-unknown} session_limit_id=$primary_session_last_rate_limit_limit_id before_limit_name=$(shell_quote "${limit_name:-unknown}") after_limit_name=$(shell_quote "${after_limit_name:-unknown}") session_limit_name=$(shell_quote "$primary_session_last_rate_limit_limit_name") session_primary_used=${primary_session_last_rate_limit_primary_used_percent}% session_secondary_used=${primary_session_last_rate_limit_secondary_used_percent}% $(quota_transition_fields "$primary_used" "$primary_left" "$secondary_used" "$secondary_left" "$after_primary" "$after_primary_left" "$after_secondary" "$after_secondary_left") observed_delta_status=$observed_delta_status fallback_child_id=pending"
+      log_line "WARN" "primary.failure_classification classification=$primary_failure_classification phase=after_run codex_exit=$codex_exit status_marker=missing session_end_state=$session_end_state agent_messages=$primary_session_agent_message_count tool_calls=$primary_session_tool_call_count quota_identity_changed=$quota_session_identity_changed observed_delta_status=$observed_delta_status rate_limit_reached_type=$primary_session_last_rate_limit_reached_type$(quota_hashed_log_field before_limit_id "${limit_id:-unknown}")$(quota_hashed_log_field after_limit_id "${after_limit_id:-unknown}")$(quota_hashed_log_field session_limit_id "$primary_session_last_rate_limit_limit_id")$(quota_sensitive_log_field before_limit_id "${limit_id:-unknown}")$(quota_sensitive_log_field after_limit_id "${after_limit_id:-unknown}")$(quota_sensitive_log_field session_limit_id "$primary_session_last_rate_limit_limit_id")$(quota_sensitive_log_fragment "$(quota_transition_fields "$primary_used" "$primary_left" "$secondary_used" "$secondary_left" "$after_primary" "$after_primary_left" "$after_secondary" "$after_secondary_left")")"
+      log_line "WARN" "primary.no_agent_quota_exhausted classification=$primary_failure_classification phase=after_run codex_exit=$codex_exit status_marker=missing session_end_state=$session_end_state quota_identity_changed=$quota_session_identity_changed observed_delta_status=$observed_delta_status fallback_child_id=pending$(quota_hashed_path_log_field session_source "${after_source:-unknown}")$(quota_hashed_log_field before_limit_id "${limit_id:-unknown}")$(quota_hashed_log_field after_limit_id "${after_limit_id:-unknown}")$(quota_hashed_log_field session_limit_id "$primary_session_last_rate_limit_limit_id")$(quota_hashed_log_field before_limit_name "${limit_name:-unknown}")$(quota_hashed_log_field after_limit_name "${after_limit_name:-unknown}")$(quota_hashed_log_field session_limit_name "$primary_session_last_rate_limit_limit_name")$(quota_sensitive_log_field session_source "${after_source:-unknown}")$(quota_sensitive_log_field before_limit_id "${limit_id:-unknown}")$(quota_sensitive_log_field after_limit_id "${after_limit_id:-unknown}")$(quota_sensitive_log_field session_limit_id "$primary_session_last_rate_limit_limit_id")$(quota_sensitive_log_field before_limit_name "${limit_name:-unknown}")$(quota_sensitive_log_field after_limit_name "${after_limit_name:-unknown}")$(quota_sensitive_log_field session_limit_name "$primary_session_last_rate_limit_limit_name")$(quota_sensitive_log_field session_primary_used "${primary_session_last_rate_limit_primary_used_percent}%")$(quota_sensitive_log_field session_secondary_used "${primary_session_last_rate_limit_secondary_used_percent}%")$(quota_sensitive_log_fragment "$(quota_transition_fields "$primary_used" "$primary_left" "$secondary_used" "$secondary_left" "$after_primary" "$after_primary_left" "$after_secondary" "$after_secondary_left")")"
       write_primary_quota_blocked_marker "$post_run_stop_reason codex_exit=$codex_exit status_marker=missing session_end_state=$session_end_state classification=$primary_failure_classification" "after_run"
     fi
     if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
       local fallback_exit=0
-      run_locked_fallback_cycle "primary_quota_after_run" "$post_run_stop_reason codex_exit=$codex_exit status_marker=${status_marker:-missing} session_end_state=$session_end_state classification=$primary_failure_classification" || fallback_exit=$?
+      run_locked_fallback_cycle "primary_quota_after_run" "$(quota_public_stop_reason "$post_run_stop_reason") codex_exit=$codex_exit status_marker=${status_marker:-missing} session_end_state=$session_end_state classification=$primary_failure_classification" || fallback_exit=$?
       if [[ "$primary_failure_classification" == "PRIMARY_NO_AGENT_MESSAGE_AFTER_QUOTA_EXHAUSTION" ]]; then
         local fallback_child_id fallback_child_marker
         fallback_child_id="$(read_artifact_or_unknown "$CODEX_POSTMORTEM_DIR/$CYCLE_ID/screen/current-child-cycle-id.txt")"
@@ -5446,7 +5474,7 @@ main() {
       fi
       finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=primary_quota_after_run final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
     fi
-    log_line "WARN" "quota.stop phase=after_run reason=\"$post_run_stop_reason\" codex_exit=$codex_exit status_marker=${status_marker:-missing}"
+    log_line "WARN" "quota.stop phase=after_run reason=\"$(quota_public_stop_reason "$post_run_stop_reason")\" codex_exit=$codex_exit status_marker=${status_marker:-missing}"
     if stop_parent_loop; then
       guardrail_stop_exit_code="$CODEX_GUARDRAIL_STOP_EXIT_CODE"
       guardrail_stop_reason="QUOTA_GUARDRAIL_STOP_AFTER_RUN"

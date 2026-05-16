@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # shellcheck source=/dev/null
+source "$ROOT_DIR/lib/upkeeper/runtime_foundation.bash"
+# shellcheck source=/dev/null
+source "$ROOT_DIR/lib/upkeeper/quota_state.bash"
+# shellcheck source=/dev/null
 source "$ROOT_DIR/lib/upkeeper/quota_block_markers.bash"
 
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-quota-block-markers.XXXXXX")"
@@ -109,8 +113,16 @@ test_write_primary_quota_blocked_marker_writes_final_marker() {
     fail "marker primary_model field missing"
   grep -qx 'blocked_bucket: primary' "$marker_path" ||
     fail "marker blocked_bucket field missing"
+  grep -qx 'quota_identity_changed: 0' "$marker_path" ||
+    fail "marker quota_identity_changed field missing"
   grep -qx 'primary_model: gpt-test' "$private_marker_path" ||
     fail "private marker primary_model field missing"
+  if grep -q '^before_limit_id:' "$marker_path"; then
+    fail "marker retained raw limit id"
+  fi
+  if grep -q '^primary_used:' "$marker_path"; then
+    fail "marker retained detailed quota usage"
+  fi
 
   shopt -s nullglob
   temp_paths=("$marker_path".tmp.*)

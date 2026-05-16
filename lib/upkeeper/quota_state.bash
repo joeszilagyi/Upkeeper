@@ -4,6 +4,77 @@
 # API. The Python block keeps parsing isolated and returns one compact JSON
 # object to Bash. Guardrails only trust exact-model buckets whose reset windows
 # are still current; stale buckets are evidence, not a stop signal.
+quota_metadata_debug_enabled() {
+  if declare -F upkeeper_verbose_metadata_enabled >/dev/null 2>&1; then
+    upkeeper_verbose_metadata_enabled
+  else
+    return 1
+  fi
+}
+
+quota_metadata_path_hmac() {
+  local value="${1:-unknown}"
+
+  if declare -F upkeeper_path_hmac >/dev/null 2>&1; then
+    upkeeper_path_hmac "$value"
+  else
+    printf '%s' "$value"
+  fi
+}
+
+quota_metadata_value_hmac() {
+  local namespace="$1"
+  local value="${2:-unknown}"
+
+  if declare -F upkeeper_value_hmac >/dev/null 2>&1; then
+    upkeeper_value_hmac "quota_$namespace" "$value"
+  else
+    printf '%s' "$value"
+  fi
+}
+
+quota_sensitive_log_field() {
+  local key="$1"
+  local value="${2:-unknown}"
+
+  if quota_metadata_debug_enabled; then
+    printf ' %s=%s' "$key" "$(shell_quote "$value")"
+  fi
+}
+
+quota_sensitive_log_fragment() {
+  local fragment="${1:-}"
+
+  if quota_metadata_debug_enabled && [[ -n "$fragment" ]]; then
+    printf ' %s' "$fragment"
+  fi
+}
+
+quota_hashed_log_field() {
+  local key="$1"
+  local value="${2:-unknown}"
+  local namespace="${3:-$1}"
+
+  printf ' %s_hmac=%s' "$key" "$(quota_metadata_value_hmac "$namespace" "$value")"
+}
+
+quota_hashed_path_log_field() {
+  local key="$1"
+  local value="${2:-unknown}"
+
+  printf ' %s_hmac=%s' "$key" "$(quota_metadata_path_hmac "$value")"
+}
+
+quota_public_stop_reason() {
+  local value="${1:-quota_guardrail_stop}"
+
+  if quota_metadata_debug_enabled; then
+    printf '%s' "$value"
+  else
+    printf 'quota_guardrail_stop'
+  fi
+}
+
 quota_state_json() {
   local target_model="${1:-$CODEX_MODEL}"
   python3 - "$CODEX_HOME_DIR" "$CODEX_SESSION_SCAN_LIMIT" "$LOG_FILE" "$target_model" <<'PY'
@@ -324,4 +395,3 @@ except KeyboardInterrupt:
     sys.exit(0)
 PY
 }
-

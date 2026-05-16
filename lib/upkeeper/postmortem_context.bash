@@ -65,6 +65,10 @@ write_postmortem_context() {
   local fallback_marker_analysis fallback_child_status_marker fallback_child_status_marker_source
   local fallback_child_status_marker_fields
   local incident_classification
+  local incident_log_hmac primary_last_message_hmac repo_root_hmac loop_log_hmac
+  local primary_session_limit_id_hmac primary_session_limit_name_hmac
+  local primary_before_limit_id_hmac primary_before_limit_name_hmac primary_before_source_hmac
+  local primary_after_limit_id_hmac primary_after_limit_name_hmac primary_after_source_hmac
 
   if [[ "$trigger" == "primary_quota_before_run" ]]; then
     primary_exec_started="0"
@@ -90,6 +94,18 @@ write_postmortem_context() {
   fallback_child_status_marker="${fallback_child_status_marker_fields%% *}"
   fallback_child_status_marker_source="${fallback_child_status_marker_fields#* }"
   incident_classification="$(postmortem_incident_classification "$trigger" "$child_exit" "$fallback_child_status_marker")"
+  incident_log_hmac="$(quota_metadata_path_hmac "$incident_log_path")"
+  primary_last_message_hmac="$(quota_metadata_path_hmac "$primary_last_message_copy")"
+  repo_root_hmac="$(quota_metadata_path_hmac "$ROOT_DIR")"
+  loop_log_hmac="$(quota_metadata_path_hmac "$LOG_FILE")"
+  primary_session_limit_id_hmac="$(quota_metadata_value_hmac session_limit_id "${primary_session_last_rate_limit_limit_id:-unknown}")"
+  primary_session_limit_name_hmac="$(quota_metadata_value_hmac session_limit_name "${primary_session_last_rate_limit_limit_name:-unknown}")"
+  primary_before_limit_id_hmac="$(quota_metadata_value_hmac before_limit_id "${limit_id:-unknown}")"
+  primary_before_limit_name_hmac="$(quota_metadata_value_hmac before_limit_name "${limit_name:-unknown}")"
+  primary_before_source_hmac="$(quota_metadata_path_hmac "${before_source:-unknown}")"
+  primary_after_limit_id_hmac="$(quota_metadata_value_hmac after_limit_id "${after_limit_id:-unknown}")"
+  primary_after_limit_name_hmac="$(quota_metadata_value_hmac after_limit_name "${after_limit_name:-unknown}")"
+  primary_after_source_hmac="$(quota_metadata_path_hmac "${after_source:-unknown}")"
 
   cat >"$context_path" <<EOF
 incident_cycle_id: $CYCLE_ID
@@ -132,56 +148,78 @@ primary_session_tool_call_count: ${primary_session_tool_call_count:-unknown}
 primary_session_tool_result_count: ${primary_session_tool_result_count:-unknown}
 primary_session_task_complete_last_agent_message: ${primary_session_task_complete_last_agent_message:-unknown}
 primary_session_last_rate_limit_reached_type: ${primary_session_last_rate_limit_reached_type:-unknown}
-primary_session_last_rate_limit_limit_id: ${primary_session_last_rate_limit_limit_id:-unknown}
-primary_session_last_rate_limit_limit_name: ${primary_session_last_rate_limit_limit_name:-unknown}
-primary_session_last_rate_limit_plan_type: ${primary_session_last_rate_limit_plan_type:-unknown}
-primary_session_last_rate_limit_primary_used_percent: ${primary_session_last_rate_limit_primary_used_percent:-unknown}
-primary_session_last_rate_limit_secondary_used_percent: ${primary_session_last_rate_limit_secondary_used_percent:-unknown}
+primary_session_last_rate_limit_limit_id_hmac: $primary_session_limit_id_hmac
+primary_session_last_rate_limit_limit_name_hmac: $primary_session_limit_name_hmac
+primary_session_last_rate_limit_usage: withheld_nondebug
 quota_snapshot_identity_changed: $(quota_identity_changed_flag "${limit_id:-unknown}" "${limit_name:-unknown}" "${after_limit_id:-unknown}" "${after_limit_name:-unknown}")
 quota_session_identity_changed: $(quota_identity_changed_flag "${limit_id:-unknown}" "${limit_name:-unknown}" "${primary_session_last_rate_limit_limit_id:-unknown}" "${primary_session_last_rate_limit_limit_name:-unknown}")
 dirty_paths: $DIRTY_PATH_COUNT
 tracked_modified_paths: $TRACKED_MODIFIED_PATH_COUNT
 untracked_paths: $UNTRACKED_PATH_COUNT
-primary_before_limit_id: ${limit_id:-unknown}
-primary_before_limit_name: ${limit_name:-unknown}
-primary_before_snapshot_source: ${before_source:-unknown}
-primary_before_snapshot_model_hint: ${before_model_hint:-unknown}
+primary_before_limit_id_hmac: $primary_before_limit_id_hmac
+primary_before_limit_name_hmac: $primary_before_limit_name_hmac
+primary_before_snapshot_source_hmac: $primary_before_source_hmac
 primary_before_snapshot_current: ${before_snapshot_is_current:-unknown}
-primary_before_snapshot_event_timestamp: ${before_ts:-unknown}
+primary_before_snapshot_event_timestamp: withheld_nondebug
 primary_before_snapshot_age_seconds: ${before_snapshot_age_seconds:-unknown}
-primary_before_primary_reset: $(format_epoch_local "${primary_reset:-}")
 primary_before_primary_reset_age_seconds: ${before_primary_reset_age_seconds:-unknown}
 primary_before_primary_reset_expired: ${before_primary_reset_expired:-unknown}
 primary_before_primary_bucket_current: ${before_primary_bucket_current:-unknown}
-primary_before_secondary_reset: $(format_epoch_local "${secondary_reset:-}")
 primary_before_secondary_reset_age_seconds: ${before_secondary_reset_age_seconds:-unknown}
 primary_before_secondary_reset_expired: ${before_secondary_reset_expired:-unknown}
 primary_before_secondary_bucket_current: ${before_secondary_bucket_current:-unknown}
 primary_before_snapshot_stale_after_reset: ${before_snapshot_stale_after_reset:-unknown}
 primary_before_session_end_state: $primary_before_session_end_state
-primary_after_limit_id: ${after_limit_id:-unknown}
-primary_after_limit_name: ${after_limit_name:-unknown}
-primary_after_snapshot_source: ${after_source:-unknown}
-primary_after_snapshot_model_hint: ${after_model_hint:-unknown}
+primary_after_limit_id_hmac: $primary_after_limit_id_hmac
+primary_after_limit_name_hmac: $primary_after_limit_name_hmac
+primary_after_snapshot_source_hmac: $primary_after_source_hmac
 primary_after_snapshot_current: ${after_snapshot_is_current:-unknown}
-primary_after_snapshot_event_timestamp: ${after_ts:-unknown}
+primary_after_snapshot_event_timestamp: withheld_nondebug
 primary_after_snapshot_age_seconds: ${after_snapshot_age_seconds:-unknown}
-primary_after_primary_reset: $(format_epoch_local "${after_primary_reset:-}")
 primary_after_primary_reset_age_seconds: ${after_primary_reset_age_seconds:-unknown}
 primary_after_primary_reset_expired: ${after_primary_reset_expired:-unknown}
 primary_after_primary_bucket_current: ${after_primary_bucket_current:-unknown}
-primary_after_secondary_reset: $(format_epoch_local "${after_secondary_reset:-}")
 primary_after_secondary_reset_age_seconds: ${after_secondary_reset_age_seconds:-unknown}
 primary_after_secondary_reset_expired: ${after_secondary_reset_expired:-unknown}
 primary_after_secondary_bucket_current: ${after_secondary_bucket_current:-unknown}
 primary_after_snapshot_stale_after_reset: ${after_snapshot_stale_after_reset:-unknown}
-primary_before_used_left: primary_used=${primary_used:-unknown}% primary_left=${primary_left:-unknown}% secondary_used=${secondary_used:-unknown}% secondary_left=${secondary_left:-unknown}%
-primary_after_used_left: primary_used=${after_primary:-unknown}% primary_left=${after_primary_left:-unknown}% secondary_used=${after_secondary:-unknown}% secondary_left=${after_secondary_left:-unknown}%
-incident_log_path: $incident_log_path
-primary_last_message_metadata: $primary_last_message_copy
-repo_root: $ROOT_DIR
-loop_log: $LOG_FILE
+primary_before_used_left: withheld_nondebug
+primary_after_used_left: withheld_nondebug
+incident_log_path_hmac: $incident_log_hmac
+primary_last_message_metadata_hmac: $primary_last_message_hmac
+repo_root_hmac: $repo_root_hmac
+loop_log_hmac: $loop_log_hmac
+private_artifact_access: operator_only
 EOF
+  if quota_metadata_debug_enabled; then
+    cat >>"$context_path" <<EOF
+debug_primary_session_last_rate_limit_limit_id: ${primary_session_last_rate_limit_limit_id:-unknown}
+debug_primary_session_last_rate_limit_limit_name: ${primary_session_last_rate_limit_limit_name:-unknown}
+debug_primary_session_last_rate_limit_plan_type: ${primary_session_last_rate_limit_plan_type:-unknown}
+debug_primary_session_last_rate_limit_primary_used_percent: ${primary_session_last_rate_limit_primary_used_percent:-unknown}
+debug_primary_session_last_rate_limit_secondary_used_percent: ${primary_session_last_rate_limit_secondary_used_percent:-unknown}
+debug_primary_before_limit_id: ${limit_id:-unknown}
+debug_primary_before_limit_name: ${limit_name:-unknown}
+debug_primary_before_snapshot_source: ${before_source:-unknown}
+debug_primary_before_snapshot_model_hint: ${before_model_hint:-unknown}
+debug_primary_before_snapshot_event_timestamp: ${before_ts:-unknown}
+debug_primary_before_primary_reset: $(format_epoch_local "${primary_reset:-}")
+debug_primary_before_secondary_reset: $(format_epoch_local "${secondary_reset:-}")
+debug_primary_after_limit_id: ${after_limit_id:-unknown}
+debug_primary_after_limit_name: ${after_limit_name:-unknown}
+debug_primary_after_snapshot_source: ${after_source:-unknown}
+debug_primary_after_snapshot_model_hint: ${after_model_hint:-unknown}
+debug_primary_after_snapshot_event_timestamp: ${after_ts:-unknown}
+debug_primary_after_primary_reset: $(format_epoch_local "${after_primary_reset:-}")
+debug_primary_after_secondary_reset: $(format_epoch_local "${after_secondary_reset:-}")
+debug_primary_before_used_left: primary_used=${primary_used:-unknown}% primary_left=${primary_left:-unknown}% secondary_used=${secondary_used:-unknown}% secondary_left=${secondary_left:-unknown}%
+debug_primary_after_used_left: primary_used=${after_primary:-unknown}% primary_left=${after_primary_left:-unknown}% secondary_used=${after_secondary:-unknown}% secondary_left=${after_secondary_left:-unknown}%
+debug_incident_log_path: $incident_log_path
+debug_primary_last_message_metadata: $primary_last_message_copy
+debug_repo_root: $ROOT_DIR
+debug_loop_log: $LOG_FILE
+EOF
+  fi
   chmod 600 "$context_path" 2>/dev/null || true
 }
 

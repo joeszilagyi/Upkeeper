@@ -756,3 +756,9 @@ Reconstructed pre-1.0 history:
 - Backlog control flow now also captures the real function exit statuses in `main()` for both quota preflight and issue runs, fixing a second shell-negation bug that was still turning `BLOCKED` issue reviews and quota-defer preflights into apparent success paths.
 - Backlog `main()` now captures those nonzero statuses in `if ...; then ... else ... fi` form so `set -e` does not abort the script before blocked-issue deferral or quota-defer handling can run.
 - Issue text describing log-rotation archives, startup-anomaly gate path/hash leaks, unresolved startup-anomaly state leakage, and `prompt_file` / `run.start` log injection now pins directly to the wrapper modules that actually own those behaviors, preventing the backlog loop from wasting full issue cycles on excluded artifacts like `Upkeeper.log` or unrelated quota helpers.
+
+2026-05-16: quota/session metadata privacy minimization:
+- Normal quota log lines now hash session-source paths and quota identity fields instead of emitting raw session JSONL paths, plan/account labels, or other quota identity detail into the live loop log.
+- Persisted primary quota cooldown markers now keep only enforcement-critical fields by default, so reset diagnostics, usage percentages, and raw quota identity details no longer spill into durable marker files.
+- Postmortem incident context now stores hashed quota/session identifiers by default and moves the fuller quota/session diagnostics behind explicit `UPKEEPER_VERBOSE_METADATA=1` within chmod-protected local artifacts.
+- Lattice doctor coverage and focused quota-marker validation now explicitly assert the hashed quota-log import contract and the reduced cooldown-marker surface.

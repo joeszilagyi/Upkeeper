@@ -735,6 +735,11 @@ prompts, backup log lines, or Lattice preselect evidence.
   current exact-model snapshots. Upkeeper treats small reset-epoch jitter as the
   same quota window and logs `quota.reset_jitter` at INFO instead of emitting a
   non-authoritative `quota.jump` warning.
+- Default quota logging is privacy-minimized: session-source paths and quota
+  identity fields are hashed in normal loop logs, cooldown markers keep only
+  enforcement-critical fields, and the fuller quota/session diagnostics remain
+  behind explicit `UPKEEPER_VERBOSE_METADATA=1` plus private local artifact
+  permissions.
 - `--prompt-pass=all` final reports must include parseable `P<N>:` lines for
   P1 through P23. Upkeeper logs `review.pass_coverage` so all-pass cycles are
   auditable from machine logs, not only from prose. The parser accepts common

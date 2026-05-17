@@ -5016,9 +5016,10 @@ def probe_cycle_finish_target_mismatch() -> dict[str, Any]:
         except (OSError, subprocess.CalledProcessError):
             pass
         (root / "tools").mkdir(parents=True, exist_ok=True)
+        (root / "runtime").mkdir(parents=True, exist_ok=True)
         (root / selected_path).write_text("print('original')\n", encoding="utf-8")
         (root / reported_path).write_text("print('replacement')\n", encoding="utf-8")
-        review_path = root / "last-message.txt"
+        review_path = root / "runtime" / "last-message.txt"
         review_path.write_text(
             "Selected file: `tools/replacement.py`\nReview outcome: REVIEWED_AND_FIXED\n",
             encoding="utf-8",
@@ -5119,8 +5120,9 @@ def probe_cycle_finish_report_only_outcome() -> dict[str, Any]:
         except (OSError, subprocess.CalledProcessError):
             pass
         (root / "tools").mkdir(parents=True, exist_ok=True)
+        (root / "runtime").mkdir(parents=True, exist_ok=True)
         (root / selected_path).write_text("print('report only')\n", encoding="utf-8")
-        review_path = root / "last-message.txt"
+        review_path = root / "runtime" / "last-message.txt"
         review_path.write_text(
             "Selected file: `tools/report-only.py`\nREVIEWED_AND_REPORTED\n",
             encoding="utf-8",
@@ -5796,10 +5798,12 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
             return digest
 
         artifact_digests = {
-            "transcript": parse_cycle_artifact_sha256(args.transcript_sha256, "transcript"),
-            "compiled_prompt": parse_cycle_artifact_sha256(args.compiled_prompt_sha256, "compiled prompt"),
-            "last_message": parse_cycle_artifact_sha256(args.last_message_sha256, "last message"),
-            "upkeeper_log": parse_cycle_artifact_sha256(args.log_sha256, "log"),
+            "transcript": parse_cycle_artifact_sha256(getattr(args, "transcript_sha256", None), "transcript"),
+            "compiled_prompt": parse_cycle_artifact_sha256(
+                getattr(args, "compiled_prompt_sha256", None), "compiled prompt"
+            ),
+            "last_message": parse_cycle_artifact_sha256(getattr(args, "last_message_sha256", None), "last message"),
+            "upkeeper_log": parse_cycle_artifact_sha256(getattr(args, "log_sha256", None), "log"),
         }
         if cycle_selected_file_id is not None:
             updates.append(("selected_file_id", cycle_selected_file_id))

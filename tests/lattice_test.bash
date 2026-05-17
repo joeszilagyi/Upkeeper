@@ -317,7 +317,9 @@ PY
   assert_sql_value "1" "select count(*) from review_passes where pass_code='P999'"
   assert_sql_value "42" "select value_integer from pass_run_attributes where namespace='custom' and key='key'"
 
-  cat >"$TEST_TMP_ROOT/last-message.txt" <<'EOF'
+  mkdir -p "$REPO/runtime"
+  local last_message_path="$REPO/runtime/last-message.txt"
+  cat >"$last_message_path" <<'EOF'
 UPKEEPER_PASS_RESULT: pass=P23 file="space name.sh" applicable=1 outcome=clean changed=0 regression=0
 UPKEEPER_PASS_RESULT: pass=P24 file="space name.sh" applicable=1 outcome=clean changed=0 changed=0 regression=0
 ```
@@ -328,7 +330,7 @@ EOF
   lattice record-pass-result \
     --cycle-id cycle-1 \
     --run-hash hash-1 \
-    --from-file "$TEST_TMP_ROOT/last-message.txt" \
+    --from-file "$last_message_path" \
     --selected-path "space name.sh" \
     --planned-passes P23,P24,P25 >$TEST_TMP_ROOT/lattice-pass-lines.json
   assert_sql_value "1" "select count(*) from source_records where parse_status='rejected'"
@@ -344,7 +346,7 @@ EOF
     --codex-exec-started 1 \
     --dry-run 0 \
     --selected-path "space name.sh" \
-    --last-message-file "$TEST_TMP_ROOT/last-message.txt" >$TEST_TMP_ROOT/lattice-finish.json
+    --last-message-file "$last_message_path" >$TEST_TMP_ROOT/lattice-finish.json
   assert_sql_value "1" "select count(*) from worktree_snapshots where snapshot_kind='after_codex'"
   assert_sql_value "1" "select count(*) from file_events where event_kind='snapshot_before' and path='space name.sh'"
   assert_sql_value "1" "select count(*) from file_events where event_kind='snapshot_after' and path='space name.sh'"
@@ -1343,7 +1345,7 @@ test_recover_no_backup_first_toggle() {
 }
 
 test_review_parser_and_redaction() {
-  local repo redaction_export_path
+  local repo redaction_export_path review_summary_path
 
   repo="$TEST_TMP_ROOT/lattice-review-parser-redaction"
   DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
@@ -1351,8 +1353,9 @@ test_review_parser_and_redaction() {
   make_repo "$repo"
   "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/review-init.out"
   REPO="$repo"
+  review_summary_path="$repo/runtime/review-summary.txt"
 
-  cat >"$TEST_TMP_ROOT/review-summary.txt" <<'EOF'
+  cat >"$review_summary_path" <<'EOF'
 Some preamble text.
 Review target:
 selected file: reviewed/with:colon/path.sh
@@ -1378,7 +1381,7 @@ EOF
     --codex-exec-started 0 \
     --dry-run 1 \
     --selected-path "README.md" \
-    --last-message-file "$TEST_TMP_ROOT/review-summary.txt" >"$TEST_TMP_ROOT/review-finish.json"
+    --last-message-file "$review_summary_path" >"$TEST_TMP_ROOT/review-finish.json"
 
   python3 - "$DB" <<'PY' || fail "review summary parser did not preserve colon-bearing target in rejection evidence"
 import json

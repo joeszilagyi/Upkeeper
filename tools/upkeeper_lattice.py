@@ -58,6 +58,7 @@ SOURCE_KINDS = {
 }
 
 COMPLETED_OUTCOMES = {"clean", "fixed", "regression_found"}
+PASS_OUTCOMES_REQUIRING_APPLICABLE_TRUE = {"clean", "fixed", "regression_found", "blocked"}
 ALLOWED_OUTCOMES = {
     "planned",
     "not_applicable",
@@ -3872,6 +3873,29 @@ def parse_bool_int(raw: str | None) -> int | None:
     return None
 
 
+def validate_pass_result_state(*, applicable: int | None, outcome: str) -> str | None:
+    if outcome == "planned":
+        if applicable is not None:
+            return "planned outcome requires applicable to be unset"
+        return None
+    if outcome == "unknown":
+        if applicable == 0:
+            return "applicable=0 requires outcome=not_applicable"
+        return None
+    if outcome == "not_applicable":
+        if applicable != 0:
+            return "not_applicable requires applicable=0"
+        return None
+    if applicable == 0:
+        return "applicable=0 requires outcome=not_applicable"
+    if outcome in PASS_OUTCOMES_REQUIRING_APPLICABLE_TRUE:
+        if applicable != 1:
+            return f"{outcome} requires applicable=1"
+    elif applicable is None:
+        return f"outcome={outcome} requires applicable=1"
+    return None
+
+
 def require_jsonl_int(raw: Any, field: str) -> int:
     if not isinstance(raw, int) or isinstance(raw, bool):
         raise TypeError(f"{field} must be an integer, got {type(raw).__name__}")
@@ -6924,6 +6948,39 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 changed = parse_bool_int(item.get("changed"))
                 regression = parse_bool_int(item.get("regression"))
                 outcome = item.get("outcome", "unknown")
+                validation_error = validate_pass_result_state(applicable=applicable, outcome=outcome)
+                if validation_error:
+                    rejection = sanitize_rejected_pass_result(
+                        root,
+                        {
+                            "line_number": item.get("line_number", 0),
+                            "reason": validation_error,
+                            "fields": {
+                                "pass": item.get("pass"),
+                                "file": item.get("file"),
+                                "outcome": outcome,
+                                "applicable": item.get("applicable", ""),
+                            },
+                        },
+                        selected_path=trusted_selected_path,
+                        preserve_raw=preserve_raw,
+                    )
+                    rejection["validation_error"] = validation_error
+                    ensure_source_record(
+                        conn,
+                        root,
+                        repo_id,
+                        "transcript",
+                        source_path=args.from_file,
+                        raw_ref=f"pass_result_rejected:{item.get('line_number')}",
+                        raw_text=item.get("raw_line", "") if preserve_raw else None,
+                        parsed=rejection,
+                        parse_status="rejected",
+                        fact_confidence="rejected",
+                        raw_storage_mode=raw_storage_mode,
+                    )
+                    rejected_count += 1
+                    continue
                 record_one_pass_result(
                     conn,
                     root,
@@ -6948,6 +7005,11 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
             pass_code = normalize_pass_code(args.pass_code)
             path = external_rel_path(args.path)
             attrs = parse_attribute_args(args.attribute)
+            applicable = parse_bool_int(args.applicable)
+            outcome = args.outcome
+            validation_error = validate_pass_result_state(applicable=applicable, outcome=outcome)
+            if validation_error:
+                fail(f"invalid pass-result state: {validation_error}", EXIT_USAGE)
             record_one_pass_result(
                 conn,
                 root,
@@ -6956,8 +7018,8 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 source_id=source_id,
                 pass_code=pass_code,
                 path=path,
-                applicable=parse_bool_int(args.applicable),
-                outcome=args.outcome,
+                applicable=applicable,
+                outcome=outcome,
                 changed=parse_bool_int(args.changed),
                 regression=parse_bool_int(args.regression),
                 raw_line=args.raw_line if preserve_raw else "",

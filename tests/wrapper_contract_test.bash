@@ -140,6 +140,27 @@ EOF
   analysis="$(cd "$ROOT_DIR"; source lib/upkeeper/report_analysis.bash; while_marker_analysis_json "$marker_file")"
   grep -Fq '"accepted_marker":""' <<<"$analysis" ||
     fail "code-fenced marker was accepted: $analysis"
+
+  marker_file="$TEST_TMP_ROOT/trailing-status-marker.txt"
+  cat >"$marker_file" <<'EOF'
+Review complete.
+UPKEEPER_STATUS: WORK_DONE
+
+If you want, I can add another test.
+EOF
+  analysis="$(
+    cd "$ROOT_DIR"
+    source lib/upkeeper/runtime_format_json.bash
+    source lib/upkeeper/report_analysis.bash
+    source lib/upkeeper/status_session.bash
+    marker_analysis="$(while_marker_analysis_json "$marker_file")"
+    recovered="$(resolved_status_marker_from_analysis "$marker_analysis" 0 present)"
+    printf '%s\nrecovered=%s\n' "$marker_analysis" "$recovered"
+  )"
+  grep -Fq '"candidate_rejection_reason":"trailing_content_after_marker"' <<<"$analysis" ||
+    fail "trailing marker recovery reason missing: $analysis"
+  grep -Fq 'recovered=WORK_DONE' <<<"$analysis" ||
+    fail "strict marker followed by trailing non-control text was not recovered: $analysis"
 }
 
 test_startup_anomaly_allowlist_reports_only_unallowed_redacted_paths() {

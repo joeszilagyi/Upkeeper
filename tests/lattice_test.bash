@@ -1541,6 +1541,42 @@ test_recover_no_backup_first_toggle() {
   [[ ! -d "$repo/runtime/upkeeper-lattice/backups" ]] || fail "recover --no-backup-first unexpectedly created backup directory"
 }
 
+test_recover_backup_first_preserves_pre_recovery_provenance() {
+  local repo backup_path
+
+  repo="$TEST_TMP_ROOT/lattice-recover-backup-provenance"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/recover-backup-provenance-init.out"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" recover --backup-first 1 >"$TEST_TMP_ROOT/recover-backup-provenance.out"
+
+  backup_path="$(find "$repo/runtime/upkeeper-lattice/backups" -maxdepth 1 -type f -name 'lattice-backup-*.sqlite3' | sort | tail -1)"
+  [[ -n "$backup_path" && -f "$backup_path" ]] || fail "recover --backup-first did not create a backup DB"
+
+  python3 - "$backup_path" <<'PY' || fail "recover backup did not preserve pre-recovery provenance boundary"
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+backup_refs = conn.execute(
+    "select count(*) from artifact_refs where artifact_kind='backup' and details_json like '%pre_recovery%'"
+).fetchone()[0]
+if backup_refs != 1:
+    raise AssertionError(f"expected one pre-recovery backup artifact ref in backup DB, got {backup_refs}")
+recovery_sources = conn.execute(
+    "select count(*) from source_records where source_kind='recovery' and raw_ref='recover'"
+).fetchone()[0]
+if recovery_sources != 1:
+    raise AssertionError(f"expected one recover source in backup DB, got {recovery_sources}")
+local_git_sources = conn.execute(
+    "select count(*) from source_records where source_kind='local_git'"
+).fetchone()[0]
+if local_git_sources != 0:
+    raise AssertionError(f"backup DB should be captured before post-recovery local_git import, got {local_git_sources}")
+conn.close()
+PY
+}
+
 test_review_parser_and_redaction() {
   local repo redaction_export_path review_summary_path
 
@@ -2073,6 +2109,7 @@ test_lattice_jsonl_input_guardrails
 test_export_backup_output_collision
 test_prune_respects_transient_artifact_older_than_days
 test_recover_no_backup_first_toggle
+test_recover_backup_first_preserves_pre_recovery_provenance
 test_review_parser_and_redaction
 test_clean_touch_uses_mtime_ns
 test_sparse_lifecycle_replay_preserves_metadata

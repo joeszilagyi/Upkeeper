@@ -4774,43 +4774,11 @@ def record_worktree_snapshot(
             continue
         if not path or worktree_snapshot_path_is_sensitive(path) or (old_path and worktree_snapshot_path_is_sensitive(old_path)):
             continue
-        file_id = None
         meta = live_file_metadata(root, path)
         stored_path = pass_result_path_hmac(root, path)
         stored_old_path = pass_result_path_hmac(root, old_path) if old_path else None
         if not stored_path:
             continue
-        is_rename = old_path is not None and "R" in status_code
-        status_state = "renamed" if is_rename else "active"
-        if is_rename and old_path:
-            existing_old_file_id = file_id_for_path(conn, repo_id, old_path)
-            if existing_old_file_id is None:
-                existing_old_file_id = ensure_file(
-                    conn,
-                    repo_id,
-                    old_path,
-                    canonical_path=old_path,
-                    state=status_state,
-                    source_id=source_id,
-                )
-            file_id = ensure_file(
-                conn,
-                repo_id,
-                path,
-                canonical_path=old_path,
-                state=status_state,
-                source_id=source_id,
-            )
-            if file_id != existing_old_file_id:
-                file_id = merge_file_lineage(conn, file_id, existing_old_file_id)
-        else:
-            file_id = ensure_file(
-                conn,
-                repo_id,
-                path,
-                state=status_state,
-                source_id=source_id,
-            )
         conn.execute(
             """
             insert into worktree_snapshot_paths(
@@ -4820,7 +4788,7 @@ def record_worktree_snapshot(
             """,
             (
                 snapshot_id,
-                file_id,
+                None,
                 stored_path,
                 stored_path,
                 worktree_snapshot_path_class(status_code),
@@ -8385,8 +8353,7 @@ def command_recover(args: argparse.Namespace) -> int:
     sources = []
     backup_path = None
     if args.backup_first and preexisting_db:
-        backup_path = create_backup(conn, root, db_path)
-        sources.append("backup:1")
+        backup_path = db_path.parent / "backups" / f"lattice-backup-{epoch_now()}.sqlite3"
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -8399,7 +8366,25 @@ def command_recover(args: argparse.Namespace) -> int:
             raw_storage_mode=raw_storage_mode,
         )
         if backup_path is not None:
-            create_artifact_ref(conn, root, repo_id, cycle_pk=None, source_id=source_id, artifact_kind="backup", path=str(backup_path))
+            create_artifact_ref(
+                conn,
+                root,
+                repo_id,
+                cycle_pk=None,
+                source_id=source_id,
+                artifact_kind="backup",
+                path=str(backup_path),
+                details={"backup_event": "pre_recovery"},
+            )
+    if args.backup_first and preexisting_db:
+        backup_path = create_backup(
+            conn,
+            root,
+            db_path,
+            output=str(backup_path),
+            allow_overwrite=False,
+        )
+        sources.append("backup:1")
     conn.close()
     status = "ok"
     if inside_git_repo(root):

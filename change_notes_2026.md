@@ -9,6 +9,8 @@ Version numbering note:
 2026-05-17: backlog watch and cleanup fixes:
 	1. Backlog watch output now treats model-echoed shell commands containing `ERROR:` as informational transcript text instead of pageable wrapper/control-plane failures.
 	2. Backlog cleanup now removes literal `$db` SQLite scratch artifacts before staging so failed ad hoc validation fixtures cannot enter backlog PRs as source files.
+	3. Lattice opt-in worktree snapshot rows now preserve private Git XY evidence without linking HMAC-only path rows back to raw `files` identities.
+	4. Strict `UPKEEPER_STATUS` markers followed only by trailing non-control prose are recovered as malformed candidates, reducing false missing-marker failures while still rejecting ambiguous or fenced markers.
 
 2026-05-16: v1.2.26 changes:
 	1. Minimized quota/session metadata in normal logs, cooldown markers, postmortem incident context, and Lattice-facing validation by hashing local session sources and quota identity fields unless explicit verbose local diagnostics are requested.

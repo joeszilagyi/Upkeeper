@@ -99,6 +99,10 @@ resolved_status_marker_from_analysis() {
     printf '%s' "$candidate"
     return 0
   fi
+  if [[ -n "$candidate" && "$candidate_rejection_reason" == "trailing_content_after_marker" ]]; then
+    printf '%s' "$candidate"
+    return 0
+  fi
 }
 
 parse_session_end_state() {

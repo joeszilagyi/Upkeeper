@@ -123,7 +123,13 @@ Important:
     when you want a fully detached background-style loop instead. Backlog
     launcher notices are shell-comment lines so accidental terminal input
     feedback stays a no-op, and live/feed-log lines use a local
-    `YYYY-MM-DDTHH:MM:SS` timestamp in column 1 for loose terminal watching.
+    `YYYY-MM-DDTHH:MM:SS` timestamp in column 1 plus an operator-attention
+    marker in column 2 for loose terminal watching. `PAGE` is the pageable
+    human/system attention class and is highlighted in red on TTY output only;
+    loop logs remain plain text for scripts and assistive tooling. Set
+    `BACKLOG_ALERT_COLOR=never` to disable `PAGE` color,
+    `BACKLOG_ALERT_COLOR=always` to force it, or `BACKLOG_ALERT_BLINK=0` to keep
+    red without blink.
   - The backlog launcher hibernates by default when its quota preflight sees a
     stop-level quota state or an active primary quota block marker. It prints
     the blocked bucket, reset time, wake time, branch, and recent activity when

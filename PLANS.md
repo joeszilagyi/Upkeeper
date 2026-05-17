@@ -3,6 +3,36 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Backlog Pageable Alert Markers
+
+Status: completed
+
+Goal:
+Add an operator-visible second-column alert taxonomy to backlog watch output so
+normal worker command failures, quota waits, blocked/deferred issues, health
+checks, and true operator-pageable failures are visually and scriptably distinct.
+
+Constraints:
+- Keep `loop.log` plain text and parseable; color must be terminal-only.
+- Preserve the interactive watch-mode stdin cutoff and live mirroring behavior.
+- Treat `PAGE` as the only "human/system attention now" class.
+- Keep recent-activity parsing compatible with old timestamped logs and new
+  timestamp-plus-marker logs.
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Quota Metadata Redaction
 
 Status: completed

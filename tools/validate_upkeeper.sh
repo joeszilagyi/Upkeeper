@@ -371,10 +371,14 @@ check_backlog_launcher_contract() {
   log "checking backlog launcher safety contract"
   grep -Fq 'BACKLOG_ALLOW_INTERACTIVE_STDIO' orchestration/backlog.sh || fail "backlog launcher missing interactive-stdio override"
   grep -Fq 'BACKLOG_INTERACTIVE_MODE="${BACKLOG_INTERACTIVE_MODE:-watch}"' orchestration/backlog.sh || fail "backlog launcher does not default interactive use to watch mode"
-  grep -Fq 'backlog_timestamp_stream | tee -a "$log_file"' orchestration/backlog.sh || fail "backlog launcher does not keep timestamped interactive watch output visible while cutting off stdin"
+  grep -Fq 'backlog_timestamp_stream | tee -a "$log_file" | backlog_color_attention_stream' orchestration/backlog.sh || fail "backlog launcher does not keep timestamped interactive watch output visible while cutting off stdin"
   grep -Fq 'backlog_timestamp_stream >>"$log_file"' orchestration/backlog.sh || fail "backlog launcher no longer exposes explicit timestamped detach mode"
   grep -Fq 'backlog_line_starts_with_timestamp' orchestration/backlog.sh || fail "backlog launcher does not avoid double-prefixing timestamped lines"
+  grep -Fq 'backlog_attention_marker_for_line' orchestration/backlog.sh || fail "backlog launcher does not classify operator attention markers"
+  grep -Fq 'backlog_color_attention_stream' orchestration/backlog.sh || fail "backlog launcher does not color pageable terminal alerts separately from the loop log"
+  grep -Fq 'PAGE|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO' orchestration/backlog.sh || fail "backlog launcher attention marker taxonomy drifted"
   grep -Fq 'sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] /' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not understand timestamped loop logs"
+  grep -Fq 'sub(/^[A-Z][A-Z]+[[:space:]]+/, "", candidate)' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not understand attention-marked loop logs"
   grep -Fq 'interactive stdio remained attached after backlog auto-detach' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed auto-detach"
   grep -Fq 'interactive stdin remained attached after backlog watch-mode reexec' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed watch-mode reexec"
   grep -Fq 'another backlog run already owns this checkout' orchestration/backlog.sh || fail "backlog launcher does not explain active backlog ownership"
@@ -407,18 +411,38 @@ PY
   if command -v script >/dev/null 2>&1; then
     temp_dir="$VALIDATION_TMP_ROOT/backlog-stdio"
     mkdir -p "$temp_dir"
-    printf '2026-05-15T17:21:47 backlog: running Upkeeper for issue #999 with gpt-5.4/high target=tools/example.sh\n' >"$temp_dir/loop.log"
+    printf '2026-05-15T17:21:47 RUN    backlog: running Upkeeper for issue #999 with gpt-5.4/high target=tools/example.sh\n' >"$temp_dir/loop.log"
     status=0
     BACKLOG_STDIO_AUTODETACH_PROBE=1 BACKLOG_LOOP_LOG_FILE="$temp_dir/loop.log" \
       script -qfec ./orchestration/backlog.sh "$temp_dir/typescript" >/dev/null 2>&1 || status="$?"
     [[ "$status" == "0" ]] || fail "backlog launcher interactive stdio auto-detach probe exited $status"
     grep -Fq '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to '"$temp_dir/loop.log" "$temp_dir/typescript" ||
       fail "backlog launcher did not explain interactive watch mode"
-    grep -Eq '^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] # backlog: interactive stdin detected;' "$temp_dir/typescript" ||
-      fail "backlog launcher watch notice is not timestamped in column 1"
+    grep -Eq '^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] INFO[[:space:]]+# backlog: interactive stdin detected;' "$temp_dir/typescript" ||
+      fail "backlog launcher watch notice is not timestamped with an attention marker"
     grep -Fq '# backlog: recent activity: running Upkeeper for issue #999 with gpt-5.4/high target=tools/example.sh' "$temp_dir/typescript" ||
       fail "backlog launcher did not parse timestamped recent activity"
   fi
+
+  temp_dir="$VALIDATION_TMP_ROOT/backlog-alert-markers"
+  mkdir -p "$temp_dir"
+  BACKLOG_SOURCE_ONLY=1 bash -lc '
+    set -euo pipefail
+    cd "$1"
+    source ./orchestration/backlog.sh
+    backlog_format_attention_line "2026-05-16T17:00:37-0700 [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s" >"$2/worker.out"
+    backlog_format_attention_line "2026-05-16T18:12:41-0700 [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed" >"$2/page.out"
+    backlog_format_attention_line "2026-05-16T18:20:00 backlog: quota preflight: deferring backlog run this cycle" >"$2/wait.out"
+    backlog_format_attention_line "2026-05-16T18:21:00 PAGE   [ERROR] already marked" >"$2/existing.out"
+  ' bash "$ROOT_DIR" "$temp_dir"
+  grep -Fq '2026-05-16T17:00:37-0700 WORKER [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s' "$temp_dir/worker.out" ||
+    fail "backlog launcher did not classify worker command failures separately from pageable errors"
+  grep -Fq '2026-05-16T18:12:41-0700 PAGE   [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed' "$temp_dir/page.out" ||
+    fail "backlog launcher did not classify wrapper/control-plane errors as PAGE"
+  grep -Fq '2026-05-16T18:20:00 WAIT   backlog: quota preflight: deferring backlog run this cycle' "$temp_dir/wait.out" ||
+    fail "backlog launcher did not classify quota waits as WAIT"
+  grep -Fxq '2026-05-16T18:21:00 PAGE   [ERROR] already marked' "$temp_dir/existing.out" ||
+    fail "backlog launcher duplicated an existing attention marker"
 }
 
 check_backlog_quota_hibernation_contract() {

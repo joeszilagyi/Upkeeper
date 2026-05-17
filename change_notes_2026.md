@@ -97,6 +97,11 @@ Version numbering note:
 	3. Updated README, operator guide, compatibility docs, public documentation policy, prompt index, validation, and launcher tests so the P30 contract is public and non-regressible.
 	4. Hardened backlog dirty-worktree autoshelve so preservation runs after the `git` gate but before `gh`, `jq`, or `rg` dependency gates, allowing dirty local work to be shelved even on minimal validation hosts before the launcher reports missing workload dependencies.
 
+2026-05-16: backlog operator attention markers:
+	1. Backlog watch-mode output now adds a second-column operator marker (`RUN`, `WORKER`, `ACTION`, `WAIT`, `HEALTH`, `OK`, `INFO`, or `PAGE`) after the timestamp so routine worker check failures are visibly distinct from true wrapper/control-plane attention events.
+	2. `PAGE` is now the pageable human/system attention class; in an interactive terminal it is highlighted red with best-effort blink, while the mirrored private loop log stays plain text for scripts and assistive tooling.
+	3. Recent-activity parsing now understands timestamp-plus-marker loop logs so repeated interactive launches still summarize the active issue/target correctly.
+
 2026-05-14: v1.2.17 changes:
 	1. Added trusted machine-local env loading after the selected config file, with `UPKEEPER_LOCAL_ENV_FILE` and `UPKEEPER_LOCAL_ENV_DISABLE` as the operator-controlled surface for machine-only backup/bootstrap settings.
 	2. Added `tools/upkeeper_precontact_bootstrap.sh` so operators and symlinked clients can create or reuse a local age identity and write only the public `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` into machine-local state instead of tracked repo config.

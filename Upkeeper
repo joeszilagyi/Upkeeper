@@ -397,6 +397,9 @@ UPKEEPER_PRECONTACT_BACKUP_REQUIRED="${UPKEEPER_PRECONTACT_BACKUP_REQUIRED:-1}"
 UPKEEPER_PRECONTACT_BACKUP_MODE="${UPKEEPER_PRECONTACT_BACKUP_MODE:-auto}"
 UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED="${UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED:-1}"
 UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT="${UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT:-0}"
+# Set to 1 only when explicitly approving cross-repository restore of a sidecar
+# that was recorded for a different repo identity.
+UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE="${UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE:-0}"
 UPKEEPER_PRECONTACT_BACKUP_ROOT="${UPKEEPER_PRECONTACT_BACKUP_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/precontact-vault}"
 UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE="${UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE:-20}"
 UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT="${UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT:-}"
@@ -3249,6 +3252,8 @@ precontact_backup_restore_by_id() {
   local identity_path="${3:-${UPKEEPER_PRECONTACT_BACKUP_AGE_IDENTITY:-}}"
   local restore_to="${4:-}"
   local vault_root sidecars sidecar_count sidecar rel_path content_fingerprint encrypted mode
+  local expected_repo_root_hmac expected_repo_key current_repo_real
+  local repo_root_hmac_from_sidecar repo_key_from_sidecar
   local target_abs tmp_restore="" artifact payload_tmp="" payload_metadata="" restored_sha
   local restore_tmp_dir=""
   local restore_tmp_dir_is_temp=0
@@ -3274,6 +3279,30 @@ precontact_backup_restore_by_id() {
     return 1
   fi
   sidecar="$(printf '%s\n' "$sidecars" | sed -n '1p')"
+  if ! repo_root_hmac_from_sidecar="$(precontact_backup_json_field "$sidecar" "repo_root_hmac")"; then
+    precontact_backup_set_reason "metadata_read_failed"
+    return 1
+  fi
+  if ! repo_key_from_sidecar="$(precontact_backup_json_field "$sidecar" "repo_key")"; then
+    precontact_backup_set_reason "metadata_read_failed"
+    return 1
+  fi
+  if ! current_repo_real="$(precontact_backup_realpath "$repo_root")"; then
+    precontact_backup_set_reason "repo_root_unresolvable"
+    return 1
+  fi
+  expected_repo_root_hmac="$(precontact_backup_hmac_text repo "$current_repo_real")"
+  expected_repo_root_hmac="repo-hmac-sha256:${expected_repo_root_hmac}"
+  expected_repo_key="repo-hmac-${expected_repo_root_hmac#repo-hmac-sha256:}"
+  if [[ "$repo_root_hmac_from_sidecar" != "$expected_repo_root_hmac" || "$repo_key_from_sidecar" != "$expected_repo_key" ]]; then
+    if [[ "${UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE:-0}" == "1" ]]; then
+      precontact_backup_restore_log "WARN" "precontact_backup.restore unsafe_cross_repo_restore blocked=0 allowed=1 reason=repo_identity_mismatch sidecar_repo_key=$(shell_quote "$repo_key_from_sidecar") sidecar_repo_root_hmac=$(shell_quote "$repo_root_hmac_from_sidecar") current_repo_key=$(shell_quote "$expected_repo_key") current_repo_root_hmac=$(shell_quote "$expected_repo_root_hmac")"
+    else
+      precontact_backup_restore_log "WARN" "precontact_backup.restore blocked=1 allowed=0 reason=repo_identity_mismatch sidecar_repo_key=$(shell_quote "$repo_key_from_sidecar") sidecar_repo_root_hmac=$(shell_quote "$repo_root_hmac_from_sidecar") current_repo_key=$(shell_quote "$expected_repo_key") current_repo_root_hmac=$(shell_quote "$expected_repo_root_hmac")"
+      precontact_backup_set_reason "restore_repo_identity_mismatch"
+      return 1
+    fi
+  fi
 
   if ! encrypted="$(precontact_backup_json_field "$sidecar" "encrypted")"; then
     precontact_backup_set_reason "metadata_read_failed"

@@ -164,6 +164,9 @@ REDACTABLE_PATH_KEYS = {
     "source_uri",
     "repo_alias_id",
 }
+REDACTION_KEY_NORMALIZER = re.compile(r"(?<!^)(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+REDACTION_KEY_SEPARATORS = re.compile(r"[\.\-\s]+")
+REDACTION_KEY_UNDERSCORE_COLLAPSE = re.compile(r"_+")
 STRUCTURED_REDACTION_STRING_KEYS = {"raw_text", "details_json", "parsed_json"}
 CONTRIBUTOR_REDACT_KEYS = {"name", "email", "github_login"}
 INLINE_ASSIGNMENT_PATTERN = re.compile(
@@ -1098,6 +1101,10 @@ def safe_output_text(raw: str) -> str:
     return raw.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
 
 
+def has_surrogate_codepoint(raw: str) -> bool:
+    return any(0xD800 <= ord(ch) <= 0xDFFF for ch in raw)
+
+
 def encode_path_text(raw: str) -> str:
     pieces: list[str] = []
     for ch in raw:
@@ -1157,7 +1164,10 @@ def external_rel_path(path: str) -> str:
 
 def sanitize_json_value(value: Any) -> Any:
     if isinstance(value, dict):
-        return {key: sanitize_json_value(item) for key, item in value.items()}
+        return {
+            safe_output_text(key) if isinstance(key, str) else str(key): sanitize_json_value(item)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
         return [sanitize_json_value(item) for item in value]
     if isinstance(value, tuple):
@@ -1957,6 +1967,10 @@ def run_git(
         )
     except FileNotFoundError:
         raise SystemExit(EXIT_GIT_UNAVAILABLE)
+    except (UnicodeEncodeError, UnicodeError, ValueError):
+        if check:
+            raise SystemExit(EXIT_GIT_UNAVAILABLE)
+        return None
     except subprocess.CalledProcessError:
         if check:
             raise
@@ -1995,12 +2009,14 @@ def parse_git_porcelain_v1_z_entries(raw: bytes) -> list[tuple[str, str, str | N
 
 def git_porcelain_status_for_path(root: Path, rel_path: str) -> str:
     rel_path = operational_rel_path(rel_path)
+    if has_surrogate_codepoint(rel_path):
+        return ""
     try:
         raw = subprocess.check_output(
             ["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--", rel_path],
             stderr=subprocess.PIPE,
         )
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.CalledProcessError, UnicodeEncodeError, UnicodeError, ValueError):
         return ""
     entries = parse_git_porcelain_v1_z_entries(raw)
     return entries[0][0] if entries else ""
@@ -2102,7 +2118,7 @@ def git_path_ignored(root: Path, path: Path) -> bool:
             check=False,
         )
         return result.returncode == 0
-    except FileNotFoundError:
+    except (FileNotFoundError, UnicodeEncodeError, UnicodeError, ValueError, OSError):
         return False
 
 
@@ -2176,7 +2192,7 @@ def git_path_tracked(root: Path, path: Path) -> bool:
             check=False,
         )
         return result.returncode == 0
-    except FileNotFoundError:
+    except (FileNotFoundError, UnicodeEncodeError, UnicodeError, ValueError, OSError):
         return False
 
 
@@ -2200,6 +2216,8 @@ def git_ignored_paths(root: Path, paths: list[str]) -> set[str]:
 
 def source_safe_parts(rel_path: str) -> list[str] | None:
     rel_path = operational_rel_path(rel_path)
+    if has_surrogate_codepoint(rel_path):
+        return None
     if not rel_path or rel_path == "." or rel_path.startswith("../") or Path(rel_path).is_absolute():
         return None
     parts = rel_path.split("/")
@@ -2214,7 +2232,7 @@ def source_safe_real_path(root: Path, rel_path: str) -> Path | None:
         real = (root / rel_path).resolve(strict=True)
         real.relative_to(root.resolve())
         return real
-    except (OSError, ValueError):
+    except (OSError, ValueError, UnicodeEncodeError, UnicodeError):
         return None
 
 
@@ -2223,34 +2241,28 @@ def read_fd_sample(file_fd: int, sample_size: int) -> bytes:
 
 
 def read_sample_no_follow(root: Path, parts: list[str], sample_size: int = TEXT_SAMPLE_SIZE) -> bytes | None:
-    open_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    dir_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
-    nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
-    dir_fd = -1
-    file_fd = -1
+    if sample_size <= 0:
+        return b""
+    if not parts:
+        return b""
     try:
-        dir_fd = os.open(str(root.resolve()), dir_flags)
-        for part in parts[:-1]:
-            next_fd = os.open(part, dir_flags | nofollow_flag, dir_fd=dir_fd)
-            os.close(dir_fd)
-            dir_fd = next_fd
-        file_fd = os.open(parts[-1], open_flags | nofollow_flag, dir_fd=dir_fd)
-        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+        current = root.resolve()
+        current_mode = None
+        for index, part in enumerate(parts):
+            current = current / part
+            st = current.lstat()
+            if stat.S_ISLNK(st.st_mode):
+                return None
+            current_mode = st.st_mode
+            if index < len(parts) - 1 and not stat.S_ISDIR(st.st_mode):
+                return None
+        if not stat.S_ISREG(current_mode or 0):
             return None
-        # Read only the requested sample so candidate scans never load the full file just
-        # to decide whether a path looks like text.
-        return read_fd_sample(file_fd, sample_size)
-    except OSError as exc:
-        if exc.errno == errno.ELOOP:
-            return None
+        # Read only the requested sample so candidate scans never load the full file.
+        with current.open("rb") as handle:
+            return read_fd_sample(handle.fileno(), sample_size)
+    except OSError:
         return None
-    finally:
-        for fd in (file_fd, dir_fd):
-            if fd >= 0:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
 
 
 def source_safe_file_stat(root: Path, rel_path: str, *, require_text: bool = False) -> tuple[os.stat_result | None, str]:
@@ -3546,6 +3558,21 @@ def record_file_event(
 def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
     rel_path = operational_rel_path(rel_path)
     meta: dict[str, Any] = {"path": stored_rel_path(rel_path)}
+    if has_surrogate_codepoint(rel_path):
+        meta["source_safety_reason"] = "invalid_path_encoding"
+        meta["git_status"] = "unreadable"
+        meta["worktree_hash"] = "unavailable"
+        meta["head_blob"] = "unavailable"
+        meta["content_state"] = "unreadable"
+        meta["ignored"] = 0
+        meta["test_path"] = 1 if is_test_path(rel_path) else 0
+        meta["generated"] = 0
+        meta["mtime_epoch"] = None
+        meta["mtime_ns"] = None
+        meta["size_bytes"] = None
+        meta["executable"] = None
+        meta["is_regular"] = 0
+        return meta
     st, safety_reason = source_safe_file_stat(root, rel_path)
     if st is not None:
         meta["mtime_epoch"] = int(st.st_mtime)
@@ -3690,7 +3717,22 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 def key_requires_path_redaction(key: str | None) -> bool:
     if not key:
         return False
-    return key in REDACTABLE_PATH_KEYS or key == "selected_file" or key.endswith(("_path", "_paths", "_uri", "_uris"))
+    normalized = key
+    if "-" in normalized or " " in normalized or any(char.isupper() for char in normalized):
+        normalized = REDACTION_KEY_SEPARATORS.sub("_", REDACTION_KEY_NORMALIZER.sub("_", normalized))
+    normalized = REDACTION_KEY_UNDERSCORE_COLLAPSE.sub("_", normalized).strip("_. ").lower()
+    if not normalized:
+        return False
+    if normalized in REDACTABLE_PATH_KEYS or normalized == "selected_file":
+        return True
+    if normalized.endswith(("_path", "_paths", "_uri", "_uris")):
+        return True
+    tokens = set(normalized.split("_"))
+    if "path" in tokens or "uri" in tokens:
+        return True
+    if "selected" in tokens and ("path" in tokens or "file" in tokens):
+        return True
+    return False
 
 
 def looks_like_json_container_string(value: str) -> bool:
@@ -4140,7 +4182,7 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["status"] = "db_unavailable"
         return result, EXIT_DB_UNAVAILABLE
     try:
-        conn = connect(db_path, journal_mode, emit_errors=False)
+        conn = connect(db_path, journal_mode, create_if_missing=False, emit_errors=False)
     except LatticeCommandError as exc:
         result["status"] = "db_unavailable"
         result["checks"]["open_error"] = str(exc)
@@ -5254,13 +5296,24 @@ def probe_export_redaction() -> dict[str, Any]:
     payload = {
         "selected_path": selected_path,
         "remote_url": local_remote,
-        "raw_text": f"selected_path={selected_path} remote_url='{local_remote}' email=alice@example.com",
+        "selectedPath": selected_path,
+        "raw_text": f"selected_path={selected_path} selectedPath={selected_path} remote_url='{local_remote}' remoteURL='{local_remote}' email=alice@example.com",
         "details_json": json_dumps({"preselected_path": selected_path, "reported_selected_path": "docs/other.md"}),
         "parsed_json": json_dumps(
             {
                 "selected_path": selected_path,
                 "remote_url": local_remote,
                 "nested": {"selected_path": selected_path},
+                "review_selected_path": selected_path,
+                "selection_map": {"review-selected-path": selected_path},
+                "alias_value": selected_path,
+                "aliases": [
+                    {
+                        "selected-file": selected_path,
+                        "alias_value": selected_path,
+                    }
+                ],
+                "report": {"selectedPath": selected_path, "remote_url": local_remote},
             }
         ),
     }
@@ -5272,10 +5325,15 @@ def probe_export_redaction() -> dict[str, Any]:
             and str(redacted.get("remote_url") or "").startswith(REDACTED_PATH_PREFIX)
             and selected_path not in json_dumps(redacted)
             and local_remote not in json_dumps(redacted)
+            and selected_path not in str(redacted.get("selectedPath") or "")
+            and selected_path not in str(redacted.get("parsed_json") or "")
+            and local_remote not in str(redacted.get("parsed_json") or "")
             and "alice@example.com" not in raw_text
             and "email=<redacted>" in raw_text
             and "selected_path=path-sha256:" in raw_text
             and "remote_url='path-sha256:" in raw_text
+            and "selectedPath=path-sha256:" in raw_text
+            and "remoteURL='path-sha256:" in raw_text
             and has_redacted_path_token(redacted)
         ),
         "raw_text": raw_text,

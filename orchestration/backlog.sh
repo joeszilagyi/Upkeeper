@@ -12,8 +12,8 @@ BACKLOG_PR_TITLE="${BACKLOG_PR_TITLE:-[backlog] Upkeeper issue batch}"
 BACKLOG_BATCH_LIMIT="${BACKLOG_BATCH_LIMIT:-10}"
 BACKLOG_ISSUE_LIMIT="${BACKLOG_ISSUE_LIMIT:-200}"
 BACKLOG_EXCLUDED_LABELS="${BACKLOG_EXCLUDED_LABELS:-feature,features,enhancement,research,r&d,r-and-d,documentation,docs,in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr}"
-BACKLOG_CODEX_MODEL="${BACKLOG_CODEX_MODEL:-gpt-5.4}"
-BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-high}"
+BACKLOG_CODEX_MODEL="${BACKLOG_CODEX_MODEL:-gpt-5.3-codex-spark}"
+BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-xhigh}"
 BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
 BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-900}"
 BACKLOG_PER_BUG_VALIDATION_MODE="${BACKLOG_PER_BUG_VALIDATION_MODE:-light}"
@@ -30,6 +30,10 @@ BACKLOG_QUOTA_HIBERNATE="${BACKLOG_QUOTA_HIBERNATE:-1}"
 BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS="${BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS:-60}"
 BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS="${BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS:-60}"
 BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS="${BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS:-0}"
+BACKLOG_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-1}"
+BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"
+BACKLOG_ALERT_COLOR="${BACKLOG_ALERT_COLOR:-auto}"
+BACKLOG_ALERT_BLINK="${BACKLOG_ALERT_BLINK:-1}"
 BACKLOG_ACTIVE_OWNER_START_TICKS=""
 
 backlog_timestamp() {
@@ -49,29 +53,176 @@ backlog_line_starts_with_timestamp() {
   esac
 }
 
+backlog_attention_marker_known() {
+  case "${1:-}" in
+    PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+backlog_line_has_attention_marker() {
+  local line="$1"
+  local first rest marker
+
+  backlog_line_starts_with_timestamp "$line" || return 1
+  first="${line%% *}"
+  [[ "$line" != "$first" ]] || return 1
+  rest="${line#* }"
+  marker="${rest%% *}"
+  backlog_attention_marker_known "$marker"
+}
+
+backlog_attention_marker_for_line() {
+  local payload="$1"
+
+  case "$payload" in
+    *"Upkeeper: "*" cmd#"*" failed:"*|*"Upkeeper: "*" cmd#"*" exited nonzero:"*)
+      printf 'WORKER\n'
+      return 0
+      ;;
+    *"quota preflight:"*|*"quota.stop "*|*"quota guardrail tripped"*|*"quota hibernation complete"*|*"quota.blocked_marker "*|*"sent SIGTERM to parent_pid="*)
+      printf 'WAIT\n'
+      return 0
+      ;;
+    *"UPKEEPER_STATUS: BLOCKED"*|*"automation.obligation.open"*|*"cycle.exit exit_code=2 reason=BLOCKED"*|*"review completed outcome=unknown"*|*"status_marker=BLOCKED"*|*"deferred blocked issue #"*|*"preserved partial work for blocked issue #"*|*"tool_failure_queue.open "*)
+      printf 'ACTION\n'
+      return 0
+      ;;
+    *"backlog: ERROR:"*|*"[ERROR]"*)
+      printf 'PAGE\n'
+      return 0
+      ;;
+    *"previous_run.anomaly"*|*"startup_anomaly.gate"*|*"machine health"*|*"active_lock."*)
+      printf '%s\n' '--FYI--'
+      return 0
+      ;;
+    *"backlog: running Upkeeper"*|*"selected file "*|*"starting Codex review"*|*"opening new backlog PR"*|*"running normal newest-file Upkeeper pass"*)
+      printf 'RUN\n'
+      return 0
+      ;;
+    *"UPKEEPER_STATUS: WORK_DONE"*|*"checks passed"*|*"Already up to date."*|*"per-bug validation: complete"*|*"batch validation: complete"*|*"committing:"*|*"pushing branch updates"*|*"merged PR #"*|*"PR #"*" now has "*|*"PR #"*" reached "*)
+      printf 'OK\n'
+      return 0
+      ;;
+    *)
+      printf 'INFO\n'
+      return 0
+      ;;
+  esac
+}
+
+backlog_format_attention_line() {
+  local line="$1"
+  local ts rest marker
+
+  if backlog_line_has_attention_marker "$line"; then
+    printf '%s\n' "$line"
+    return 0
+  fi
+
+  if backlog_line_starts_with_timestamp "$line"; then
+    ts="${line%% *}"
+    if [[ "$line" == "$ts" ]]; then
+      rest=""
+    else
+      rest="${line#* }"
+    fi
+  else
+    ts="$(backlog_timestamp)"
+    rest="$line"
+  fi
+
+  marker="$(backlog_attention_marker_for_line "$rest")"
+  if [[ -n "$rest" ]]; then
+    printf '%s %-7s %s\n' "$ts" "$marker" "$rest"
+  else
+    printf '%s %-7s\n' "$ts" "$marker"
+  fi
+}
+
+backlog_alert_color_enabled() {
+  local mode="${BACKLOG_ALERT_COLOR,,}"
+
+  case "$mode" in
+    never|0|no|false|off)
+      return 1
+      ;;
+    always|1|yes|true|on)
+      return 0
+      ;;
+    auto|'')
+      [[ -z "${NO_COLOR:-}" && -t 1 ]]
+      ;;
+    *)
+      [[ -z "${NO_COLOR:-}" && -t 1 ]]
+      ;;
+  esac
+}
+
+backlog_color_attention_line() {
+  local line="$1"
+  local ts rest marker suffix color reset
+
+  if ! backlog_alert_color_enabled || ! backlog_line_has_attention_marker "$line"; then
+    printf '%s\n' "$line"
+    return 0
+  fi
+
+  ts="${line%% *}"
+  rest="${line#* }"
+  marker="${rest%% *}"
+  suffix="${rest#"$marker"}"
+  case "$marker" in
+    PAGE)
+      if [[ "$BACKLOG_ALERT_BLINK" == "1" ]]; then
+        color=$'\033[5;1;31m'
+      else
+        color=$'\033[1;31m'
+      fi
+      ;;
+    --FYI--)
+      color=$'\033[1;38;5;208m'
+      ;;
+    *)
+      printf '%s\n' "$line"
+      return 0
+      ;;
+  esac
+  reset=$'\033[0m'
+  printf '%s %s%s%s%s\n' "$ts" "$color" "$marker" "$reset" "$suffix"
+}
+
+backlog_color_attention_stream() {
+  local line
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    backlog_color_attention_line "$line"
+  done
+}
+
 backlog_timestamp_stream() {
   local line
 
   while IFS= read -r line || [[ -n "$line" ]]; do
-    if backlog_line_starts_with_timestamp "$line"; then
-      printf '%s\n' "$line"
-    else
-      printf '%s %s\n' "$(backlog_timestamp)" "$line"
-    fi
+    backlog_format_attention_line "$line"
   done
 }
 
 log() {
-  printf '%s backlog: %s\n' "$(backlog_timestamp)" "$*" >&2
+  backlog_color_attention_line "$(backlog_format_attention_line "$(backlog_timestamp) backlog: $*")" >&2
 }
 
 fail() {
-  printf '%s backlog: ERROR: %s\n' "$(backlog_timestamp)" "$*" >&2
+  backlog_color_attention_line "$(backlog_format_attention_line "$(backlog_timestamp) backlog: ERROR: $*")" >&2
   exit 1
 }
 
 backlog_notice() {
-  printf '%s # backlog: %s\n' "$(backlog_timestamp)" "$*" >&2
+  backlog_color_attention_line "$(backlog_format_attention_line "$(backlog_timestamp) # backlog: $*")" >&2
 }
 
 require_command() {
@@ -243,6 +394,7 @@ backlog_recent_log_summary() {
     {
       candidate=$0
       sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] /, "", candidate)
+      sub(/^([A-Z][A-Z]+|--FYI--)[[:space:]]+/, "", candidate)
       if (candidate ~ /^backlog: running Upkeeper for issue #[0-9]+/) {
         line=candidate
       }
@@ -380,7 +532,7 @@ follow_active_backlog_output() {
   fi
   backlog_notice "attaching to $log_file until pid $pid exits"
   if [[ -f "$log_file" ]]; then
-    tail -n "$BACKLOG_ACTIVE_ATTACH_LINES" -f --pid="$pid" "$log_file" || true
+    tail -n "$BACKLOG_ACTIVE_ATTACH_LINES" -f --pid="$pid" "$log_file" | backlog_color_attention_stream || true
   else
     while kill -0 "$pid" 2>/dev/null; do
       sleep 1
@@ -431,7 +583,7 @@ redirect_interactive_stdio() {
     watch)
       print_stdio_watch_notice "$log_file"
       export BACKLOG_STDIO_WATCHED=1
-      exec "$SCRIPT_PATH" "$@" </dev/null > >(backlog_timestamp_stream | tee -a "$log_file") 2>&1
+      exec "$SCRIPT_PATH" "$@" </dev/null > >(backlog_timestamp_stream | tee -a "$log_file" | backlog_color_attention_stream) 2>&1
       ;;
     detach)
       print_stdio_detach_notice "$log_file"
@@ -502,12 +654,12 @@ prepare_backlog_runtime_env() {
   export CODEX_FALLBACK_SCREEN_ENABLED="${BACKLOG_CODEX_FALLBACK_SCREEN_ENABLED:-0}"
   export CODEX_POSTMORTEM_ENABLED="${BACKLOG_CODEX_POSTMORTEM_ENABLED:-0}"
   export CODEX_5H_STOP_PERCENT="${BACKLOG_5H_STOP_PERCENT:-0}"
-  export CODEX_WEEK_STOP_PERCENT="${BACKLOG_WEEK_STOP_PERCENT:-10}"
+  export CODEX_WEEK_STOP_PERCENT="${BACKLOG_WEEK_STOP_PERCENT:-0}"
   export CODEX_WEEK_STOP_BUFFER_PERCENT="${BACKLOG_WEEK_STOP_BUFFER_PERCENT:-0}"
   export CODEX_SPARK_5H_STOP_PERCENT="${BACKLOG_SPARK_5H_STOP_PERCENT:-0}"
   export CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT="${BACKLOG_SPARK_WEEK_STOP_BUFFER_PERCENT:-0}"
-  export CODEX_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-0}"
-  export CODEX_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-0}"
+  export CODEX_QUOTA_GUARDRAIL_BYPASS="$BACKLOG_QUOTA_GUARDRAIL_BYPASS"
+  export CODEX_QUOTA_COOLDOWN_BYPASS="$BACKLOG_QUOTA_COOLDOWN_BYPASS"
   export UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="${BACKLOG_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL:-1}"
   export CODEX_TERMINAL_VERBOSITY="${BACKLOG_CODEX_TERMINAL_VERBOSITY:-${CODEX_TERMINAL_VERBOSITY:-quiet}}"
   export PYTHONDONTWRITEBYTECODE=1
@@ -543,6 +695,7 @@ quota_preflight_allows_backlog_run() {
   local blocked_bucket blocked_until_epoch
   local primary_reset
   local secondary_reset
+  local primary_reset_expired secondary_reset_expired snapshot_stale_after_reset
 
   prepare_backlog_runtime_env
   source "$ROOT_DIR/lib/upkeeper/config_validation.bash"
@@ -550,7 +703,7 @@ quota_preflight_allows_backlog_run() {
   source "$ROOT_DIR/lib/upkeeper/quota_guardrails.bash"
   source "$ROOT_DIR/lib/upkeeper/quota_block_markers.bash"
 
-  if marker_path="$(latest_active_primary_quota_block_marker "$CODEX_MODEL" 2>/dev/null)"; then
+  if [[ "$BACKLOG_QUOTA_COOLDOWN_BYPASS" != "1" ]] && marker_path="$(latest_active_primary_quota_block_marker "$CODEX_MODEL" 2>/dev/null)"; then
     marker_epoch="$(backlog_marker_field "$marker_path" "blocked_until_epoch")"
     marker_bucket="$(backlog_marker_field "$marker_path" "blocked_bucket")"
     marker_reason="$(backlog_marker_field "$marker_path" "reason")"
@@ -565,12 +718,19 @@ quota_preflight_allows_backlog_run() {
 
   primary_bucket_current="$(jq -r '.snapshot.primary_bucket_current // "false"' <<<"$quota_json")"
   secondary_bucket_current="$(jq -r '.snapshot.secondary_bucket_current // "false"' <<<"$quota_json")"
+  snapshot_stale_after_reset="$(jq -r '.snapshot.snapshot_stale_after_reset // "false"' <<<"$quota_json")"
+  primary_reset_expired="$(jq -r '.snapshot.primary_reset_expired // "false"' <<<"$quota_json")"
+  secondary_reset_expired="$(jq -r '.snapshot.secondary_reset_expired // "false"' <<<"$quota_json")"
   primary_projected_left="$(jq -r '100 - ((.snapshot.primary_used_percent // 0) + (.projection.primary_delta // 0))' <<<"$quota_json")"
   secondary_projected_left="$(jq -r '100 - ((.snapshot.secondary_used_percent // 0) + (.projection.secondary_delta // 0))' <<<"$quota_json")"
   primary_decision="$(quota_bucket_decision "$primary_bucket_current" "$primary_projected_left" "$(quota_5h_stop_percent_for_model "$CODEX_MODEL")")"
   secondary_decision="$(quota_bucket_decision "$secondary_bucket_current" "$secondary_projected_left" "$(quota_week_stop_percent_for_model "$CODEX_MODEL")")"
 
   if [[ "$primary_decision" == "stop" || "$secondary_decision" == "stop" ]]; then
+    if [[ "$BACKLOG_QUOTA_GUARDRAIL_BYPASS" == "1" ]]; then
+      log "quota preflight: burn bypass continuing despite stop decision (primary=$primary_decision secondary=$secondary_decision)"
+      return 0
+    fi
     blocked_bucket=""
     blocked_until_epoch=0
     if [[ "$primary_decision" == "stop" ]]; then
@@ -591,6 +751,19 @@ quota_preflight_allows_backlog_run() {
   fi
 
   if [[ "$primary_decision" == "defer" || "$secondary_decision" == "defer" ]]; then
+    if [[ "$BACKLOG_QUOTA_GUARDRAIL_BYPASS" == "1" ]]; then
+      if [[ "$snapshot_stale_after_reset" == "true" ]]; then
+        log "quota preflight: burn bypass continuing despite stale quota evidence after reset (primary=$primary_decision secondary=$secondary_decision primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired)"
+      else
+        log "quota preflight: burn bypass continuing despite stale quota evidence (primary=$primary_decision secondary=$secondary_decision)"
+      fi
+      return 0
+    fi
+
+    if [[ "$snapshot_stale_after_reset" == "true" && "$primary_decision" == "defer" && "$secondary_decision" == "defer" ]]; then
+      log "quota preflight: stale quota evidence after reset; retrying guarded run this cycle to refresh quota state (primary=$primary_decision secondary=$secondary_decision primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired)"
+      return 0
+    fi
     log "quota preflight: deferring backlog run this cycle (primary=$primary_decision secondary=$secondary_decision)"
     return 3
   fi

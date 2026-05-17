@@ -186,6 +186,18 @@ Upkeeper is expected to stress test both itself and client repositories.
 - If a breaking change is unavoidable, document the reason, operator impact,
   migration path, and validation coverage in the same committed state.
 
+## Component Choice Discipline
+
+- When a solution needs more than one component, choose each component for
+  stability, efficiency, and resistance to misuse or hostile input within its
+  class before choosing for convenience.
+- If the most durable component is too expensive, complex, or operationally
+  heavy for the problem, document that tradeoff and choose the next-best
+  durable option; do not start with the easiest component merely because it is
+  locally convenient.
+- Prefer simple, deterministic, pre-model local mechanisms for control-plane
+  work when they can provide the same safety property as a broader dependency.
+
 ## Configuration Discipline
 
 - Keep the central default config in root `Upkeeper.conf`.

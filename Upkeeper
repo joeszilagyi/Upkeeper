@@ -2999,6 +2999,8 @@ if mode_text and re.fullmatch(r"[0-7]{3,4}", mode_text):
 
 dir_fd = None
 next_fd = None
+verify_dir_fd = None
+verify_next_fd = None
 target_fd = None
 
 try:
@@ -3059,6 +3061,53 @@ try:
             emit("error", "directory_target_rejected")
             raise SystemExit(0)
 
+    try:
+        verify_dir_fd = os.open(root, open_flags)
+    except OSError as exc:
+        emit("error", f"restore_parent_root_open_failed:{exc.__class__.__name__}")
+        raise SystemExit(0)
+
+    for verify_part in parts[:-1]:
+        try:
+            verify_stat = os.lstat(verify_part, dir_fd=verify_dir_fd)
+        except FileNotFoundError:
+            emit("error", "restore_parent_disappeared")
+            raise SystemExit(0)
+        except OSError as exc:
+            emit("error", f"restore_parent_recheck_failed:{exc.__class__.__name__}")
+            raise SystemExit(0)
+
+        if stat.S_ISLNK(verify_stat.st_mode):
+            emit("error", "restore_parent_symlinked")
+            raise SystemExit(0)
+        if not stat.S_ISDIR(verify_stat.st_mode):
+            emit("error", "restore_parent_not_directory")
+            raise SystemExit(0)
+
+        try:
+            verify_next_fd = os.open(verify_part, open_flags | nofollow_flag, dir_fd=verify_dir_fd)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                emit("error", "restore_parent_symlinked")
+            elif exc.errno == errno.ENOTDIR:
+                emit("error", "restore_parent_not_directory")
+            else:
+                emit("error", f"restore_parent_reopen_failed:{exc.__class__.__name__}")
+            raise SystemExit(0)
+
+        os.close(verify_dir_fd)
+        verify_dir_fd = verify_next_fd
+        verify_next_fd = None
+
+    if (os.fstat(dir_fd).st_dev, os.fstat(dir_fd).st_ino) != (os.fstat(verify_dir_fd).st_dev, os.fstat(verify_dir_fd).st_ino):
+        emit("error", "restore_parent_race_detected")
+        raise SystemExit(0)
+
+    os.close(dir_fd)
+    dir_fd = verify_dir_fd
+    verify_dir_fd = None
+    verify_next_fd = None
+
     os.replace(tmp_restore, final_name, dst_dir_fd=dir_fd)
 
     if mode_value is not None:
@@ -3078,6 +3127,10 @@ finally:
         os.close(target_fd)
     if next_fd is not None:
         os.close(next_fd)
+    if verify_next_fd is not None:
+        os.close(verify_next_fd)
+    if verify_dir_fd is not None:
+        os.close(verify_dir_fd)
     if dir_fd is not None:
         os.close(dir_fd)
 PY
@@ -3498,13 +3551,13 @@ def marker_auth_hmac(data: dict) -> str:
     return f"hmac-sha256:{digest}"
 
 
-def display_json(value: object, limit: int = 500) -> str:
+def display_text(value: object, limit: int = 500) -> str:
     text = str(value if value is not None else "unknown")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) > limit:
         text = text[: limit - 15].rstrip() + "...<truncated>"
-    return json.dumps(text or "unknown")
+    return text or "unknown"
 
 
 for path in (queue_dir, open_dir):
@@ -3606,8 +3659,8 @@ emit(
     target_path=target_path,
     first_seen_epoch=str(first_seen_epoch),
     failure_count=str(failure_count),
-    first_failure_kind_json=display_json(data.get("first_failure_kind", "unknown")),
-    first_failure_exit_line_json=display_json(data.get("first_failure_exit_line", "unknown")),
+    first_failure_kind_json=display_text(data.get("first_failure_kind", "unknown")),
+    first_failure_exit_line_json=display_text(data.get("first_failure_exit_line", "unknown")),
 )
 PY
 }
@@ -3985,6 +4038,8 @@ upkeeper_emit_canonical_preselect_output() {
   local include_globs exclude_globs selection_review_modules self_review_threshold_days selection_basis
   local failure_queue_selected failure_marker_id failure_marker_path failure_marker_first_seen_epoch
   local failure_marker_failure_count failure_marker_first_failure_kind failure_marker_first_failure_exit_line
+  local safe_failure_marker_id safe_failure_marker_path safe_failure_marker_first_seen_epoch
+  local safe_failure_marker_failure_count safe_failure_marker_first_failure_kind safe_failure_marker_first_failure_exit_line
 
   path="$(upkeeper_preselect_output_field path "$raw")"
   epoch="$(upkeeper_preselect_output_field epoch "$raw")"
@@ -4035,13 +4090,19 @@ upkeeper_emit_canonical_preselect_output() {
     failure_marker_failure_count="$(upkeeper_preselect_output_field failure_count "$marker_meta")"
     failure_marker_first_failure_kind="$(upkeeper_preselect_output_field first_failure_kind_json "$marker_meta")"
     failure_marker_first_failure_exit_line="$(upkeeper_preselect_output_field first_failure_exit_line_json "$marker_meta")"
+    safe_failure_marker_id="$(upkeeper_prompt_json_string_literal "${failure_marker_id:-unknown}")"
+    safe_failure_marker_path="$(upkeeper_prompt_json_string_literal "${failure_marker_path:-unknown}")"
+    safe_failure_marker_first_seen_epoch="$(upkeeper_prompt_json_string_literal "${failure_marker_first_seen_epoch:-unknown}")"
+    safe_failure_marker_failure_count="$(upkeeper_prompt_json_string_literal "${failure_marker_failure_count:-unknown}")"
+    safe_failure_marker_first_failure_kind="$(upkeeper_prompt_json_string_literal "${failure_marker_first_failure_kind:-unknown}")"
+    safe_failure_marker_first_failure_exit_line="$(upkeeper_prompt_json_string_literal "${failure_marker_first_failure_exit_line:-unknown}")"
     printf 'failure_queue_selected=1\n'
-    printf 'failure_marker_id=%s\n' "$failure_marker_id"
-    printf 'failure_marker_path=%s\n' "$(upkeeper_prompt_safe_inline_value "$failure_marker_path" "unknown")"
-    printf 'failure_marker_first_seen_epoch=%s\n' "${failure_marker_first_seen_epoch:-0}"
-    printf 'failure_marker_failure_count=%s\n' "${failure_marker_failure_count:-unknown}"
-    printf 'failure_marker_first_failure_kind=%s\n' "${failure_marker_first_failure_kind:-\"unknown\"}"
-    printf 'failure_marker_first_failure_exit_line=%s\n' "${failure_marker_first_failure_exit_line:-\"unknown\"}"
+    printf 'failure_marker_id=%s\n' "$safe_failure_marker_id"
+    printf 'failure_marker_path=%s\n' "$safe_failure_marker_path"
+    printf 'failure_marker_first_seen_epoch=%s\n' "${safe_failure_marker_first_seen_epoch:-0}"
+    printf 'failure_marker_failure_count=%s\n' "${safe_failure_marker_failure_count:-unknown}"
+    printf 'failure_marker_first_failure_kind=%s\n' "${safe_failure_marker_first_failure_kind:-\"unknown\"}"
+    printf 'failure_marker_first_failure_exit_line=%s\n' "${safe_failure_marker_first_failure_exit_line:-\"unknown\"}"
   else
     printf 'failure_queue_selected=0\n'
   fi
@@ -4052,6 +4113,7 @@ upkeeper_emit_canonical_preselect_output() {
 preselect_review_target() {
   local original_output="" rc selection_mode="" failure_queue_selected="" failure_marker_path="" marker_meta="" marker_status=""
   local marker_reason="" marker_target="" fallback_output="" original_bypass=""
+  local selected_target="" selected_target_normalized=""
   local secure_queue_result="" secure_queue_status="" secure_queue_reason=""
 
   if tool_failure_queue_active_for_selection; then
@@ -4087,7 +4149,12 @@ preselect_review_target() {
     marker_status="$(upkeeper_preselect_output_field status "$marker_meta")"
     if [[ "$marker_status" == "ok" ]]; then
       marker_target="$(upkeeper_preselect_output_field target_path "$marker_meta")"
-      if [[ "$marker_target" != "$(upkeeper_preselect_output_field path "$original_output")" ]]; then
+      selected_target="$(upkeeper_preselect_output_field path "$original_output")"
+      selected_target_normalized=""
+      if ! selected_target_normalized="$(upkeeper_tool_failure_queue_normalize_target "$selected_target")"; then
+        marker_status="unsafe"
+        marker_reason="selected_target_invalid_for_marker"
+      elif [[ "$marker_target" != "$selected_target_normalized" ]]; then
         marker_status="unsafe"
         marker_reason="marker_target_mismatch"
       fi
@@ -4113,6 +4180,34 @@ preselect_review_target() {
   fi
 
   upkeeper_emit_canonical_preselect_output "$original_output" "$marker_meta"
+}
+
+upkeeper_tool_failure_queue_normalize_target() {
+  local target_path="${1:-}"
+
+  python3 - "$ROOT_DIR" "$target_path" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+root, raw_target = sys.argv[1:3]
+value = (raw_target or "").strip()
+if not value or "\0" in value or any(ord(char) < 32 for char in value):
+    raise SystemExit(1)
+
+root_path = Path(root).resolve()
+if os.path.isabs(value):
+    try:
+        print(Path(value).resolve().relative_to(root_path).as_posix())
+    except (OSError, ValueError):
+        raise SystemExit(1)
+    raise SystemExit(0)
+
+normalized = os.path.normpath(value).replace(os.sep, "/")
+if normalized in {".", ""} or normalized.startswith("../") or os.path.isabs(normalized):
+    raise SystemExit(1)
+print(normalized)
+PY
 }
 
 tool_failure_queue_finalize_run() {

@@ -371,10 +371,14 @@ check_backlog_launcher_contract() {
   log "checking backlog launcher safety contract"
   grep -Fq 'BACKLOG_ALLOW_INTERACTIVE_STDIO' orchestration/backlog.sh || fail "backlog launcher missing interactive-stdio override"
   grep -Fq 'BACKLOG_INTERACTIVE_MODE="${BACKLOG_INTERACTIVE_MODE:-watch}"' orchestration/backlog.sh || fail "backlog launcher does not default interactive use to watch mode"
-  grep -Fq 'backlog_timestamp_stream | tee -a "$log_file"' orchestration/backlog.sh || fail "backlog launcher does not keep timestamped interactive watch output visible while cutting off stdin"
+  grep -Fq 'backlog_timestamp_stream | tee -a "$log_file" | backlog_color_attention_stream' orchestration/backlog.sh || fail "backlog launcher does not keep timestamped interactive watch output visible while cutting off stdin"
   grep -Fq 'backlog_timestamp_stream >>"$log_file"' orchestration/backlog.sh || fail "backlog launcher no longer exposes explicit timestamped detach mode"
   grep -Fq 'backlog_line_starts_with_timestamp' orchestration/backlog.sh || fail "backlog launcher does not avoid double-prefixing timestamped lines"
+  grep -Fq 'backlog_attention_marker_for_line' orchestration/backlog.sh || fail "backlog launcher does not classify operator attention markers"
+  grep -Fq 'backlog_color_attention_stream' orchestration/backlog.sh || fail "backlog launcher does not color pageable terminal alerts separately from the loop log"
+  grep -Fq 'PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO' orchestration/backlog.sh || fail "backlog launcher attention marker taxonomy drifted"
   grep -Fq 'sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] /' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not understand timestamped loop logs"
+  grep -Fq 'sub(/^([A-Z][A-Z]+|--FYI--)[[:space:]]+/, "", candidate)' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not understand attention-marked loop logs"
   grep -Fq 'interactive stdio remained attached after backlog auto-detach' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed auto-detach"
   grep -Fq 'interactive stdin remained attached after backlog watch-mode reexec' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed watch-mode reexec"
   grep -Fq 'another backlog run already owns this checkout' orchestration/backlog.sh || fail "backlog launcher does not explain active backlog ownership"
@@ -386,6 +390,9 @@ check_backlog_launcher_contract() {
   grep -Fq 'backlog_hibernate_until_epoch' orchestration/backlog.sh || fail "backlog launcher is missing quota hibernation helper"
   grep -Fq 'quota preflight: quota blocked bucket=' orchestration/backlog.sh || fail "backlog launcher does not explain quota hibernation"
   grep -Fq 'latest_active_primary_quota_block_marker' orchestration/backlog.sh || fail "backlog launcher does not honor active quota block markers"
+  grep -Fq 'BACKLOG_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota guardrail bypass on"
+  grep -Fq 'BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota cooldown bypass on"
+  grep -Fq 'quota preflight: burn bypass continuing despite stale quota evidence' orchestration/backlog.sh || fail "backlog launcher does not explain stale quota bypass"
   grep -Fq 'BACKLOG_SOURCE_ONLY' orchestration/backlog.sh || fail "backlog launcher cannot be source-tested without running main"
   python3 - <<'PY' || fail "backlog autoshelve no longer runs before gh/jq/rg dependency gates"
 from pathlib import Path
@@ -407,18 +414,65 @@ PY
   if command -v script >/dev/null 2>&1; then
     temp_dir="$VALIDATION_TMP_ROOT/backlog-stdio"
     mkdir -p "$temp_dir"
-    printf '2026-05-15T17:21:47 backlog: running Upkeeper for issue #999 with gpt-5.4/high target=tools/example.sh\n' >"$temp_dir/loop.log"
+    printf '2026-05-15T17:21:47 RUN     backlog: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh\n' >"$temp_dir/loop.log"
     status=0
     BACKLOG_STDIO_AUTODETACH_PROBE=1 BACKLOG_LOOP_LOG_FILE="$temp_dir/loop.log" \
       script -qfec ./orchestration/backlog.sh "$temp_dir/typescript" >/dev/null 2>&1 || status="$?"
     [[ "$status" == "0" ]] || fail "backlog launcher interactive stdio auto-detach probe exited $status"
     grep -Fq '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to '"$temp_dir/loop.log" "$temp_dir/typescript" ||
       fail "backlog launcher did not explain interactive watch mode"
-    grep -Eq '^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] # backlog: interactive stdin detected;' "$temp_dir/typescript" ||
-      fail "backlog launcher watch notice is not timestamped in column 1"
-    grep -Fq '# backlog: recent activity: running Upkeeper for issue #999 with gpt-5.4/high target=tools/example.sh' "$temp_dir/typescript" ||
+    grep -Eq '^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] INFO[[:space:]]+# backlog: interactive stdin detected;' "$temp_dir/typescript" ||
+      fail "backlog launcher watch notice is not timestamped with an attention marker"
+    grep -Fq '# backlog: recent activity: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh' "$temp_dir/typescript" ||
       fail "backlog launcher did not parse timestamped recent activity"
   fi
+
+  temp_dir="$VALIDATION_TMP_ROOT/backlog-alert-markers"
+  mkdir -p "$temp_dir"
+  BACKLOG_SOURCE_ONLY=1 bash -lc '
+    set -euo pipefail
+    cd "$1"
+    source ./orchestration/backlog.sh
+    backlog_format_attention_line "2026-05-16T17:00:37-0700 [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s" >"$2/worker.out"
+    backlog_format_attention_line "2026-05-16T18:12:41-0700 [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed" >"$2/page.out"
+    backlog_format_attention_line "2026-05-16T18:20:00 backlog: quota preflight: deferring backlog run this cycle" >"$2/wait.out"
+    backlog_format_attention_line "2026-05-16T18:20:30 Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)" >"$2/fyi.out"
+    backlog_format_attention_line "2026-05-16T18:21:00 PAGE   [ERROR] already marked" >"$2/existing.out"
+  ' bash "$ROOT_DIR" "$temp_dir"
+  grep -Fq '2026-05-16T17:00:37-0700 WORKER  [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s' "$temp_dir/worker.out" ||
+    fail "backlog launcher did not classify worker command failures separately from pageable errors"
+  grep -Fq '2026-05-16T18:12:41-0700 PAGE    [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed' "$temp_dir/page.out" ||
+    fail "backlog launcher did not classify wrapper/control-plane errors as PAGE"
+  grep -Fq '2026-05-16T18:20:00 WAIT    backlog: quota preflight: deferring backlog run this cycle' "$temp_dir/wait.out" ||
+    fail "backlog launcher did not classify quota waits as WAIT"
+  grep -Fq '2026-05-16T18:20:30 --FYI-- Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)' "$temp_dir/fyi.out" ||
+    fail "backlog launcher did not classify advisory health output as FYI"
+  grep -Fxq '2026-05-16T18:21:00 PAGE   [ERROR] already marked' "$temp_dir/existing.out" ||
+    fail "backlog launcher duplicated an existing attention marker"
+
+  temp_dir="$VALIDATION_TMP_ROOT/backlog-burn-env"
+  mkdir -p "$temp_dir"
+  BACKLOG_SOURCE_ONLY=1 bash -lc '
+    set -euo pipefail
+    cd "$1"
+    source ./orchestration/backlog.sh
+    prepare_backlog_runtime_env
+    printf "model=%s\n" "$CODEX_MODEL"
+    printf "effort=%s\n" "$CODEX_REASONING_EFFORT"
+    printf "week=%s\n" "$CODEX_WEEK_STOP_PERCENT"
+    printf "bypass=%s\n" "$CODEX_QUOTA_GUARDRAIL_BYPASS"
+    printf "cooldown=%s\n" "$CODEX_QUOTA_COOLDOWN_BYPASS"
+  ' bash "$ROOT_DIR" >"$temp_dir/defaults.out"
+  grep -Fxq 'model=gpt-5.3-codex-spark' "$temp_dir/defaults.out" ||
+    fail "backlog launcher did not default to Spark model"
+  grep -Fxq 'effort=xhigh' "$temp_dir/defaults.out" ||
+    fail "backlog launcher did not default to xhigh reasoning"
+  grep -Fxq 'week=0' "$temp_dir/defaults.out" ||
+    fail "backlog launcher did not default to spend-to-zero weekly floor"
+  grep -Fxq 'bypass=1' "$temp_dir/defaults.out" ||
+    fail "backlog launcher did not export quota guardrail bypass"
+  grep -Fxq 'cooldown=1' "$temp_dir/defaults.out" ||
+    fail "backlog launcher did not export quota cooldown bypass"
 }
 
 check_backlog_quota_hibernation_contract() {
@@ -3082,7 +3136,33 @@ check_startup_anomaly_state_parser_contract() {
   temp_dir="$(mktemp -d /tmp/upkeeper-startup-state.XXXXXX)"
   state_dir="$temp_dir/startup gates"
   mkdir -p "$state_dir"
-  printf 'cycle_id=cycle with spaces\nrun_hash=hash with spaces\nstatus=unresolved\ncreated_epoch=123 extra=bad\nreason=manual reason\n' >"$state_dir/bad state.state"
+  chmod 700 "$state_dir"
+  python3 - "$state_dir/bad state.state" <<'PY'
+from hashlib import sha256
+from hmac import new as hmac_new
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+secret = b"startup-anomaly-test-key"
+fields = {
+    "active_reasons": "manual reason",
+    "created_epoch": "123 extra=bad",
+    "cycle_id": "cycle with spaces",
+    "detail": "private detail",
+    "reason": "manual reason",
+    "root_dir": "/private/customer/project",
+    "run_hash": "hash with spaces",
+    "self_path": "/private/customer/project/Upkeeper",
+    "state_path": str(path),
+    "status": "unresolved",
+    "updated_epoch": "456",
+}
+payload = "".join(f"{key}={fields.get(key, '')}\n" for key in sorted(fields))
+signature = hmac_new(secret, f"startup_anomaly_state\0{payload}".encode("utf-8", "surrogateescape"), sha256).hexdigest()
+path.write_text(payload + f"state_signature={signature}\n", encoding="utf-8")
+path.chmod(0o600)
+PY
 
   output="$(
     cd "$ROOT_DIR"
@@ -3118,14 +3198,33 @@ $stamp [INFO] cycle=prior-missing run_hash=aaa111 cycle.start selected_file=Upke
 $stamp [INFO] cycle=prior-missing run_hash=aaa111 run.start role=primary boot_id=boot-prior
 $stamp [WARN] cycle=prior-gate run_hash=bbb222 startup_anomaly.gate_unresolved reason=missing_log_review boot_id=boot-prior
 EOF
-  cat >"$state_dir/unresolved.state" <<'EOF'
-cycle_id=state-cycle
-run_hash=state-hash
-status=unresolved
-reason=changed path violation
-created_epoch=123
-updated_epoch=456
-EOF
+  chmod 700 "$state_dir"
+  python3 - "$state_dir/unresolved.state" <<'PY'
+from hashlib import sha256
+from hmac import new as hmac_new
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+secret = b"startup-anomaly-test-key"
+fields = {
+    "active_reasons": "previous_run_anomaly",
+    "created_epoch": "123",
+    "cycle_id": "state-cycle",
+    "detail": "changed path violation",
+    "reason": "changed path violation",
+    "root_dir": "/private/customer/project",
+    "run_hash": "state-hash",
+    "self_path": "/private/customer/project/Upkeeper",
+    "state_path": str(path),
+    "status": "unresolved",
+    "updated_epoch": "456",
+}
+payload = "".join(f"{key}={fields.get(key, '')}\n" for key in sorted(fields))
+signature = hmac_new(secret, f"startup_anomaly_state\0{payload}".encode("utf-8", "surrogateescape"), sha256).hexdigest()
+path.write_text(payload + f"state_signature={signature}\n", encoding="utf-8")
+path.chmod(0o600)
+PY
 
   run_summary_fixture() {
     local mode="$1"

@@ -57,12 +57,31 @@ import tempfile
 import time
 from pathlib import Path
 
-root = Path(sys.argv[1]).resolve()
-manifest_path = Path(sys.argv[2])
+root = Path(os.path.expanduser(sys.argv[1]))
+if not root.is_absolute():
+    root = Path.cwd() / root
+root = root.absolute()
+
+manifest_path = Path(os.path.expanduser(sys.argv[2]))
+if not manifest_path.is_absolute():
+    manifest_path = Path.cwd() / manifest_path
 mode = sys.argv[3]
 ignore_file = Path(sys.argv[5]).expanduser()
 if not ignore_file.is_absolute():
-    ignore_file = (root / ignore_file).resolve()
+    ignore_file = root / ignore_file
+
+
+def ensure_not_symlink(path: Path, *, context: str) -> None:
+    try:
+        if stat.S_ISLNK(path.lstat().st_mode):
+            raise ValueError(f"refuse_manifest_input_symlink {context}={path}")
+    except FileNotFoundError:
+        return
+
+
+ensure_not_symlink(root, context="root")
+if ignore_file.exists():
+    ensure_not_symlink(ignore_file, context="ignore_file")
 try:
     max_age_seconds = max(0, int(sys.argv[4]))
 except ValueError:

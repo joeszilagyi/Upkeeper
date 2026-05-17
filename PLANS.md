@@ -3,6 +3,63 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Backlog Spark Burn Defaults
+
+Status: completed
+
+Goal:
+Flip the backlog launcher back to the Spark quota bucket for reset-window bug
+burn-down runs, including bypass of stale local quota evidence that would
+otherwise defer before the first post-reset backend call can refresh quota state.
+
+Constraints:
+- Keep the change limited to backlog launcher defaults and matching public notes.
+- Preserve operator overrides for model, reasoning effort, and quota thresholds.
+- Do not weaken machine-health, backup, or normal local validation checks.
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n orchestration/backlog.sh tools/validate_upkeeper.sh lib/upkeeper/help_selection.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Backlog Pageable Alert Markers
+
+Status: completed
+
+Goal:
+Add an operator-visible second-column alert taxonomy to backlog watch output so
+normal worker command failures, quota waits, blocked/deferred issues, health
+checks, and true operator-pageable failures are visually and scriptably distinct.
+
+Constraints:
+- Keep `loop.log` plain text and parseable; color must be terminal-only.
+- Preserve the interactive watch-mode stdin cutoff and live mirroring behavior.
+- Treat `PAGE` as the only "human/system attention now" class.
+- Keep recent-activity parsing compatible with old timestamped logs and new
+  timestamp-plus-marker logs.
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Quota Metadata Redaction
 
 Status: completed

@@ -127,8 +127,19 @@ Important:
     or use orchestration/backlog_loop.sh when you want a fully detached
     background-style loop instead. Backlog launcher notices are shell-comment
     lines so accidental terminal input feedback stays a no-op, and live/feed-log
-    lines use a local YYYY-MM-DDTHH:MM:SS timestamp in column 1 for loose
-    terminal watching.
+    lines use a local YYYY-MM-DDTHH:MM:SS timestamp in column 1 plus an
+    operator-attention marker in column 2 for loose terminal watching. PAGE is
+    the pageable human/system attention class and is highlighted in red on TTY
+    output only; loop logs remain plain text for scripts and assistive tooling.
+    Set BACKLOG_ALERT_COLOR=never to disable PAGE color, BACKLOG_ALERT_COLOR=always
+    to force it, or BACKLOG_ALERT_BLINK=0 to keep red without blink.
+  - Backlog batches default to gpt-5.3-codex-spark with xhigh reasoning and a
+    zero weekly stop floor for reset-window burn-down runs. Backlog burn mode
+    also bypasses stale local quota snapshots and active quota-cooldown markers
+    by default so a provider-side reset can be used immediately. Override with
+    BACKLOG_CODEX_MODEL, BACKLOG_CODEX_REASONING_EFFORT,
+    BACKLOG_WEEK_STOP_PERCENT, BACKLOG_QUOTA_GUARDRAIL_BYPASS=0, or
+    BACKLOG_QUOTA_COOLDOWN_BYPASS=0 when a guarded or non-Spark run is wanted.
   - The backlog launcher hibernates by default when its quota preflight sees a
     stop-level quota state or an active primary quota block marker. It prints
     the blocked bucket, reset time, wake time, branch, and recent activity when

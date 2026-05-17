@@ -143,6 +143,43 @@ ARTIFACT_RETENTION_CLASSES = {
     "quota_block_marker": "operator_local",
     "backup": "durable",
 }
+ARTIFACT_SCOPE_PATHS = {
+    "transcript": "runtime",
+    "compiled_prompt": "runtime",
+    "last_message": "runtime",
+    "upkeeper_log": "repo",
+    "startup_anomaly_state": "runtime",
+    "postmortem_report": "runtime",
+    "wrapper_health_state": "runtime",
+    "quota_block_marker": "runtime",
+    "backup": "runtime",
+}
+
+
+def normalize_hex_sha256(raw: Any) -> str | None:
+    text = str(raw).strip().lower() if has_meaningful_value(raw) else ""
+    if len(text) != 64:
+        return None
+    if any(ch not in "0123456789abcdef" for ch in text):
+        return None
+    return text
+
+
+def canonical_artifact_path(root: Path, path: str, artifact_kind: str) -> Path:
+    candidate = Path(path).expanduser()
+    path_abs = candidate.absolute() if candidate.is_absolute() else (Path.cwd() / candidate).absolute()
+    normalized = path_abs.resolve(strict=False)
+    scope = ARTIFACT_SCOPE_PATHS.get(artifact_kind, "runtime")
+    runtime_root = (root / "runtime").resolve()
+    scope_root = root.resolve() if scope == "repo" else runtime_root
+    if not path_under(normalized, scope_root):
+        fail(
+            f"unsafe artifact path for {artifact_kind}: {normalized} is outside {scope_root}",
+            EXIT_USAGE,
+        )
+    if has_forbidden_symlink(normalized, scope_root):
+        fail(f"artifact path contains forbidden symlink for {artifact_kind}: {normalized}", EXIT_USAGE)
+    return normalized
 REDACTABLE_PATH_KEYS = {
     "path",
     "paths",
@@ -4979,9 +5016,10 @@ def probe_cycle_finish_target_mismatch() -> dict[str, Any]:
         except (OSError, subprocess.CalledProcessError):
             pass
         (root / "tools").mkdir(parents=True, exist_ok=True)
+        (root / "runtime").mkdir(parents=True, exist_ok=True)
         (root / selected_path).write_text("print('original')\n", encoding="utf-8")
         (root / reported_path).write_text("print('replacement')\n", encoding="utf-8")
-        review_path = root / "last-message.txt"
+        review_path = root / "runtime" / "last-message.txt"
         review_path.write_text(
             "Selected file: `tools/replacement.py`\nReview outcome: REVIEWED_AND_FIXED\n",
             encoding="utf-8",
@@ -5082,8 +5120,9 @@ def probe_cycle_finish_report_only_outcome() -> dict[str, Any]:
         except (OSError, subprocess.CalledProcessError):
             pass
         (root / "tools").mkdir(parents=True, exist_ok=True)
+        (root / "runtime").mkdir(parents=True, exist_ok=True)
         (root / selected_path).write_text("print('report only')\n", encoding="utf-8")
-        review_path = root / "last-message.txt"
+        review_path = root / "runtime" / "last-message.txt"
         review_path.write_text(
             "Selected file: `tools/report-only.py`\nREVIEWED_AND_REPORTED\n",
             encoding="utf-8",
@@ -5536,19 +5575,23 @@ def create_artifact_ref(
     source_id: int | None,
     artifact_kind: str,
     path: str,
+    expected_sha256: str | None = None,
     dedupe_identity: bool = False,
     details: Any = None,
 ) -> None:
     if not path:
         return
-    p = Path(path)
-    stored_path = artifact_storage_path(root, path)
+    p = canonical_artifact_path(root, path, artifact_kind)
+    stored_path = artifact_storage_path(root, str(p))
     stored_details = artifact_details_payload(artifact_kind, details)
+    expected_digest = normalize_hex_sha256(expected_sha256)
     try:
         entry = p.lstat()
     except OSError:
         entry = None
     exists = entry is not None and stat.S_ISREG(entry.st_mode)
+    if expected_digest is not None and not exists:
+        fail(f"expected artifact missing for {artifact_kind}: {p}", EXIT_INTEGRITY)
     size = None
     digest = None
     digest_hmac = None
@@ -5559,19 +5602,23 @@ def create_artifact_ref(
             else:
                 fd = os.open(str(p), os.O_RDONLY)
             try:
-                data = os.read(fd, 1024 * 1024)
-                chunks = [data]
-                while data:
-                    data = os.read(fd, 1024 * 1024)
-                    chunks.append(data)
-                payload = b"".join(chunks)
-                size = len(payload)
-                digest = sha256_bytes(payload)
+                hasher = hashlib.sha256()
+                while True:
+                    chunk = os.read(fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+                    size = (size or 0) + len(chunk)
+                digest = hasher.hexdigest()
                 digest_hmac = content_value_hmac(root, digest)
+                if expected_digest is not None and digest != expected_digest:
+                    fail(f"artifact hash mismatch for {artifact_kind}: {p}", EXIT_INTEGRITY)
             finally:
                 os.close(fd)
-        except OSError:
-            pass
+        except OSError as exc:
+            if expected_digest is not None:
+                fail(f"artifact unreadable for {artifact_kind}: {p} ({exc})", EXIT_INTEGRITY)
+            return
     observed_epoch = epoch_now()
     if dedupe_identity:
         existing = conn.execute(
@@ -5742,6 +5789,22 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
             updates.append(("codex_exec_started", args.codex_exec_started))
         if args.dry_run is not None:
             updates.append(("dry_run", parse_bool_int(str(args.dry_run))))
+        def parse_cycle_artifact_sha256(raw: Any, artifact_kind: str) -> str | None:
+            if not has_meaningful_value(raw):
+                return None
+            digest = normalize_hex_sha256(raw)
+            if digest is None:
+                fail(f"invalid {artifact_kind} SHA-256 value: {raw}", EXIT_USAGE)
+            return digest
+
+        artifact_digests = {
+            "transcript": parse_cycle_artifact_sha256(getattr(args, "transcript_sha256", None), "transcript"),
+            "compiled_prompt": parse_cycle_artifact_sha256(
+                getattr(args, "compiled_prompt_sha256", None), "compiled prompt"
+            ),
+            "last_message": parse_cycle_artifact_sha256(getattr(args, "last_message_sha256", None), "last message"),
+            "upkeeper_log": parse_cycle_artifact_sha256(getattr(args, "log_sha256", None), "log"),
+        }
         if cycle_selected_file_id is not None:
             updates.append(("selected_file_id", cycle_selected_file_id))
         if cycle_selected_path:
@@ -5805,6 +5868,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 source_id=source_id,
                 artifact_kind=artifact_kind,
                 path=artifact_path or "",
+                expected_sha256=artifact_digests[artifact_kind],
             )
     print_json({"status": "ok", "cycle_pk": cycle_pk, "worktree_snapshot_id": snapshot_id})
     return EXIT_SUCCESS
@@ -8500,6 +8564,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--transcript-path", default=None)
     p.add_argument("--compiled-prompt-path", default=None)
     p.add_argument("--log-path", default=None)
+    p.add_argument("--transcript-sha256", default=None)
+    p.add_argument("--compiled-prompt-sha256", default=None)
+    p.add_argument("--last-message-sha256", default=None)
+    p.add_argument("--log-sha256", default=None)
     p.add_argument("--snapshot-kind", default="after_codex")
     p.add_argument("--end-epoch", type=int)
     p.set_defaults(func=command_record_cycle_finish)

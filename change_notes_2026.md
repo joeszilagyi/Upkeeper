@@ -11,6 +11,7 @@ Version numbering note:
 	2. Hardened config-file sourcing with filesystem trust checks and fixed the assignment-file parser so a valid config no longer exits silently at EOF under `set -e`.
 	3. Tightened manifest cache reuse by invalidating legacy payloads that still carry raw checkout-root fields, forcing regeneration into the hashed-root schema.
 	4. Cleared raw inline prompt environment variables once a prompt file is authoritative and before screen fallback children launch, reducing descendant exposure of sensitive inline prompt text.
+	5. Kept auxiliary postmortem hardening away from model-written report contents by passing only deterministic report metadata and sanitized heading structure into the opt-in hardening prompt.
 
 2026-05-16: v1.2.25 changes:
 	1. Backlog loops now hibernate locally when quota preflight sees a stop-level quota state or active primary quota block marker, printing the blocked bucket, reset time, wake time, branch, and recent activity before sleeping without backend model work until the reset grace passes.

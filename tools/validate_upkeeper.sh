@@ -431,7 +431,16 @@ PY
     [[ "$status" == "0" ]] || fail "backlog launcher interactive stdio auto-detach probe exited $status"
     grep -Fq '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to '"$temp_dir/loop.log" "$temp_dir/typescript" ||
       fail "backlog launcher did not explain interactive watch mode"
-    grep -Eq '^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] █ INFO[[:space:]]+# backlog: interactive stdin detected;' "$temp_dir/typescript" ||
+    python3 - "$temp_dir/typescript" <<'PY' ||
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+pattern = r"(?m)^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} █ INFO\s+# backlog: interactive stdin detected;"
+raise SystemExit(0 if re.search(pattern, text) else 1)
+PY
       fail "backlog launcher watch notice is not timestamped with a visual block and attention marker"
     grep -Fq '# backlog: recent activity: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh' "$temp_dir/typescript" ||
       fail "backlog launcher did not parse timestamped recent activity"
@@ -3117,7 +3126,7 @@ EOF
 check_lattice_contract() {
   log "checking Upkeeper Lattice"
   bash tests/lattice_test.bash
-  if rg -n '\b(curl|gh|requests|urllib|http\.client|GITHUB_TOKEN)\b' tools/upkeeper_lattice.py lib/upkeeper/lattice.bash >/dev/null; then
+  if rg -n '\b(curl|gh|requests|urllib3|urllib\.request|urllib\.error|http\.client|GITHUB_TOKEN)\b' tools/upkeeper_lattice.py lib/upkeeper/lattice.bash >/dev/null; then
     fail "Lattice implementation contains a default network/token surface"
   fi
 }

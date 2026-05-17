@@ -73,6 +73,7 @@ else:
 bug_report_only = str(bug_report_only_raw).strip().lower() in {"1", "true", "yes", "on"}
 redaction_key_bytes = redaction_key.encode("utf-8", "surrogateescape")
 uid = os.getuid()
+command_hash_re = re.compile(r"^value-hmac-sha256:[0-9a-f]{64}$")
 
 
 def short(value: str, limit: int = 500) -> str:
@@ -112,7 +113,57 @@ def scrub_marker_snapshot(data: dict, *, keep_target_path: bool) -> dict:
         if key == "target_path" and not keep_target_path:
             continue
         cleaned[key] = value
+
+    for key in ("failure_samples", "unresolved_failures"):
+        raw_list = data.get(key)
+        if not isinstance(raw_list, list):
+            cleaned.pop(key, None)
+            continue
+        cleaned_list = []
+        for item in raw_list:
+            failure_item = scrub_failure_item(item)
+            if failure_item is not None:
+                cleaned_list.append(failure_item)
+        if cleaned_list:
+            cleaned[key] = cleaned_list
+        elif key in cleaned:
+            del cleaned[key]
     return cleaned
+
+
+def scrub_failure_item(item: dict) -> dict | None:
+    kind = item.get("kind")
+    command_hash = normalize_failure_command_hash(item.get("command_hash"), item.get("command"))
+    exit_line = item.get("exit_line")
+    if not isinstance(kind, str) or not kind:
+        return None
+    if not command_hash:
+        return None
+    if not isinstance(exit_line, str) or not exit_line:
+        return None
+    return {
+        "kind": kind,
+        "command_hash": command_hash,
+        "command_signature": command_signature(kind, command_hash),
+        "exit_line": exit_line,
+        "signature": failure_signature(kind, command_hash, exit_line),
+    }
+
+
+def normalize_failure_command_hash(command_hash: object, command_text: object = None) -> str:
+    if isinstance(command_hash, str):
+        candidate = command_hash.strip()
+        if command_hash_re.match(candidate):
+            return candidate
+        if candidate:
+            # Legacy data may have persisted raw commands in command_hash fields.
+            return value_hmac("command", short(candidate))
+    if isinstance(command_text, str):
+        command_value = command_text.strip()
+        if command_value:
+            # Legacy records may keep command text in a sibling field.
+            return value_hmac("command", short(command_value))
+    return ""
 
 
 def failure_signature(kind: str, command_hash: str, exit_line: str) -> str:
@@ -125,10 +176,17 @@ def command_signature(kind: str, command_hash: str) -> str:
     return hashlib.sha256(payload.encode("utf-8", "surrogateescape")).hexdigest()
 
 
-def normalize_failure_item(kind: object, command_hash: object, exit_line: object) -> dict[str, str] | None:
+def normalize_failure_item(
+    kind: object,
+    command_hash: object,
+    exit_line: object,
+    *,
+    command_text: object = None,
+) -> dict[str, str] | None:
     if not isinstance(kind, str) or not kind:
         return None
-    if not isinstance(command_hash, str) or not command_hash:
+    command_hash = normalize_failure_command_hash(command_hash, command_text)
+    if not command_hash:
         return None
     if not isinstance(exit_line, str) or not exit_line:
         return None
@@ -290,8 +348,19 @@ def marker_unresolved_failures(data: dict) -> list[dict[str, str]]:
     collected = []
     seen = set()
 
-    def add(kind: object, command_hash: object, exit_line: object) -> None:
-        failure = normalize_failure_item(kind, command_hash, exit_line)
+    def add(
+        kind: object,
+        command_hash: object,
+        exit_line: object,
+        *,
+        command_text: object = None,
+    ) -> None:
+        failure = normalize_failure_item(
+            kind,
+            command_hash,
+            exit_line,
+            command_text=command_text,
+        )
         if failure is None or failure["signature"] in seen:
             return
         seen.add(failure["signature"])
@@ -302,7 +371,7 @@ def marker_unresolved_failures(data: dict) -> list[dict[str, str]]:
         for item in unresolved:
             if not isinstance(item, dict):
                 continue
-            add(item.get("kind"), item.get("command_hash"), item.get("exit_line"))
+            add(item.get("kind"), item.get("command_hash"), item.get("exit_line"), command_text=item.get("command"))
         if collected:
             return collected
 
@@ -311,10 +380,20 @@ def marker_unresolved_failures(data: dict) -> list[dict[str, str]]:
         for item in samples:
             if not isinstance(item, dict):
                 continue
-            add(item.get("kind"), item.get("command_hash"), item.get("exit_line"))
+            add(item.get("kind"), item.get("command_hash"), item.get("exit_line"), command_text=item.get("command"))
 
-    add(data.get("first_failure_kind"), data.get("first_failure_command_hash"), data.get("first_failure_exit_line"))
-    add(data.get("last_failure_kind"), data.get("last_failure_command_hash"), data.get("last_failure_exit_line"))
+    add(
+        data.get("first_failure_kind"),
+        data.get("first_failure_command_hash"),
+        data.get("first_failure_exit_line"),
+        command_text=data.get("first_failure_command"),
+    )
+    add(
+        data.get("last_failure_kind"),
+        data.get("last_failure_command_hash"),
+        data.get("last_failure_exit_line"),
+        command_text=data.get("last_failure_command"),
+    )
     return collected
 
 

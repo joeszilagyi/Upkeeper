@@ -5132,6 +5132,27 @@ run_locked_fallback_cycle() {
   return "$fallback_rc"
 }
 
+if declare -f upkeeper_original_run_fallback_cycle >/dev/null; then
+  :
+elif ! declare -f run_fallback_cycle >/dev/null; then
+  log_line "WARN" "fallback.hardening run_fallback_cycle missing; prompt leakage hardening skipped"
+else
+  _upkeeper_run_fallback_cycle_def="$(declare -f run_fallback_cycle)"
+  if [[ -n "$_upkeeper_run_fallback_cycle_def" ]]; then
+    _upkeeper_run_fallback_cycle_def="upkeeper_original_run_fallback_cycle${_upkeeper_run_fallback_cycle_def#run_fallback_cycle}"
+    eval "$_upkeeper_run_fallback_cycle_def"
+    unset -v _upkeeper_run_fallback_cycle_def
+  fi
+fi
+
+run_fallback_cycle() {
+  upkeeper_materialize_inline_prompt_file
+  if [[ -n "${INLINE_PROMPT:-}" || -n "${UPKEEPER_PROMPT:-}" ]]; then
+    unset INLINE_PROMPT UPKEEPER_PROMPT
+  fi
+  upkeeper_original_run_fallback_cycle "$@"
+}
+
 # Main cycle.
 #
 # Order matters:

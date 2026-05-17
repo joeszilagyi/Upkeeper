@@ -1255,6 +1255,29 @@ def external_rel_path(path: str) -> str:
     return operational_rel_path(path)
 
 
+def repo_relative_target_path(root: Path, raw_target: str) -> str:
+    if not raw_target:
+        return ""
+
+    normalized = raw_target.replace("\\", "/").strip()
+    if not normalized:
+        return ""
+
+    try:
+        candidate = Path(normalized)
+        if candidate.is_absolute():
+            resolved = candidate.resolve(strict=False)
+        else:
+            resolved = (root / candidate).resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        return ""
+
+    try:
+        return resolved.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return ""
+
+
 def sanitize_json_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -3501,7 +3524,11 @@ def normalize_repo_file_identity_ref(root: Path, path: str) -> str:
     return normalized
 
 
-def tool_failure_marker_identity(marker_path: Path, payload: Any) -> tuple[str, str, str]:
+def tool_failure_marker_identity(
+    root: Path,
+    marker_path: Path,
+    payload: Any,
+) -> tuple[str, str, str]:
     raw_marker_id = marker_path.stem
     if not isinstance(payload, dict):
         return "", "", raw_marker_id
@@ -3510,7 +3537,7 @@ def tool_failure_marker_identity(marker_path: Path, payload: Any) -> tuple[str, 
     raw_target = payload.get("target_path")
     if not isinstance(raw_target, str):
         return "", "", raw_marker_id
-    target_path = external_rel_path(raw_target)
+    target_path = repo_relative_target_path(root, raw_target)
     if not target_path:
         return "", "", raw_marker_id
     # Equivalent path spellings must collapse to one marker identity in Lattice.
@@ -8204,7 +8231,7 @@ def import_failure_markers(
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
-            target, marker_id, raw_marker_id = tool_failure_marker_identity(path, data)
+            target, marker_id, raw_marker_id = tool_failure_marker_identity(root, path, data)
             if not target or not marker_id:
                 continue
             file_id = ensure_file(conn, repo_id, target)

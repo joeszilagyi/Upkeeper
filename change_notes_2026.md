@@ -101,6 +101,7 @@ Version numbering note:
 	1. Backlog watch-mode output now adds a second-column operator marker (`RUN`, `WORKER`, `ACTION`, `WAIT`, `HEALTH`, `OK`, `INFO`, or `PAGE`) after the timestamp so routine worker check failures are visibly distinct from true wrapper/control-plane attention events.
 	2. `PAGE` is now the pageable human/system attention class; in an interactive terminal it is highlighted red with best-effort blink, while the mirrored private loop log stays plain text for scripts and assistive tooling.
 	3. Recent-activity parsing now understands timestamp-plus-marker loop logs so repeated interactive launches still summarize the active issue/target correctly.
+	4. Backlog batches default back to the Spark bucket (`gpt-5.3-codex-spark` with `xhigh` reasoning) and set the weekly stop floor to zero for reset-window burn-down runs, while preserving explicit `BACKLOG_CODEX_MODEL`, `BACKLOG_CODEX_REASONING_EFFORT`, and `BACKLOG_WEEK_STOP_PERCENT` overrides.
 
 2026-05-14: v1.2.17 changes:
 	1. Added trusted machine-local env loading after the selected config file, with `UPKEEPER_LOCAL_ENV_FILE` and `UPKEEPER_LOCAL_ENV_DISABLE` as the operator-controlled surface for machine-only backup/bootstrap settings.
@@ -755,8 +756,8 @@ Reconstructed pre-1.0 history:
 - Operators can still opt into private issue prompt exposure explicitly with `UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL=1` when a responsible fix requires the original issue prose.
 
 2026-05-12: backlog orchestration wrench:
-- Added `orchestration/backlog.sh`, a deliberately small operator launcher that opens or reuses a `[backlog]` PR, targets the newest open non-feature/non-research issue, runs one Upkeeper repair pass with `gpt-5.4` high reasoning, pushes the result, waits for PR checks, and merges the batch after 10 recorded fixes.
-- The launcher keeps the five-hour quota stop threshold at zero for this workflow while preserving a 10% weekly quota stop threshold, and falls back to a normal newest-file Upkeeper pass when no eligible issue is open.
+- Added `orchestration/backlog.sh`, a deliberately small operator launcher that opens or reuses a `[backlog]` PR, targets the newest open non-feature/non-research issue, runs one Upkeeper repair pass, pushes the result, waits for PR checks, and merges the batch after 10 recorded fixes.
+- The launcher keeps quota stop thresholds configurable for this workflow and falls back to a normal newest-file Upkeeper pass when no eligible issue is open.
 
 2026-05-12: backlog wrench post-fix efficiency hardening:
 - `orchestration/backlog.sh` now scrubs Python bytecode cache artifacts before the commit path and disables bytecode generation during backlog runs so one-file issue fixes do not stall on transient `__pycache__` junk.

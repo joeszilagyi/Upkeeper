@@ -411,7 +411,7 @@ PY
   if command -v script >/dev/null 2>&1; then
     temp_dir="$VALIDATION_TMP_ROOT/backlog-stdio"
     mkdir -p "$temp_dir"
-    printf '2026-05-15T17:21:47 RUN    backlog: running Upkeeper for issue #999 with gpt-5.4/high target=tools/example.sh\n' >"$temp_dir/loop.log"
+    printf '2026-05-15T17:21:47 RUN    backlog: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh\n' >"$temp_dir/loop.log"
     status=0
     BACKLOG_STDIO_AUTODETACH_PROBE=1 BACKLOG_LOOP_LOG_FILE="$temp_dir/loop.log" \
       script -qfec ./orchestration/backlog.sh "$temp_dir/typescript" >/dev/null 2>&1 || status="$?"
@@ -420,7 +420,7 @@ PY
       fail "backlog launcher did not explain interactive watch mode"
     grep -Eq '^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] INFO[[:space:]]+# backlog: interactive stdin detected;' "$temp_dir/typescript" ||
       fail "backlog launcher watch notice is not timestamped with an attention marker"
-    grep -Fq '# backlog: recent activity: running Upkeeper for issue #999 with gpt-5.4/high target=tools/example.sh' "$temp_dir/typescript" ||
+    grep -Fq '# backlog: recent activity: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh' "$temp_dir/typescript" ||
       fail "backlog launcher did not parse timestamped recent activity"
   fi
 

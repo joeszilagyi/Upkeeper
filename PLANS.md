@@ -3,6 +3,32 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Backlog Spark Burn Defaults
+
+Status: completed
+
+Goal:
+Flip the backlog launcher back to the Spark quota bucket for reset-window bug
+burn-down runs.
+
+Constraints:
+- Keep the change limited to backlog launcher defaults and matching public notes.
+- Preserve operator overrides for model, reasoning effort, and quota thresholds.
+- Do not weaken machine-health, backup, or normal local validation checks.
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n orchestration/backlog.sh tools/validate_upkeeper.sh lib/upkeeper/help_selection.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Backlog Pageable Alert Markers
 
 Status: completed

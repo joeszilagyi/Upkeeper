@@ -35,6 +35,7 @@ tool_failure_queue_finalize_run() {
 
   set +e
   output="$(python3 - \
+    "$ROOT_DIR" \
     "$CODEX_TOOL_FAILURE_QUEUE_DIR" \
     "$target_path" \
     "$transcript_file" \
@@ -50,17 +51,28 @@ import hmac
 import json
 import os
 import re
+import stat
 import sys
 import time
 from pathlib import Path
 
-queue_dir_raw, target_path, transcript_raw, codex_exit, status_marker, cycle_id, run_hash, selected_marker_raw, bug_report_only_raw, redaction_key = sys.argv[1:11]
-queue_dir = Path(queue_dir_raw)
+root_raw, queue_dir_raw, target_path, transcript_raw, codex_exit, status_marker, cycle_id, run_hash, selected_marker_raw, bug_report_only_raw, redaction_key = sys.argv[1:12]
+root_path = Path(root_raw).resolve()
+queue_dir = Path(queue_dir_raw).expanduser()
+if not queue_dir.is_absolute():
+    queue_dir = Path(os.path.abspath(root_path / queue_dir))
+else:
+    queue_dir = Path(os.path.abspath(queue_dir))
 open_dir = queue_dir / "open"
 resolved_dir = queue_dir / "resolved"
-transcript_path = Path(transcript_raw)
+transcript_path = Path(transcript_raw).expanduser()
+if not transcript_path.is_absolute():
+    transcript_path = Path(os.path.abspath(root_path / transcript_path))
+else:
+    transcript_path = Path(os.path.abspath(transcript_path))
 bug_report_only = str(bug_report_only_raw).strip().lower() in {"1", "true", "yes", "on"}
 redaction_key_bytes = redaction_key.encode("utf-8", "surrogateescape")
+uid = os.getuid()
 
 
 def short(value: str, limit: int = 500) -> str:
@@ -135,6 +147,44 @@ def field(value: str) -> str:
 
 def marker_id_for(path: str) -> str:
     return hashlib.sha1(path.encode("utf-8", "surrogateescape")).hexdigest()[:24]
+
+
+def normalize_target_path(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    path = value.strip()
+    if not path or "\0" in path or any(ord(char) < 32 for char in path):
+        return ""
+    if os.path.isabs(path):
+        try:
+            rel = Path(path).resolve().relative_to(root_path)
+        except (OSError, ValueError):
+            return ""
+        return rel.as_posix()
+    normalized = os.path.normpath(path).replace(os.sep, "/")
+    if normalized in {".", ""} or normalized.startswith("../") or os.path.isabs(normalized):
+        return ""
+    return normalized
+
+
+def normalize_open_marker_path(value: object) -> Path | None:
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw or "\0" in raw or any(ord(char) < 32 for char in raw):
+        return None
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = Path(os.path.abspath(root_path / path))
+    else:
+        path = Path(os.path.abspath(path))
+    try:
+        relative = path.relative_to(open_dir)
+    except ValueError:
+        return None
+    if relative.parent != Path("."):
+        return None
+    return path
 
 
 def command_kind(line: str) -> str:
@@ -270,20 +320,38 @@ def marker_unresolved_failures(data: dict) -> list[dict[str, str]]:
 
 def ensure_private_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(path, 0o700)
-    except OSError:
-        pass
+    st = os.lstat(path)
+    if not stat.S_ISDIR(st.st_mode) or stat.S_ISLNK(st.st_mode):
+        raise PermissionError(f"queue_path_not_private_dir:{path}")
+    if st.st_uid != uid:
+        raise PermissionError(f"queue_dir_wrong_owner:{path}")
+    os.chmod(path, 0o700)
+    st = os.lstat(path)
+    if stat.S_IMODE(st.st_mode) != 0o700:
+        raise PermissionError(f"queue_dir_unprotected:{path}")
+
+
+def ensure_private_regular_file(path: Path) -> None:
+    st = os.lstat(path)
+    if not stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode):
+        raise PermissionError(f"queue_marker_not_regular:{path}")
+    if st.st_uid != uid:
+        raise PermissionError(f"queue_marker_wrong_owner:{path}")
+    os.chmod(path, 0o600)
+    st = os.lstat(path)
+    if stat.S_IMODE(st.st_mode) != 0o600:
+        raise PermissionError(f"queue_marker_unprotected:{path}")
 
 
 def read_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    ensure_private_regular_file(path)
     try:
         with path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
             if isinstance(data, dict):
                 return data
-    except OSError:
-        return {}
     except json.JSONDecodeError:
         return {}
     return {}
@@ -298,10 +366,7 @@ def write_json_atomic(path: Path, data: dict) -> None:
             json.dump(data, handle, indent=2, sort_keys=True)
             handle.write("\n")
         os.replace(tmp, path)
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
+        ensure_private_regular_file(path)
     except Exception:
         try:
             os.unlink(tmp)
@@ -335,9 +400,12 @@ def resolve_marker(path: Path, reason: str) -> Path:
 
 
 def main() -> None:
-    marker_id = marker_id_for(target_path)
+    normalized_target_path = normalize_target_path(target_path)
+    if not normalized_target_path:
+        raise ValueError("target_path_invalid")
+    marker_id = marker_id_for(normalized_target_path)
     marker_path = open_dir / f"{marker_id}.json"
-    selected_marker_path = Path(selected_marker_raw) if selected_marker_raw else marker_path
+    selected_marker_path = normalize_open_marker_path(selected_marker_raw) or marker_path
     now = int(time.time())
     failures, unresolved_failures, successful_command_signatures = transcript_failure_state(transcript_path)
     ensure_private_dir(queue_dir)
@@ -351,6 +419,7 @@ def main() -> None:
             existing = read_json(selected_marker_path)
         else:
             existing = {}
+        existing = scrub_marker_snapshot(existing, keep_target_path=True)
         first = failures[0]
         remaining_existing_unresolved = [
             item
@@ -373,10 +442,6 @@ def main() -> None:
         first_failure_command_hash = existing.get("first_failure_command_hash")
         if not isinstance(first_failure_command_hash, str) or not first_failure_command_hash:
             first_failure_command_hash = ""
-        if not first_failure_command_hash:
-            existing_first_failure_command = existing.get("first_failure_command")
-            if isinstance(existing_first_failure_command, str) and existing_first_failure_command:
-                first_failure_command_hash = value_hmac("command", existing_first_failure_command)
         first_failure_exit_line = existing.get("first_failure_exit_line")
         if not (first_failure and first_failure_command_hash and first_failure_exit_line):
             first_failure = first["kind"]
@@ -400,8 +465,8 @@ def main() -> None:
             "version": 2,
             "status": "open",
             "marker_id": marker_id,
-            "target_path": target_path,
-            "target_path_hmac": path_hmac(target_path),
+            "target_path": normalized_target_path,
+            "target_path_hmac": path_hmac(normalized_target_path),
             "first_seen_epoch": int(existing.get("first_seen_epoch", now) or now),
             "first_seen_cycle": existing.get("first_seen_cycle", cycle_id),
             "first_seen_run_hash": existing.get("first_seen_run_hash", run_hash),
@@ -429,18 +494,18 @@ def main() -> None:
         if addressed_by_later_success and not bug_report_only:
             reason = "work_done_after_detected_failure" if status_marker == "WORK_DONE" else "later_success_after_detected_failure"
             resolved_path = resolve_marker(marker_path, reason)
-            print(f"action=resolved_same_run marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(resolved_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures={len(failures)} unresolved_failures=0 addressed_by_later_success=1")
+            print(f"action=resolved_same_run marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(resolved_path)))} target_path_hmac={field(path_hmac(normalized_target_path))} path_redacted=1 failures={len(failures)} unresolved_failures=0 addressed_by_later_success=1")
         else:
-            print(f"action=open marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(marker_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures={len(failures)} unresolved_failures={len(unresolved_combined)} addressed_by_later_success={1 if addressed_by_later_success else 0} kind={field(last_failure['kind'])} exit_line={field(last_failure['exit_line'])}")
+            print(f"action=open marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(marker_path)))} target_path_hmac={field(path_hmac(normalized_target_path))} path_redacted=1 failures={len(failures)} unresolved_failures={len(unresolved_combined)} addressed_by_later_success={1 if addressed_by_later_success else 0} kind={field(last_failure['kind'])} exit_line={field(last_failure['exit_line'])}")
         raise SystemExit(0)
 
     if status_marker == "WORK_DONE" and selected_marker_path.exists() and bug_report_only:
-        print(f"action=preserved_report_only marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(selected_marker_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures=0")
+        print(f"action=preserved_report_only marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(selected_marker_path)))} target_path_hmac={field(path_hmac(normalized_target_path))} path_redacted=1 failures=0")
     elif status_marker == "WORK_DONE" and selected_marker_path.exists():
         resolved_path = resolve_marker(selected_marker_path, "work_done_without_new_tool_failure")
-        print(f"action=resolved marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(resolved_path)))} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures=0")
+        print(f"action=resolved marker_id={field(marker_id)} marker_path_hmac={field(path_hmac(str(resolved_path)))} target_path_hmac={field(path_hmac(normalized_target_path))} path_redacted=1 failures=0")
     else:
-        print(f"action=none marker_id={field(marker_id)} target_path_hmac={field(path_hmac(target_path))} path_redacted=1 failures=0")
+        print(f"action=none marker_id={field(marker_id)} target_path_hmac={field(path_hmac(normalized_target_path))} path_redacted=1 failures=0")
 
 
 try:

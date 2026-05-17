@@ -2999,6 +2999,8 @@ if mode_text and re.fullmatch(r"[0-7]{3,4}", mode_text):
 
 dir_fd = None
 next_fd = None
+verify_dir_fd = None
+verify_next_fd = None
 target_fd = None
 
 try:
@@ -3059,6 +3061,53 @@ try:
             emit("error", "directory_target_rejected")
             raise SystemExit(0)
 
+    try:
+        verify_dir_fd = os.open(root, open_flags)
+    except OSError as exc:
+        emit("error", f"restore_parent_root_open_failed:{exc.__class__.__name__}")
+        raise SystemExit(0)
+
+    for verify_part in parts[:-1]:
+        try:
+            verify_stat = os.lstat(verify_part, dir_fd=verify_dir_fd)
+        except FileNotFoundError:
+            emit("error", "restore_parent_disappeared")
+            raise SystemExit(0)
+        except OSError as exc:
+            emit("error", f"restore_parent_recheck_failed:{exc.__class__.__name__}")
+            raise SystemExit(0)
+
+        if stat.S_ISLNK(verify_stat.st_mode):
+            emit("error", "restore_parent_symlinked")
+            raise SystemExit(0)
+        if not stat.S_ISDIR(verify_stat.st_mode):
+            emit("error", "restore_parent_not_directory")
+            raise SystemExit(0)
+
+        try:
+            verify_next_fd = os.open(verify_part, open_flags | nofollow_flag, dir_fd=verify_dir_fd)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                emit("error", "restore_parent_symlinked")
+            elif exc.errno == errno.ENOTDIR:
+                emit("error", "restore_parent_not_directory")
+            else:
+                emit("error", f"restore_parent_reopen_failed:{exc.__class__.__name__}")
+            raise SystemExit(0)
+
+        os.close(verify_dir_fd)
+        verify_dir_fd = verify_next_fd
+        verify_next_fd = None
+
+    if (os.fstat(dir_fd).st_dev, os.fstat(dir_fd).st_ino) != (os.fstat(verify_dir_fd).st_dev, os.fstat(verify_dir_fd).st_ino):
+        emit("error", "restore_parent_race_detected")
+        raise SystemExit(0)
+
+    os.close(dir_fd)
+    dir_fd = verify_dir_fd
+    verify_dir_fd = None
+    verify_next_fd = None
+
     os.replace(tmp_restore, final_name, dst_dir_fd=dir_fd)
 
     if mode_value is not None:
@@ -3078,6 +3127,10 @@ finally:
         os.close(target_fd)
     if next_fd is not None:
         os.close(next_fd)
+    if verify_next_fd is not None:
+        os.close(verify_next_fd)
+    if verify_dir_fd is not None:
+        os.close(verify_dir_fd)
     if dir_fd is not None:
         os.close(dir_fd)
 PY

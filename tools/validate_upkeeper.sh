@@ -3400,6 +3400,7 @@ check_postmortem_sequence_marker_contract() {
 
         run_aux_codex_exec() {
           local phase_label="$1"
+          local prompt_path="$5"
           local last_message_path="$6"
 
           case "$phase_label:$case_name" in
@@ -3433,10 +3434,12 @@ check_postmortem_sequence_marker_contract() {
               return 0
               ;;
             postmortem.hardening:hardening_missing_marker)
+              cp "$prompt_path" "$case_dir/hardening-prompt.txt"
               printf "hardening fixture omitted required marker\n" >"$last_message_path"
               return 0
               ;;
             postmortem.hardening:report_and_hardening_success)
+              cp "$prompt_path" "$case_dir/hardening-prompt.txt"
               printf "CODEX_POSTMORTEM_STATUS: HARDENING_DONE\n" >"$last_message_path"
               return 0
               ;;
@@ -3494,6 +3497,22 @@ check_postmortem_sequence_marker_contract() {
     [[ "$(stat -c %a "$pm_root/incident-log.txt")" == "600" ]] || fail "$case_name incident log permissions were not private"
     [[ "$(stat -c %a "$pm_root/bug-record.md")" == "600" ]] || fail "$case_name bug record permissions were not private"
     [[ "$(stat -c %a "$pm_root/primary-last-message.meta")" == "600" ]] || fail "$case_name primary last-message metadata permissions were not private"
+    if [[ "$case_name" != "report_missing_marker" ]]; then
+      [[ -s "$case_dir/hardening-prompt.txt" ]] || fail "$case_name did not preserve the hardening prompt for validation"
+      grep -Fq "Deterministic post-mortem report summary:" "$case_dir/hardening-prompt.txt" || fail "$case_name hardening prompt did not include deterministic report summary"
+      grep -Fq "report_present=1" "$case_dir/hardening-prompt.txt" || fail "$case_name hardening prompt did not include report presence"
+      grep -Fq "report_sha256=" "$case_dir/hardening-prompt.txt" || fail "$case_name hardening prompt did not include report digest"
+      grep -Fq "report_headings=Incident Summary" "$case_dir/hardening-prompt.txt" || fail "$case_name hardening prompt did not include sanitized report structure"
+      if grep -Fq "$pm_root/postmortem.md" "$case_dir/hardening-prompt.txt"; then
+        fail "$case_name hardening prompt leaked the untrusted report path"
+      fi
+      if grep -Fq "Report fixture" "$case_dir/hardening-prompt.txt"; then
+        fail "$case_name hardening prompt leaked raw report prose"
+      fi
+      if grep -Fq "read the existing post-mortem report at" "$case_dir/hardening-prompt.txt"; then
+        fail "$case_name hardening prompt still instructs reading the untrusted report"
+      fi
+    fi
   done
 
   rm -r "$temp_dir"

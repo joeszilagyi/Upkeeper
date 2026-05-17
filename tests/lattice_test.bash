@@ -1172,7 +1172,7 @@ assert git_rows[0]["subject"] is None, git_rows
 assert git_rows[0]["subject_hash"].startswith("subject-sha256:"), git_rows
 PY
   "$LATTICE_TOOL" --root "$repo" --db "$default_db" export-jsonl --output "$export_path" >"$TEST_TMP_ROOT/privacy-default-export.out"
-  if rg -q 'alice@example.com|Incident ACME-42 for Jane Doe' "$export_path"; then
+  if grep -Eq 'alice@example.com|Incident ACME-42 for Jane Doe' "$export_path"; then
     fail "default export-jsonl leaked contributor or commit subject PII"
   fi
 

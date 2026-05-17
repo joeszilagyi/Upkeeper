@@ -8394,6 +8394,7 @@ def command_recover(args: argparse.Namespace) -> int:
                 path=str(backup_path),
                 details={"backup_event": "pre_recovery", "recorded_in": "backup"},
             )
+            backup_conn.commit()
         finally:
             backup_conn.close()
         sources.append("backup:1")

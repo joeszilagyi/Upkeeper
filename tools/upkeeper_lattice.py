@@ -3804,6 +3804,12 @@ def parse_bool_int(raw: str | None) -> int | None:
     return None
 
 
+def require_jsonl_int(raw: Any, field: str) -> int:
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        raise TypeError(f"{field} must be an integer, got {type(raw).__name__}")
+    return raw
+
+
 def parse_bool_flag(raw: str | None) -> bool:
     if raw is None or raw is True:
         return True
@@ -8000,18 +8006,38 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             schema_version = row.get("schema_version")
             row_version = row.get("row_version")
             try:
-                if int(schema_version) != SCHEMA_VERSION:
+                if require_jsonl_int(schema_version, "schema_version") != SCHEMA_VERSION:
                     raise ValueError
             except (TypeError, ValueError):
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "schema_mismatch")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    declared_payload_hash,
+                    "schema_mismatch",
+                    details={"expected": SCHEMA_VERSION, "received": schema_version},
+                )
                 continue
             try:
-                if int(row_version) != SCHEMA_ROW_VERSION:
+                if require_jsonl_int(row_version, "row_version") != SCHEMA_ROW_VERSION:
                     raise ValueError
             except (TypeError, ValueError):
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "row_version_mismatch")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    declared_payload_hash,
+                    "row_version_mismatch",
+                    details={"expected": SCHEMA_ROW_VERSION, "received": row_version},
+                )
                 continue
             if not isinstance(payload, dict):
                 conflicts += 1
@@ -8134,7 +8160,12 @@ def record_import_conflict(
     existing_hash: str,
     incoming_hash: str,
     resolution: str,
+    *,
+    details: dict[str, Any] | None = None,
 ) -> None:
+    details_payload = {"resolution": resolution}
+    if details:
+        details_payload.update(details)
     conn.execute(
         """
         insert into lattice_import_conflicts(import_id, repo_id, row_type, logical_key, existing_hash, incoming_hash, resolution, details_json)
@@ -8148,7 +8179,7 @@ def record_import_conflict(
             existing_hash or None,
             incoming_hash or None,
             resolution,
-            json_dumps({"resolution": resolution}),
+            json_dumps(details_payload),
         ),
     )
 

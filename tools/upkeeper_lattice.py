@@ -394,6 +394,7 @@ REQUIRED_TABLES = [
 REQUIRED_INDEXES = {
     "idx_artifact_refs_unique_identity_digest": "artifact_refs",
     "idx_artifact_refs_unique_identity_missing_digest": "artifact_refs",
+    "idx_artifact_refs_unique_identity_coalesced": "artifact_refs",
     "idx_cycles_repo_cycle": "cycles",
     "idx_cycles_repo_selected_path": "cycles",
     "idx_files_repo_current_path": "files",
@@ -1165,6 +1166,7 @@ CREATE_TABLE_SQL = [
 CREATE_INDEX_SQL = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, artifact_kind, path) WHERE sha256 IS NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_coalesced ON artifact_refs(repo_id, artifact_kind, path, coalesce(sha256, ''))",
     "CREATE INDEX IF NOT EXISTS idx_cycles_repo_cycle ON cycles(repo_id, cycle_id)",
     "CREATE INDEX IF NOT EXISTS idx_cycles_repo_selected_path ON cycles(repo_id, selected_path)",
     "CREATE INDEX IF NOT EXISTS idx_files_repo_current_path ON files(repo_id, current_path)",
@@ -5932,6 +5934,7 @@ def create_artifact_ref(
             if expected_digest is not None:
                 fail(f"artifact unreadable for {artifact_kind}: {p} ({exc})", EXIT_INTEGRITY)
             return
+    stored_digest = digest_hmac or ""
     observed_epoch = epoch_now()
     if dedupe_identity:
         existing = conn.execute(
@@ -5940,7 +5943,7 @@ def create_artifact_ref(
             from artifact_refs
             where repo_id = ? and artifact_kind = ? and path = ? and coalesce(sha256, '') = coalesce(?, '')
             """,
-            (repo_id, artifact_kind, stored_path, digest_hmac),
+            (repo_id, artifact_kind, stored_path, stored_digest),
         ).fetchone()
         if existing is not None:
             conn.execute(
@@ -5985,7 +5988,7 @@ def create_artifact_ref(
                 stored_path,
                 1 if exists else 0,
                 size,
-                digest_hmac,
+                stored_digest,
                 observed_epoch,
                 1 if exists else 0,
                 json_dumps(stored_details),
@@ -6019,7 +6022,7 @@ def create_artifact_ref(
                 repo_id,
                 artifact_kind,
                 stored_path,
-                digest_hmac,
+                stored_digest,
             ),
         )
 

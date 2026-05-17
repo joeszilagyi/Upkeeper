@@ -1156,6 +1156,32 @@ if not os.path.isdir(staged_dir):
     raise SystemExit(2)
 if os.path.lexists(final_dir):
     raise SystemExit(3)
+
+for entry in os.listdir(staged_dir):
+    candidate = os.path.join(staged_dir, entry)
+    if os.path.isfile(candidate):
+        try:
+            fd = os.open(candidate, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            except OSError:
+                pass
+            finally:
+                os.close(fd)
+        except OSError:
+            continue
+
+try:
+    dir_fd = os.open(staged_dir, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+    finally:
+        os.close(dir_fd)
+except OSError:
+    pass
+
 os.replace(staged_dir, final_dir)
 parent_dir = os.path.dirname(final_dir) or "."
 try:

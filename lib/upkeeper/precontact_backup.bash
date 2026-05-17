@@ -679,6 +679,34 @@ with open(payload_path, "wb") as output:
 PY
 }
 
+precontact_backup_write_payload_and_sha() {
+  local metadata_file="$1"
+  local target_file="$2"
+  local payload_file="$3"
+
+  python3 - "$metadata_file" "$target_file" "$payload_file" <<'PY'
+import hashlib
+import sys
+
+metadata_path, target_path, payload_path = sys.argv[1:4]
+digest = hashlib.sha256()
+
+with open(metadata_path, "rb") as handle:
+    metadata = handle.read()
+
+with open(payload_path, "wb") as output:
+    output.write(b"UPKEEPER_PRECONTACT_BACKUP_V1\n")
+    output.write(str(len(metadata)).encode("ascii") + b"\n")
+    output.write(metadata)
+    with open(target_path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+            output.write(chunk)
+
+print(digest.hexdigest())
+PY
+}
+
 precontact_backup_extract_payload() {
   local payload_file="$1"
   local restored_file="$2"
@@ -769,7 +797,7 @@ precontact_backup_create_age() {
   local backup_id="$3"
   local metadata_file="$4"
   local sidecar_file="$5"
-  local tmp_age tmp_json final_age final_json payload_file
+  local tmp_age tmp_json final_age final_json payload_file payload_sha expected_fingerprint actual_fingerprint
 
   if ! mkdir -p -- "$path_dir"; then
     precontact_backup_set_reason "mkdir_failed"
@@ -787,9 +815,28 @@ precontact_backup_create_age() {
   final_json="$path_dir/${backup_id}.json"
   rm -f -- "$tmp_age" "$tmp_json"
 
-  if ! precontact_backup_write_payload "$metadata_file" "$target_abs" "$payload_file"; then
+  if ! expected_fingerprint="$(precontact_backup_content_fingerprint_field "$metadata_file")"; then
+    rm -f -- "$payload_file"
+    precontact_backup_set_reason "metadata_read_failed"
+    return 1
+  fi
+  if ! payload_sha="$(precontact_backup_write_payload_and_sha "$metadata_file" "$target_abs" "$payload_file")"; then
     rm -f -- "$payload_file" "$tmp_age" "$tmp_json"
     precontact_backup_set_reason "payload_write_failed"
+    return 1
+  fi
+  case "$expected_fingerprint" in
+    content-hmac-sha256:*)
+      actual_fingerprint="$(precontact_backup_content_hmac "$payload_sha")"
+      ;;
+    *)
+      actual_fingerprint="$payload_sha"
+      ;;
+  esac
+  if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+    rm -f -- "$payload_file"
+    rm -f -- "$tmp_age" "$tmp_json"
+    precontact_backup_set_reason "payload_hash_mismatch"
     return 1
   fi
   if ! age --encrypt --recipient "$UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT" --output "$tmp_age" <"$payload_file"; then

@@ -125,11 +125,12 @@ Important:
     feedback stays a no-op, and live/feed-log lines use a local
     `YYYY-MM-DDTHH:MM:SS` timestamp in column 1 plus an operator-attention
     marker in column 2 for loose terminal watching. `PAGE` is the pageable
-    human/system attention class and is highlighted in red on TTY output only;
-    loop logs remain plain text for scripts and assistive tooling. Set
-    `BACKLOG_ALERT_COLOR=never` to disable `PAGE` color,
-    `BACKLOG_ALERT_COLOR=always` to force it, or `BACKLOG_ALERT_BLINK=0` to keep
-    red without blink.
+    human/system attention class and is highlighted in red on TTY output only.
+    Advisory health output uses a non-blinking bold orange `--FYI--` marker so
+    it stays visible without looking like an emergency. Loop logs remain plain
+    text for scripts and assistive tooling. Set `BACKLOG_ALERT_COLOR=never` to
+    disable terminal marker color, `BACKLOG_ALERT_COLOR=always` to force it, or
+    `BACKLOG_ALERT_BLINK=0` to keep `PAGE` red without blink.
   - Backlog batches default to `gpt-5.3-codex-spark` with `xhigh` reasoning and
     a zero weekly stop floor for reset-window burn-down runs. Backlog burn mode
     also bypasses stale local quota snapshots and active quota-cooldown markers

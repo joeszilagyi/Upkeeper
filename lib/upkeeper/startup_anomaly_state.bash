@@ -41,13 +41,13 @@ startup_anomaly_state_signature() {
     return 1
   fi
 
-  printf '%s' "$text" | python3 - "$key" <<'PY' 2>/dev/null || printf '%s\n' unknown
+  python3 - "$key" "$text" <<'PY' 2>/dev/null || printf '%s\n' unknown
 import hashlib
 import hmac
 import sys
 
 key = sys.argv[1].encode("utf-8", "surrogateescape")
-text = sys.stdin.buffer.read().decode("utf-8", "surrogateescape")
+text = sys.argv[2] if len(sys.argv) > 2 else ""
 material = f"startup_anomaly_state\0{text}".encode("utf-8", "surrogateescape")
 print(hmac.new(key, material, hashlib.sha256).hexdigest())
 PY
@@ -126,26 +126,26 @@ write_startup_anomaly_gate_state() {
   hmac_key="$(startup_anomaly_redaction_key_material)"
 
   state_payload="$(
+    printf 'active_reasons=%s\n' "${STARTUP_ANOMALY_REASONS:-unknown}"
+    printf 'created_epoch=%s\n' "$now_epoch"
     printf 'cycle_id=%s\n' "$CYCLE_ID"
+    printf 'detail=%s\n' "${detail:-none}"
+    printf 'reason=%s\n' "${detail:-none}"
+    printf 'root_dir=%s\n' "$ROOT_DIR"
     printf 'run_hash=%s\n' "$CYCLE_RUN_HASH"
     printf 'self_path=%s\n' "$SELF_PATH"
-    printf 'root_dir=%s\n' "$ROOT_DIR"
-    printf 'status=%s\n' "$status"
-    printf 'reason=%s\n' "${detail:-none}"
-    printf 'active_reasons=%s\n' "${STARTUP_ANOMALY_REASONS:-unknown}"
-    printf 'detail=%s\n' "${detail:-none}"
-    printf 'created_epoch=%s\n' "$now_epoch"
-    printf 'updated_epoch=%s\n' "$now_epoch"
     printf 'state_path=%s\n' "$state_path"
+    printf 'status=%s\n' "$status"
+    printf 'updated_epoch=%s\n' "$now_epoch"
   )"
-  state_signature="$(startup_anomaly_state_signature "$state_payload" "$hmac_key")"
+  state_signature="$(startup_anomaly_state_signature "${state_payload}"$'\n' "$hmac_key")"
   if [[ "$state_signature" == "unknown" ]]; then
     log_line "ERROR" "startup_anomaly.gate_state_unwritable path=$(shell_quote "$state_path") reason=signature_failed"
     return 1
   fi
 
   if ! {
-    printf '%s' "$state_payload"
+    printf '%s\n' "$state_payload"
     printf 'state_signature=%s\n' "$state_signature"
   } >"$tmp_path"; then
     rm -f "$tmp_path"

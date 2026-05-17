@@ -52,8 +52,23 @@ payload
 
   append_issue_fix_prompt "$compiled"
 
-  grep -Fq '```text' "$compiled" || fail "issue prompt did not include expected issue-body wrapper"
-  ! grep -Fq '```SENSITIVE_SECRET' "$compiled" || fail "issue body fence delimiter escaped text remained unprotected"
+  grep -Fq 'Issue body excerpt as a JSON string literal:' "$compiled" || fail "issue prompt did not describe JSON issue-body wrapper"
+  grep -Fq 'issue_body_excerpt_json=' "$compiled" || fail "issue prompt did not include JSON issue-body wrapper"
+  python3 - "$compiled" "$attack_body" <<'PY' || fail "issue prompt JSON wrapper did not preserve the issue body safely"
+import json
+import sys
+
+compiled_path, expected = sys.argv[1:3]
+for line in open(compiled_path, encoding="utf-8"):
+    if line.startswith("issue_body_excerpt_json="):
+        got = json.loads(line.split("=", 1)[1])
+        if got != expected:
+            raise SystemExit(1)
+        break
+else:
+    raise SystemExit(1)
+PY
+  ! grep -Fxq '```SENSITIVE_SECRET' "$compiled" || fail "issue body fence delimiter was emitted as a standalone prompt fence"
   unset UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL
 }
 

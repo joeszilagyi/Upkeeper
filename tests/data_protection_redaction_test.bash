@@ -56,23 +56,17 @@ test_startup_state_prompt_summary_is_redacted() {
   local output
 
   mkdir -p "$state_dir"
-  cat >"$state_dir/raw state.state" <<'STATE'
-cycle_id=cycle with spaces
-run_hash=raw run hash
-self_path=/private/customer/project/Upkeeper
-root_dir=/private/customer/project
-status=unresolved
-reason=manual reason with spaces
-detail=customer incident alpha
-created_epoch=bad epoch
-updated_epoch=456
-STATE
 
   output="$(
     cd "$PROJECT_ROOT"
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$state_dir" \
       UPKEEPER_REDACTION_KEY="startup-state-redaction-test" \
-      bash -c 'source lib/upkeeper/startup_anomaly_state.bash; startup_anomaly_state_lines'
+      CYCLE_ID="cycle with spaces" \
+      CYCLE_RUN_HASH="raw run hash" \
+      SELF_PATH="/private/customer/project/Upkeeper" \
+      ROOT_DIR="/private/customer/project" \
+      STARTUP_ANOMALY_REASONS="manual reason with spaces" \
+      bash -c 'source lib/upkeeper/startup_anomaly_state.bash; log_line(){ :; }; shell_quote(){ printf %q "$1"; }; write_startup_anomaly_gate_state unresolved "manual reason with spaces" >/dev/null; startup_anomaly_state_lines'
   )"
 
   grep -Fq "state_id=state-hmac-sha256:" <<<"$output" || fail "state summary omitted state HMAC"

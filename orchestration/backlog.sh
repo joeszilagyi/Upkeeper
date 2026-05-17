@@ -55,7 +55,7 @@ backlog_line_starts_with_timestamp() {
 
 backlog_attention_marker_known() {
   case "${1:-}" in
-    PAGE|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO)
+    PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO)
       return 0
       ;;
     *)
@@ -97,7 +97,7 @@ backlog_attention_marker_for_line() {
       return 0
       ;;
     *"previous_run.anomaly"*|*"startup_anomaly.gate"*|*"machine health"*|*"active_lock."*)
-      printf 'HEALTH\n'
+      printf '%s\n' '--FYI--'
       return 0
       ;;
     *"backlog: running Upkeeper"*|*"selected file "*|*"starting Codex review"*|*"opening new backlog PR"*|*"running normal newest-file Upkeeper pass"*)
@@ -138,9 +138,9 @@ backlog_format_attention_line() {
 
   marker="$(backlog_attention_marker_for_line "$rest")"
   if [[ -n "$rest" ]]; then
-    printf '%s %-6s %s\n' "$ts" "$marker" "$rest"
+    printf '%s %-7s %s\n' "$ts" "$marker" "$rest"
   else
-    printf '%s %-6s\n' "$ts" "$marker"
+    printf '%s %-7s\n' "$ts" "$marker"
   fi
 }
 
@@ -175,17 +175,23 @@ backlog_color_attention_line() {
   ts="${line%% *}"
   rest="${line#* }"
   marker="${rest%% *}"
-  [[ "$marker" == "PAGE" ]] || {
-    printf '%s\n' "$line"
-    return 0
-  }
-
   suffix="${rest#"$marker"}"
-  if [[ "$BACKLOG_ALERT_BLINK" == "1" ]]; then
-    color=$'\033[5;1;31m'
-  else
-    color=$'\033[1;31m'
-  fi
+  case "$marker" in
+    PAGE)
+      if [[ "$BACKLOG_ALERT_BLINK" == "1" ]]; then
+        color=$'\033[5;1;31m'
+      else
+        color=$'\033[1;31m'
+      fi
+      ;;
+    --FYI--)
+      color=$'\033[1;38;5;208m'
+      ;;
+    *)
+      printf '%s\n' "$line"
+      return 0
+      ;;
+  esac
   reset=$'\033[0m'
   printf '%s %s%s%s%s\n' "$ts" "$color" "$marker" "$reset" "$suffix"
 }
@@ -388,7 +394,7 @@ backlog_recent_log_summary() {
     {
       candidate=$0
       sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] /, "", candidate)
-      sub(/^[A-Z][A-Z]+[[:space:]]+/, "", candidate)
+      sub(/^([A-Z][A-Z]+|--FYI--)[[:space:]]+/, "", candidate)
       if (candidate ~ /^backlog: running Upkeeper for issue #[0-9]+/) {
         line=candidate
       }

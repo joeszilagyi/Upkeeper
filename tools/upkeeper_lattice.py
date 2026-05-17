@@ -2238,34 +2238,28 @@ def read_fd_sample(file_fd: int, sample_size: int) -> bytes:
 
 
 def read_sample_no_follow(root: Path, parts: list[str], sample_size: int = TEXT_SAMPLE_SIZE) -> bytes | None:
-    open_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    dir_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
-    nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
-    dir_fd = -1
-    file_fd = -1
+    if sample_size <= 0:
+        return b""
+    if not parts:
+        return b""
     try:
-        dir_fd = os.open(str(root.resolve()), dir_flags)
-        for part in parts[:-1]:
-            next_fd = os.open(part, dir_flags | nofollow_flag, dir_fd=dir_fd)
-            os.close(dir_fd)
-            dir_fd = next_fd
-        file_fd = os.open(parts[-1], open_flags | nofollow_flag, dir_fd=dir_fd)
-        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+        current = root.resolve()
+        current_mode = None
+        for index, part in enumerate(parts):
+            current = current / part
+            st = current.lstat()
+            if stat.S_ISLNK(st.st_mode):
+                return None
+            current_mode = st.st_mode
+            if index < len(parts) - 1 and not stat.S_ISDIR(st.st_mode):
+                return None
+        if not stat.S_ISREG(current_mode or 0):
             return None
-        # Read only the requested sample so candidate scans never load the full file just
-        # to decide whether a path looks like text.
-        return read_fd_sample(file_fd, sample_size)
-    except OSError as exc:
-        if exc.errno == errno.ELOOP:
-            return None
+        # Read only the requested sample so candidate scans never load the full file.
+        with current.open("rb") as handle:
+            return read_fd_sample(handle.fileno(), sample_size)
+    except OSError:
         return None
-    finally:
-        for fd in (file_fd, dir_fd):
-            if fd >= 0:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
 
 
 def source_safe_file_stat(root: Path, rel_path: str, *, require_text: bool = False) -> tuple[os.stat_result | None, str]:

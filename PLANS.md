@@ -3,6 +3,41 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Worktree Snapshot Privacy And Status Marker Recovery
+
+Status: completed
+
+Goal:
+- fix issue `#303` by making Lattice worktree snapshots count dirty paths by
+  default without persisting raw dirty/untracked path inventory
+- recover final `UPKEEPER_STATUS` markers when the only defect is harmless
+  inline markdown backticks, avoiding repeated `MISSING_STATUS_MARKER` loop
+  stops after completed model work
+
+Constraints:
+- keep raw path inventory opt-in and store HMACs/classes rather than raw paths
+- do not link opt-in worktree snapshot rows to raw `files`/`file_paths` entries
+- keep ambiguous, code-fenced, punctuated, quoted, and multiple-marker final
+  lines rejected
+- use focused tests plus quick validation for fast loop restart readiness
+
+Files likely touched:
+- `lib/upkeeper/status_session.bash`
+- `lib/upkeeper/worktree_state.bash`
+- `tools/upkeeper_lattice.py`
+- `tests/bug_fix_batch_280_281_265_test.bash`
+- `tests/lattice_test.bash`
+- `docs/lattice.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash tests/bug_fix_batch_280_281_265_test.bash`
+- `bash tests/wrapper_contract_test.bash`
+- `bash tests/lattice_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Lattice Git Status XY Preservation
 
 Status: completed

@@ -68,6 +68,21 @@ EOF
   [[ -n "$reason" ]] || fail "expected malformed marker rejection reason"
 }
 
+test_status_marker_recovers_inline_backtick_final_marker() {
+  local messages="$TEST_TMP_ROOT/inline-backtick-final.txt"
+  local analysis resolved source
+  write_message_file "$messages" <<'EOF'
+Review complete.
+`UPKEEPER_STATUS: WORK_DONE`
+EOF
+
+  analysis="$(while_marker_analysis_json "$messages")"
+  source="$(json_field "$analysis" '.candidate_rejection_reason')"
+  resolved="$(resolved_status_marker_from_analysis "$analysis" 0 present)"
+  [[ "$source" == "markdown_backticks" ]] || fail "expected markdown_backticks candidate reason, got $source"
+  [[ "$resolved" == "WORK_DONE" ]] || fail "expected inline backtick marker to resolve to WORK_DONE, got $resolved"
+}
+
 test_status_alias_no_changes_resolves_to_work_done() {
   local messages="$TEST_TMP_ROOT/no-changes.txt"
   write_message_file "$messages" <<'EOF'
@@ -116,6 +131,7 @@ EOF
 test_status_marker_final_line_is_authoritative
 test_status_marker_ignores_non_final_markers_and_code_fence
 test_status_marker_rejects_malformed_final_marker_and_keeps_reason
+test_status_marker_recovers_inline_backtick_final_marker
 test_status_alias_no_changes_resolves_to_work_done
 test_status_marker_rejects_multiple_markers_in_final_line
 test_postmortem_status_parser_enforces_final_exact_contract

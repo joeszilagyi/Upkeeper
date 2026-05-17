@@ -941,46 +941,81 @@ for path, git_status in expected.items():
         raise AssertionError(f"{path} git_status should be {git_status!r}, got {got!r}: {rows[path]}")
 PY
 
-  lattice record-worktree-snapshot --snapshot-kind xy >"$TEST_TMP_ROOT/git-status-xy-snapshot.json"
-  python3 - "$DB" <<'PY' || fail "worktree snapshot did not preserve raw Git XY evidence"
+  lattice record-worktree-snapshot --snapshot-kind xy >"$TEST_TMP_ROOT/git-status-xy-default-snapshot.json"
+  python3 - "$DB" <<'PY' || fail "default worktree snapshot persisted path inventory"
 import sqlite3
 import sys
 
 conn = sqlite3.connect(sys.argv[1])
+snapshot_id = conn.execute(
+    "select worktree_snapshot_id from worktree_snapshots where snapshot_kind='xy' order by worktree_snapshot_id desc limit 1"
+).fetchone()[0]
+path_count = conn.execute(
+    "select count(*) from worktree_snapshot_paths where worktree_snapshot_id=?",
+    (snapshot_id,),
+).fetchone()[0]
+dirty_count = conn.execute(
+    "select dirty_path_count from worktree_snapshots where worktree_snapshot_id=?",
+    (snapshot_id,),
+).fetchone()[0]
+if path_count != 0:
+    raise AssertionError(f"default snapshot should store counts only, found {path_count} path rows")
+if dirty_count <= 0:
+    raise AssertionError(f"default snapshot should keep dirty path count, got {dirty_count}")
+PY
+
+  lattice record-worktree-snapshot --snapshot-kind xy-opt-in --worktree-untracked-files all >"$TEST_TMP_ROOT/git-status-xy-snapshot.json"
+  python3 - "$DB" <<'PY' || fail "worktree snapshot did not preserve private Git XY evidence"
+import sqlite3
+import sys
+
+raw_paths = {"unstaged.sh", "staged.sh", "both.sh", "deleted.sh", "rename-new.sh", "rename-old.sh"}
+conn = sqlite3.connect(sys.argv[1])
 conn.row_factory = sqlite3.Row
-rows = {
-    row["path"]: row
-    for row in conn.execute(
-        """
-        select p.path, p.status, p.old_path
-          from worktree_snapshot_paths p
-          join worktree_snapshots s on s.worktree_snapshot_id = p.worktree_snapshot_id
-         where s.snapshot_kind = 'xy'
-        """
+rows = list(
+    conn.execute(
+      """
+      select p.path, p.path_hmac, p.path_class, p.status, p.old_path, p.old_path_hmac, p.old_path_class, p.file_id
+        from worktree_snapshot_paths p
+        join worktree_snapshots s on s.worktree_snapshot_id = p.worktree_snapshot_id
+       where s.snapshot_kind = 'xy-opt-in'
+      """
     )
-}
+)
+if not rows:
+    raise AssertionError("opt-in snapshot did not store path rows")
+for row in rows:
+    if row["path"] in raw_paths or row["old_path"] in raw_paths:
+        raise AssertionError(f"snapshot persisted raw path: {dict(row)}")
+    if not str(row["path"]).startswith("path-hmac-sha256:"):
+        raise AssertionError(f"snapshot path should be HMAC, got {row['path']!r}")
+    if row["path_hmac"] != row["path"]:
+        raise AssertionError(f"path_hmac should mirror stored path HMAC: {dict(row)}")
+    if row["old_path"] and not str(row["old_path"]).startswith("path-hmac-sha256:"):
+        raise AssertionError(f"snapshot old_path should be HMAC, got {row['old_path']!r}")
+    if row["file_id"] is not None:
+        raise AssertionError(f"snapshot path rows should not link raw file ids: {dict(row)}")
 
-expected_status = {
-    "unstaged.sh": " M",
-    "staged.sh": "M ",
-    "both.sh": "MM",
-    "deleted.sh": " D",
-}
-missing = sorted(path for path in expected_status if path not in rows)
-if missing:
-    raise AssertionError(f"missing snapshot paths: {missing}; saw {sorted(rows)}")
-for path, status in expected_status.items():
-    got = rows[path]["status"]
-    if got != status:
-        raise AssertionError(f"{path} snapshot status should be {status!r}, got {got!r}")
-
-rename = rows.get("rename-new.sh")
-if rename is None:
-    raise AssertionError(f"missing rename-new.sh snapshot row; saw {sorted(rows)}")
-if not str(rename["status"]).startswith("R"):
-    raise AssertionError(f"rename status should start with R, got {rename['status']!r}")
-if rename["old_path"] != "rename-old.sh":
-    raise AssertionError(f"rename old_path should be rename-old.sh, got {rename['old_path']!r}")
+statuses = {row["status"] for row in rows}
+for status in {" M", "M ", "MM", " D"}:
+    if status not in statuses:
+        raise AssertionError(f"missing snapshot status {status!r}; saw {sorted(statuses)}")
+rename_rows = [row for row in rows if str(row["status"]).startswith("R")]
+if not rename_rows:
+    raise AssertionError(f"missing rename snapshot row; saw statuses {sorted(statuses)}")
+rename = rename_rows[0]
+if not rename["old_path"] or not str(rename["old_path"]).startswith("path-hmac-sha256:"):
+    raise AssertionError(f"rename old_path should be HMAC, got {rename['old_path']!r}")
+if rename["path_class"] != "renamed_new" or rename["old_path_class"] != "renamed_old":
+    raise AssertionError(f"rename classes wrong: {dict(rename)}")
+for table, column in (("files", "canonical_path"), ("files", "current_path"), ("file_paths", "path")):
+    placeholders = ",".join("?" for _ in raw_paths)
+    count = conn.execute(
+        f"select count(*) from {table} where {column} in ({placeholders})",
+        tuple(raw_paths),
+    ).fetchone()[0]
+    if count:
+        raise AssertionError(f"{table}.{column} leaked raw snapshot path count={count}")
 PY
 }
 

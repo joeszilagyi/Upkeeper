@@ -170,6 +170,11 @@ Rollup tables are also present for pass, fragility, Git churn, selection, and
 failure summaries. They are derived summaries; core repo/file/cycle/pass/git
 facts are not deleted by default pruning.
 
+Worktree snapshots store dirty-path counts by default. Path-level snapshot
+inventory is opt-in and stores path HMACs plus coarse path classes instead of
+raw dirty or untracked filenames; those opt-in rows are not linked into the raw
+`files` or `file_paths` inventory.
+
 ## Pass Counts
 
 “Net times through P*” means `completed_count`.

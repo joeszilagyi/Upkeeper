@@ -80,7 +80,7 @@ resolved_status_marker_from_analysis() {
   local analysis="$1"
   local codex_exit="$2"
   local task_complete_last_agent_message="$3"
-  local accepted
+  local accepted candidate candidate_rejection_reason
 
   accepted="$(json_field "$analysis" '.accepted_marker')"
   if [[ "$accepted" == "NO_CHANGES" ]]; then
@@ -88,6 +88,15 @@ resolved_status_marker_from_analysis() {
   fi
   if [[ -n "$accepted" ]]; then
     printf '%s' "$accepted"
+    return 0
+  fi
+  candidate="$(json_field "$analysis" '.candidate_marker')"
+  candidate_rejection_reason="$(json_field "$analysis" '.candidate_rejection_reason')"
+  if [[ "$candidate" == "NO_CHANGES" ]]; then
+    candidate="WORK_DONE"
+  fi
+  if [[ -n "$candidate" && "$candidate_rejection_reason" == "markdown_backticks" ]]; then
+    printf '%s' "$candidate"
     return 0
   fi
 }

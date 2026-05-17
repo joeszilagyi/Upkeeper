@@ -121,9 +121,40 @@ BRANCH_HMAC_PREFIX = "branch-hmac-sha256:"
 REMOTE_HMAC_PREFIX = "remote-hmac-sha256:"
 SSH_REMOTE_HMAC_PREFIX = "ssh-remote-hmac-sha256:"
 LOCAL_REMOTE_HMAC_PREFIX = "local-remote-hmac-sha256:"
+WORKTREE_SNAPSHOT_UNTRACKED_MODES = ("no", "normal", "all")
+WORKTREE_SNAPSHOT_UNTRACKED_FILES_ENV = "UPKEEPER_LATTICE_WORKTREE_UNTRACKED_FILES"
 TOOL_FAILURE_MARKER_ID_HEX_LENGTH = 24
 UPKEEPER_VERBOSE_METADATA_ENV = "UPKEEPER_VERBOSE_METADATA"
 UPKEEPER_RAW_REPO_IDENTITY_ENV = "UPKEEPER_LATTICE_RAW_REPO_IDENTITY"
+SENSITIVE_WORKTREE_PATH_SUFFIXES = {".pem", ".p12", ".pfx", ".key", ".der", ".cer", ".crt", ".asc", ".gpg", ".jks", ".keystore"}
+SENSITIVE_WORKTREE_PATH_PARTS = {
+    ".env",
+    ".env.local",
+    ".env.production",
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    ".kube",
+    "kubeconfig",
+}
+SENSITIVE_WORKTREE_PATH_FRAGMENTS = {
+    "secret",
+    "secrets",
+    "credential",
+    "credentials",
+    "password",
+    "private_key",
+    "token",
+}
+WORKTREE_PATH_CLASS_TRACKED = "tracked"
+WORKTREE_PATH_CLASS_UNTRACKED = "untracked"
+WORKTREE_PATH_CLASS_RENAMED_NEW = "renamed_new"
+WORKTREE_PATH_CLASS_RENAMED_OLD = "renamed_old"
+WORKTREE_PATH_CLASS_SENSITIVE = "sensitive"
 SOURCE_RECORD_PATH_HMAC_KINDS = {
     "lattice_export",
     "lattice_import",
@@ -648,8 +679,12 @@ CREATE_TABLE_SQL = [
       worktree_snapshot_id integer not null references worktree_snapshots(worktree_snapshot_id),
       file_id integer references files(file_id),
       path text not null,
+      path_hmac text,
+      path_class text,
       status text,
       old_path text,
+      old_path_hmac text,
+      old_path_class text,
       head_blob text,
       worktree_hash text,
       size_bytes integer,
@@ -1249,7 +1284,12 @@ IMPORTED_STORED_REL_PATH_COLUMNS: dict[str, dict[str, bool]] = {
     "git_file_changes": {"path": True, "old_path": False},
     "selection_candidates": {"path": True},
     "selection_runs": {"selected_path": False},
-    "worktree_snapshot_paths": {"path": True, "old_path": False},
+    "worktree_snapshot_paths": {
+        "path": True,
+        "old_path": False,
+        "path_hmac": False,
+        "old_path_hmac": False,
+    },
 }
 
 
@@ -1281,6 +1321,44 @@ def normalize_imported_stored_rel_path_payload(table: str, payload: dict[str, An
             raise ValueError(f"invalid_repo_relative_path:{column}")
         updated[column] = None
     return updated
+
+
+def worktree_snapshot_untracked_files_mode(raw: str | None = None) -> str:
+    requested = str(raw).strip().lower() if has_meaningful_value(raw) else ""
+    if not requested:
+        requested = str(os.environ.get(WORKTREE_SNAPSHOT_UNTRACKED_FILES_ENV, "")).strip().lower()
+    if requested not in WORKTREE_SNAPSHOT_UNTRACKED_MODES:
+        return "no"
+    return requested
+
+
+def worktree_snapshot_path_is_sensitive(path: str) -> bool:
+    normalized = normalize_rel_path(path)
+    if not normalized:
+        return False
+    normalized_lower = normalized.lower()
+    parts = normalized_lower.split("/")
+    for part in SENSITIVE_WORKTREE_PATH_PARTS:
+        if part in parts:
+            return True
+    for suffix in SENSITIVE_WORKTREE_PATH_SUFFIXES:
+        if normalized_lower.endswith(suffix):
+            return True
+    for fragment in SENSITIVE_WORKTREE_PATH_FRAGMENTS:
+        if fragment in normalized_lower:
+            return True
+    return False
+
+
+def worktree_snapshot_path_class(status_code: str, *, is_old: bool = False) -> str:
+    status_code = str(status_code or "")[:2]
+    if len(status_code) != 2:
+        return WORKTREE_PATH_CLASS_TRACKED
+    if status_code == "??":
+        return WORKTREE_PATH_CLASS_UNTRACKED
+    if "R" in status_code or "C" in status_code:
+        return WORKTREE_PATH_CLASS_RENAMED_OLD if is_old else WORKTREE_PATH_CLASS_RENAMED_NEW
+    return WORKTREE_PATH_CLASS_TRACKED
 
 
 def json_dumps(value: Any) -> str:
@@ -2668,6 +2746,24 @@ def ensure_worktree_snapshot_path_mtime_ns_column(conn: sqlite3.Connection) -> N
             pass
 
 
+def ensure_worktree_snapshot_path_identity_columns(conn: sqlite3.Connection) -> None:
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(worktree_snapshot_paths)").fetchall()}
+    except sqlite3.Error:
+        return
+    for column, sql in (
+        ("path_hmac", "alter table worktree_snapshot_paths add column path_hmac text"),
+        ("path_class", "alter table worktree_snapshot_paths add column path_class text"),
+        ("old_path_hmac", "alter table worktree_snapshot_paths add column old_path_hmac text"),
+        ("old_path_class", "alter table worktree_snapshot_paths add column old_path_class text"),
+    ):
+        if column not in columns:
+            try:
+                conn.execute(sql)
+            except sqlite3.Error:
+                pass
+
+
 def ensure_contributor_privacy_columns(conn: sqlite3.Connection) -> None:
     try:
         columns = {row["name"] for row in conn.execute("pragma table_info(contributors)").fetchall()}
@@ -2782,6 +2878,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
         deduped_git_change_groups = dedupe_git_file_changes(conn)
         ensure_file_snapshot_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_mtime_ns_column(conn)
+        ensure_worktree_snapshot_path_identity_columns(conn)
         ensure_contributor_privacy_columns(conn)
         ensure_git_commit_privacy_columns(conn)
         for sql in CREATE_INDEX_SQL:
@@ -2800,7 +2897,6 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
             "insert or replace into schema_meta(key, value) values (?, ?)",
             ("updated_epoch", str(now)),
         )
-        ensure_worktree_snapshot_path_mtime_ns_column(conn)
         conn.execute(
             """
             insert or ignore into schema_migrations(
@@ -2843,6 +2939,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     ensure_artifact_ref_identity_indexes(conn)
     ensure_file_snapshot_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_mtime_ns_column(conn)
+    ensure_worktree_snapshot_path_identity_columns(conn)
     scrub_legacy_git_privacy_data(conn)
 
 
@@ -4452,7 +4549,15 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
             dry_run=parse_bool_int(str(args.dry_run)) if args.dry_run is not None else None,
         )
         record_cycle_link_from_env(conn, repo_id, cycle_pk, args, source_id)
-        record_worktree_snapshot(conn, root, repo_id, cycle_pk, "before_codex", source_id=source_id)
+        record_worktree_snapshot(
+            conn,
+            root,
+            repo_id,
+            cycle_pk,
+            "before_codex",
+            source_id=source_id,
+            untracked_files_mode=worktree_snapshot_untracked_files_mode(getattr(args, "worktree_untracked_files", None)),
+        )
     print_json({"status": "ok", "cycle_pk": cycle_pk, "schema_version": SCHEMA_VERSION})
     return EXIT_SUCCESS
 
@@ -4465,6 +4570,7 @@ def record_worktree_snapshot(
     snapshot_kind: str,
     *,
     source_id: int | None = None,
+    untracked_files_mode: str = "no",
 ) -> int:
     observed = epoch_now()
     info = repo_git_info(root)
@@ -4472,8 +4578,13 @@ def record_worktree_snapshot(
     head_sha = info["head_sha"]
     branch = protected_branch_name(context, info["branch_name"])
     raw = b""
+    untracked_files_mode = worktree_snapshot_untracked_files_mode(untracked_files_mode)
+    include_path_inventory = untracked_files_mode in {"normal", "all"}
+    status_source = f"git status --porcelain=v1 -z --untracked-files={untracked_files_mode}"
     try:
-        raw = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        raw = subprocess.check_output(
+            ["git", "-C", str(root), "status", "--porcelain=v1", "-z", f"--untracked-files={untracked_files_mode}"]
+        )
     except (OSError, subprocess.CalledProcessError):
         raw = b""
     entries = parse_git_porcelain_v1_z_entries(raw)
@@ -4502,27 +4613,38 @@ def record_worktree_snapshot(
             tracked,
             untracked,
             source_id,
-            json_dumps({"source": "git status --porcelain=v1 -z --untracked-files=all"}),
+            json_dumps({"source": status_source}),
         ),
     )
     snapshot_id = int(cur.lastrowid)
     for status_code, path, old_path in entries:
-        file_id = ensure_file(conn, repo_id, path, state="active", source_id=source_id)
+        if not include_path_inventory:
+            continue
+        if not path or worktree_snapshot_path_is_sensitive(path) or (old_path and worktree_snapshot_path_is_sensitive(old_path)):
+            continue
+        file_id = None
         meta = live_file_metadata(root, path)
-        stored_path = stored_rel_path(path)
-        stored_old_path = stored_rel_path(old_path) if old_path else None
+        stored_path = pass_result_path_hmac(root, path)
+        stored_old_path = pass_result_path_hmac(root, old_path) if old_path else None
+        if not stored_path:
+            continue
         conn.execute(
             """
             insert into worktree_snapshot_paths(
-              worktree_snapshot_id, file_id, path, status, old_path, head_blob, worktree_hash, size_bytes, mtime_epoch, mtime_ns
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              worktree_snapshot_id, file_id, path, path_hmac, path_class, status, old_path, old_path_hmac, old_path_class, head_blob,
+              worktree_hash, size_bytes, mtime_epoch, mtime_ns
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot_id,
                 file_id,
                 stored_path,
+                stored_path,
+                worktree_snapshot_path_class(status_code),
                 status_code,
                 stored_old_path,
+                stored_old_path,
+                worktree_snapshot_path_class(status_code, is_old=True),
                 meta.get("head_blob"),
                 meta.get("worktree_hash"),
                 meta.get("size_bytes"),
@@ -4714,7 +4836,15 @@ def command_record_worktree_snapshot(args: argparse.Namespace) -> int:
         cycle_pk = None
         if args.cycle_id and args.run_hash:
             cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
-        snapshot_id = record_worktree_snapshot(conn, root, repo_id, cycle_pk, args.snapshot_kind, source_id=source_id)
+        snapshot_id = record_worktree_snapshot(
+            conn,
+            root,
+            repo_id,
+            cycle_pk,
+            args.snapshot_kind,
+            source_id=source_id,
+            untracked_files_mode=worktree_snapshot_untracked_files_mode(getattr(args, "worktree_untracked_files", None)),
+        )
     print_json({"status": "ok", "worktree_snapshot_id": snapshot_id})
     return EXIT_SUCCESS
 
@@ -8693,6 +8823,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--head-tree-sha", default=None)
     p.add_argument("--upstream-ref", default=None)
     p.add_argument("--dirty-path-count", default=None)
+    p.add_argument("--worktree-untracked-files", choices=WORKTREE_SNAPSHOT_UNTRACKED_MODES, default=None)
     p.add_argument("--dry-run", default=None)
     p.add_argument("--start-epoch", type=int)
     p.add_argument("--parent-cycle-id", default="")
@@ -8736,6 +8867,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("record-worktree-snapshot")
     add_cycle_args(p, required=False)
     p.add_argument("--snapshot-kind", required=True)
+    p.add_argument("--worktree-untracked-files", choices=WORKTREE_SNAPSHOT_UNTRACKED_MODES, default=None)
     p.set_defaults(func=command_record_worktree_snapshot)
 
     p = sub.add_parser("record-pass-result")

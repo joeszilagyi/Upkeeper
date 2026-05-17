@@ -14,6 +14,8 @@ Version numbering note:
 	5. Kept auxiliary postmortem hardening away from model-written report contents by passing only deterministic report metadata and sanitized heading structure into the opt-in hardening prompt.
 	6. Fixed Lattice JSONL import reconciliation so same-logical-key schema rows with different validated payloads are recorded as conflicts instead of unconditional duplicates.
 	7. Preserved Git porcelain XY status in Lattice live metadata and snapshot evidence, so unstaged-only worktree changes stay `_M` instead of being confused with staged `M_` states.
+	8. Changed Lattice worktree snapshots to counts-only by default and, when inventory is explicitly enabled, store path HMACs/classes without linking raw dirty or untracked paths into `files` or `file_paths`.
+	9. Recovered final `UPKEEPER_STATUS` markers wrapped only in inline markdown backticks while continuing to reject ambiguous, code-fenced, punctuated, quoted, or multi-marker final lines.
 
 2026-05-16: v1.2.25 changes:
 	1. Backlog loops now hibernate locally when quota preflight sees a stop-level quota state or active primary quota block marker, printing the blocked bucket, reset time, wake time, branch, and recent activity before sleeping without backend model work until the reset grace passes.

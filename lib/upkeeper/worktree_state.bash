@@ -24,6 +24,21 @@ PY
 )"
 }
 
+worktree_snapshot_untracked_files_mode() {
+  local raw
+
+  raw="${1:-${UPKEEPER_WORKTREE_UNTRACKED_FILES:-${UPKEEPER_LATTICE_WORKTREE_UNTRACKED_FILES:-no}}}"
+  raw="${raw,,}"
+  case "${raw,,}" in
+    all|normal|no)
+      printf '%s' "$raw"
+      ;;
+    *)
+      printf 'no'
+      ;;
+  esac
+}
+
 refresh_worktree_counts() {
   DIRTY_PATH_COUNT=0
   TRACKED_MODIFIED_PATH_COUNT=0
@@ -43,11 +58,14 @@ refresh_worktree_counts() {
 
 write_git_status_snapshot_json() {
   local output_file="$1"
+  local untracked_files_mode
   local hmac_key
+
+  untracked_files_mode="$(worktree_snapshot_untracked_files_mode)"
   ensure_run_tmp_dir
   hmac_key="$(worktree_redaction_key_material)"
   # Persist redacted path identities because the gate only needs stable joins, not raw filenames.
-  python3 - "$ROOT_DIR" "$output_file" "$RUN_TMP_DIR" "$hmac_key" <<'PY'
+  python3 - "$ROOT_DIR" "$output_file" "$RUN_TMP_DIR" "$hmac_key" "$untracked_files_mode" <<'PY'
 import hashlib
 import hmac
 import json
@@ -63,6 +81,9 @@ root = Path(sys.argv[1])
 output = Path(sys.argv[2])
 run_tmp_dir = Path(sys.argv[3]).resolve()
 hmac_key = sys.argv[4].encode("utf-8", "surrogateescape")
+untracked_mode = (sys.argv[5] if len(sys.argv) > 5 else "no").lower()
+if untracked_mode not in {"no", "normal", "all"}:
+    untracked_mode = "no"
 
 allowed_exact = {
     "Upkeeper",
@@ -176,6 +197,41 @@ def coarse_path_class(path):
         return "source"
     return "no_extension"
 
+def path_is_sensitive(path):
+    lower = path.lower()
+    if (
+        "secret" in lower
+        or "credential" in lower
+        or "token" in lower
+        or "passwd" in lower
+        or "password" in lower
+        or "private-key" in lower
+        or "id_rsa" in lower
+        or "id_ed25519" in lower
+        or ".pem" in lower
+        or ".key" in lower
+        or "client_secret" in lower
+        or "api_key" in lower
+        or "apikey" in lower
+        or "access-token" in lower
+        or "session-token" in lower
+        or "jwt" in lower
+        or "incident" in lower
+        or "customer" in lower
+        or "legal" in lower
+        or "jira" in lower
+        or "ticket" in lower
+        or "ticket#" in lower
+        or "slack-token" in lower
+        or "oauth" in lower
+        or "auth" in lower
+        or lower.startswith(".aws/")
+        or lower.startswith(".azure/")
+        or lower.startswith(".ssh/")
+    ):
+        return True
+    return False
+
 
 def allowed(path):
     return (
@@ -223,7 +279,7 @@ def atomic_write_json(path, payload):
         raise
 
 
-raw = git(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+raw = git(["status", "--porcelain=v1", "-z", f"--untracked-files={untracked_mode}"])
 output = validated_output_path(output)
 parts = raw.decode("utf-8", "surrogateescape").split("\0")
 items = {
@@ -245,12 +301,16 @@ while i < len(parts):
     rel_path = entry[3:]
     if not rel_path:
         continue
+    if status_code == "??" and untracked_mode == "no":
+        continue
+    if path_is_sensitive(rel_path):
+        continue
     items["__paths__"][path_hmac(rel_path)] = snapshot_record(rel_path, status_code)
     if status_code[0] in {"R", "C"} or status_code[1] in {"R", "C"}:
         if i < len(parts):
             old_path = parts[i]
             i += 1
-            if old_path:
+            if old_path and not path_is_sensitive(old_path):
                 items["__paths__"].setdefault(path_hmac(old_path), snapshot_record(old_path, "old"))
 
 atomic_write_json(output, items)
@@ -413,13 +473,12 @@ def emit_path_change(path_key, before_state, after_state):
         "content_changed": content_changed,
         "status_changed": status_changed,
     }
+    diagnostic["path_hmac"] = path_token
+    diagnostic["path_class"] = path_class
+    diagnostic["extension"] = extension
     raw_path = before_state.get("legacy_path") or after_state.get("legacy_path")
     if raw_path:
         diagnostic["path"] = raw_path
-    else:
-        diagnostic["path_hmac"] = path_token
-        diagnostic["path_class"] = path_class
-        diagnostic["extension"] = extension
     record_diagnostic("changed_path", diagnostic)
     print(
         f"changed_path path_hmac={path_token} "

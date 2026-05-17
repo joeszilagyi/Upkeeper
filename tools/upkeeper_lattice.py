@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlsplit
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -121,9 +122,40 @@ BRANCH_HMAC_PREFIX = "branch-hmac-sha256:"
 REMOTE_HMAC_PREFIX = "remote-hmac-sha256:"
 SSH_REMOTE_HMAC_PREFIX = "ssh-remote-hmac-sha256:"
 LOCAL_REMOTE_HMAC_PREFIX = "local-remote-hmac-sha256:"
+WORKTREE_SNAPSHOT_UNTRACKED_MODES = ("no", "normal", "all")
+WORKTREE_SNAPSHOT_UNTRACKED_FILES_ENV = "UPKEEPER_LATTICE_WORKTREE_UNTRACKED_FILES"
 TOOL_FAILURE_MARKER_ID_HEX_LENGTH = 24
 UPKEEPER_VERBOSE_METADATA_ENV = "UPKEEPER_VERBOSE_METADATA"
 UPKEEPER_RAW_REPO_IDENTITY_ENV = "UPKEEPER_LATTICE_RAW_REPO_IDENTITY"
+SENSITIVE_WORKTREE_PATH_SUFFIXES = {".pem", ".p12", ".pfx", ".key", ".der", ".cer", ".crt", ".asc", ".gpg", ".jks", ".keystore"}
+SENSITIVE_WORKTREE_PATH_PARTS = {
+    ".env",
+    ".env.local",
+    ".env.production",
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    ".kube",
+    "kubeconfig",
+}
+SENSITIVE_WORKTREE_PATH_FRAGMENTS = {
+    "secret",
+    "secrets",
+    "credential",
+    "credentials",
+    "password",
+    "private_key",
+    "token",
+}
+WORKTREE_PATH_CLASS_TRACKED = "tracked"
+WORKTREE_PATH_CLASS_UNTRACKED = "untracked"
+WORKTREE_PATH_CLASS_RENAMED_NEW = "renamed_new"
+WORKTREE_PATH_CLASS_RENAMED_OLD = "renamed_old"
+WORKTREE_PATH_CLASS_SENSITIVE = "sensitive"
 SOURCE_RECORD_PATH_HMAC_KINDS = {
     "lattice_export",
     "lattice_import",
@@ -132,6 +164,7 @@ SOURCE_RECORD_PATH_HMAC_KINDS = {
     "upkeeper_log",
 }
 TRANSIENT_ARTIFACT_KINDS = {"transcript", "compiled_prompt", "last_message"}
+OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS = {"compiled_prompt", "last_message"}
 ARTIFACT_RETENTION_CLASSES = {
     "transcript": "transient",
     "compiled_prompt": "transient",
@@ -165,6 +198,18 @@ def normalize_hex_sha256(raw: Any) -> str | None:
     return text
 
 
+def is_upkeeper_temp_artifact_path(path: Path) -> bool:
+    candidate = path.resolve(strict=False)
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    if not path_under(candidate, temp_root):
+        return False
+    try:
+        relative = candidate.relative_to(temp_root)
+    except ValueError:
+        return False
+    return bool(relative.parts) and relative.parts[0].startswith("upkeeper-")
+
+
 def canonical_artifact_path(root: Path, path: str, artifact_kind: str) -> Path:
     candidate = Path(path).expanduser()
     path_abs = candidate.absolute() if candidate.is_absolute() else (Path.cwd() / candidate).absolute()
@@ -173,6 +218,11 @@ def canonical_artifact_path(root: Path, path: str, artifact_kind: str) -> Path:
     runtime_root = (root / "runtime").resolve()
     scope_root = root.resolve() if scope == "repo" else runtime_root
     if not path_under(normalized, scope_root):
+        if artifact_kind in OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS and is_upkeeper_temp_artifact_path(normalized):
+            temp_root = Path(tempfile.gettempdir()).resolve()
+            if has_forbidden_symlink(normalized, temp_root):
+                fail(f"artifact path contains forbidden symlink for {artifact_kind}: {normalized}", EXIT_USAGE)
+            return normalized
         fail(
             f"unsafe artifact path for {artifact_kind}: {normalized} is outside {scope_root}",
             EXIT_USAGE,
@@ -344,6 +394,7 @@ REQUIRED_TABLES = [
 REQUIRED_INDEXES = {
     "idx_artifact_refs_unique_identity_digest": "artifact_refs",
     "idx_artifact_refs_unique_identity_missing_digest": "artifact_refs",
+    "idx_artifact_refs_unique_identity_coalesced": "artifact_refs",
     "idx_cycles_repo_cycle": "cycles",
     "idx_cycles_repo_selected_path": "cycles",
     "idx_files_repo_current_path": "files",
@@ -630,8 +681,12 @@ CREATE_TABLE_SQL = [
       worktree_snapshot_id integer not null references worktree_snapshots(worktree_snapshot_id),
       file_id integer references files(file_id),
       path text not null,
+      path_hmac text,
+      path_class text,
       status text,
       old_path text,
+      old_path_hmac text,
+      old_path_class text,
       head_blob text,
       worktree_hash text,
       size_bytes integer,
@@ -1111,6 +1166,7 @@ CREATE_TABLE_SQL = [
 CREATE_INDEX_SQL = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, artifact_kind, path) WHERE sha256 IS NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_coalesced ON artifact_refs(repo_id, artifact_kind, path, coalesce(sha256, ''))",
     "CREATE INDEX IF NOT EXISTS idx_cycles_repo_cycle ON cycles(repo_id, cycle_id)",
     "CREATE INDEX IF NOT EXISTS idx_cycles_repo_selected_path ON cycles(repo_id, selected_path)",
     "CREATE INDEX IF NOT EXISTS idx_files_repo_current_path ON files(repo_id, current_path)",
@@ -1231,7 +1287,12 @@ IMPORTED_STORED_REL_PATH_COLUMNS: dict[str, dict[str, bool]] = {
     "git_file_changes": {"path": True, "old_path": False},
     "selection_candidates": {"path": True},
     "selection_runs": {"selected_path": False},
-    "worktree_snapshot_paths": {"path": True, "old_path": False},
+    "worktree_snapshot_paths": {
+        "path": True,
+        "old_path": False,
+        "path_hmac": False,
+        "old_path_hmac": False,
+    },
 }
 
 
@@ -1263,6 +1324,44 @@ def normalize_imported_stored_rel_path_payload(table: str, payload: dict[str, An
             raise ValueError(f"invalid_repo_relative_path:{column}")
         updated[column] = None
     return updated
+
+
+def worktree_snapshot_untracked_files_mode(raw: str | None = None) -> str:
+    requested = str(raw).strip().lower() if has_meaningful_value(raw) else ""
+    if not requested:
+        requested = str(os.environ.get(WORKTREE_SNAPSHOT_UNTRACKED_FILES_ENV, "")).strip().lower()
+    if requested not in WORKTREE_SNAPSHOT_UNTRACKED_MODES:
+        return "no"
+    return requested
+
+
+def worktree_snapshot_path_is_sensitive(path: str) -> bool:
+    normalized = normalize_rel_path(path)
+    if not normalized:
+        return False
+    normalized_lower = normalized.lower()
+    parts = normalized_lower.split("/")
+    for part in SENSITIVE_WORKTREE_PATH_PARTS:
+        if part in parts:
+            return True
+    for suffix in SENSITIVE_WORKTREE_PATH_SUFFIXES:
+        if normalized_lower.endswith(suffix):
+            return True
+    for fragment in SENSITIVE_WORKTREE_PATH_FRAGMENTS:
+        if fragment in normalized_lower:
+            return True
+    return False
+
+
+def worktree_snapshot_path_class(status_code: str, *, is_old: bool = False) -> str:
+    status_code = str(status_code or "")[:2]
+    if len(status_code) != 2:
+        return WORKTREE_PATH_CLASS_TRACKED
+    if status_code == "??":
+        return WORKTREE_PATH_CLASS_UNTRACKED
+    if "R" in status_code or "C" in status_code:
+        return WORKTREE_PATH_CLASS_RENAMED_OLD if is_old else WORKTREE_PATH_CLASS_RENAMED_NEW
+    return WORKTREE_PATH_CLASS_TRACKED
 
 
 def json_dumps(value: Any) -> str:
@@ -2650,6 +2749,24 @@ def ensure_worktree_snapshot_path_mtime_ns_column(conn: sqlite3.Connection) -> N
             pass
 
 
+def ensure_worktree_snapshot_path_identity_columns(conn: sqlite3.Connection) -> None:
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(worktree_snapshot_paths)").fetchall()}
+    except sqlite3.Error:
+        return
+    for column, sql in (
+        ("path_hmac", "alter table worktree_snapshot_paths add column path_hmac text"),
+        ("path_class", "alter table worktree_snapshot_paths add column path_class text"),
+        ("old_path_hmac", "alter table worktree_snapshot_paths add column old_path_hmac text"),
+        ("old_path_class", "alter table worktree_snapshot_paths add column old_path_class text"),
+    ):
+        if column not in columns:
+            try:
+                conn.execute(sql)
+            except sqlite3.Error:
+                pass
+
+
 def ensure_contributor_privacy_columns(conn: sqlite3.Connection) -> None:
     try:
         columns = {row["name"] for row in conn.execute("pragma table_info(contributors)").fetchall()}
@@ -2764,6 +2881,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
         deduped_git_change_groups = dedupe_git_file_changes(conn)
         ensure_file_snapshot_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_mtime_ns_column(conn)
+        ensure_worktree_snapshot_path_identity_columns(conn)
         ensure_contributor_privacy_columns(conn)
         ensure_git_commit_privacy_columns(conn)
         for sql in CREATE_INDEX_SQL:
@@ -2782,7 +2900,6 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
             "insert or replace into schema_meta(key, value) values (?, ?)",
             ("updated_epoch", str(now)),
         )
-        ensure_worktree_snapshot_path_mtime_ns_column(conn)
         conn.execute(
             """
             insert or ignore into schema_migrations(
@@ -2825,6 +2942,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     ensure_artifact_ref_identity_indexes(conn)
     ensure_file_snapshot_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_mtime_ns_column(conn)
+    ensure_worktree_snapshot_path_identity_columns(conn)
     scrub_legacy_git_privacy_data(conn)
 
 
@@ -3345,11 +3463,33 @@ def normalize_change_note_ref(path: str) -> str:
     return normalized
 
 
+HOST_LIKE_PATH_SEGMENT_PATTERN = re.compile(
+    r"^(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?$",
+    re.IGNORECASE,
+)
+
+
+def is_unsafe_change_note_ref(path: str) -> bool:
+    if not path:
+        return False
+    parsed = urlsplit(path)
+    if parsed.scheme:
+        return True
+    if path.startswith("//"):
+        return True
+    if "/" not in path:
+        return False
+    first_segment = path.split("/", 1)[0]
+    return bool(HOST_LIKE_PATH_SEGMENT_PATTERN.fullmatch(first_segment))
+
+
 def normalize_repo_file_identity_ref(root: Path, path: str) -> str:
     # Change-note imports may mention URLs and runtime artifacts in prose, but
     # only repo-local source paths should become durable file identities.
     normalized = normalize_change_note_ref(path)
     if not normalized:
+        return ""
+    if is_unsafe_change_note_ref(normalized):
         return ""
     if normalized == "Upkeeper.log" or normalized.startswith((".git/", "runtime/")):
         return ""
@@ -4294,6 +4434,11 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if not bool(report_only_cycle_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
+        transient_temp_scope_probe = probe_cycle_finish_transient_artifact_scope()
+        result["checks"]["cycle_finish_transient_artifact_scope"] = transient_temp_scope_probe
+        if not bool(transient_temp_scope_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
         if not all(bool(item.get("ok")) for item in change_note_ref_probe.values()):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
@@ -4429,7 +4574,15 @@ def command_record_cycle_start(args: argparse.Namespace) -> int:
             dry_run=parse_bool_int(str(args.dry_run)) if args.dry_run is not None else None,
         )
         record_cycle_link_from_env(conn, repo_id, cycle_pk, args, source_id)
-        record_worktree_snapshot(conn, root, repo_id, cycle_pk, "before_codex", source_id=source_id)
+        record_worktree_snapshot(
+            conn,
+            root,
+            repo_id,
+            cycle_pk,
+            "before_codex",
+            source_id=source_id,
+            untracked_files_mode=worktree_snapshot_untracked_files_mode(getattr(args, "worktree_untracked_files", None)),
+        )
     print_json({"status": "ok", "cycle_pk": cycle_pk, "schema_version": SCHEMA_VERSION})
     return EXIT_SUCCESS
 
@@ -4442,6 +4595,7 @@ def record_worktree_snapshot(
     snapshot_kind: str,
     *,
     source_id: int | None = None,
+    untracked_files_mode: str = "no",
 ) -> int:
     observed = epoch_now()
     info = repo_git_info(root)
@@ -4449,8 +4603,13 @@ def record_worktree_snapshot(
     head_sha = info["head_sha"]
     branch = protected_branch_name(context, info["branch_name"])
     raw = b""
+    untracked_files_mode = worktree_snapshot_untracked_files_mode(untracked_files_mode)
+    include_path_inventory = untracked_files_mode in {"normal", "all"}
+    status_source = f"git status --porcelain=v1 -z --untracked-files={untracked_files_mode}"
     try:
-        raw = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        raw = subprocess.check_output(
+            ["git", "-C", str(root), "status", "--porcelain=v1", "-z", f"--untracked-files={untracked_files_mode}"]
+        )
     except (OSError, subprocess.CalledProcessError):
         raw = b""
     entries = parse_git_porcelain_v1_z_entries(raw)
@@ -4479,27 +4638,38 @@ def record_worktree_snapshot(
             tracked,
             untracked,
             source_id,
-            json_dumps({"source": "git status --porcelain=v1 -z --untracked-files=all"}),
+            json_dumps({"source": status_source}),
         ),
     )
     snapshot_id = int(cur.lastrowid)
     for status_code, path, old_path in entries:
-        file_id = ensure_file(conn, repo_id, path, state="active", source_id=source_id)
+        if not include_path_inventory:
+            continue
+        if not path or worktree_snapshot_path_is_sensitive(path) or (old_path and worktree_snapshot_path_is_sensitive(old_path)):
+            continue
+        file_id = None
         meta = live_file_metadata(root, path)
-        stored_path = stored_rel_path(path)
-        stored_old_path = stored_rel_path(old_path) if old_path else None
+        stored_path = pass_result_path_hmac(root, path)
+        stored_old_path = pass_result_path_hmac(root, old_path) if old_path else None
+        if not stored_path:
+            continue
         conn.execute(
             """
             insert into worktree_snapshot_paths(
-              worktree_snapshot_id, file_id, path, status, old_path, head_blob, worktree_hash, size_bytes, mtime_epoch, mtime_ns
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              worktree_snapshot_id, file_id, path, path_hmac, path_class, status, old_path, old_path_hmac, old_path_class, head_blob,
+              worktree_hash, size_bytes, mtime_epoch, mtime_ns
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot_id,
                 file_id,
                 stored_path,
+                stored_path,
+                worktree_snapshot_path_class(status_code),
                 status_code,
                 stored_old_path,
+                stored_old_path,
+                worktree_snapshot_path_class(status_code, is_old=True),
                 meta.get("head_blob"),
                 meta.get("worktree_hash"),
                 meta.get("size_bytes"),
@@ -4691,7 +4861,15 @@ def command_record_worktree_snapshot(args: argparse.Namespace) -> int:
         cycle_pk = None
         if args.cycle_id and args.run_hash:
             cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
-        snapshot_id = record_worktree_snapshot(conn, root, repo_id, cycle_pk, args.snapshot_kind, source_id=source_id)
+        snapshot_id = record_worktree_snapshot(
+            conn,
+            root,
+            repo_id,
+            cycle_pk,
+            args.snapshot_kind,
+            source_id=source_id,
+            untracked_files_mode=worktree_snapshot_untracked_files_mode(getattr(args, "worktree_untracked_files", None)),
+        )
     print_json({"status": "ok", "worktree_snapshot_id": snapshot_id})
     return EXIT_SUCCESS
 
@@ -4892,7 +5070,12 @@ def parse_review_summary_file(path: Path, repo_root: Path | None = None) -> dict
         elif bt:
             candidate = normalize_review_summary_target(bt.group(1), repo_root)
         elif ":" in line:
-            candidate = normalize_review_summary_target(line.split(":", 1)[1], repo_root)
+            parsed_candidate_match = re.search(
+                r"(?ix)^\s*(?:selected\s+file|selected\s+target|target\s+file|review\s+target\s+file|review\s+target|target)\s*[:=]\s*(.+)$",
+                line,
+            )
+            if parsed_candidate_match:
+                candidate = normalize_review_summary_target(parsed_candidate_match.group(1), repo_root)
         if candidate:
             selected_file = candidate
         if selected_file:
@@ -4967,6 +5150,11 @@ def probe_review_summary_parsing() -> dict[str, Any]:
             "Selected file: pkg:tools/build.sh\nReview outcome: REVIEWED_AND_FIXED\n",
             "pkg:tools/build.sh",
             "REVIEWED_AND_FIXED",
+        ),
+        "markdown_colon_bearing_path": (
+            "Selected file: [pkg:tools/build.sh](pkg:tools/build.sh)\nReview outcome: REVIEWED_AND_REPORTED\n",
+            "pkg:tools/build.sh",
+            "REVIEWED_AND_REPORTED",
         ),
         "markdown_scheme_rejected": (
             "Selected file: [remote](https://example.invalid/file.sh)\nReview outcome: REVIEWED_CLEAN\n",
@@ -5112,6 +5300,124 @@ def probe_cycle_finish_target_mismatch() -> dict[str, Any]:
     }
 
 
+def probe_cycle_finish_transient_artifact_scope() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-cycle-finish-scope-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        selected_path = "tools/selected.py"
+        try:
+            subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        (root / "tools").mkdir(parents=True, exist_ok=True)
+        (root / "runtime").mkdir(parents=True, exist_ok=True)
+        (root / selected_path).write_text("print('selected')\n", encoding="utf-8")
+
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        transient_dir = Path(tempfile.mkdtemp(prefix="upkeeper-", dir=str(temp_root)))
+        compiled_prompt_path = transient_dir / "compiled-prompt.probe"
+        last_message_path = transient_dir / "last-message.probe"
+        review_path = last_message_path
+        compiled_prompt_path.write_text("probe compiled prompt artifact\n", encoding="utf-8")
+        last_message_path.write_text(
+            "Selected file: `tools/selected.py`\nREVIEWED_AND_REPORTED\n",
+            encoding="utf-8",
+        )
+
+        db_path = root / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True, create_parent=True, create_if_missing=True)
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+        finally:
+            conn.close()
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="wal",
+            allow_unsafe_db=True,
+            raw_storage_mode="minimal",
+            cycle_id="cycle-temp-scope",
+            run_hash="run-temp-scope",
+            status_marker="WORK_DONE",
+            review_outcome=None,
+            review_selected_path=None,
+            codex_exit=0,
+            wrapper_exit=0,
+            finish_reason="work_done",
+            finish_level="info",
+            codex_exec_started=1,
+            dry_run="1",
+            selected_path=selected_path,
+            last_message_file=str(review_path),
+            transcript_path=None,
+            compiled_prompt_path=str(compiled_prompt_path),
+            log_path=None,
+            snapshot_kind="after_codex",
+            end_epoch=1234567890,
+        )
+        cycle = None
+        compiled = None
+        last_message = None
+        code = 0
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                command_record_cycle_finish(args)
+            code = 0
+        except LatticeCommandError as exc:
+            code = exc.code
+        else:
+            conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True)
+            try:
+                repo_id = ensure_repository(conn, root)
+                cycle = conn.execute(
+                    """
+                    select cycle_pk
+                      from cycles
+                     where cycle_id=? and run_hash=?
+                    """,
+                    ("cycle-temp-scope", "run-temp-scope"),
+                ).fetchone()
+                compiled = conn.execute(
+                    """
+                    select path
+                      from artifact_refs
+                     where repo_id=? and cycle_pk=? and artifact_kind='compiled_prompt'
+                    """,
+                    (repo_id, cycle["cycle_pk"]),
+                ).fetchone()
+                last_message = conn.execute(
+                    """
+                    select path
+                      from artifact_refs
+                     where repo_id=? and cycle_pk=? and artifact_kind='last_message'
+                    """,
+                    (repo_id, cycle["cycle_pk"]),
+                ).fetchone()
+            finally:
+                conn.close()
+        finally:
+            for candidate in (compiled_prompt_path, last_message_path):
+                try:
+                    candidate.unlink()
+                except OSError:
+                    pass
+            try:
+                transient_dir.rmdir()
+            except OSError:
+                pass
+    ok = code == 0
+    if cycle:
+        ok = ok and bool(compiled) and isinstance(compiled["path"], str) and compiled["path"].startswith(PASS_RESULT_PATH_HMAC_PREFIX)
+        ok = ok and bool(last_message) and isinstance(last_message["path"], str) and last_message["path"].startswith(PASS_RESULT_PATH_HMAC_PREFIX)
+    return {
+        "cycle_id": "cycle-temp-scope",
+        "run_hash": "run-temp-scope",
+        "cycle_return_code": code,
+        "compiled_prompt_path": compiled["path"] if compiled else None,
+        "last_message_path": last_message["path"] if last_message else None,
+        "ok": ok,
+    }
+
+
 def probe_cycle_finish_report_only_outcome() -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-cycle-finish-report-only-") as tmpdir:
         root = Path(tmpdir)
@@ -5203,6 +5509,9 @@ def probe_change_note_file_identity_validation() -> dict[str, Any]:
         cases = {
             "valid_repo_file": ("tools/upkeeper_lattice.py", "tools/upkeeper_lattice.py"),
             "url_rejected": ("https://example.invalid/not-a-file.py", ""),
+            "protocol_relative_rejected": ("//example.invalid/not-a-file.py", ""),
+            "scheme_like_rejected": ("https:example.invalid/not-a-file.py", ""),
+            "implicit_host_rejected": ("example.invalid/not-a-file.py", ""),
             "absolute_rejected": ("/tmp/not-a-file.py", ""),
             "traversal_rejected": ("../outside.py", ""),
             "control_char_rejected": ("docs/line\nbreak.py", ""),
@@ -5625,6 +5934,7 @@ def create_artifact_ref(
             if expected_digest is not None:
                 fail(f"artifact unreadable for {artifact_kind}: {p} ({exc})", EXIT_INTEGRITY)
             return
+    stored_digest = digest_hmac or ""
     observed_epoch = epoch_now()
     if dedupe_identity:
         existing = conn.execute(
@@ -5633,7 +5943,7 @@ def create_artifact_ref(
             from artifact_refs
             where repo_id = ? and artifact_kind = ? and path = ? and coalesce(sha256, '') = coalesce(?, '')
             """,
-            (repo_id, artifact_kind, stored_path, digest_hmac),
+            (repo_id, artifact_kind, stored_path, stored_digest),
         ).fetchone()
         if existing is not None:
             conn.execute(
@@ -5678,7 +5988,7 @@ def create_artifact_ref(
                 stored_path,
                 1 if exists else 0,
                 size,
-                digest_hmac,
+                stored_digest,
                 observed_epoch,
                 1 if exists else 0,
                 json_dumps(stored_details),
@@ -5712,7 +6022,7 @@ def create_artifact_ref(
                 repo_id,
                 artifact_kind,
                 stored_path,
-                digest_hmac,
+                stored_digest,
             ),
         )
 
@@ -5742,11 +6052,39 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
             raw_storage_mode=raw_storage_mode,
         )
         cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
-        selected_path = external_rel_path(args.selected_path or "")
-        selected_file_id = ensure_file(conn, repo_id, selected_path, source_id=source_id) if selected_path else None
+        db_cycle = conn.execute(
+            "select selected_file_id, selected_path from cycles where cycle_pk=?",
+            (cycle_pk,),
+        ).fetchone()
+        db_selected_path = str(db_cycle["selected_path"] or "") if db_cycle else ""
+        db_selected_file_id = db_cycle["selected_file_id"] if db_cycle else None
+        selected_path = external_rel_path(args.selected_path or db_selected_path)
+        selected_file_id = (
+            ensure_file(conn, repo_id, selected_path, source_id=source_id)
+            if selected_path
+            else db_selected_file_id
+        )
         cycle_selected_path = selected_path
-        cycle_selected_file_id = selected_file_id
-        if reported_selected and selected_path and reported_selected != selected_path:
+        cycle_selected_file_id = int(selected_file_id) if selected_file_id is not None else None
+        if reported_selected and not cycle_selected_path:
+            # A reported target is not a safe substitute: without a preselected
+            # target, we cannot safely re-anchor the cycle to a different file.
+            record_file_event(
+                conn,
+                repo_id,
+                "target_substitution_rejected",
+                file_id=cycle_selected_file_id,
+                cycle_pk=cycle_pk,
+                source_id=source_id,
+                path=cycle_selected_path or None,
+                confidence="reported",
+                details={"preselected_path": "", "reported_selected_path": reported_selected},
+            )
+            review_outcome = "STOPPED_ON_BLOCKER"
+            status_marker = "BLOCKED"
+            finish_reason = "selected_path_mismatch"
+            finish_level = "error"
+        elif reported_selected and cycle_selected_path and reported_selected != cycle_selected_path:
             # The wrapper-selected target is backed up before Codex runs, so a
             # different reported target is invalid evidence rather than a new cycle target.
             record_file_event(
@@ -5764,20 +6102,6 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
             status_marker = "BLOCKED"
             finish_reason = "selected_path_mismatch"
             finish_level = "error"
-        elif reported_selected and not selected_path:
-            cycle_selected_path = reported_selected
-            cycle_selected_file_id = ensure_file(conn, repo_id, reported_selected, source_id=source_id)
-            record_file_event(
-                conn,
-                repo_id,
-                "target_substituted",
-                file_id=cycle_selected_file_id,
-                cycle_pk=cycle_pk,
-                source_id=source_id,
-                path=cycle_selected_path,
-                confidence="reported",
-                details={"reported_selected_path": reported_selected},
-            )
         updates: list[tuple[str, Any]] = [("end_epoch", args.end_epoch or epoch_now())]
         if status_marker:
             updates.append(("status_marker", status_marker))
@@ -6313,9 +6637,37 @@ def parse_attribute_args(items: list[str] | None) -> dict[str, Any]:
     return attrs
 
 
-def refresh_rollups(conn: sqlite3.Connection, repo_id: int) -> None:
+def refresh_rollups(
+    conn: sqlite3.Connection,
+    repo_id: int,
+    *,
+    file_ids: Iterable[int] | None = None,
+) -> None:
     now = epoch_now()
-    file_ids = [int(row["file_id"]) for row in conn.execute("select file_id from files where repo_id=?", (repo_id,))]
+    if file_ids is None:
+        file_ids = [int(row["file_id"]) for row in conn.execute("select file_id from files where repo_id=?", (repo_id,))]
+    else:
+        normalized_file_ids_set: set[int] = set()
+        for file_id in file_ids:
+            try:
+                normalized_file_id = int(file_id)
+            except (TypeError, ValueError):
+                continue
+            if normalized_file_id > 0:
+                normalized_file_ids_set.add(normalized_file_id)
+        normalized_file_ids = sorted(normalized_file_ids_set)
+        if not normalized_file_ids:
+            return
+        placeholders = ",".join(["?"] * len(normalized_file_ids))
+        file_ids = [
+            int(row["file_id"])
+            for row in conn.execute(
+                f"select file_id from files where repo_id=? and file_id in ({placeholders})",
+                (repo_id, *normalized_file_ids),
+            )
+        ]
+    if not file_ids:
+        return
     for file_id in file_ids:
         rows = [
             dict(row)
@@ -7333,7 +7685,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     rows_seen = rows_written = conflicts = duplicates = 0
-    refresh_pass_rollups = False
+    refresh_pass_rollup_file_ids: set[int] = set()
     imported_import_max = 0
     try:
         input_lines = input_path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -7461,11 +7813,6 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_raw_hash, "empty_filtered_payload")
                 continue
-            if table == "file_pass_runs":
-                # JSONL exports intentionally omit file_pass_rollups because they are
-                # derived state. Replayed pass rows still need a rollup refresh even
-                # when every imported row is a semantic duplicate of existing data.
-                refresh_pass_rollups = True
             incoming_semantic_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
             existing = None
             if pk and filtered.get(pk) is not None:
@@ -7492,6 +7839,13 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     [filtered[key] for key in colnames],
                 )
                 rows_written += 1
+                if table == "file_pass_runs":
+                    try:
+                        pass_file_id = int(filtered.get("file_id", 0))
+                    except (TypeError, ValueError):
+                        pass_file_id = 0
+                    if pass_file_id > 0:
+                        refresh_pass_rollup_file_ids.add(pass_file_id)
             except sqlite3.IntegrityError as exc:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_semantic_hash, f"integrity_error:{exc}")
@@ -7504,8 +7858,8 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             conflicts,
             {"duplicates": duplicates},
         )
-        if refresh_pass_rollups:
-            refresh_rollups(conn, repo_id)
+        if refresh_pass_rollup_file_ids:
+            refresh_rollups(conn, repo_id, file_ids=refresh_pass_rollup_file_ids)
         record_file_event(conn, repo_id, "import_reconciled", details={"path": str(input_path), "conflicts": conflicts})
     status = "conflicts" if conflicts else "ok"
     print_json({"status": status, "rows_seen": rows_seen, "rows_written": rows_written, "duplicates": duplicates, "conflicts": conflicts})
@@ -8552,6 +8906,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--head-tree-sha", default=None)
     p.add_argument("--upstream-ref", default=None)
     p.add_argument("--dirty-path-count", default=None)
+    p.add_argument("--worktree-untracked-files", choices=WORKTREE_SNAPSHOT_UNTRACKED_MODES, default=None)
     p.add_argument("--dry-run", default=None)
     p.add_argument("--start-epoch", type=int)
     p.add_argument("--parent-cycle-id", default="")
@@ -8595,6 +8950,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("record-worktree-snapshot")
     add_cycle_args(p, required=False)
     p.add_argument("--snapshot-kind", required=True)
+    p.add_argument("--worktree-untracked-files", choices=WORKTREE_SNAPSHOT_UNTRACKED_MODES, default=None)
     p.set_defaults(func=command_record_worktree_snapshot)
 
     p = sub.add_parser("record-pass-result")

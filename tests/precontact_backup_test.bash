@@ -348,6 +348,75 @@ SH
     fail "age sidecar leaked detailed restore metadata"
 }
 
+test_age_create_rejects_stale_payload_when_target_mutates_after_metadata() {
+  local repo="$TEST_TMP_ROOT/age-mismatch repo"
+  local selection_file metadata_file sidecar_file path_dir backup_id rel_path target_path
+  local created_utc size_bytes mode_text mtime_text repo_real repo_hmac repo_key repo_root_hmac
+  local path_hmac content_sha derivation_sha rc
+  make_repo "$repo"
+  reset_env "$repo" age-mismatch
+  rel_path="dir/space file.sh"
+  selection_file="$TEST_TMP_ROOT/age-mismatch-selection.env"
+  write_selection_file "$rel_path" "$selection_file"
+  UPKEEPER_PRECONTACT_BACKUP_MODE=age
+  UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT="age1testrecipient"
+  target_path="$repo/$rel_path"
+  path_dir="$UPKEEPER_PRECONTACT_BACKUP_ROOT/age-mismatch"
+  backup_id="pb-$(printf '%s' "$rel_path" | tr '/ ' '-')-mismatch"
+  mkdir -p "$path_dir"
+
+  repo_real="$(precontact_backup_realpath "$repo")"
+  repo_hmac="$(precontact_backup_hmac_text repo "$repo_real")"
+  repo_key="repo-hmac-${repo_hmac}"
+  repo_root_hmac="repo-hmac-sha256:${repo_hmac}"
+  path_hmac="$(precontact_backup_path_hmac "$rel_path")"
+  created_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  size_bytes="$(file_size_bytes "$target_path")"
+  mode_text="$(python3 - "$target_path" <<'PY' 2>/dev/null || printf 'unknown'
+from pathlib import Path
+import stat
+import sys
+
+st = Path(sys.argv[1]).stat()
+print(oct(stat.S_IMODE(st.st_mode))[2:])
+PY
+  )"
+  mtime_text="$(python3 - "$target_path" <<'PY' 2>/dev/null || printf 'unknown'
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+st = Path(sys.argv[1]).stat()
+print(datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat().replace("+00:00", "Z"))
+PY
+  )"
+  content_sha="$(precontact_backup_sha256_file "$target_path")"
+  derivation_sha="$(precontact_backup_sha256_text "${content_sha}-${path_hmac}-${CYCLE_ID}")"
+
+  metadata_file="$(run_mktemp precontact-backup-metadata)"
+  sidecar_file="$(run_mktemp precontact-backup-age-sidecar)"
+  if ! precontact_backup_write_metadata "$metadata_file" "$repo_key" "$repo_root_hmac" \
+    "$rel_path" "$path_hmac" "$(precontact_backup_content_hmac "$content_sha")" \
+    "$CYCLE_ID" "$CYCLE_RUN_HASH" "$created_utc" "$size_bytes" "$mode_text" "$mtime_text" \
+    "clean" "worktree-fixture" "test selected $rel_path" \
+    "age" "true" "unknown" "$derivation_sha" "matches_head" "head-fixture"; then
+    fail "age mismatch test failed to write metadata"
+  fi
+  if ! precontact_backup_write_age_public_metadata "$sidecar_file" "$derivation_sha" "$created_utc" "unknown"; then
+    fail "age mismatch test failed to write sidecar"
+  fi
+
+  printf 'mutated between metadata and payload write' >"$target_path"
+
+  set +e
+  precontact_backup_create_age "$target_path" "$path_dir" "$backup_id" "$metadata_file" "$sidecar_file"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 1 ]] || fail "age create with stale payload returned $rc, expected 1"
+  [[ "$PRECONTACT_BACKUP_LAST_REASON" == "payload_hash_mismatch" ]] || fail "age create did not record payload hash mismatch reason"
+  [[ ! -s "$path_dir/${backup_id}.age" ]] || fail "age artifact was written despite payload mismatch"
+}
+
 test_required_encrypted_mode_fails_closed() {
   local repo="$TEST_TMP_ROOT/fail repo"
   local selection_file rc
@@ -695,6 +764,7 @@ test_machine_preflight_skips_read_only_issue_stages() {
 
 test_plain_required_backup_succeeds
 test_age_mode_uses_public_recipient_only
+test_age_create_rejects_stale_payload_when_target_mutates_after_metadata
 test_machine_preflight_blocks_before_issue_selection
 test_machine_preflight_skips_read_only_issue_stages
 test_required_encrypted_mode_fails_closed

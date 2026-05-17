@@ -41,6 +41,7 @@ def decorated_reason(line: str, core: str) -> str:
     return ""
 
 
+non_fenced_lines = []
 final_line = ""
 in_code_fence = False
 with open(path, "r", encoding="utf-8", errors="replace") as handle:
@@ -53,6 +54,7 @@ with open(path, "r", encoding="utf-8", errors="replace") as handle:
             continue
         if in_code_fence:
             continue
+        non_fenced_lines.append(line)
         final_line = line
 
 if final_line:
@@ -76,6 +78,25 @@ if final_line:
             result["candidate_marker"] = status
             result["candidate_line"] = final_line
             result["candidate_rejection_reason"] = reason
+
+if not result["accepted_marker"] and not result["candidate_marker"]:
+    marker_hits = []
+    for index, line in enumerate(non_fenced_lines):
+        hits = [(core, status) for core, status in cores.items() if core in line]
+        if hits:
+            marker_hits.append((index, line, hits))
+    if len(marker_hits) == 1:
+        index, line, hits = marker_hits[0]
+        core, status = hits[0]
+        if len(hits) == 1 and line == core and index < len(non_fenced_lines) - 1:
+            result["candidate_marker"] = status
+            result["candidate_line"] = line
+            result["candidate_rejection_reason"] = "trailing_content_after_marker"
+    elif len(marker_hits) > 1:
+        index, line, hits = marker_hits[-1]
+        result["candidate_marker"] = hits[0][1]
+        result["candidate_line"] = line
+        result["candidate_rejection_reason"] = "multiple_markers"
 
 print(json.dumps(result, separators=(",", ":")))
 PY

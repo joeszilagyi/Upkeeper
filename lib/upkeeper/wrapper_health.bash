@@ -84,6 +84,7 @@ scan_wrapper_health_state() {
 from pathlib import Path
 import os
 import shlex
+import tempfile
 import sys
 import time
 
@@ -159,9 +160,20 @@ for path in sorted(state_dir.glob(f"{prefix}*.state")):
         if archive_dir:
             try:
                 archive_dir.mkdir(parents=True, exist_ok=True)
-                archived_path = archive_dir / f"{path.stem}-retired-{time.strftime('%Y%m%dT%H%M%S%z')}-{os.getpid()}.state"
+                fd, archived_path = tempfile.mkstemp(
+                    prefix=f"{path.stem}-retired-",
+                    suffix=f"-{time.strftime('%Y%m%dT%H%M%S%z')}.state",
+                    dir=str(archive_dir),
+                )
+                os.close(fd)
+                archived_path = Path(archived_path)
                 path.replace(archived_path)
             except Exception:
+                if archived_path is not None:
+                    try:
+                        Path(archived_path).unlink()
+                    except OSError:
+                        pass
                 archived_path = None
         if archived_path is not None:
             print(

@@ -3,6 +3,39 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Backlog Local Supervisor Lease
+
+Status: completed
+
+Goal:
+- make `orchestration/backlog.sh` safe to invoke repeatedly while one primary
+  backlog owner holds the checkout
+- keep the primary loop alive through local waits such as PR checks and quota
+  hibernation instead of requiring a human restart
+- let secondary invocations perform a cheap local duplicate/health check, exit
+  cleanly when the owner is healthy, and reclaim the owner lease when it is
+  stale
+
+Constraints:
+- keep the supervisor local-only, deterministic, and no-backend
+- preserve the existing PID/start-tick protection against stale PID reuse
+- make heartbeat updates truthful by checking the recorded owner identity before
+  each refresh
+- preserve the interactive watch-mode operator experience while preventing
+  concurrent checkout mutation
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Worktree Snapshot Privacy And Status Marker Recovery
 
 Status: completed

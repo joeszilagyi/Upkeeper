@@ -6,6 +6,13 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-17: backlog watch and cleanup fixes:
+	1. Backlog watch output now treats model-echoed shell commands containing `ERROR:` as informational transcript text instead of pageable wrapper/control-plane failures.
+	2. Backlog cleanup now removes literal `$db` SQLite scratch artifacts before staging so failed ad hoc validation fixtures cannot enter backlog PRs as source files.
+	3. Lattice opt-in worktree snapshot rows now preserve private Git XY evidence without linking HMAC-only path rows back to raw `files` identities.
+	4. Strict `UPKEEPER_STATUS` markers followed only by trailing non-control prose are recovered as malformed candidates, reducing false missing-marker failures while still rejecting ambiguous or fenced markers.
+	5. Backlog launchers now maintain a local owner lease with PID/start-tick-verified heartbeats; duplicate invocations exit cleanly when the primary is healthy, stale owners are reclaimed locally, and PR-check waits poll in place instead of requiring operator restarts.
+
 2026-05-16: v1.2.26 changes:
 	1. Minimized quota/session metadata in normal logs, cooldown markers, postmortem incident context, and Lattice-facing validation by hashing local session sources and quota identity fields unless explicit verbose local diagnostics are requested.
 	2. Hardened config-file sourcing with filesystem trust checks and fixed the assignment-file parser so a valid config no longer exits silently at EOF under `set -e`.

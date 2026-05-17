@@ -384,6 +384,13 @@ check_backlog_launcher_contract() {
   grep -Fq 'another backlog run already owns this checkout' orchestration/backlog.sh || fail "backlog launcher does not explain active backlog ownership"
   grep -Fq 'active-owner.' orchestration/backlog.sh || fail "backlog launcher does not track an explicit repo-local active owner file"
   grep -Fq 'start_ticks' orchestration/backlog.sh || fail "backlog launcher does not guard against stale PID reuse in active owner tracking"
+  grep -Fq 'BACKLOG_DUPLICATE_MODE="${BACKLOG_DUPLICATE_MODE:-exit}"' orchestration/backlog.sh || fail "backlog launcher does not default duplicate invocations to clean exit"
+  grep -Fq 'BACKLOG_OWNER_HEARTBEAT_STALE_SECONDS' orchestration/backlog.sh || fail "backlog launcher does not define owner heartbeat freshness"
+  grep -Fq 'backlog_owner_health_status' orchestration/backlog.sh || fail "backlog launcher cannot classify active owner health"
+  grep -Fq 'duplicate invocation not needed; primary owner is healthy; exiting 0' orchestration/backlog.sh || fail "backlog launcher does not plainly exit duplicate invocations"
+  grep -Fq 'owner heartbeat: state=' orchestration/backlog.sh || fail "backlog launcher does not emit truthful owner heartbeats"
+  grep -Fq 'waiting_on_pr_checks' orchestration/backlog.sh || fail "backlog launcher does not keep PR-check waits under the owner lease"
+  grep -Fq 'gh pr checks "$pr_number" --watch=false' orchestration/backlog.sh || fail "backlog launcher PR check watcher is not local polling"
   grep -Fq 'BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default dirty-worktree autoshelve on"
   grep -Fq 'autoshelving local changes to' orchestration/backlog.sh || fail "backlog launcher does not explain dirty-worktree autoshelve"
   grep -Fq 'BACKLOG_QUOTA_HIBERNATE="${BACKLOG_QUOTA_HIBERNATE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default quota hibernation on"
@@ -394,6 +401,7 @@ check_backlog_launcher_contract() {
   grep -Fq 'BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota cooldown bypass on"
   grep -Fq 'quota preflight: burn bypass continuing despite stale quota evidence' orchestration/backlog.sh || fail "backlog launcher does not explain stale quota bypass"
   grep -Fq 'BACKLOG_SOURCE_ONLY' orchestration/backlog.sh || fail "backlog launcher cannot be source-tested without running main"
+  grep -Fq 'rm -f -- "$ROOT_DIR/\$db"' orchestration/backlog.sh || fail "backlog launcher does not clean literal db scratch artifacts before staging"
   python3 - <<'PY' || fail "backlog autoshelve no longer runs before gh/jq/rg dependency gates"
 from pathlib import Path
 
@@ -434,6 +442,7 @@ PY
     cd "$1"
     source ./orchestration/backlog.sh
     backlog_format_attention_line "2026-05-16T17:00:37-0700 [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s" >"$2/worker.out"
+    backlog_format_attention_line "2026-05-17T10:26:29-0700 [ERROR] Upkeeper: primary: echo '\''ERROR: tools/upkeeper_lattice.py not found'\''" >"$2/echo-error.out"
     backlog_format_attention_line "2026-05-16T18:12:41-0700 [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed" >"$2/page.out"
     backlog_format_attention_line "2026-05-16T18:20:00 backlog: quota preflight: deferring backlog run this cycle" >"$2/wait.out"
     backlog_format_attention_line "2026-05-16T18:20:30 Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)" >"$2/fyi.out"
@@ -441,6 +450,8 @@ PY
   ' bash "$ROOT_DIR" "$temp_dir"
   grep -Fq '2026-05-16T17:00:37-0700 WORKER  [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s' "$temp_dir/worker.out" ||
     fail "backlog launcher did not classify worker command failures separately from pageable errors"
+  grep -Fq "2026-05-17T10:26:29-0700 INFO    [ERROR] Upkeeper: primary: echo 'ERROR: tools/upkeeper_lattice.py not found'" "$temp_dir/echo-error.out" ||
+    fail "backlog launcher treated echoed model ERROR text as a pageable wrapper error"
   grep -Fq '2026-05-16T18:12:41-0700 PAGE    [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed' "$temp_dir/page.out" ||
     fail "backlog launcher did not classify wrapper/control-plane errors as PAGE"
   grep -Fq '2026-05-16T18:20:00 WAIT    backlog: quota preflight: deferring backlog run this cycle' "$temp_dir/wait.out" ||
@@ -473,6 +484,61 @@ PY
     fail "backlog launcher did not export quota guardrail bypass"
   grep -Fxq 'cooldown=1' "$temp_dir/defaults.out" ||
     fail "backlog launcher did not export quota cooldown bypass"
+
+  temp_dir="$VALIDATION_TMP_ROOT/backlog-owner-lease"
+  mkdir -p "$temp_dir"
+  BACKLOG_SOURCE_ONLY=1 \
+    BACKLOG_STATE_ROOT="$temp_dir/state" \
+    BACKLOG_TEST_OWNER_MATCH=1 \
+    BACKLOG_TEST_NOW_EPOCH=1000 \
+    BACKLOG_OWNER_HEARTBEAT_STALE_SECONDS=300 \
+    bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./orchestration/backlog.sh
+      owner_file="$(backlog_active_owner_file)"
+      mkdir -p "$(dirname "$owner_file")"
+      BACKLOG_ACTIVE_OWNER_START_TICKS=123
+      backlog_write_owner_record "$owner_file" "$$" 123 branch "$2/loop.log" waiting_on_pr_checks "pr=397 checks_pending" 397 pending
+      backlog_owner_health_status "$owner_file" >"$2/healthy.out"
+      BACKLOG_TEST_NOW_EPOCH=1401
+      export BACKLOG_TEST_NOW_EPOCH
+      if backlog_owner_health_status "$owner_file" >"$2/stale.out"; then
+        printf "owner unexpectedly healthy after stale heartbeat window\n" >&2
+        exit 1
+      fi
+    ' bash "$ROOT_DIR" "$temp_dir"
+  grep -Fq 'healthy pid=' "$temp_dir/healthy.out" ||
+    fail "backlog launcher owner health check did not accept a fresh heartbeat"
+  grep -Fq 'stale_heartbeat' "$temp_dir/stale.out" ||
+    fail "backlog launcher owner health check did not reject a stale heartbeat"
+
+  temp_dir="$VALIDATION_TMP_ROOT/backlog-pr-check-hibernate"
+  mkdir -p "$temp_dir"
+  if ! BACKLOG_SOURCE_ONLY=1 \
+    BACKLOG_STATE_ROOT="$temp_dir/state" \
+    BACKLOG_TEST_OWNER_MATCH=1 \
+    BACKLOG_TEST_NOW_EPOCH=1000 \
+    BACKLOG_TEST_FAKE_SLEEP=1 \
+    BACKLOG_TEST_SLEEP_LOG="$temp_dir/sleeps.log" \
+    BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE=pending,pending,pass \
+    BACKLOG_PR_CHECK_INTERVAL_SECONDS=60 \
+    bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./orchestration/backlog.sh
+      write_backlog_active_owner
+      wait_for_pr_checks 397
+    ' bash "$ROOT_DIR" >"$temp_dir/pr.out" 2>"$temp_dir/pr.err"; then
+    cat "$temp_dir/pr.err" >&2
+    fail "backlog launcher PR check hibernation fake-clock check failed"
+  fi
+  [[ "$(cat "$temp_dir/sleeps.log")" == $'60\n60' ]] ||
+    fail "backlog launcher PR check hibernation did not sleep between pending polls"
+  grep -Fq "checks pending; holding owner lease" "$temp_dir/pr.err" ||
+    fail "backlog launcher PR check hibernation did not explain local owner hold"
+  grep -Fq "owner heartbeat: state=waiting_on_pr_checks" "$temp_dir/pr.err" ||
+    fail "backlog launcher PR check hibernation did not refresh owner heartbeat"
 }
 
 check_backlog_quota_hibernation_contract() {

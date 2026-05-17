@@ -73,6 +73,9 @@ REVIEW_OUTCOME_MARKERS = (
     "STOPPED_ON_BLOCKER",
 )
 REVIEW_OUTCOME_PATTERN = re.compile(r"\b(" + "|".join(REVIEW_OUTCOME_MARKERS) + r")\b")
+UPKEEPER_STATUS_MARKERS = ("WORK_DONE", "NO_CHANGES", "NO_BACKEND_TASK", "BLOCKED")
+UPKEEPER_STATUS_CONTRACT_LINE = re.compile(rf"^UPKEEPER_STATUS:\s*({'|'.join(UPKEEPER_STATUS_MARKERS)})\s*$")
+UPKEEPER_STATUS_ALIAS = {"NO_CHANGES": "WORK_DONE"}
 REVIEW_OUTCOME_LINE_PATTERN = re.compile(
     r"^(?:[-*]\s*)?(?:final status|review outcome|outcome|status)\s*:?\s*("
     + "|".join(REVIEW_OUTCOME_MARKERS)
@@ -165,6 +168,10 @@ SOURCE_RECORD_PATH_HMAC_KINDS = {
 }
 TRANSIENT_ARTIFACT_KINDS = {"transcript", "compiled_prompt", "last_message"}
 OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS = {"compiled_prompt", "last_message"}
+WORKTREE_RUNTIME_MESSAGE_ARTIFACT_PATH_PREFIXES = (
+    "runtime/upkeeper-transcripts/",
+    "runtime/last-message",
+)
 ARTIFACT_RETENTION_CLASSES = {
     "transcript": "transient",
     "compiled_prompt": "transient",
@@ -1255,6 +1262,29 @@ def external_rel_path(path: str) -> str:
     return operational_rel_path(path)
 
 
+def repo_relative_target_path(root: Path, raw_target: str) -> str:
+    if not raw_target:
+        return ""
+
+    normalized = raw_target.replace("\\", "/").strip()
+    if not normalized:
+        return ""
+
+    try:
+        candidate = Path(normalized)
+        if candidate.is_absolute():
+            resolved = candidate.resolve(strict=False)
+        else:
+            resolved = (root / candidate).resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        return ""
+
+    try:
+        return resolved.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return ""
+
+
 def sanitize_json_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -1341,6 +1371,8 @@ def worktree_snapshot_path_is_sensitive(path: str) -> bool:
         return False
     normalized_lower = normalized.lower()
     parts = normalized_lower.split("/")
+    if any(normalized_lower.startswith(prefix) for prefix in WORKTREE_RUNTIME_MESSAGE_ARTIFACT_PATH_PREFIXES):
+        return True
     for part in SENSITIVE_WORKTREE_PATH_PARTS:
         if part in parts:
             return True
@@ -2477,7 +2509,11 @@ def check_path_safe(root: Path, db_path: Path, journal_mode: str, allow_unsafe: 
         raise SystemExit(EXIT_UNSAFE_DB_PATH)
 
 
-def chmod_private(path: Path, is_dir: bool = False) -> None:
+def chmod_private(path: Path, is_dir: bool = False, *, created_by_invocation: bool = False) -> None:
+    # Keep directory mode hardening limited to directories this invocation created.
+    if is_dir and not created_by_invocation:
+        return
+
     try:
         path.chmod(0o700 if is_dir else 0o600)
     except OSError:
@@ -2520,8 +2556,10 @@ def connect(
         raise_command_error(f"DB path missing: {db_path}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
 
     if create_parent:
+        parent_existed = db_path.parent.exists()
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        chmod_private(db_path.parent, is_dir=True)
+        if not parent_existed:
+            chmod_private(db_path.parent, is_dir=True, created_by_invocation=True)
     if not db_path.parent.exists():
         raise_command_error(f"DB parent directory does not exist: {db_path.parent}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
     connect_target = str(db_path)
@@ -3111,6 +3149,86 @@ def ensure_source_record(
     return int(cur.lastrowid)
 
 
+def git_head_file_paths(root: Path) -> set[str]:
+    raw = git_output(root, ["ls-tree", "-r", "--name-only", "HEAD"], default="", strip=False)
+    if not raw:
+        return set()
+    paths: set[str] = set()
+    for path in raw.splitlines():
+        stored = stored_rel_path(path.strip())
+        if stored:
+            paths.add(stored)
+    return paths
+
+
+def sync_file_current_state_to_head(
+    conn: sqlite3.Connection,
+    root: Path,
+    repo_id: int,
+    source_id: int | None = None,
+) -> None:
+    head_paths = git_head_file_paths(root)
+    if not head_paths:
+        return
+    now = epoch_now()
+    for path in head_paths:
+        row = conn.execute(
+            """
+            select file_id, current_path, current_state
+            from files
+            where repo_id=? and (current_path=? or canonical_path=?)
+            """,
+            (repo_id, path, path),
+        ).fetchone()
+        if row:
+            file_id = int(row["file_id"])
+            current_path = stored_rel_path(str(row["current_path"] or ""))
+            current_state = str(row["current_state"] or "")
+            target_state = "active" if current_state in {"deleted", "unknown"} else current_state
+            if current_path != path:
+                conn.execute(
+                    "update files set current_path=?, current_state=?, last_seen_epoch=? where file_id=?",
+                    (path, target_state, now, file_id),
+                )
+            elif target_state != current_state:
+                conn.execute(
+                    "update files set current_state=?, last_seen_epoch=? where file_id=?",
+                    (target_state, now, file_id),
+                )
+            else:
+                conn.execute("update files set last_seen_epoch=? where file_id=?", (now, file_id))
+            conn.execute(
+                """
+                insert into file_paths(file_id, path, first_seen_epoch, last_seen_epoch, source_id)
+                values (?, ?, ?, ?, ?)
+                on conflict(file_id, path) do update set
+                  last_seen_epoch=excluded.last_seen_epoch,
+                  source_id=coalesce(excluded.source_id, file_paths.source_id)
+                """,
+                (file_id, path, now, now, source_id),
+            )
+        else:
+            ensure_file(
+                conn,
+                repo_id,
+                path,
+                state="active",
+                source_id=source_id,
+            )
+    for row in conn.execute(
+        "select file_id, current_path, current_state from files where repo_id=?",
+        (repo_id,),
+    ):
+        file_id = int(row["file_id"])
+        current_path = stored_rel_path(str(row["current_path"] or ""))
+        current_state = str(row["current_state"] or "")
+        if current_path and current_path not in head_paths and current_state != "deleted":
+            conn.execute(
+                "update files set current_state='deleted', last_seen_epoch=? where file_id=?",
+                (now, file_id),
+            )
+
+
 def ensure_file(
     conn: sqlite3.Connection,
     repo_id: int,
@@ -3501,7 +3619,11 @@ def normalize_repo_file_identity_ref(root: Path, path: str) -> str:
     return normalized
 
 
-def tool_failure_marker_identity(marker_path: Path, payload: Any) -> tuple[str, str, str]:
+def tool_failure_marker_identity(
+    root: Path,
+    marker_path: Path,
+    payload: Any,
+) -> tuple[str, str, str]:
     raw_marker_id = marker_path.stem
     if not isinstance(payload, dict):
         return "", "", raw_marker_id
@@ -3510,7 +3632,7 @@ def tool_failure_marker_identity(marker_path: Path, payload: Any) -> tuple[str, 
     raw_target = payload.get("target_path")
     if not isinstance(raw_target, str):
         return "", "", raw_marker_id
-    target_path = external_rel_path(raw_target)
+    target_path = repo_relative_target_path(root, raw_target)
     if not target_path:
         return "", "", raw_marker_id
     # Equivalent path spellings must collapse to one marker identity in Lattice.
@@ -3686,6 +3808,12 @@ def parse_bool_int(raw: str | None) -> int | None:
     if raw in {"0", "false", "no", "off"}:
         return 0
     return None
+
+
+def require_jsonl_int(raw: Any, field: str) -> int:
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        raise TypeError(f"{field} must be an integer, got {type(raw).__name__}")
+    return raw
 
 
 def parse_bool_flag(raw: str | None) -> bool:
@@ -4416,7 +4544,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         cycle_finish_probe = probe_cycle_finish_target_mismatch()
         result["checks"]["cycle_finish_target_mismatch"] = cycle_finish_probe
         report_only_cycle_probe = probe_cycle_finish_report_only_outcome()
+        decorated_marker_probe = probe_cycle_finish_rejects_decorated_status_marker()
         result["checks"]["cycle_finish_report_only_outcome"] = report_only_cycle_probe
+        result["checks"]["cycle_finish_rejects_decorated_status_marker"] = decorated_marker_probe
         change_note_ref_probe = probe_change_note_file_identity_validation()
         result["checks"]["change_note_file_identity_validation"] = change_note_ref_probe
         candidate_symlink_probe = probe_candidate_symlink_exclusion()
@@ -4432,6 +4562,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(report_only_cycle_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(decorated_marker_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         transient_temp_scope_probe = probe_cycle_finish_transient_artifact_scope()
@@ -4647,7 +4780,6 @@ def record_worktree_snapshot(
             continue
         if not path or worktree_snapshot_path_is_sensitive(path) or (old_path and worktree_snapshot_path_is_sensitive(old_path)):
             continue
-        file_id = None
         meta = live_file_metadata(root, path)
         stored_path = pass_result_path_hmac(root, path)
         stored_old_path = pass_result_path_hmac(root, old_path) if old_path else None
@@ -4662,7 +4794,7 @@ def record_worktree_snapshot(
             """,
             (
                 snapshot_id,
-                file_id,
+                None,
                 stored_path,
                 stored_path,
                 worktree_snapshot_path_class(status_code),
@@ -5098,6 +5230,35 @@ def extract_review_outcome(text: str) -> str:
     return outcome
 
 
+def extract_review_status_marker_from_text(text: str) -> str:
+    in_fence = False
+    final_line = ""
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        final_line = line
+    if not final_line:
+        return ""
+    match = UPKEEPER_STATUS_CONTRACT_LINE.match(final_line)
+    if not match:
+        return ""
+    marker = match.group(1)
+    return UPKEEPER_STATUS_ALIAS.get(marker, marker)
+
+
+def parse_review_status_marker(path: Path) -> str:
+    try:
+        return extract_review_status_marker_from_text(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return ""
+
+
 def normalize_review_summary_target(raw_target: str, repo_root: Path | None = None) -> str:
     text = raw_target.strip().strip("<>")
     if not text:
@@ -5436,7 +5597,7 @@ def probe_cycle_finish_report_only_outcome() -> dict[str, Any]:
         (root / selected_path).write_text("print('report only')\n", encoding="utf-8")
         review_path = root / "runtime" / "last-message.txt"
         review_path.write_text(
-            "Selected file: `tools/report-only.py`\nREVIEWED_AND_REPORTED\n",
+            "Selected file: `tools/report-only.py`\nREVIEWED_AND_REPORTED\nUPKEEPER_STATUS: WORK_DONE\n",
             encoding="utf-8",
         )
         db_path = root / "lattice.sqlite3"
@@ -5499,6 +5660,80 @@ def probe_cycle_finish_report_only_outcome() -> dict[str, Any]:
         "finish_level": cycle["finish_level"] if cycle else None,
         "actual_selected_path": cycle["selected_path"] if cycle else None,
         "ok": ok,
+    }
+
+
+def probe_cycle_finish_rejects_decorated_status_marker() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-cycle-finish-decorated-") as tmpdir:
+        root = Path(tmpdir)
+        selected_path = "tools/report-only.py"
+        try:
+            subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        (root / "tools").mkdir(parents=True, exist_ok=True)
+        (root / "runtime").mkdir(parents=True, exist_ok=True)
+        (root / selected_path).write_text("print('report only')\n", encoding="utf-8")
+        review_path = root / "runtime" / "last-message.txt"
+        review_path.write_text(
+            "Selected file: `tools/report-only.py`\n"
+            "`UPKEEPER_STATUS: WORK_DONE`\n"
+            "REVIEWED_AND_REPORTED",
+            encoding="utf-8",
+        )
+        db_path = root / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True, create_parent=True, create_if_missing=True)
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+        finally:
+            conn.close()
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="wal",
+            allow_unsafe_db=True,
+            raw_storage_mode="minimal",
+            cycle_id="cycle-decorated",
+            run_hash="run-decorated",
+            status_marker="WORK_DONE",
+            review_outcome=None,
+            review_selected_path=None,
+            codex_exit=0,
+            wrapper_exit=0,
+            finish_reason="work_done",
+            finish_level="info",
+            codex_exec_started=1,
+            dry_run="1",
+            selected_path=selected_path,
+            last_message_file=str(review_path),
+            transcript_path=None,
+            compiled_prompt_path=None,
+            log_path=None,
+            snapshot_kind="after_codex",
+            end_epoch=1234567890,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            command_record_cycle_finish(args)
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True)
+        try:
+            cycle = conn.execute(
+                """
+                select status_marker, review_outcome, finish_reason, finish_level, selected_path
+                  from cycles
+                 where cycle_id=? and run_hash=?
+                """,
+                ("cycle-decorated", "run-decorated"),
+            ).fetchone()
+        finally:
+            conn.close()
+    return {
+        "selected_path": selected_path,
+        "status_marker": cycle["status_marker"] if cycle else None,
+        "review_outcome": cycle["review_outcome"] if cycle else None,
+        "finish_reason": cycle["finish_reason"] if cycle else None,
+        "finish_level": cycle["finish_level"] if cycle else None,
+        "actual_selected_path": cycle["selected_path"] if cycle else None,
+        "ok": cycle is not None and cycle["status_marker"] is None,
     }
 
 
@@ -6036,10 +6271,11 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         repo_id = ensure_repository(conn, root)
         parsed = vars(args).copy()
         parsed.pop("func", None)
-        review = parse_review_summary_file(Path(args.last_message_file), root) if args.last_message_file else {}
+        last_message_path = Path(args.last_message_file) if args.last_message_file else None
+        review = parse_review_summary_file(last_message_path, root) if last_message_path else {}
         review_outcome = args.review_outcome or review.get("review_outcome") or None
         reported_selected = external_rel_path(args.review_selected_path or review.get("selected_file", ""))
-        status_marker = args.status_marker
+        status_marker = parse_review_status_marker(last_message_path) if last_message_path else args.status_marker or ""
         finish_reason = args.finish_reason
         finish_level = args.finish_level
         source_id = ensure_source_record(
@@ -7062,6 +7298,7 @@ def command_import_git(args: argparse.Namespace) -> int:
                             status_code,
                         ),
                     )
+        sync_file_current_state_to_head(conn, root, repo_id, source_id=source_id)
         shallow = git_output(root, ["rev-parse", "--is-shallow-repository"], "false") == "true"
         conn.execute(
             """
@@ -7608,7 +7845,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
     )
     if not output.parent.exists():
         output.parent.mkdir(parents=True, exist_ok=True)
-        chmod_private(output.parent, is_dir=True)
+        chmod_private(output.parent, is_dir=True, created_by_invocation=True)
     warn_sensitive_export_request(args, output)
     started = epoch_now()
     row_count = 0
@@ -7743,18 +7980,38 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             schema_version = row.get("schema_version")
             row_version = row.get("row_version")
             try:
-                if int(schema_version) != SCHEMA_VERSION:
+                if require_jsonl_int(schema_version, "schema_version") != SCHEMA_VERSION:
                     raise ValueError
             except (TypeError, ValueError):
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "schema_mismatch")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    declared_payload_hash,
+                    "schema_mismatch",
+                    details={"expected": SCHEMA_VERSION, "received": schema_version},
+                )
                 continue
             try:
-                if int(row_version) != SCHEMA_ROW_VERSION:
+                if require_jsonl_int(row_version, "row_version") != SCHEMA_ROW_VERSION:
                     raise ValueError
             except (TypeError, ValueError):
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "row_version_mismatch")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    declared_payload_hash,
+                    "row_version_mismatch",
+                    details={"expected": SCHEMA_ROW_VERSION, "received": row_version},
+                )
                 continue
             if not isinstance(payload, dict):
                 conflicts += 1
@@ -7877,7 +8134,12 @@ def record_import_conflict(
     existing_hash: str,
     incoming_hash: str,
     resolution: str,
+    *,
+    details: dict[str, Any] | None = None,
 ) -> None:
+    details_payload = {"resolution": resolution}
+    if details:
+        details_payload.update(details)
     conn.execute(
         """
         insert into lattice_import_conflicts(import_id, repo_id, row_type, logical_key, existing_hash, incoming_hash, resolution, details_json)
@@ -7891,7 +8153,7 @@ def record_import_conflict(
             existing_hash or None,
             incoming_hash or None,
             resolution,
-            json_dumps({"resolution": resolution}),
+            json_dumps(details_payload),
         ),
     )
 
@@ -7917,11 +8179,11 @@ def create_backup(
         backup_dir = db_path.parent / "backups"
         if not backup_dir.exists():
             backup_dir.mkdir(parents=True, exist_ok=True)
-            chmod_private(backup_dir, is_dir=True)
+            chmod_private(backup_dir, is_dir=True, created_by_invocation=True)
         backup_path = backup_dir / f"lattice-backup-{epoch_now()}.sqlite3"
     if not backup_path.parent.exists():
         backup_path.parent.mkdir(parents=True, exist_ok=True)
-        chmod_private(backup_path.parent, is_dir=True)
+        chmod_private(backup_path.parent, is_dir=True, created_by_invocation=True)
     if backup_path.exists() or backup_path.is_symlink():
         try:
             existing = backup_path.lstat()
@@ -8097,8 +8359,7 @@ def command_recover(args: argparse.Namespace) -> int:
     sources = []
     backup_path = None
     if args.backup_first and preexisting_db:
-        backup_path = create_backup(conn, root, db_path)
-        sources.append("backup:1")
+        backup_path = db_path.parent / "backups" / f"lattice-backup-{epoch_now()}.sqlite3"
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -8110,8 +8371,33 @@ def command_recover(args: argparse.Namespace) -> int:
             parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
             raw_storage_mode=raw_storage_mode,
         )
-        if backup_path is not None:
-            create_artifact_ref(conn, root, repo_id, cycle_pk=None, source_id=source_id, artifact_kind="backup", path=str(backup_path))
+    if args.backup_first and preexisting_db:
+        backup_path = create_backup(
+            conn,
+            root,
+            db_path,
+            output=str(backup_path),
+            allow_overwrite=False,
+        )
+        backup_conn = sqlite3.connect(str(backup_path))
+        try:
+            backup_conn.row_factory = sqlite3.Row
+            backup_conn.execute("PRAGMA busy_timeout=5000")
+            backup_conn.execute("PRAGMA foreign_keys=ON")
+            create_artifact_ref(
+                backup_conn,
+                root,
+                repo_id,
+                cycle_pk=None,
+                source_id=source_id,
+                artifact_kind="backup",
+                path=str(backup_path),
+                details={"backup_event": "pre_recovery", "recorded_in": "backup"},
+            )
+            backup_conn.commit()
+        finally:
+            backup_conn.close()
+        sources.append("backup:1")
     conn.close()
     status = "ok"
     if inside_git_repo(root):
@@ -8177,7 +8463,7 @@ def command_recover(args: argparse.Namespace) -> int:
     recovery_dir = db_path.parent / "recovery"
     if not recovery_dir.exists():
         recovery_dir.mkdir(parents=True, exist_ok=True)
-        chmod_private(recovery_dir, is_dir=True)
+        chmod_private(recovery_dir, is_dir=True, created_by_invocation=True)
     report_path = recovery_dir / f"recovery-{epoch_now()}.json"
     report = {"status": status, "sources": sources}
     report_path.write_text(json_dumps(report) + "\n", encoding="utf-8")
@@ -8204,7 +8490,7 @@ def import_failure_markers(
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
-            target, marker_id, raw_marker_id = tool_failure_marker_identity(path, data)
+            target, marker_id, raw_marker_id = tool_failure_marker_identity(root, path, data)
             if not target or not marker_id:
                 continue
             file_id = ensure_file(conn, repo_id, target)

@@ -43,6 +43,105 @@ wrapper_log_archive_parent_is_private() {
   [[ "$owner" == "$(id -u)" && "$mode" == "700" ]]
 }
 
+log_rotation_marker_path() {
+  printf '%s.upkeeper-log-rotation.marker' "$LOG_FILE"
+}
+
+log_rotation_marker_expected() {
+  upkeeper_path_hmac "$LOG_FILE"
+}
+
+log_rotation_marker_readable() {
+  local marker_path="$1"
+  local marker_current
+
+  [[ -f "$marker_path" && ! -L "$marker_path" ]] || return 1
+  IFS= read -r marker_current < "$marker_path" || true
+  [[ -n "$marker_current" ]] || return 1
+
+  printf '%s' "$marker_current"
+}
+
+log_rotation_store_marker() {
+  local marker_path="$1"
+  local marker_expected="$2"
+  local marker_tmp="$marker_path.tmp.$$"
+
+  if ! printf '%s\n' "$marker_expected" > "$marker_tmp" 2>/dev/null; then
+    rm -f -- "$marker_tmp"
+    return 1
+  fi
+  if ! chmod 600 "$marker_tmp" 2>/dev/null; then
+    rm -f -- "$marker_tmp"
+    return 1
+  fi
+  if ! mv -f -- "$marker_tmp" "$marker_path"; then
+    rm -f -- "$marker_tmp"
+    return 1
+  fi
+}
+
+log_rotation_target_is_safe() {
+  local marker_path marker_expected marker_current
+  local default_log_file="$ROOT_DIR/Upkeeper.log"
+  local allow_unsafe=0
+  local current_uid
+
+  current_uid="$(id -u)"
+  marker_path="$(log_rotation_marker_path)"
+  marker_expected="$(log_rotation_marker_expected)"
+
+  case "${CODEX_LOG_FILE_ALLOW_UNSAFE:-0}" in
+    1|true|yes|on)
+      allow_unsafe=1
+      ;;
+  esac
+
+  if [[ -L "$LOG_FILE" ]]; then
+    printf 'log_file_symlink'
+    return 1
+  fi
+  if [[ -L "$LOG_FILE_DIR" || ! -d "$LOG_FILE_DIR" ]]; then
+    printf 'log_dir_invalid'
+    return 1
+  fi
+
+  if [[ -n "$LOG_FILE" && "$LOG_FILE" != "$default_log_file" && "$allow_unsafe" != "1" ]]; then
+    printf 'custom_log_path_without_explicit_override'
+    return 1
+  fi
+
+  marker_current="$(log_rotation_marker_readable "$marker_path" || true)"
+  if [[ "$marker_current" != "$marker_expected" ]]; then
+    if [[ "$LOG_FILE" == "$default_log_file" || "$allow_unsafe" == "1" ]]; then
+      if ! log_rotation_store_marker "$marker_path" "$marker_expected"; then
+        printf 'log_marker_write_failed'
+        return 1
+      fi
+    else
+      printf 'log_marker_missing'
+      return 1
+    fi
+  fi
+
+  marker_current="$(log_rotation_marker_readable "$marker_path" || true)"
+  if [[ "$marker_current" != "$marker_expected" ]]; then
+    printf 'log_marker_mismatch'
+    return 1
+  fi
+
+  if [[ "$(stat -Lc '%u' -- "$marker_path" 2>/dev/null || printf '')" != "$current_uid" ]]; then
+    printf 'log_marker_wrong_owner'
+    return 1
+  fi
+  if [[ "$(stat -Lc '%a' -- "$marker_path" 2>/dev/null || printf '')" != "600" ]]; then
+    printf 'log_marker_wrong_mode'
+    return 1
+  fi
+
+  return 0
+}
+
 prune_wrapper_log_archives() {
   local keep_hours keep_minutes
 
@@ -79,6 +178,16 @@ rotate_wrapper_log_if_needed() {
   local archive_path archive_temp_path archive_timestamp rotation_line
   local archive_owner archive_mode archive_retained archive_reason
   local live_log_hash archive_path_hash
+  local rotation_safety_error
+
+  rotation_safety_error="$(log_rotation_target_is_safe || true)"
+  if [[ -n "$rotation_safety_error" ]]; then
+    rotation_line="$(printf '%s [WARN] cycle=%s run_hash=%s log.rotate_blocked reason=%s path_redacted=1' \
+      "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$rotation_safety_error")"
+    append_log_line_secure "$rotation_line" "log_rotate_blocked"
+    printf '%s\n' "$rotation_line"
+    return 0
+  fi
 
   prune_wrapper_log_archives
 

@@ -2503,7 +2503,11 @@ def check_path_safe(root: Path, db_path: Path, journal_mode: str, allow_unsafe: 
         raise SystemExit(EXIT_UNSAFE_DB_PATH)
 
 
-def chmod_private(path: Path, is_dir: bool = False) -> None:
+def chmod_private(path: Path, is_dir: bool = False, *, created_by_invocation: bool = False) -> None:
+    # Keep directory mode hardening limited to directories this invocation created.
+    if is_dir and not created_by_invocation:
+        return
+
     try:
         path.chmod(0o700 if is_dir else 0o600)
     except OSError:
@@ -2546,8 +2550,10 @@ def connect(
         raise_command_error(f"DB path missing: {db_path}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
 
     if create_parent:
+        parent_existed = db_path.parent.exists()
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        chmod_private(db_path.parent, is_dir=True)
+        if not parent_existed:
+            chmod_private(db_path.parent, is_dir=True, created_by_invocation=True)
     if not db_path.parent.exists():
         raise_command_error(f"DB parent directory does not exist: {db_path.parent}", EXIT_DB_UNAVAILABLE, emit=emit_errors)
     connect_target = str(db_path)
@@ -7859,7 +7865,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
     )
     if not output.parent.exists():
         output.parent.mkdir(parents=True, exist_ok=True)
-        chmod_private(output.parent, is_dir=True)
+        chmod_private(output.parent, is_dir=True, created_by_invocation=True)
     warn_sensitive_export_request(args, output)
     started = epoch_now()
     row_count = 0
@@ -8168,11 +8174,11 @@ def create_backup(
         backup_dir = db_path.parent / "backups"
         if not backup_dir.exists():
             backup_dir.mkdir(parents=True, exist_ok=True)
-            chmod_private(backup_dir, is_dir=True)
+            chmod_private(backup_dir, is_dir=True, created_by_invocation=True)
         backup_path = backup_dir / f"lattice-backup-{epoch_now()}.sqlite3"
     if not backup_path.parent.exists():
         backup_path.parent.mkdir(parents=True, exist_ok=True)
-        chmod_private(backup_path.parent, is_dir=True)
+        chmod_private(backup_path.parent, is_dir=True, created_by_invocation=True)
     if backup_path.exists() or backup_path.is_symlink():
         try:
             existing = backup_path.lstat()
@@ -8428,7 +8434,7 @@ def command_recover(args: argparse.Namespace) -> int:
     recovery_dir = db_path.parent / "recovery"
     if not recovery_dir.exists():
         recovery_dir.mkdir(parents=True, exist_ok=True)
-        chmod_private(recovery_dir, is_dir=True)
+        chmod_private(recovery_dir, is_dir=True, created_by_invocation=True)
     report_path = recovery_dir / f"recovery-{epoch_now()}.json"
     report = {"status": status, "sources": sources}
     report_path.write_text(json_dumps(report) + "\n", encoding="utf-8")

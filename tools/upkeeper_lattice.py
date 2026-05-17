@@ -5446,7 +5446,11 @@ def normalize_review_summary_target(raw_target: str, repo_root: Path | None = No
     candidates = [text]
     line_match = re.fullmatch(r"(.+):([0-9]+)", text)
     if line_match:
-        candidates.append(line_match.group(1))
+        # Only treat ":<line>" as a line suffix when the pre-colon path is not
+        # URL-like and does not contain a repo-relative colon-bearing filename.
+        line_target = line_match.group(1)
+        if re.match(r"^[A-Za-z]:[\\/]", line_target) or (":" not in line_target and "://" not in text):
+            candidates.append(line_target)
 
     if repo_root is None:
         return ""
@@ -5493,6 +5497,16 @@ def probe_review_summary_parsing() -> dict[str, Any]:
         ),
         "markdown_scheme_rejected": (
             "Selected file: [remote](https://example.invalid/file.sh)\nReview outcome: REVIEWED_CLEAN\n",
+            "",
+            "REVIEWED_CLEAN",
+        ),
+        "markdown_scheme_with_line_suffix_rejected": (
+            "Selected file: [remote](https://example.invalid/file.sh:443)\nReview outcome: REVIEWED_CLEAN\n",
+            "",
+            "REVIEWED_CLEAN",
+        ),
+        "markdown_scheme_single_slash_rejected": (
+            "Selected file: [remote](https:/example.invalid/file.sh)\nReview outcome: REVIEWED_CLEAN\n",
             "",
             "REVIEWED_CLEAN",
         ),

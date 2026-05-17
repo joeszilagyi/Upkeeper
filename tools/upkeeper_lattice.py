@@ -221,10 +221,12 @@ def is_upkeeper_temp_artifact_path(path: Path) -> bool:
 def canonical_artifact_path(root: Path, path: str, artifact_kind: str) -> Path:
     candidate = Path(path).expanduser()
     path_abs = candidate.absolute() if candidate.is_absolute() else (Path.cwd() / candidate).absolute()
-    normalized = path_abs.resolve(strict=False)
+    normalized = Path(os.path.normpath(str(path_abs)))
     scope = ARTIFACT_SCOPE_PATHS.get(artifact_kind, "runtime")
     runtime_root = (root / "runtime").resolve()
     scope_root = root.resolve() if scope == "repo" else runtime_root
+    if has_forbidden_symlink(path_abs, scope_root):
+        fail(f"artifact path contains forbidden symlink for {artifact_kind}: {normalized}", EXIT_USAGE)
     if not path_under(normalized, scope_root):
         if artifact_kind in OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS and is_upkeeper_temp_artifact_path(normalized):
             temp_root = Path(tempfile.gettempdir()).resolve()
@@ -2024,10 +2026,7 @@ def canonical_artifact_identity(root: Path, raw_path: str) -> str:
     if not raw_path:
         return ""
     path = Path(raw_path).expanduser()
-    try:
-        normalized = path.resolve(strict=False)
-    except OSError:
-        normalized = path.absolute()
+    normalized = Path(os.path.normpath(str(path.absolute())))
     try:
         relative = normalized.relative_to(root)
     except ValueError:
@@ -6281,6 +6280,8 @@ def create_artifact_ref(
         entry = p.lstat()
     except OSError:
         entry = None
+    if entry is not None and stat.S_ISLNK(entry.st_mode):
+        fail(f"artifact path is a symlink and cannot be hashed: {p}", EXIT_USAGE)
     exists = entry is not None and stat.S_ISREG(entry.st_mode)
     if expected_digest is not None and not exists:
         fail(f"expected artifact missing for {artifact_kind}: {p}", EXIT_INTEGRITY)

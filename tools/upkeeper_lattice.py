@@ -132,6 +132,7 @@ SOURCE_RECORD_PATH_HMAC_KINDS = {
     "upkeeper_log",
 }
 TRANSIENT_ARTIFACT_KINDS = {"transcript", "compiled_prompt", "last_message"}
+OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS = {"compiled_prompt", "last_message"}
 ARTIFACT_RETENTION_CLASSES = {
     "transcript": "transient",
     "compiled_prompt": "transient",
@@ -165,6 +166,18 @@ def normalize_hex_sha256(raw: Any) -> str | None:
     return text
 
 
+def is_upkeeper_temp_artifact_path(path: Path) -> bool:
+    candidate = path.resolve(strict=False)
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    if not path_under(candidate, temp_root):
+        return False
+    try:
+        relative = candidate.relative_to(temp_root)
+    except ValueError:
+        return False
+    return bool(relative.parts) and relative.parts[0].startswith("upkeeper-")
+
+
 def canonical_artifact_path(root: Path, path: str, artifact_kind: str) -> Path:
     candidate = Path(path).expanduser()
     path_abs = candidate.absolute() if candidate.is_absolute() else (Path.cwd() / candidate).absolute()
@@ -173,6 +186,11 @@ def canonical_artifact_path(root: Path, path: str, artifact_kind: str) -> Path:
     runtime_root = (root / "runtime").resolve()
     scope_root = root.resolve() if scope == "repo" else runtime_root
     if not path_under(normalized, scope_root):
+        if artifact_kind in OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS and is_upkeeper_temp_artifact_path(normalized):
+            temp_root = Path(tempfile.gettempdir()).resolve()
+            if has_forbidden_symlink(normalized, temp_root):
+                fail(f"artifact path contains forbidden symlink for {artifact_kind}: {normalized}", EXIT_USAGE)
+            return normalized
         fail(
             f"unsafe artifact path for {artifact_kind}: {normalized} is outside {scope_root}",
             EXIT_USAGE,
@@ -4294,6 +4312,11 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if not bool(report_only_cycle_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
+        transient_temp_scope_probe = probe_cycle_finish_transient_artifact_scope()
+        result["checks"]["cycle_finish_transient_artifact_scope"] = transient_temp_scope_probe
+        if not bool(transient_temp_scope_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
         if not all(bool(item.get("ok")) for item in change_note_ref_probe.values()):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
@@ -5108,6 +5131,124 @@ def probe_cycle_finish_target_mismatch() -> dict[str, Any]:
         "target_substituted_count": substituted_count,
         "rejected_event_kind": rejected["event_kind"] if rejected else None,
         "rejected_event_path": rejected["path"] if rejected else None,
+        "ok": ok,
+    }
+
+
+def probe_cycle_finish_transient_artifact_scope() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-cycle-finish-scope-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        selected_path = "tools/selected.py"
+        try:
+            subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        (root / "tools").mkdir(parents=True, exist_ok=True)
+        (root / "runtime").mkdir(parents=True, exist_ok=True)
+        (root / selected_path).write_text("print('selected')\n", encoding="utf-8")
+
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        transient_dir = Path(tempfile.mkdtemp(prefix="upkeeper-", dir=str(temp_root)))
+        compiled_prompt_path = transient_dir / "compiled-prompt.probe"
+        last_message_path = transient_dir / "last-message.probe"
+        review_path = last_message_path
+        compiled_prompt_path.write_text("probe compiled prompt artifact\n", encoding="utf-8")
+        last_message_path.write_text(
+            "Selected file: `tools/selected.py`\nREVIEWED_AND_REPORTED\n",
+            encoding="utf-8",
+        )
+
+        db_path = root / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True, create_parent=True, create_if_missing=True)
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+        finally:
+            conn.close()
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="wal",
+            allow_unsafe_db=True,
+            raw_storage_mode="minimal",
+            cycle_id="cycle-temp-scope",
+            run_hash="run-temp-scope",
+            status_marker="WORK_DONE",
+            review_outcome=None,
+            review_selected_path=None,
+            codex_exit=0,
+            wrapper_exit=0,
+            finish_reason="work_done",
+            finish_level="info",
+            codex_exec_started=1,
+            dry_run="1",
+            selected_path=selected_path,
+            last_message_file=str(review_path),
+            transcript_path=None,
+            compiled_prompt_path=str(compiled_prompt_path),
+            log_path=None,
+            snapshot_kind="after_codex",
+            end_epoch=1234567890,
+        )
+        cycle = None
+        compiled = None
+        last_message = None
+        code = 0
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                command_record_cycle_finish(args)
+            code = 0
+        except LatticeCommandError as exc:
+            code = exc.code
+        else:
+            conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True)
+            try:
+                repo_id = ensure_repository(conn, root)
+                cycle = conn.execute(
+                    """
+                    select cycle_pk
+                      from cycles
+                     where cycle_id=? and run_hash=?
+                    """,
+                    ("cycle-temp-scope", "run-temp-scope"),
+                ).fetchone()
+                compiled = conn.execute(
+                    """
+                    select path
+                      from artifact_refs
+                     where repo_id=? and cycle_pk=? and artifact_kind='compiled_prompt'
+                    """,
+                    (repo_id, cycle["cycle_pk"]),
+                ).fetchone()
+                last_message = conn.execute(
+                    """
+                    select path
+                      from artifact_refs
+                     where repo_id=? and cycle_pk=? and artifact_kind='last_message'
+                    """,
+                    (repo_id, cycle["cycle_pk"]),
+                ).fetchone()
+            finally:
+                conn.close()
+        finally:
+            for candidate in (compiled_prompt_path, last_message_path):
+                try:
+                    candidate.unlink()
+                except OSError:
+                    pass
+            try:
+                transient_dir.rmdir()
+            except OSError:
+                pass
+    ok = code == 0
+    if cycle:
+        ok = ok and bool(compiled) and isinstance(compiled["path"], str) and compiled["path"].startswith(PASS_RESULT_PATH_HMAC_PREFIX)
+        ok = ok and bool(last_message) and isinstance(last_message["path"], str) and last_message["path"].startswith(PASS_RESULT_PATH_HMAC_PREFIX)
+    return {
+        "cycle_id": "cycle-temp-scope",
+        "run_hash": "run-temp-scope",
+        "cycle_return_code": code,
+        "compiled_prompt_path": compiled["path"] if compiled else None,
+        "last_message_path": last_message["path"] if last_message else None,
         "ok": ok,
     }
 

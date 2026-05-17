@@ -390,6 +390,9 @@ check_backlog_launcher_contract() {
   grep -Fq 'backlog_hibernate_until_epoch' orchestration/backlog.sh || fail "backlog launcher is missing quota hibernation helper"
   grep -Fq 'quota preflight: quota blocked bucket=' orchestration/backlog.sh || fail "backlog launcher does not explain quota hibernation"
   grep -Fq 'latest_active_primary_quota_block_marker' orchestration/backlog.sh || fail "backlog launcher does not honor active quota block markers"
+  grep -Fq 'BACKLOG_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota guardrail bypass on"
+  grep -Fq 'BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota cooldown bypass on"
+  grep -Fq 'quota preflight: burn bypass continuing despite stale quota evidence' orchestration/backlog.sh || fail "backlog launcher does not explain stale quota bypass"
   grep -Fq 'BACKLOG_SOURCE_ONLY' orchestration/backlog.sh || fail "backlog launcher cannot be source-tested without running main"
   python3 - <<'PY' || fail "backlog autoshelve no longer runs before gh/jq/rg dependency gates"
 from pathlib import Path
@@ -443,6 +446,30 @@ PY
     fail "backlog launcher did not classify quota waits as WAIT"
   grep -Fxq '2026-05-16T18:21:00 PAGE   [ERROR] already marked' "$temp_dir/existing.out" ||
     fail "backlog launcher duplicated an existing attention marker"
+
+  temp_dir="$VALIDATION_TMP_ROOT/backlog-burn-env"
+  mkdir -p "$temp_dir"
+  BACKLOG_SOURCE_ONLY=1 bash -lc '
+    set -euo pipefail
+    cd "$1"
+    source ./orchestration/backlog.sh
+    prepare_backlog_runtime_env
+    printf "model=%s\n" "$CODEX_MODEL"
+    printf "effort=%s\n" "$CODEX_REASONING_EFFORT"
+    printf "week=%s\n" "$CODEX_WEEK_STOP_PERCENT"
+    printf "bypass=%s\n" "$CODEX_QUOTA_GUARDRAIL_BYPASS"
+    printf "cooldown=%s\n" "$CODEX_QUOTA_COOLDOWN_BYPASS"
+  ' bash "$ROOT_DIR" >"$temp_dir/defaults.out"
+  grep -Fxq 'model=gpt-5.3-codex-spark' "$temp_dir/defaults.out" ||
+    fail "backlog launcher did not default to Spark model"
+  grep -Fxq 'effort=xhigh' "$temp_dir/defaults.out" ||
+    fail "backlog launcher did not default to xhigh reasoning"
+  grep -Fxq 'week=0' "$temp_dir/defaults.out" ||
+    fail "backlog launcher did not default to spend-to-zero weekly floor"
+  grep -Fxq 'bypass=1' "$temp_dir/defaults.out" ||
+    fail "backlog launcher did not export quota guardrail bypass"
+  grep -Fxq 'cooldown=1' "$temp_dir/defaults.out" ||
+    fail "backlog launcher did not export quota cooldown bypass"
 }
 
 check_backlog_quota_hibernation_contract() {

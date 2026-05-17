@@ -9,7 +9,8 @@ Status: completed
 
 Goal:
 Flip the backlog launcher back to the Spark quota bucket for reset-window bug
-burn-down runs.
+burn-down runs, including bypass of stale local quota evidence that would
+otherwise defer before the first post-reset backend call can refresh quota state.
 
 Constraints:
 - Keep the change limited to backlog launcher defaults and matching public notes.

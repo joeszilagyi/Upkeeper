@@ -30,6 +30,8 @@ BACKLOG_QUOTA_HIBERNATE="${BACKLOG_QUOTA_HIBERNATE:-1}"
 BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS="${BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS:-60}"
 BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS="${BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS:-60}"
 BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS="${BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS:-0}"
+BACKLOG_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-1}"
+BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"
 BACKLOG_ALERT_COLOR="${BACKLOG_ALERT_COLOR:-auto}"
 BACKLOG_ALERT_BLINK="${BACKLOG_ALERT_BLINK:-1}"
 BACKLOG_ACTIVE_OWNER_START_TICKS=""
@@ -650,8 +652,8 @@ prepare_backlog_runtime_env() {
   export CODEX_WEEK_STOP_BUFFER_PERCENT="${BACKLOG_WEEK_STOP_BUFFER_PERCENT:-0}"
   export CODEX_SPARK_5H_STOP_PERCENT="${BACKLOG_SPARK_5H_STOP_PERCENT:-0}"
   export CODEX_SPARK_WEEK_STOP_BUFFER_PERCENT="${BACKLOG_SPARK_WEEK_STOP_BUFFER_PERCENT:-0}"
-  export CODEX_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-0}"
-  export CODEX_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-0}"
+  export CODEX_QUOTA_GUARDRAIL_BYPASS="$BACKLOG_QUOTA_GUARDRAIL_BYPASS"
+  export CODEX_QUOTA_COOLDOWN_BYPASS="$BACKLOG_QUOTA_COOLDOWN_BYPASS"
   export UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="${BACKLOG_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL:-1}"
   export CODEX_TERMINAL_VERBOSITY="${BACKLOG_CODEX_TERMINAL_VERBOSITY:-${CODEX_TERMINAL_VERBOSITY:-quiet}}"
   export PYTHONDONTWRITEBYTECODE=1
@@ -694,7 +696,7 @@ quota_preflight_allows_backlog_run() {
   source "$ROOT_DIR/lib/upkeeper/quota_guardrails.bash"
   source "$ROOT_DIR/lib/upkeeper/quota_block_markers.bash"
 
-  if marker_path="$(latest_active_primary_quota_block_marker "$CODEX_MODEL" 2>/dev/null)"; then
+  if [[ "$BACKLOG_QUOTA_COOLDOWN_BYPASS" != "1" ]] && marker_path="$(latest_active_primary_quota_block_marker "$CODEX_MODEL" 2>/dev/null)"; then
     marker_epoch="$(backlog_marker_field "$marker_path" "blocked_until_epoch")"
     marker_bucket="$(backlog_marker_field "$marker_path" "blocked_bucket")"
     marker_reason="$(backlog_marker_field "$marker_path" "reason")"
@@ -715,6 +717,10 @@ quota_preflight_allows_backlog_run() {
   secondary_decision="$(quota_bucket_decision "$secondary_bucket_current" "$secondary_projected_left" "$(quota_week_stop_percent_for_model "$CODEX_MODEL")")"
 
   if [[ "$primary_decision" == "stop" || "$secondary_decision" == "stop" ]]; then
+    if [[ "$BACKLOG_QUOTA_GUARDRAIL_BYPASS" == "1" ]]; then
+      log "quota preflight: burn bypass continuing despite stop decision (primary=$primary_decision secondary=$secondary_decision)"
+      return 0
+    fi
     blocked_bucket=""
     blocked_until_epoch=0
     if [[ "$primary_decision" == "stop" ]]; then
@@ -735,6 +741,10 @@ quota_preflight_allows_backlog_run() {
   fi
 
   if [[ "$primary_decision" == "defer" || "$secondary_decision" == "defer" ]]; then
+    if [[ "$BACKLOG_QUOTA_GUARDRAIL_BYPASS" == "1" ]]; then
+      log "quota preflight: burn bypass continuing despite stale quota evidence (primary=$primary_decision secondary=$secondary_decision)"
+      return 0
+    fi
     log "quota preflight: deferring backlog run this cycle (primary=$primary_decision secondary=$secondary_decision)"
     return 3
   fi

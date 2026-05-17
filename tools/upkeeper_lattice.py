@@ -5045,7 +5045,12 @@ def parse_review_summary_file(path: Path, repo_root: Path | None = None) -> dict
         elif bt:
             candidate = normalize_review_summary_target(bt.group(1), repo_root)
         elif ":" in line:
-            candidate = normalize_review_summary_target(line.split(":", 1)[1], repo_root)
+            parsed_candidate_match = re.search(
+                r"(?ix)^\s*(?:selected\s+file|selected\s+target|target\s+file|review\s+target\s+file|review\s+target|target)\s*[:=]\s*(.+)$",
+                line,
+            )
+            if parsed_candidate_match:
+                candidate = normalize_review_summary_target(parsed_candidate_match.group(1), repo_root)
         if candidate:
             selected_file = candidate
         if selected_file:
@@ -5120,6 +5125,11 @@ def probe_review_summary_parsing() -> dict[str, Any]:
             "Selected file: pkg:tools/build.sh\nReview outcome: REVIEWED_AND_FIXED\n",
             "pkg:tools/build.sh",
             "REVIEWED_AND_FIXED",
+        ),
+        "markdown_colon_bearing_path": (
+            "Selected file: [pkg:tools/build.sh](pkg:tools/build.sh)\nReview outcome: REVIEWED_AND_REPORTED\n",
+            "pkg:tools/build.sh",
+            "REVIEWED_AND_REPORTED",
         ),
         "markdown_scheme_rejected": (
             "Selected file: [remote](https://example.invalid/file.sh)\nReview outcome: REVIEWED_CLEAN\n",

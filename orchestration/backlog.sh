@@ -689,6 +689,7 @@ quota_preflight_allows_backlog_run() {
   local blocked_bucket blocked_until_epoch
   local primary_reset
   local secondary_reset
+  local primary_reset_expired secondary_reset_expired snapshot_stale_after_reset
 
   prepare_backlog_runtime_env
   source "$ROOT_DIR/lib/upkeeper/config_validation.bash"
@@ -711,6 +712,9 @@ quota_preflight_allows_backlog_run() {
 
   primary_bucket_current="$(jq -r '.snapshot.primary_bucket_current // "false"' <<<"$quota_json")"
   secondary_bucket_current="$(jq -r '.snapshot.secondary_bucket_current // "false"' <<<"$quota_json")"
+  snapshot_stale_after_reset="$(jq -r '.snapshot.snapshot_stale_after_reset // "false"' <<<"$quota_json")"
+  primary_reset_expired="$(jq -r '.snapshot.primary_reset_expired // "false"' <<<"$quota_json")"
+  secondary_reset_expired="$(jq -r '.snapshot.secondary_reset_expired // "false"' <<<"$quota_json")"
   primary_projected_left="$(jq -r '100 - ((.snapshot.primary_used_percent // 0) + (.projection.primary_delta // 0))' <<<"$quota_json")"
   secondary_projected_left="$(jq -r '100 - ((.snapshot.secondary_used_percent // 0) + (.projection.secondary_delta // 0))' <<<"$quota_json")"
   primary_decision="$(quota_bucket_decision "$primary_bucket_current" "$primary_projected_left" "$(quota_5h_stop_percent_for_model "$CODEX_MODEL")")"
@@ -742,7 +746,16 @@ quota_preflight_allows_backlog_run() {
 
   if [[ "$primary_decision" == "defer" || "$secondary_decision" == "defer" ]]; then
     if [[ "$BACKLOG_QUOTA_GUARDRAIL_BYPASS" == "1" ]]; then
-      log "quota preflight: burn bypass continuing despite stale quota evidence (primary=$primary_decision secondary=$secondary_decision)"
+      if [[ "$snapshot_stale_after_reset" == "true" ]]; then
+        log "quota preflight: burn bypass continuing despite stale quota evidence after reset (primary=$primary_decision secondary=$secondary_decision primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired)"
+      else
+        log "quota preflight: burn bypass continuing despite stale quota evidence (primary=$primary_decision secondary=$secondary_decision)"
+      fi
+      return 0
+    fi
+
+    if [[ "$snapshot_stale_after_reset" == "true" && "$primary_decision" == "defer" && "$secondary_decision" == "defer" ]]; then
+      log "quota preflight: stale quota evidence after reset; retrying guarded run this cycle to refresh quota state (primary=$primary_decision secondary=$secondary_decision primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired)"
       return 0
     fi
     log "quota preflight: deferring backlog run this cycle (primary=$primary_decision secondary=$secondary_decision)"

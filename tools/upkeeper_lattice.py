@@ -2059,6 +2059,12 @@ def git_porcelain_status_for_path(root: Path, rel_path: str) -> str:
     return entries[0][0] if entries else ""
 
 
+def stored_git_status_code(status_code: str) -> str:
+    if len(status_code) < 2:
+        return "clean"
+    return status_code[:2].replace(" ", "_")
+
+
 def inside_git_repo(root: Path) -> bool:
     return git_output(root, ["rev-parse", "--is-inside-work-tree"]) == "true"
 
@@ -3638,7 +3644,7 @@ def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
         meta["generated"] = 0
         return meta
     status = git_porcelain_status_for_path(root, rel_path)
-    meta["git_status"] = status[:2].replace(" ", "_") if status else "clean"
+    meta["git_status"] = stored_git_status_code(status) if status else "clean"
     raw_worktree_hash = git_output(root, ["hash-object", "--", rel_path], "missing") if st is not None else "unavailable"
     raw_head_blob = git_output(root, ["rev-parse", f"HEAD:{rel_path}"], "none")
     if raw_head_blob == "none":

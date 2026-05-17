@@ -884,6 +884,106 @@ PY
   [[ "$collision_rc" -ne 0 ]] || fail "export to db path should fail"
 }
 
+test_git_status_xy_preserves_index_worktree_columns() {
+  local repo candidates_path
+
+  repo="$TEST_TMP_ROOT/git-status-xy"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  mkdir -p "$repo"
+  (
+    cd "$repo"
+    git init -q
+    git config user.name "Lattice Test"
+    git config user.email "lattice@example.invalid"
+    printf 'runtime/\n' >.gitignore
+    for path in clean.sh unstaged.sh staged.sh both.sh deleted.sh rename-old.sh; do
+      printf '#!/usr/bin/env bash\nprintf "%s\\n"\n' "$path" >"$path"
+    done
+    git add -A
+    git commit -q -m "initial xy fixtures"
+    printf '# unstaged\n' >>unstaged.sh
+    printf '# staged\n' >>staged.sh
+    git add staged.sh
+    printf '# staged first\n' >>both.sh
+    git add both.sh
+    printf '# unstaged second\n' >>both.sh
+    rm deleted.sh
+    git mv rename-old.sh rename-new.sh
+  )
+
+  lattice init >"$TEST_TMP_ROOT/git-status-xy-init.json"
+  candidates_path="$TEST_TMP_ROOT/git-status-xy-candidates.jsonl"
+  lattice query selection-candidates --mode oldest-mtime --format jsonl >"$candidates_path"
+  python3 - "$candidates_path" <<'PY' || fail "selection candidates did not preserve Git XY status columns"
+import json
+import sys
+
+rows = {}
+with open(sys.argv[1], encoding="utf-8") as handle:
+    for line in handle:
+        row = json.loads(line)
+        rows[row.get("path")] = row
+
+expected = {
+    "clean.sh": "clean",
+    "unstaged.sh": "_M",
+    "staged.sh": "M_",
+    "both.sh": "MM",
+    "deleted.sh": "_D",
+}
+missing = sorted(path for path in expected if path not in rows)
+if missing:
+    raise AssertionError(f"missing candidate rows: {missing}; saw {sorted(rows)}")
+for path, git_status in expected.items():
+    got = rows[path].get("git_status")
+    if got != git_status:
+        raise AssertionError(f"{path} git_status should be {git_status!r}, got {got!r}: {rows[path]}")
+PY
+
+  lattice record-worktree-snapshot --snapshot-kind xy >"$TEST_TMP_ROOT/git-status-xy-snapshot.json"
+  python3 - "$DB" <<'PY' || fail "worktree snapshot did not preserve raw Git XY evidence"
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+conn.row_factory = sqlite3.Row
+rows = {
+    row["path"]: row
+    for row in conn.execute(
+        """
+        select p.path, p.status, p.old_path
+          from worktree_snapshot_paths p
+          join worktree_snapshots s on s.worktree_snapshot_id = p.worktree_snapshot_id
+         where s.snapshot_kind = 'xy'
+        """
+    )
+}
+
+expected_status = {
+    "unstaged.sh": " M",
+    "staged.sh": "M ",
+    "both.sh": "MM",
+    "deleted.sh": " D",
+}
+missing = sorted(path for path in expected_status if path not in rows)
+if missing:
+    raise AssertionError(f"missing snapshot paths: {missing}; saw {sorted(rows)}")
+for path, status in expected_status.items():
+    got = rows[path]["status"]
+    if got != status:
+        raise AssertionError(f"{path} snapshot status should be {status!r}, got {got!r}")
+
+rename = rows.get("rename-new.sh")
+if rename is None:
+    raise AssertionError(f"missing rename-new.sh snapshot row; saw {sorted(rows)}")
+if not str(rename["status"]).startswith("R"):
+    raise AssertionError(f"rename status should start with R, got {rename['status']!r}")
+if rename["old_path"] != "rename-old.sh":
+    raise AssertionError(f"rename old_path should be rename-old.sh, got {rename['old_path']!r}")
+PY
+}
+
 test_no_git_import_and_recovery() {
   local no_git_dir no_git_db rc recover_repo recover_db
 
@@ -1924,6 +2024,7 @@ PY
 }
 
 test_lattice_cli_contracts
+test_git_status_xy_preserves_index_worktree_columns
 test_no_git_import_and_recovery
 test_import_git_prefers_checked_out_branch_state
 test_import_git_privacy_defaults_and_opt_in

@@ -4688,6 +4688,37 @@ def record_worktree_snapshot(
         stored_old_path = pass_result_path_hmac(root, old_path) if old_path else None
         if not stored_path:
             continue
+        is_rename = old_path is not None and "R" in status_code
+        status_state = "renamed" if is_rename else "active"
+        if is_rename and old_path:
+            existing_old_file_id = file_id_for_path(conn, repo_id, old_path)
+            if existing_old_file_id is None:
+                existing_old_file_id = ensure_file(
+                    conn,
+                    repo_id,
+                    old_path,
+                    canonical_path=old_path,
+                    state=status_state,
+                    source_id=source_id,
+                )
+            file_id = ensure_file(
+                conn,
+                repo_id,
+                path,
+                canonical_path=old_path,
+                state=status_state,
+                source_id=source_id,
+            )
+            if file_id != existing_old_file_id:
+                file_id = merge_file_lineage(conn, file_id, existing_old_file_id)
+        else:
+            file_id = ensure_file(
+                conn,
+                repo_id,
+                path,
+                state=status_state,
+                source_id=source_id,
+            )
         conn.execute(
             """
             insert into worktree_snapshot_paths(

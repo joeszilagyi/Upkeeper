@@ -6052,11 +6052,39 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
             raw_storage_mode=raw_storage_mode,
         )
         cycle_pk = ensure_cycle(conn, repo_id, args.cycle_id, args.run_hash, source_id=source_id)
-        selected_path = external_rel_path(args.selected_path or "")
-        selected_file_id = ensure_file(conn, repo_id, selected_path, source_id=source_id) if selected_path else None
+        db_cycle = conn.execute(
+            "select selected_file_id, selected_path from cycles where cycle_pk=?",
+            (cycle_pk,),
+        ).fetchone()
+        db_selected_path = str(db_cycle["selected_path"] or "") if db_cycle else ""
+        db_selected_file_id = db_cycle["selected_file_id"] if db_cycle else None
+        selected_path = external_rel_path(args.selected_path or db_selected_path)
+        selected_file_id = (
+            ensure_file(conn, repo_id, selected_path, source_id=source_id)
+            if selected_path
+            else db_selected_file_id
+        )
         cycle_selected_path = selected_path
-        cycle_selected_file_id = selected_file_id
-        if reported_selected and selected_path and reported_selected != selected_path:
+        cycle_selected_file_id = int(selected_file_id) if selected_file_id is not None else None
+        if reported_selected and not cycle_selected_path:
+            # A reported target is not a safe substitute: without a preselected
+            # target, we cannot safely re-anchor the cycle to a different file.
+            record_file_event(
+                conn,
+                repo_id,
+                "target_substitution_rejected",
+                file_id=cycle_selected_file_id,
+                cycle_pk=cycle_pk,
+                source_id=source_id,
+                path=cycle_selected_path or None,
+                confidence="reported",
+                details={"preselected_path": "", "reported_selected_path": reported_selected},
+            )
+            review_outcome = "STOPPED_ON_BLOCKER"
+            status_marker = "BLOCKED"
+            finish_reason = "selected_path_mismatch"
+            finish_level = "error"
+        elif reported_selected and cycle_selected_path and reported_selected != cycle_selected_path:
             # The wrapper-selected target is backed up before Codex runs, so a
             # different reported target is invalid evidence rather than a new cycle target.
             record_file_event(
@@ -6074,20 +6102,6 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
             status_marker = "BLOCKED"
             finish_reason = "selected_path_mismatch"
             finish_level = "error"
-        elif reported_selected and not selected_path:
-            cycle_selected_path = reported_selected
-            cycle_selected_file_id = ensure_file(conn, repo_id, reported_selected, source_id=source_id)
-            record_file_event(
-                conn,
-                repo_id,
-                "target_substituted",
-                file_id=cycle_selected_file_id,
-                cycle_pk=cycle_pk,
-                source_id=source_id,
-                path=cycle_selected_path,
-                confidence="reported",
-                details={"reported_selected_path": reported_selected},
-            )
         updates: list[tuple[str, Any]] = [("end_epoch", args.end_epoch or epoch_now())]
         if status_marker:
             updates.append(("status_marker", status_marker))

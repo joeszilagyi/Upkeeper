@@ -164,6 +164,9 @@ REDACTABLE_PATH_KEYS = {
     "source_uri",
     "repo_alias_id",
 }
+REDACTION_KEY_NORMALIZER = re.compile(r"(?<!^)(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+REDACTION_KEY_SEPARATORS = re.compile(r"[\.\-\s]+")
+REDACTION_KEY_UNDERSCORE_COLLAPSE = re.compile(r"_+")
 STRUCTURED_REDACTION_STRING_KEYS = {"raw_text", "details_json", "parsed_json"}
 CONTRIBUTOR_REDACT_KEYS = {"name", "email", "github_login"}
 INLINE_ASSIGNMENT_PATTERN = re.compile(
@@ -3714,7 +3717,22 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 def key_requires_path_redaction(key: str | None) -> bool:
     if not key:
         return False
-    return key in REDACTABLE_PATH_KEYS or key == "selected_file" or key.endswith(("_path", "_paths", "_uri", "_uris"))
+    normalized = key
+    if "-" in normalized or " " in normalized or any(char.isupper() for char in normalized):
+        normalized = REDACTION_KEY_SEPARATORS.sub("_", REDACTION_KEY_NORMALIZER.sub("_", normalized))
+    normalized = REDACTION_KEY_UNDERSCORE_COLLAPSE.sub("_", normalized).strip("_. ").lower()
+    if not normalized:
+        return False
+    if normalized in REDACTABLE_PATH_KEYS or normalized == "selected_file":
+        return True
+    if normalized.endswith(("_path", "_paths", "_uri", "_uris")):
+        return True
+    tokens = set(normalized.split("_"))
+    if "path" in tokens or "uri" in tokens:
+        return True
+    if "selected" in tokens and ("path" in tokens or "file" in tokens):
+        return True
+    return False
 
 
 def looks_like_json_container_string(value: str) -> bool:
@@ -5278,13 +5296,24 @@ def probe_export_redaction() -> dict[str, Any]:
     payload = {
         "selected_path": selected_path,
         "remote_url": local_remote,
-        "raw_text": f"selected_path={selected_path} remote_url='{local_remote}' email=alice@example.com",
+        "selectedPath": selected_path,
+        "raw_text": f"selected_path={selected_path} selectedPath={selected_path} remote_url='{local_remote}' remoteURL='{local_remote}' email=alice@example.com",
         "details_json": json_dumps({"preselected_path": selected_path, "reported_selected_path": "docs/other.md"}),
         "parsed_json": json_dumps(
             {
                 "selected_path": selected_path,
                 "remote_url": local_remote,
                 "nested": {"selected_path": selected_path},
+                "review_selected_path": selected_path,
+                "selection_map": {"review-selected-path": selected_path},
+                "alias_value": selected_path,
+                "aliases": [
+                    {
+                        "selected-file": selected_path,
+                        "alias_value": selected_path,
+                    }
+                ],
+                "report": {"selectedPath": selected_path, "remote_url": local_remote},
             }
         ),
     }
@@ -5296,10 +5325,15 @@ def probe_export_redaction() -> dict[str, Any]:
             and str(redacted.get("remote_url") or "").startswith(REDACTED_PATH_PREFIX)
             and selected_path not in json_dumps(redacted)
             and local_remote not in json_dumps(redacted)
+            and selected_path not in str(redacted.get("selectedPath") or "")
+            and selected_path not in str(redacted.get("parsed_json") or "")
+            and local_remote not in str(redacted.get("parsed_json") or "")
             and "alice@example.com" not in raw_text
             and "email=<redacted>" in raw_text
             and "selected_path=path-sha256:" in raw_text
             and "remote_url='path-sha256:" in raw_text
+            and "selectedPath=path-sha256:" in raw_text
+            and "remoteURL='path-sha256:" in raw_text
             and has_redacted_path_token(redacted)
         ),
         "raw_text": raw_text,

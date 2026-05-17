@@ -92,6 +92,10 @@ backlog_attention_marker_for_line() {
       printf 'ACTION\n'
       return 0
       ;;
+    *"[ERROR] Upkeeper: "*"primary: echo "*|*"[ERROR] Upkeeper: "*"secondary: echo "*|*"[ERROR] Upkeeper: "*"validation: echo "*)
+      printf 'INFO\n'
+      return 0
+      ;;
     *"backlog: ERROR:"*|*"[ERROR]"*)
       printf 'PAGE\n'
       return 0
@@ -614,6 +618,7 @@ deferred_issue_file() {
 cleanup_ephemeral_artifacts() {
   find "$ROOT_DIR" -type d -name '__pycache__' -prune -exec rm -rf -- {} + 2>/dev/null || true
   find "$ROOT_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true
+  rm -f -- "$ROOT_DIR/\$db" "$ROOT_DIR/\$db-shm" "$ROOT_DIR/\$db-wal" 2>/dev/null || true
 }
 
 autoshelve_dirty_worktree_if_enabled() {

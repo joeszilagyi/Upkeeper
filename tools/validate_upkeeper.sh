@@ -394,6 +394,7 @@ check_backlog_launcher_contract() {
   grep -Fq 'BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota cooldown bypass on"
   grep -Fq 'quota preflight: burn bypass continuing despite stale quota evidence' orchestration/backlog.sh || fail "backlog launcher does not explain stale quota bypass"
   grep -Fq 'BACKLOG_SOURCE_ONLY' orchestration/backlog.sh || fail "backlog launcher cannot be source-tested without running main"
+  grep -Fq 'rm -f -- "$ROOT_DIR/\$db"' orchestration/backlog.sh || fail "backlog launcher does not clean literal db scratch artifacts before staging"
   python3 - <<'PY' || fail "backlog autoshelve no longer runs before gh/jq/rg dependency gates"
 from pathlib import Path
 
@@ -434,6 +435,7 @@ PY
     cd "$1"
     source ./orchestration/backlog.sh
     backlog_format_attention_line "2026-05-16T17:00:37-0700 [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s" >"$2/worker.out"
+    backlog_format_attention_line "2026-05-17T10:26:29-0700 [ERROR] Upkeeper: primary: echo '\''ERROR: tools/upkeeper_lattice.py not found'\''" >"$2/echo-error.out"
     backlog_format_attention_line "2026-05-16T18:12:41-0700 [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed" >"$2/page.out"
     backlog_format_attention_line "2026-05-16T18:20:00 backlog: quota preflight: deferring backlog run this cycle" >"$2/wait.out"
     backlog_format_attention_line "2026-05-16T18:20:30 Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)" >"$2/fyi.out"
@@ -441,6 +443,8 @@ PY
   ' bash "$ROOT_DIR" "$temp_dir"
   grep -Fq '2026-05-16T17:00:37-0700 WORKER  [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s' "$temp_dir/worker.out" ||
     fail "backlog launcher did not classify worker command failures separately from pageable errors"
+  grep -Fq "2026-05-17T10:26:29-0700 INFO    [ERROR] Upkeeper: primary: echo 'ERROR: tools/upkeeper_lattice.py not found'" "$temp_dir/echo-error.out" ||
+    fail "backlog launcher treated echoed model ERROR text as a pageable wrapper error"
   grep -Fq '2026-05-16T18:12:41-0700 PAGE    [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed' "$temp_dir/page.out" ||
     fail "backlog launcher did not classify wrapper/control-plane errors as PAGE"
   grep -Fq '2026-05-16T18:20:00 WAIT    backlog: quota preflight: deferring backlog run this cycle' "$temp_dir/wait.out" ||

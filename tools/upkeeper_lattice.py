@@ -8365,17 +8365,6 @@ def command_recover(args: argparse.Namespace) -> int:
             parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
             raw_storage_mode=raw_storage_mode,
         )
-        if backup_path is not None:
-            create_artifact_ref(
-                conn,
-                root,
-                repo_id,
-                cycle_pk=None,
-                source_id=source_id,
-                artifact_kind="backup",
-                path=str(backup_path),
-                details={"backup_event": "pre_recovery"},
-            )
     if args.backup_first and preexisting_db:
         backup_path = create_backup(
             conn,
@@ -8384,6 +8373,23 @@ def command_recover(args: argparse.Namespace) -> int:
             output=str(backup_path),
             allow_overwrite=False,
         )
+        backup_conn = sqlite3.connect(str(backup_path))
+        try:
+            backup_conn.row_factory = sqlite3.Row
+            backup_conn.execute("PRAGMA busy_timeout=5000")
+            backup_conn.execute("PRAGMA foreign_keys=ON")
+            create_artifact_ref(
+                backup_conn,
+                root,
+                repo_id,
+                cycle_pk=None,
+                source_id=source_id,
+                artifact_kind="backup",
+                path=str(backup_path),
+                details={"backup_event": "pre_recovery", "recorded_in": "backup"},
+            )
+        finally:
+            backup_conn.close()
         sources.append("backup:1")
     conn.close()
     status = "ok"

@@ -3,6 +3,43 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Model Output Redaction Boundary
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- fix issue `#292` by treating model-derived transcript/status/review text as
+  tainted before it reaches operator logs or terminal progress
+- keep protected raw transcript artifacts available for local evidence while
+  default summaries use redacted classes, HMAC path labels, and safe snippets
+- cover live output, transcript signals, review summaries, terminal finales, and
+  malformed status-marker candidate logs
+
+Constraints:
+- do not remove raw protected transcripts or full diagnostic modes
+- keep wrapper-owned structured fields useful for operators
+- avoid broad rewrites; add a reusable redaction helper and apply it at sinks
+- add deterministic no-backend validation with fake secrets, private paths, and
+  model prose
+
+Files likely touched:
+- `lib/upkeeper/runtime_foundation.bash`
+- `lib/upkeeper/transcript_output.bash`
+- `lib/upkeeper/report_analysis.bash`
+- `Upkeeper`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- focused transcript/review redaction validator checks
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+
 ## Backlog Local Supervisor Lease
 
 Status: completed

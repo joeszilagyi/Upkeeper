@@ -12,6 +12,8 @@ emit_codex_transcript_summary() {
 from datetime import datetime, timezone
 from pathlib import Path
 import errno
+import hashlib
+import hmac
 import os
 import re
 import stat
@@ -55,7 +57,14 @@ except ValueError:
 try:
     text = path.read_text(encoding='utf-8', errors='replace')
 except OSError:
-    print(f'Upkeeper: {label} transcript unavailable path={path}', file=sys.stderr)
+    raw = os.fspath(path)
+    redaction_key = os.environ.get('UPKEEPER_REDACTION_KEY') or os.environ.get('UPKEEPER_LATTICE_REDACTION_KEY') or ''
+    material = f'path\0{raw}'.encode('utf-8', 'surrogateescape')
+    if redaction_key:
+        path_digest = hmac.new(redaction_key.encode('utf-8', 'surrogateescape'), material, hashlib.sha256).hexdigest()
+    else:
+        path_digest = hashlib.sha256(material).hexdigest()
+    print(f'Upkeeper: {label} transcript unavailable transcript=path-hmac-sha256:{path_digest} path_redacted=1', file=sys.stderr)
     raise SystemExit(0)
 lines = text.splitlines()
 
@@ -81,11 +90,68 @@ def strip_initial_prompt_echo(raw_lines: list[str]) -> tuple[list[str], bool]:
 
 runtime_lines, stripped_prompt_echo = strip_initial_prompt_echo(lines)
 
-def ts():
+def ts_log():
     return datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%dT%H:%M:%S%z')
 
+
+def ts_terminal():
+    return datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%dT%H:%M:%S')
+
+root = os.path.realpath(os.environ.get('ROOT_DIR', os.getcwd()))
+redaction_key = os.environ.get('UPKEEPER_REDACTION_KEY') or os.environ.get('UPKEEPER_LATTICE_REDACTION_KEY') or ''
+redaction_key_bytes = redaction_key.encode('utf-8', 'surrogateescape')
+
+
+def digest(namespace: str, value: str) -> str:
+    material = f'{namespace}\0{value}'.encode('utf-8', 'surrogateescape')
+    if redaction_key_bytes:
+        return hmac.new(redaction_key_bytes, material, hashlib.sha256).hexdigest()
+    return hashlib.sha256(material).hexdigest()
+
+
+def redact_path(match: re.Match[str]) -> str:
+    raw = match.group(0).rstrip('.,;:)]}\'"')
+    suffix = match.group(0)[len(raw):]
+    if raw == '/dev/null' or raw.startswith(('/bin/', '/usr/bin/', '/usr/local/bin/', '/opt/homebrew/bin/')):
+        return raw + suffix
+    try:
+        resolved = os.path.realpath(raw)
+        rel = os.path.relpath(resolved, root)
+    except (OSError, ValueError):
+        rel = ''
+    if rel and not rel.startswith('..') and not os.path.isabs(rel):
+        label = f'repo-path:{rel}'
+    else:
+        label = f'path-hmac-sha256:{digest("path", raw)}'
+    return label + suffix
+
+
+def redact_text(value: str) -> str:
+    text = value.replace('\r', ' ').replace('\n', ' ')
+    text = re.sub(r'\s+', ' ', text).strip()
+    text = re.sub(r'-----BEGIN [^-]{0,80}PRIVATE KEY-----.*?-----END [^-]{0,80}PRIVATE KEY-----', '[redacted-private-key]', text, flags=re.I)
+    text = re.sub(r'\bBearer\s+[A-Za-z0-9._~+/=-]{12,}', 'Bearer [redacted-token]', text, flags=re.I)
+    text = re.sub(r'\b(?:sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_]{10,}|github_pat_[A-Za-z0-9_]{10,}|AKIA[0-9A-Z]{12,}|xox[baprs]-[A-Za-z0-9-]{10,})\b', '[redacted-token]', text)
+    text = re.sub(r'\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b', '[redacted-jwt]', text)
+    text = re.sub(r'(?i)\b(api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|credential|authorization)\b\s*[:=]\s*[\'"]?[^\'"\s;,]{4,}', r'\1=[redacted-secret]', text)
+    text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', lambda m: f'email-hmac-sha256:{digest("email", m.group(0))}', text)
+    text = re.sub(r'(?<![A-Za-z0-9:])/(?:[A-Za-z0-9._@%+=:,~-]+/)*[A-Za-z0-9._@%+=:,~-]+', redact_path, text)
+    return text
+
+
+def path_label(value: Path) -> str:
+    raw = os.fspath(value)
+    try:
+        resolved = os.path.realpath(raw)
+        rel = os.path.relpath(resolved, root)
+    except (OSError, ValueError):
+        rel = ''
+    if rel and not rel.startswith('..') and not os.path.isabs(rel):
+        return f'repo-path:{rel}'
+    return f'path-hmac-sha256:{digest("path", raw)}'
+
 def short(value: str, limit: int = 300) -> str:
-    value = re.sub(r'\s+', ' ', value.strip())
+    value = re.sub(r'\s+', ' ', redact_text(value).strip())
     if len(value) > limit:
         return value[: limit - 15].rstrip() + '...<truncated>'
     return value
@@ -240,12 +306,12 @@ def dedupe_signals(raw_signals: list[str]) -> list[str]:
 
 signals = dedupe_signals(collect_signals(runtime_lines))
 summary = (
-    f'codex.transcript.summary label={label} path={path} exit={exit_raw} lines={len(lines)} '
+    f'codex.transcript.summary label={label} transcript={path_label(path)} path_redacted=1 exit={exit_raw} lines={len(lines)} '
     f'diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count} signal_lines={len(signals)}'
 )
-log_lines = [f'{ts()} [INFO] cycle={cycle_id} run_hash={run_hash} {summary}']
+log_lines = [f'{ts_log()} [INFO] cycle={cycle_id} run_hash={run_hash} {summary}']
 for item in signals[-signal_limit:]:
-    log_lines.append(f'{ts()} [INFO] cycle={cycle_id} run_hash={run_hash} codex.transcript.signal label={label} text={field_value(item)}')
+    log_lines.append(f'{ts_log()} [INFO] cycle={cycle_id} run_hash={run_hash} codex.transcript.signal label={label} text={field_value(item)}')
 
 def append_log_lines_secure(path: Path, items: list[str]) -> None:
     path_raw = os.fspath(path)
@@ -311,14 +377,14 @@ try:
 except OSError:
     pass
 if not silent_terminal and (diagnostic_terminal or exit_raw not in {'0', ''}):
-    print(f'{ts()} [INFO] Upkeeper: {label} transcript captured path={path} exit={exit_raw} lines={len(lines)} diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count}', file=sys.stderr)
+    print(f'{ts_terminal()} [INFO] Upkeeper: {label} transcript captured transcript={path_label(path)} path_redacted=1 exit={exit_raw} lines={len(lines)} diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count}', file=sys.stderr)
 if not silent_terminal and diagnostic_terminal and signals and signal_limit:
-    print(f'{ts()} [INFO] Upkeeper: {label} high-signal transcript tail (last {min(signal_limit, len(signals))}):', file=sys.stderr)
+    print(f'{ts_terminal()} [INFO] Upkeeper: {label} high-signal transcript tail (last {min(signal_limit, len(signals))}):', file=sys.stderr)
     for line in signals[-signal_limit:]:
         print(f'  {line}', file=sys.stderr)
 if not silent_terminal and exit_raw not in {'0', ''} and tail_limit:
     tail_lines = runtime_lines if runtime_lines else lines
-    print(f'{ts()} [ERROR] Upkeeper: {label} failure transcript tail (last {min(tail_limit, len(tail_lines))} lines):', file=sys.stderr)
+    print(f'{ts_terminal()} [ERROR] Upkeeper: {label} failure transcript tail (last {min(tail_limit, len(tail_lines))} lines):', file=sys.stderr)
     for line in tail_lines[-tail_limit:]:
         print(f'  {short(line)}', file=sys.stderr)
 PY
@@ -329,6 +395,8 @@ codex_live_output_filter() {
 
   python3 /dev/fd/3 "$label" 3<<'PY'
 from datetime import datetime, timezone
+import hashlib
+import hmac
 import os
 import re
 import sys
@@ -380,11 +448,53 @@ contractish = re.compile(
 
 
 def ts() -> str:
-    return datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+    return datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+
+
+root = os.path.realpath(os.environ.get("ROOT_DIR", os.getcwd()))
+redaction_key = os.environ.get("UPKEEPER_REDACTION_KEY") or os.environ.get("UPKEEPER_LATTICE_REDACTION_KEY") or ""
+redaction_key_bytes = redaction_key.encode("utf-8", "surrogateescape")
+
+
+def digest(namespace: str, value: str) -> str:
+    material = f"{namespace}\0{value}".encode("utf-8", "surrogateescape")
+    if redaction_key_bytes:
+        return hmac.new(redaction_key_bytes, material, hashlib.sha256).hexdigest()
+    return hashlib.sha256(material).hexdigest()
+
+
+def redact_path(match: re.Match[str]) -> str:
+    raw = match.group(0).rstrip(".,;:)]}'\"")
+    suffix = match.group(0)[len(raw):]
+    if raw == "/dev/null" or raw.startswith(("/bin/", "/usr/bin/", "/usr/local/bin/", "/opt/homebrew/bin/")):
+        return raw + suffix
+    try:
+        resolved = os.path.realpath(raw)
+        rel = os.path.relpath(resolved, root)
+    except (OSError, ValueError):
+        rel = ""
+    if rel and not rel.startswith("..") and not os.path.isabs(rel):
+        label = f"repo-path:{rel}"
+    else:
+        label = f"path-hmac-sha256:{digest('path', raw)}"
+    return label + suffix
+
+
+def redact_text(value: str) -> str:
+    text = value.replace("\r", " ").replace("\n", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"-----BEGIN [^-]{0,80}PRIVATE KEY-----.*?-----END [^-]{0,80}PRIVATE KEY-----", "[redacted-private-key]", text, flags=re.I)
+    text = re.sub(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", "Bearer [redacted-token]", text, flags=re.I)
+    text = re.sub(r"\b(?:sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_]{10,}|github_pat_[A-Za-z0-9_]{10,}|AKIA[0-9A-Z]{12,}|xox[baprs]-[A-Za-z0-9-]{10,})\b", "[redacted-token]", text)
+    text = re.sub(r"\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", "[redacted-jwt]", text)
+    text = re.sub(r"(?i)\b(api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|credential|authorization)\b\s*[:=]\s*['\"]?[^'\"\s;,]{4,}", r"\1=[redacted-secret]", text)
+    text = re.sub(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", lambda m: f"email-hmac-sha256:{digest('email', m.group(0))}", text)
+    text = re.sub(r"(?<![A-Za-z0-9:])/(?:[A-Za-z0-9._@%+=:,~-]+/)*[A-Za-z0-9._@%+=:,~-]+", redact_path, text)
+    return text
 
 
 def short(value: str, limit: int = 260) -> str:
-    value = re.sub(r"\s+", " ", value.strip())
+    value = re.sub(r"\s+", " ", redact_text(value).strip())
     if len(value) > limit:
         return value[: limit - 15].rstrip() + "...<truncated>"
     return value

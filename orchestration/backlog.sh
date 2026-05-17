@@ -60,6 +60,34 @@ backlog_line_starts_with_timestamp() {
   esac
 }
 
+backlog_display_timestamp() {
+  local ts="$1"
+
+  if [[ "$ts" =~ ^([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9])([+-][0-9][0-9][0-9][0-9])$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  printf '%s\n' "$ts"
+}
+
+backlog_normalize_attention_line_timestamp() {
+  local line="$1"
+  local original_ts ts rest
+
+  backlog_line_starts_with_timestamp "$line" || {
+    printf '%s\n' "$line"
+    return 0
+  }
+  original_ts="${line%% *}"
+  ts="$(backlog_display_timestamp "$original_ts")"
+  if [[ "$line" == "$original_ts" ]]; then
+    printf '%s\n' "$ts"
+  else
+    rest="${line#* }"
+    printf '%s %s\n' "$ts" "$rest"
+  fi
+}
+
 backlog_attention_marker_known() {
   case "${1:-}" in
     PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO)
@@ -128,16 +156,17 @@ backlog_attention_marker_for_line() {
 
 backlog_format_attention_line() {
   local line="$1"
-  local ts rest marker
+  local original_ts ts rest marker
 
   if backlog_line_has_attention_marker "$line"; then
-    printf '%s\n' "$line"
+    backlog_normalize_attention_line_timestamp "$line"
     return 0
   fi
 
   if backlog_line_starts_with_timestamp "$line"; then
-    ts="${line%% *}"
-    if [[ "$line" == "$ts" ]]; then
+    original_ts="${line%% *}"
+    ts="$(backlog_display_timestamp "$original_ts")"
+    if [[ "$line" == "$original_ts" ]]; then
       rest=""
     else
       rest="${line#* }"
@@ -414,7 +443,7 @@ backlog_recent_log_summary() {
   awk '
     {
       candidate=$0
-      sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] /, "", candidate)
+      sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]([+-][0-9][0-9][0-9][0-9])? /, "", candidate)
       sub(/^([A-Z][A-Z]+|--FYI--)[[:space:]]+/, "", candidate)
       if (candidate ~ /^backlog: running Upkeeper for issue #[0-9]+/) {
         line=candidate

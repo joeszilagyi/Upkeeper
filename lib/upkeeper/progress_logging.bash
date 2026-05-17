@@ -13,7 +13,7 @@ ensure_log_writable_or_exit() {
 die() {
   ensure_log_parent
   if ! log_line "ERROR" "$*"; then
-    printf '%s [ERROR] cycle=%s %s\n' "$(timestamp_now)" "$CYCLE_ID" "$*" >&2
+    printf '%s [ERROR] cycle=%s %s\n' "$(terminal_timestamp_now)" "$CYCLE_ID" "$*" >&2
   fi
   stop_run_mark_heartbeat "die"
   finalize_wrapper_health_state "die"
@@ -80,7 +80,7 @@ start_terminal_progress_heartbeat() {
         transcript_updated="missing"
       fi
       printf '%s [INFO] Upkeeper: %s still working on %s; elapsed=%ss transcript_lines=%s transcript_bytes=%s last_update=%s\n' \
-        "$(timestamp_now)" \
+        "$(terminal_timestamp_now)" \
         "$label" \
         "${target:-unknown}" \
         "$elapsed_seconds" \
@@ -90,7 +90,7 @@ start_terminal_progress_heartbeat() {
     done
   ) &
   RUN_TERMINAL_PROGRESS_PID="$!"
-  log_line "INFO" "terminal_progress.start pid=$RUN_TERMINAL_PROGRESS_PID label=$label interval_seconds=$interval target=$(shell_quote "${target:-unknown}") transcript=$(shell_quote "$transcript_file")"
+  log_line "INFO" "terminal_progress.start pid=$RUN_TERMINAL_PROGRESS_PID label=$label interval_seconds=$interval target=$(shell_quote "$(upkeeper_redact_model_text "${target:-unknown}" 240)") transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1"
 }
 
 start_run_mark_heartbeat() {

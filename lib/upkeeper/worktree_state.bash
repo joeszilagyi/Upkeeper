@@ -445,6 +445,7 @@ def normalize_snapshot(snapshot):
             "allowed": 1 if allowed(path) else 0,
             "path_class": coarse_path_class(path),
             "extension": extension_class(path),
+            "legacy_path": path,
         }
     return meta, normalized
 
@@ -475,6 +476,9 @@ def emit_path_change(path_key, before_state, after_state):
     diagnostic["path_hmac"] = path_token
     diagnostic["path_class"] = path_class
     diagnostic["extension"] = extension
+    raw_path = before_state.get("legacy_path") or after_state.get("legacy_path")
+    if raw_path:
+        diagnostic["path"] = raw_path
     record_diagnostic("changed_path", diagnostic)
     print(
         f"changed_path path_hmac={path_token} "

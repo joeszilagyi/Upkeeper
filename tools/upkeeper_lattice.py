@@ -4182,7 +4182,7 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["status"] = "db_unavailable"
         return result, EXIT_DB_UNAVAILABLE
     try:
-        conn = connect(db_path, journal_mode, emit_errors=False)
+        conn = connect(db_path, journal_mode, create_if_missing=False, emit_errors=False)
     except LatticeCommandError as exc:
         result["status"] = "db_unavailable"
         result["checks"]["open_error"] = str(exc)

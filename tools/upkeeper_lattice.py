@@ -168,6 +168,10 @@ SOURCE_RECORD_PATH_HMAC_KINDS = {
 }
 TRANSIENT_ARTIFACT_KINDS = {"transcript", "compiled_prompt", "last_message"}
 OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS = {"compiled_prompt", "last_message"}
+WORKTREE_RUNTIME_MESSAGE_ARTIFACT_PATH_PREFIXES = (
+    "runtime/upkeeper-transcripts/",
+    "runtime/last-message",
+)
 ARTIFACT_RETENTION_CLASSES = {
     "transcript": "transient",
     "compiled_prompt": "transient",
@@ -1367,6 +1371,8 @@ def worktree_snapshot_path_is_sensitive(path: str) -> bool:
         return False
     normalized_lower = normalized.lower()
     parts = normalized_lower.split("/")
+    if any(normalized_lower.startswith(prefix) for prefix in WORKTREE_RUNTIME_MESSAGE_ARTIFACT_PATH_PREFIXES):
+        return True
     for part in SENSITIVE_WORKTREE_PATH_PARTS:
         if part in parts:
             return True

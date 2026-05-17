@@ -638,6 +638,68 @@ PY
   [[ "$conflict_rc" -eq 8 ]] || fail "conflicting JSONL import exited $conflict_rc, expected 8"
   assert_sql_value "1" "select count(*) from lattice_import_conflicts"
 
+  python3 - "$TEST_TMP_ROOT/export-replay.jsonl" "$TEST_TMP_ROOT/conflict-rehashed.jsonl" <<'PY'
+import hashlib
+import json
+import sys
+
+
+def dumps(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+src, dst = sys.argv[1:3]
+changed_file = False
+changed_schema = False
+with open(src, encoding="utf-8") as handle, open(dst, "w", encoding="utf-8") as out:
+    for line in handle:
+        row = json.loads(line)
+        if not changed_file and row.get("row_type") == "files":
+            row["payload"]["current_state"] = "deleted"
+            row["payload_sha256"] = hashlib.sha256(dumps(row["payload"]).encode("utf-8")).hexdigest()
+            changed_file = True
+        elif not changed_schema and row.get("row_type") == "schema_meta" and row["payload"].get("key") == "schema_version":
+            row["payload"]["value"] = f"{row['payload'].get('value', '')}-conflict"
+            row["payload_sha256"] = hashlib.sha256(dumps(row["payload"]).encode("utf-8")).hexdigest()
+            changed_schema = True
+        print(dumps(row), file=out)
+assert changed_file
+assert changed_schema
+PY
+  set +e
+  UPKEEPER_LATTICE_RAW_STORAGE=full \
+    lattice import-jsonl --preserve-raw "$TEST_TMP_ROOT/conflict-rehashed.jsonl" >"$TEST_TMP_ROOT/conflict-rehashed.out" 2>"$TEST_TMP_ROOT/conflict-rehashed.err"
+  local rehashed_conflict_rc=$?
+  set -e
+  [[ "$rehashed_conflict_rc" -eq 8 ]] || fail "same-key rehashed JSONL import exited $rehashed_conflict_rc, expected 8"
+  python3 - "$TEST_TMP_ROOT/conflict-rehashed.out" "$DB" <<'PY' || fail "rehashed JSONL import did not report same-key conflicts"
+import json
+import sqlite3
+import sys
+
+summary_path, db_path = sys.argv[1:3]
+summary = json.load(open(summary_path, encoding="utf-8"))
+if summary.get("duplicates", 0) <= 0:
+    raise AssertionError(f"expected unchanged rows to remain duplicates: {summary}")
+if summary.get("conflicts", 0) < 2:
+    raise AssertionError(f"expected file and schema conflicts: {summary}")
+
+conn = sqlite3.connect(db_path)
+rows = conn.execute(
+    """
+    select row_type, logical_key, resolution, existing_hash, incoming_hash
+    from lattice_import_conflicts
+    where resolution='kept_existing'
+    """
+).fetchall()
+row_types = {row[0] for row in rows}
+if "files" not in row_types or "schema_meta" not in row_types:
+    raise AssertionError(f"same-key conflicts were not recorded for files and schema_meta: {rows}")
+for row_type, logical_key, resolution, existing_hash, incoming_hash in rows:
+    if not existing_hash or not incoming_hash or existing_hash == incoming_hash:
+        raise AssertionError(f"conflict hash evidence was incomplete for {row_type}:{logical_key}: {rows}")
+PY
+
   set +e
   UPKEEPER_LATTICE_RAW_STORAGE=full \
     lattice import-jsonl --preserve-raw "$TEST_TMP_ROOT/export-replay.jsonl" --max-conflicts=0 >"$TEST_TMP_ROOT/malformed-jsonl.out" 2>"$TEST_TMP_ROOT/malformed-jsonl.err"

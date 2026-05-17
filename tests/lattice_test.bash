@@ -1275,6 +1275,44 @@ EOF
   assert_sql_value "missing" "select current_state from files where canonical_path='missing-target.txt'"
 }
 
+test_missing_selected_candidate_target_stays_missing() {
+  local repo DB selection_run_id
+
+  repo="$TEST_TMP_ROOT/lattice-missing-selection-candidates"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/missing-selection-candidates-init.out"
+
+  cat >"$TEST_TMP_ROOT/missing-selection-candidates.env" <<'EOF'
+path=missing-target.txt
+selection_mode=oldest-mtime
+selection_basis=missing candidate fixture
+EOF
+  cat >"$TEST_TMP_ROOT/missing-selection-candidates.jsonl" <<'EOF'
+{"path":"missing-target.txt","candidate_state":"eligible","rank":1,"git_status":"M","content_state":"untracked","head_blob":"none","worktree_hash":"none","mtime_epoch":111}
+EOF
+  lattice record-preselect \
+    --cycle-id cycle-missing-candidate \
+    --run-hash hash-missing-candidate \
+    --selection-file "$TEST_TMP_ROOT/missing-selection-candidates.env" \
+    --candidate-file "$TEST_TMP_ROOT/missing-selection-candidates.jsonl" \
+    >"$TEST_TMP_ROOT/missing-selection-candidates-preselect.out"
+
+  selection_run_id="$(python3 - "$TEST_TMP_ROOT/missing-selection-candidates-preselect.out" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding='utf-8'))
+print(data['selection_run_id'])
+PY
+)"
+
+  assert_sql_value "missing" "select current_state from files where canonical_path='missing-target.txt'"
+  assert_sql_value "missing" "select content_state from selection_candidates where selection_run_id=${selection_run_id} and path='missing-target.txt'"
+  assert_sql_value "selected" "select candidate_state from selection_candidates where selection_run_id=${selection_run_id} and path='missing-target.txt'"
+}
+
 test_wrapper_required_policy() {
   local repo rc
 
@@ -2101,6 +2139,7 @@ test_import_git_prefers_checked_out_branch_state
 test_import_git_privacy_defaults_and_opt_in
 test_backup_is_read_only
 test_missing_selection_path_stays_missing
+test_missing_selected_candidate_target_stays_missing
 test_wrapper_required_policy
 test_unsafe_lattice_db_path_is_rejected_by_default
 test_default_runtime_symlink_db_path_is_rejected

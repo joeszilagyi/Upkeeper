@@ -5029,10 +5029,12 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         selected_path = external_rel_path(selection.get("path", ""))
         stored_selected_path = stored_rel_path(selected_path) if selected_path else ""
         selected_file_state = "active"
+        selected_content_state = selection.get("content_state")
         if selected_path:
             _, selected_file_safety = source_safe_file_stat(root, selected_path)
             if selected_file_safety:
                 selected_file_state = "missing"
+                selected_content_state = "missing"
         selected_file_id = (
             ensure_file(conn, repo_id, selected_path, state=selected_file_state, source_id=source_id) if selected_path else None
         )
@@ -5086,12 +5088,15 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                 if not path:
                     continue
                 state = str(row.get("candidate_state", "eligible"))
+                file_state = "active"
                 if path == selected_path:
                     state = "selected"
-                file_id = ensure_file(conn, repo_id, path, source_id=source_id) if state != "forced_missing" else None
+                    file_state = selected_file_state
+                file_id = ensure_file(conn, repo_id, path, state=file_state, source_id=source_id) if state != "forced_missing" else None
                 rank = row.get("rank")
                 if state in {"eligible", "selected"} and rank is None:
                     rank = index
+                content_state = row.get("content_state") if path != selected_path else (selected_content_state if selected_content_state is not None else row.get("content_state"))
                 conn.execute(
                     """
                     insert or ignore into selection_candidates(
@@ -5107,7 +5112,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                         rank,
                         row.get("mtime_epoch"),
                         row.get("git_status"),
-                        row.get("content_state"),
+                        content_state,
                         row.get("head_blob"),
                         row.get("worktree_hash"),
                         row.get("exclusion_reason") or None,
@@ -5144,7 +5149,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                     stored_selected_path,
                     int(selection.get("epoch") or 0) or None,
                     selection.get("git_status"),
-                    selection.get("content_state"),
+                    selected_content_state,
                     selection.get("head_blob"),
                     selection.get("worktree_hash"),
                     source_id,

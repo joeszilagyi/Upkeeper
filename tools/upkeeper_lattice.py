@@ -73,6 +73,9 @@ REVIEW_OUTCOME_MARKERS = (
     "STOPPED_ON_BLOCKER",
 )
 REVIEW_OUTCOME_PATTERN = re.compile(r"\b(" + "|".join(REVIEW_OUTCOME_MARKERS) + r")\b")
+UPKEEPER_STATUS_MARKERS = ("WORK_DONE", "NO_CHANGES", "NO_BACKEND_TASK", "BLOCKED")
+UPKEEPER_STATUS_CONTRACT_LINE = re.compile(rf"^UPKEEPER_STATUS:\s*({'|'.join(UPKEEPER_STATUS_MARKERS)})\s*$")
+UPKEEPER_STATUS_ALIAS = {"NO_CHANGES": "WORK_DONE"}
 REVIEW_OUTCOME_LINE_PATTERN = re.compile(
     r"^(?:[-*]\s*)?(?:final status|review outcome|outcome|status)\s*:?\s*("
     + "|".join(REVIEW_OUTCOME_MARKERS)
@@ -4443,7 +4446,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         cycle_finish_probe = probe_cycle_finish_target_mismatch()
         result["checks"]["cycle_finish_target_mismatch"] = cycle_finish_probe
         report_only_cycle_probe = probe_cycle_finish_report_only_outcome()
+        decorated_marker_probe = probe_cycle_finish_rejects_decorated_status_marker()
         result["checks"]["cycle_finish_report_only_outcome"] = report_only_cycle_probe
+        result["checks"]["cycle_finish_rejects_decorated_status_marker"] = decorated_marker_probe
         change_note_ref_probe = probe_change_note_file_identity_validation()
         result["checks"]["change_note_file_identity_validation"] = change_note_ref_probe
         candidate_symlink_probe = probe_candidate_symlink_exclusion()
@@ -4459,6 +4464,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(report_only_cycle_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(decorated_marker_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         transient_temp_scope_probe = probe_cycle_finish_transient_artifact_scope()
@@ -5125,6 +5133,35 @@ def extract_review_outcome(text: str) -> str:
     return outcome
 
 
+def extract_review_status_marker_from_text(text: str) -> str:
+    in_fence = False
+    final_line = ""
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        final_line = line
+    if not final_line:
+        return ""
+    match = UPKEEPER_STATUS_CONTRACT_LINE.match(final_line)
+    if not match:
+        return ""
+    marker = match.group(1)
+    return UPKEEPER_STATUS_ALIAS.get(marker, marker)
+
+
+def parse_review_status_marker(path: Path) -> str:
+    try:
+        return extract_review_status_marker_from_text(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return ""
+
+
 def normalize_review_summary_target(raw_target: str, repo_root: Path | None = None) -> str:
     text = raw_target.strip().strip("<>")
     if not text:
@@ -5463,7 +5500,7 @@ def probe_cycle_finish_report_only_outcome() -> dict[str, Any]:
         (root / selected_path).write_text("print('report only')\n", encoding="utf-8")
         review_path = root / "runtime" / "last-message.txt"
         review_path.write_text(
-            "Selected file: `tools/report-only.py`\nREVIEWED_AND_REPORTED\n",
+            "Selected file: `tools/report-only.py`\nREVIEWED_AND_REPORTED\nUPKEEPER_STATUS: WORK_DONE\n",
             encoding="utf-8",
         )
         db_path = root / "lattice.sqlite3"
@@ -5526,6 +5563,80 @@ def probe_cycle_finish_report_only_outcome() -> dict[str, Any]:
         "finish_level": cycle["finish_level"] if cycle else None,
         "actual_selected_path": cycle["selected_path"] if cycle else None,
         "ok": ok,
+    }
+
+
+def probe_cycle_finish_rejects_decorated_status_marker() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-cycle-finish-decorated-") as tmpdir:
+        root = Path(tmpdir)
+        selected_path = "tools/report-only.py"
+        try:
+            subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        (root / "tools").mkdir(parents=True, exist_ok=True)
+        (root / "runtime").mkdir(parents=True, exist_ok=True)
+        (root / selected_path).write_text("print('report only')\n", encoding="utf-8")
+        review_path = root / "runtime" / "last-message.txt"
+        review_path.write_text(
+            "Selected file: `tools/report-only.py`\n"
+            "`UPKEEPER_STATUS: WORK_DONE`\n"
+            "REVIEWED_AND_REPORTED",
+            encoding="utf-8",
+        )
+        db_path = root / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True, create_parent=True, create_if_missing=True)
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+        finally:
+            conn.close()
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="wal",
+            allow_unsafe_db=True,
+            raw_storage_mode="minimal",
+            cycle_id="cycle-decorated",
+            run_hash="run-decorated",
+            status_marker="WORK_DONE",
+            review_outcome=None,
+            review_selected_path=None,
+            codex_exit=0,
+            wrapper_exit=0,
+            finish_reason="work_done",
+            finish_level="info",
+            codex_exec_started=1,
+            dry_run="1",
+            selected_path=selected_path,
+            last_message_file=str(review_path),
+            transcript_path=None,
+            compiled_prompt_path=None,
+            log_path=None,
+            snapshot_kind="after_codex",
+            end_epoch=1234567890,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            command_record_cycle_finish(args)
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True)
+        try:
+            cycle = conn.execute(
+                """
+                select status_marker, review_outcome, finish_reason, finish_level, selected_path
+                  from cycles
+                 where cycle_id=? and run_hash=?
+                """,
+                ("cycle-decorated", "run-decorated"),
+            ).fetchone()
+        finally:
+            conn.close()
+    return {
+        "selected_path": selected_path,
+        "status_marker": cycle["status_marker"] if cycle else None,
+        "review_outcome": cycle["review_outcome"] if cycle else None,
+        "finish_reason": cycle["finish_reason"] if cycle else None,
+        "finish_level": cycle["finish_level"] if cycle else None,
+        "actual_selected_path": cycle["selected_path"] if cycle else None,
+        "ok": cycle is not None and cycle["status_marker"] is None,
     }
 
 
@@ -6063,10 +6174,11 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
         repo_id = ensure_repository(conn, root)
         parsed = vars(args).copy()
         parsed.pop("func", None)
-        review = parse_review_summary_file(Path(args.last_message_file), root) if args.last_message_file else {}
+        last_message_path = Path(args.last_message_file) if args.last_message_file else None
+        review = parse_review_summary_file(last_message_path, root) if last_message_path else {}
         review_outcome = args.review_outcome or review.get("review_outcome") or None
         reported_selected = external_rel_path(args.review_selected_path or review.get("selected_file", ""))
-        status_marker = args.status_marker
+        status_marker = parse_review_status_marker(last_message_path) if last_message_path else args.status_marker or ""
         finish_reason = args.finish_reason
         finish_level = args.finish_level
         source_id = ensure_source_record(

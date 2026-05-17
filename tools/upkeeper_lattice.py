@@ -1777,6 +1777,21 @@ def repo_identity_value_hmac(context: tuple[str, str, str], namespace: str, valu
     return prefix + digest
 
 
+def git_common_dir_path(root: Path) -> str:
+    common = git_output(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], "")
+    if not common:
+        common = git_output(root, ["rev-parse", "--git-common-dir"], "")
+    if not common:
+        return ""
+    path = Path(common)
+    if not path.is_absolute():
+        path = root / path
+    try:
+        return str(path.resolve(strict=False))
+    except OSError:
+        return str(path.absolute())
+
+
 def identity_value_is_redacted(value: str) -> bool:
     if not value:
         return False
@@ -2994,13 +3009,61 @@ def sanitize_remote_url(raw: str) -> str:
 
 def repo_git_info(root: Path) -> dict[str, str]:
     info = {
-        "git_common_dir": git_output(root, ["rev-parse", "--git-common-dir"], ""),
+        "git_common_dir": git_common_dir_path(root),
         "head_sha": git_output(root, ["rev-parse", "--verify", "HEAD"], ""),
         "head_tree_sha": git_output(root, ["rev-parse", "HEAD^{tree}"], ""),
         "branch_name": git_output(root, ["branch", "--show-current"], ""),
         "remote_url": sanitize_remote_url(git_output(root, ["config", "--get", "remote.origin.url"], "")),
     }
     return info
+
+
+def upsert_repo_alias(
+    conn: sqlite3.Connection,
+    repo_id: int,
+    alias_kind: str,
+    alias_value: str,
+    now: int,
+) -> None:
+    if not alias_value:
+        return
+    existing_for_repo = conn.execute(
+        "select repo_alias_id, alias_value from repo_aliases where repo_id=? and alias_kind=?",
+        (repo_id, alias_kind),
+    ).fetchone()
+    if existing_for_repo:
+        existing_alias_id = int(existing_for_repo["repo_alias_id"])
+        existing_alias_value = str(existing_for_repo["alias_value"] or "")
+        if existing_alias_value != alias_value:
+            conflict = conn.execute(
+                "select repo_alias_id, repo_id from repo_aliases where alias_kind=? and alias_value=?",
+                (alias_kind, alias_value),
+            ).fetchone()
+            if conflict and int(conflict["repo_id"]) != repo_id:
+                return
+            conn.execute(
+                "update repo_aliases set alias_value=?, last_seen_epoch=? where repo_alias_id=?",
+                (alias_value, now, existing_alias_id),
+            )
+            return
+        conn.execute(
+            "update repo_aliases set last_seen_epoch=? where repo_alias_id=?",
+            (now, existing_alias_id),
+        )
+        return
+    conflict = conn.execute(
+        "select repo_alias_id, repo_id from repo_aliases where alias_kind=? and alias_value=?",
+        (alias_kind, alias_value),
+    ).fetchone()
+    if conflict and int(conflict["repo_id"]) != repo_id:
+        return
+    conn.execute(
+        """
+        insert into repo_aliases(repo_id, alias_kind, alias_value, first_seen_epoch, last_seen_epoch)
+        values (?, ?, ?, ?, ?)
+        """,
+        (repo_id, alias_kind, alias_value, now, now),
+    )
 
 
 def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
@@ -3082,16 +3145,7 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
     ]:
         if not value:
             continue
-        conn.execute(
-            """
-            insert into repo_aliases(repo_id, alias_kind, alias_value, first_seen_epoch, last_seen_epoch)
-            values (?, ?, ?, ?, ?)
-            on conflict(alias_kind, alias_value) do update set
-              repo_id=excluded.repo_id,
-              last_seen_epoch=excluded.last_seen_epoch
-            """,
-            (repo_id, kind, value, now, now),
-        )
+        upsert_repo_alias(conn, repo_id, kind, value, now)
     scrub_repo_identity_rows(conn, repo_id, context)
     scrub_source_record_rows(conn, root, repo_id)
     return repo_id

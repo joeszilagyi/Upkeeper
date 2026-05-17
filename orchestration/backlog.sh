@@ -15,7 +15,8 @@ BACKLOG_EXCLUDED_LABELS="${BACKLOG_EXCLUDED_LABELS:-feature,features,enhancement
 BACKLOG_CODEX_MODEL="${BACKLOG_CODEX_MODEL:-gpt-5.3-codex-spark}"
 BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-xhigh}"
 BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
-BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-900}"
+BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-0}"
+BACKLOG_PR_CHECK_INTERVAL_SECONDS="${BACKLOG_PR_CHECK_INTERVAL_SECONDS:-60}"
 BACKLOG_PER_BUG_VALIDATION_MODE="${BACKLOG_PER_BUG_VALIDATION_MODE:-light}"
 BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"
 BACKLOG_AUTOSHELVE_BRANCH_PREFIX="${BACKLOG_AUTOSHELVE_BRANCH_PREFIX:-wip/backlog-autoshelve/}"
@@ -23,6 +24,7 @@ BACKLOG_AUTOSHELVE_PROBE="${BACKLOG_AUTOSHELVE_PROBE:-0}"
 BACKLOG_ALLOW_INTERACTIVE_STDIN="${BACKLOG_ALLOW_INTERACTIVE_STDIN:-0}"
 BACKLOG_ALLOW_INTERACTIVE_STDIO="${BACKLOG_ALLOW_INTERACTIVE_STDIO:-$BACKLOG_ALLOW_INTERACTIVE_STDIN}"
 BACKLOG_INTERACTIVE_MODE="${BACKLOG_INTERACTIVE_MODE:-watch}"
+BACKLOG_DUPLICATE_MODE="${BACKLOG_DUPLICATE_MODE:-exit}"
 BACKLOG_ACTIVE_ATTACH_LINES="${BACKLOG_ACTIVE_ATTACH_LINES:-20}"
 BACKLOG_STDIO_AUTODETACHED="${BACKLOG_STDIO_AUTODETACHED:-0}"
 BACKLOG_STDIO_WATCHED="${BACKLOG_STDIO_WATCHED:-0}"
@@ -34,7 +36,12 @@ BACKLOG_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-1}"
 BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"
 BACKLOG_ALERT_COLOR="${BACKLOG_ALERT_COLOR:-auto}"
 BACKLOG_ALERT_BLINK="${BACKLOG_ALERT_BLINK:-1}"
+BACKLOG_OWNER_HEARTBEAT_INTERVAL_SECONDS="${BACKLOG_OWNER_HEARTBEAT_INTERVAL_SECONDS:-120}"
+BACKLOG_OWNER_HEARTBEAT_STALE_SECONDS="${BACKLOG_OWNER_HEARTBEAT_STALE_SECONDS:-300}"
+BACKLOG_OWNER_CLAIM_LOCK_STALE_SECONDS="${BACKLOG_OWNER_CLAIM_LOCK_STALE_SECONDS:-30}"
 BACKLOG_ACTIVE_OWNER_START_TICKS=""
+BACKLOG_OWNER_HEARTBEAT_PID=""
+BACKLOG_PR_CHECKS_LAST_OUTPUT=""
 
 backlog_timestamp() {
   date '+%Y-%m-%dT%H:%M:%S'
@@ -349,6 +356,7 @@ backlog_hibernate_until_epoch() {
   else
     log "quota preflight: quota blocked bucket=$blocked_bucket until=$blocked_until_text wake=$wake_text wait_seconds=$wait_seconds branch=$branch source=$source reason=$reason"
   fi
+  backlog_update_active_owner_heartbeat "quota_hibernating" "bucket=$blocked_bucket wake=$wake_text source=$source" "" "quota_wait_until_verified"
 
   while true; do
     now_epoch="$(backlog_now_epoch)" || return 4
@@ -357,6 +365,7 @@ backlog_hibernate_until_epoch() {
     if [[ "$chunk" -gt "$poll" ]]; then
       chunk="$poll"
     fi
+    backlog_update_active_owner_heartbeat "quota_hibernating" "bucket=$blocked_bucket wake=$wake_text sleep=${chunk}s" "" "quota_wait_until_verified"
     backlog_sleep_seconds "$chunk"
   done
 
@@ -388,6 +397,14 @@ backlog_active_owner_file() {
   mkdir -p "$state_root"
   chmod 700 "$state_root" 2>/dev/null || true
   printf '%s/active-owner.%s.tsv\n' "$state_root" "$(backlog_repo_key)"
+}
+
+backlog_active_owner_lock_dir() {
+  printf '%s.lock\n' "$(backlog_active_owner_file)"
+}
+
+backlog_owner_sanitize_value() {
+  printf '%s' "${1:-}" | tr '\t\r\n' '   '
 }
 
 backlog_recent_log_summary() {
@@ -432,6 +449,11 @@ backlog_pid_matches_owner() {
   local expected_start_ticks="$2"
   local cmdline cwd current_start_ticks
 
+  if [[ "${BACKLOG_TEST_OWNER_MATCH:-0}" == "1" ]]; then
+    [[ -n "$pid" && -n "$expected_start_ticks" ]]
+    return "$?"
+  fi
+
   [[ -n "$pid" && -r "/proc/$pid/cmdline" ]] || return 1
   cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
   [[ "$cmdline" == *"orchestration/backlog.sh"* ]] || return 1
@@ -442,18 +464,117 @@ backlog_pid_matches_owner() {
   return 0
 }
 
-backlog_active_owner_pid() {
-  local owner_file pid start_ticks
+backlog_write_owner_record() {
+  local owner_file="$1"
+  local pid="$2"
+  local start_ticks="$3"
+  local branch="$4"
+  local log_file="$5"
+  local state="$6"
+  local detail="$7"
+  local pr_number="${8:-}"
+  local check_status="${9:-}"
+  local now_epoch tmp_file
+
+  now_epoch="$(backlog_now_epoch)" || return 1
+  tmp_file="$(mktemp "${owner_file}.tmp.XXXXXX")"
+  {
+    printf 'pid\t%s\n' "$(backlog_owner_sanitize_value "$pid")"
+    printf 'start_ticks\t%s\n' "$(backlog_owner_sanitize_value "$start_ticks")"
+    printf 'branch\t%s\n' "$(backlog_owner_sanitize_value "$branch")"
+    printf 'log_file\t%s\n' "$(backlog_owner_sanitize_value "$log_file")"
+    printf 'state\t%s\n' "$(backlog_owner_sanitize_value "$state")"
+    printf 'detail\t%s\n' "$(backlog_owner_sanitize_value "$detail")"
+    printf 'pr_number\t%s\n' "$(backlog_owner_sanitize_value "$pr_number")"
+    printf 'check_status\t%s\n' "$(backlog_owner_sanitize_value "$check_status")"
+    printf 'heartbeat_epoch\t%s\n' "$now_epoch"
+    printf 'updated_at\t%s\n' "$(backlog_format_epoch "$now_epoch")"
+  } >"$tmp_file"
+  chmod 600 "$tmp_file" 2>/dev/null || true
+  mv -f -- "$tmp_file" "$owner_file"
+}
+
+backlog_current_process_owns_file() {
+  local owner_file owner_pid owner_start_ticks
 
   owner_file="$(backlog_active_owner_file)"
   [[ -f "$owner_file" ]] || return 1
-  pid="$(backlog_owner_field "$owner_file" pid)"
-  start_ticks="$(backlog_owner_field "$owner_file" start_ticks)"
-  if backlog_pid_matches_owner "$pid" "$start_ticks"; then
+  owner_pid="$(backlog_owner_field "$owner_file" pid 2>/dev/null || true)"
+  owner_start_ticks="$(backlog_owner_field "$owner_file" start_ticks 2>/dev/null || true)"
+  [[ "$owner_pid" == "$$" ]] || return 1
+  [[ -n "$BACKLOG_ACTIVE_OWNER_START_TICKS" && "$owner_start_ticks" == "$BACKLOG_ACTIVE_OWNER_START_TICKS" ]] || return 1
+  backlog_pid_matches_owner "$owner_pid" "$owner_start_ticks"
+}
+
+backlog_update_active_owner_heartbeat() {
+  local state="${1:-running}"
+  local detail="${2:-process_alive}"
+  local pr_number="${3:-}"
+  local check_status="${4:-owner_pid_start_cwd_verified}"
+  local owner_file branch log_file
+
+  backlog_current_process_owns_file || return 0
+  owner_file="$(backlog_active_owner_file)"
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || backlog_owner_field "$owner_file" branch 2>/dev/null || printf 'unknown')"
+  log_file="$(backlog_owner_field "$owner_file" log_file 2>/dev/null || printf '%s/loop.log' "$(backlog_state_root)")"
+  backlog_write_owner_record "$owner_file" "$$" "$BACKLOG_ACTIVE_OWNER_START_TICKS" "$branch" "$log_file" "$state" "$detail" "$pr_number" "$check_status" || return 0
+  log "owner heartbeat: state=$state detail=$detail check_status=$check_status"
+}
+
+backlog_owner_health_status() {
+  local owner_file="${1:-$(backlog_active_owner_file)}"
+  local pid start_ticks heartbeat_epoch now_epoch age stale_after state detail branch
+
+  [[ -f "$owner_file" ]] || {
+    printf 'missing_owner_file\n'
+    return 1
+  }
+
+  pid="$(backlog_owner_field "$owner_file" pid 2>/dev/null || true)"
+  start_ticks="$(backlog_owner_field "$owner_file" start_ticks 2>/dev/null || true)"
+  if ! backlog_pid_matches_owner "$pid" "$start_ticks"; then
+    printf 'stale_process pid=%s\n' "${pid:-unknown}"
+    return 2
+  fi
+
+  heartbeat_epoch="$(backlog_owner_field "$owner_file" heartbeat_epoch 2>/dev/null || true)"
+  if ! backlog_nonnegative_integer "$heartbeat_epoch"; then
+    printf 'healthy_legacy_no_heartbeat pid=%s\n' "$pid"
+    return 0
+  fi
+
+  now_epoch="$(backlog_now_epoch)" || {
+    printf 'unknown_current_time pid=%s\n' "$pid"
+    return 2
+  }
+  age=$((now_epoch - heartbeat_epoch))
+  [[ "$age" -ge 0 ]] || age=0
+  stale_after="$(backlog_positive_integer_or_default "$BACKLOG_OWNER_HEARTBEAT_STALE_SECONDS" 300)"
+  state="$(backlog_owner_field "$owner_file" state 2>/dev/null || true)"
+  detail="$(backlog_owner_field "$owner_file" detail 2>/dev/null || true)"
+  branch="$(backlog_owner_field "$owner_file" branch 2>/dev/null || true)"
+
+  if [[ "$age" -gt "$stale_after" ]]; then
+    printf 'stale_heartbeat pid=%s age=%s stale_after=%s state=%s detail=%s branch=%s\n' "$pid" "$age" "$stale_after" "${state:-unknown}" "${detail:-unknown}" "${branch:-unknown}"
+    return 2
+  fi
+
+  printf 'healthy pid=%s age=%s state=%s detail=%s branch=%s\n' "$pid" "$age" "${state:-unknown}" "${detail:-unknown}" "${branch:-unknown}"
+  return 0
+}
+
+backlog_active_owner_pid() {
+  local owner_file pid health_status
+
+  owner_file="$(backlog_active_owner_file)"
+  [[ -f "$owner_file" ]] || return 1
+  if health_status="$(backlog_owner_health_status "$owner_file")"; then
+    pid="$(backlog_owner_field "$owner_file" pid)"
     printf '%s\n' "$pid"
     return 0
   fi
 
+  log "active owner is stale; reclaiming checkout ownership: $health_status"
   rm -f -- "$owner_file"
   return 1
 }
@@ -467,13 +588,7 @@ write_backlog_active_owner() {
   start_ticks="$(backlog_process_start_ticks "$$")"
   BACKLOG_ACTIVE_OWNER_START_TICKS="$start_ticks"
 
-  {
-    printf 'pid\t%s\n' "$$"
-    printf 'start_ticks\t%s\n' "$start_ticks"
-    printf 'branch\t%s\n' "$branch"
-    printf 'log_file\t%s\n' "$log_file"
-  } >"$owner_file"
-  chmod 600 "$owner_file" 2>/dev/null || true
+  backlog_write_owner_record "$owner_file" "$$" "$start_ticks" "$branch" "$log_file" "starting" "owner_claimed" "" "owner_pid_start_cwd_verified"
 }
 
 clear_backlog_active_owner() {
@@ -486,6 +601,62 @@ clear_backlog_active_owner() {
   if [[ "$owner_pid" == "$$" && -n "$BACKLOG_ACTIVE_OWNER_START_TICKS" && "$owner_start_ticks" == "$BACKLOG_ACTIVE_OWNER_START_TICKS" ]]; then
     rm -f -- "$owner_file"
   fi
+}
+
+start_backlog_owner_heartbeat() {
+  local interval
+
+  [[ -z "${BACKLOG_OWNER_HEARTBEAT_PID:-}" ]] || return 0
+  [[ "${BACKLOG_TEST_FAKE_SLEEP:-0}" == "1" ]] && return 0
+  interval="$(backlog_positive_integer_or_default "$BACKLOG_OWNER_HEARTBEAT_INTERVAL_SECONDS" 120)"
+  (
+    sleep_pid=""
+    trap 'if [[ -n "${sleep_pid:-}" ]]; then kill "$sleep_pid" 2>/dev/null || true; fi; exit 0' TERM INT EXIT
+    while true; do
+      sleep "$interval" &
+      sleep_pid="$!"
+      wait "$sleep_pid" || exit 0
+      sleep_pid=""
+      backlog_update_active_owner_heartbeat "running" "owner_process_alive" "" "owner_pid_start_cwd_verified" || exit 0
+    done
+  ) &
+  BACKLOG_OWNER_HEARTBEAT_PID="$!"
+}
+
+stop_backlog_owner_heartbeat() {
+  if [[ -n "${BACKLOG_OWNER_HEARTBEAT_PID:-}" ]]; then
+    kill "$BACKLOG_OWNER_HEARTBEAT_PID" 2>/dev/null || true
+    wait "$BACKLOG_OWNER_HEARTBEAT_PID" 2>/dev/null || true
+    BACKLOG_OWNER_HEARTBEAT_PID=""
+  fi
+}
+
+backlog_acquire_owner_claim_lock() {
+  local lock_dir stale_after now_epoch lock_mtime age attempts
+
+  lock_dir="$(backlog_active_owner_lock_dir)"
+  stale_after="$(backlog_positive_integer_or_default "$BACKLOG_OWNER_CLAIM_LOCK_STALE_SECONDS" 30)"
+  attempts=0
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    now_epoch="$(backlog_now_epoch 2>/dev/null || date '+%s')"
+    lock_mtime="$(stat -c '%Y' "$lock_dir" 2>/dev/null || printf '0')"
+    if backlog_nonnegative_integer "$lock_mtime" && [[ "$lock_mtime" -gt 0 ]]; then
+      age=$((now_epoch - lock_mtime))
+      if [[ "$age" -gt "$stale_after" ]]; then
+        rm -rf -- "$lock_dir" 2>/dev/null || true
+        continue
+      fi
+    fi
+    attempts=$((attempts + 1))
+    if [[ "$attempts" -gt "$stale_after" ]]; then
+      fail "could not acquire backlog owner claim lock after ${stale_after}s"
+    fi
+    sleep 1
+  done
+}
+
+backlog_release_owner_claim_lock() {
+  rmdir "$(backlog_active_owner_lock_dir)" 2>/dev/null || true
 }
 
 print_stdio_watch_notice() {
@@ -518,22 +689,36 @@ print_stdio_detach_notice() {
   backlog_notice "follow progress with: tail -f $log_file"
 }
 
-follow_active_backlog_output() {
+describe_active_backlog_owner() {
   local pid="$1"
   local log_file="$2"
-  local summary owner_file owner_branch
+  local summary owner_file owner_branch state detail check_status health_status
 
   owner_file="$(backlog_active_owner_file)"
   owner_branch="$(backlog_owner_field "$owner_file" branch 2>/dev/null || true)"
+  state="$(backlog_owner_field "$owner_file" state 2>/dev/null || true)"
+  detail="$(backlog_owner_field "$owner_file" detail 2>/dev/null || true)"
+  check_status="$(backlog_owner_field "$owner_file" check_status 2>/dev/null || true)"
+  health_status="$(backlog_owner_health_status "$owner_file" 2>/dev/null || true)"
 
   summary="$(backlog_recent_log_summary "$log_file")"
   backlog_notice "another backlog run already owns this checkout (pid=$pid)"
   if [[ -n "$owner_branch" ]]; then
     backlog_notice "active branch: $owner_branch"
   fi
+  if [[ -n "$state" ]]; then
+    backlog_notice "owner heartbeat: state=$state detail=${detail:-none} check=${check_status:-unknown} health=${health_status:-unknown}"
+  fi
   if [[ -n "$summary" ]]; then
     backlog_notice "current activity: $summary"
   fi
+}
+
+follow_active_backlog_output() {
+  local pid="$1"
+  local log_file="$2"
+
+  describe_active_backlog_owner "$pid" "$log_file"
   backlog_notice "attaching to $log_file until pid $pid exits"
   if [[ -f "$log_file" ]]; then
     tail -n "$BACKLOG_ACTIVE_ATTACH_LINES" -f --pid="$pid" "$log_file" | backlog_color_attention_stream || true
@@ -542,6 +727,49 @@ follow_active_backlog_output() {
       sleep 1
     done
   fi
+}
+
+handle_healthy_active_backlog_owner() {
+  local active_pid="$1"
+  local log_file="$2"
+
+  case "$BACKLOG_DUPLICATE_MODE" in
+    attach)
+      follow_active_backlog_output "$active_pid" "$log_file"
+      ;;
+    exit)
+      describe_active_backlog_owner "$active_pid" "$log_file"
+      backlog_notice "duplicate invocation not needed; primary owner is healthy; exiting 0"
+      ;;
+    *)
+      fail "unsupported BACKLOG_DUPLICATE_MODE: $BACKLOG_DUPLICATE_MODE"
+      ;;
+  esac
+}
+
+claim_backlog_active_owner_or_exit() {
+  local owner_file health_status health_rc active_pid log_file
+
+  backlog_acquire_owner_claim_lock
+  owner_file="$(backlog_active_owner_file)"
+  if [[ -f "$owner_file" ]]; then
+    set +e
+    health_status="$(backlog_owner_health_status "$owner_file")"
+    health_rc="$?"
+    set -e
+    if [[ "$health_rc" -eq 0 ]]; then
+      active_pid="$(backlog_owner_field "$owner_file" pid 2>/dev/null || true)"
+      log_file="$(backlog_owner_field "$owner_file" log_file 2>/dev/null || printf '%s/loop.log' "$(backlog_state_root)")"
+      backlog_release_owner_claim_lock
+      handle_healthy_active_backlog_owner "$active_pid" "$log_file"
+      exit 0
+    fi
+    log "active owner is stale; taking over checkout ownership: $health_status"
+    rm -f -- "$owner_file"
+  fi
+  write_backlog_active_owner
+  backlog_release_owner_claim_lock
+  start_backlog_owner_heartbeat
 }
 redirect_interactive_stdio() {
   local state_root log_file active_pid
@@ -579,7 +807,7 @@ redirect_interactive_stdio() {
   active_pid="$(backlog_active_owner_pid || true)"
   if [[ -n "$active_pid" ]]; then
     log_file="$(backlog_owner_field "$(backlog_active_owner_file)" log_file 2>/dev/null || printf '%s' "$log_file")"
-    follow_active_backlog_output "$active_pid" "$log_file"
+    handle_healthy_active_backlog_owner "$active_pid" "$log_file"
     exit 0
   fi
 
@@ -961,6 +1189,7 @@ run_upkeeper_for_one_target() {
     fi
     upkeeper_args+=(--fix-issue="$issue_number")
     log "running Upkeeper for issue #$issue_number with $CODEX_MODEL/$CODEX_REASONING_EFFORT target=${target_hint:-wrapper-inferred}"
+    backlog_update_active_owner_heartbeat "running_upkeeper" "issue=$issue_number target=${target_hint:-wrapper-inferred}" "" "owner_pid_start_cwd_verified"
     ./Upkeeper "${upkeeper_args[@]}"
     upkeeper_status="$?"
     if [[ "$upkeeper_status" -ne 0 ]]; then
@@ -971,6 +1200,7 @@ run_upkeeper_for_one_target() {
     fi
   else
     log "no eligible issue found; running normal newest-file Upkeeper pass with $CODEX_MODEL/$CODEX_REASONING_EFFORT"
+    backlog_update_active_owner_heartbeat "running_upkeeper" "normal_newest_file_pass" "" "owner_pid_start_cwd_verified"
     ./Upkeeper --selection-order=newest
   fi
 }
@@ -985,6 +1215,7 @@ run_per_bug_validation() {
   [[ "${BACKLOG_SKIP_LOCAL_VALIDATION:-0}" == "1" ]] && return 0
 
   validation_start="$SECONDS"
+  backlog_update_active_owner_heartbeat "validating" "per_bug_validation" "" "owner_pid_start_cwd_verified"
   log "per-bug validation: bash syntax"
   bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh
   log "per-bug validation: diff whitespace"
@@ -998,6 +1229,7 @@ run_batch_validation() {
   [[ "${BACKLOG_SKIP_LOCAL_VALIDATION:-0}" == "1" ]] && return 0
 
   validation_start="$SECONDS"
+  backlog_update_active_owner_heartbeat "validating" "batch_validation" "" "owner_pid_start_cwd_verified"
   log "batch validation: bash syntax"
   bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh
   log "batch validation: unit tests"
@@ -1054,17 +1286,98 @@ commit_and_push_changes() {
 
 wait_for_pr_checks() {
   local pr_number="$1"
+  local interval timeout_seconds start_epoch now_epoch elapsed status output status_rc
+
   log "waiting for PR #$pr_number checks"
-  if timeout "$BACKLOG_PR_CHECK_TIMEOUT_SECONDS" gh pr checks "$pr_number" --watch; then
-    log "PR #$pr_number checks passed"
-    return 0
+  interval="$(backlog_positive_integer_or_default "$BACKLOG_PR_CHECK_INTERVAL_SECONDS" 60)"
+  timeout_seconds="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-0}"
+  backlog_nonnegative_integer "$timeout_seconds" || timeout_seconds=0
+  start_epoch="$(backlog_now_epoch)" || start_epoch=0
+
+  while true; do
+    backlog_update_active_owner_heartbeat "waiting_on_pr_checks" "pr=$pr_number polling_checks" "$pr_number" "polling"
+    if backlog_pr_checks_once "$pr_number"; then
+      status_rc=0
+    else
+      status_rc="$?"
+    fi
+    output="$BACKLOG_PR_CHECKS_LAST_OUTPUT"
+    status="$(sed -n '1p' <<<"$output")"
+    case "$status_rc" in
+      0)
+        backlog_update_active_owner_heartbeat "waiting_on_pr_checks" "pr=$pr_number checks_passed" "$pr_number" "pass"
+        log "PR #$pr_number checks passed"
+        return 0
+        ;;
+      2)
+        now_epoch="$(backlog_now_epoch)" || now_epoch="$start_epoch"
+        elapsed=$((now_epoch - start_epoch))
+        [[ "$elapsed" -ge 0 ]] || elapsed=0
+        if [[ "$timeout_seconds" -gt 0 && "$elapsed" -ge "$timeout_seconds" ]]; then
+          log "PR #$pr_number checks still pending after ${elapsed}s; owner remains healthy but configured timeout is ${timeout_seconds}s"
+          return 2
+        fi
+        backlog_update_active_owner_heartbeat "waiting_on_pr_checks" "pr=$pr_number checks_pending elapsed=${elapsed}s next_check=${interval}s" "$pr_number" "pending"
+        log "PR #$pr_number checks pending; holding owner lease and checking again in ${interval}s"
+        backlog_sleep_seconds "$interval"
+        ;;
+      *)
+        backlog_update_active_owner_heartbeat "waiting_on_pr_checks" "pr=$pr_number checks_failed" "$pr_number" "fail"
+        printf '%s\n' "$output" >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
+backlog_pr_checks_once() {
+  local pr_number="$1"
+  local next_status rest output rc
+
+  if [[ -n "${BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE:-}" ]]; then
+    next_status="${BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE%%,*}"
+    if [[ "$BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE" == *","* ]]; then
+      rest="${BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE#*,}"
+    else
+      rest="$next_status"
+    fi
+    BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE="$rest"
+    export BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE
+    case "$next_status" in
+      pass|passed|success|ok)
+        BACKLOG_PR_CHECKS_LAST_OUTPUT="pass"
+        return 0
+        ;;
+      pending|wait|waiting|queued|in_progress)
+        BACKLOG_PR_CHECKS_LAST_OUTPUT="pending"
+        return 2
+        ;;
+      fail|failed|failure|error)
+        BACKLOG_PR_CHECKS_LAST_OUTPUT="fail"
+        return 1
+        ;;
+      *)
+        BACKLOG_PR_CHECKS_LAST_OUTPUT="$(printf 'fail\nunknown fake PR check status: %s\n' "$next_status")"
+        return 1
+        ;;
+    esac
   fi
 
-  if [[ "$?" -eq 124 ]]; then
-    log "PR #$pr_number checks still pending after ${BACKLOG_PR_CHECK_TIMEOUT_SECONDS}s; retry on the next backlog iteration"
+  set +e
+  output="$(gh pr checks "$pr_number" --watch=false 2>&1)"
+  rc="$?"
+  set -e
+
+  if [[ "$rc" -eq 0 ]]; then
+    BACKLOG_PR_CHECKS_LAST_OUTPUT="$(printf 'pass\n%s\n' "$output")"
+    return 0
+  fi
+  if grep -Eiq 'pending|queued|in.?progress|waiting' <<<"$output"; then
+    BACKLOG_PR_CHECKS_LAST_OUTPUT="$(printf 'pending\n%s\n' "$output")"
     return 2
   fi
 
+  BACKLOG_PR_CHECKS_LAST_OUTPUT="$(printf 'fail\n%s\n' "$output")"
   return 1
 }
 
@@ -1094,8 +1407,8 @@ main() {
   local pr_info pr_number branch issue_info issue_number count run_status
 
   redirect_interactive_stdio "$@"
-  write_backlog_active_owner
-  trap clear_backlog_active_owner EXIT
+  claim_backlog_active_owner_or_exit
+  trap 'stop_backlog_owner_heartbeat; clear_backlog_active_owner' EXIT
 
   require_command git
   autoshelve_dirty_worktree_if_enabled

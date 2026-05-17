@@ -5,7 +5,7 @@ Upkeeper changes. Keep entries brief and update their status before merge.
 
 ## Model Output Redaction Boundary
 
-Status: completed locally; pending PR/CI
+Status: completed
 
 Goal:
 - fix issue `#292` by treating model-derived transcript/status/review text as
@@ -39,6 +39,32 @@ Validation:
 - `for test_script in tests/*.bash; do bash "$test_script"; done`
 - `tools/check_public_docs.sh --quick`
 - `tools/validate_upkeeper.sh --smoke`
+
+## Backlog Visual Status Block
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- add a single visual block column to backlog watch output so loose terminal
+  watching can classify state by peripheral color before reading the marker text
+- keep the plain marker column for scripts, logs, and assistive tooling
+- preserve `PAGE` blink/red behavior while adding logical colors for `OK`,
+  `INFO`, `--FYI--`, `RUN`, `ACTION`, `WAIT`, `WORKER`, and `HEALTH`
+
+Constraints:
+- do not add ANSI color to the mirrored loop log
+- keep `NO_COLOR`, `BACKLOG_ALERT_COLOR`, and `BACKLOG_ALERT_BLINK` semantics
+- keep old timestamped/marked log lines parseable during transition
+
+Validation:
+- `bash -n orchestration/backlog.sh tools/validate_upkeeper.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `./Upkeeper --help`
+- `./Upkeeper --version`
+- `git diff --check`
 
 ## Backlog Local Supervisor Lease
 

@@ -376,8 +376,10 @@ check_backlog_launcher_contract() {
   grep -Fq 'backlog_line_starts_with_timestamp' orchestration/backlog.sh || fail "backlog launcher does not avoid double-prefixing timestamped lines"
   grep -Fq 'backlog_attention_marker_for_line' orchestration/backlog.sh || fail "backlog launcher does not classify operator attention markers"
   grep -Fq 'backlog_color_attention_stream' orchestration/backlog.sh || fail "backlog launcher does not color pageable terminal alerts separately from the loop log"
+  grep -Fq 'BACKLOG_VISUAL_BLOCK="${BACKLOG_VISUAL_BLOCK:-█}"' orchestration/backlog.sh || fail "backlog launcher visual status block default drifted"
   grep -Fq 'PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO' orchestration/backlog.sh || fail "backlog launcher attention marker taxonomy drifted"
   grep -Fq '([+-][0-9][0-9][0-9][0-9])? /, "", candidate)' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not understand zone-suffixed timestamped loop logs"
+  grep -Fq 'sub(/^[^[:space:]]+[[:space:]]+/, "", candidate)' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not strip visual block columns"
   grep -Fq 'sub(/^([A-Z][A-Z]+|--FYI--)[[:space:]]+/, "", candidate)' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not understand attention-marked loop logs"
   grep -Fq 'interactive stdio remained attached after backlog auto-detach' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed auto-detach"
   grep -Fq 'interactive stdin remained attached after backlog watch-mode reexec' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed watch-mode reexec"
@@ -422,15 +424,24 @@ PY
   if command -v script >/dev/null 2>&1; then
     temp_dir="$VALIDATION_TMP_ROOT/backlog-stdio"
     mkdir -p "$temp_dir"
-    printf '2026-05-15T17:21:47 RUN     backlog: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh\n' >"$temp_dir/loop.log"
+    printf '2026-05-15T17:21:47 █ RUN     backlog: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh\n' >"$temp_dir/loop.log"
     status=0
     BACKLOG_STDIO_AUTODETACH_PROBE=1 BACKLOG_LOOP_LOG_FILE="$temp_dir/loop.log" \
       script -qfec ./orchestration/backlog.sh "$temp_dir/typescript" >/dev/null 2>&1 || status="$?"
     [[ "$status" == "0" ]] || fail "backlog launcher interactive stdio auto-detach probe exited $status"
     grep -Fq '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to '"$temp_dir/loop.log" "$temp_dir/typescript" ||
       fail "backlog launcher did not explain interactive watch mode"
-    grep -Eq '^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] INFO[[:space:]]+# backlog: interactive stdin detected;' "$temp_dir/typescript" ||
-      fail "backlog launcher watch notice is not timestamped with an attention marker"
+    python3 - "$temp_dir/typescript" <<'PY' ||
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+pattern = r"(?m)^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} █ INFO\s+# backlog: interactive stdin detected;"
+raise SystemExit(0 if re.search(pattern, text) else 1)
+PY
+      fail "backlog launcher watch notice is not timestamped with a visual block and attention marker"
     grep -Fq '# backlog: recent activity: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh' "$temp_dir/typescript" ||
       fail "backlog launcher did not parse timestamped recent activity"
   fi
@@ -447,19 +458,34 @@ PY
     backlog_format_attention_line "2026-05-16T18:20:00 backlog: quota preflight: deferring backlog run this cycle" >"$2/wait.out"
     backlog_format_attention_line "2026-05-16T18:20:30 Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)" >"$2/fyi.out"
     backlog_format_attention_line "2026-05-16T18:21:00 PAGE   [ERROR] already marked" >"$2/existing.out"
+    backlog_format_attention_line "2026-05-16T18:21:01 █ RUN     backlog: running Upkeeper for issue #999 with gpt target=x" >"$2/existing-block.out"
+    BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:02 Already up to date.")" >"$2/ok-color.out"
+    BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:03 [ERROR] wrapper exploded")" >"$2/page-color.out"
+    BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:04 previous_run.anomaly_summary x")" >"$2/fyi-color.out"
+    BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:05 backlog: running Upkeeper for issue #1")" >"$2/run-color.out"
   ' bash "$ROOT_DIR" "$temp_dir"
-  grep -Fq '2026-05-16T17:00:37 WORKER  [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s' "$temp_dir/worker.out" ||
+  grep -Fq '2026-05-16T17:00:37 █ WORKER  [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s' "$temp_dir/worker.out" ||
     fail "backlog launcher did not classify worker command failures separately from pageable errors"
-  grep -Fq "2026-05-17T10:26:29 INFO    [ERROR] Upkeeper: primary: echo 'ERROR: tools/upkeeper_lattice.py not found'" "$temp_dir/echo-error.out" ||
+  grep -Fq "2026-05-17T10:26:29 █ INFO    [ERROR] Upkeeper: primary: echo 'ERROR: tools/upkeeper_lattice.py not found'" "$temp_dir/echo-error.out" ||
     fail "backlog launcher treated echoed model ERROR text as a pageable wrapper error"
-  grep -Fq '2026-05-16T18:12:41 PAGE    [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed' "$temp_dir/page.out" ||
+  grep -Fq '2026-05-16T18:12:41 █ PAGE    [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed' "$temp_dir/page.out" ||
     fail "backlog launcher did not classify wrapper/control-plane errors as PAGE"
-  grep -Fq '2026-05-16T18:20:00 WAIT    backlog: quota preflight: deferring backlog run this cycle' "$temp_dir/wait.out" ||
+  grep -Fq '2026-05-16T18:20:00 █ WAIT    backlog: quota preflight: deferring backlog run this cycle' "$temp_dir/wait.out" ||
     fail "backlog launcher did not classify quota waits as WAIT"
-  grep -Fq '2026-05-16T18:20:30 --FYI-- Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)' "$temp_dir/fyi.out" ||
+  grep -Fq '2026-05-16T18:20:30 █ --FYI-- Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)' "$temp_dir/fyi.out" ||
     fail "backlog launcher did not classify advisory health output as FYI"
-  grep -Fxq '2026-05-16T18:21:00 PAGE   [ERROR] already marked' "$temp_dir/existing.out" ||
-    fail "backlog launcher duplicated an existing attention marker"
+  grep -Fxq '2026-05-16T18:21:00 █ PAGE    [ERROR] already marked' "$temp_dir/existing.out" ||
+    fail "backlog launcher did not normalize existing attention markers into visual-block format"
+  grep -Fxq '2026-05-16T18:21:01 █ RUN     backlog: running Upkeeper for issue #999 with gpt target=x' "$temp_dir/existing-block.out" ||
+    fail "backlog launcher duplicated an existing visual block marker"
+  grep -Fq $'\033[1;32m█\033[0m OK' "$temp_dir/ok-color.out" ||
+    fail "backlog launcher did not color OK visual block green"
+  grep -Fq $'\033[5;1;31m█\033[0m PAGE' "$temp_dir/page-color.out" ||
+    fail "backlog launcher did not color PAGE visual block blinking red"
+  grep -Fq $'\033[1;38;5;208m█\033[0m --FYI--' "$temp_dir/fyi-color.out" ||
+    fail "backlog launcher did not color FYI visual block orange"
+  grep -Fq $'\033[1;36m█\033[0m RUN' "$temp_dir/run-color.out" ||
+    fail "backlog launcher did not color RUN visual block cyan"
 
   temp_dir="$VALIDATION_TMP_ROOT/backlog-burn-env"
   mkdir -p "$temp_dir"
@@ -3100,7 +3126,7 @@ EOF
 check_lattice_contract() {
   log "checking Upkeeper Lattice"
   bash tests/lattice_test.bash
-  if rg -n '\b(curl|gh|requests|urllib|http\.client|GITHUB_TOKEN)\b' tools/upkeeper_lattice.py lib/upkeeper/lattice.bash >/dev/null; then
+  if rg -n '\b(curl|gh|requests|urllib3|urllib\.request|urllib\.error|http\.client|GITHUB_TOKEN)\b' tools/upkeeper_lattice.py lib/upkeeper/lattice.bash >/dev/null; then
     fail "Lattice implementation contains a default network/token surface"
   fi
 }

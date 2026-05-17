@@ -608,7 +608,7 @@ source_upkeeper_module() {
   local path="$UPKEEPER_MODULE_DIR/$module"
 
   if [[ ! -r "$path" ]]; then
-    printf "%s [ERROR] Upkeeper module missing path=%s\n" "$(date "+%Y-%m-%dT%H:%M:%S%z")" "$path" >&2
+    printf "%s [ERROR] Upkeeper module missing path=%s\n" "$(date "+%Y-%m-%dT%H:%M:%S")" "$path" >&2
     exit 70
   fi
 
@@ -5537,7 +5537,7 @@ main() {
   if upkeeper_issue_workflow_read_only_enabled; then
     log_line "INFO" "genie_protocol.backend_mode stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") source=issue_workflow_read_only mode=$(shell_quote "$backend_mode_summary") comment_transport=last_message_block"
   fi
-  log_line "INFO" "run.start $(log_kv execution_origin "$CODEX_EXECUTION_ORIGIN") $(log_kv prompt_file "${PROMPT_FILE:-inline/default}") $(log_kv compiled_prompt "$compiled_prompt_file") $(log_kv transcript "$RUN_TRANSCRIPT_FILE")"
+  log_line "INFO" "run.start $(log_kv execution_origin "$CODEX_EXECUTION_ORIGIN") $(log_kv prompt_file "${PROMPT_FILE:-inline/default}") $(log_kv compiled_prompt "$compiled_prompt_file") transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1"
   RUN_CODEX_STARTED_EPOCH="$(date '+%s')"
   terminal_emit_progress "starting Codex review for ${RUN_SELECTED_REVIEW_PATH:-unknown} (model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT pass=${CODEX_PROMPT_PASS:-default}; transcript=$RUN_TRANSCRIPT_FILE)"
   start_terminal_progress_heartbeat "primary" "$RUN_TRANSCRIPT_FILE" "$RUN_CODEX_STARTED_EPOCH" "${RUN_SELECTED_REVIEW_PATH:-unknown}"
@@ -5563,9 +5563,9 @@ main() {
   fi
 
   if [[ "$codex_exit" -eq 0 ]]; then
-    log_line "INFO" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE") transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
+    log_line "INFO" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1 transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
   else
-    log_line "ERROR" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE") transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
+    log_line "ERROR" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1 transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
   fi
   terminal_emit_progress "Codex review finished for ${RUN_SELECTED_REVIEW_PATH:-unknown} (exit=$codex_exit; transcript=$RUN_TRANSCRIPT_FILE)"
   local after_quota_json=""
@@ -5662,7 +5662,7 @@ main() {
   status_marker_candidate_rejection_reason="$marker_candidate_rejection_reason"
   primary_session_diagnostics_source="${after_source:-}"
   if [[ "$codex_empty_transcript" == "1" ]]; then
-    log_line "WARN" "codex.session_diagnostics_ignored reason=empty_transcript codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE") transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines$(quota_hashed_path_log_field ignored_session_source "${after_source:-unknown}")$(quota_sensitive_log_field ignored_session_source "${after_source:-unknown}")"
+    log_line "WARN" "codex.session_diagnostics_ignored reason=empty_transcript codex_exit=$codex_exit transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1 transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines$(quota_hashed_path_log_field ignored_session_source "${after_source:-unknown}")$(quota_sensitive_log_field ignored_session_source "${after_source:-unknown}")"
     primary_session_diagnostics_source=""
     session_end_state="codex_no_output"
   else
@@ -5686,10 +5686,10 @@ main() {
     status_marker_source="exact"
   elif [[ -n "$status_marker" ]]; then
     status_marker_source="recovered_malformed_candidate"
-    log_line "WARN" "status_marker.candidate_recovered marker=$status_marker candidate_marker=$status_marker_candidate_marker reason=$status_marker_candidate_rejection_reason candidate=$(shell_quote "$status_marker_candidate") codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
+    log_line "WARN" "status_marker.candidate_recovered marker=$status_marker candidate_marker=$status_marker_candidate_marker reason=$status_marker_candidate_rejection_reason candidate=$(shell_quote "$(upkeeper_redact_model_text "$status_marker_candidate" 240)") detail_redacted=1 codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
   elif [[ -n "$status_marker_candidate" ]]; then
     status_marker_source="rejected_malformed_candidate"
-    log_line "WARN" "status_marker.candidate_rejected candidate_marker=$status_marker_candidate_marker reason=$status_marker_candidate_rejection_reason candidate=$(shell_quote "$status_marker_candidate") codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
+    log_line "WARN" "status_marker.candidate_rejected candidate_marker=$status_marker_candidate_marker reason=$status_marker_candidate_rejection_reason candidate=$(shell_quote "$(upkeeper_redact_model_text "$status_marker_candidate" 240)") detail_redacted=1 codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
   else
     status_marker_source="missing"
   fi
@@ -5863,7 +5863,7 @@ main() {
       fi
       if [[ "$codex_exit" -ne 0 && "$session_end_state" == "codex_no_output" ]]; then
         log_line "ERROR" "codex exited non-zero without transcript output"
-        finish_cycle 3 CODEX_EXEC_EMPTY_TRANSCRIPT ERROR "codex_exit=$codex_exit transcript=$(shell_quote "$RUN_TRANSCRIPT_FILE") transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
+        finish_cycle 3 CODEX_EXEC_EMPTY_TRANSCRIPT ERROR "codex_exit=$codex_exit transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1 transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
       fi
       if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_FAILURE" == "1" ]] && fallback_available; then
         local fallback_exit=0

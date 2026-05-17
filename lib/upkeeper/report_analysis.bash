@@ -498,16 +498,21 @@ log_review_report_summary() {
     selected_file="$RUN_SELECTED_REVIEW_PATH"
   fi
   [[ -n "$selected_file" ]] || selected_file="unknown"
-  log_line "INFO" "review.summary status_marker=${status_marker_value:-missing} review_outcome=$outcome selected_file=$(shell_quote "$selected_file") findings=$(shell_quote "$findings") changes=$(shell_quote "$changes") verification=$(shell_quote "$verification") codex_exit=$codex_exit_value"
-  terminal_emit_progress "review completed outcome=$outcome status_marker=${status_marker_value:-missing} selected_file=$selected_file"
-  terminal_emit_review_finale "$outcome" "$selected_file" "$findings" "$changes" "$verification"
+  local safe_selected_file safe_findings safe_changes safe_verification
+  safe_selected_file="$(upkeeper_redact_model_text "$selected_file" 240)"
+  safe_findings="$(upkeeper_redact_model_text "$findings" 700)"
+  safe_changes="$(upkeeper_redact_model_text "$changes" 700)"
+  safe_verification="$(upkeeper_redact_model_text "$verification" 500)"
+  log_line "INFO" "review.summary status_marker=${status_marker_value:-missing} review_outcome=$outcome selected_file=$(shell_quote "$safe_selected_file") findings=$(shell_quote "$safe_findings") changes=$(shell_quote "$safe_changes") verification=$(shell_quote "$safe_verification") codex_exit=$codex_exit_value detail_redacted=1"
+  terminal_emit_progress "review completed outcome=$outcome status_marker=${status_marker_value:-missing} selected_file=$safe_selected_file"
+  terminal_emit_review_finale "$outcome" "$safe_selected_file" "$safe_findings" "$safe_changes" "$safe_verification"
 
   if [[ "$outcome" == "REVIEWED_AND_FIXED" || "$outcome" == "REVIEWED_AND_REPORTED" || ( "$outcome" == "unknown" && -n "$changes" ) ]]; then
-    local terminal_findings="$findings"
-    local terminal_changes="$changes"
+    local terminal_findings="$safe_findings"
+    local terminal_changes="$safe_changes"
     [[ "${#terminal_findings}" -le 260 ]] || terminal_findings="${terminal_findings:0:260}..."
     [[ "${#terminal_changes}" -le 260 ]] || terminal_changes="${terminal_changes:0:260}..."
-    log_line "INFO" "review.fix_details review_outcome=$outcome selected_file=$(shell_quote "$selected_file") findings=$(shell_quote "$findings") changes=$(shell_quote "$changes")"
+    log_line "INFO" "review.fix_details review_outcome=$outcome selected_file=$(shell_quote "$safe_selected_file") findings=$(shell_quote "$safe_findings") changes=$(shell_quote "$safe_changes") detail_redacted=1"
     if terminal_wants_verbose_output; then
       terminal_emit_progress "bugs/fixes found: ${terminal_findings:-none}; changes: ${terminal_changes:-none}"
     fi
@@ -538,6 +543,10 @@ terminal_emit_review_finale() {
       return 0
       ;;
   esac
+  selected_file="$(upkeeper_redact_model_text "$selected_file" 240)"
+  terminal_findings="$(upkeeper_redact_model_text "$terminal_findings" 420)"
+  terminal_changes="$(upkeeper_redact_model_text "$terminal_changes" 420)"
+  terminal_verification="$(upkeeper_redact_model_text "$terminal_verification" 300)"
 
   [[ "${#terminal_findings}" -le 420 ]] || terminal_findings="${terminal_findings:0:420}..."
   [[ "${#terminal_changes}" -le 420 ]] || terminal_changes="${terminal_changes:0:420}..."
@@ -547,21 +556,21 @@ terminal_emit_review_finale() {
     level="WARN"
   fi
 
-  printf '%s [%s] Upkeeper: final review for %s -> %s\n' "$(timestamp_now)" "$level" "${selected_file:-unknown}" "${outcome:-unknown}" >&2
+  printf '%s [%s] Upkeeper: final review for %s -> %s\n' "$(terminal_timestamp_now)" "$level" "${selected_file:-unknown}" "${outcome:-unknown}" >&2
   if [[ -n "$terminal_findings" ]]; then
-    printf '%s [%s] Upkeeper: what was wrong: %s\n' "$(timestamp_now)" "$level" "$terminal_findings" >&2
+    printf '%s [%s] Upkeeper: what was wrong: %s\n' "$(terminal_timestamp_now)" "$level" "$terminal_findings" >&2
   elif [[ "$outcome" == "REVIEWED_AND_FIXED" && -n "$terminal_changes" ]]; then
-    printf '%s [INFO] Upkeeper: what was wrong: see change summary\n' "$(timestamp_now)" >&2
+    printf '%s [INFO] Upkeeper: what was wrong: see change summary\n' "$(terminal_timestamp_now)" >&2
   elif [[ "$outcome" == "REVIEWED_AND_REPORTED" && -n "$terminal_changes" ]]; then
-    printf '%s [INFO] Upkeeper: what was wrong: see issue report summary\n' "$(timestamp_now)" >&2
+    printf '%s [INFO] Upkeeper: what was wrong: see issue report summary\n' "$(terminal_timestamp_now)" >&2
   elif [[ "$outcome" == "REVIEWED_CLEAN" ]]; then
-    printf '%s [INFO] Upkeeper: what was wrong: nothing found\n' "$(timestamp_now)" >&2
+    printf '%s [INFO] Upkeeper: what was wrong: nothing found\n' "$(terminal_timestamp_now)" >&2
   fi
   if [[ -n "$terminal_changes" ]]; then
-    printf '%s [INFO] Upkeeper: what changed: %s\n' "$(timestamp_now)" "$terminal_changes" >&2
+    printf '%s [INFO] Upkeeper: what changed: %s\n' "$(terminal_timestamp_now)" "$terminal_changes" >&2
   fi
   if [[ -n "$terminal_verification" ]]; then
-    printf '%s [INFO] Upkeeper: verification: %s\n' "$(timestamp_now)" "$terminal_verification" >&2
+    printf '%s [INFO] Upkeeper: verification: %s\n' "$(terminal_timestamp_now)" "$terminal_verification" >&2
   fi
 }
 

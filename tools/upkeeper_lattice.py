@@ -1098,6 +1098,10 @@ def safe_output_text(raw: str) -> str:
     return raw.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
 
 
+def has_surrogate_codepoint(raw: str) -> bool:
+    return any(0xD800 <= ord(ch) <= 0xDFFF for ch in raw)
+
+
 def encode_path_text(raw: str) -> str:
     pieces: list[str] = []
     for ch in raw:
@@ -1157,7 +1161,10 @@ def external_rel_path(path: str) -> str:
 
 def sanitize_json_value(value: Any) -> Any:
     if isinstance(value, dict):
-        return {key: sanitize_json_value(item) for key, item in value.items()}
+        return {
+            safe_output_text(key) if isinstance(key, str) else str(key): sanitize_json_value(item)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
         return [sanitize_json_value(item) for item in value]
     if isinstance(value, tuple):
@@ -1957,6 +1964,10 @@ def run_git(
         )
     except FileNotFoundError:
         raise SystemExit(EXIT_GIT_UNAVAILABLE)
+    except (UnicodeEncodeError, UnicodeError, ValueError):
+        if check:
+            raise SystemExit(EXIT_GIT_UNAVAILABLE)
+        return None
     except subprocess.CalledProcessError:
         if check:
             raise
@@ -1995,12 +2006,14 @@ def parse_git_porcelain_v1_z_entries(raw: bytes) -> list[tuple[str, str, str | N
 
 def git_porcelain_status_for_path(root: Path, rel_path: str) -> str:
     rel_path = operational_rel_path(rel_path)
+    if has_surrogate_codepoint(rel_path):
+        return ""
     try:
         raw = subprocess.check_output(
             ["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--", rel_path],
             stderr=subprocess.PIPE,
         )
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.CalledProcessError, UnicodeEncodeError, UnicodeError, ValueError):
         return ""
     entries = parse_git_porcelain_v1_z_entries(raw)
     return entries[0][0] if entries else ""
@@ -2102,7 +2115,7 @@ def git_path_ignored(root: Path, path: Path) -> bool:
             check=False,
         )
         return result.returncode == 0
-    except FileNotFoundError:
+    except (FileNotFoundError, UnicodeEncodeError, UnicodeError, ValueError, OSError):
         return False
 
 
@@ -2176,7 +2189,7 @@ def git_path_tracked(root: Path, path: Path) -> bool:
             check=False,
         )
         return result.returncode == 0
-    except FileNotFoundError:
+    except (FileNotFoundError, UnicodeEncodeError, UnicodeError, ValueError, OSError):
         return False
 
 
@@ -2200,6 +2213,8 @@ def git_ignored_paths(root: Path, paths: list[str]) -> set[str]:
 
 def source_safe_parts(rel_path: str) -> list[str] | None:
     rel_path = operational_rel_path(rel_path)
+    if has_surrogate_codepoint(rel_path):
+        return None
     if not rel_path or rel_path == "." or rel_path.startswith("../") or Path(rel_path).is_absolute():
         return None
     parts = rel_path.split("/")
@@ -2214,7 +2229,7 @@ def source_safe_real_path(root: Path, rel_path: str) -> Path | None:
         real = (root / rel_path).resolve(strict=True)
         real.relative_to(root.resolve())
         return real
-    except (OSError, ValueError):
+    except (OSError, ValueError, UnicodeEncodeError, UnicodeError):
         return None
 
 
@@ -3546,6 +3561,21 @@ def record_file_event(
 def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
     rel_path = operational_rel_path(rel_path)
     meta: dict[str, Any] = {"path": stored_rel_path(rel_path)}
+    if has_surrogate_codepoint(rel_path):
+        meta["source_safety_reason"] = "invalid_path_encoding"
+        meta["git_status"] = "unreadable"
+        meta["worktree_hash"] = "unavailable"
+        meta["head_blob"] = "unavailable"
+        meta["content_state"] = "unreadable"
+        meta["ignored"] = 0
+        meta["test_path"] = 1 if is_test_path(rel_path) else 0
+        meta["generated"] = 0
+        meta["mtime_epoch"] = None
+        meta["mtime_ns"] = None
+        meta["size_bytes"] = None
+        meta["executable"] = None
+        meta["is_regular"] = 0
+        return meta
     st, safety_reason = source_safe_file_stat(root, rel_path)
     if st is not None:
         meta["mtime_epoch"] = int(st.st_mtime)

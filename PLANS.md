@@ -3,6 +3,33 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Lattice JSONL Conflict Detection
+
+Status: completed
+
+Goal:
+Fix issue `#247` so `import-jsonl` never treats a same-logical-key,
+different-payload row as a duplicate. Incoming row hashes must be validated
+first, and only an existing payload hash that matches the incoming semantic
+payload may count as a duplicate.
+
+Constraints:
+- Preserve idempotent replay of identical JSONL exports.
+- Preserve existing conflict reporting through `lattice_import_conflicts`.
+- Keep the fix deterministic and local; no backend Codex validation.
+- Work in an isolated worktree while the backlog loop owns the main checkout.
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash tests/lattice_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Backlog Spark Burn Defaults
 
 Status: completed

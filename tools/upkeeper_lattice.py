@@ -7217,7 +7217,19 @@ def semantic_import_payload(table: str, payload: dict[str, Any]) -> dict[str, An
     for key in ("source_id", "imported_epoch", "last_seen_epoch", "updated_epoch"):
         if key in normalized:
             normalized[key] = None
+    if table == "schema_meta" and normalized.get("key") == "updated_epoch":
+        normalized["value"] = None
+    if table == "schema_migrations":
+        normalized["applied_epoch"] = None
     return normalized
+
+
+def align_redacted_import_compare_payload(incoming: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
+    aligned = dict(incoming)
+    for key, value in list(aligned.items()):
+        if value == "<redacted>" and key in existing:
+            aligned[key] = existing[key]
+    return aligned
 
 
 def command_export_jsonl(args: argparse.Namespace) -> int:
@@ -7453,16 +7465,18 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             if pk and filtered.get(pk) is not None:
                 existing = conn.execute(f"select * from {table} where {pk}=?", (filtered[pk],)).fetchone()
             if existing:
-                if table in {"schema_meta", "schema_migrations"}:
-                    duplicates += 1
-                    continue
                 existing_payload = semantic_import_payload(table, {key: existing[key] for key in columns})
                 existing_hash = sha256_text(json_dumps(existing_payload))
-                if existing_hash == incoming_semantic_hash:
+                incoming_compare_payload = align_redacted_import_compare_payload(
+                    semantic_import_payload(table, filtered),
+                    existing_payload,
+                )
+                incoming_compare_hash = sha256_text(json_dumps(incoming_compare_payload))
+                if existing_hash == incoming_compare_hash:
                     duplicates += 1
                     continue
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, table, logical_key, existing_hash, incoming_semantic_hash, "kept_existing")
+                record_import_conflict(conn, import_id, repo_id, table, logical_key, existing_hash, incoming_compare_hash, "kept_existing")
                 continue
             colnames = list(filtered.keys())
             placeholders = ",".join("?" for _ in colnames)

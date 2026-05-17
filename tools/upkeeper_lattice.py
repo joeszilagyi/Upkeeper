@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlsplit
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -3460,11 +3461,33 @@ def normalize_change_note_ref(path: str) -> str:
     return normalized
 
 
+HOST_LIKE_PATH_SEGMENT_PATTERN = re.compile(
+    r"^(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?$",
+    re.IGNORECASE,
+)
+
+
+def is_unsafe_change_note_ref(path: str) -> bool:
+    if not path:
+        return False
+    parsed = urlsplit(path)
+    if parsed.scheme:
+        return True
+    if path.startswith("//"):
+        return True
+    if "/" not in path:
+        return False
+    first_segment = path.split("/", 1)[0]
+    return bool(HOST_LIKE_PATH_SEGMENT_PATTERN.fullmatch(first_segment))
+
+
 def normalize_repo_file_identity_ref(root: Path, path: str) -> str:
     # Change-note imports may mention URLs and runtime artifacts in prose, but
     # only repo-local source paths should become durable file identities.
     normalized = normalize_change_note_ref(path)
     if not normalized:
+        return ""
+    if is_unsafe_change_note_ref(normalized):
         return ""
     if normalized == "Upkeeper.log" or normalized.startswith((".git/", "runtime/")):
         return ""
@@ -5484,6 +5507,9 @@ def probe_change_note_file_identity_validation() -> dict[str, Any]:
         cases = {
             "valid_repo_file": ("tools/upkeeper_lattice.py", "tools/upkeeper_lattice.py"),
             "url_rejected": ("https://example.invalid/not-a-file.py", ""),
+            "protocol_relative_rejected": ("//example.invalid/not-a-file.py", ""),
+            "scheme_like_rejected": ("https:example.invalid/not-a-file.py", ""),
+            "implicit_host_rejected": ("example.invalid/not-a-file.py", ""),
             "absolute_rejected": ("/tmp/not-a-file.py", ""),
             "traversal_rejected": ("../outside.py", ""),
             "control_char_rejected": ("docs/line\nbreak.py", ""),

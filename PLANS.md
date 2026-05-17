@@ -3,6 +3,34 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Lattice Git Status XY Preservation
+
+Status: completed
+
+Goal:
+Fix issue `#246` by making Lattice preserve the two-column Git porcelain XY
+status for live metadata and worktree snapshots, including leading-space
+unstaged-only states.
+
+Constraints:
+- Use raw `git status --porcelain=v1 -z` parsing for machine status data.
+- Preserve current stored display convention where spaces become `_` in
+  candidate/live metadata.
+- Keep raw snapshot status evidence intact for replay and delta calculations.
+- Work in an isolated worktree so normal backlog loops can use the main
+  checkout.
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash tests/lattice_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Lattice JSONL Conflict Detection
 
 Status: completed

@@ -6594,9 +6594,37 @@ def parse_attribute_args(items: list[str] | None) -> dict[str, Any]:
     return attrs
 
 
-def refresh_rollups(conn: sqlite3.Connection, repo_id: int) -> None:
+def refresh_rollups(
+    conn: sqlite3.Connection,
+    repo_id: int,
+    *,
+    file_ids: Iterable[int] | None = None,
+) -> None:
     now = epoch_now()
-    file_ids = [int(row["file_id"]) for row in conn.execute("select file_id from files where repo_id=?", (repo_id,))]
+    if file_ids is None:
+        file_ids = [int(row["file_id"]) for row in conn.execute("select file_id from files where repo_id=?", (repo_id,))]
+    else:
+        normalized_file_ids_set: set[int] = set()
+        for file_id in file_ids:
+            try:
+                normalized_file_id = int(file_id)
+            except (TypeError, ValueError):
+                continue
+            if normalized_file_id > 0:
+                normalized_file_ids_set.add(normalized_file_id)
+        normalized_file_ids = sorted(normalized_file_ids_set)
+        if not normalized_file_ids:
+            return
+        placeholders = ",".join(["?"] * len(normalized_file_ids))
+        file_ids = [
+            int(row["file_id"])
+            for row in conn.execute(
+                f"select file_id from files where repo_id=? and file_id in ({placeholders})",
+                (repo_id, *normalized_file_ids),
+            )
+        ]
+    if not file_ids:
+        return
     for file_id in file_ids:
         rows = [
             dict(row)
@@ -7614,7 +7642,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     rows_seen = rows_written = conflicts = duplicates = 0
-    refresh_pass_rollups = False
+    refresh_pass_rollup_file_ids: set[int] = set()
     imported_import_max = 0
     try:
         input_lines = input_path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -7742,11 +7770,6 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_raw_hash, "empty_filtered_payload")
                 continue
-            if table == "file_pass_runs":
-                # JSONL exports intentionally omit file_pass_rollups because they are
-                # derived state. Replayed pass rows still need a rollup refresh even
-                # when every imported row is a semantic duplicate of existing data.
-                refresh_pass_rollups = True
             incoming_semantic_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
             existing = None
             if pk and filtered.get(pk) is not None:
@@ -7773,6 +7796,13 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     [filtered[key] for key in colnames],
                 )
                 rows_written += 1
+                if table == "file_pass_runs":
+                    try:
+                        pass_file_id = int(filtered.get("file_id", 0))
+                    except (TypeError, ValueError):
+                        pass_file_id = 0
+                    if pass_file_id > 0:
+                        refresh_pass_rollup_file_ids.add(pass_file_id)
             except sqlite3.IntegrityError as exc:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_semantic_hash, f"integrity_error:{exc}")
@@ -7785,8 +7815,8 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             conflicts,
             {"duplicates": duplicates},
         )
-        if refresh_pass_rollups:
-            refresh_rollups(conn, repo_id)
+        if refresh_pass_rollup_file_ids:
+            refresh_rollups(conn, repo_id, file_ids=refresh_pass_rollup_file_ids)
         record_file_event(conn, repo_id, "import_reconciled", details={"path": str(input_path), "conflicts": conflicts})
     status = "conflicts" if conflicts else "ok"
     print_json({"status": status, "rows_seen": rows_seen, "rows_written": rows_written, "duplicates": duplicates, "conflicts": conflicts})

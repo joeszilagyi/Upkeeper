@@ -1386,6 +1386,14 @@ def worktree_snapshot_path_is_sensitive(path: str) -> bool:
     return False
 
 
+def is_runtime_artifact_path(path: str) -> bool:
+    normalized = normalize_rel_path(path)
+    if not normalized:
+        return False
+    normalized_lower = normalized.lower()
+    return normalized_lower == "runtime" or normalized_lower.startswith("runtime/")
+
+
 def worktree_snapshot_path_class(status_code: str, *, is_old: bool = False) -> str:
     status_code = str(status_code or "")[:2]
     if len(status_code) != 2:
@@ -4809,7 +4817,13 @@ def record_worktree_snapshot(
         )
     except (OSError, subprocess.CalledProcessError):
         raw = b""
-    entries = parse_git_porcelain_v1_z_entries(raw)
+    entries = []
+    for status_code, path, old_path in parse_git_porcelain_v1_z_entries(raw):
+        if not path or is_runtime_artifact_path(path):
+            continue
+        if old_path and is_runtime_artifact_path(old_path):
+            continue
+        entries.append((status_code, path, old_path))
     tracked = 0
     untracked = 0
     for status_code, path, _old_path in entries:
@@ -4842,7 +4856,7 @@ def record_worktree_snapshot(
     for status_code, path, old_path in entries:
         if not include_path_inventory:
             continue
-        if not path or worktree_snapshot_path_is_sensitive(path) or (old_path and worktree_snapshot_path_is_sensitive(old_path)):
+        if worktree_snapshot_path_is_sensitive(path) or (old_path and worktree_snapshot_path_is_sensitive(old_path)):
             continue
         meta = live_file_metadata(root, path)
         stored_path = pass_result_path_hmac(root, path)

@@ -3137,6 +3137,86 @@ def ensure_source_record(
     return int(cur.lastrowid)
 
 
+def git_head_file_paths(root: Path) -> set[str]:
+    raw = git_output(root, ["ls-tree", "-r", "--name-only", "HEAD"], default="", strip=False)
+    if not raw:
+        return set()
+    paths: set[str] = set()
+    for path in raw.splitlines():
+        stored = stored_rel_path(path.strip())
+        if stored:
+            paths.add(stored)
+    return paths
+
+
+def sync_file_current_state_to_head(
+    conn: sqlite3.Connection,
+    root: Path,
+    repo_id: int,
+    source_id: int | None = None,
+) -> None:
+    head_paths = git_head_file_paths(root)
+    if not head_paths:
+        return
+    now = epoch_now()
+    for path in head_paths:
+        row = conn.execute(
+            """
+            select file_id, current_path, current_state
+            from files
+            where repo_id=? and (current_path=? or canonical_path=?)
+            """,
+            (repo_id, path, path),
+        ).fetchone()
+        if row:
+            file_id = int(row["file_id"])
+            current_path = stored_rel_path(str(row["current_path"] or ""))
+            current_state = str(row["current_state"] or "")
+            target_state = "active" if current_state in {"deleted", "unknown"} else current_state
+            if current_path != path:
+                conn.execute(
+                    "update files set current_path=?, current_state=?, last_seen_epoch=? where file_id=?",
+                    (path, target_state, now, file_id),
+                )
+            elif target_state != current_state:
+                conn.execute(
+                    "update files set current_state=?, last_seen_epoch=? where file_id=?",
+                    (target_state, now, file_id),
+                )
+            else:
+                conn.execute("update files set last_seen_epoch=? where file_id=?", (now, file_id))
+            conn.execute(
+                """
+                insert into file_paths(file_id, path, first_seen_epoch, last_seen_epoch, source_id)
+                values (?, ?, ?, ?, ?)
+                on conflict(file_id, path) do update set
+                  last_seen_epoch=excluded.last_seen_epoch,
+                  source_id=coalesce(excluded.source_id, file_paths.source_id)
+                """,
+                (file_id, path, now, now, source_id),
+            )
+        else:
+            ensure_file(
+                conn,
+                repo_id,
+                path,
+                state="active",
+                source_id=source_id,
+            )
+    for row in conn.execute(
+        "select file_id, current_path, current_state from files where repo_id=?",
+        (repo_id,),
+    ):
+        file_id = int(row["file_id"])
+        current_path = stored_rel_path(str(row["current_path"] or ""))
+        current_state = str(row["current_state"] or "")
+        if current_path and current_path not in head_paths and current_state != "deleted":
+            conn.execute(
+                "update files set current_state='deleted', last_seen_epoch=? where file_id=?",
+                (now, file_id),
+            )
+
+
 def ensure_file(
     conn: sqlite3.Connection,
     repo_id: int,
@@ -7232,6 +7312,7 @@ def command_import_git(args: argparse.Namespace) -> int:
                             status_code,
                         ),
                     )
+        sync_file_current_state_to_head(conn, root, repo_id, source_id=source_id)
         shallow = git_output(root, ["rev-parse", "--is-shallow-repository"], "false") == "true"
         conn.execute(
             """

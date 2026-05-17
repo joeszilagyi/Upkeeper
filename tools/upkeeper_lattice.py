@@ -5015,6 +5015,40 @@ def record_worktree_delta_events(
         after_snapshot["git_head_sha"] if after_snapshot else None,
     ) if before_snapshot is not None and after_snapshot is not None else set()
 
+    # If there is no pre-Codex snapshot, we cannot classify per-file diffs safely.
+    # Record known dirty files as a special baseline-missing signal and avoid
+    # emitting normal changed events that could be misattributed to this cycle.
+    if before_snapshot is None:
+        for path, after in after_paths.items():
+            after_status = after["status"] if after else "clean"
+            if after_status == "clean":
+                continue
+            file_id = after["file_id"] if after else None
+            if file_id is None:
+                file_id = ensure_file(conn, repo_id, path, source_id=source_id)
+            record_file_event(
+                conn,
+                repo_id,
+                "dirty_state_observed_without_baseline",
+                file_id=file_id,
+                cycle_pk=cycle_pk,
+                source_id=source_id,
+                path=path,
+                details={
+                    "source": "worktree_snapshot_delta",
+                    "before_worktree_snapshot_id": before_snapshot_id,
+                    "after_worktree_snapshot_id": after_snapshot_id,
+                    "before_status": "unknown",
+                    "after_status": after_status,
+                    "before_worktree_hash": None,
+                    "after_worktree_hash": after["worktree_hash"] if after else None,
+                    "before_worktree_head_sha": None,
+                    "after_worktree_head_sha": after_snapshot["git_head_sha"] if after_snapshot else None,
+                    "reason": "missing_before_snapshot",
+                },
+            )
+        return
+
     all_paths = sorted(set(before_paths) | set(after_paths))
     all_paths.extend(sorted(commit_changed_paths - set(all_paths)))
 

@@ -3833,6 +3833,15 @@ def has_meaningful_value(value: Any) -> bool:
     return True
 
 
+def parse_optional_dirty_paths(raw: Any) -> int | None:
+    if not has_meaningful_value(raw):
+        return None
+    text = str(raw).strip()
+    if not text.isdigit():
+        return None
+    return 1 if int(text) > 0 else 0
+
+
 def record_file_event(
     conn: sqlite3.Connection,
     repo_id: int,
@@ -7461,6 +7470,8 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                 cycle_pk = ensure_cycle(conn, repo_id, cycle_id, run_hash, source_id=source_id)
                 if event == "cycle.start":
                     start_fields = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_CYCLE_START_SAFE_KEYS)
+                    dry_run = parse_bool_int(start_fields["dry_run"]) if "dry_run" in start_fields else None
+                    worktree_dirty = parse_optional_dirty_paths(start_fields.get("dirty_paths")) if "dirty_paths" in start_fields else None
                     ensure_cycle(
                         conn,
                         repo_id,
@@ -7468,8 +7479,8 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                         run_hash,
                         source_id=source_id,
                         execution_origin=start_fields.get("execution_origin"),
-                        worktree_dirty=1 if str(start_fields.get("dirty_paths", "0")).isdigit() and int(start_fields.get("dirty_paths", "0")) > 0 else 0,
-                        dry_run=parse_bool_int(str(start_fields.get("dry_run", ""))),
+                        worktree_dirty=worktree_dirty,
+                        dry_run=dry_run,
                     )
                 elif event == "review.preselect":
                     preselect_fields = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_REVIEW_PRESELECT_SAFE_KEYS)

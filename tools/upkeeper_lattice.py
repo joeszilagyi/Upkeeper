@@ -28,6 +28,7 @@ from typing import Any, Iterable
 SCHEMA_VERSION = 1
 SCHEMA_ROW_VERSION = 1
 TEXT_SAMPLE_SIZE = 4096
+CANDIDATE_STATE_PRIORITY = {"selected": 3, "eligible": 2, "excluded": 1}
 
 EXIT_SUCCESS = 0
 EXIT_NO_MATCH = 1
@@ -5051,14 +5052,41 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         gate = selector_priority_gate(mode)
         selected_rank = None
         eligible_count = int(selection.get("eligible_count") or 0)
-        excluded_count = 0
+        seen_candidates: dict[str, dict[str, Any]] = {}
         for index, row in enumerate(candidate_rows, start=1):
-            if row.get("candidate_state") == "excluded":
-                excluded_count += 1
-            if external_rel_path(str(row.get("path", ""))) == selected_path:
-                selected_rank = int(row.get("rank") or index)
+            path = external_rel_path(str(row.get("path", "")))
+            if not path:
+                continue
+            state = str(row.get("candidate_state", "eligible"))
+            state_priority = CANDIDATE_STATE_PRIORITY.get(state, CANDIDATE_STATE_PRIORITY["eligible"])
+            prior = seen_candidates.get(path)
+            if prior is None:
+                seen_candidates[path] = {"index": index, "state_priority": state_priority, "row": row}
+            elif state_priority > prior["state_priority"]:
+                prior["index"] = index
+                prior["state_priority"] = state_priority
+                prior["row"] = row
+        deduped_candidates: list[dict[str, Any]] = []
+        for path, info in seen_candidates.items():
+            row = dict(info["row"])
+            row["path"] = path
+            row["_lattice_input_index"] = info["index"]
+            if path == selected_path:
+                row["candidate_state"] = "selected"
+            deduped_candidates.append(row)
+        for row in deduped_candidates:
+            if row.get("path") == selected_path:
+                selected_rank = int(row.get("rank") or row.get("_lattice_input_index", 1))
+                break
         if selected_rank is None and selected_path:
             selected_rank = 1
+        calculated_excluded_count = len([r for r in deduped_candidates if r.get("candidate_state") == "excluded"])
+        calculated_eligible_count = len(
+            [r for r in deduped_candidates if r.get("candidate_state") in {"eligible", "selected"}]
+        )
+        if not eligible_count:
+            eligible_count = calculated_eligible_count
+        excluded_count = calculated_excluded_count
         cur = conn.execute(
             """
             insert into selection_runs(
@@ -5080,7 +5108,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                 epoch_now(),
                 repo_git_info(root)["head_sha"] or None,
                 None,
-                eligible_count or len([r for r in candidate_rows if r.get("candidate_state") in {"eligible", "selected"}]),
+                eligible_count,
                 excluded_count,
                 0,
                 None,
@@ -5091,11 +5119,9 @@ def command_record_preselect(args: argparse.Namespace) -> int:
             ),
         )
         selection_run_id = int(cur.lastrowid)
-        if candidate_rows:
-            for index, row in enumerate(candidate_rows, start=1):
-                path = external_rel_path(str(row.get("path", "")))
-                if not path:
-                    continue
+        if deduped_candidates:
+            for row in deduped_candidates:
+                path = row.get("path")
                 state = str(row.get("candidate_state", "eligible"))
                 file_state = "active"
                 if path == selected_path:
@@ -5104,7 +5130,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                 file_id = ensure_file(conn, repo_id, path, state=file_state, source_id=source_id) if state != "forced_missing" else None
                 rank = row.get("rank")
                 if state in {"eligible", "selected"} and rank is None:
-                    rank = index
+                    rank = row.get("_lattice_input_index", 1)
                 content_state = row.get("content_state") if path != selected_path else (selected_content_state if selected_content_state is not None else row.get("content_state"))
                 conn.execute(
                     """

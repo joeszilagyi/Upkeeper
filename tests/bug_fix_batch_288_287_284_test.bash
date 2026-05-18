@@ -167,29 +167,38 @@ test_source_mutation_fingerprint_tracks_ref_and_reflog_changes() {
   [[ "$after_branch" == "$before_branch" ]] || fail "branch changed after local commit in baseline test"
 }
 
-test_manifest_selection_uses_live_file_mtime_instead_of_manifest_mtime() {
+test_manifest_selection_prefers_manifest_mtime_ns() {
   local repo="$TEST_TMP_ROOT/selection-mtime"
-  local manifest output error_capture selected
+  local manifest output error_capture selected manifest_root_hash
   make_git_repo "$repo"
   (
     cd "$repo"
-    printf '#!/usr/bin/env bash\necho fresh candidate\n' >fresh.sh
-    printf '#!/usr/bin/env bash\necho stale candidate\n' >stale.sh
-    touch -d '@1700000000' fresh.sh
-    touch -d '@1600000000' stale.sh
-    git add fresh.sh stale.sh
+    printf '#!/usr/bin/env bash\necho new candidate\n' >a_newer.sh
+    printf '#!/usr/bin/env bash\necho old candidate\n' >z_older.sh
+    touch -d '@1700000000' a_newer.sh
+    touch -d '@1700000000' z_older.sh
+    git add a_newer.sh z_older.sh
     git commit -q -m "selection fixture"
   )
 
+  manifest_root_hash="$(python3 - "$repo" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+print(hashlib.sha256(str(root).encode("utf-8")).hexdigest())
+PY
+)"
   manifest="$repo/runtime-manifest.json"
   : >"$repo/.upkeeperignore"
   cat >"$manifest" <<EOF
 {
-  "schema_version": 1,
-  "root": "$(realpath "$repo")",
+  "schema_version": 2,
+  "root_hash": "$manifest_root_hash",
   "files": [
-    {"rel_path": "fresh.sh", "mtime": 1},
-    {"rel_path": "stale.sh", "mtime": 100}
+    {"rel_path": "a_newer.sh", "mtime": 1700000000, "mtime_ns": 1700000000250000000},
+    {"rel_path": "z_older.sh", "mtime": 1700000000, "mtime_ns": 1700000000000000000}
   ]
 }
 EOF
@@ -228,11 +237,11 @@ EOF
   if [[ -z "$selected" ]]; then
     fail "selection output empty; see preselect error capture at $error_capture"
   fi
-  [[ "$selected" == "stale.sh" ]] || fail "manifest-based selection used stale manifest mtime; expected stale.sh by live file mtime"
+  [[ "$selected" == "z_older.sh" ]] || fail "manifest-based selection did not prefer smaller mtime_ns; expected z_older.sh"
 }
 
 test_record_startup_anomaly_gate_review_rejects_missing_log_review_marker
 test_record_startup_anomaly_gate_review_requires_matching_log_review_marker
 test_source_mutation_fingerprint_tracks_ref_and_reflog_changes
-test_manifest_selection_uses_live_file_mtime_instead_of_manifest_mtime
+test_manifest_selection_prefers_manifest_mtime_ns
 printf 'bug_fix_batch_288_287_284_test: ok\n'

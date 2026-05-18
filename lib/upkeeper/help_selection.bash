@@ -1186,10 +1186,14 @@ def manifest_paths(path: str) -> tuple[list[tuple[float, str]], str]:
         stat_result, error = source_safe_file_stat(rel_path)
         if error:
             continue
-        try:
-            mtime = float(stat_result.st_mtime)
-        except (AttributeError, TypeError, ValueError):
-            mtime = 0.0
+        if isinstance(item.get("mtime_ns"), (int, float)):
+            mtime_ns = int(item["mtime_ns"])
+        else:
+            try:
+                mtime_ns = int(item.get("mtime", 0) * 1_000_000_000)
+            except (TypeError, ValueError):
+                mtime_ns = int(getattr(stat_result, "st_mtime_ns", 0))
+        mtime = mtime_ns / 1_000_000_000
         paths.append((mtime, rel_path))
     return paths, "manifest"
 
@@ -1432,7 +1436,7 @@ for manifest_mtime, path in paths:
             continue
         stat_result = text_stat
     if is_candidate:
-        mtime = stat_result.st_mtime
+        mtime = manifest_mtime
         candidates.append((mtime, path))
 
 if startup_anomaly_gate == "1" and startup_force_upkeeper == "1":

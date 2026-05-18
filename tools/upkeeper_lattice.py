@@ -4233,6 +4233,7 @@ def record_file_event(
     details: Any = None,
     event_epoch: int | None = None,
     dedupe_by_cycle: bool = False,
+    dedupe_by_source: bool = False,
 ) -> None:
     stored_path = stored_rel_path(path) if path else None
     details_json = json_dumps(details) if details is not None else None
@@ -4257,6 +4258,29 @@ def record_file_event(
                 where event_id=?
                 """,
                 (event_epoch or epoch_now(), source_id, confidence, details_json, int(existing["event_id"])),
+            )
+            return
+    if dedupe_by_source and source_id is not None:
+        existing = conn.execute(
+            """
+            select event_id
+              from file_events
+             where repo_id=? and source_id=? and event_kind=?
+               and coalesce(file_id, -1) = coalesce(?, -1)
+               and coalesce(path, '') = coalesce(?, '')
+             order by event_epoch desc, event_id desc
+             limit 1
+            """,
+            (repo_id, source_id, event_kind, file_id, stored_path),
+        ).fetchone()
+        if existing is not None:
+            conn.execute(
+                """
+                update file_events
+                set event_epoch=?, confidence=?, details_json=?
+                where event_id=?
+                """,
+                (event_epoch or epoch_now(), confidence, details_json, int(existing["event_id"])),
             )
             return
     conn.execute(
@@ -9480,6 +9504,11 @@ def import_failure_markers(
             target, marker_id, raw_marker_id = tool_failure_marker_identity(root, path, data)
             if not target or not marker_id:
                 continue
+            marker_status = str(data.get("status", "open")).strip()
+            first_seen_epoch = int(data.get("first_seen_epoch") or 0) or None
+            last_seen_epoch = int(data.get("last_seen_epoch") or 0) or None
+            resolved_epoch = int(data.get("resolved_epoch") or 0) or None
+            failure_count = int(data.get("failure_count") or 0) or None
             file_id = ensure_file(conn, repo_id, target)
             source_id = ensure_source_record(
                 conn,
@@ -9491,29 +9520,67 @@ def import_failure_markers(
                 parsed=data,
                 raw_storage_mode=raw_storage_mode,
             )
-            conn.execute(
-                """
-                insert into tool_failures(
-                  repo_id, file_id, marker_id, status, first_seen_epoch, last_seen_epoch, resolved_epoch,
-                  first_failure_kind, last_failure_kind, failure_count, source_id, raw_json
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    repo_id,
-                    file_id,
-                    marker_id,
-                    str(data.get("status", "open")),
-                    int(data.get("first_seen_epoch") or 0) or None,
-                    int(data.get("last_seen_epoch") or 0) or None,
-                    int(data.get("resolved_epoch") or 0) or None,
-                    data.get("first_failure_kind"),
-                    data.get("last_failure_kind"),
-                    int(data.get("failure_count") or 0) or None,
-                    source_id,
-                    json_dumps(data),
-                ),
+            existing = conn.execute(
+                "select tool_failure_id from tool_failures where repo_id=? and marker_id=?",
+                (repo_id, marker_id),
+            ).fetchone()
+            if existing is not None:
+                conn.execute(
+                    """
+                    update tool_failures
+                    set file_id=?, status=?, first_seen_epoch=coalesce(?, first_seen_epoch),
+                        last_seen_epoch=coalesce(?, last_seen_epoch), resolved_epoch=coalesce(?, resolved_epoch),
+                        first_failure_kind=coalesce(?, first_failure_kind), last_failure_kind=coalesce(?, last_failure_kind),
+                        failure_count=coalesce(?, failure_count), source_id=?, raw_json=?
+                    where tool_failure_id=?
+                    """,
+                    (
+                        file_id,
+                        marker_status,
+                        first_seen_epoch,
+                        last_seen_epoch,
+                        resolved_epoch,
+                        data.get("first_failure_kind"),
+                        data.get("last_failure_kind"),
+                        failure_count,
+                        source_id,
+                        json_dumps(data),
+                        int(existing["tool_failure_id"]),
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    insert into tool_failures(
+                      repo_id, file_id, marker_id, status, first_seen_epoch, last_seen_epoch, resolved_epoch,
+                      first_failure_kind, last_failure_kind, failure_count, source_id, raw_json
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        repo_id,
+                        file_id,
+                        marker_id,
+                        marker_status,
+                        first_seen_epoch,
+                        last_seen_epoch,
+                        resolved_epoch,
+                        data.get("first_failure_kind"),
+                        data.get("last_failure_kind"),
+                        failure_count,
+                        source_id,
+                        json_dumps(data),
+                    ),
+                )
+            record_file_event(
+                conn,
+                repo_id,
+                "tool_failure_resolved" if marker_status == "resolved" else "tool_failure_opened",
+                file_id=file_id,
+                source_id=source_id,
+                path=target,
+                details=data,
+                dedupe_by_source=True,
             )
-            record_file_event(conn, repo_id, "tool_failure_resolved" if data.get("status") == "resolved" else "tool_failure_opened", file_id=file_id, source_id=source_id, path=target, details=data)
 
 
 def pass_counts_for_path(conn: sqlite3.Connection, repo_id: int, path: str, pass_code: str | None = None) -> list[dict[str, Any]]:

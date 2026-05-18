@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-18: Lattice source-record recovery:
+	1. Lattice doctor now installs additive `source_records` identity columns before running internal source-record probes, so existing runtime databases can recover without an integrity-failure wall.
+	2. Lattice review-summary parsing again recognizes bare final-prose `REVIEWED_*` outcome lines while still rejecting quoted, fenced, or prose-only examples.
+	3. Imported log, transcript, change-note, and recovery source records now carry line/content identity so repeated local imports can update existing evidence rows without collapsing unrelated wrapper observations.
+	4. Lattice JSONL query output now redirects stdout to `/dev/null` after a closed downstream pipe so ordinary `| head` usage exits cleanly without BrokenPipe stderr noise.
+
 2026-05-17: backlog watch and cleanup fixes:
 	1. Backlog watch output now treats model-echoed shell commands containing `ERROR:` as informational transcript text instead of pageable wrapper/control-plane failures.
 	2. Backlog cleanup now removes literal `$db` SQLite scratch artifacts before staging so failed ad hoc validation fixtures cannot enter backlog PRs as source files.

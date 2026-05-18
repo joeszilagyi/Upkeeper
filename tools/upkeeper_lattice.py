@@ -75,7 +75,9 @@ REVIEW_OUTCOME_MARKERS = (
     "STOPPED_ON_BLOCKER",
 )
 REVIEW_OUTCOME_LINE_PATTERN = re.compile(
-    r"^UPKEEPER_REVIEW_OUTCOME\s*=\s*(" + "|".join(REVIEW_OUTCOME_MARKERS) + r")$"
+    r"^(?:UPKEEPER_REVIEW_OUTCOME\s*=\s*)?("
+    + "|".join(REVIEW_OUTCOME_MARKERS)
+    + r")(?:\s+for\s+.+)?$"
 )
 UPKEEPER_STATUS_MARKERS = ("WORK_DONE", "NO_CHANGES", "NO_BACKEND_TASK", "BLOCKED")
 UPKEEPER_STATUS_CONTRACT_LINE = re.compile(rf"^UPKEEPER_STATUS:\s*({'|'.join(UPKEEPER_STATUS_MARKERS)})\s*$")
@@ -615,8 +617,10 @@ CREATE_TABLE_SQL = [
       source_uri text,
       source_epoch integer,
       imported_epoch integer not null,
+      source_line integer,
       raw_ref text,
       raw_text text,
+      raw_sha256 text,
       parsed_json text,
       parse_status text,
       fact_confidence text
@@ -1190,6 +1194,7 @@ CREATE_INDEX_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_regression_events_repo_file_epoch ON regression_events(repo_id, file_id, marked_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_extension_facts_lookup ON extension_facts(namespace, key, subject_type, subject_pk)",
     "CREATE INDEX IF NOT EXISTS idx_pass_run_attributes_lookup ON pass_run_attributes(file_pass_run_id, namespace, key)",
+    "CREATE INDEX IF NOT EXISTS idx_source_records_identity ON source_records(repo_id, source_kind, coalesce(source_path, ''), coalesce(source_line, -1), coalesce(raw_sha256, ''))",
 ]
 
 
@@ -2119,6 +2124,21 @@ def print_json(value: Any) -> None:
     print(json.dumps(sanitize_json_value(value), sort_keys=True, indent=2))
 
 
+def redirect_stdout_to_devnull() -> None:
+    devnull_fd = None
+    try:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull_fd, sys.stdout.fileno())
+    except OSError:
+        pass
+    finally:
+        if devnull_fd is not None:
+            try:
+                os.close(devnull_fd)
+            except OSError:
+                pass
+
+
 class LatticeCommandError(Exception):
     def __init__(self, message: str, code: int, *, emitted: bool) -> None:
         super().__init__(message)
@@ -2825,6 +2845,29 @@ def ensure_worktree_snapshot_path_identity_columns(conn: sqlite3.Connection) -> 
                 pass
 
 
+def ensure_source_record_identity_columns(conn: sqlite3.Connection) -> None:
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(source_records)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "source_line" not in columns:
+        try:
+            conn.execute("alter table source_records add column source_line integer")
+        except sqlite3.Error:
+            pass
+    if "raw_sha256" not in columns:
+        try:
+            conn.execute("alter table source_records add column raw_sha256 text")
+        except sqlite3.Error:
+            pass
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_source_records_identity ON source_records(repo_id, source_kind, coalesce(source_path, ''), coalesce(source_line, -1), coalesce(raw_sha256, ''))"
+        )
+    except sqlite3.Error:
+        pass
+
+
 def ensure_contributor_privacy_columns(conn: sqlite3.Connection) -> None:
     try:
         columns = {row["name"] for row in conn.execute("pragma table_info(contributors)").fetchall()}
@@ -2940,6 +2983,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
         ensure_file_snapshot_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_identity_columns(conn)
+        ensure_source_record_identity_columns(conn)
         ensure_contributor_privacy_columns(conn)
         ensure_git_commit_privacy_columns(conn)
         for sql in CREATE_INDEX_SQL:
@@ -3001,6 +3045,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     ensure_file_snapshot_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_identity_columns(conn)
+    ensure_source_record_identity_columns(conn)
     scrub_legacy_git_privacy_data(conn)
 
 
@@ -3169,6 +3214,8 @@ def ensure_source_record(
     parsed: Any = None,
     parse_status: str = "parsed",
     fact_confidence: str = "observed",
+    source_line: int | str | None = None,
+    raw_sha256: str | None = None,
     raw_storage_mode: str | None = None,
 ) -> int:
     if source_kind not in SOURCE_KINDS:
@@ -3176,6 +3223,10 @@ def ensure_source_record(
     now = epoch_now()
     stored_source_path = source_record_storage_path(root, source_kind, source_path)
     stored_source_uri = source_record_storage_uri(root, source_kind, source_uri)
+    try:
+        stored_source_line = int(source_line) if source_line is not None else None
+    except (TypeError, ValueError):
+        stored_source_line = None
     stored_raw_text = raw_text if effective_lattice_raw_storage(raw_storage_mode) == "full" else None
     stored_parsed = normalize_source_record_parsed(
         source_kind,
@@ -3184,12 +3235,65 @@ def ensure_source_record(
         parsed,
         raw_storage_mode=raw_storage_mode,
     )
+    parsed_payload_text = json_dumps(stored_parsed) if stored_parsed is not None else None
+    if isinstance(raw_sha256, str) and raw_sha256.strip():
+        computed_raw_sha256 = raw_sha256.strip()
+    elif isinstance(stored_raw_text, str):
+        computed_raw_sha256 = sha256_text(stored_raw_text)
+    elif parsed_payload_text is not None:
+        computed_raw_sha256 = sha256_text(parsed_payload_text)
+    else:
+        computed_raw_sha256 = None
+    stored_raw_sha256 = computed_raw_sha256
+    identity_path = stored_source_path or ""
+    identity_line = stored_source_line if stored_source_line is not None else -1
+    identity_sha = stored_raw_sha256 or ""
+    if identity_path and stored_raw_sha256:
+        row = conn.execute(
+            """
+            select source_id
+            from source_records
+            where repo_id=?
+              and source_kind=?
+              and coalesce(source_path, '') = ?
+              and coalesce(source_line, -1) = ?
+              and coalesce(raw_sha256, '') = ?
+            order by imported_epoch desc, source_id desc
+            limit 1
+            """,
+            (repo_id, source_kind, identity_path, identity_line, identity_sha),
+        ).fetchone()
+        if row:
+            source_id = int(row["source_id"])
+            conn.execute(
+                """
+                update source_records
+                set source_path=?, source_uri=?, source_epoch=?, source_line=?, raw_ref=?, raw_text=coalesce(?, raw_text),
+                    parsed_json=coalesce(?, parsed_json), parse_status=?, fact_confidence=?, raw_sha256=?, imported_epoch=?
+                where source_id=?
+                """,
+                (
+                    stored_source_path,
+                    stored_source_uri,
+                    source_epoch,
+                    stored_source_line,
+                    raw_ref or None,
+                    stored_raw_text,
+                    parsed_payload_text,
+                    parse_status,
+                    fact_confidence,
+                    stored_raw_sha256,
+                    now,
+                    source_id,
+                ),
+            )
+            return source_id
     cur = conn.execute(
         """
         insert into source_records(
           repo_id, source_kind, source_path, source_uri, source_epoch, imported_epoch,
-          raw_ref, raw_text, parsed_json, parse_status, fact_confidence
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          source_line, raw_ref, raw_text, raw_sha256, parsed_json, parse_status, fact_confidence
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             repo_id,
@@ -3198,8 +3302,10 @@ def ensure_source_record(
             stored_source_uri or None,
             source_epoch,
             now,
+            stored_source_line,
             raw_ref or None,
             stored_raw_text,
+            stored_raw_sha256,
             json_dumps(stored_parsed) if stored_parsed is not None else None,
             parse_status,
             fact_confidence,
@@ -4346,6 +4452,7 @@ def format_rows(rows: list[dict[str, Any]], fmt: str) -> None:
                     )
                 )
     except BrokenPipeError:
+        redirect_stdout_to_devnull()
         raise SystemExit(EXIT_SUCCESS)
 
 
@@ -4626,10 +4733,14 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         table_names = {row["name"] for row in conn.execute("select name from sqlite_master where type='table'")}
         missing_tables = [table for table in REQUIRED_TABLES if table not in table_names]
         result["checks"]["required_tables_missing"] = missing_tables
+        if missing_tables:
+            result["status"] = "schema_mismatch"
+            return result, EXIT_SCHEMA_MISMATCH
+        ensure_source_record_identity_columns(conn)
         index_names = {row["name"] for row in conn.execute("select name from sqlite_master where type='index'")}
         missing_indexes = [index for index in REQUIRED_INDEXES if index not in index_names]
         result["checks"]["required_indexes_missing"] = missing_indexes
-        if missing_tables or missing_indexes:
+        if missing_indexes:
             result["status"] = "schema_mismatch"
             return result, EXIT_SCHEMA_MISMATCH
         meta = conn.execute("select value from schema_meta where key='schema_version'").fetchone()
@@ -5480,6 +5591,11 @@ def probe_review_summary_parsing() -> dict[str, Any]:
     cases: dict[str, tuple[str, str, str]] = {
         "contract_outcome": (
             "selected file: `tools/upkeeper_lattice.py`\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_AND_REPORTED\n",
+            "tools/upkeeper_lattice.py",
+            "REVIEWED_AND_REPORTED",
+        ),
+        "bare_outcome": (
+            "Selected file: `tools/upkeeper_lattice.py`\nREVIEWED_AND_REPORTED\n",
             "tools/upkeeper_lattice.py",
             "REVIEWED_AND_REPORTED",
         ),
@@ -6940,6 +7056,12 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     )
                     if rejected_pass and rejected_path:
                         rejected_pairs.add((rejected_pass, rejected_path))
+                line_number = 0
+                try:
+                    line_number = int(item.get("line_number", 0) or 0)
+                except (TypeError, ValueError):
+                    line_number = 0
+                raw_line = item.get("raw_line", "") if preserve_raw else ""
                 ensure_source_record(
                     conn,
                     root,
@@ -6947,7 +7069,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     "transcript",
                     source_path=args.from_file,
                     raw_ref=f"pass_result_rejected:{item.get('line_number')}",
-                    raw_text=item.get("raw_line", "") if preserve_raw else None,
+                    raw_text=raw_line if preserve_raw else None,
                     parsed=sanitize_rejected_pass_result(
                         root,
                         item,
@@ -6956,6 +7078,8 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     ),
                     parse_status="rejected",
                     fact_confidence="rejected",
+                    source_line=line_number,
+                    raw_sha256=sha256_text(raw_line) if preserve_raw else sha256_text(str(line_number)),
                     raw_storage_mode=raw_storage_mode,
                 )
                 rejected_count += 1
@@ -6965,6 +7089,12 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 outcome = item.get("outcome", "unknown")
                 if trusted_selected_path and reported_path != trusted_selected_path:
                     rejected_pairs.add((pass_code, trusted_selected_path))
+                    line_number = 0
+                    try:
+                        line_number = int(item.get("line_number", 0) or 0)
+                    except (TypeError, ValueError):
+                        line_number = 0
+                    raw_line = item.get("raw_line", "") if preserve_raw else ""
                     ensure_source_record(
                         conn,
                         root,
@@ -6982,6 +7112,8 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         },
                         parse_status="rejected",
                         fact_confidence="rejected",
+                        source_line=line_number,
+                        raw_sha256=sha256_text(raw_line) if preserve_raw else sha256_text(str(line_number)),
                         raw_storage_mode=raw_storage_mode,
                     )
                     rejected_count += 1
@@ -7010,6 +7142,12 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         preserve_raw=preserve_raw,
                     )
                     rejection["validation_error"] = str(exc)
+                    line_number = 0
+                    try:
+                        line_number = int(item.get("line_number", 0) or 0)
+                    except (TypeError, ValueError):
+                        line_number = 0
+                    raw_line = item.get("raw_line", "") if preserve_raw else ""
                     ensure_source_record(
                         conn,
                         root,
@@ -7017,10 +7155,12 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         "transcript",
                         source_path=args.from_file,
                         raw_ref=f"pass_result_rejected:{item.get('line_number')}",
-                        raw_text=item.get("raw_line", "") if preserve_raw else None,
+                        raw_text=raw_line if preserve_raw else None,
                         parsed=rejection,
                         parse_status="rejected",
                         fact_confidence="rejected",
+                        source_line=line_number,
+                        raw_sha256=sha256_text(raw_line) if preserve_raw else sha256_text(str(line_number)),
                         raw_storage_mode=raw_storage_mode,
                     )
                     rejected_count += 1
@@ -7043,6 +7183,11 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         preserve_raw=preserve_raw,
                     )
                     rejection["validation_error"] = validation_error
+                    line_number = 0
+                    try:
+                        line_number = int(item.get("line_number", 0) or 0)
+                    except (TypeError, ValueError):
+                        line_number = 0
                     ensure_source_record(
                         conn,
                         root,
@@ -7054,6 +7199,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         parsed=rejection,
                         parse_status="rejected",
                         fact_confidence="rejected",
+                        source_line=line_number,
                         raw_storage_mode=raw_storage_mode,
                     )
                     rejected_count += 1
@@ -7715,7 +7861,7 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
             finish_import(conn, import_id, "unavailable", 0, 0, 0, {"reason": "missing_log"})
             print_json({"status": "unavailable", "reason": "missing_log", "path": str(log_path)})
             return EXIT_SUCCESS
-        for raw_line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line_number, raw_line in enumerate(log_path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
             rows_seen += 1
             parsed = parse_upkeeper_log_line(raw_line)
             if not parsed:
@@ -7734,6 +7880,8 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                 raw_text=stored_raw_line,
                 parsed=safe_parsed,
                 parse_status="parsed",
+                source_line=line_number,
+                raw_sha256=sha256_text(stored_raw_line) if stored_raw_line is not None else None,
                 raw_storage_mode=raw_storage_mode,
             )
             cycle_id = str(parsed.get("cycle", ""))
@@ -7826,6 +7974,8 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                     raw_ref=f"{current_version}:{line_number}",
                     raw_text=raw if args.raw else None,
                     parsed={"version": current_version, "date": current_date, "item_number": int(item.group(1)), "text": text},
+                    source_line=line_number,
+                    raw_sha256=sha256_text(raw),
                     raw_storage_mode=raw_storage_mode,
                 )
                 cur = conn.execute(
@@ -8248,7 +8398,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             {"path": str(input_path)},
             forced_id=max(existing_import_max, imported_import_max) + 1,
         )
-        for raw in input_lines:
+        for line_number, raw in enumerate(input_lines, start=1):
             if not raw:
                 continue
             rows_seen += 1
@@ -8331,6 +8481,8 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     parsed=summarize_lattice_unavailable_payload(payload, raw),
                     parse_status="spooled_lattice_unavailable",
                     fact_confidence="observed",
+                    source_line=line_number,
+                    raw_sha256=sha256_text(raw),
                     raw_storage_mode=raw_storage_mode,
                 )
                 rows_written += 1
@@ -9740,16 +9892,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except BrokenPipeError:
-        devnull_fd = None
-        try:
-            devnull_fd = os.open(os.devnull, os.O_WRONLY)
-            os.dup2(devnull_fd, sys.stdout.fileno())
-        except OSError:
-            pass
-        finally:
-            if devnull_fd is not None:
-                try:
-                    os.close(devnull_fd)
-                except OSError:
-                    pass
+        redirect_stdout_to_devnull()
         raise SystemExit(EXIT_SUCCESS)

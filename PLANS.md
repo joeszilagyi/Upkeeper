@@ -3,6 +3,41 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Lattice Source Record Identity And Outcome Compatibility
+
+Status: completed locally
+
+Goal:
+- recover the latest failed loop by fixing the Lattice integrity failure around
+  report-only review outcome parsing
+- finish the local `source_records` identity work so repeated imported evidence
+  can update an existing row without collapsing unrelated wrapper observations
+- preserve the documented final-prose `REVIEWED_*` compatibility contract while
+  still rejecting quoted, fenced, or prose-only outcome examples
+
+Constraints:
+- keep the fix local and deterministic; do not launch backend Codex validation
+- keep runtime recovery files, logs, transcripts, manifests, and SQLite files
+  as local evidence only
+- avoid broad schema churn beyond the existing additive `source_records`
+  identity columns
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_lattice.py`
+- `bash tests/lattice_test.bash`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `git diff --check`
+
 ## Model Output Redaction Boundary
 
 Status: completed

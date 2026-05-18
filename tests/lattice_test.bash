@@ -1573,30 +1573,25 @@ test_prune_scopes_actions_to_current_repo() {
   make_repo "$repo_b"
 
   "$LATTICE_TOOL" --root "$repo_a" --db "$DB" init >"$TEST_TMP_ROOT/prune-shared-init-a.out"
-  "$LATTICE_TOOL" --root "$repo_b" --db "$DB" init >"$TEST_TMP_ROOT/prune-shared-init-b.out"
+  "$LATTICE_TOOL" --root "$repo_b" --db "$DB" --allow-unsafe-db init >"$TEST_TMP_ROOT/prune-shared-init-b.out"
 
   now=$(date +%s)
   old_epoch=$((now - 172800))
   fresh_epoch=$((now - 3600))
 
-  python3 - "$DB" "$repo_a" "$repo_b" "$old_epoch" "$fresh_epoch" <<'PY' || fail "failed to seed shared-db prune fixtures"
+  python3 - "$DB" "$old_epoch" "$fresh_epoch" <<'PY' || fail "failed to seed shared-db prune fixtures"
 import sqlite3
 import sys
 
-db, repo_a, repo_b, old_epoch, fresh_epoch = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
+db, old_epoch, fresh_epoch = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 
 with sqlite3.connect(db) as conn:
     conn.execute("PRAGMA foreign_keys=ON")
-    rows = conn.execute(
-        "select root_path, repo_id from repositories where root_path in (?, ?)",
-        (repo_a, repo_b),
-    ).fetchall()
-    ids = {path: repo_id for path, repo_id in rows}
-    if len(ids) != 2:
-        raise AssertionError(f"expected both repos in shared db, got {ids}")
+    repo_ids = [row[0] for row in conn.execute("select repo_id from repositories order by repo_id asc").fetchall()]
+    if len(repo_ids) != 2:
+        raise AssertionError(f"expected both repos in shared db, got {repo_ids}")
 
-    repo_a_id = ids[repo_a]
-    repo_b_id = ids[repo_b]
+    repo_a_id, repo_b_id = repo_ids
 
     conn.executemany(
         """
@@ -1664,30 +1659,25 @@ PY
     --candidate-details \
     --transient-artifacts >"$TEST_TMP_ROOT/prune-shared.out"
 
-  python3 - "$DB" "$repo_a" "$repo_b" <<'PY' || fail "prune scoped-by-repo test assertions failed"
+  python3 - "$DB" <<'PY' || fail "prune scoped-by-repo test assertions failed"
 import sqlite3
 import sys
 
-db, repo_a, repo_b = sys.argv[1], sys.argv[2], sys.argv[3]
+db = sys.argv[1]
 
 with sqlite3.connect(db) as conn:
-    rows = conn.execute(
-        "select root_path, repo_id from repositories where root_path in (?, ?)",
-        (repo_a, repo_b),
-    ).fetchall()
-    repo_id_by_root = {root_path: repo_id for root_path, repo_id in rows}
-    if len(repo_id_by_root) != 2:
-        raise AssertionError(f"expected both repos in shared db, got {repo_id_by_root}")
+    repo_ids = [row[0] for row in conn.execute("select repo_id from repositories order by repo_id asc").fetchall()]
+    if len(repo_ids) != 2:
+        raise AssertionError(f"expected both repos in shared db, got {repo_ids}")
 
-    repo_a_id = repo_id_by_root[repo_a]
-    repo_b_id = repo_id_by_root[repo_b]
+    repo_a_id, repo_b_id = repo_ids
 
     repo_a_rows = conn.execute(
-        "select raw_text from source_records where repo_id = ?",
+        "select raw_text from source_records where repo_id = ? and raw_ref = 'prune-regression'",
         (repo_a_id,),
     ).fetchall()
     repo_b_rows = conn.execute(
-        "select raw_text from source_records where repo_id = ?",
+        "select raw_text from source_records where repo_id = ? and raw_ref = 'prune-regression'",
         (repo_b_id,),
     ).fetchall()
     if repo_a_rows.count((None,)) != 1:
@@ -2242,6 +2232,51 @@ if tuple(cycle) != expected_cycle:
 PY
 }
 
+test_source_record_identity_reuses_imported_lines_only() {
+  local repo log_path
+
+  repo="$TEST_TMP_ROOT/lattice-source-record-identity"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/source-record-identity-init.out"
+
+  log_path="$TEST_TMP_ROOT/source-record-identity.log"
+  cat >"$log_path" <<'EOF'
+2026-05-12T00:00:00-0700 [INFO] cycle=cycle-source run_hash=hash-source cycle.start dry_run=1
+2026-05-12T00:00:01-0700 [INFO] cycle=cycle-source run_hash=hash-source review.preselect path=README.md
+2026-05-12T00:00:02-0700 [INFO] cycle=cycle-source run_hash=hash-source cycle.exit exit_code=0
+EOF
+
+  lattice import-upkeeper-log --path "$log_path" >"$TEST_TMP_ROOT/source-record-identity-import-1.out"
+  lattice import-upkeeper-log --path "$log_path" >"$TEST_TMP_ROOT/source-record-identity-import-2.out"
+  lattice record-cycle-start --cycle-id cycle-source-a --run-hash hash-source-a >"$TEST_TMP_ROOT/source-record-identity-start-a.out"
+  lattice record-cycle-start --cycle-id cycle-source-b --run-hash hash-source-b >"$TEST_TMP_ROOT/source-record-identity-start-b.out"
+
+  python3 - "$DB" <<'PY' || fail "source_records identity replay boundary regressed"
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+rows = conn.execute(
+    "select source_line, raw_sha256 from source_records where source_kind='upkeeper_log' order by source_line"
+).fetchall()
+if len(rows) != 3:
+    raise AssertionError(f"expected repeated imported log lines to reuse three source_records, got {len(rows)}: {rows}")
+for expected_line, (source_line, raw_sha256) in enumerate(rows, start=1):
+    if int(source_line or 0) != expected_line:
+        raise AssertionError(f"source_line mismatch: expected {expected_line}, got {source_line}")
+    if not raw_sha256:
+        raise AssertionError(f"raw_sha256 missing for imported log line {expected_line}")
+
+wrapper_count = conn.execute(
+    "select count(*) from source_records where source_kind='wrapper_observed' and raw_ref='cycle_start'"
+).fetchone()[0]
+if int(wrapper_count) != 2:
+    raise AssertionError(f"wrapper observations without an anchored source identity collapsed: {wrapper_count}")
+PY
+}
+
 test_planned_pass_semantics_do_not_mark_all_runs_as_planned() {
   local repo
 
@@ -2335,5 +2370,6 @@ test_review_parser_and_redaction
 test_clean_touch_uses_mtime_ns
 test_sparse_lifecycle_replay_preserves_metadata
 test_import_upkeeper_log_omits_sensitive_parsed_fields
+test_source_record_identity_reuses_imported_lines_only
 test_planned_pass_semantics_do_not_mark_all_runs_as_planned
 printf 'ok - lattice\n'

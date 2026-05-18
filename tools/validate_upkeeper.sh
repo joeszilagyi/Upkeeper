@@ -371,13 +371,17 @@ check_backlog_launcher_contract() {
   log "checking backlog launcher safety contract"
   grep -Fq 'BACKLOG_ALLOW_INTERACTIVE_STDIO' orchestration/backlog.sh || fail "backlog launcher missing interactive-stdio override"
   grep -Fq 'BACKLOG_INTERACTIVE_MODE="${BACKLOG_INTERACTIVE_MODE:-watch}"' orchestration/backlog.sh || fail "backlog launcher does not default interactive use to watch mode"
-  grep -Fq 'backlog_timestamp_stream | tee -a "$log_file" | backlog_color_attention_stream' orchestration/backlog.sh || fail "backlog launcher does not keep timestamped interactive watch output visible while cutting off stdin"
+  grep -Fq 'backlog_run_owned_watch_pipeline' orchestration/backlog.sh || fail "backlog launcher does not own and wait on the interactive watch pipeline"
+  grep -Fq 'wait "$BACKLOG_WATCH_FORMATTER_PID"' orchestration/backlog.sh || fail "backlog launcher does not wait for watch formatter drain before returning to the shell"
+  ! grep -Fq '> >(backlog_timestamp_stream | tee -a "$log_file" | backlog_color_attention_stream)' orchestration/backlog.sh || fail "backlog launcher still uses asynchronous process substitution for watch output"
   grep -Fq 'backlog_timestamp_stream >>"$log_file"' orchestration/backlog.sh || fail "backlog launcher no longer exposes explicit timestamped detach mode"
   grep -Fq 'backlog_line_starts_with_timestamp' orchestration/backlog.sh || fail "backlog launcher does not avoid double-prefixing timestamped lines"
   grep -Fq 'backlog_attention_marker_for_line' orchestration/backlog.sh || fail "backlog launcher does not classify operator attention markers"
   grep -Fq 'backlog_color_attention_stream' orchestration/backlog.sh || fail "backlog launcher does not color pageable terminal alerts separately from the loop log"
+  grep -Fq 'BACKLOG_VISUAL_BLOCK="${BACKLOG_VISUAL_BLOCK:-█}"' orchestration/backlog.sh || fail "backlog launcher visual status block default drifted"
   grep -Fq 'PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO' orchestration/backlog.sh || fail "backlog launcher attention marker taxonomy drifted"
-  grep -Fq 'sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] /' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not understand timestamped loop logs"
+  grep -Fq '([+-][0-9][0-9][0-9][0-9])? /, "", candidate)' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not understand zone-suffixed timestamped loop logs"
+  grep -Fq 'sub(/^[^[:space:]]+[[:space:]]+/, "", candidate)' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not strip visual block columns"
   grep -Fq 'sub(/^([A-Z][A-Z]+|--FYI--)[[:space:]]+/, "", candidate)' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not understand attention-marked loop logs"
   grep -Fq 'interactive stdio remained attached after backlog auto-detach' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed auto-detach"
   grep -Fq 'interactive stdin remained attached after backlog watch-mode reexec' orchestration/backlog.sh || fail "backlog launcher does not fail closed after failed watch-mode reexec"
@@ -422,17 +426,63 @@ PY
   if command -v script >/dev/null 2>&1; then
     temp_dir="$VALIDATION_TMP_ROOT/backlog-stdio"
     mkdir -p "$temp_dir"
-    printf '2026-05-15T17:21:47 RUN     backlog: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh\n' >"$temp_dir/loop.log"
+    printf '2026-05-15T17:21:47 █ RUN     backlog: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh\n' >"$temp_dir/loop.log"
     status=0
     BACKLOG_STDIO_AUTODETACH_PROBE=1 BACKLOG_LOOP_LOG_FILE="$temp_dir/loop.log" \
       script -qfec ./orchestration/backlog.sh "$temp_dir/typescript" >/dev/null 2>&1 || status="$?"
     [[ "$status" == "0" ]] || fail "backlog launcher interactive stdio auto-detach probe exited $status"
     grep -Fq '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to '"$temp_dir/loop.log" "$temp_dir/typescript" ||
       fail "backlog launcher did not explain interactive watch mode"
-    grep -Eq '^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] INFO[[:space:]]+# backlog: interactive stdin detected;' "$temp_dir/typescript" ||
-      fail "backlog launcher watch notice is not timestamped with an attention marker"
+    python3 - "$temp_dir/typescript" <<'PY' ||
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+pattern = r"(?m)^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} █ INFO\s+# backlog: interactive stdin detected;"
+raise SystemExit(0 if re.search(pattern, text) else 1)
+PY
+      fail "backlog launcher watch notice is not timestamped with a visual block and attention marker"
     grep -Fq '# backlog: recent activity: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh' "$temp_dir/typescript" ||
       fail "backlog launcher did not parse timestamped recent activity"
+
+    cat >"$temp_dir/fake-watch-child" <<'SH'
+#!/usr/bin/env bash
+printf 'fake child first\n'
+printf 'fake child final\n'
+exit 7
+SH
+    chmod +x "$temp_dir/fake-watch-child"
+    status=0
+    BACKLOG_SOURCE_ONLY=1 BACKLOG_ALERT_COLOR=never bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./orchestration/backlog.sh
+      SCRIPT_PATH="$2"
+      set +e
+      backlog_run_owned_watch_pipeline "$3"
+      rc="$?"
+      set -e
+      printf "SENTINEL_AFTER_HELPER\n"
+      exit "$rc"
+    ' bash "$ROOT_DIR" "$temp_dir/fake-watch-child" "$temp_dir/owned-watch.log" >"$temp_dir/owned-watch.out" 2>"$temp_dir/owned-watch.err" || status="$?"
+    [[ "$status" == "7" ]] || fail "backlog owned watch pipeline did not preserve child exit status"
+    grep -Fq 'fake child final' "$temp_dir/owned-watch.log" ||
+      fail "backlog owned watch pipeline did not mirror final child output to the loop log"
+    python3 - "$temp_dir/owned-watch.out" <<'PY' ||
+import sys
+from pathlib import Path
+
+lines = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines()
+try:
+    final_index = next(index for index, line in enumerate(lines) if "fake child final" in line)
+    sentinel_index = next(index for index, line in enumerate(lines) if line == "SENTINEL_AFTER_HELPER")
+except StopIteration:
+    raise SystemExit(1)
+raise SystemExit(0 if final_index < sentinel_index else 1)
+PY
+      fail "backlog owned watch pipeline can return to the shell before formatter output drains"
   fi
 
   temp_dir="$VALIDATION_TMP_ROOT/backlog-alert-markers"
@@ -447,19 +497,34 @@ PY
     backlog_format_attention_line "2026-05-16T18:20:00 backlog: quota preflight: deferring backlog run this cycle" >"$2/wait.out"
     backlog_format_attention_line "2026-05-16T18:20:30 Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)" >"$2/fyi.out"
     backlog_format_attention_line "2026-05-16T18:21:00 PAGE   [ERROR] already marked" >"$2/existing.out"
+    backlog_format_attention_line "2026-05-16T18:21:01 █ RUN     backlog: running Upkeeper for issue #999 with gpt target=x" >"$2/existing-block.out"
+    BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:02 Already up to date.")" >"$2/ok-color.out"
+    BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:03 [ERROR] wrapper exploded")" >"$2/page-color.out"
+    BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:04 previous_run.anomaly_summary x")" >"$2/fyi-color.out"
+    BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:05 backlog: running Upkeeper for issue #1")" >"$2/run-color.out"
   ' bash "$ROOT_DIR" "$temp_dir"
-  grep -Fq '2026-05-16T17:00:37-0700 WORKER  [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s' "$temp_dir/worker.out" ||
+  grep -Fq '2026-05-16T17:00:37 █ WORKER  [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s' "$temp_dir/worker.out" ||
     fail "backlog launcher did not classify worker command failures separately from pageable errors"
-  grep -Fq "2026-05-17T10:26:29-0700 INFO    [ERROR] Upkeeper: primary: echo 'ERROR: tools/upkeeper_lattice.py not found'" "$temp_dir/echo-error.out" ||
+  grep -Fq "2026-05-17T10:26:29 █ INFO    [ERROR] Upkeeper: primary: echo 'ERROR: tools/upkeeper_lattice.py not found'" "$temp_dir/echo-error.out" ||
     fail "backlog launcher treated echoed model ERROR text as a pageable wrapper error"
-  grep -Fq '2026-05-16T18:12:41-0700 PAGE    [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed' "$temp_dir/page.out" ||
+  grep -Fq '2026-05-16T18:12:41 █ PAGE    [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed' "$temp_dir/page.out" ||
     fail "backlog launcher did not classify wrapper/control-plane errors as PAGE"
-  grep -Fq '2026-05-16T18:20:00 WAIT    backlog: quota preflight: deferring backlog run this cycle' "$temp_dir/wait.out" ||
+  grep -Fq '2026-05-16T18:20:00 █ WAIT    backlog: quota preflight: deferring backlog run this cycle' "$temp_dir/wait.out" ||
     fail "backlog launcher did not classify quota waits as WAIT"
-  grep -Fq '2026-05-16T18:20:30 --FYI-- Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)' "$temp_dir/fyi.out" ||
+  grep -Fq '2026-05-16T18:20:30 █ --FYI-- Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)' "$temp_dir/fyi.out" ||
     fail "backlog launcher did not classify advisory health output as FYI"
-  grep -Fxq '2026-05-16T18:21:00 PAGE   [ERROR] already marked' "$temp_dir/existing.out" ||
-    fail "backlog launcher duplicated an existing attention marker"
+  grep -Fxq '2026-05-16T18:21:00 █ PAGE    [ERROR] already marked' "$temp_dir/existing.out" ||
+    fail "backlog launcher did not normalize existing attention markers into visual-block format"
+  grep -Fxq '2026-05-16T18:21:01 █ RUN     backlog: running Upkeeper for issue #999 with gpt target=x' "$temp_dir/existing-block.out" ||
+    fail "backlog launcher duplicated an existing visual block marker"
+  grep -Fq $'\033[1;32m█\033[0m OK' "$temp_dir/ok-color.out" ||
+    fail "backlog launcher did not color OK visual block green"
+  grep -Fq $'\033[5;1;31m█\033[0m PAGE' "$temp_dir/page-color.out" ||
+    fail "backlog launcher did not color PAGE visual block blinking red"
+  grep -Fq $'\033[1;38;5;208m█\033[0m --FYI--' "$temp_dir/fyi-color.out" ||
+    fail "backlog launcher did not color FYI visual block orange"
+  grep -Fq $'\033[1;36m█\033[0m RUN' "$temp_dir/run-color.out" ||
+    fail "backlog launcher did not color RUN visual block cyan"
 
   temp_dir="$VALIDATION_TMP_ROOT/backlog-burn-env"
   mkdir -p "$temp_dir"
@@ -3100,7 +3165,7 @@ EOF
 check_lattice_contract() {
   log "checking Upkeeper Lattice"
   bash tests/lattice_test.bash
-  if rg -n '\b(curl|gh|requests|urllib|http\.client|GITHUB_TOKEN)\b' tools/upkeeper_lattice.py lib/upkeeper/lattice.bash >/dev/null; then
+  if rg -n '\b(curl|gh|requests|urllib3|urllib\.request|urllib\.error|http\.client|GITHUB_TOKEN)\b' tools/upkeeper_lattice.py lib/upkeeper/lattice.bash >/dev/null; then
     fail "Lattice implementation contains a default network/token surface"
   fi
 }
@@ -3684,6 +3749,7 @@ succeeded in 1ms:
 exec
 python -m pytest
 exited 1 in 0.1s
+ERROR secret=sk-testsecret123456 path=/home/joe/private/customer.txt email=ada@example.com Bearer abcdefghijklmnop
 tokens used
 123
 Final prose mentions ERROR and failed but is not runtime evidence.
@@ -3719,7 +3785,12 @@ EOF
   [[ "$(grep -Ec "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ check passed:" "$temp_dir/live-verbose.err")" -eq 1 ]] || fail "verbose live output repeated successful check completion"
   grep -Eq "\\[INFO\\] Upkeeper: validation cmd#[0-9]+ tests started: python -m pytest" "$temp_dir/live-verbose.err" || fail "verbose live output did not report interesting command"
   grep -Eq "\\[ERROR\\] Upkeeper: validation cmd#[0-9]+ tests failed: exited 1 in 0.1s" "$temp_dir/live-verbose.err" || fail "verbose live output did not report failed command"
+  grep -Fq "[redacted-secret]" "$temp_dir/live-verbose.err" || fail "verbose live output did not redact model secret text"
+  grep -Fq "path-hmac-sha256:" "$temp_dir/live-verbose.err" || fail "verbose live output did not redact private paths"
   [[ "$(grep -Fc "[INFO] Upkeeper: validation status: UPKEEPER_STATUS: WORK_DONE" "$temp_dir/live-verbose.err")" -eq 1 ]] || fail "verbose live output repeated duplicate status markers"
+  if grep -Eq "sk-testsecret123456|/home/joe/private/customer[.]txt|ada@example[.]com|Bearer abcdefghijklmnop" "$temp_dir/live-verbose.err"; then
+    fail "verbose live output leaked raw model-derived sensitive text"
+  fi
   if grep -Eq "broad except|ValueError|Python traceback|change-note output|source-view output|diff-block output|ERROR .*exited 1 in 0ms|ERROR .*exited 2|ERROR .*exited 64|tests failed: exited 1 in 0ms|Final prose mentions|validation command completed" "$temp_dir/live-verbose.err"; then
     fail "verbose live output reported prompt, uninteresting command output, or Codex prose as runtime signal"
   fi
@@ -3731,6 +3802,9 @@ EOF
   grep -Eq "\\[INFO\\] Upkeeper: validation finished check cmd#[0-9]+: succeeded in 0ms:" "$temp_dir/live-basic.err" || fail "basic live output did not report check completion"
   [[ "$(grep -Ec "\\[INFO\\] Upkeeper: validation finished check cmd#[0-9]+:" "$temp_dir/live-basic.err")" -eq 1 ]] || fail "basic live output repeated successful check completion"
   grep -Eq "\\[ERROR\\] Upkeeper: validation cmd#[0-9]+ tests failed: exited 1 in 0.1s" "$temp_dir/live-basic.err" || fail "basic live output did not report failed command"
+  if grep -Eq "sk-testsecret123456|/home/joe/private/customer[.]txt|ada@example[.]com|Bearer abcdefghijklmnop" "$temp_dir/live-basic.err"; then
+    fail "basic live output leaked raw model-derived sensitive text"
+  fi
   if grep -Eq "search started|search exited nonzero|change-note output|source-view output|diff-block output|Final prose mentions" "$temp_dir/live-basic.err"; then
     fail "basic live output reported verbose search chatter or filtered text"
   fi
@@ -3744,12 +3818,24 @@ EOF
 
   run_live_filter_mode silent
   [[ ! -s "$temp_dir/live-silent.err" ]] || fail "silent live output wrote unexpected stderr"
+  if grep -Eq '^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9][+-][0-9][0-9][0-9][0-9] ' \
+    "$temp_dir/live-verbose.err" "$temp_dir/live-basic.err" "$temp_dir/live-quiet.err"; then
+    fail "live output column-one timestamps still include timezone suffixes"
+  fi
 
   CODEX_LOG_FILE="$temp_dir/Upkeeper.log" CYCLE_ID=validation CYCLE_RUN_HASH=filter-test \
     CODEX_TERMINAL_VERBOSITY=basic \
     bash -lc 'cd "$1"; source ./Upkeeper; emit_codex_transcript_summary validation "$2" 1' bash "$ROOT_DIR" "$temp_dir/transcript.log" \
       >"$temp_dir/summary.out" 2>"$temp_dir/summary.err"
+  if grep -Eq '^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9][+-][0-9][0-9][0-9][0-9] ' "$temp_dir/summary.err"; then
+    fail "transcript summary terminal output still includes timezone suffixes"
+  fi
   grep -Fq "codex.transcript.signal label=validation text=exited\\ 1\\ in\\ 0.1s" "$temp_dir/Upkeeper.log" || fail "transcript summary did not report runtime failure"
+  grep -Fq "[redacted-secret]" "$temp_dir/Upkeeper.log" || fail "transcript summary did not redact model secret text"
+  grep -Fq "path-hmac-sha256:" "$temp_dir/Upkeeper.log" || fail "transcript summary did not redact private paths"
+  if grep -Eq "sk-testsecret123456|/home/joe/private/customer[.]txt|ada@example[.]com|Bearer abcdefghijklmnop" "$temp_dir/Upkeeper.log" "$temp_dir/summary.err"; then
+    fail "transcript summary leaked raw model-derived sensitive text"
+  fi
   if grep -Fq "codex.transcript.signal label=validation text=exited\\ 2\\ in\\ 104ms:" "$temp_dir/Upkeeper.log"; then
     fail "transcript summary reported exploratory search failure as runtime signal"
   fi
@@ -3856,6 +3942,32 @@ EOF
     bash -lc 'cd "$1"; source ./Upkeeper; LOG_FILE="$2"; RUN_SELECTED_REVIEW_PATH="lib/upkeeper/session_store_preflight.bash"; log_review_report_summary "$3" WORK_DONE 0' bash "$ROOT_DIR" "$temp_dir/Upkeeper.log" "$temp_dir/last-message.txt"
   grep -Fq "review.summary" "$temp_dir/Upkeeper.log" || fail "review summary fallback did not write a summary log"
   grep -Fq "selected_file=lib/upkeeper/session_store_preflight.bash" "$temp_dir/Upkeeper.log" || fail "review summary fallback did not use wrapper-selected target"
+
+  cat >"$temp_dir/last-message.txt" <<'EOF'
+REVIEWED_AND_FIXED
+
+Findings:
+- Model prose included secret=sk-reviewsecret123456 and path /home/joe/private/customer.txt for ada@example.com.
+
+Changed:
+- Removed Bearer abcdefghijklmnop from logs.
+
+Verification:
+- Checked /home/joe/private/customer.txt stayed private.
+
+UPKEEPER_STATUS: WORK_DONE
+EOF
+
+  : >"$temp_dir/Upkeeper.log"
+  CODEX_TERMINAL_VERBOSITY=basic CODEX_PROMPT_PASS=default \
+    bash -lc 'cd "$1"; source ./Upkeeper; LOG_FILE="$2"; RUN_SELECTED_REVIEW_PATH="lib/upkeeper/session_store_preflight.bash"; log_review_report_summary "$3" WORK_DONE 0' bash "$ROOT_DIR" "$temp_dir/Upkeeper.log" "$temp_dir/last-message.txt" \
+      >"$temp_dir/summary-redaction.out" 2>"$temp_dir/summary-redaction.err"
+  grep -Fq "redacted-secret" "$temp_dir/Upkeeper.log" || fail "review summary log did not redact model-derived secret text"
+  grep -Fq "path-hmac-sha256:" "$temp_dir/Upkeeper.log" || fail "review summary log did not redact model-derived private path"
+  grep -Fq "[redacted-secret]" "$temp_dir/summary-redaction.err" || fail "review summary terminal did not redact model-derived secret text"
+  if grep -Eq "sk-reviewsecret123456|/home/joe/private/customer[.]txt|ada@example[.]com|Bearer abcdefghijklmnop" "$temp_dir/Upkeeper.log" "$temp_dir/summary-redaction.err"; then
+    fail "review summary leaked raw model-derived sensitive text"
+  fi
 
   CODEX_TERMINAL_VERBOSITY=basic \
     bash -lc 'cd "$1"; source ./Upkeeper; terminal_emit_review_finale REVIEWED_AND_FIXED lib/upkeeper/example.bash "parser accepted malformed JSON as absent" "added strict rejection" "bash -n passed"' bash "$ROOT_DIR" \

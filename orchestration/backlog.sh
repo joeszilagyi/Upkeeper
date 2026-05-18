@@ -36,12 +36,17 @@ BACKLOG_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-1}"
 BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"
 BACKLOG_ALERT_COLOR="${BACKLOG_ALERT_COLOR:-auto}"
 BACKLOG_ALERT_BLINK="${BACKLOG_ALERT_BLINK:-1}"
+BACKLOG_VISUAL_BLOCK="${BACKLOG_VISUAL_BLOCK:-█}"
 BACKLOG_OWNER_HEARTBEAT_INTERVAL_SECONDS="${BACKLOG_OWNER_HEARTBEAT_INTERVAL_SECONDS:-120}"
 BACKLOG_OWNER_HEARTBEAT_STALE_SECONDS="${BACKLOG_OWNER_HEARTBEAT_STALE_SECONDS:-300}"
 BACKLOG_OWNER_CLAIM_LOCK_STALE_SECONDS="${BACKLOG_OWNER_CLAIM_LOCK_STALE_SECONDS:-30}"
 BACKLOG_ACTIVE_OWNER_START_TICKS=""
 BACKLOG_OWNER_HEARTBEAT_PID=""
 BACKLOG_PR_CHECKS_LAST_OUTPUT=""
+BACKLOG_WATCH_CHILD_PID=""
+BACKLOG_WATCH_FORMATTER_PID=""
+BACKLOG_WATCH_FIFO=""
+BACKLOG_WATCH_FIFO_DIR=""
 
 backlog_timestamp() {
   date '+%Y-%m-%dT%H:%M:%S'
@@ -60,6 +65,22 @@ backlog_line_starts_with_timestamp() {
   esac
 }
 
+backlog_display_timestamp() {
+  local ts="$1"
+
+  if [[ "$ts" =~ ^([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9])([+-][0-9][0-9][0-9][0-9])$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  printf '%s\n' "$ts"
+}
+
+backlog_trim_leading_ws() {
+  local value="${1:-}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  printf '%s\n' "$value"
+}
+
 backlog_attention_marker_known() {
   case "${1:-}" in
     PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO)
@@ -71,16 +92,79 @@ backlog_attention_marker_known() {
   esac
 }
 
+backlog_attention_marker_payload() {
+  local rest="$1"
+  local first after_block marker payload
+
+  [[ -n "$rest" ]] || return 1
+  first="${rest%% *}"
+  if backlog_attention_marker_known "$first"; then
+    payload="${rest#"$first"}"
+    payload="$(backlog_trim_leading_ws "$payload")"
+    printf '%s\t%s\n' "$first" "$payload"
+    return 0
+  fi
+
+  if [[ "$first" == "$BACKLOG_VISUAL_BLOCK" && "$rest" != "$first" ]]; then
+    after_block="${rest#"$first"}"
+    after_block="$(backlog_trim_leading_ws "$after_block")"
+    [[ -n "$after_block" ]] || return 1
+    marker="${after_block%% *}"
+    if backlog_attention_marker_known "$marker"; then
+      payload="${after_block#"$marker"}"
+      payload="$(backlog_trim_leading_ws "$payload")"
+      printf '%s\t%s\n' "$marker" "$payload"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+backlog_emit_attention_line() {
+  local ts="$1"
+  local marker="$2"
+  local payload="${3:-}"
+
+  if [[ -n "$payload" ]]; then
+    printf '%s %s %-7s %s\n' "$ts" "$BACKLOG_VISUAL_BLOCK" "$marker" "$payload"
+  else
+    printf '%s %s %-7s\n' "$ts" "$BACKLOG_VISUAL_BLOCK" "$marker"
+  fi
+}
+
+backlog_normalize_attention_line_timestamp() {
+  local line="$1"
+  local original_ts ts rest marker payload
+
+  backlog_line_starts_with_timestamp "$line" || {
+    printf '%s\n' "$line"
+    return 0
+  }
+  original_ts="${line%% *}"
+  ts="$(backlog_display_timestamp "$original_ts")"
+  if [[ "$line" == "$original_ts" ]]; then
+    printf '%s\n' "$ts"
+  else
+    rest="${line#* }"
+    if backlog_attention_marker_payload "$rest" >/dev/null; then
+      IFS=$'\t' read -r marker payload < <(backlog_attention_marker_payload "$rest")
+      backlog_emit_attention_line "$ts" "$marker" "$payload"
+    else
+      printf '%s %s\n' "$ts" "$rest"
+    fi
+  fi
+}
+
 backlog_line_has_attention_marker() {
   local line="$1"
-  local first rest marker
+  local first rest
 
   backlog_line_starts_with_timestamp "$line" || return 1
   first="${line%% *}"
   [[ "$line" != "$first" ]] || return 1
   rest="${line#* }"
-  marker="${rest%% *}"
-  backlog_attention_marker_known "$marker"
+  backlog_attention_marker_payload "$rest" >/dev/null
 }
 
 backlog_attention_marker_for_line() {
@@ -128,16 +212,17 @@ backlog_attention_marker_for_line() {
 
 backlog_format_attention_line() {
   local line="$1"
-  local ts rest marker
+  local original_ts ts rest marker payload
 
   if backlog_line_has_attention_marker "$line"; then
-    printf '%s\n' "$line"
+    backlog_normalize_attention_line_timestamp "$line"
     return 0
   fi
 
   if backlog_line_starts_with_timestamp "$line"; then
-    ts="${line%% *}"
-    if [[ "$line" == "$ts" ]]; then
+    original_ts="${line%% *}"
+    ts="$(backlog_display_timestamp "$original_ts")"
+    if [[ "$line" == "$original_ts" ]]; then
       rest=""
     else
       rest="${line#* }"
@@ -148,11 +233,8 @@ backlog_format_attention_line() {
   fi
 
   marker="$(backlog_attention_marker_for_line "$rest")"
-  if [[ -n "$rest" ]]; then
-    printf '%s %-7s %s\n' "$ts" "$marker" "$rest"
-  else
-    printf '%s %-7s\n' "$ts" "$marker"
-  fi
+  payload="$rest"
+  backlog_emit_attention_line "$ts" "$marker" "$payload"
 }
 
 backlog_alert_color_enabled() {
@@ -176,7 +258,7 @@ backlog_alert_color_enabled() {
 
 backlog_color_attention_line() {
   local line="$1"
-  local ts rest marker suffix color reset
+  local ts rest marker payload color reset
 
   if ! backlog_alert_color_enabled || ! backlog_line_has_attention_marker "$line"; then
     printf '%s\n' "$line"
@@ -185,8 +267,7 @@ backlog_color_attention_line() {
 
   ts="${line%% *}"
   rest="${line#* }"
-  marker="${rest%% *}"
-  suffix="${rest#"$marker"}"
+  IFS=$'\t' read -r marker payload < <(backlog_attention_marker_payload "$rest")
   case "$marker" in
     PAGE)
       if [[ "$BACKLOG_ALERT_BLINK" == "1" ]]; then
@@ -195,16 +276,34 @@ backlog_color_attention_line() {
         color=$'\033[1;31m'
       fi
       ;;
+    OK)
+      color=$'\033[1;32m'
+      ;;
+    INFO)
+      color=$'\033[37m'
+      ;;
     --FYI--)
       color=$'\033[1;38;5;208m'
       ;;
-    *)
-      printf '%s\n' "$line"
-      return 0
+    RUN)
+      color=$'\033[1;36m'
+      ;;
+    ACTION)
+      color=$'\033[1;35m'
+      ;;
+    WAIT|HEALTH)
+      color=$'\033[1;33m'
+      ;;
+    WORKER)
+      color=$'\033[1;34m'
       ;;
   esac
   reset=$'\033[0m'
-  printf '%s %s%s%s%s\n' "$ts" "$color" "$marker" "$reset" "$suffix"
+  if [[ -n "$payload" ]]; then
+    printf '%s %s%s%s %-7s %s\n' "$ts" "$color" "$BACKLOG_VISUAL_BLOCK" "$reset" "$marker" "$payload"
+  else
+    printf '%s %s%s%s %-7s\n' "$ts" "$color" "$BACKLOG_VISUAL_BLOCK" "$reset" "$marker"
+  fi
 }
 
 backlog_color_attention_stream() {
@@ -221,6 +320,91 @@ backlog_timestamp_stream() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     backlog_format_attention_line "$line"
   done
+}
+
+backlog_cleanup_owned_watch_pipeline() {
+  local pid
+
+  for pid in "${BACKLOG_WATCH_CHILD_PID:-}" "${BACKLOG_WATCH_FORMATTER_PID:-}"; do
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
+  BACKLOG_WATCH_CHILD_PID=""
+  BACKLOG_WATCH_FORMATTER_PID=""
+  if [[ -n "${BACKLOG_WATCH_FIFO:-}" ]]; then
+    rm -f -- "$BACKLOG_WATCH_FIFO"
+    BACKLOG_WATCH_FIFO=""
+  fi
+  if [[ -n "${BACKLOG_WATCH_FIFO_DIR:-}" ]]; then
+    rmdir -- "$BACKLOG_WATCH_FIFO_DIR" 2>/dev/null || true
+    BACKLOG_WATCH_FIFO_DIR=""
+  fi
+}
+
+backlog_abort_owned_watch_pipeline() {
+  local status="${1:-130}"
+
+  backlog_cleanup_owned_watch_pipeline
+  exit "$status"
+}
+
+backlog_run_owned_watch_pipeline() {
+  local log_file="$1"
+  local fifo_parent status formatter_status had_errexit
+  shift
+  had_errexit=0
+  case "$-" in
+    *e*)
+      had_errexit=1
+      ;;
+  esac
+
+  fifo_parent="$(dirname -- "$log_file")"
+  BACKLOG_WATCH_FIFO_DIR="$(mktemp -d "$fifo_parent/backlog-watch.XXXXXX")"
+  chmod 700 "$BACKLOG_WATCH_FIFO_DIR" 2>/dev/null || true
+  BACKLOG_WATCH_FIFO="$BACKLOG_WATCH_FIFO_DIR/output.fifo"
+  mkfifo -- "$BACKLOG_WATCH_FIFO"
+  chmod 600 "$BACKLOG_WATCH_FIFO" 2>/dev/null || true
+
+  (
+    backlog_timestamp_stream <"$BACKLOG_WATCH_FIFO" |
+      tee -a "$log_file" |
+      backlog_color_attention_stream
+  ) &
+  BACKLOG_WATCH_FORMATTER_PID="$!"
+
+  trap 'backlog_abort_owned_watch_pipeline 130' INT
+  trap 'backlog_abort_owned_watch_pipeline 143' TERM
+  trap 'backlog_cleanup_owned_watch_pipeline' EXIT
+
+  BACKLOG_STDIO_WATCHED=1 "$SCRIPT_PATH" "$@" </dev/null >"$BACKLOG_WATCH_FIFO" 2>&1 &
+  BACKLOG_WATCH_CHILD_PID="$!"
+
+  set +e
+  wait "$BACKLOG_WATCH_CHILD_PID"
+  status="$?"
+  BACKLOG_WATCH_CHILD_PID=""
+  wait "$BACKLOG_WATCH_FORMATTER_PID"
+  formatter_status="$?"
+  BACKLOG_WATCH_FORMATTER_PID=""
+  if [[ "$had_errexit" == "1" ]]; then
+    set -e
+  else
+    set +e
+  fi
+
+  rm -f -- "$BACKLOG_WATCH_FIFO"
+  BACKLOG_WATCH_FIFO=""
+  rmdir -- "$BACKLOG_WATCH_FIFO_DIR" 2>/dev/null || true
+  BACKLOG_WATCH_FIFO_DIR=""
+  trap - INT TERM EXIT
+
+  if [[ "$status" -eq 0 && "$formatter_status" -ne 0 ]]; then
+    return "$formatter_status"
+  fi
+  return "$status"
 }
 
 log() {
@@ -414,7 +598,10 @@ backlog_recent_log_summary() {
   awk '
     {
       candidate=$0
-      sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9] /, "", candidate)
+      sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]([+-][0-9][0-9][0-9][0-9])? /, "", candidate)
+      if (candidate ~ /^[^[:space:]]+[[:space:]]+([A-Z][A-Z]+|--FYI--)[[:space:]]+/) {
+        sub(/^[^[:space:]]+[[:space:]]+/, "", candidate)
+      }
       sub(/^([A-Z][A-Z]+|--FYI--)[[:space:]]+/, "", candidate)
       if (candidate ~ /^backlog: running Upkeeper for issue #[0-9]+/) {
         line=candidate
@@ -772,7 +959,7 @@ claim_backlog_active_owner_or_exit() {
   start_backlog_owner_heartbeat
 }
 redirect_interactive_stdio() {
-  local state_root log_file active_pid
+  local state_root log_file active_pid status
 
   [[ "$BACKLOG_ALLOW_INTERACTIVE_STDIO" == "1" ]] && return 0
   [[ ! -t 0 && ! -t 1 && ! -t 2 ]] && return 0
@@ -814,8 +1001,11 @@ redirect_interactive_stdio() {
   case "$BACKLOG_INTERACTIVE_MODE" in
     watch)
       print_stdio_watch_notice "$log_file"
-      export BACKLOG_STDIO_WATCHED=1
-      exec "$SCRIPT_PATH" "$@" </dev/null > >(backlog_timestamp_stream | tee -a "$log_file" | backlog_color_attention_stream) 2>&1
+      set +e
+      backlog_run_owned_watch_pipeline "$log_file" "$@"
+      status="$?"
+      set -e
+      exit "$status"
       ;;
     detach)
       print_stdio_detach_notice "$log_file"

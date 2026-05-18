@@ -212,11 +212,11 @@ run_codex_exec_capture() {
   fi
 
   if [[ "$tee_rc" -ne 0 ]]; then
-    log_line "ERROR" "codex.transcript_capture_failed label=$label transcript=$(shell_quote "$transcript_file") tee_exit=$tee_rc codex_exit=$codex_rc" || true
+    log_line "ERROR" "codex.transcript_capture_failed label=$label transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1 tee_exit=$tee_rc codex_exit=$codex_rc" || true
     [[ "$codex_rc" -ne 0 ]] || return "$tee_rc"
   fi
   if [[ "$filter_rc" -ne 0 ]]; then
-    log_line "WARN" "codex.live_output_filter_failed label=$label transcript=$(shell_quote "$transcript_file") filter_exit=$filter_rc codex_exit=$codex_rc" || true
+    log_line "WARN" "codex.live_output_filter_failed label=$label transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1 filter_exit=$filter_rc codex_exit=$codex_rc" || true
   fi
   return "$codex_rc"
 }

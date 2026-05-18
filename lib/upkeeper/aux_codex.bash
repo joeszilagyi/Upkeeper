@@ -278,9 +278,9 @@ run_aux_codex_exec() {
   set -e
 
   if [[ "$aux_exit" -eq 0 ]]; then
-    log_line "INFO" "$phase_label.finish exit_code=$aux_exit model=$model transcript=$(shell_quote "$aux_transcript_file")"
+    log_line "INFO" "$phase_label.finish exit_code=$aux_exit model=$model transcript=$(shell_quote "$(upkeeper_path_hmac "$aux_transcript_file")") path_redacted=1"
   else
-    log_line "ERROR" "$phase_label.finish exit_code=$aux_exit model=$model transcript=$(shell_quote "$aux_transcript_file")"
+    log_line "ERROR" "$phase_label.finish exit_code=$aux_exit model=$model transcript=$(shell_quote "$(upkeeper_path_hmac "$aux_transcript_file")") path_redacted=1"
   fi
   return "$aux_exit"
 

@@ -3,6 +3,69 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Model Output Redaction Boundary
+
+Status: completed
+
+Goal:
+- fix issue `#292` by treating model-derived transcript/status/review text as
+  tainted before it reaches operator logs or terminal progress
+- keep protected raw transcript artifacts available for local evidence while
+  default summaries use redacted classes, HMAC path labels, and safe snippets
+- cover live output, transcript signals, review summaries, terminal finales, and
+  malformed status-marker candidate logs
+
+Constraints:
+- do not remove raw protected transcripts or full diagnostic modes
+- keep wrapper-owned structured fields useful for operators
+- avoid broad rewrites; add a reusable redaction helper and apply it at sinks
+- add deterministic no-backend validation with fake secrets, private paths, and
+  model prose
+
+Files likely touched:
+- `lib/upkeeper/runtime_foundation.bash`
+- `lib/upkeeper/transcript_output.bash`
+- `lib/upkeeper/report_analysis.bash`
+- `Upkeeper`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- focused transcript/review redaction validator checks
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+
+## Backlog Visual Status Block
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- add a single visual block column to backlog watch output so loose terminal
+  watching can classify state by peripheral color before reading the marker text
+- keep the plain marker column for scripts, logs, and assistive tooling
+- preserve `PAGE` blink/red behavior while adding logical colors for `OK`,
+  `INFO`, `--FYI--`, `RUN`, `ACTION`, `WAIT`, `WORKER`, and `HEALTH`
+
+Constraints:
+- do not add ANSI color to the mirrored loop log
+- keep `NO_COLOR`, `BACKLOG_ALERT_COLOR`, and `BACKLOG_ALERT_BLINK` semantics
+- keep old timestamped/marked log lines parseable during transition
+
+Validation:
+- `bash -n orchestration/backlog.sh tools/validate_upkeeper.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `./Upkeeper --help`
+- `./Upkeeper --version`
+- `git diff --check`
+
 ## Backlog Local Supervisor Lease
 
 Status: completed
@@ -2781,3 +2844,34 @@ Validation:
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
 - `tools/validate_upkeeper.sh --quick`
+
+## Backlog Watch Prompt Ownership
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- stop interactive backlog watch mode from returning the operator's shell prompt
+  before the timestamp/color formatter has drained all child-process output
+- preserve current terminal watching, loop-log mirroring, visual block markers,
+  duplicate-owner behavior, and detached mode
+
+Constraints:
+- do not require a backend Codex call or GitHub network access for the focused
+  regression check
+- keep stdin cut off from the child run so accidental terminal input cannot be
+  consumed as commands or prompt content
+- preserve the child run's exit status through the watch wrapper
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`

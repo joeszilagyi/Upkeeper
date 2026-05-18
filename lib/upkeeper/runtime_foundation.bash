@@ -2,6 +2,20 @@ timestamp_now() {
   date '+%Y-%m-%dT%H:%M:%S%z'
 }
 
+terminal_timestamp_now() {
+  date '+%Y-%m-%dT%H:%M:%S'
+}
+
+terminal_strip_column_timezone() {
+  local line="${1:-}"
+
+  if [[ "$line" =~ ^([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9])([+-][0-9][0-9][0-9][0-9])([[:space:]].*)?$ ]]; then
+    printf '%s%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]:-}"
+    return 0
+  fi
+  printf '%s\n' "$line"
+}
+
 epoch_now_fraction() {
   local now
   now="$(date '+%s.%N' 2>/dev/null || true)"
@@ -161,6 +175,75 @@ upkeeper_content_hmac() {
   printf 'content-hmac-sha256:%s' "$(upkeeper_hmac_sha256_text content "$value")"
 }
 
+upkeeper_redact_model_text() {
+  local value="${1:-}"
+  local max_len="${2:-700}"
+  local key root
+
+  key="$(upkeeper_redaction_key_material)"
+  root="${ROOT_DIR:-$PWD}"
+  python3 - "$key" "$root" "$max_len" "$value" <<'PY' 2>/dev/null || {
+import hashlib
+import hmac
+import os
+import re
+import sys
+
+key, root_raw, max_len_raw, value = sys.argv[1:5]
+try:
+    max_len = max(80, int(max_len_raw))
+except ValueError:
+    max_len = 700
+root = os.path.realpath(root_raw)
+key_bytes = key.encode("utf-8", "surrogateescape")
+
+
+def digest(namespace: str, text: str) -> str:
+    material = f"{namespace}\0{text}".encode("utf-8", "surrogateescape")
+    return hmac.new(key_bytes, material, hashlib.sha256).hexdigest()
+
+
+def path_repl(match: re.Match[str]) -> str:
+    raw = match.group(0).rstrip(".,;:)]}'\"")
+    suffix = match.group(0)[len(raw):]
+    if raw == "/dev/null" or raw.startswith(("/bin/", "/usr/bin/", "/usr/local/bin/", "/opt/homebrew/bin/")):
+        return raw + suffix
+    try:
+        resolved = os.path.realpath(raw)
+    except OSError:
+        resolved = raw
+    try:
+        rel = os.path.relpath(resolved, root)
+    except ValueError:
+        rel = ""
+    if rel and not rel.startswith("..") and not os.path.isabs(rel):
+        label = f"repo-path:{rel}"
+    else:
+        label = f"path-hmac-sha256:{digest('path', raw)}"
+    return label + suffix
+
+
+def email_repl(match: re.Match[str]) -> str:
+    return f"email-hmac-sha256:{digest('email', match.group(0))}"
+
+
+text = value.replace("\r", " ").replace("\n", " ")
+text = re.sub(r"\s+", " ", text).strip()
+text = re.sub(r"-----BEGIN [^-]{0,80}PRIVATE KEY-----.*?-----END [^-]{0,80}PRIVATE KEY-----", "[redacted-private-key]", text, flags=re.I)
+text = re.sub(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", "Bearer [redacted-token]", text, flags=re.I)
+text = re.sub(r"\b(?:sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_]{10,}|github_pat_[A-Za-z0-9_]{10,}|AKIA[0-9A-Z]{12,}|xox[baprs]-[A-Za-z0-9-]{10,})\b", "[redacted-token]", text)
+text = re.sub(r"\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", "[redacted-jwt]", text)
+text = re.sub(r"(?i)\b(api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|credential|authorization)\b\s*[:=]\s*['\"]?[^'\"\s;,]{4,}", r"\1=[redacted-secret]", text)
+text = re.sub(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", email_repl, text)
+text = re.sub(r"(?<![A-Za-z0-9:])/(?:[A-Za-z0-9._@%+=:,~-]+/)*[A-Za-z0-9._@%+=:,~-]+", path_repl, text)
+if len(text) > max_len:
+    text = text[: max_len - 15].rstrip() + "...<truncated>"
+print(text)
+PY
+    printf '%s' "${value//$'\n'/ }"
+  }
+}
+
 generate_fallback_chain_token() {
   local token
   if [[ -r /dev/urandom ]]; then
@@ -283,7 +366,8 @@ terminal_emit_progress() {
         ;;
     esac
   fi
-  printf '%s [INFO] Upkeeper: %s\n' "$(timestamp_now)" "$message" >&2
+  message="$(upkeeper_redact_model_text "$message" 420)"
+  printf '%s [INFO] Upkeeper: %s\n' "$(terminal_timestamp_now)" "$message" >&2
 }
 
 terminal_emit_log_line() {
@@ -291,21 +375,21 @@ terminal_emit_log_line() {
   local line="$2"
 
   if terminal_wants_full_output; then
-    printf '%s\n' "$line"
+    terminal_strip_column_timezone "$line"
     return 0
   fi
   terminal_wants_silent_output && return 0
   if terminal_wants_quiet_output; then
     case "$level" in
       WARN|ERROR)
-        printf '%s\n' "$line" >&2
+        terminal_strip_column_timezone "$line" >&2
         ;;
     esac
     return 0
   fi
   case "$level" in
     WARN|ERROR)
-      printf '%s\n' "$line" >&2
+      terminal_strip_column_timezone "$line" >&2
       ;;
   esac
 }
@@ -451,7 +535,7 @@ PY
   fi
   detail="${detail//$'\n'/; }"
   [[ -n "$detail" ]] || detail="unknown"
-  printf '%s [ERROR] cycle=%s run_hash=%s log.write_failed phase=%s path=%s reason=%s\n' "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$phase" "$LOG_FILE" "$detail" >&2
+  printf '%s [ERROR] cycle=%s run_hash=%s log.write_failed phase=%s path=%s reason=%s\n' "$(terminal_timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$phase" "$LOG_FILE" "$detail" >&2
   return "$rc"
 }
 
@@ -468,34 +552,34 @@ log_line() {
 ensure_log_parent() {
   if [[ -n "$LOG_FILE_DIR" && "$LOG_FILE_DIR" != "." ]]; then
     if ! mkdir -p -- "$LOG_FILE_DIR"; then
-      printf '%s [ERROR] cycle=%s log.parent_failed path=%s\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
+      printf '%s [ERROR] cycle=%s log.parent_failed path=%s\n' "$(terminal_timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
       exit 3
     fi
 
     if [[ -L "$LOG_FILE_DIR" ]]; then
-      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=symlink_parent\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
+      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=symlink_parent\n' "$(terminal_timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
       exit 3
     fi
     if [[ ! -d "$LOG_FILE_DIR" ]]; then
-      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=not_directory\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
+      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=not_directory\n' "$(terminal_timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
       exit 3
     fi
 
     log_parent_uid="$(stat -Lc '%u' -- "$LOG_FILE_DIR" 2>/dev/null || printf '')"
     log_parent_mode="$(stat -Lc '%a' -- "$LOG_FILE_DIR" 2>/dev/null || printf '')"
     if [[ -z "$log_parent_uid" || -z "$log_parent_mode" ]]; then
-      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=stat_failed\n' "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
+      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=stat_failed\n' "$(terminal_timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
       exit 3
     fi
 
     if [[ "$log_parent_uid" != "$(id -u)" ]]; then
       printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=wrong_owner expected=%s actual=%s\n' \
-        "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" "$(id -u)" "$log_parent_uid" >&2
+        "$(terminal_timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" "$(id -u)" "$log_parent_uid" >&2
       exit 3
     fi
     if (( (8#$log_parent_mode & 8#022) != 0 )); then
       printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=unsafe_permissions mode=%s\n' \
-        "$(timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" "$log_parent_mode" >&2
+        "$(terminal_timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" "$log_parent_mode" >&2
       exit 3
     fi
   fi

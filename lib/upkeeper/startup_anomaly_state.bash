@@ -4,6 +4,9 @@
 # run to inspect Upkeeper itself before normal target selection. State files are
 # treated as security-sensitive control inputs; readers ignore untrusted records and
 # only trust files that are owned, private, and cryptographically signed.
+
+STARTUP_ANOMALY_GATE_STATE_OWNER="upkeeper_startup_anomaly_gate"
+STARTUP_ANOMALY_GATE_STATE_SCHEMA_VERSION="1"
 startup_anomaly_redaction_key_material() {
   if declare -F upkeeper_redaction_key_material >/dev/null 2>&1; then
     upkeeper_redaction_key_material
@@ -48,7 +51,20 @@ import sys
 
 key = sys.argv[1].encode("utf-8", "surrogateescape")
 text = sys.argv[2] if len(sys.argv) > 2 else ""
-material = f"startup_anomaly_state\0{text}".encode("utf-8", "surrogateescape")
+
+fields = {}
+for line in text.splitlines():
+    if "=" not in line:
+        continue
+    field_key, value = line.split("=", 1)
+    fields[field_key.strip()] = value.strip()
+
+payload = "".join(
+    f"{field_key}={fields.get(field_key, '')}\n"
+    for field_key in sorted(fields)
+    if field_key != "state_signature"
+)
+material = f"startup_anomaly_state\0{payload}".encode("utf-8", "surrogateescape")
 print(hmac.new(key, material, hashlib.sha256).hexdigest())
 PY
 }
@@ -134,8 +150,10 @@ write_startup_anomaly_gate_state() {
     printf 'root_dir=%s\n' "$ROOT_DIR"
     printf 'run_hash=%s\n' "$CYCLE_RUN_HASH"
     printf 'self_path=%s\n' "$SELF_PATH"
-    printf 'state_path=%s\n' "$state_path"
+    printf 'schema_version=%s\n' "$STARTUP_ANOMALY_GATE_STATE_SCHEMA_VERSION"
     printf 'status=%s\n' "$status"
+    printf 'state_path=%s\n' "$state_path"
+    printf 'owner=%s\n' "$STARTUP_ANOMALY_GATE_STATE_OWNER"
     printf 'updated_epoch=%s\n' "$now_epoch"
   )"
   state_signature="$(startup_anomaly_state_signature "${state_payload}"$'\n' "$hmac_key")"
@@ -181,7 +199,8 @@ mark_startup_anomaly_gate_states_resolved() {
   fi
   hmac_key="$(startup_anomaly_redaction_key_material)"
 
-  python3 - "$state_dir" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$hmac_key" <<'PY' || true
+  python3 - "$state_dir" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$hmac_key" \
+    "$STARTUP_ANOMALY_GATE_STATE_OWNER" "$STARTUP_ANOMALY_GATE_STATE_SCHEMA_VERSION" <<'PY' || true
 from hashlib import sha256
 from hmac import compare_digest, new as hmac_new
 from pathlib import Path
@@ -193,6 +212,8 @@ root = Path(sys.argv[1])
 cycle_id = sys.argv[2]
 run_hash = sys.argv[3]
 secret = sys.argv[4].encode("utf-8", "surrogateescape")
+owner = sys.argv[5]
+schema_version = sys.argv[6]
 now = str(int(time.time()))
 
 
@@ -234,6 +255,10 @@ def read_fields(path):
         key, value = line.split("=", 1)
         fields[key.strip()] = value.strip()
 
+    if fields.get("owner") != owner:
+        return None
+    if str(fields.get("schema_version", "")) != str(schema_version):
+        return None
     if not valid_signature(fields):
         return None
     return fields
@@ -274,7 +299,7 @@ startup_anomaly_state_lines() {
   fi
 
   hmac_key="$(startup_anomaly_redaction_key_material)"
-  python3 - "$state_dir" "$hmac_key" <<'PY'
+  python3 - "$state_dir" "$hmac_key" "$STARTUP_ANOMALY_GATE_STATE_OWNER" "$STARTUP_ANOMALY_GATE_STATE_SCHEMA_VERSION" <<'PY'
 from hashlib import sha256
 from hmac import compare_digest, new as hmac_new
 from pathlib import Path
@@ -284,6 +309,8 @@ import sys
 
 root = Path(sys.argv[1])
 secret = sys.argv[2].encode("utf-8", "surrogateescape")
+owner = sys.argv[3]
+schema_version = sys.argv[4]
 items = []
 
 
@@ -332,6 +359,10 @@ def read_fields(path):
             continue
         key, value = line.split("=", 1)
         fields[key.strip()] = value.strip()
+    if fields.get("owner") != owner:
+        return None
+    if str(fields.get("schema_version", "")) != str(schema_version):
+        return None
     signature = fields.get("state_signature", "")
     if not signature:
         return None
@@ -376,7 +407,8 @@ startup_anomaly_gate_has_unresolved_state() {
 
   reasons_py="$(printf '%s' "$reasons_csv")"
   hmac_key="$(startup_anomaly_redaction_key_material)"
-  output="$(python3 - "$state_dir" "$reasons_py" "$hmac_key" <<'PY'
+  output="$(python3 - "$state_dir" "$reasons_py" "$hmac_key" \
+    "$STARTUP_ANOMALY_GATE_STATE_OWNER" "$STARTUP_ANOMALY_GATE_STATE_SCHEMA_VERSION" <<'PY'
 from hashlib import sha256
 from hmac import compare_digest, new as hmac_new
 from pathlib import Path
@@ -388,6 +420,8 @@ import sys
 root = Path(sys.argv[1])
 raw_reasons = (sys.argv[2] or "").strip()
 secret = sys.argv[3].encode("utf-8", "surrogateescape")
+owner = sys.argv[4]
+schema_version = sys.argv[5]
 target_reasons = {token for token in raw_reasons.split(",") if token}
 
 
@@ -421,6 +455,10 @@ def read_fields(path):
             continue
         key, value = line.split("=", 1)
         fields[key.strip()] = value.strip()
+    if fields.get("owner") != owner:
+        return None
+    if str(fields.get("schema_version", "")) != str(schema_version):
+        return None
     signature = fields.get("state_signature", "")
     if not signature:
         return None

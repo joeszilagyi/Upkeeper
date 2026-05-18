@@ -1176,9 +1176,9 @@ CREATE_TABLE_SQL = [
 ]
 
 CREATE_INDEX_SQL = [
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, artifact_kind, path) WHERE sha256 IS NULL",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_coalesced ON artifact_refs(repo_id, artifact_kind, path, coalesce(sha256, ''))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, cycle_pk, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, cycle_pk, artifact_kind, path) WHERE sha256 IS NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_coalesced ON artifact_refs(repo_id, cycle_pk, artifact_kind, path, coalesce(sha256, ''))",
     "CREATE INDEX IF NOT EXISTS idx_cycles_repo_cycle ON cycles(repo_id, cycle_id)",
     "CREATE INDEX IF NOT EXISTS idx_cycles_repo_selected_path ON cycles(repo_id, selected_path)",
     "CREATE INDEX IF NOT EXISTS idx_files_repo_current_path ON files(repo_id, current_path)",
@@ -2750,7 +2750,7 @@ def dedupe_artifact_refs(conn: sqlite3.Connection) -> int:
         select count(*) from (
           select 1
           from artifact_refs
-          group by repo_id, artifact_kind, path, coalesce(sha256, '')
+          group by repo_id, cycle_pk, artifact_kind, path, coalesce(sha256, '')
           having count(*) > 1
         )
         """
@@ -2761,24 +2761,37 @@ def dedupe_artifact_refs(conn: sqlite3.Connection) -> int:
 
     duplicate_keys = conn.execute(
         """
-        select repo_id, artifact_kind, path, coalesce(sha256, '') as sha_key
+        select repo_id, cycle_pk, artifact_kind, path, coalesce(sha256, '') as sha_key
         from artifact_refs
-        group by repo_id, artifact_kind, path, coalesce(sha256, '')
+        group by repo_id, cycle_pk, artifact_kind, path, coalesce(sha256, '')
         having count(*) > 1
         """
     ).fetchall()
     for key in duplicate_keys:
-        rows = conn.execute(
-            """
-            select artifact_id, cycle_pk, source_id, exists_at_record_time, size_bytes,
-                   sha256, created_epoch, observed_epoch, retained, details_json
-            from artifact_refs
-            where repo_id = ? and artifact_kind = ? and path = ?
-              and coalesce(sha256, '') = ?
-            order by observed_epoch desc, artifact_id desc
-            """,
-            (key["repo_id"], key["artifact_kind"], key["path"], key["sha_key"]),
-        ).fetchall()
+        if key["cycle_pk"] is None:
+            rows = conn.execute(
+                """
+                select artifact_id, cycle_pk, source_id, exists_at_record_time, size_bytes,
+                       sha256, created_epoch, observed_epoch, retained, details_json
+                from artifact_refs
+                where repo_id = ? and cycle_pk is null and artifact_kind = ? and path = ?
+                  and coalesce(sha256, '') = ?
+                order by observed_epoch desc, artifact_id desc
+                """,
+                (key["repo_id"], key["artifact_kind"], key["path"], key["sha_key"]),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                select artifact_id, cycle_pk, source_id, exists_at_record_time, size_bytes,
+                       sha256, created_epoch, observed_epoch, retained, details_json
+                from artifact_refs
+                where repo_id = ? and cycle_pk = ? and artifact_kind = ? and path = ?
+                  and coalesce(sha256, '') = ?
+                order by observed_epoch desc, artifact_id desc
+                """,
+                (key["repo_id"], key["cycle_pk"], key["artifact_kind"], key["path"], key["sha_key"]),
+            ).fetchall()
         if len(rows) < 2:
             continue
         winner = dict(rows[0])
@@ -2849,12 +2862,24 @@ def ensure_artifact_ref_identity_indexes(conn: sqlite3.Connection) -> int:
     if not required.issubset(columns):
         return 0
     duplicate_groups = dedupe_artifact_refs(conn)
+    for index_name in (
+        "idx_artifact_refs_unique_identity_digest",
+        "idx_artifact_refs_unique_identity_missing_digest",
+        "idx_artifact_refs_unique_identity_coalesced",
+    ):
+        try:
+            conn.execute(f"DROP INDEX IF EXISTS {index_name}")
+        except sqlite3.Error:
+            pass
     try:
         conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL"
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, cycle_pk, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL"
         )
         conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, artifact_kind, path) WHERE sha256 IS NULL"
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, cycle_pk, artifact_kind, path) WHERE sha256 IS NULL"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_coalesced ON artifact_refs(repo_id, cycle_pk, artifact_kind, path, coalesce(sha256, ''))"
         )
     except sqlite3.Error:
         pass
@@ -4118,8 +4143,33 @@ def record_file_event(
     confidence: str = "observed",
     details: Any = None,
     event_epoch: int | None = None,
+    dedupe_by_cycle: bool = False,
 ) -> None:
     stored_path = stored_rel_path(path) if path else None
+    details_json = json_dumps(details) if details is not None else None
+    if dedupe_by_cycle and cycle_pk is not None:
+        existing = conn.execute(
+            """
+            select event_id
+              from file_events
+             where repo_id=? and cycle_pk=? and event_kind=?
+               and coalesce(file_id, -1) = coalesce(?, -1)
+               and coalesce(path, '') = coalesce(?, '')
+             order by event_epoch desc, event_id desc
+             limit 1
+            """,
+            (repo_id, cycle_pk, event_kind, file_id, stored_path),
+        ).fetchone()
+        if existing is not None:
+            conn.execute(
+                """
+                update file_events
+                set event_epoch=?, source_id=?, confidence=?, details_json=?
+                where event_id=?
+                """,
+                (event_epoch or epoch_now(), source_id, confidence, details_json, int(existing["event_id"])),
+            )
+            return
     conn.execute(
         """
         insert into file_events(repo_id, file_id, cycle_pk, source_id, event_kind, event_epoch, path, confidence, details_json)
@@ -4134,7 +4184,7 @@ def record_file_event(
             event_epoch or epoch_now(),
             stored_path,
             confidence,
-            json_dumps(details) if details is not None else None,
+            details_json,
         ),
     )
 
@@ -5229,24 +5279,25 @@ def record_worktree_delta_events(
     if before_snapshot is None:
         for path, after in after_paths.items():
             after_status = after["status"] if after else "clean"
-            if after_status == "clean":
-                continue
-            file_id = after["file_id"] if after else None
-            if file_id is None:
-                file_id = ensure_file(conn, repo_id, path, source_id=source_id)
-            record_file_event(
-                conn,
-                repo_id,
-                "dirty_state_observed_without_baseline",
-                file_id=file_id,
-                cycle_pk=cycle_pk,
-                source_id=source_id,
-                path=path,
-                details={
-                    "source": "worktree_snapshot_delta",
-                    "before_worktree_snapshot_id": before_snapshot_id,
-                    "after_worktree_snapshot_id": after_snapshot_id,
-                    "before_status": "unknown",
+        if after_status == "clean":
+            continue
+        file_id = after["file_id"] if after else None
+        if file_id is None:
+            file_id = ensure_file(conn, repo_id, path, source_id=source_id)
+        record_file_event(
+            conn,
+            repo_id,
+            "dirty_state_observed_without_baseline",
+            file_id=file_id,
+            cycle_pk=cycle_pk,
+            source_id=source_id,
+            path=path,
+            dedupe_by_cycle=True,
+            details={
+                "source": "worktree_snapshot_delta",
+                "before_worktree_snapshot_id": before_snapshot_id,
+                "after_worktree_snapshot_id": after_snapshot_id,
+                "before_status": "unknown",
                     "after_status": after_status,
                     "before_worktree_hash": None,
                     "after_worktree_hash": after["worktree_hash"] if after else None,
@@ -5280,6 +5331,7 @@ def record_worktree_delta_events(
             cycle_pk=cycle_pk,
             source_id=source_id,
             path=path,
+            dedupe_by_cycle=True,
             details={
                 "source": "worktree_snapshot_delta",
                 "before_worktree_snapshot_id": before_snapshot_id,
@@ -5397,38 +5449,81 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         if not eligible_count:
             eligible_count = calculated_eligible_count
         excluded_count = calculated_excluded_count
-        cur = conn.execute(
+        existing_run = conn.execute(
             """
-            insert into selection_runs(
-              repo_id, cycle_pk, selector_version, source_safe_boundary_version,
-              mode_requested, mode_effective, priority_gate, generated_epoch,
-              git_head_sha, dirty_path_count, eligible_count, excluded_count,
-              incomplete, incomplete_reason, selected_file_id, selected_path,
-              selected_rank, details_json
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            select selection_run_id
+              from selection_runs
+             where cycle_pk=?
+             order by generated_epoch desc, selection_run_id desc
+             limit 1
             """,
-            (
-                repo_id,
-                cycle_pk,
-                args.selector_version,
-                args.source_safe_boundary_version,
-                args.selection_mode or selection.get("selection_order") or "oldest-mtime",
-                mode,
-                gate,
-                epoch_now(),
-                repo_git_info(root)["head_sha"] or None,
-                None,
-                eligible_count,
-                excluded_count,
-                0,
-                None,
-                selected_file_id,
-                stored_selected_path or None,
-                selected_rank,
-                json_dumps(selection),
-            ),
-        )
-        selection_run_id = int(cur.lastrowid)
+            (cycle_pk,),
+        ).fetchone()
+        if existing_run is not None:
+            selection_run_id = int(existing_run["selection_run_id"])
+            conn.execute(
+                """
+                update selection_runs
+                set selector_version=?, source_safe_boundary_version=?, mode_requested=?,
+                    mode_effective=?, priority_gate=?, generated_epoch=?, git_head_sha=?,
+                    dirty_path_count=?, eligible_count=?, excluded_count=?, incomplete=?,
+                    incomplete_reason=?, selected_file_id=?, selected_path=?, selected_rank=?, details_json=?
+                where selection_run_id=?
+                """,
+                (
+                    args.selector_version,
+                    args.source_safe_boundary_version,
+                    args.selection_mode or selection.get("selection_order") or "oldest-mtime",
+                    mode,
+                    gate,
+                    epoch_now(),
+                    repo_git_info(root)["head_sha"] or None,
+                    None,
+                    eligible_count,
+                    excluded_count,
+                    0,
+                    None,
+                    selected_file_id,
+                    stored_selected_path or None,
+                    selected_rank,
+                    json_dumps(selection),
+                    selection_run_id,
+                ),
+            )
+            conn.execute("delete from selection_candidates where selection_run_id=?", (selection_run_id,))
+        else:
+            cur = conn.execute(
+                """
+                insert into selection_runs(
+                  repo_id, cycle_pk, selector_version, source_safe_boundary_version,
+                  mode_requested, mode_effective, priority_gate, generated_epoch,
+                  git_head_sha, dirty_path_count, eligible_count, excluded_count,
+                  incomplete, incomplete_reason, selected_file_id, selected_path,
+                  selected_rank, details_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    repo_id,
+                    cycle_pk,
+                    args.selector_version,
+                    args.source_safe_boundary_version,
+                    args.selection_mode or selection.get("selection_order") or "oldest-mtime",
+                    mode,
+                    gate,
+                    epoch_now(),
+                    repo_git_info(root)["head_sha"] or None,
+                    None,
+                    eligible_count,
+                    excluded_count,
+                    0,
+                    None,
+                    selected_file_id,
+                    stored_selected_path or None,
+                    selected_rank,
+                    json_dumps(selection),
+                ),
+            )
+            selection_run_id = int(cur.lastrowid)
         if deduped_candidates:
             for row in deduped_candidates:
                 path = row.get("path")
@@ -5479,6 +5574,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                     source_id=source_id,
                     path=path,
                     details=row,
+                    dedupe_by_cycle=True,
                 )
         elif selected_path:
             conn.execute(
@@ -5501,7 +5597,23 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                 ),
             )
         if selected_path:
-            before_snapshot_id = insert_file_snapshot(conn, root, repo_id, selected_path, file_id=selected_file_id, source_id=source_id)
+            before_snapshot = snapshot_row_for_event(
+                conn,
+                repo_id=repo_id,
+                cycle_pk=cycle_pk,
+                file_id=selected_file_id,
+                event_kind="snapshot_before",
+            )
+            before_snapshot_id = int(before_snapshot["snapshot_id"]) if before_snapshot is not None else None
+            if before_snapshot_id is None:
+                before_snapshot_id = insert_file_snapshot(
+                    conn,
+                    root,
+                    repo_id,
+                    selected_path,
+                    file_id=selected_file_id,
+                    source_id=source_id,
+                )
             record_file_event(
                 conn,
                 repo_id,
@@ -5511,6 +5623,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                 source_id=source_id,
                 path=selected_path,
                 details={"snapshot_id": before_snapshot_id},
+                dedupe_by_cycle=True,
             )
             conn.execute(
                 "update cycles set selected_file_id=?, selected_path=?, selection_basis=? where cycle_pk=?",
@@ -5526,6 +5639,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                     source_id=source_id,
                     path=selected_path,
                     details=selection,
+                    dedupe_by_cycle=True,
                 )
     print_json({"status": "ok", "selection_run_id": selection_run_id, "selected_path": stored_selected_path})
     return EXIT_SUCCESS
@@ -6418,18 +6532,19 @@ def record_selected_file_delta(
         "select * from file_snapshots where snapshot_id=? and repo_id=?",
         (after_snapshot_id, repo_id),
     ).fetchone()
-    if not before or not after:
-        if has_clean_finish_evidence(conn, repo_id=repo_id, cycle_pk=cycle_pk, file_id=file_id, review_outcome=review_outcome):
-            record_file_event(
-                conn,
-                repo_id,
-                "clean_without_touch_evidence",
-                file_id=file_id,
-                cycle_pk=cycle_pk,
-                source_id=source_id,
-                path=path,
-                details={"reason": "missing_before_or_after_snapshot", "after_snapshot_id": after_snapshot_id},
-            )
+        if not before or not after:
+            if has_clean_finish_evidence(conn, repo_id=repo_id, cycle_pk=cycle_pk, file_id=file_id, review_outcome=review_outcome):
+                record_file_event(
+                    conn,
+                    repo_id,
+                    "clean_without_touch_evidence",
+                    file_id=file_id,
+                    cycle_pk=cycle_pk,
+                    source_id=source_id,
+                    path=path,
+                    details={"reason": "missing_before_or_after_snapshot", "after_snapshot_id": after_snapshot_id},
+                    dedupe_by_cycle=True,
+                )
         return
 
     before_hash = before["worktree_hash"]
@@ -6460,6 +6575,7 @@ def record_selected_file_delta(
             source_id=source_id,
             path=path,
             details=details,
+            dedupe_by_cycle=True,
         )
         return
 
@@ -6483,6 +6599,7 @@ def record_selected_file_delta(
             source_id=source_id,
             path=path,
             details=details,
+            dedupe_by_cycle=True,
         )
     elif before_mtime_ns is not None and after_mtime_ns is not None and int(before_mtime_ns) != int(after_mtime_ns):
         record_file_event(
@@ -6494,6 +6611,7 @@ def record_selected_file_delta(
             source_id=source_id,
             path=path,
             details=details,
+            dedupe_by_cycle=True,
         )
     elif int(before_mtime) != int(after_mtime):
         record_file_event(
@@ -6505,6 +6623,7 @@ def record_selected_file_delta(
             source_id=source_id,
             path=path,
             details=details,
+            dedupe_by_cycle=True,
         )
 
 
@@ -6535,6 +6654,12 @@ def create_artifact_ref(
         p = canonical_artifact_path(root, path, artifact_kind)
     stored_path = artifact_storage_path(root, str(p))
     stored_details = artifact_details_payload(artifact_kind, details)
+    if cycle_pk is None:
+        cycle_condition = "cycle_pk is null"
+        cycle_params: tuple[Any, ...] = ()
+    else:
+        cycle_condition = "cycle_pk = ?"
+        cycle_params = (cycle_pk,)
     expected_digest = normalize_hex_sha256(expected_sha256)
     try:
         entry = p.lstat()
@@ -6579,9 +6704,10 @@ def create_artifact_ref(
             """
             select artifact_id
             from artifact_refs
-            where repo_id = ? and artifact_kind = ? and path = ? and coalesce(sha256, '') = coalesce(?, '')
-            """,
-            (repo_id, artifact_kind, stored_path, stored_digest),
+            where repo_id = ? and {cycle_condition} and artifact_kind = ? and path = ?
+              and coalesce(sha256, '') = coalesce(?, '')
+            """.format(cycle_condition=cycle_condition),
+            (repo_id,) + cycle_params + (artifact_kind, stored_path, stored_digest),
         ).fetchone()
         if existing is not None:
             conn.execute(
@@ -6646,9 +6772,9 @@ def create_artifact_ref(
               observed_epoch = ?,
               retained = ?,
               details_json = coalesce(?, details_json)
-            where repo_id = ? and artifact_kind = ? and path = ?
+            where repo_id = ? and {cycle_condition} and artifact_kind = ? and path = ?
               and coalesce(sha256, '') = coalesce(?, '')
-            """,
+            """.format(cycle_condition=cycle_condition),
             (
                 cycle_pk,
                 source_id,
@@ -6658,6 +6784,7 @@ def create_artifact_ref(
                 1 if exists else 0,
                 json_dumps(stored_details),
                 repo_id,
+                *cycle_params,
                 artifact_kind,
                 stored_path,
                 stored_digest,
@@ -6718,6 +6845,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 path=cycle_selected_path or None,
                 confidence="reported",
                 details={"preselected_path": "", "reported_selected_path": reported_selected},
+                dedupe_by_cycle=True,
             )
             review_outcome = "STOPPED_ON_BLOCKER"
             status_marker = "BLOCKED"
@@ -6736,6 +6864,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 path=cycle_selected_path,
                 confidence="reported",
                 details={"preselected_path": selected_path, "reported_selected_path": reported_selected},
+                dedupe_by_cycle=True,
             )
             review_outcome = "STOPPED_ON_BLOCKER"
             status_marker = "BLOCKED"
@@ -6785,7 +6914,21 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 f"update cycles set {set_clause} where cycle_pk=?",
                 [value for _, value in updates] + [cycle_pk],
             )
-        snapshot_id = record_worktree_snapshot(conn, root, repo_id, cycle_pk, args.snapshot_kind, source_id=source_id)
+        snapshot_id = latest_worktree_snapshot_id(
+            conn,
+            repo_id=repo_id,
+            cycle_pk=cycle_pk,
+            snapshot_kind=args.snapshot_kind,
+        )
+        if snapshot_id is None:
+            snapshot_id = record_worktree_snapshot(
+                conn,
+                root,
+                repo_id,
+                cycle_pk,
+                args.snapshot_kind,
+                source_id=source_id,
+            )
         record_worktree_delta_events(
             conn,
             repo_id=repo_id,
@@ -6795,14 +6938,23 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
             after_snapshot_id=snapshot_id,
         )
         if cycle_selected_path:
-            after_snapshot_id = insert_file_snapshot(
+            before_snapshot = snapshot_row_for_event(
                 conn,
-                root,
-                repo_id,
-                cycle_selected_path,
+                repo_id=repo_id,
+                cycle_pk=cycle_pk,
                 file_id=cycle_selected_file_id,
-                source_id=source_id,
+                event_kind="snapshot_after",
             )
+            after_snapshot_id = int(before_snapshot["snapshot_id"]) if before_snapshot is not None else None
+            if after_snapshot_id is None:
+                after_snapshot_id = insert_file_snapshot(
+                    conn,
+                    root,
+                    repo_id,
+                    cycle_selected_path,
+                    file_id=cycle_selected_file_id,
+                    source_id=source_id,
+                )
             record_file_event(
                 conn,
                 repo_id,
@@ -6812,6 +6964,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 source_id=source_id,
                 path=cycle_selected_path,
                 details={"snapshot_id": after_snapshot_id},
+                dedupe_by_cycle=True,
             )
             record_selected_file_delta(
                 conn,
@@ -6838,6 +6991,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 artifact_kind=artifact_kind,
                 path=artifact_path or "",
                 expected_sha256=artifact_digests[artifact_kind],
+                dedupe_identity=True,
             )
     print_json({"status": "ok", "cycle_pk": cycle_pk, "worktree_snapshot_id": snapshot_id})
     return EXIT_SUCCESS

@@ -74,16 +74,12 @@ REVIEW_OUTCOME_MARKERS = (
     "REVIEWED_CLEAN",
     "STOPPED_ON_BLOCKER",
 )
-REVIEW_OUTCOME_PATTERN = re.compile(r"\b(" + "|".join(REVIEW_OUTCOME_MARKERS) + r")\b")
+REVIEW_OUTCOME_LINE_PATTERN = re.compile(
+    r"^UPKEEPER_REVIEW_OUTCOME\s*=\s*(" + "|".join(REVIEW_OUTCOME_MARKERS) + r")$"
+)
 UPKEEPER_STATUS_MARKERS = ("WORK_DONE", "NO_CHANGES", "NO_BACKEND_TASK", "BLOCKED")
 UPKEEPER_STATUS_CONTRACT_LINE = re.compile(rf"^UPKEEPER_STATUS:\s*({'|'.join(UPKEEPER_STATUS_MARKERS)})\s*$")
 UPKEEPER_STATUS_ALIAS = {"NO_CHANGES": "WORK_DONE"}
-REVIEW_OUTCOME_LINE_PATTERN = re.compile(
-    r"^(?:[-*]\s*)?(?:final status|review outcome|outcome|status)\s*:?\s*("
-    + "|".join(REVIEW_OUTCOME_MARKERS)
-    + r")\s*$",
-    re.I,
-)
 
 SCRIPT_EXTS = {
     ".awk",
@@ -5390,17 +5386,20 @@ def parse_review_summary_file(path: Path, repo_root: Path | None = None) -> dict
 
 
 def extract_review_outcome(text: str) -> str:
-    labeled_outcome = ""
+    outcome = ""
+    in_fence = False
     for raw_line in text.splitlines():
         line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence or line.startswith(">"):
+            continue
         match = REVIEW_OUTCOME_LINE_PATTERN.match(line)
         if match:
-            labeled_outcome = match.group(1)
-    if labeled_outcome:
-        return labeled_outcome
-    outcome = ""
-    for match in REVIEW_OUTCOME_PATTERN.finditer(text):
-        outcome = match.group(1)
+            outcome = match.group(1)
     return outcome
 
 
@@ -5479,46 +5478,62 @@ def normalize_review_summary_target(raw_target: str, repo_root: Path | None = No
 
 def probe_review_summary_parsing() -> dict[str, Any]:
     cases: dict[str, tuple[str, str, str]] = {
-        "report_only": (
-            "selected file: `tools/upkeeper_lattice.py`\nREVIEWED_AND_REPORTED\n",
+        "contract_outcome": (
+            "selected file: `tools/upkeeper_lattice.py`\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_AND_REPORTED\n",
             "tools/upkeeper_lattice.py",
             "REVIEWED_AND_REPORTED",
         ),
-        "labeled_status": (
+        "legacy_status_phrase": (
             "Selected file: `tools/upkeeper_lattice.py`\nReview outcome: REVIEWED_AND_REPORTED\n",
             "tools/upkeeper_lattice.py",
-            "REVIEWED_AND_REPORTED",
+            "",
+        ),
+        "legacy_marker_in_body": (
+            "Allowed outcomes include REVIEWED_CLEAN and REVIEWED_AND_REPORTED.\n"
+            "Final status: REVIEWED_AND_FIXED\n",
+            "",
+            "",
+        ),
+        "quoted_marker": (
+            "> UPKEEPER_REVIEW_OUTCOME=REVIEWED_AND_REPORTED\nSelected file: `tools/upkeeper_lattice.py`\n",
+            "tools/upkeeper_lattice.py",
+            "",
+        ),
+        "fenced_marker": (
+            "```text\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_AND_REPORTED\n```\nSelected file: `tools/upkeeper_lattice.py`\n",
+            "tools/upkeeper_lattice.py",
+            "",
+        ),
+        "inline_quote_marker_ignored": (
+            "Example instruction: `UPKEEPER_REVIEW_OUTCOME=REVIEWED_CLEAN` should never count.\n"
+            "Selected file: `tools/upkeeper_lattice.py`\n",
+            "tools/upkeeper_lattice.py",
+            "",
         ),
         "colon_bearing_path": (
-            "Selected file: pkg:tools/build.sh\nReview outcome: REVIEWED_AND_FIXED\n",
+            "Selected file: pkg:tools/build.sh\nUPKEEPER_REVIEW_OUTCOME = REVIEWED_AND_FIXED\n",
             "pkg:tools/build.sh",
             "REVIEWED_AND_FIXED",
         ),
         "markdown_colon_bearing_path": (
-            "Selected file: [pkg:tools/build.sh](pkg:tools/build.sh)\nReview outcome: REVIEWED_AND_REPORTED\n",
+            "Selected file: [pkg:tools/build.sh](pkg:tools/build.sh)\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_AND_REPORTED\n",
             "pkg:tools/build.sh",
             "REVIEWED_AND_REPORTED",
         ),
         "markdown_scheme_rejected": (
-            "Selected file: [remote](https://example.invalid/file.sh)\nReview outcome: REVIEWED_CLEAN\n",
+            "Selected file: [remote](https://example.invalid/file.sh)\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_CLEAN\n",
             "",
             "REVIEWED_CLEAN",
         ),
         "markdown_scheme_with_line_suffix_rejected": (
-            "Selected file: [remote](https://example.invalid/file.sh:443)\nReview outcome: REVIEWED_CLEAN\n",
+            "Selected file: [remote](https://example.invalid/file.sh:443)\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_CLEAN\n",
             "",
             "REVIEWED_CLEAN",
         ),
         "markdown_scheme_single_slash_rejected": (
-            "Selected file: [remote](https:/example.invalid/file.sh)\nReview outcome: REVIEWED_CLEAN\n",
+            "Selected file: [remote](https:/example.invalid/file.sh)\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_CLEAN\n",
             "",
             "REVIEWED_CLEAN",
-        ),
-        "last_marker_wins": (
-            "Allowed outcomes include REVIEWED_CLEAN and REVIEWED_AND_REPORTED.\n"
-            "Final status: REVIEWED_AND_FIXED\n",
-            "",
-            "REVIEWED_AND_FIXED",
         ),
     }
     results: dict[str, Any] = {}
@@ -5528,7 +5543,7 @@ def probe_review_summary_parsing() -> dict[str, Any]:
         absolute_line_target = root / "pkg:tools" / "build.sh"
         absolute_line_target.write_text("#!/bin/sh\n", encoding="utf-8")
         cases["markdown_absolute_line_suffix"] = (
-            f"Selected file: [pkg:tools/build.sh]({absolute_line_target}:12)\nReview outcome: REVIEWED_AND_FIXED\n",
+            f"Selected file: [pkg:tools/build.sh]({absolute_line_target}:12)\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_AND_FIXED\n",
             "pkg:tools/build.sh",
             "REVIEWED_AND_FIXED",
         )

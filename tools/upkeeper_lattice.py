@@ -7928,16 +7928,56 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     log_path = Path(args.path or root / "Upkeeper.log")
+    log_details = {}
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     rows_seen = rows_written = 0
     with conn:
         repo_id = ensure_repository(conn, root)
-        import_id = start_import(conn, repo_id, "upkeeper_log", {"path": str(log_path)})
+        if log_path.exists():
+            try:
+                stats = log_path.stat()
+                log_details = {
+                    "path": str(log_path),
+                    "size_bytes": int(stats.st_size),
+                    "mtime_ns": int(stats.st_mtime_ns),
+                }
+                log_details_json = json_dumps(log_details)
+            except OSError:
+                log_details = {}
+        else:
+            log_details = {}
+
+        existing_import_id = None
+        if log_details:
+            existing_import_id = conn.execute(
+                """
+                select import_id
+                from lattice_imports
+                where repo_id=? and import_kind=? and details_json=?
+                order by import_id desc
+                limit 1
+                """,
+                (repo_id, "upkeeper_log", log_details_json),
+            ).fetchone()
+
+        if existing_import_id is not None:
+            import_id = int(existing_import_id["import_id"])
+            conn.execute(
+                """
+                update lattice_imports
+                set started_epoch=?, status='started', rows_seen=0, rows_written=0, conflicts=0, details_json=?
+                where import_id=?
+                """,
+                (epoch_now(), json_dumps(log_details), import_id),
+            )
+        else:
+            import_id = start_import(conn, repo_id, "upkeeper_log", log_details)
         if not log_path.exists():
             finish_import(conn, import_id, "unavailable", 0, 0, 0, {"reason": "missing_log"})
             print_json({"status": "unavailable", "reason": "missing_log", "path": str(log_path)})
             return EXIT_SUCCESS
+        stored_source_path = source_record_storage_path(root, "upkeeper_log", str(log_path))
         for line_number, raw_line in enumerate(log_path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
             rows_seen += 1
             parsed = parse_upkeeper_log_line(raw_line)
@@ -7947,20 +7987,35 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
             stored_raw_line = raw_line if args.raw else None
             if stored_raw_line is not None:
                 stored_raw_line = sanitize_upkeeper_log_raw_text(root, stored_raw_line, parsed)
+            line_hash = sha256_text(raw_line)
+            existing_source_id = conn.execute(
+                """
+                select source_id
+                from source_records
+                where repo_id=?
+                  and source_kind=?
+                  and coalesce(source_path, '') = ?
+                  and coalesce(source_line, -1) = ?
+                  and coalesce(raw_sha256, '') = ?
+                """,
+                (repo_id, "upkeeper_log", stored_source_path, line_number, line_hash),
+            ).fetchone()
             source_id = ensure_source_record(
                 conn,
                 root,
                 repo_id,
                 "upkeeper_log",
-                source_path=str(log_path),
+                source_path=stored_source_path,
                 raw_ref=parsed.get("event", ""),
                 raw_text=stored_raw_line,
                 parsed=safe_parsed,
                 parse_status="parsed",
                 source_line=line_number,
-                raw_sha256=sha256_text(stored_raw_line) if stored_raw_line is not None else None,
+                raw_sha256=line_hash,
                 raw_storage_mode=raw_storage_mode,
             )
+            if not existing_source_id:
+                rows_written += 1
             cycle_id = str(parsed.get("cycle", ""))
             run_hash = str(parsed.get("run_hash", ""))
             event = str(parsed.get("event", ""))

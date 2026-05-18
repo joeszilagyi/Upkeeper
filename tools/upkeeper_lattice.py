@@ -3248,46 +3248,45 @@ def ensure_source_record(
     identity_path = stored_source_path or ""
     identity_line = stored_source_line if stored_source_line is not None else -1
     identity_sha = stored_raw_sha256 or ""
-    if identity_path and stored_raw_sha256:
-        row = conn.execute(
+    row = conn.execute(
+        """
+        select source_id
+        from source_records
+        where repo_id=?
+          and source_kind=?
+          and coalesce(source_path, '') = ?
+          and coalesce(source_line, -1) = ?
+          and coalesce(raw_sha256, '') = ?
+        order by imported_epoch desc, source_id desc
+        limit 1
+        """,
+        (repo_id, source_kind, identity_path, identity_line, identity_sha),
+    ).fetchone()
+    if row:
+        source_id = int(row["source_id"])
+        conn.execute(
             """
-            select source_id
-            from source_records
-            where repo_id=?
-              and source_kind=?
-              and coalesce(source_path, '') = ?
-              and coalesce(source_line, -1) = ?
-              and coalesce(raw_sha256, '') = ?
-            order by imported_epoch desc, source_id desc
-            limit 1
+            update source_records
+            set source_path=?, source_uri=?, source_epoch=?, source_line=?, raw_ref=?, raw_text=coalesce(?, raw_text),
+                parsed_json=coalesce(?, parsed_json), parse_status=?, fact_confidence=?, raw_sha256=?, imported_epoch=?
+            where source_id=?
             """,
-            (repo_id, source_kind, identity_path, identity_line, identity_sha),
-        ).fetchone()
-        if row:
-            source_id = int(row["source_id"])
-            conn.execute(
-                """
-                update source_records
-                set source_path=?, source_uri=?, source_epoch=?, source_line=?, raw_ref=?, raw_text=coalesce(?, raw_text),
-                    parsed_json=coalesce(?, parsed_json), parse_status=?, fact_confidence=?, raw_sha256=?, imported_epoch=?
-                where source_id=?
-                """,
-                (
-                    stored_source_path,
-                    stored_source_uri,
-                    source_epoch,
-                    stored_source_line,
-                    raw_ref or None,
-                    stored_raw_text,
-                    parsed_payload_text,
-                    parse_status,
-                    fact_confidence,
-                    stored_raw_sha256,
-                    now,
-                    source_id,
-                ),
-            )
-            return source_id
+            (
+                stored_source_path,
+                stored_source_uri,
+                source_epoch,
+                stored_source_line,
+                raw_ref or None,
+                stored_raw_text,
+                parsed_payload_text,
+                parse_status,
+                fact_confidence,
+                stored_raw_sha256,
+                now,
+                source_id,
+            ),
+        )
+        return source_id
     cur = conn.execute(
         """
         insert into source_records(

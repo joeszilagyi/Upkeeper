@@ -3,6 +3,37 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Backlog Live Output Attention Emphasis
+
+Status: completed locally
+
+Goal:
+- make interactive backlog `PAGE` lines visually harder to miss by coloring the
+  timestamp red, and coloring/blinking both the block and `PAGE` marker text
+- make interactive backlog `--FYI--` lines color the timestamp orange and color
+  the marker text bold orange
+- keep loop logs and non-color output free of ANSI sequences for scripts and
+  assistive tooling
+
+Constraints:
+- preserve `BACKLOG_ALERT_COLOR` and `BACKLOG_ALERT_BLINK`
+- keep blink off timestamps
+- keep the existing visual block and marker taxonomy
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n orchestration/backlog.sh tools/validate_upkeeper.sh lib/upkeeper/help_selection.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Lattice Redacted JSONL Import Guard
 
 Status: completed locally

@@ -6,6 +6,9 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-18: backlog live-output emphasis:
+	1. Interactive backlog watch output now colors `PAGE` timestamps red without blink, keeps the `PAGE` block and marker bold/blinking red, and colors `--FYI--` timestamps orange with bold orange marker text while preserving plain loop logs.
+
 2026-05-18: backlog autoshelve local remediation:
 	1. Backlog dirty-worktree autoshelve now distinguishes ordinary local work from Upkeeper control-plane fixes. Ordinary dirty files remain preserved on the private autoshelve branch, while dirty wrapper/modules/orchestration/tools/tests/prompts/config changes are reapplied and committed locally on the active backlog branch before issue work continues.
 	2. Autoshelve branch names now avoid timestamp collisions, and a failed control-plane transplant stops the launcher before stale automation can run while leaving the autoshelve branch as local evidence.

@@ -258,7 +258,8 @@ backlog_alert_color_enabled() {
 
 backlog_color_attention_line() {
   local line="$1"
-  local ts rest marker payload color reset
+  local ts rest marker payload reset
+  local timestamp_style block_style marker_style ts_text block_text marker_field marker_text
 
   if ! backlog_alert_color_enabled || ! backlog_line_has_attention_marker "$line"; then
     printf '%s\n' "$line"
@@ -268,41 +269,61 @@ backlog_color_attention_line() {
   ts="${line%% *}"
   rest="${line#* }"
   IFS=$'\t' read -r marker payload < <(backlog_attention_marker_payload "$rest")
+  timestamp_style=""
+  block_style=""
+  marker_style=""
   case "$marker" in
     PAGE)
+      timestamp_style=$'\033[31m'
       if [[ "$BACKLOG_ALERT_BLINK" == "1" ]]; then
-        color=$'\033[5;1;31m'
+        block_style=$'\033[5;1;31m'
       else
-        color=$'\033[1;31m'
+        block_style=$'\033[1;31m'
       fi
+      marker_style="$block_style"
       ;;
     OK)
-      color=$'\033[1;32m'
+      block_style=$'\033[1;32m'
       ;;
     INFO)
-      color=$'\033[37m'
+      block_style=$'\033[37m'
       ;;
     --FYI--)
-      color=$'\033[1;38;5;208m'
+      timestamp_style=$'\033[38;5;208m'
+      block_style=$'\033[1;38;5;208m'
+      marker_style="$block_style"
       ;;
     RUN)
-      color=$'\033[1;36m'
+      block_style=$'\033[1;36m'
       ;;
     ACTION)
-      color=$'\033[1;35m'
+      block_style=$'\033[1;35m'
       ;;
     WAIT|HEALTH)
-      color=$'\033[1;33m'
+      block_style=$'\033[1;33m'
       ;;
     WORKER)
-      color=$'\033[1;34m'
+      block_style=$'\033[1;34m'
       ;;
   esac
   reset=$'\033[0m'
+  ts_text="$ts"
+  block_text="$BACKLOG_VISUAL_BLOCK"
+  printf -v marker_field '%-7s' "$marker"
+  marker_text="$marker_field"
+  if [[ -n "$timestamp_style" ]]; then
+    ts_text="${timestamp_style}${ts}${reset}"
+  fi
+  if [[ -n "$block_style" ]]; then
+    block_text="${block_style}${BACKLOG_VISUAL_BLOCK}${reset}"
+  fi
+  if [[ -n "$marker_style" ]]; then
+    marker_text="${marker_style}${marker_field}${reset}"
+  fi
   if [[ -n "$payload" ]]; then
-    printf '%s %s%s%s %-7s %s\n' "$ts" "$color" "$BACKLOG_VISUAL_BLOCK" "$reset" "$marker" "$payload"
+    printf '%s %s %s %s\n' "$ts_text" "$block_text" "$marker_text" "$payload"
   else
-    printf '%s %s%s%s %-7s\n' "$ts" "$color" "$BACKLOG_VISUAL_BLOCK" "$reset" "$marker"
+    printf '%s %s %s\n' "$ts_text" "$block_text" "$marker_text"
   fi
 }
 

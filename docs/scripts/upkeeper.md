@@ -129,11 +129,12 @@ Important:
     column 2, and an operator-attention marker in column 3 for loose terminal
     watching. TTY output colors the block by marker: green `OK`, red blinking
     `PAGE`, white `INFO`, orange `--FYI--`, cyan `RUN`, magenta `ACTION`,
-    yellow `WAIT`/`HEALTH`, and blue `WORKER`. Loop logs keep the same block
-    and marker text without ANSI color for scripts and assistive tooling. Set
-    `BACKLOG_ALERT_COLOR=never` to disable terminal block color,
-    `BACKLOG_ALERT_COLOR=always` to force it, or `BACKLOG_ALERT_BLINK=0` to keep
-    `PAGE` red without blink.
+    yellow `WAIT`/`HEALTH`, and blue `WORKER`. `PAGE` and `--FYI--` also color
+    their timestamp and bold marker text; `PAGE` keeps blink off the timestamp.
+    Loop logs keep the same block and marker text without ANSI color for scripts
+    and assistive tooling. Set `BACKLOG_ALERT_COLOR=never` to disable terminal
+    block color, `BACKLOG_ALERT_COLOR=always` to force it, or
+    `BACKLOG_ALERT_BLINK=0` to keep `PAGE` red without blink.
   - Before backlog issue work starts, the launcher autoshelves dirty local work
     to a private `wip/backlog-autoshelve/*` branch. Ordinary dirty files stay
     shelved while the loop continues from a clean branch. If the dirty set

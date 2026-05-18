@@ -64,6 +64,11 @@ release_active_lock() {
   [[ -n "$CODEX_ACTIVE_LOCK_DIR" ]] || return 0
   rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state.tmp.$$" 2>/dev/null || true
   rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state" 2>/dev/null || true
+  if declare -F upkeeper_active_lock_marker_path >/dev/null 2>&1; then
+    rm -f -- "$(upkeeper_active_lock_marker_path "$CODEX_ACTIVE_LOCK_DIR")" 2>/dev/null || true
+  else
+    rm -f -- "$CODEX_ACTIVE_LOCK_DIR/.upkeeper_active_lock.owner" 2>/dev/null || true
+  fi
   rmdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null || true
   ACTIVE_LOCK_ACQUIRED="0"
 }

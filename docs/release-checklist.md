@@ -19,7 +19,7 @@ Run the applicable local checks from the central checkout:
 ```sh
 tools/validate_upkeeper.sh --deps
 bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf
-for test_script in tests/*.bash; do bash "$test_script"; done
+set -e; for test_script in tests/*.bash; do bash "$test_script"; done
 tools/check_public_docs.sh --quick
 tools/validate_upkeeper.sh --quick
 tools/validate_upkeeper.sh --full

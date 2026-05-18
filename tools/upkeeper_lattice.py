@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import secrets
 from urllib.parse import urlsplit
 from pathlib import Path
 from typing import Any, Iterable
@@ -1176,9 +1177,9 @@ CREATE_TABLE_SQL = [
 ]
 
 CREATE_INDEX_SQL = [
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, artifact_kind, path) WHERE sha256 IS NULL",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_coalesced ON artifact_refs(repo_id, artifact_kind, path, coalesce(sha256, ''))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, cycle_pk, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, cycle_pk, artifact_kind, path) WHERE sha256 IS NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_coalesced ON artifact_refs(repo_id, cycle_pk, artifact_kind, path, coalesce(sha256, ''))",
     "CREATE INDEX IF NOT EXISTS idx_cycles_repo_cycle ON cycles(repo_id, cycle_id)",
     "CREATE INDEX IF NOT EXISTS idx_cycles_repo_selected_path ON cycles(repo_id, selected_path)",
     "CREATE INDEX IF NOT EXISTS idx_files_repo_current_path ON files(repo_id, current_path)",
@@ -1201,6 +1202,11 @@ CREATE_INDEX_SQL = [
 
 def epoch_now() -> int:
     return int(time.time())
+
+
+def artifact_now() -> str:
+    """Return a high-entropy timestamp token for durable artifact filenames."""
+    return f"{time.time_ns():d}-{secrets.token_hex(4)}"
 
 
 def safe_output_text(raw: str) -> str:
@@ -1428,10 +1434,16 @@ def sha256_text(text: str) -> str:
     return sha256_bytes(text.encode("utf-8", "surrogateescape"))
 
 
-def contributor_identity_hash(name: str, email: str) -> str:
-    if not name and not email:
+def normalize_contributor_identity_value(raw: str | None) -> str:
+    return "" if raw is None else raw
+
+
+def contributor_identity_hash(name: str | None, email: str | None) -> str:
+    normalized_name = normalize_contributor_identity_value(name)
+    normalized_email = normalize_contributor_identity_value(email)
+    if not normalized_name and not normalized_email:
         return ""
-    return CONTRIBUTOR_HASH_PREFIX + sha256_text(f"name={name}\0email={email}")
+    return CONTRIBUTOR_HASH_PREFIX + sha256_text(f"name={normalized_name}\0email={normalized_email}")
 
 
 def commit_subject_hash(subject: str) -> str:
@@ -2750,7 +2762,7 @@ def dedupe_artifact_refs(conn: sqlite3.Connection) -> int:
         select count(*) from (
           select 1
           from artifact_refs
-          group by repo_id, artifact_kind, path, coalesce(sha256, '')
+          group by repo_id, cycle_pk, artifact_kind, path, coalesce(sha256, '')
           having count(*) > 1
         )
         """
@@ -2761,24 +2773,37 @@ def dedupe_artifact_refs(conn: sqlite3.Connection) -> int:
 
     duplicate_keys = conn.execute(
         """
-        select repo_id, artifact_kind, path, coalesce(sha256, '') as sha_key
+        select repo_id, cycle_pk, artifact_kind, path, coalesce(sha256, '') as sha_key
         from artifact_refs
-        group by repo_id, artifact_kind, path, coalesce(sha256, '')
+        group by repo_id, cycle_pk, artifact_kind, path, coalesce(sha256, '')
         having count(*) > 1
         """
     ).fetchall()
     for key in duplicate_keys:
-        rows = conn.execute(
-            """
-            select artifact_id, cycle_pk, source_id, exists_at_record_time, size_bytes,
-                   sha256, created_epoch, observed_epoch, retained, details_json
-            from artifact_refs
-            where repo_id = ? and artifact_kind = ? and path = ?
-              and coalesce(sha256, '') = ?
-            order by observed_epoch desc, artifact_id desc
-            """,
-            (key["repo_id"], key["artifact_kind"], key["path"], key["sha_key"]),
-        ).fetchall()
+        if key["cycle_pk"] is None:
+            rows = conn.execute(
+                """
+                select artifact_id, cycle_pk, source_id, exists_at_record_time, size_bytes,
+                       sha256, created_epoch, observed_epoch, retained, details_json
+                from artifact_refs
+                where repo_id = ? and cycle_pk is null and artifact_kind = ? and path = ?
+                  and coalesce(sha256, '') = ?
+                order by observed_epoch desc, artifact_id desc
+                """,
+                (key["repo_id"], key["artifact_kind"], key["path"], key["sha_key"]),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                select artifact_id, cycle_pk, source_id, exists_at_record_time, size_bytes,
+                       sha256, created_epoch, observed_epoch, retained, details_json
+                from artifact_refs
+                where repo_id = ? and cycle_pk = ? and artifact_kind = ? and path = ?
+                  and coalesce(sha256, '') = ?
+                order by observed_epoch desc, artifact_id desc
+                """,
+                (key["repo_id"], key["cycle_pk"], key["artifact_kind"], key["path"], key["sha_key"]),
+            ).fetchall()
         if len(rows) < 2:
             continue
         winner = dict(rows[0])
@@ -2849,12 +2874,24 @@ def ensure_artifact_ref_identity_indexes(conn: sqlite3.Connection) -> int:
     if not required.issubset(columns):
         return 0
     duplicate_groups = dedupe_artifact_refs(conn)
+    for index_name in (
+        "idx_artifact_refs_unique_identity_digest",
+        "idx_artifact_refs_unique_identity_missing_digest",
+        "idx_artifact_refs_unique_identity_coalesced",
+    ):
+        try:
+            conn.execute(f"DROP INDEX IF EXISTS {index_name}")
+        except sqlite3.Error:
+            pass
     try:
         conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL"
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, cycle_pk, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL"
         )
         conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, artifact_kind, path) WHERE sha256 IS NULL"
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, cycle_pk, artifact_kind, path) WHERE sha256 IS NULL"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_coalesced ON artifact_refs(repo_id, cycle_pk, artifact_kind, path, coalesce(sha256, ''))"
         )
     except sqlite3.Error:
         pass
@@ -3499,11 +3536,13 @@ def ensure_file(
             select f.file_id
             from file_paths p
             join files f on f.file_id=p.file_id
-            where f.repo_id=? and p.path=?
+            where f.repo_id=?
+              and p.path=?
+              and (f.current_path=? or f.canonical_path=?)
             order by f.last_seen_epoch desc, f.file_id
             limit 1
             """,
-            (repo_id, path),
+            (repo_id, path, path, path),
         ).fetchone()
     if not row and prefer_historical_match and canonical == path:
         row = conn.execute(
@@ -3572,11 +3611,13 @@ def ensure_file_historical_only(
             select f.file_id
             from file_paths p
             join files f on f.file_id=p.file_id
-            where f.repo_id=? and p.path=?
+            where f.repo_id=?
+              and p.path=?
+              and (f.current_path=? or f.canonical_path=?)
             order by f.last_seen_epoch desc, f.file_id
             limit 1
             """,
-            (repo_id, path),
+            (repo_id, path, path, path),
         ).fetchone()
     if row:
         file_id = int(row["file_id"])
@@ -4118,8 +4159,33 @@ def record_file_event(
     confidence: str = "observed",
     details: Any = None,
     event_epoch: int | None = None,
+    dedupe_by_cycle: bool = False,
 ) -> None:
     stored_path = stored_rel_path(path) if path else None
+    details_json = json_dumps(details) if details is not None else None
+    if dedupe_by_cycle and cycle_pk is not None:
+        existing = conn.execute(
+            """
+            select event_id
+              from file_events
+             where repo_id=? and cycle_pk=? and event_kind=?
+               and coalesce(file_id, -1) = coalesce(?, -1)
+               and coalesce(path, '') = coalesce(?, '')
+             order by event_epoch desc, event_id desc
+             limit 1
+            """,
+            (repo_id, cycle_pk, event_kind, file_id, stored_path),
+        ).fetchone()
+        if existing is not None:
+            conn.execute(
+                """
+                update file_events
+                set event_epoch=?, source_id=?, confidence=?, details_json=?
+                where event_id=?
+                """,
+                (event_epoch or epoch_now(), source_id, confidence, details_json, int(existing["event_id"])),
+            )
+            return
     conn.execute(
         """
         insert into file_events(repo_id, file_id, cycle_pk, source_id, event_kind, event_epoch, path, confidence, details_json)
@@ -4134,7 +4200,7 @@ def record_file_event(
             event_epoch or epoch_now(),
             stored_path,
             confidence,
-            json_dumps(details) if details is not None else None,
+            details_json,
         ),
     )
 
@@ -4291,10 +4357,24 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
             try:
                 obj = json.loads(raw)
             except json.JSONDecodeError:
-                rows.append({"path": "", "candidate_state": "excluded", "exclusion_reason": "malformed_candidate_json"})
+                rows.append(
+                    {
+                        "path": "",
+                        "candidate_state": "excluded",
+                        "exclusion_reason": "malformed_candidate_json",
+                    }
+                )
                 continue
             if isinstance(obj, dict):
                 rows.append(obj)
+                continue
+            rows.append(
+                {
+                    "path": "",
+                    "candidate_state": "excluded",
+                    "exclusion_reason": "malformed_candidate_json",
+                }
+            )
     return rows
 
 
@@ -5242,6 +5322,7 @@ def record_worktree_delta_events(
                 cycle_pk=cycle_pk,
                 source_id=source_id,
                 path=path,
+                dedupe_by_cycle=True,
                 details={
                     "source": "worktree_snapshot_delta",
                     "before_worktree_snapshot_id": before_snapshot_id,
@@ -5280,6 +5361,7 @@ def record_worktree_delta_events(
             cycle_pk=cycle_pk,
             source_id=source_id,
             path=path,
+            dedupe_by_cycle=True,
             details={
                 "source": "worktree_snapshot_delta",
                 "before_worktree_snapshot_id": before_snapshot_id,
@@ -5364,7 +5446,10 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         eligible_count = int(selection.get("eligible_count") or 0)
         seen_candidates: dict[str, dict[str, Any]] = {}
         for index, row in enumerate(candidate_rows, start=1):
-            path = external_rel_path(str(row.get("path", "")))
+            path_value = row.get("path", "")
+            if not isinstance(path_value, str) or path_value == "":
+                continue
+            path = external_rel_path(path_value)
             if not path:
                 continue
             state = str(row.get("candidate_state", "eligible"))
@@ -5397,38 +5482,81 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         if not eligible_count:
             eligible_count = calculated_eligible_count
         excluded_count = calculated_excluded_count
-        cur = conn.execute(
+        existing_run = conn.execute(
             """
-            insert into selection_runs(
-              repo_id, cycle_pk, selector_version, source_safe_boundary_version,
-              mode_requested, mode_effective, priority_gate, generated_epoch,
-              git_head_sha, dirty_path_count, eligible_count, excluded_count,
-              incomplete, incomplete_reason, selected_file_id, selected_path,
-              selected_rank, details_json
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            select selection_run_id
+              from selection_runs
+             where cycle_pk=?
+             order by generated_epoch desc, selection_run_id desc
+             limit 1
             """,
-            (
-                repo_id,
-                cycle_pk,
-                args.selector_version,
-                args.source_safe_boundary_version,
-                args.selection_mode or selection.get("selection_order") or "oldest-mtime",
-                mode,
-                gate,
-                epoch_now(),
-                repo_git_info(root)["head_sha"] or None,
-                None,
-                eligible_count,
-                excluded_count,
-                0,
-                None,
-                selected_file_id,
-                stored_selected_path or None,
-                selected_rank,
-                json_dumps(selection),
-            ),
-        )
-        selection_run_id = int(cur.lastrowid)
+            (cycle_pk,),
+        ).fetchone()
+        if existing_run is not None:
+            selection_run_id = int(existing_run["selection_run_id"])
+            conn.execute(
+                """
+                update selection_runs
+                set selector_version=?, source_safe_boundary_version=?, mode_requested=?,
+                    mode_effective=?, priority_gate=?, generated_epoch=?, git_head_sha=?,
+                    dirty_path_count=?, eligible_count=?, excluded_count=?, incomplete=?,
+                    incomplete_reason=?, selected_file_id=?, selected_path=?, selected_rank=?, details_json=?
+                where selection_run_id=?
+                """,
+                (
+                    args.selector_version,
+                    args.source_safe_boundary_version,
+                    args.selection_mode or selection.get("selection_order") or "oldest-mtime",
+                    mode,
+                    gate,
+                    epoch_now(),
+                    repo_git_info(root)["head_sha"] or None,
+                    None,
+                    eligible_count,
+                    excluded_count,
+                    0,
+                    None,
+                    selected_file_id,
+                    stored_selected_path or None,
+                    selected_rank,
+                    json_dumps(selection),
+                    selection_run_id,
+                ),
+            )
+            conn.execute("delete from selection_candidates where selection_run_id=?", (selection_run_id,))
+        else:
+            cur = conn.execute(
+                """
+                insert into selection_runs(
+                  repo_id, cycle_pk, selector_version, source_safe_boundary_version,
+                  mode_requested, mode_effective, priority_gate, generated_epoch,
+                  git_head_sha, dirty_path_count, eligible_count, excluded_count,
+                  incomplete, incomplete_reason, selected_file_id, selected_path,
+                  selected_rank, details_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    repo_id,
+                    cycle_pk,
+                    args.selector_version,
+                    args.source_safe_boundary_version,
+                    args.selection_mode or selection.get("selection_order") or "oldest-mtime",
+                    mode,
+                    gate,
+                    epoch_now(),
+                    repo_git_info(root)["head_sha"] or None,
+                    None,
+                    eligible_count,
+                    excluded_count,
+                    0,
+                    None,
+                    selected_file_id,
+                    stored_selected_path or None,
+                    selected_rank,
+                    json_dumps(selection),
+                ),
+            )
+            selection_run_id = int(cur.lastrowid)
         if deduped_candidates:
             for row in deduped_candidates:
                 path = row.get("path")
@@ -5479,6 +5607,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                     source_id=source_id,
                     path=path,
                     details=row,
+                    dedupe_by_cycle=True,
                 )
         elif selected_path:
             conn.execute(
@@ -5501,7 +5630,23 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                 ),
             )
         if selected_path:
-            before_snapshot_id = insert_file_snapshot(conn, root, repo_id, selected_path, file_id=selected_file_id, source_id=source_id)
+            before_snapshot = snapshot_row_for_event(
+                conn,
+                repo_id=repo_id,
+                cycle_pk=cycle_pk,
+                file_id=selected_file_id,
+                event_kind="snapshot_before",
+            )
+            before_snapshot_id = int(before_snapshot["snapshot_id"]) if before_snapshot is not None else None
+            if before_snapshot_id is None:
+                before_snapshot_id = insert_file_snapshot(
+                    conn,
+                    root,
+                    repo_id,
+                    selected_path,
+                    file_id=selected_file_id,
+                    source_id=source_id,
+                )
             record_file_event(
                 conn,
                 repo_id,
@@ -5511,6 +5656,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                 source_id=source_id,
                 path=selected_path,
                 details={"snapshot_id": before_snapshot_id},
+                dedupe_by_cycle=True,
             )
             conn.execute(
                 "update cycles set selected_file_id=?, selected_path=?, selection_basis=? where cycle_pk=?",
@@ -5526,6 +5672,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                     source_id=source_id,
                     path=selected_path,
                     details=selection,
+                    dedupe_by_cycle=True,
                 )
     print_json({"status": "ok", "selection_run_id": selection_run_id, "selected_path": stored_selected_path})
     return EXIT_SUCCESS
@@ -6429,6 +6576,7 @@ def record_selected_file_delta(
                 source_id=source_id,
                 path=path,
                 details={"reason": "missing_before_or_after_snapshot", "after_snapshot_id": after_snapshot_id},
+                dedupe_by_cycle=True,
             )
         return
 
@@ -6460,6 +6608,7 @@ def record_selected_file_delta(
             source_id=source_id,
             path=path,
             details=details,
+            dedupe_by_cycle=True,
         )
         return
 
@@ -6483,6 +6632,7 @@ def record_selected_file_delta(
             source_id=source_id,
             path=path,
             details=details,
+            dedupe_by_cycle=True,
         )
     elif before_mtime_ns is not None and after_mtime_ns is not None and int(before_mtime_ns) != int(after_mtime_ns):
         record_file_event(
@@ -6494,6 +6644,7 @@ def record_selected_file_delta(
             source_id=source_id,
             path=path,
             details=details,
+            dedupe_by_cycle=True,
         )
     elif int(before_mtime) != int(after_mtime):
         record_file_event(
@@ -6505,6 +6656,7 @@ def record_selected_file_delta(
             source_id=source_id,
             path=path,
             details=details,
+            dedupe_by_cycle=True,
         )
 
 
@@ -6535,6 +6687,12 @@ def create_artifact_ref(
         p = canonical_artifact_path(root, path, artifact_kind)
     stored_path = artifact_storage_path(root, str(p))
     stored_details = artifact_details_payload(artifact_kind, details)
+    if cycle_pk is None:
+        cycle_condition = "cycle_pk is null"
+        cycle_params: tuple[Any, ...] = ()
+    else:
+        cycle_condition = "cycle_pk = ?"
+        cycle_params = (cycle_pk,)
     expected_digest = normalize_hex_sha256(expected_sha256)
     try:
         entry = p.lstat()
@@ -6579,9 +6737,10 @@ def create_artifact_ref(
             """
             select artifact_id
             from artifact_refs
-            where repo_id = ? and artifact_kind = ? and path = ? and coalesce(sha256, '') = coalesce(?, '')
-            """,
-            (repo_id, artifact_kind, stored_path, stored_digest),
+            where repo_id = ? and {cycle_condition} and artifact_kind = ? and path = ?
+              and coalesce(sha256, '') = coalesce(?, '')
+            """.format(cycle_condition=cycle_condition),
+            (repo_id,) + cycle_params + (artifact_kind, stored_path, stored_digest),
         ).fetchone()
         if existing is not None:
             conn.execute(
@@ -6646,9 +6805,9 @@ def create_artifact_ref(
               observed_epoch = ?,
               retained = ?,
               details_json = coalesce(?, details_json)
-            where repo_id = ? and artifact_kind = ? and path = ?
+            where repo_id = ? and {cycle_condition} and artifact_kind = ? and path = ?
               and coalesce(sha256, '') = coalesce(?, '')
-            """,
+            """.format(cycle_condition=cycle_condition),
             (
                 cycle_pk,
                 source_id,
@@ -6658,6 +6817,7 @@ def create_artifact_ref(
                 1 if exists else 0,
                 json_dumps(stored_details),
                 repo_id,
+                *cycle_params,
                 artifact_kind,
                 stored_path,
                 stored_digest,
@@ -6718,6 +6878,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 path=cycle_selected_path or None,
                 confidence="reported",
                 details={"preselected_path": "", "reported_selected_path": reported_selected},
+                dedupe_by_cycle=True,
             )
             review_outcome = "STOPPED_ON_BLOCKER"
             status_marker = "BLOCKED"
@@ -6736,6 +6897,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 path=cycle_selected_path,
                 confidence="reported",
                 details={"preselected_path": selected_path, "reported_selected_path": reported_selected},
+                dedupe_by_cycle=True,
             )
             review_outcome = "STOPPED_ON_BLOCKER"
             status_marker = "BLOCKED"
@@ -6785,7 +6947,21 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 f"update cycles set {set_clause} where cycle_pk=?",
                 [value for _, value in updates] + [cycle_pk],
             )
-        snapshot_id = record_worktree_snapshot(conn, root, repo_id, cycle_pk, args.snapshot_kind, source_id=source_id)
+        snapshot_id = latest_worktree_snapshot_id(
+            conn,
+            repo_id=repo_id,
+            cycle_pk=cycle_pk,
+            snapshot_kind=args.snapshot_kind,
+        )
+        if snapshot_id is None:
+            snapshot_id = record_worktree_snapshot(
+                conn,
+                root,
+                repo_id,
+                cycle_pk,
+                args.snapshot_kind,
+                source_id=source_id,
+            )
         record_worktree_delta_events(
             conn,
             repo_id=repo_id,
@@ -6795,14 +6971,23 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
             after_snapshot_id=snapshot_id,
         )
         if cycle_selected_path:
-            after_snapshot_id = insert_file_snapshot(
+            before_snapshot = snapshot_row_for_event(
                 conn,
-                root,
-                repo_id,
-                cycle_selected_path,
+                repo_id=repo_id,
+                cycle_pk=cycle_pk,
                 file_id=cycle_selected_file_id,
-                source_id=source_id,
+                event_kind="snapshot_after",
             )
+            after_snapshot_id = int(before_snapshot["snapshot_id"]) if before_snapshot is not None else None
+            if after_snapshot_id is None:
+                after_snapshot_id = insert_file_snapshot(
+                    conn,
+                    root,
+                    repo_id,
+                    cycle_selected_path,
+                    file_id=cycle_selected_file_id,
+                    source_id=source_id,
+                )
             record_file_event(
                 conn,
                 repo_id,
@@ -6812,6 +6997,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 source_id=source_id,
                 path=cycle_selected_path,
                 details={"snapshot_id": after_snapshot_id},
+                dedupe_by_cycle=True,
             )
             record_selected_file_delta(
                 conn,
@@ -6838,6 +7024,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 artifact_kind=artifact_kind,
                 path=artifact_path or "",
                 expected_sha256=artifact_digests[artifact_kind],
+                dedupe_identity=True,
             )
     print_json({"status": "ok", "cycle_pk": cycle_pk, "worktree_snapshot_id": snapshot_id})
     return EXIT_SUCCESS
@@ -7480,17 +7667,24 @@ def ensure_contributor(
     include_pii: bool = False,
 ) -> int | None:
     ensure_contributor_privacy_columns(conn)
-    if not name and not email:
+    normalized_name = normalize_contributor_identity_value(name)
+    normalized_email = normalize_contributor_identity_value(email)
+    if not normalized_name and not normalized_email:
         return None
-    identity_hash = contributor_identity_hash(name, email)
+    identity_hash = contributor_identity_hash(normalized_name, normalized_email)
     row = conn.execute(
         "select contributor_id, identity_hash from contributors where identity_hash=?",
         (identity_hash,),
     ).fetchone()
     if not row:
         row = conn.execute(
-            "select contributor_id, identity_hash from contributors where name is ? and email is ?",
-            (name or None, email or None),
+            """
+            select contributor_id, identity_hash from contributors
+            where coalesce(name, '') = ? and coalesce(email, '') = ?
+            order by contributor_id asc
+            limit 1
+            """,
+            (normalized_name, normalized_email),
         ).fetchone()
     if row:
         contributor_id = int(row["contributor_id"])
@@ -7501,7 +7695,7 @@ def ensure_contributor(
                 set identity_hash=?, name=?, email=?, pii_included=1
                 where contributor_id=?
                 """,
-                (identity_hash, name or None, email or None, contributor_id),
+                (identity_hash, normalized_name or None, normalized_email or None, contributor_id),
             )
         elif not row["identity_hash"]:
             conn.execute(
@@ -7516,8 +7710,8 @@ def ensure_contributor(
     cur = conn.execute(
         "insert into contributors(name, email, identity_hash, pii_included) values (?, ?, ?, ?)",
         (
-            (name or None) if include_pii else None,
-            (email or None) if include_pii else None,
+            normalized_name or None if include_pii else None,
+            normalized_email or None if include_pii else None,
             identity_hash,
             1 if include_pii else 0,
         ),
@@ -7721,9 +7915,9 @@ def command_import_git(args: argparse.Namespace) -> int:
                     i += 1
                     if not path:
                         continue
-                canonical = old_path if status_code.startswith("R") and old_path else path
                 stored_path = stored_rel_path(path)
                 stored_old_path = stored_rel_path(old_path) if old_path else None
+                canonical = stored_old_path if status_code.startswith("C") and stored_old_path else stored_path
                 state = "deleted" if status_code.startswith("D") else ("renamed" if status_code.startswith("R") else "active")
                 if sha == head_sha:
                     file_id = ensure_file(
@@ -7743,21 +7937,10 @@ def command_import_git(args: argparse.Namespace) -> int:
                         canonical_path=canonical,
                         source_id=commit_source_id,
                     )
-                if status_code.startswith("R") and old_path:
-                    current_row = conn.execute(
-                        """
-                        select file_id
-                        from files
-                        where repo_id=? and current_path=?
-                        order by case when canonical_path <> ? then 0 else 1 end, file_id
-                        limit 1
-                        """,
-                        (repo_id, stored_path, stored_path),
-                    ).fetchone()
-                    if current_row:
-                        current_file_id = int(current_row["file_id"])
-                        if current_file_id != file_id:
-                            file_id = merge_file_lineage(conn, file_id, current_file_id)
+                if status_code.startswith("R") and stored_old_path:
+                    source_file_id = file_id_for_path(conn, repo_id, stored_old_path)
+                    if source_file_id is not None and source_file_id != file_id:
+                        file_id = merge_file_lineage(conn, source_file_id, file_id)
                 file_changes_seen += 1
                 cur = conn.execute(
                     """
@@ -8409,7 +8592,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
     context = repo_identity_context(root)
     output = validate_lattice_output_path(
         root,
-        args.output if args.output else db_path.parent / "exports" / f"lattice-export-{epoch_now()}.jsonl",
+        args.output if args.output else db_path.parent / "exports" / f"lattice-export-{artifact_now()}.jsonl",
         allow_existing=args.overwrite,
         journal_mode=args.journal_mode,
         db_path=db_path,
@@ -8872,7 +9055,7 @@ def create_backup(
         if not backup_dir.exists():
             backup_dir.mkdir(parents=True, exist_ok=True)
             chmod_private(backup_dir, is_dir=True, created_by_invocation=True)
-        backup_path = backup_dir / f"lattice-backup-{epoch_now()}.sqlite3"
+        backup_path = backup_dir / f"lattice-backup-{artifact_now()}.sqlite3"
     if not backup_path.parent.exists():
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         chmod_private(backup_path.parent, is_dir=True, created_by_invocation=True)
@@ -9087,7 +9270,7 @@ def command_recover(args: argparse.Namespace) -> int:
     sources = []
     backup_path = None
     if args.backup_first and preexisting_db:
-        backup_path = db_path.parent / "backups" / f"lattice-backup-{epoch_now()}.sqlite3"
+        backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -9192,7 +9375,7 @@ def command_recover(args: argparse.Namespace) -> int:
     if not recovery_dir.exists():
         recovery_dir.mkdir(parents=True, exist_ok=True)
         chmod_private(recovery_dir, is_dir=True, created_by_invocation=True)
-    report_path = recovery_dir / f"recovery-{epoch_now()}.json"
+    report_path = recovery_dir / f"recovery-{artifact_now()}.json"
     report = {"status": status, "sources": sources}
     report_path.write_text(json_dumps(report) + "\n", encoding="utf-8")
     chmod_private(report_path)
@@ -9488,8 +9671,10 @@ def query_changed_since_last_pass(conn: sqlite3.Connection, root: Path, repo_id:
         if file_id:
             latest_pass = conn.execute(
                 """
-                select max(created_epoch) from file_pass_runs
-                where repo_id=? and file_id=? and pass_code=? and outcome in ('clean','fixed','regression_found')
+                select max(coalesce(c.end_epoch, p.created_epoch))
+                from file_pass_runs p
+                left join cycles c on c.cycle_pk = p.cycle_pk
+                where p.repo_id=? and p.file_id=? and p.pass_code=? and p.outcome in ('clean','fixed','regression_found')
                 """,
                 (repo_id, file_id, pass_code),
             ).fetchone()[0]
@@ -9741,27 +9926,50 @@ def command_mark_regression(args: argparse.Namespace) -> int:
                 (repo_id, args.cycle_id),
             ).fetchone()
             cycle_pk = int(row["cycle_pk"]) if row else None
-        cur = conn.execute(
+        existing = conn.execute(
             """
-            insert into regression_events(repo_id, file_id, cycle_pk, marked_epoch, confidence, detector, reason, status, source_id)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            select regression_id
+            from regression_events
+            where repo_id=? and file_id=? and detector=? and reason=? and status=?
+            order by regression_id desc
+            limit 1
             """,
-            (repo_id, file_id, cycle_pk, epoch_now(), args.confidence, args.detector, args.reason, args.status, source_id),
-        )
-        regression_id = int(cur.lastrowid)
-        if args.cause_commit:
-            commit_row = conn.execute(
-                "select commit_id from git_commits where repo_id=? and sha=?",
-                (repo_id, args.cause_commit),
-            ).fetchone()
-            conn.execute(
+            (repo_id, file_id, args.detector, args.reason, args.status),
+        ).fetchone()
+        regression_created = existing is None
+        if regression_created:
+            cur = conn.execute(
                 """
-                insert into regression_causes(regression_id, suspected_cause_commit_id, cause_file_id, confidence, reason)
-                values (?, ?, ?, ?, ?)
+                insert into regression_events(repo_id, file_id, cycle_pk, marked_epoch, confidence, detector, reason, status, source_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (regression_id, int(commit_row["commit_id"]) if commit_row else None, file_id, args.confidence, args.reason),
+                (repo_id, file_id, cycle_pk, epoch_now(), args.confidence, args.detector, args.reason, args.status, source_id),
             )
-        record_file_event(conn, repo_id, "regression_marked", file_id=file_id, cycle_pk=cycle_pk, source_id=source_id, path=args.path, confidence=args.confidence)
+            regression_id = int(cur.lastrowid)
+            if args.cause_commit:
+                commit_row = conn.execute(
+                    "select commit_id from git_commits where repo_id=? and sha=?",
+                    (repo_id, args.cause_commit),
+                ).fetchone()
+                conn.execute(
+                    """
+                    insert into regression_causes(regression_id, suspected_cause_commit_id, cause_file_id, confidence, reason)
+                    values (?, ?, ?, ?, ?)
+                    """,
+                    (regression_id, int(commit_row["commit_id"]) if commit_row else None, file_id, args.confidence, args.reason),
+                )
+            record_file_event(
+                conn,
+                repo_id,
+                "regression_marked",
+                file_id=file_id,
+                cycle_pk=cycle_pk,
+                source_id=source_id,
+                path=args.path,
+                confidence=args.confidence,
+            )
+        else:
+            regression_id = int(existing["regression_id"])
     print_json({"status": "ok", "regression_id": regression_id})
     return EXIT_SUCCESS
 

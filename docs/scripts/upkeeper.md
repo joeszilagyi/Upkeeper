@@ -129,11 +129,35 @@ Important:
     column 2, and an operator-attention marker in column 3 for loose terminal
     watching. TTY output colors the block by marker: green `OK`, red blinking
     `PAGE`, white `INFO`, orange `--FYI--`, cyan `RUN`, magenta `ACTION`,
-    yellow `WAIT`/`HEALTH`, and blue `WORKER`. Loop logs keep the same block
-    and marker text without ANSI color for scripts and assistive tooling. Set
-    `BACKLOG_ALERT_COLOR=never` to disable terminal block color,
-    `BACKLOG_ALERT_COLOR=always` to force it, or `BACKLOG_ALERT_BLINK=0` to keep
-    `PAGE` red without blink.
+    yellow `WAIT`/`HEALTH`, and blue `WORKER`. `PAGE` and `--FYI--` also color
+    their timestamp and bold marker text; `PAGE` keeps blink off the timestamp.
+    Loop logs keep the same block and marker text without ANSI color for scripts
+    and assistive tooling. Set `BACKLOG_ALERT_COLOR=never` to disable terminal
+    block color, `BACKLOG_ALERT_COLOR=always` to force it, or
+    `BACKLOG_ALERT_BLINK=0` to keep `PAGE` red without blink.
+  - When a backlog invocation locks in its local job, it prints a local-only
+    green `##### ##### #####` summary block before backend work starts. The
+    block names the target file or selection mode, why this cycle is doing that
+    work, and the expected outcome. When the invocation finishes that job and is
+    about to return to the outer sleep/next invocation, it prints the matching
+    local-only block with the target, outcome, start time, end time, runtime, and
+    final disposition. Set `BACKLOG_JOB_SUMMARY=0` to disable these local
+    summary blocks.
+  - If an issue-targeted backlog pass exits successfully but leaves no tracked
+    changes, the launcher defers that issue for the current backlog branch before
+    returning to the outer loop. This keeps a no-op or already-addressed issue
+    from being selected repeatedly while preserving the open issue for a later
+    branch or manual close.
+  - Once a backlog PR has recorded fixes, the next invocation waits for that
+    PR's checks before selecting another issue. Passing checks allow the next
+    issue, pending checks keep the local owner lease alive, and failed checks
+    stop the launcher before more work stacks on a red branch. Set
+    `BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE=0` only for an intentional manual
+    override.
+  - Light per-bug validation still avoids the full batch suite, but it now
+    compiles changed Python files before commit. Lattice issue fixes that touch
+    `tools/upkeeper_lattice.py` also run `tests/lattice_test.bash` before the
+    fix is recorded.
   - Before backlog issue work starts, the launcher autoshelves dirty local work
     to a private `wip/backlog-autoshelve/*` branch. Ordinary dirty files stay
     shelved while the loop continues from a clean branch. If the dirty set
@@ -862,6 +886,9 @@ prompts, backup log lines, or Lattice preselect evidence.
 - A repo-level active lock at `runtime/upkeeper-active.lock` prevents two
   Upkeeper loops from running the same checkout concurrently; stale locks are
   reclaimed only when the recorded PID/start fingerprint no longer matches.
+  Custom `CODEX_ACTIVE_LOCK_DIR` values must stay under the checkout's
+  `runtime/` tree and carry Upkeeper's ownership marker before stale cleanup can
+  remove lock contents.
 - A shared central-wrapper health state under `$CODEX_HOME/upkeeper/` is keyed
   by resolved wrapper path and wrapper blob hash. If a prior same-code run is
   stale, wedged, or ambiguous, later client starts fail closed before normal

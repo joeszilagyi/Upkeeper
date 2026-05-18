@@ -17,6 +17,7 @@ BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-xhigh}"
 BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
 BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-0}"
 BACKLOG_PR_CHECK_INTERVAL_SECONDS="${BACKLOG_PR_CHECK_INTERVAL_SECONDS:-60}"
+BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE="${BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE:-1}"
 BACKLOG_PER_BUG_VALIDATION_MODE="${BACKLOG_PER_BUG_VALIDATION_MODE:-light}"
 BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"
 BACKLOG_AUTOSHELVE_BRANCH_PREFIX="${BACKLOG_AUTOSHELVE_BRANCH_PREFIX:-wip/backlog-autoshelve/}"
@@ -37,12 +38,23 @@ BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"
 BACKLOG_ALERT_COLOR="${BACKLOG_ALERT_COLOR:-auto}"
 BACKLOG_ALERT_BLINK="${BACKLOG_ALERT_BLINK:-1}"
 BACKLOG_VISUAL_BLOCK="${BACKLOG_VISUAL_BLOCK:-█}"
+BACKLOG_JOB_SUMMARY="${BACKLOG_JOB_SUMMARY:-1}"
+BACKLOG_JOB_SUMMARY_BAR="${BACKLOG_JOB_SUMMARY_BAR:-##### ##### #####}"
+BACKLOG_JOB_SUMMARY_SENTINEL_PREFIX="__UPKEEPER_BACKLOG_JOB_SUMMARY__:"
+BACKLOG_JOB_SUMMARY_BLANK_SENTINEL="${BACKLOG_JOB_SUMMARY_SENTINEL_PREFIX}blank"
+BACKLOG_JOB_SUMMARY_BAR_SENTINEL="${BACKLOG_JOB_SUMMARY_SENTINEL_PREFIX}bar"
+BACKLOG_JOB_SUMMARY_LINE_SENTINEL="${BACKLOG_JOB_SUMMARY_SENTINEL_PREFIX}line:"
 BACKLOG_OWNER_HEARTBEAT_INTERVAL_SECONDS="${BACKLOG_OWNER_HEARTBEAT_INTERVAL_SECONDS:-120}"
 BACKLOG_OWNER_HEARTBEAT_STALE_SECONDS="${BACKLOG_OWNER_HEARTBEAT_STALE_SECONDS:-300}"
 BACKLOG_OWNER_CLAIM_LOCK_STALE_SECONDS="${BACKLOG_OWNER_CLAIM_LOCK_STALE_SECONDS:-30}"
 BACKLOG_ACTIVE_OWNER_START_TICKS=""
 BACKLOG_OWNER_HEARTBEAT_PID=""
 BACKLOG_PR_CHECKS_LAST_OUTPUT=""
+BACKLOG_JOB_START_EPOCH=""
+BACKLOG_JOB_START_TIME=""
+BACKLOG_JOB_TARGET=""
+BACKLOG_JOB_REASON=""
+BACKLOG_JOB_EXPECTED=""
 BACKLOG_WATCH_CHILD_PID=""
 BACKLOG_WATCH_FORMATTER_PID=""
 BACKLOG_WATCH_FIFO=""
@@ -258,7 +270,21 @@ backlog_alert_color_enabled() {
 
 backlog_color_attention_line() {
   local line="$1"
-  local ts rest marker payload color reset
+  local ts rest marker payload reset
+  local timestamp_style block_style marker_style ts_text block_text marker_field marker_text
+
+  if [[ "$line" == "$BACKLOG_JOB_SUMMARY_BAR" ]]; then
+    if backlog_alert_color_enabled; then
+      if [[ "$BACKLOG_ALERT_BLINK" == "1" ]]; then
+        printf '%s%s%s\n' $'\033[5;1;32m' "$line" $'\033[0m'
+      else
+        printf '%s%s%s\n' $'\033[1;32m' "$line" $'\033[0m'
+      fi
+    else
+      printf '%s\n' "$line"
+    fi
+    return 0
+  fi
 
   if ! backlog_alert_color_enabled || ! backlog_line_has_attention_marker "$line"; then
     printf '%s\n' "$line"
@@ -268,41 +294,61 @@ backlog_color_attention_line() {
   ts="${line%% *}"
   rest="${line#* }"
   IFS=$'\t' read -r marker payload < <(backlog_attention_marker_payload "$rest")
+  timestamp_style=""
+  block_style=""
+  marker_style=""
   case "$marker" in
     PAGE)
+      timestamp_style=$'\033[31m'
       if [[ "$BACKLOG_ALERT_BLINK" == "1" ]]; then
-        color=$'\033[5;1;31m'
+        block_style=$'\033[5;1;31m'
       else
-        color=$'\033[1;31m'
+        block_style=$'\033[1;31m'
       fi
+      marker_style="$block_style"
       ;;
     OK)
-      color=$'\033[1;32m'
+      block_style=$'\033[1;32m'
       ;;
     INFO)
-      color=$'\033[37m'
+      block_style=$'\033[37m'
       ;;
     --FYI--)
-      color=$'\033[1;38;5;208m'
+      timestamp_style=$'\033[38;5;208m'
+      block_style=$'\033[1;38;5;208m'
+      marker_style="$block_style"
       ;;
     RUN)
-      color=$'\033[1;36m'
+      block_style=$'\033[1;36m'
       ;;
     ACTION)
-      color=$'\033[1;35m'
+      block_style=$'\033[1;35m'
       ;;
     WAIT|HEALTH)
-      color=$'\033[1;33m'
+      block_style=$'\033[1;33m'
       ;;
     WORKER)
-      color=$'\033[1;34m'
+      block_style=$'\033[1;34m'
       ;;
   esac
   reset=$'\033[0m'
+  ts_text="$ts"
+  block_text="$BACKLOG_VISUAL_BLOCK"
+  printf -v marker_field '%-7s' "$marker"
+  marker_text="$marker_field"
+  if [[ -n "$timestamp_style" ]]; then
+    ts_text="${timestamp_style}${ts}${reset}"
+  fi
+  if [[ -n "$block_style" ]]; then
+    block_text="${block_style}${BACKLOG_VISUAL_BLOCK}${reset}"
+  fi
+  if [[ -n "$marker_style" ]]; then
+    marker_text="${marker_style}${marker_field}${reset}"
+  fi
   if [[ -n "$payload" ]]; then
-    printf '%s %s%s%s %-7s %s\n' "$ts" "$color" "$BACKLOG_VISUAL_BLOCK" "$reset" "$marker" "$payload"
+    printf '%s %s %s %s\n' "$ts_text" "$block_text" "$marker_text" "$payload"
   else
-    printf '%s %s%s%s %-7s\n' "$ts" "$color" "$BACKLOG_VISUAL_BLOCK" "$reset" "$marker"
+    printf '%s %s %s\n' "$ts_text" "$block_text" "$marker_text"
   fi
 }
 
@@ -318,6 +364,20 @@ backlog_timestamp_stream() {
   local line
 
   while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+      "$BACKLOG_JOB_SUMMARY_BLANK_SENTINEL")
+        printf '\n'
+        continue
+        ;;
+      "$BACKLOG_JOB_SUMMARY_BAR_SENTINEL")
+        printf '%s\n' "$BACKLOG_JOB_SUMMARY_BAR"
+        continue
+        ;;
+      "$BACKLOG_JOB_SUMMARY_LINE_SENTINEL"*)
+        printf '%s\n' "${line#"$BACKLOG_JOB_SUMMARY_LINE_SENTINEL"}"
+        continue
+        ;;
+    esac
     backlog_format_attention_line "$line"
   done
 }
@@ -418,6 +478,106 @@ fail() {
 
 backlog_notice() {
   backlog_color_attention_line "$(backlog_format_attention_line "$(backlog_timestamp) # backlog: $*")" >&2
+}
+
+backlog_summary_use_sentinel_stream() {
+  [[ "$BACKLOG_STDIO_WATCHED" == "1" || "$BACKLOG_STDIO_AUTODETACHED" == "1" ]]
+}
+
+backlog_job_summary_blank_line() {
+  if backlog_summary_use_sentinel_stream; then
+    printf '%s\n' "$BACKLOG_JOB_SUMMARY_BLANK_SENTINEL" >&2
+  else
+    printf '\n' >&2
+  fi
+}
+
+backlog_job_summary_bar_line() {
+  if backlog_summary_use_sentinel_stream; then
+    printf '%s\n' "$BACKLOG_JOB_SUMMARY_BAR_SENTINEL" >&2
+  else
+    backlog_color_attention_line "$BACKLOG_JOB_SUMMARY_BAR" >&2
+  fi
+}
+
+backlog_job_summary_text_line() {
+  local message="$1"
+
+  if backlog_summary_use_sentinel_stream; then
+    printf '%s%s %s\n' "$BACKLOG_JOB_SUMMARY_LINE_SENTINEL" "$(backlog_timestamp)" "$message" >&2
+  else
+    printf '%s %s\n' "$(backlog_timestamp)" "$message" >&2
+  fi
+}
+
+backlog_job_summary_spacer() {
+  local i
+
+  for i in 1 2 3 4 5 6; do
+    backlog_job_summary_blank_line
+  done
+}
+
+backlog_job_summary_enabled() {
+  case "${BACKLOG_JOB_SUMMARY,,}" in
+    never|0|no|false|off)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+backlog_emit_job_start_summary() {
+  local target="$1"
+  local reason="$2"
+  local expected="$3"
+
+  backlog_job_summary_enabled || return 0
+  BACKLOG_JOB_START_EPOCH="$(backlog_now_epoch 2>/dev/null || date '+%s')"
+  BACKLOG_JOB_START_TIME="$(backlog_timestamp)"
+  BACKLOG_JOB_TARGET="$target"
+  BACKLOG_JOB_REASON="$reason"
+  BACKLOG_JOB_EXPECTED="$expected"
+
+  backlog_job_summary_spacer
+  backlog_job_summary_bar_line
+  backlog_job_summary_blank_line
+  backlog_job_summary_text_line "file being worked: $target"
+  backlog_job_summary_text_line "why: $reason"
+  backlog_job_summary_text_line "expected outcome: $expected"
+  backlog_job_summary_blank_line
+  backlog_job_summary_bar_line
+  backlog_job_summary_spacer
+}
+
+backlog_emit_job_finish_summary() {
+  local outcome="$1"
+  local disposition="$2"
+  local end_epoch end_time runtime
+
+  backlog_job_summary_enabled || return 0
+  end_epoch="$(backlog_now_epoch 2>/dev/null || date '+%s')"
+  end_time="$(backlog_timestamp)"
+  if backlog_nonnegative_integer "${BACKLOG_JOB_START_EPOCH:-}" && [[ "$end_epoch" -ge "$BACKLOG_JOB_START_EPOCH" ]]; then
+    runtime="$((end_epoch - BACKLOG_JOB_START_EPOCH))s"
+  else
+    runtime="unknown"
+  fi
+
+  backlog_job_summary_spacer
+  backlog_job_summary_bar_line
+  backlog_job_summary_blank_line
+  backlog_job_summary_text_line "file worked: ${BACKLOG_JOB_TARGET:-unknown}"
+  backlog_job_summary_text_line "outcome/results: $outcome"
+  backlog_job_summary_text_line "start time: ${BACKLOG_JOB_START_TIME:-unknown}"
+  backlog_job_summary_text_line "end time: $end_time"
+  backlog_job_summary_text_line "run time: $runtime"
+  backlog_job_summary_text_line "final disposition: $disposition"
+  backlog_job_summary_blank_line
+  backlog_job_summary_bar_line
+  backlog_job_summary_spacer
 }
 
 require_command() {
@@ -1475,7 +1635,7 @@ target_hint_for_issue() {
 
 run_upkeeper_for_one_target() {
   local issue_number="${1:-}"
-  local target_hint=""
+  local target_hint="${2:-}"
   local upkeeper_args=()
   local upkeeper_status=0
 
@@ -1485,7 +1645,6 @@ run_upkeeper_for_one_target() {
     if [[ "$BACKLOG_IGNORE_FAILURE_QUEUE" == "1" ]]; then
       upkeeper_args+=(--ignore-failure-queue)
     fi
-    target_hint="$(target_hint_for_issue "$issue_number")"
     if [[ -n "$target_hint" ]]; then
       upkeeper_args+=(--target-file="$target_hint")
     fi
@@ -1511,7 +1670,45 @@ has_worktree_changes() {
   [[ -n "$(git status --short)" ]]
 }
 
+backlog_git_path_changed() {
+  local path="$1"
+
+  git diff --name-only --diff-filter=ACMR -- "$path" | grep -Fxq "$path"
+}
+
+run_changed_python_compile_validation() {
+  local -a python_files=()
+  local python_file
+
+  while IFS= read -r -d '' python_file; do
+    [[ -n "$python_file" ]] || continue
+    python_files+=("$python_file")
+  done < <(git diff --name-only -z --diff-filter=ACMR -- '*.py')
+
+  [[ "${#python_files[@]}" -gt 0 ]] || return 0
+  require_command python3
+  log "per-bug validation: python compile (${#python_files[@]} changed file(s))"
+  python3 -m py_compile "${python_files[@]}"
+}
+
+run_focused_issue_validation() {
+  local issue_number="${1:-}"
+  local target_hint="${2:-}"
+
+  [[ -n "$issue_number" ]] || return 0
+  if [[ "$target_hint" == "tools/upkeeper_lattice.py" ]] || backlog_git_path_changed "tools/upkeeper_lattice.py"; then
+    if backlog_git_path_changed "tools/upkeeper_lattice.py"; then
+      require_command python3
+      log "per-bug validation: lattice focused coverage (tests/lattice_test.bash)"
+      python3 -m py_compile tools/upkeeper_lattice.py
+      bash tests/lattice_test.bash
+    fi
+  fi
+}
+
 run_per_bug_validation() {
+  local issue_number="${1:-}"
+  local target_hint="${2:-}"
   local validation_start
 
   [[ "${BACKLOG_SKIP_LOCAL_VALIDATION:-0}" == "1" ]] && return 0
@@ -1520,6 +1717,8 @@ run_per_bug_validation() {
   backlog_update_active_owner_heartbeat "validating" "per_bug_validation" "" "owner_pid_start_cwd_verified"
   log "per-bug validation: bash syntax"
   bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh
+  run_changed_python_compile_validation
+  run_focused_issue_validation "$issue_number" "$target_hint"
   log "per-bug validation: diff whitespace"
   git diff --check
   log "per-bug validation: complete in $((SECONDS - validation_start))s"
@@ -1550,6 +1749,7 @@ run_batch_validation() {
 commit_and_push_changes() {
   local issue_number="${1:-}"
   local commit_message="${2:-}"
+  local target_hint="${3:-}"
   local message
 
   cleanup_ephemeral_artifacts
@@ -1559,7 +1759,7 @@ commit_and_push_changes() {
       log "per-bug validation: skipped by BACKLOG_PER_BUG_VALIDATION_MODE=none"
       ;;
     light)
-      run_per_bug_validation
+      run_per_bug_validation "$issue_number" "$target_hint"
       ;;
     full)
       run_batch_validation
@@ -1683,6 +1883,28 @@ backlog_pr_checks_once() {
   return 1
 }
 
+backlog_ensure_pr_checks_allow_next_issue() {
+  local pr_number="$1"
+  local count="$2"
+  local status
+
+  [[ "$BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE" == "1" ]] || return 0
+  [[ "$count" -gt 0 ]] || return 0
+
+  log "checking PR #$pr_number checks before selecting another issue"
+  if wait_for_pr_checks "$pr_number"; then
+    return 0
+  else
+    status="$?"
+  fi
+  if [[ "$status" -eq 2 ]]; then
+    log "PR #$pr_number checks are still pending; no new issue selected this cycle"
+    return 2
+  fi
+  log "PR #$pr_number checks failed; stopping before selecting another issue"
+  return "$status"
+}
+
 merge_and_clean() {
   local pr_number="$1"
   local branch="$2"
@@ -1706,7 +1928,9 @@ merge_and_clean() {
 }
 
 main() {
-  local pr_info pr_number branch issue_info issue_number count run_status
+  local pr_info pr_number branch issue_info issue_number issue_title target_hint count run_status
+  local job_target job_reason job_expected commit_result final_disposition status
+  local issue_deferred_after_noop
 
   redirect_interactive_stdio "$@"
   claim_backlog_active_owner_or_exit
@@ -1733,12 +1957,31 @@ main() {
   count="$(fix_count "$pr_number")"
   if [[ "$count" -ge "$BACKLOG_BATCH_LIMIT" ]]; then
     log "PR #$pr_number has $count recorded fixes; merging batch"
-    merge_and_clean "$pr_number" "$branch" || {
-      local status="$?"
+    backlog_emit_job_start_summary \
+      "PR #$pr_number batch merge" \
+      "batch limit reached with $count recorded fixes on $branch" \
+      "run local batch validation, wait for PR checks, merge, and clean local main"
+    if merge_and_clean "$pr_number" "$branch"; then
+      backlog_emit_job_finish_summary \
+        "batch validation, PR checks, and merge completed" \
+        "merged PR #$pr_number and returned to clean main"
+    else
+      status="$?"
+      backlog_emit_job_finish_summary \
+        "batch merge path stopped with status $status" \
+        "launcher exiting with status $status"
       [[ "$status" -eq 2 ]] && exit 0
       exit "$status"
-    }
+    fi
     exit 0
+  fi
+
+  if backlog_ensure_pr_checks_allow_next_issue "$pr_number" "$count"; then
+    :
+  else
+    status="$?"
+    [[ "$status" -eq 2 ]] && exit 0
+    exit "$status"
   fi
 
   if quota_preflight_allows_backlog_run; then
@@ -1753,44 +1996,84 @@ main() {
 
   issue_info="$(selected_issue "$pr_number")"
   issue_number="$(awk -F '\t' '{print $1}' <<<"$issue_info")"
+  issue_title="$(awk -F '\t' '{print $2}' <<<"$issue_info")"
+  target_hint="$(target_hint_for_issue "$issue_number")"
+  issue_deferred_after_noop=0
+  if [[ -n "$issue_number" ]]; then
+    job_target="${target_hint:-wrapper-inferred target for issue #$issue_number}"
+    job_reason="issue #$issue_number${issue_title:+: $issue_title}"
+    job_expected="fix issue #$issue_number, validate locally, commit and push tracked changes"
+  else
+    job_target="wrapper-selected newest eligible file"
+    job_reason="no eligible backlog issue found"
+    job_expected="run a normal newest-file Upkeeper pass and commit tracked changes if produced"
+  fi
+  backlog_emit_job_start_summary "$job_target" "$job_reason" "$job_expected"
 
-  if run_upkeeper_for_one_target "$issue_number"; then
+  if run_upkeeper_for_one_target "$issue_number" "$target_hint"; then
     run_status=0
   else
     run_status="$?"
   fi
 
   if [[ "$run_status" -eq 2 ]]; then
+    commit_result="blocked with no partial tracked changes"
     if has_worktree_changes; then
-      if commit_and_push_changes "" "Preserve partial backlog work for issue #$issue_number"; then
+      if commit_and_push_changes "" "Preserve partial backlog work for issue #$issue_number" "$target_hint"; then
         log "preserved partial work for blocked issue #$issue_number"
+        commit_result="blocked; partial work committed and pushed"
+      else
+        commit_result="blocked; partial work present but no commit was produced"
       fi
     fi
     defer_issue "$issue_number"
     log "deferred blocked issue #$issue_number for this backlog branch"
+    backlog_emit_job_finish_summary "$commit_result" "deferred issue #$issue_number for this backlog branch"
     exit 0
   elif [[ "$run_status" -ne 0 ]]; then
+    backlog_emit_job_finish_summary "Upkeeper exited with status $run_status" "launcher exiting with status $run_status"
     exit "$run_status"
   fi
 
-  if commit_and_push_changes "$issue_number"; then
+  if commit_and_push_changes "$issue_number" "" "$target_hint"; then
+    commit_result="tracked changes committed and pushed"
     if [[ -n "$issue_number" ]]; then
       append_pr_fix_line "$pr_number" "$issue_number"
     fi
   else
     log "Upkeeper produced no tracked changes"
+    commit_result="no tracked changes produced"
+    if [[ -n "$issue_number" ]]; then
+      defer_issue "$issue_number"
+      log "deferred no-change issue #$issue_number for this backlog branch"
+      commit_result="no tracked changes produced; deferred issue #$issue_number for this backlog branch"
+      issue_deferred_after_noop=1
+    fi
   fi
 
   count="$(fix_count "$pr_number")"
   if [[ "$count" -ge "$BACKLOG_BATCH_LIMIT" ]]; then
     log "PR #$pr_number reached $count fixes; merging batch"
-    merge_and_clean "$pr_number" "$branch" || {
-      local status="$?"
+    if merge_and_clean "$pr_number" "$branch"; then
+      backlog_emit_job_finish_summary \
+        "$commit_result; batch validation, PR checks, and merge completed" \
+        "merged PR #$pr_number and returned to clean main"
+    else
+      status="$?"
+      backlog_emit_job_finish_summary \
+        "$commit_result; merge path stopped with status $status" \
+        "launcher exiting with status $status"
       [[ "$status" -eq 2 ]] && exit 0
       exit "$status"
-    }
+    fi
   else
     log "PR #$pr_number now has $count/$BACKLOG_BATCH_LIMIT recorded fixes"
+    if [[ "$issue_deferred_after_noop" == "1" ]]; then
+      final_disposition="deferred issue #$issue_number after no tracked changes; PR #$pr_number has $count/$BACKLOG_BATCH_LIMIT recorded fixes; outer loop may sleep before next invocation"
+    else
+      final_disposition="PR #$pr_number has $count/$BACKLOG_BATCH_LIMIT recorded fixes; outer loop may sleep before next invocation"
+    fi
+    backlog_emit_job_finish_summary "$commit_result" "$final_disposition"
   fi
 }
 

@@ -759,6 +759,45 @@ PY
   set -e
   [[ "$row_version_rc" -eq 8 ]] || fail "row-version mismatch JSONL import exited $row_version_rc, expected 8"
 
+  python3 - "$DB" "$TEST_TMP_ROOT/injected-bad-hash.jsonl" <<'PY'
+import json
+import sqlite3
+import sys
+import time
+
+db_path, out = sys.argv[1:3]
+conn = sqlite3.connect(db_path)
+repo_id = conn.execute("select repo_id from repositories order by repo_id asc limit 1").fetchone()[0]
+base = int(time.time())
+payload = {
+  "repo_id": repo_id,
+  "canonical_path": "bad-hash-new-row.txt",
+  "current_path": "bad-hash-new-row.txt",
+  "current_state": "active",
+  "first_seen_epoch": base,
+  "last_seen_epoch": base,
+}
+row = {
+  "schema_version": 1,
+  "row_type": "files",
+  "row_version": 1,
+  "logical_key": "files:bad-hash-new-row.txt",
+  "source_identity": {"db_path_hash": "integration"},
+  "repo_identity": {"repo_id": repo_id, "root_path": "/tmp"},
+  "payload": payload,
+  "payload_sha256": "bad-hash",
+  "exported_epoch": base,
+}
+with open(out, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
+PY
+  set +e
+  lattice import-jsonl "$TEST_TMP_ROOT/injected-bad-hash.jsonl" >"$TEST_TMP_ROOT/injected-bad-hash.out" 2>"$TEST_TMP_ROOT/injected-bad-hash.err"
+  local bad_hash_rc=$?
+  set -e
+  [[ "$bad_hash_rc" -eq 8 ]] || fail "bad-hash new-row JSONL import exited $bad_hash_rc, expected 8"
+  assert_sql_value "0" "select count(*) from files where canonical_path='bad-hash-new-row.txt'"
+
   python3 - "$DB" "$TEST_TMP_ROOT/injected-redacted.jsonl" <<'PY'
 import hashlib
 import json

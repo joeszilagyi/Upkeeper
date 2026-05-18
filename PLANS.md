@@ -3,6 +3,45 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Backlog Live Output Attention Emphasis
+
+Status: completed locally
+
+Goal:
+- make interactive backlog `PAGE` lines visually harder to miss by coloring the
+  timestamp red, and coloring/blinking both the block and `PAGE` marker text
+- make interactive backlog `--FYI--` lines color the timestamp orange and color
+  the marker text bold orange
+- add local-only green job start/finish summary blocks so operators can see
+  what the current cycle is doing and how it ended without model involvement
+- defer issue-targeted no-change cycles locally so already-addressed issues do
+  not repeat forever on the same backlog branch
+- keep loop logs and non-color output free of ANSI sequences for scripts and
+  assistive tooling
+
+Constraints:
+- preserve `BACKLOG_ALERT_COLOR` and `BACKLOG_ALERT_BLINK`
+- keep blink off timestamps
+- keep green job summaries deterministic and local to the launcher
+- preserve open GitHub issues when a no-change cycle is only branch-local
+  evidence
+- keep the existing visual block and marker taxonomy
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n orchestration/backlog.sh tools/validate_upkeeper.sh lib/upkeeper/help_selection.bash`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Lattice Redacted JSONL Import Guard
 
 Status: completed locally
@@ -3003,3 +3042,47 @@ Validation:
 - `tools/validate_upkeeper.sh --full`
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
+
+## Backlog Quality Gates
+
+Status: in progress
+
+Goal:
+- prevent the backlog launcher from stacking new issue work while the current
+  backlog PR is red or still unvalidated
+- catch Python syntax regressions during per-bug validation instead of waiting
+  for batch CI
+- give Lattice issue fixes a focused local coverage gate before recording them
+  as completed fixes
+- make documented unit-test commands fail fast so an earlier failing test cannot
+  be masked by later passing commands
+- reconcile the issue #166 active-lock hardening with local full-validation
+  fixtures so safe dry-runs use repo-runtime lock paths and release their
+  ownership markers
+
+Constraints:
+- do not launch real backend Codex during validation
+- preserve the existing light/full validation mode split while making the light
+  path catch cheap deterministic regressions
+- keep the default unattended path conservative, with explicit environment
+  overrides only for manual operator intervention
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `.github/workflows/ci.yml`
+- `lib/upkeeper/active_lock.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `lib/upkeeper/help_selection.bash`
+- `docs/dependencies.md`
+- `docs/release-checklist.md`
+- `AGENTS.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`

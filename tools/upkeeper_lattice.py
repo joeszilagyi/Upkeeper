@@ -6516,11 +6516,20 @@ def create_artifact_ref(
     path: str,
     expected_sha256: str | None = None,
     dedupe_identity: bool = False,
+    allow_outside_scope: bool = False,
     details: Any = None,
 ) -> None:
     if not path:
         return
-    p = canonical_artifact_path(root, path, artifact_kind)
+    if allow_outside_scope:
+        candidate = Path(path).expanduser()
+        if candidate.is_absolute():
+            p = candidate.absolute()
+        else:
+            p = (Path.cwd() / candidate).absolute()
+        p = Path(os.path.normpath(str(p)))
+    else:
+        p = canonical_artifact_path(root, path, artifact_kind)
     stored_path = artifact_storage_path(root, str(p))
     stored_details = artifact_details_payload(artifact_kind, details)
     expected_digest = normalize_hex_sha256(expected_sha256)
@@ -8917,6 +8926,25 @@ def safe_recovery_root(root: Path, raw: Path) -> Path | None:
     return normalized
 
 
+def recovery_root_from_env(root: Path, raw: Path) -> tuple[Path, bool] | None:
+    normalized = safe_recovery_root(root, raw)
+    if normalized:
+        return normalized, True
+    candidate = raw.expanduser()
+    if candidate.is_absolute():
+        candidate = candidate.absolute()
+    else:
+        candidate = (Path.cwd() / candidate).absolute()
+    candidate = Path(os.path.normpath(str(candidate)))
+    try:
+        entry = candidate.lstat()
+    except OSError:
+        return None
+    if not stat.S_ISDIR(entry.st_mode) or stat.S_ISLNK(entry.st_mode):
+        return None
+    return candidate, False
+
+
 def recover_artifact_refs(
     root: Path,
     db_path: Path,
@@ -8946,9 +8974,26 @@ def recover_artifact_refs(
         for env_name in ("CODEX_WRAPPER_HEALTH_STATE_DIR", "CODEX_WRAPPER_HEALTH_ARCHIVE_DIR"):
             configured = os.environ.get(env_name)
             if configured:
-                candidate = safe_recovery_root(root, Path(configured))
-                if candidate:
-                    artifact_roots.append(("wrapper_health_state", candidate))
+                resolved = recovery_root_from_env(root, Path(configured))
+                if not resolved:
+                    continue
+                artifact_root, can_scan = resolved
+                if can_scan:
+                    artifact_roots.append(("wrapper_health_state", artifact_root))
+                else:
+                    create_artifact_ref(
+                        conn,
+                        root,
+                        repo_id,
+                        cycle_pk=None,
+                        source_id=source_id,
+                        artifact_kind="wrapper_health_state",
+                        path=str(artifact_root),
+                        dedupe_identity=True,
+                        allow_outside_scope=True,
+                        details={"recovery_scan_scope": "configured_root_presence"},
+                    )
+                    recorded.append(f"wrapper_health_state:{artifact_retention_class('wrapper_health_state')}:1")
         for artifact_kind, artifact_root in artifact_roots:
             count = record_recovery_artifact_tree(conn, root, repo_id, source_id, artifact_kind, artifact_root)
             if count:

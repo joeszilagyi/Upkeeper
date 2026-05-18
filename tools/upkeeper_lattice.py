@@ -3530,11 +3530,13 @@ def ensure_file(
             select f.file_id
             from file_paths p
             join files f on f.file_id=p.file_id
-            where f.repo_id=? and p.path=?
+            where f.repo_id=?
+              and p.path=?
+              and (f.current_path=? or f.canonical_path=?)
             order by f.last_seen_epoch desc, f.file_id
             limit 1
             """,
-            (repo_id, path),
+            (repo_id, path, path, path),
         ).fetchone()
     if not row and prefer_historical_match and canonical == path:
         row = conn.execute(
@@ -3603,11 +3605,13 @@ def ensure_file_historical_only(
             select f.file_id
             from file_paths p
             join files f on f.file_id=p.file_id
-            where f.repo_id=? and p.path=?
+            where f.repo_id=?
+              and p.path=?
+              and (f.current_path=? or f.canonical_path=?)
             order by f.last_seen_epoch desc, f.file_id
             limit 1
             """,
-            (repo_id, path),
+            (repo_id, path, path, path),
         ).fetchone()
     if row:
         file_id = int(row["file_id"])
@@ -3787,10 +3791,11 @@ def file_id_for_path(conn: sqlite3.Connection, repo_id: int, path: str) -> int |
         from file_paths p
         join files f on f.file_id=p.file_id
         where f.repo_id=? and p.path=?
+        and (f.current_path=? or f.canonical_path=?)
         order by case when f.current_path=? then 0 else 1 end, f.last_seen_epoch desc, f.file_id
         limit 1
         """,
-        (repo_id, path, path),
+        (repo_id, path, path, path, path),
     ).fetchone()
     return int(row["file_id"]) if row else None
 
@@ -7898,9 +7903,9 @@ def command_import_git(args: argparse.Namespace) -> int:
                     i += 1
                     if not path:
                         continue
-                canonical = old_path if status_code.startswith("R") and old_path else path
                 stored_path = stored_rel_path(path)
                 stored_old_path = stored_rel_path(old_path) if old_path else None
+                canonical = stored_old_path if status_code.startswith("C") and stored_old_path else stored_path
                 state = "deleted" if status_code.startswith("D") else ("renamed" if status_code.startswith("R") else "active")
                 if sha == head_sha:
                     file_id = ensure_file(
@@ -7920,21 +7925,10 @@ def command_import_git(args: argparse.Namespace) -> int:
                         canonical_path=canonical,
                         source_id=commit_source_id,
                     )
-                if status_code.startswith("R") and old_path:
-                    current_row = conn.execute(
-                        """
-                        select file_id
-                        from files
-                        where repo_id=? and current_path=?
-                        order by case when canonical_path <> ? then 0 else 1 end, file_id
-                        limit 1
-                        """,
-                        (repo_id, stored_path, stored_path),
-                    ).fetchone()
-                    if current_row:
-                        current_file_id = int(current_row["file_id"])
-                        if current_file_id != file_id:
-                            file_id = merge_file_lineage(conn, file_id, current_file_id)
+                if status_code.startswith("R") and stored_old_path:
+                    source_file_id = file_id_for_path(conn, repo_id, stored_old_path)
+                    if source_file_id is not None and source_file_id != file_id:
+                        file_id = merge_file_lineage(conn, source_file_id, file_id)
                 file_changes_seen += 1
                 cur = conn.execute(
                     """

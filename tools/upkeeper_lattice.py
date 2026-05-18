@@ -5000,7 +5000,9 @@ def record_cycle_link_from_env(conn: sqlite3.Connection, repo_id: int, cycle_pk:
             (repo_id, parent_cycle_id),
         ).fetchone()
         parent_pk = int(row["cycle_pk"]) if row else None
-    child_pk = cycle_pk
+    child_pk: int | None = None
+    if child_cycle_id and str(child_cycle_id) == str(args.cycle_id):
+        child_pk = cycle_pk
     conn.execute(
         """
         insert into cycle_links(

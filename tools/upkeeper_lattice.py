@@ -3868,6 +3868,24 @@ def ensure_file_historical_only(
     return file_id
 
 
+def ensure_file_identity(
+    conn: sqlite3.Connection,
+    repo_id: int,
+    path: str,
+    *,
+    canonical_path: str | None = None,
+    source_id: int | None = None,
+) -> int:
+    """Resolve a file identity without updating current lifecycle state."""
+    return ensure_file_historical_only(
+        conn,
+        repo_id,
+        path,
+        canonical_path=canonical_path,
+        source_id=source_id,
+    )
+
+
 def merge_file_lineage(
     conn: sqlite3.Connection,
     source_file_id: int,
@@ -7410,7 +7428,7 @@ def record_one_pass_result(
     attributes: dict[str, Any] | None = None,
 ) -> int:
     pass_id = ensure_pass(conn, pass_code)
-    file_id = ensure_file(conn, repo_id, path, source_id=source_id)
+    file_id = ensure_file_identity(conn, repo_id, path, source_id=source_id)
     attempted = 1 if outcome not in {"planned", "unknown"} else 0
     resolved_planned = 1 if (planned is not None and bool(planned)) or (planned is None and outcome == "planned") else 0
     cur = conn.execute(
@@ -8584,7 +8602,7 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                     if "/" not in normalized_ref and normalized_ref not in {"Upkeeper", "README.md", "AGENTS.md"}:
                         continue
                     try:
-                        file_id = ensure_file(conn, repo_id, normalized_ref, source_id=source_id)
+                        file_id = ensure_file_identity(conn, repo_id, normalized_ref, source_id=source_id)
                     except ValueError:
                         continue
                     existing_ref = conn.execute(
@@ -9695,7 +9713,7 @@ def import_failure_markers(
             last_seen_epoch = int(data.get("last_seen_epoch") or 0) or None
             resolved_epoch = int(data.get("resolved_epoch") or 0) or None
             failure_count = int(data.get("failure_count") or 0) or None
-            file_id = ensure_file(conn, repo_id, target)
+            file_id = ensure_file_identity(conn, repo_id, target)
             source_id = ensure_source_record(
                 conn,
                 root,
@@ -10247,7 +10265,7 @@ def command_mark_regression(args: argparse.Namespace) -> int:
             parsed=vars(args),
             raw_storage_mode=raw_storage_mode,
         )
-        file_id = ensure_file(conn, repo_id, args.path, source_id=source_id)
+        file_id = ensure_file_identity(conn, repo_id, args.path, source_id=source_id)
         cycle_pk = None
         if args.cycle_id:
             row = conn.execute(

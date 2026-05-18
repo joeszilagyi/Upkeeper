@@ -134,6 +134,16 @@ Important:
     `BACKLOG_ALERT_COLOR=never` to disable terminal block color,
     `BACKLOG_ALERT_COLOR=always` to force it, or `BACKLOG_ALERT_BLINK=0` to keep
     `PAGE` red without blink.
+  - Before backlog issue work starts, the launcher autoshelves dirty local work
+    to a private `wip/backlog-autoshelve/*` branch. Ordinary dirty files stay
+    shelved while the loop continues from a clean branch. If the dirty set
+    includes Upkeeper control-plane paths such as the wrapper, modules,
+    orchestration, tools, tests, prompts, or config, the launcher reapplies that
+    local remediation bundle onto the active backlog branch and commits it
+    before continuing, so the next cycle runs the repaired code without manual
+    cherry-picking. If that local transplant cannot apply cleanly, the launcher
+    stops before stale automation can run and leaves the autoshelve branch as
+    evidence.
   - Backlog batches default to `gpt-5.3-codex-spark` with `xhigh` reasoning and
     a zero weekly stop floor for reset-window burn-down runs. Backlog burn mode
     also bypasses stale local quota snapshots and active quota-cooldown markers

@@ -74,16 +74,14 @@ REVIEW_OUTCOME_MARKERS = (
     "REVIEWED_CLEAN",
     "STOPPED_ON_BLOCKER",
 )
-REVIEW_OUTCOME_PATTERN = re.compile(r"\b(" + "|".join(REVIEW_OUTCOME_MARKERS) + r")\b")
+REVIEW_OUTCOME_LINE_PATTERN = re.compile(
+    r"^(?:UPKEEPER_REVIEW_OUTCOME\s*=\s*)?("
+    + "|".join(REVIEW_OUTCOME_MARKERS)
+    + r")(?:\s+for\s+.+)?$"
+)
 UPKEEPER_STATUS_MARKERS = ("WORK_DONE", "NO_CHANGES", "NO_BACKEND_TASK", "BLOCKED")
 UPKEEPER_STATUS_CONTRACT_LINE = re.compile(rf"^UPKEEPER_STATUS:\s*({'|'.join(UPKEEPER_STATUS_MARKERS)})\s*$")
 UPKEEPER_STATUS_ALIAS = {"NO_CHANGES": "WORK_DONE"}
-REVIEW_OUTCOME_LINE_PATTERN = re.compile(
-    r"^(?:[-*]\s*)?(?:final status|review outcome|outcome|status)\s*:?\s*("
-    + "|".join(REVIEW_OUTCOME_MARKERS)
-    + r")\s*$",
-    re.I,
-)
 
 SCRIPT_EXTS = {
     ".awk",
@@ -118,6 +116,7 @@ BUILD_NAMES = {
 }
 TEST_DIRS = {"__tests__", "test", "tests"}
 REDACTED_PATH_PREFIX = "path-sha256:"
+REDACTED_PATH_TOKEN_PATTERN = re.compile(f"{re.escape(REDACTED_PATH_PREFIX)}[0-9a-f]{{64}}")
 PASS_RESULT_PATH_HMAC_PREFIX = "path-hmac-sha256:"
 METADATA_HMAC_PREFIX = "meta-hmac-sha256:"
 CONTENT_HMAC_PREFIX = "content-hmac-sha256:"
@@ -619,8 +618,10 @@ CREATE_TABLE_SQL = [
       source_uri text,
       source_epoch integer,
       imported_epoch integer not null,
+      source_line integer,
       raw_ref text,
       raw_text text,
+      raw_sha256 text,
       parsed_json text,
       parse_status text,
       fact_confidence text
@@ -1194,6 +1195,7 @@ CREATE_INDEX_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_regression_events_repo_file_epoch ON regression_events(repo_id, file_id, marked_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_extension_facts_lookup ON extension_facts(namespace, key, subject_type, subject_pk)",
     "CREATE INDEX IF NOT EXISTS idx_pass_run_attributes_lookup ON pass_run_attributes(file_pass_run_id, namespace, key)",
+    "CREATE INDEX IF NOT EXISTS idx_source_records_identity ON source_records(repo_id, source_kind, coalesce(source_path, ''), coalesce(source_line, -1), coalesce(raw_sha256, ''))",
 ]
 
 
@@ -2123,6 +2125,21 @@ def print_json(value: Any) -> None:
     print(json.dumps(sanitize_json_value(value), sort_keys=True, indent=2))
 
 
+def redirect_stdout_to_devnull() -> None:
+    devnull_fd = None
+    try:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull_fd, sys.stdout.fileno())
+    except OSError:
+        pass
+    finally:
+        if devnull_fd is not None:
+            try:
+                os.close(devnull_fd)
+            except OSError:
+                pass
+
+
 class LatticeCommandError(Exception):
     def __init__(self, message: str, code: int, *, emitted: bool) -> None:
         super().__init__(message)
@@ -2644,6 +2661,63 @@ def table_primary_key(conn: sqlite3.Connection, table: str) -> str | None:
     return None
 
 
+def table_foreign_key_parents(conn: sqlite3.Connection, table: str) -> list[str]:
+    """
+    Return distinct parent table names from SQLite foreign key declarations.
+    Only used to derive import ordering; callers validate the child table
+    against REQUIRED_TABLES before importing.
+    """
+    parents = []
+    seen = set[str]()
+    for row in conn.execute(f"PRAGMA foreign_key_list({table})"):
+        parent = row["table"]
+        if not isinstance(parent, str) or not parent:
+            continue
+        if parent in seen:
+            continue
+        seen.add(parent)
+        parents.append(parent)
+    return parents
+
+
+def table_import_dependency_order(conn: sqlite3.Connection, tables: set[str]) -> list[str]:
+    """
+    Compute a best-effort topological order of tables based on FK parent
+    relationships, using only tables in `tables`.
+    """
+    ordered: list[str] = []
+    requested = sorted(tables)
+    remaining = set(requested)
+    if not remaining:
+        return ordered
+
+    indegree: dict[str, int] = {table: 0 for table in remaining}
+    graph: dict[str, set[str]] = {table: set() for table in remaining}
+    for table in remaining:
+        for parent in table_foreign_key_parents(conn, table):
+            if parent == table or parent not in remaining:
+                continue
+            graph[parent].add(table)
+            indegree[table] += 1
+
+    ready = sorted([table for table, deps in indegree.items() if deps == 0])
+    while ready:
+        table = ready.pop(0)
+        ordered.append(table)
+        remaining.discard(table)
+        for child in sorted(graph.get(table, set())):
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                ready.append(child)
+                ready.sort()
+
+    if remaining:
+        # Cyclic/self-referential schemas and unknown external parent links are
+        # intentionally stable-ordered as a fallback.
+        ordered.extend(sorted(remaining))
+    return ordered
+
+
 def dedupe_git_file_changes(conn: sqlite3.Connection) -> int:
     row = conn.execute(
         """
@@ -2829,6 +2903,29 @@ def ensure_worktree_snapshot_path_identity_columns(conn: sqlite3.Connection) -> 
                 pass
 
 
+def ensure_source_record_identity_columns(conn: sqlite3.Connection) -> None:
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(source_records)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "source_line" not in columns:
+        try:
+            conn.execute("alter table source_records add column source_line integer")
+        except sqlite3.Error:
+            pass
+    if "raw_sha256" not in columns:
+        try:
+            conn.execute("alter table source_records add column raw_sha256 text")
+        except sqlite3.Error:
+            pass
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_source_records_identity ON source_records(repo_id, source_kind, coalesce(source_path, ''), coalesce(source_line, -1), coalesce(raw_sha256, ''))"
+        )
+    except sqlite3.Error:
+        pass
+
+
 def ensure_contributor_privacy_columns(conn: sqlite3.Connection) -> None:
     try:
         columns = {row["name"] for row in conn.execute("pragma table_info(contributors)").fetchall()}
@@ -2944,6 +3041,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
         ensure_file_snapshot_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_identity_columns(conn)
+        ensure_source_record_identity_columns(conn)
         ensure_contributor_privacy_columns(conn)
         ensure_git_commit_privacy_columns(conn)
         for sql in CREATE_INDEX_SQL:
@@ -3005,6 +3103,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     ensure_file_snapshot_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_identity_columns(conn)
+    ensure_source_record_identity_columns(conn)
     scrub_legacy_git_privacy_data(conn)
 
 
@@ -3159,6 +3258,14 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
     return repo_id
 
 
+def lookup_repository_id(conn: sqlite3.Connection, root: Path) -> int | None:
+    root = root.resolve()
+    info = repo_git_info(root)
+    repo_key = sha256_text(f"{root}|{info['git_common_dir']}|{info['remote_url']}")
+    row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
+    return int(row["repo_id"]) if row else None
+
+
 def ensure_source_record(
     conn: sqlite3.Connection,
     root: Path,
@@ -3173,6 +3280,8 @@ def ensure_source_record(
     parsed: Any = None,
     parse_status: str = "parsed",
     fact_confidence: str = "observed",
+    source_line: int | str | None = None,
+    raw_sha256: str | None = None,
     raw_storage_mode: str | None = None,
 ) -> int:
     if source_kind not in SOURCE_KINDS:
@@ -3180,6 +3289,10 @@ def ensure_source_record(
     now = epoch_now()
     stored_source_path = source_record_storage_path(root, source_kind, source_path)
     stored_source_uri = source_record_storage_uri(root, source_kind, source_uri)
+    try:
+        stored_source_line = int(source_line) if source_line is not None else None
+    except (TypeError, ValueError):
+        stored_source_line = None
     stored_raw_text = raw_text if effective_lattice_raw_storage(raw_storage_mode) == "full" else None
     stored_parsed = normalize_source_record_parsed(
         source_kind,
@@ -3188,12 +3301,66 @@ def ensure_source_record(
         parsed,
         raw_storage_mode=raw_storage_mode,
     )
+    parsed_payload_text = json_dumps(stored_parsed) if stored_parsed is not None else None
+    if isinstance(raw_sha256, str) and raw_sha256.strip():
+        computed_raw_sha256 = raw_sha256.strip()
+    elif isinstance(stored_raw_text, str):
+        computed_raw_sha256 = sha256_text(stored_raw_text)
+    elif parsed_payload_text is not None:
+        computed_raw_sha256 = sha256_text(parsed_payload_text)
+    else:
+        computed_raw_sha256 = None
+    stored_raw_sha256 = computed_raw_sha256
+    identity_path = stored_source_path or ""
+    identity_line = stored_source_line if stored_source_line is not None else -1
+    identity_sha = stored_raw_sha256 or ""
+    has_anchored_identity = bool(identity_sha or (identity_path and stored_source_line is not None))
+    if has_anchored_identity:
+        row = conn.execute(
+            """
+            select source_id
+            from source_records
+            where repo_id=?
+              and source_kind=?
+              and coalesce(source_path, '') = ?
+              and coalesce(source_line, -1) = ?
+              and coalesce(raw_sha256, '') = ?
+            order by imported_epoch desc, source_id desc
+            limit 1
+            """,
+            (repo_id, source_kind, identity_path, identity_line, identity_sha),
+        ).fetchone()
+        if row:
+            source_id = int(row["source_id"])
+            conn.execute(
+                """
+                update source_records
+                set source_path=?, source_uri=?, source_epoch=?, source_line=?, raw_ref=?, raw_text=coalesce(?, raw_text),
+                    parsed_json=coalesce(?, parsed_json), parse_status=?, fact_confidence=?, raw_sha256=?, imported_epoch=?
+                where source_id=?
+                """,
+                (
+                    stored_source_path,
+                    stored_source_uri,
+                    source_epoch,
+                    stored_source_line,
+                    raw_ref or None,
+                    stored_raw_text,
+                    parsed_payload_text,
+                    parse_status,
+                    fact_confidence,
+                    stored_raw_sha256,
+                    now,
+                    source_id,
+                ),
+            )
+            return source_id
     cur = conn.execute(
         """
         insert into source_records(
           repo_id, source_kind, source_path, source_uri, source_epoch, imported_epoch,
-          raw_ref, raw_text, parsed_json, parse_status, fact_confidence
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          source_line, raw_ref, raw_text, raw_sha256, parsed_json, parse_status, fact_confidence
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             repo_id,
@@ -3202,8 +3369,10 @@ def ensure_source_record(
             stored_source_uri or None,
             source_epoch,
             now,
+            stored_source_line,
             raw_ref or None,
             stored_raw_text,
+            stored_raw_sha256,
             json_dumps(stored_parsed) if stored_parsed is not None else None,
             parse_status,
             fact_confidence,
@@ -4186,24 +4355,26 @@ def has_redacted_inline_assignment_string(raw: str) -> bool:
     return False
 
 
-def has_redacted_path_token(payload: Any, current_key: str | None = None) -> bool:
+def has_redacted_path_token(payload: Any, current_key: str | None = None, *, check_any_context: bool = False) -> bool:
     if isinstance(payload, dict):
         for key, value in payload.items():
-            if has_redacted_path_token(value, key):
+            if has_redacted_path_token(value, key, check_any_context=check_any_context):
                 return True
     elif isinstance(payload, list):
         for value in payload:
-            if has_redacted_path_token(value, current_key):
+            if has_redacted_path_token(value, current_key, check_any_context=check_any_context):
                 return True
     elif isinstance(payload, str):
-        if key_requires_path_redaction(current_key) and payload.startswith(REDACTED_PATH_PREFIX):
-            return True
+        redacted_context = check_any_context or key_requires_path_redaction(current_key)
+        if redacted_context:
+            if REDACTED_PATH_PREFIX in payload:
+                return True
         if looks_like_json_container_string(payload):
             try:
                 parsed = json.loads(payload)
             except (TypeError, json.JSONDecodeError):
                 return has_redacted_inline_assignment_string(payload)
-            return has_redacted_path_token(parsed, current_key)
+            return has_redacted_path_token(parsed, current_key, check_any_context=check_any_context)
         return has_redacted_inline_assignment_string(payload)
     return False
 
@@ -4350,6 +4521,7 @@ def format_rows(rows: list[dict[str, Any]], fmt: str) -> None:
                     )
                 )
     except BrokenPipeError:
+        redirect_stdout_to_devnull()
         raise SystemExit(EXIT_SUCCESS)
 
 
@@ -4630,10 +4802,14 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         table_names = {row["name"] for row in conn.execute("select name from sqlite_master where type='table'")}
         missing_tables = [table for table in REQUIRED_TABLES if table not in table_names]
         result["checks"]["required_tables_missing"] = missing_tables
+        if missing_tables:
+            result["status"] = "schema_mismatch"
+            return result, EXIT_SCHEMA_MISMATCH
+        ensure_source_record_identity_columns(conn)
         index_names = {row["name"] for row in conn.execute("select name from sqlite_master where type='index'")}
         missing_indexes = [index for index in REQUIRED_INDEXES if index not in index_names]
         result["checks"]["required_indexes_missing"] = missing_indexes
-        if missing_tables or missing_indexes:
+        if missing_indexes:
             result["status"] = "schema_mismatch"
             return result, EXIT_SCHEMA_MISMATCH
         meta = conn.execute("select value from schema_meta where key='schema_version'").fetchone()
@@ -5390,17 +5566,20 @@ def parse_review_summary_file(path: Path, repo_root: Path | None = None) -> dict
 
 
 def extract_review_outcome(text: str) -> str:
-    labeled_outcome = ""
+    outcome = ""
+    in_fence = False
     for raw_line in text.splitlines():
         line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence or line.startswith(">"):
+            continue
         match = REVIEW_OUTCOME_LINE_PATTERN.match(line)
         if match:
-            labeled_outcome = match.group(1)
-    if labeled_outcome:
-        return labeled_outcome
-    outcome = ""
-    for match in REVIEW_OUTCOME_PATTERN.finditer(text):
-        outcome = match.group(1)
+            outcome = match.group(1)
     return outcome
 
 
@@ -5479,46 +5658,67 @@ def normalize_review_summary_target(raw_target: str, repo_root: Path | None = No
 
 def probe_review_summary_parsing() -> dict[str, Any]:
     cases: dict[str, tuple[str, str, str]] = {
-        "report_only": (
-            "selected file: `tools/upkeeper_lattice.py`\nREVIEWED_AND_REPORTED\n",
+        "contract_outcome": (
+            "selected file: `tools/upkeeper_lattice.py`\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_AND_REPORTED\n",
             "tools/upkeeper_lattice.py",
             "REVIEWED_AND_REPORTED",
         ),
-        "labeled_status": (
+        "bare_outcome": (
+            "Selected file: `tools/upkeeper_lattice.py`\nREVIEWED_AND_REPORTED\n",
+            "tools/upkeeper_lattice.py",
+            "REVIEWED_AND_REPORTED",
+        ),
+        "legacy_status_phrase": (
             "Selected file: `tools/upkeeper_lattice.py`\nReview outcome: REVIEWED_AND_REPORTED\n",
             "tools/upkeeper_lattice.py",
-            "REVIEWED_AND_REPORTED",
+            "",
+        ),
+        "legacy_marker_in_body": (
+            "Allowed outcomes include REVIEWED_CLEAN and REVIEWED_AND_REPORTED.\n"
+            "Final status: REVIEWED_AND_FIXED\n",
+            "",
+            "",
+        ),
+        "quoted_marker": (
+            "> UPKEEPER_REVIEW_OUTCOME=REVIEWED_AND_REPORTED\nSelected file: `tools/upkeeper_lattice.py`\n",
+            "tools/upkeeper_lattice.py",
+            "",
+        ),
+        "fenced_marker": (
+            "```text\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_AND_REPORTED\n```\nSelected file: `tools/upkeeper_lattice.py`\n",
+            "tools/upkeeper_lattice.py",
+            "",
+        ),
+        "inline_quote_marker_ignored": (
+            "Example instruction: `UPKEEPER_REVIEW_OUTCOME=REVIEWED_CLEAN` should never count.\n"
+            "Selected file: `tools/upkeeper_lattice.py`\n",
+            "tools/upkeeper_lattice.py",
+            "",
         ),
         "colon_bearing_path": (
-            "Selected file: pkg:tools/build.sh\nReview outcome: REVIEWED_AND_FIXED\n",
+            "Selected file: pkg:tools/build.sh\nUPKEEPER_REVIEW_OUTCOME = REVIEWED_AND_FIXED\n",
             "pkg:tools/build.sh",
             "REVIEWED_AND_FIXED",
         ),
         "markdown_colon_bearing_path": (
-            "Selected file: [pkg:tools/build.sh](pkg:tools/build.sh)\nReview outcome: REVIEWED_AND_REPORTED\n",
+            "Selected file: [pkg:tools/build.sh](pkg:tools/build.sh)\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_AND_REPORTED\n",
             "pkg:tools/build.sh",
             "REVIEWED_AND_REPORTED",
         ),
         "markdown_scheme_rejected": (
-            "Selected file: [remote](https://example.invalid/file.sh)\nReview outcome: REVIEWED_CLEAN\n",
+            "Selected file: [remote](https://example.invalid/file.sh)\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_CLEAN\n",
             "",
             "REVIEWED_CLEAN",
         ),
         "markdown_scheme_with_line_suffix_rejected": (
-            "Selected file: [remote](https://example.invalid/file.sh:443)\nReview outcome: REVIEWED_CLEAN\n",
+            "Selected file: [remote](https://example.invalid/file.sh:443)\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_CLEAN\n",
             "",
             "REVIEWED_CLEAN",
         ),
         "markdown_scheme_single_slash_rejected": (
-            "Selected file: [remote](https:/example.invalid/file.sh)\nReview outcome: REVIEWED_CLEAN\n",
+            "Selected file: [remote](https:/example.invalid/file.sh)\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_CLEAN\n",
             "",
             "REVIEWED_CLEAN",
-        ),
-        "last_marker_wins": (
-            "Allowed outcomes include REVIEWED_CLEAN and REVIEWED_AND_REPORTED.\n"
-            "Final status: REVIEWED_AND_FIXED\n",
-            "",
-            "REVIEWED_AND_FIXED",
         ),
     }
     results: dict[str, Any] = {}
@@ -5528,7 +5728,7 @@ def probe_review_summary_parsing() -> dict[str, Any]:
         absolute_line_target = root / "pkg:tools" / "build.sh"
         absolute_line_target.write_text("#!/bin/sh\n", encoding="utf-8")
         cases["markdown_absolute_line_suffix"] = (
-            f"Selected file: [pkg:tools/build.sh]({absolute_line_target}:12)\nReview outcome: REVIEWED_AND_FIXED\n",
+            f"Selected file: [pkg:tools/build.sh]({absolute_line_target}:12)\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_AND_FIXED\n",
             "pkg:tools/build.sh",
             "REVIEWED_AND_FIXED",
         )
@@ -6319,11 +6519,20 @@ def create_artifact_ref(
     path: str,
     expected_sha256: str | None = None,
     dedupe_identity: bool = False,
+    allow_outside_scope: bool = False,
     details: Any = None,
 ) -> None:
     if not path:
         return
-    p = canonical_artifact_path(root, path, artifact_kind)
+    if allow_outside_scope:
+        candidate = Path(path).expanduser()
+        if candidate.is_absolute():
+            p = candidate.absolute()
+        else:
+            p = (Path.cwd() / candidate).absolute()
+        p = Path(os.path.normpath(str(p)))
+    else:
+        p = canonical_artifact_path(root, path, artifact_kind)
     stored_path = artifact_storage_path(root, str(p))
     stored_details = artifact_details_payload(artifact_kind, details)
     expected_digest = normalize_hex_sha256(expected_sha256)
@@ -6925,6 +7134,12 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     )
                     if rejected_pass and rejected_path:
                         rejected_pairs.add((rejected_pass, rejected_path))
+                line_number = 0
+                try:
+                    line_number = int(item.get("line_number", 0) or 0)
+                except (TypeError, ValueError):
+                    line_number = 0
+                raw_line = item.get("raw_line", "") if preserve_raw else ""
                 ensure_source_record(
                     conn,
                     root,
@@ -6932,7 +7147,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     "transcript",
                     source_path=args.from_file,
                     raw_ref=f"pass_result_rejected:{item.get('line_number')}",
-                    raw_text=item.get("raw_line", "") if preserve_raw else None,
+                    raw_text=raw_line if preserve_raw else None,
                     parsed=sanitize_rejected_pass_result(
                         root,
                         item,
@@ -6941,6 +7156,8 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     ),
                     parse_status="rejected",
                     fact_confidence="rejected",
+                    source_line=line_number,
+                    raw_sha256=sha256_text(raw_line) if preserve_raw else sha256_text(str(line_number)),
                     raw_storage_mode=raw_storage_mode,
                 )
                 rejected_count += 1
@@ -6950,6 +7167,12 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 outcome = item.get("outcome", "unknown")
                 if trusted_selected_path and reported_path != trusted_selected_path:
                     rejected_pairs.add((pass_code, trusted_selected_path))
+                    line_number = 0
+                    try:
+                        line_number = int(item.get("line_number", 0) or 0)
+                    except (TypeError, ValueError):
+                        line_number = 0
+                    raw_line = item.get("raw_line", "") if preserve_raw else ""
                     ensure_source_record(
                         conn,
                         root,
@@ -6967,6 +7190,8 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         },
                         parse_status="rejected",
                         fact_confidence="rejected",
+                        source_line=line_number,
+                        raw_sha256=sha256_text(raw_line) if preserve_raw else sha256_text(str(line_number)),
                         raw_storage_mode=raw_storage_mode,
                     )
                     rejected_count += 1
@@ -6995,6 +7220,12 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         preserve_raw=preserve_raw,
                     )
                     rejection["validation_error"] = str(exc)
+                    line_number = 0
+                    try:
+                        line_number = int(item.get("line_number", 0) or 0)
+                    except (TypeError, ValueError):
+                        line_number = 0
+                    raw_line = item.get("raw_line", "") if preserve_raw else ""
                     ensure_source_record(
                         conn,
                         root,
@@ -7002,10 +7233,12 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         "transcript",
                         source_path=args.from_file,
                         raw_ref=f"pass_result_rejected:{item.get('line_number')}",
-                        raw_text=item.get("raw_line", "") if preserve_raw else None,
+                        raw_text=raw_line if preserve_raw else None,
                         parsed=rejection,
                         parse_status="rejected",
                         fact_confidence="rejected",
+                        source_line=line_number,
+                        raw_sha256=sha256_text(raw_line) if preserve_raw else sha256_text(str(line_number)),
                         raw_storage_mode=raw_storage_mode,
                     )
                     rejected_count += 1
@@ -7028,6 +7261,11 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         preserve_raw=preserve_raw,
                     )
                     rejection["validation_error"] = validation_error
+                    line_number = 0
+                    try:
+                        line_number = int(item.get("line_number", 0) or 0)
+                    except (TypeError, ValueError):
+                        line_number = 0
                     ensure_source_record(
                         conn,
                         root,
@@ -7039,6 +7277,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         parsed=rejection,
                         parse_status="rejected",
                         fact_confidence="rejected",
+                        source_line=line_number,
                         raw_storage_mode=raw_storage_mode,
                     )
                     rejected_count += 1
@@ -7690,17 +7929,57 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     log_path = Path(args.path or root / "Upkeeper.log")
+    log_details = {}
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     rows_seen = rows_written = 0
     with conn:
         repo_id = ensure_repository(conn, root)
-        import_id = start_import(conn, repo_id, "upkeeper_log", {"path": str(log_path)})
+        if log_path.exists():
+            try:
+                stats = log_path.stat()
+                log_details = {
+                    "path": str(log_path),
+                    "size_bytes": int(stats.st_size),
+                    "mtime_ns": int(stats.st_mtime_ns),
+                }
+                log_details_json = json_dumps(log_details)
+            except OSError:
+                log_details = {}
+        else:
+            log_details = {}
+
+        existing_import_id = None
+        if log_details:
+            existing_import_id = conn.execute(
+                """
+                select import_id
+                from lattice_imports
+                where repo_id=? and import_kind=? and details_json=?
+                order by import_id desc
+                limit 1
+                """,
+                (repo_id, "upkeeper_log", log_details_json),
+            ).fetchone()
+
+        if existing_import_id is not None:
+            import_id = int(existing_import_id["import_id"])
+            conn.execute(
+                """
+                update lattice_imports
+                set started_epoch=?, status='started', rows_seen=0, rows_written=0, conflicts=0, details_json=?
+                where import_id=?
+                """,
+                (epoch_now(), json_dumps(log_details), import_id),
+            )
+        else:
+            import_id = start_import(conn, repo_id, "upkeeper_log", log_details)
         if not log_path.exists():
             finish_import(conn, import_id, "unavailable", 0, 0, 0, {"reason": "missing_log"})
             print_json({"status": "unavailable", "reason": "missing_log", "path": str(log_path)})
             return EXIT_SUCCESS
-        for raw_line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        stored_source_path = source_record_storage_path(root, "upkeeper_log", str(log_path))
+        for line_number, raw_line in enumerate(log_path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
             rows_seen += 1
             parsed = parse_upkeeper_log_line(raw_line)
             if not parsed:
@@ -7709,18 +7988,35 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
             stored_raw_line = raw_line if args.raw else None
             if stored_raw_line is not None:
                 stored_raw_line = sanitize_upkeeper_log_raw_text(root, stored_raw_line, parsed)
+            line_hash = sha256_text(raw_line)
+            existing_source_id = conn.execute(
+                """
+                select source_id
+                from source_records
+                where repo_id=?
+                  and source_kind=?
+                  and coalesce(source_path, '') = ?
+                  and coalesce(source_line, -1) = ?
+                  and coalesce(raw_sha256, '') = ?
+                """,
+                (repo_id, "upkeeper_log", stored_source_path, line_number, line_hash),
+            ).fetchone()
             source_id = ensure_source_record(
                 conn,
                 root,
                 repo_id,
                 "upkeeper_log",
-                source_path=str(log_path),
+                source_path=stored_source_path,
                 raw_ref=parsed.get("event", ""),
                 raw_text=stored_raw_line,
                 parsed=safe_parsed,
                 parse_status="parsed",
+                source_line=line_number,
+                raw_sha256=line_hash,
                 raw_storage_mode=raw_storage_mode,
             )
+            if not existing_source_id:
+                rows_written += 1
             cycle_id = str(parsed.get("cycle", ""))
             run_hash = str(parsed.get("run_hash", ""))
             event = str(parsed.get("event", ""))
@@ -7811,6 +8107,8 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                     raw_ref=f"{current_version}:{line_number}",
                     raw_text=raw if args.raw else None,
                     parsed={"version": current_version, "date": current_date, "item_number": int(item.group(1)), "text": text},
+                    source_line=line_number,
+                    raw_sha256=sha256_text(raw),
                     raw_storage_mode=raw_storage_mode,
                 )
                 cur = conn.execute(
@@ -7821,7 +8119,7 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                     (repo_id, current_version, current_date, int(item.group(1)), str(path), line_number, text, source_id),
                 )
                 entry_id = int(cur.lastrowid)
-                for ref in re.findall(r"`([^`]+\.[A-Za-z0-9]+)`", text):
+                for ref in re.findall(r"`([^`]+)`", text):
                     normalized_ref = normalize_repo_file_identity_ref(root, ref)
                     if not normalized_ref:
                         continue
@@ -8233,7 +8531,8 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             {"path": str(input_path)},
             forced_id=max(existing_import_max, imported_import_max) + 1,
         )
-        for raw in input_lines:
+        staged_import_rows: list[dict[str, Any]] = []
+        for line_number, raw in enumerate(input_lines, start=1):
             if not raw:
                 continue
             rows_seen += 1
@@ -8291,7 +8590,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "unsupported_row")
                 continue
-            if has_redacted_path_token(payload):
+            if not getattr(args, "anonymized_archive", False) and has_redacted_path_token(row, check_any_context=True):
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "redacted_path_payload")
                 continue
@@ -8305,20 +8604,17 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 # Recovery spool rows can contain DB paths and prior failure text;
                 # default imports keep only a hashed summary unless raw retention
                 # is explicitly requested and raw storage mode allows it.
-                ensure_source_record(
-                    conn,
-                    root,
-                    repo_id,
-                    "recovery",
-                    source_path=str(input_path),
-                    raw_ref=logical_key,
-                    raw_text=raw if not getattr(args, "redact_raw", False) else None,
-                    parsed=summarize_lattice_unavailable_payload(payload, raw),
-                    parse_status="spooled_lattice_unavailable",
-                    fact_confidence="observed",
-                    raw_storage_mode=raw_storage_mode,
+                staged_import_rows.append(
+                    {
+                        "mode": "recovery",
+                        "line_number": rows_seen,
+                        "logical_key": logical_key,
+                        "payload_sha256": incoming_raw_hash,
+                        "raw": raw,
+                        "payload": payload,
+                        "source_path": str(input_path),
+                    }
                 )
-                rows_written += 1
                 continue
             if table not in REQUIRED_TABLES:
                 conflicts += 1
@@ -8345,41 +8641,163 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_raw_hash, "empty_filtered_payload")
                 continue
             incoming_semantic_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
-            existing = None
-            if pk and filtered.get(pk) is not None:
-                existing = conn.execute(f"select * from {table} where {pk}=?", (filtered[pk],)).fetchone()
-            if existing:
-                existing_payload = semantic_import_payload(table, {key: existing[key] for key in columns})
-                existing_hash = sha256_text(json_dumps(existing_payload))
-                incoming_compare_payload = align_redacted_import_compare_payload(
-                    semantic_import_payload(table, filtered),
-                    existing_payload,
-                )
-                incoming_compare_hash = sha256_text(json_dumps(incoming_compare_payload))
-                if existing_hash == incoming_compare_hash:
-                    duplicates += 1
+            staged_import_rows.append(
+                {
+                    "mode": "insert",
+                    "line_number": rows_seen,
+                    "logical_key": logical_key,
+                    "incoming_raw_hash": incoming_raw_hash,
+                    "incoming_semantic_hash": incoming_semantic_hash,
+                    "table": table,
+                    "payload_columns": columns,
+                    "payload_pk": pk,
+                    "filtered_payload": filtered,
+                }
+            )
+
+        def _is_foreign_key_integrity_error(exc: sqlite3.IntegrityError) -> bool:
+            message = str(exc).lower()
+            return "foreign key constraint failed" in message or "violates foreign key" in message
+
+        staged_tables = {
+            str(staged["table"])
+            for staged in staged_import_rows
+            if staged["mode"] != "recovery"
+        }
+        import_table_order = table_import_dependency_order(conn, staged_tables)
+        table_rank = {table: index for index, table in enumerate(import_table_order)}
+
+        def _pending_row_key(staged: dict[str, Any]) -> tuple[int, int]:
+            if staged["mode"] == "recovery":
+                return (-1, int(staged.get("line_number", 0)))
+            return (table_rank.get(str(staged.get("table", "")), len(table_rank)), int(staged.get("line_number", 0)))
+
+        pending_rows = sorted(staged_import_rows, key=_pending_row_key)
+        max_import_rounds = len(staged_import_rows) if staged_import_rows else 0
+        import_round = 0
+        while pending_rows and import_round < max_import_rounds:
+            import_round += 1
+            next_round_rows: list[dict[str, Any]] = []
+            pending_rows.sort(key=_pending_row_key)
+            for staged in pending_rows:
+                if staged["mode"] == "recovery":
+                    if not isinstance(staged["payload"], dict):
+                        conflicts += 1
+                        record_import_conflict(
+                            conn,
+                            import_id,
+                            repo_id,
+                            "lattice_unavailable",
+                            str(staged["logical_key"]),
+                            "",
+                            str(staged["payload_sha256"]),
+                            "unsupported_row",
+                        )
+                        continue
+                    source_line = int(staged["line_number"])
+                    summarize_payload = summarize_lattice_unavailable_payload(staged["payload"], staged["raw"])
+                    ensure_source_record(
+                        conn,
+                        root,
+                        repo_id,
+                        "recovery",
+                        source_path=staged["source_path"],
+                        raw_ref=staged["logical_key"],
+                        raw_text=staged["raw"] if not getattr(args, "redact_raw", False) else None,
+                        parsed=summarize_payload,
+                        parse_status="spooled_lattice_unavailable",
+                        fact_confidence="observed",
+                        source_line=source_line,
+                        raw_sha256=sha256_text(staged["raw"]),
+                        raw_storage_mode=raw_storage_mode,
+                    )
+                    rows_written += 1
                     continue
+
+                table = str(staged["table"])
+                logical_key = str(staged["logical_key"])
+                incoming_raw_hash = str(staged["incoming_raw_hash"])
+                incoming_semantic_hash = str(staged["incoming_semantic_hash"])
+                columns = list(staged["payload_columns"])
+                pk = staged["payload_pk"]
+                filtered = dict(staged["filtered_payload"])
+                try:
+                    existing = None
+                    if pk and filtered.get(pk) is not None:
+                        existing = conn.execute(f"select * from {table} where {pk}=?", (filtered[pk],)).fetchone()
+                    if existing:
+                        existing_payload = semantic_import_payload(table, {key: existing[key] for key in columns})
+                        existing_hash = sha256_text(json_dumps(existing_payload))
+                        incoming_compare_payload = align_redacted_import_compare_payload(
+                            semantic_import_payload(table, filtered),
+                            existing_payload,
+                        )
+                        incoming_compare_hash = sha256_text(json_dumps(incoming_compare_payload))
+                        if existing_hash == incoming_compare_hash:
+                            duplicates += 1
+                            continue
+                        conflicts += 1
+                        record_import_conflict(
+                            conn,
+                            import_id,
+                            repo_id,
+                            table,
+                            logical_key,
+                            existing_hash,
+                            incoming_compare_hash,
+                            "kept_existing",
+                        )
+                        continue
+                    colnames = list(filtered.keys())
+                    placeholders = ",".join("?" for _ in colnames)
+                    conn.execute(
+                        f"insert into {table}({', '.join(colnames)}) values ({placeholders})",
+                        [filtered[key] for key in colnames],
+                    )
+                    rows_written += 1
+                    if table == "file_pass_runs":
+                        try:
+                            pass_file_id = int(filtered.get("file_id", 0))
+                        except (TypeError, ValueError):
+                            pass_file_id = 0
+                        if pass_file_id > 0:
+                            refresh_pass_rollup_file_ids.add(pass_file_id)
+                except sqlite3.IntegrityError as exc:
+                    if _is_foreign_key_integrity_error(exc):
+                        next_round_rows.append(staged)
+                        continue
+                    conflicts += 1
+                    record_import_conflict(
+                        conn,
+                        import_id,
+                        repo_id,
+                        table,
+                        logical_key,
+                        "",
+                        incoming_semantic_hash,
+                        f"integrity_error:{exc}",
+                    )
+            if len(next_round_rows) == len(pending_rows):
+                break
+            pending_rows = next_round_rows
+
+        if pending_rows:
+            for staged in pending_rows:
+                table = str(staged["table"]) if staged["mode"] == "insert" else "lattice_unavailable"
+                logical_key = str(staged["logical_key"])
+                incoming_semantic_hash = str(staged["incoming_semantic_hash"]) if staged["mode"] == "insert" else ""
+                incoming_raw_hash = str(staged["incoming_raw_hash"]) if staged["mode"] == "insert" else str(staged["payload_sha256"])
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, table, logical_key, existing_hash, incoming_compare_hash, "kept_existing")
-                continue
-            colnames = list(filtered.keys())
-            placeholders = ",".join("?" for _ in colnames)
-            try:
-                conn.execute(
-                    f"insert into {table}({', '.join(colnames)}) values ({placeholders})",
-                    [filtered[key] for key in colnames],
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    table,
+                    logical_key,
+                    "",
+                    incoming_raw_hash if table == "lattice_unavailable" else incoming_semantic_hash,
+                    "integrity_error:deferred_foreign_key",
                 )
-                rows_written += 1
-                if table == "file_pass_runs":
-                    try:
-                        pass_file_id = int(filtered.get("file_id", 0))
-                    except (TypeError, ValueError):
-                        pass_file_id = 0
-                    if pass_file_id > 0:
-                        refresh_pass_rollup_file_ids.add(pass_file_id)
-            except sqlite3.IntegrityError as exc:
-                conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_semantic_hash, f"integrity_error:{exc}")
         finish_import(
             conn,
             import_id,
@@ -8566,6 +8984,25 @@ def safe_recovery_root(root: Path, raw: Path) -> Path | None:
     return normalized
 
 
+def recovery_root_from_env(root: Path, raw: Path) -> tuple[Path, bool] | None:
+    normalized = safe_recovery_root(root, raw)
+    if normalized:
+        return normalized, True
+    candidate = raw.expanduser()
+    if candidate.is_absolute():
+        candidate = candidate.absolute()
+    else:
+        candidate = (Path.cwd() / candidate).absolute()
+    candidate = Path(os.path.normpath(str(candidate)))
+    try:
+        entry = candidate.lstat()
+    except OSError:
+        return None
+    if not stat.S_ISDIR(entry.st_mode) or stat.S_ISLNK(entry.st_mode):
+        return None
+    return candidate, False
+
+
 def recover_artifact_refs(
     root: Path,
     db_path: Path,
@@ -8595,9 +9032,26 @@ def recover_artifact_refs(
         for env_name in ("CODEX_WRAPPER_HEALTH_STATE_DIR", "CODEX_WRAPPER_HEALTH_ARCHIVE_DIR"):
             configured = os.environ.get(env_name)
             if configured:
-                candidate = safe_recovery_root(root, Path(configured))
-                if candidate:
-                    artifact_roots.append(("wrapper_health_state", candidate))
+                resolved = recovery_root_from_env(root, Path(configured))
+                if not resolved:
+                    continue
+                artifact_root, can_scan = resolved
+                if can_scan:
+                    artifact_roots.append(("wrapper_health_state", artifact_root))
+                else:
+                    create_artifact_ref(
+                        conn,
+                        root,
+                        repo_id,
+                        cycle_pk=None,
+                        source_id=source_id,
+                        artifact_kind="wrapper_health_state",
+                        path=str(artifact_root),
+                        dedupe_identity=True,
+                        allow_outside_scope=True,
+                        details={"recovery_scan_scope": "configured_root_presence"},
+                    )
+                    recorded.append(f"wrapper_health_state:{artifact_retention_class('wrapper_health_state')}:1")
         for artifact_kind, artifact_root in artifact_roots:
             count = record_recovery_artifact_tree(conn, root, repo_id, source_id, artifact_kind, artifact_root)
             if count:
@@ -9229,8 +9683,15 @@ def command_query(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
+    conn.execute("PRAGMA query_only = ON")
     with conn:
-        repo_id = ensure_repository(conn, root)
+        repo_id = lookup_repository_id(conn, root)
+    if repo_id is None:
+        fail(
+            "repository metadata is not initialized in this lattice DB for this repository; "
+            "run a write command (for example `record-cycle-start` or `import-git`) before querying",
+            EXIT_USAGE,
+        )
     query_name = args.query_name
     if query_name == "never-pass":
         rows = query_never_pass(conn, root, repo_id, args)
@@ -9310,100 +9771,104 @@ def command_prune(args: argparse.Namespace) -> int:
     raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
+    if args.dry_run:
+        conn.execute("PRAGMA query_only = ON")
     cutoff = epoch_now() - int(args.older_than_days or 0) * 86400 if args.older_than_days else None
     actions: list[dict[str, Any]] = []
+    repo_id: int | None = None
     with conn:
-        repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(
-            conn,
-            root,
-            repo_id,
-            "operator",
-            raw_ref="prune",
-            parsed=vars(args),
-            raw_storage_mode=raw_storage_mode,
-        )
+        if args.dry_run:
+            info = repo_git_info(root)
+            repo_key = sha256_text(f"{root}|{info['git_common_dir']}|{info['remote_url']}")
+            row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
+            repo_id = int(row["repo_id"]) if row else None
+        else:
+            repo_id = ensure_repository(conn, root)
+            source_id = ensure_source_record(
+                conn,
+                root,
+                repo_id,
+                "operator",
+                raw_ref="prune",
+                parsed=vars(args),
+                raw_storage_mode=raw_storage_mode,
+            )
         if args.raw_only:
-            sql = "update source_records set raw_text=null where raw_text is not null"
-            params: tuple[Any, ...] = ()
-            if cutoff:
-                sql += " and imported_epoch<?"
-                params = (cutoff,)
-            count = conn.execute("select count(*) from source_records where raw_text is not null" + (" and imported_epoch<?" if cutoff else ""), params).fetchone()[0]
-            actions.append({"action": "raw_text_null", "rows": count})
-            if not args.dry_run:
-                conn.execute(sql, params)
-        if args.candidate_details:
-            sql = """
-                delete from selection_candidates
-                where candidate_state != 'selected'
-                  and selection_run_id in (select selection_run_id from selection_runs where generated_epoch<?)
-            """
-            count = 0
-            if cutoff:
-                count = conn.execute(
-                    """
-                    select count(*) from selection_candidates
-                    where candidate_state != 'selected'
-                      and selection_run_id in (select selection_run_id from selection_runs where generated_epoch<?)
-                    """,
-                    (cutoff,),
-                ).fetchone()[0]
-                actions.append({"action": "candidate_details_delete", "rows": count})
+            if repo_id is None and args.dry_run:
+                actions.append({"action": "raw_text_null", "rows": 0, "skipped": "repo_not_registered"})
+            else:
+                sql = "update source_records set raw_text=null where repo_id=? and raw_text is not null"
+                params: list[Any] = [repo_id]
+                if cutoff:
+                    sql += " and imported_epoch<?"
+                    params.append(cutoff)
+                select_sql = "select count(*) from source_records where repo_id=? and raw_text is not null"
+                if cutoff:
+                    select_sql += " and imported_epoch<?"
+                count = conn.execute(select_sql, tuple(params)).fetchone()[0]
+                actions.append({"action": "raw_text_null", "rows": count})
                 if not args.dry_run:
-                    conn.execute(sql, (cutoff,))
+                    conn.execute(sql, tuple(params))
+        if args.candidate_details:
+            if repo_id is None and args.dry_run:
+                actions.append({"action": "candidate_details_delete", "rows": 0, "skipped": "repo_not_registered"})
+            else:
+                sql = """
+                delete from selection_candidates
+                  where candidate_state != 'selected'
+                  and selection_run_id in (select selection_run_id from selection_runs where repo_id=? and generated_epoch<?)
+                """
+                count = 0
+                if cutoff:
+                    count = conn.execute(
+                        """
+                        select count(*) from selection_candidates
+                        where candidate_state != 'selected'
+                          and selection_run_id in (select selection_run_id from selection_runs where repo_id=? and generated_epoch<?)
+                        """,
+                        (repo_id, cutoff),
+                    ).fetchone()[0]
+                    actions.append({"action": "candidate_details_delete", "rows": count})
+                    if not args.dry_run:
+                        conn.execute(sql, (repo_id, cutoff))
         if args.transient_artifacts:
             transient_kinds = tuple(sorted(TRANSIENT_ARTIFACT_KINDS))
             placeholders = ",".join("?" for _ in transient_kinds)
-            sql = f"""
-                select count(*) from artifact_refs
-                where repo_id=? and retained=1 and artifact_kind in ({placeholders})
-            """
-            sql_params: list[Any] = [repo_id, *transient_kinds]
-            if cutoff:
-                sql += " and observed_epoch < ?"
-                sql_params.append(cutoff)
-            row_count = int(conn.execute(sql, sql_params).fetchone()[0] or 0)
-            actions.append({"action": "transient_artifacts_unretain", "rows": row_count})
-            if not args.dry_run:
-                update_sql = f"""
-                    update artifact_refs
-                    set retained=0
+            if repo_id is None and args.dry_run:
+                actions.append({"action": "transient_artifacts_unretain", "rows": 0, "skipped": "repo_not_registered"})
+            else:
+                sql = f"""
+                    select count(*) from artifact_refs
                     where repo_id=? and retained=1 and artifact_kind in ({placeholders})
                 """
-                update_params: list[Any] = [repo_id, *transient_kinds]
+                sql_params: list[Any] = [repo_id, *transient_kinds]
                 if cutoff:
-                    update_sql += " and observed_epoch < ?"
-                    update_params.append(cutoff)
-                conn.execute(
-                    update_sql,
-                    update_params,
-                )
+                    sql += " and observed_epoch < ?"
+                    sql_params.append(cutoff)
+                row_count = int(conn.execute(sql, sql_params).fetchone()[0] or 0)
+                actions.append({"action": "transient_artifacts_unretain", "rows": row_count})
+                if not args.dry_run:
+                    update_sql = f"""
+                        update artifact_refs
+                        set retained=0
+                        where repo_id=? and retained=1 and artifact_kind in ({placeholders})
+                    """
+                    update_params: list[Any] = [repo_id, *transient_kinds]
+                    if cutoff:
+                        update_sql += " and observed_epoch < ?"
+                        update_params.append(cutoff)
+                    conn.execute(
+                        update_sql,
+                        update_params,
+                    )
         if args.scrub_transient_metadata:
             transient_kinds = tuple(sorted(TRANSIENT_ARTIFACT_KINDS))
             placeholders = ",".join("?" for _ in transient_kinds)
-            sql = f"""
-                select count(*) from artifact_refs
-                where repo_id=?
-                  and artifact_kind in ({placeholders})
-                  and (
-                    retained=1
-                    or path is not null
-                    or size_bytes is not null
-                    or sha256 is not null
-                    or details_json is not null
-                  )
-            """
-            sql_params: list[Any] = [repo_id, *transient_kinds]
-            if cutoff:
-                sql += " and observed_epoch < ?"
-                sql_params.append(cutoff)
-            row_count = int(conn.execute(sql, sql_params).fetchone()[0] or 0)
-            actions.append({"action": "transient_artifacts_scrub", "rows": row_count})
-            if not args.dry_run:
-                update_sql = f"""
-                    update artifact_refs
-                    set retained=0, path=null, size_bytes=null, sha256=null, details_json=null
+            if repo_id is None and args.dry_run:
+                actions.append({"action": "transient_artifacts_scrub", "rows": 0, "skipped": "repo_not_registered"})
+            else:
+                sql = f"""
+                    select count(*) from artifact_refs
                     where repo_id=?
                       and artifact_kind in ({placeholders})
                       and (
@@ -9414,15 +9879,36 @@ def command_prune(args: argparse.Namespace) -> int:
                         or details_json is not null
                       )
                 """
-                update_params: list[Any] = [repo_id, *transient_kinds]
+                sql_params: list[Any] = [repo_id, *transient_kinds]
                 if cutoff:
-                    update_sql += " and observed_epoch < ?"
-                    update_params.append(cutoff)
-                conn.execute(
-                    update_sql,
-                    update_params,
-                )
-        record_file_event(conn, repo_id, "operator_annotation", source_id=source_id, details={"prune_actions": actions, "dry_run": args.dry_run})
+                    sql += " and observed_epoch < ?"
+                    sql_params.append(cutoff)
+                row_count = int(conn.execute(sql, sql_params).fetchone()[0] or 0)
+                actions.append({"action": "transient_artifacts_scrub", "rows": row_count})
+                if not args.dry_run:
+                    update_sql = f"""
+                        update artifact_refs
+                        set retained=0, path=null, size_bytes=null, sha256=null, details_json=null
+                        where repo_id=?
+                          and artifact_kind in ({placeholders})
+                          and (
+                            retained=1
+                            or path is not null
+                            or size_bytes is not null
+                            or sha256 is not null
+                            or details_json is not null
+                          )
+                    """
+                    update_params: list[Any] = [repo_id, *transient_kinds]
+                    if cutoff:
+                        update_sql += " and observed_epoch < ?"
+                        update_params.append(cutoff)
+                    conn.execute(
+                        update_sql,
+                        update_params,
+                    )
+        if not args.dry_run:
+            record_file_event(conn, repo_id, "operator_annotation", source_id=source_id, details={"prune_actions": actions, "dry_run": args.dry_run})
         if args.vacuum and not args.dry_run:
             conn.execute("commit")
             conn.execute("vacuum")
@@ -9582,6 +10068,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path")
     p.add_argument("--max-conflicts", type=int, default=0)
     p.add_argument(
+        "--anonymized-archive",
+        dest="anonymized_archive",
+        action="store_true",
+        help="allow importing JSONL exports with redacted path-sha256 values (for explicit anonymized archives)",
+    )
+    p.add_argument(
         "--redact-raw",
         dest="redact_raw",
         action="store_true",
@@ -9700,16 +10192,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except BrokenPipeError:
-        devnull_fd = None
-        try:
-            devnull_fd = os.open(os.devnull, os.O_WRONLY)
-            os.dup2(devnull_fd, sys.stdout.fileno())
-        except OSError:
-            pass
-        finally:
-            if devnull_fd is not None:
-                try:
-                    os.close(devnull_fd)
-                except OSError:
-                    pass
+        redirect_stdout_to_devnull()
         raise SystemExit(EXIT_SUCCESS)

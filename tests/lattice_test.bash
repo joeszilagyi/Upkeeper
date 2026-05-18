@@ -1357,6 +1357,8 @@ test_wrapper_required_policy() {
   [[ "$rc" -eq 0 ]] || fail "REQUIRED=0 unsafe DB dry-run exited $rc, expected 0"
   grep -Fq "lattice.unavailable required=0" "$repo/Upkeeper.log" ||
     fail "REQUIRED=0 did not warn about unavailable lattice"
+  grep -Fq "detail_summary=" "$repo/Upkeeper.log" ||
+    fail "REQUIRED=0 lattice warning did not use bounded detail_summary"
   [[ -s "$repo/runtime/upkeeper-lattice/recovery/lattice-unavailable.jsonl" ]] ||
     fail "REQUIRED=0 did not spool recovery evidence"
 
@@ -1392,6 +1394,24 @@ test_wrapper_required_policy() {
     fail "REQUIRED=1 did not fail before Codex launch with LATTICE_UNAVAILABLE"
   grep -Fq "codex_exec_started=0" "$repo/Upkeeper.log" ||
     fail "REQUIRED=1 failure did not record codex_exec_started=0"
+  grep -Fq "detail_summary=" "$repo/Upkeeper.log" ||
+    fail "REQUIRED=1 lattice failure did not use bounded detail_summary"
+}
+
+test_lattice_unavailable_summary_redacts_raw_detail() {
+  local detail summary
+
+  detail='{"status":"integrity_failure","checks":{"cycle_finish_report_only_outcome":{"ok":false,"selected_path":"/tmp/private/path.py"}}}'
+  # shellcheck source=/dev/null
+  source "$ROOT_DIR/lib/upkeeper/lattice.bash"
+  summary="$(lattice_unavailable_detail_summary "$detail")"
+  [[ "$summary" == *"detail_sha256="* ]] || fail "lattice unavailable summary missing detail hash"
+  [[ "$summary" == *"detail_bytes="* ]] || fail "lattice unavailable summary missing byte count"
+  [[ "$summary" == *"json_status=integrity_failure"* ]] || fail "lattice unavailable summary missing JSON status"
+  [[ "$summary" == *"first_failed_check=cycle_finish_report_only_outcome"* ]] ||
+    fail "lattice unavailable summary missing failed check name"
+  [[ "$summary" != *"/tmp/private"* ]] || fail "lattice unavailable summary leaked raw path"
+  [[ "$summary" != *"selected_path"* ]] || fail "lattice unavailable summary leaked raw detail key"
 }
 
 test_unsafe_lattice_db_path_is_rejected_by_default() {
@@ -1560,6 +1580,177 @@ if len(rows) != len(expected):
 for path, retained in rows:
     if expected.get(path) != retained:
         raise AssertionError(f"unexpected retained value for {path}: got {retained}, expected {expected[path]}")
+PY
+}
+
+test_prune_scopes_actions_to_current_repo() {
+  local repo_a repo_b old_epoch now
+
+  repo_a="$TEST_TMP_ROOT/lattice-prune-shared-db-a"
+  repo_b="$TEST_TMP_ROOT/lattice-prune-shared-db-b"
+  DB="$repo_a/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo_a"
+  make_repo "$repo_b"
+
+  "$LATTICE_TOOL" --root "$repo_a" --db "$DB" init >"$TEST_TMP_ROOT/prune-shared-init-a.out"
+  "$LATTICE_TOOL" --root "$repo_b" --db "$DB" --allow-unsafe-db init >"$TEST_TMP_ROOT/prune-shared-init-b.out"
+
+  now=$(date +%s)
+  old_epoch=$((now - 172800))
+  fresh_epoch=$((now - 3600))
+
+  python3 - "$DB" "$old_epoch" "$fresh_epoch" <<'PY' || fail "failed to seed shared-db prune fixtures"
+import sqlite3
+import sys
+
+db, old_epoch, fresh_epoch = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+
+with sqlite3.connect(db) as conn:
+    conn.execute("PRAGMA foreign_keys=ON")
+    repo_ids = [row[0] for row in conn.execute("select repo_id from repositories order by repo_id asc").fetchall()]
+    if len(repo_ids) != 2:
+        raise AssertionError(f"expected both repos in shared db, got {repo_ids}")
+
+    repo_a_id, repo_b_id = repo_ids
+
+    conn.executemany(
+        """
+        insert into source_records (repo_id, source_kind, source_epoch, imported_epoch, raw_ref, raw_text)
+        values (?, 'operator', ?, ?, 'prune-regression', ?)
+        """,
+        [
+            (repo_a_id, old_epoch, old_epoch, "repo-a-old"),
+            (repo_b_id, old_epoch, old_epoch, "repo-b-old"),
+        ],
+    )
+
+    conn.execute(
+        """
+        insert into selection_runs (
+          repo_id, selector_version, source_safe_boundary_version, mode_requested, mode_effective, priority_gate, generated_epoch
+        )
+        values (?, 'help-selection', 'help-selection', 'oldest-mtime', 'oldest-mtime', 'default', ?)
+        """,
+        (repo_a_id, old_epoch),
+    )
+    run_a = int(conn.execute("select last_insert_rowid()").fetchone()[0])
+    conn.execute(
+        """
+        insert into selection_runs (
+          repo_id, selector_version, source_safe_boundary_version, mode_requested, mode_effective, priority_gate, generated_epoch
+        )
+        values (?, 'help-selection', 'help-selection', 'oldest-mtime', 'oldest-mtime', 'default', ?)
+        """,
+        (repo_b_id, old_epoch),
+    )
+    run_b = int(conn.execute("select last_insert_rowid()").fetchone()[0])
+
+    conn.executemany(
+        """
+        insert into selection_candidates (selection_run_id, path, candidate_state, rank, mtime_epoch)
+        values (?, ?, ?, 100, ?)
+        """,
+        [
+            (run_a, "shared-old-a", "excluded", old_epoch),
+            (run_b, "shared-old-b", "excluded", old_epoch),
+        ],
+    )
+
+    conn.executemany(
+        """
+        insert into artifact_refs (
+          repo_id, cycle_pk, source_id, artifact_kind, path, exists_at_record_time, observed_epoch, retained
+        )
+        values (?, null, null, 'transcript', ?, 1, ?, 1)
+        """,
+        [
+            (repo_a_id, "runtime/transcripts/shared-old-a.log", old_epoch),
+            (repo_a_id, "runtime/transcripts/shared-fresh-a.log", fresh_epoch),
+            (repo_b_id, "runtime/transcripts/shared-old-b.log", old_epoch),
+            (repo_b_id, "runtime/transcripts/shared-fresh-b.log", fresh_epoch),
+        ],
+    )
+PY
+
+  REPO="$repo_a"
+  lattice prune \
+    --older-than-days 1 \
+    --raw-only \
+    --candidate-details \
+    --transient-artifacts >"$TEST_TMP_ROOT/prune-shared.out"
+
+  python3 - "$DB" <<'PY' || fail "prune scoped-by-repo test assertions failed"
+import sqlite3
+import sys
+
+db = sys.argv[1]
+
+with sqlite3.connect(db) as conn:
+    repo_ids = [row[0] for row in conn.execute("select repo_id from repositories order by repo_id asc").fetchall()]
+    if len(repo_ids) != 2:
+        raise AssertionError(f"expected both repos in shared db, got {repo_ids}")
+
+    repo_a_id, repo_b_id = repo_ids
+
+    repo_a_rows = conn.execute(
+        "select raw_text from source_records where repo_id = ? and raw_ref = 'prune-regression'",
+        (repo_a_id,),
+    ).fetchall()
+    repo_b_rows = conn.execute(
+        "select raw_text from source_records where repo_id = ? and raw_ref = 'prune-regression'",
+        (repo_b_id,),
+    ).fetchall()
+    if repo_a_rows.count((None,)) != 1:
+        raise AssertionError(f"repo_a raw_text rows not nulled as expected: {repo_a_rows}")
+    if repo_b_rows != [("repo-b-old",)]:
+        raise AssertionError(f"repo_b raw_text rows were modified unexpectedly: {repo_b_rows}")
+
+    repo_a_candidates = conn.execute(
+        """
+        select count(*) from selection_candidates
+        where selection_run_id in (select selection_run_id from selection_runs where repo_id=?)
+          and candidate_state != 'selected'
+        """,
+        (repo_a_id,),
+    ).fetchone()[0]
+    repo_b_candidates = conn.execute(
+        """
+        select count(*) from selection_candidates
+        where selection_run_id in (select selection_run_id from selection_runs where repo_id=?)
+          and candidate_state != 'selected'
+        """,
+        (repo_b_id,),
+    ).fetchone()[0]
+    if repo_a_candidates != 0:
+        raise AssertionError(f"repo_a candidate details were not fully cleaned: {repo_a_candidates}")
+    if repo_b_candidates != 1:
+        raise AssertionError(f"repo_b candidate details were modified unexpectedly: {repo_b_candidates}")
+
+    repo_a_old_artifact_retained = conn.execute(
+        "select retained from artifact_refs where repo_id = ? and path = 'runtime/transcripts/shared-old-a.log'",
+        (repo_a_id,),
+    ).fetchone()[0]
+    repo_b_old_artifact_retained = conn.execute(
+        "select retained from artifact_refs where repo_id = ? and path = 'runtime/transcripts/shared-old-b.log'",
+        (repo_b_id,),
+    ).fetchone()[0]
+    repo_a_fresh_artifact_retained = conn.execute(
+        "select retained from artifact_refs where repo_id = ? and path = 'runtime/transcripts/shared-fresh-a.log'",
+        (repo_a_id,),
+    ).fetchone()[0]
+    repo_b_fresh_artifact_retained = conn.execute(
+        "select retained from artifact_refs where repo_id = ? and path = 'runtime/transcripts/shared-fresh-b.log'",
+        (repo_b_id,),
+    ).fetchone()[0]
+
+    if repo_a_old_artifact_retained not in (0, None):
+        raise AssertionError(f"repo_a old artifact not unretained as expected: {repo_a_old_artifact_retained}")
+    if repo_b_old_artifact_retained != 1:
+        raise AssertionError(f"repo_b old artifact was modified unexpectedly: {repo_b_old_artifact_retained}")
+    if repo_a_fresh_artifact_retained != 1:
+        raise AssertionError(f"repo_a fresh artifact was modified unexpectedly: {repo_a_fresh_artifact_retained}")
+    if repo_b_fresh_artifact_retained != 1:
+        raise AssertionError(f"repo_b fresh artifact was modified unexpectedly: {repo_b_fresh_artifact_retained}")
 PY
 }
 
@@ -2061,6 +2252,59 @@ if tuple(cycle) != expected_cycle:
 PY
 }
 
+test_source_record_identity_reuses_imported_lines_only() {
+  local repo log_path
+
+  repo="$TEST_TMP_ROOT/lattice-source-record-identity"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  "$LATTICE_TOOL" --root "$repo" --db "$DB" init >"$TEST_TMP_ROOT/source-record-identity-init.out"
+
+  log_path="$TEST_TMP_ROOT/source-record-identity.log"
+  cat >"$log_path" <<'EOF'
+2026-05-12T00:00:00-0700 [INFO] cycle=cycle-source run_hash=hash-source cycle.start dry_run=1
+2026-05-12T00:00:01-0700 [INFO] cycle=cycle-source run_hash=hash-source review.preselect path=README.md
+2026-05-12T00:00:02-0700 [INFO] cycle=cycle-source run_hash=hash-source cycle.exit exit_code=0
+EOF
+
+  lattice import-upkeeper-log --path "$log_path" >"$TEST_TMP_ROOT/source-record-identity-import-1.out"
+  lattice import-upkeeper-log --path "$log_path" >"$TEST_TMP_ROOT/source-record-identity-import-2.out"
+  lattice record-cycle-start --cycle-id cycle-source-a --run-hash hash-source-a >"$TEST_TMP_ROOT/source-record-identity-start-a.out"
+  lattice record-cycle-start --cycle-id cycle-source-b --run-hash hash-source-b >"$TEST_TMP_ROOT/source-record-identity-start-b.out"
+  lattice record-worktree-snapshot --snapshot-kind identity-unanchored >"$TEST_TMP_ROOT/source-record-identity-snapshot-1.out"
+  lattice record-worktree-snapshot --snapshot-kind identity-unanchored >"$TEST_TMP_ROOT/source-record-identity-snapshot-2.out"
+
+  python3 - "$DB" <<'PY' || fail "source_records identity replay boundary regressed"
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+rows = conn.execute(
+    "select source_line, raw_sha256 from source_records where source_kind='upkeeper_log' order by source_line"
+).fetchall()
+if len(rows) != 3:
+    raise AssertionError(f"expected repeated imported log lines to reuse three source_records, got {len(rows)}: {rows}")
+for expected_line, (source_line, raw_sha256) in enumerate(rows, start=1):
+    if int(source_line or 0) != expected_line:
+        raise AssertionError(f"source_line mismatch: expected {expected_line}, got {source_line}")
+    if not raw_sha256:
+        raise AssertionError(f"raw_sha256 missing for imported log line {expected_line}")
+
+wrapper_count = conn.execute(
+    "select count(*) from source_records where source_kind='wrapper_observed' and raw_ref='cycle_start'"
+).fetchone()[0]
+if int(wrapper_count) != 2:
+    raise AssertionError(f"wrapper observations without an anchored source identity collapsed: {wrapper_count}")
+
+unanchored_count = conn.execute(
+    "select count(*) from source_records where source_kind='wrapper_observed' and raw_ref='worktree_snapshot:identity-unanchored'"
+).fetchone()[0]
+if int(unanchored_count) != 2:
+    raise AssertionError(f"unanchored worktree snapshot source records collapsed: {unanchored_count}")
+PY
+}
+
 test_planned_pass_semantics_do_not_mark_all_runs_as_planned() {
   local repo
 
@@ -2141,17 +2385,20 @@ test_backup_is_read_only
 test_missing_selection_path_stays_missing
 test_missing_selected_candidate_target_stays_missing
 test_wrapper_required_policy
+test_lattice_unavailable_summary_redacts_raw_detail
 test_unsafe_lattice_db_path_is_rejected_by_default
 test_default_runtime_symlink_db_path_is_rejected
 test_ordinary_command_does_not_create_missing_db
 test_lattice_jsonl_input_guardrails
 test_export_backup_output_collision
 test_prune_respects_transient_artifact_older_than_days
+test_prune_scopes_actions_to_current_repo
 test_recover_no_backup_first_toggle
 test_recover_backup_first_preserves_pre_recovery_provenance
 test_review_parser_and_redaction
 test_clean_touch_uses_mtime_ns
 test_sparse_lifecycle_replay_preserves_metadata
 test_import_upkeeper_log_omits_sensitive_parsed_fields
+test_source_record_identity_reuses_imported_lines_only
 test_planned_pass_semantics_do_not_mark_all_runs_as_planned
 printf 'ok - lattice\n'

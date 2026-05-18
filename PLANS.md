@@ -3,6 +3,134 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Lattice Redacted JSONL Import Guard
+
+Status: completed locally
+
+Goal:
+- restore default JSONL import rejection for any row carrying `path-sha256:`
+  redacted path markers
+- reject malformed or truncated redacted path markers as sensitive instead of
+  requiring a syntactically complete 64-hex token before default imports fail
+- keep explicit `--anonymized-archive` as the opt-in path for importing
+  anonymized exports
+
+Constraints:
+- keep the fix local to Lattice import/redaction detection
+- do not launch backend Codex validation
+- preserve normal full-length redacted-token detection behavior
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_lattice.py`
+- `bash tests/lattice_test.bash`
+- `git diff --check`
+
+## Lattice Unanchored Source Record Identity Guard
+
+Status: completed locally
+
+Goal:
+- keep imported line/source evidence idempotent when it has a deterministic
+  path/line/hash identity
+- prevent unrelated local wrapper observations with no path, no line, and no
+  raw/parsed hash from collapsing into one `source_records` row
+- add deterministic regression coverage for unanchored source observations
+
+Constraints:
+- keep the fix local and focused on Lattice source-record identity
+- do not launch backend Codex validation
+- preserve the newly repaired bounded Lattice unavailable logging path
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_lattice.py`
+- `bash tests/lattice_test.bash`
+- `git diff --check`
+
+## Backlog Autoshelve Local Remediation
+
+Status: completed locally
+
+Goal:
+- prevent backlog loops from autoshelving dirty Upkeeper control-plane fixes and
+  then continuing on stale wrapper code
+- preserve unrelated dirty local work on the autoshelve branch while promoting
+  wrapper/source/test/docs changes that are part of the local remediation bundle
+  back onto the active backlog branch automatically
+- keep Lattice unavailable terminal/log output bounded while preserving the full
+  doctor/init payload in private local recovery evidence
+
+Constraints:
+- keep the remediation deterministic, local-only, and pre-model
+- do not launch backend Codex validation
+- fail closed only when the local control-plane transplant cannot be applied
+  cleanly, and leave the autoshelve branch as evidence
+- avoid logging raw Lattice JSON walls to normal terminal/watch output
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `lib/upkeeper/lattice.bash`
+- `tools/validate_upkeeper.sh`
+- `tests/lattice_test.bash`
+- `docs/scripts/upkeeper.md`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `./Upkeeper --help`
+- `git diff --check`
+
+## Lattice Source Record Identity And Outcome Compatibility
+
+Status: completed locally
+
+Goal:
+- recover the latest failed loop by fixing the Lattice integrity failure around
+  report-only review outcome parsing
+- finish the local `source_records` identity work so repeated imported evidence
+  can update an existing row without collapsing unrelated wrapper observations
+- preserve the documented final-prose `REVIEWED_*` compatibility contract while
+  still rejecting quoted, fenced, or prose-only outcome examples
+
+Constraints:
+- keep the fix local and deterministic; do not launch backend Codex validation
+- keep runtime recovery files, logs, transcripts, manifests, and SQLite files
+  as local evidence only
+- avoid broad schema churn beyond the existing additive `source_records`
+  identity columns
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_lattice.py`
+- `bash tests/lattice_test.bash`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `git diff --check`
+
 ## Model Output Redaction Boundary
 
 Status: completed

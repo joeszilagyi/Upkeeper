@@ -28,6 +28,7 @@ from typing import Any, Iterable
 SCHEMA_VERSION = 1
 SCHEMA_ROW_VERSION = 1
 TEXT_SAMPLE_SIZE = 4096
+CANDIDATE_STATE_PRIORITY = {"selected": 3, "eligible": 2, "excluded": 1}
 
 EXIT_SUCCESS = 0
 EXIT_NO_MATCH = 1
@@ -57,6 +58,7 @@ SOURCE_KINDS = {
 }
 
 COMPLETED_OUTCOMES = {"clean", "fixed", "regression_found"}
+PASS_OUTCOMES_REQUIRING_APPLICABLE_TRUE = {"clean", "fixed", "regression_found", "blocked"}
 ALLOWED_OUTCOMES = {
     "planned",
     "not_applicable",
@@ -220,10 +222,12 @@ def is_upkeeper_temp_artifact_path(path: Path) -> bool:
 def canonical_artifact_path(root: Path, path: str, artifact_kind: str) -> Path:
     candidate = Path(path).expanduser()
     path_abs = candidate.absolute() if candidate.is_absolute() else (Path.cwd() / candidate).absolute()
-    normalized = path_abs.resolve(strict=False)
+    normalized = Path(os.path.normpath(str(path_abs)))
     scope = ARTIFACT_SCOPE_PATHS.get(artifact_kind, "runtime")
     runtime_root = (root / "runtime").resolve()
     scope_root = root.resolve() if scope == "repo" else runtime_root
+    if has_forbidden_symlink(path_abs, scope_root):
+        fail(f"artifact path contains forbidden symlink for {artifact_kind}: {normalized}", EXIT_USAGE)
     if not path_under(normalized, scope_root):
         if artifact_kind in OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS and is_upkeeper_temp_artifact_path(normalized):
             temp_root = Path(tempfile.gettempdir()).resolve()
@@ -1385,6 +1389,14 @@ def worktree_snapshot_path_is_sensitive(path: str) -> bool:
     return False
 
 
+def is_runtime_artifact_path(path: str) -> bool:
+    normalized = normalize_rel_path(path)
+    if not normalized:
+        return False
+    normalized_lower = normalized.lower()
+    return normalized_lower == "runtime" or normalized_lower.startswith("runtime/")
+
+
 def worktree_snapshot_path_class(status_code: str, *, is_old: bool = False) -> str:
     status_code = str(status_code or "")[:2]
     if len(status_code) != 2:
@@ -1776,6 +1788,21 @@ def repo_identity_value_hmac(context: tuple[str, str, str], namespace: str, valu
     return prefix + digest
 
 
+def git_common_dir_path(root: Path) -> str:
+    common = git_output(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], "")
+    if not common:
+        common = git_output(root, ["rev-parse", "--git-common-dir"], "")
+    if not common:
+        return ""
+    path = Path(common)
+    if not path.is_absolute():
+        path = root / path
+    try:
+        return str(path.resolve(strict=False))
+    except OSError:
+        return str(path.absolute())
+
+
 def identity_value_is_redacted(value: str) -> bool:
     if not value:
         return False
@@ -2000,10 +2027,7 @@ def canonical_artifact_identity(root: Path, raw_path: str) -> str:
     if not raw_path:
         return ""
     path = Path(raw_path).expanduser()
-    try:
-        normalized = path.resolve(strict=False)
-    except OSError:
-        normalized = path.absolute()
+    normalized = Path(os.path.normpath(str(path.absolute())))
     try:
         relative = normalized.relative_to(root)
     except ValueError:
@@ -2993,13 +3017,61 @@ def sanitize_remote_url(raw: str) -> str:
 
 def repo_git_info(root: Path) -> dict[str, str]:
     info = {
-        "git_common_dir": git_output(root, ["rev-parse", "--git-common-dir"], ""),
+        "git_common_dir": git_common_dir_path(root),
         "head_sha": git_output(root, ["rev-parse", "--verify", "HEAD"], ""),
         "head_tree_sha": git_output(root, ["rev-parse", "HEAD^{tree}"], ""),
         "branch_name": git_output(root, ["branch", "--show-current"], ""),
         "remote_url": sanitize_remote_url(git_output(root, ["config", "--get", "remote.origin.url"], "")),
     }
     return info
+
+
+def upsert_repo_alias(
+    conn: sqlite3.Connection,
+    repo_id: int,
+    alias_kind: str,
+    alias_value: str,
+    now: int,
+) -> None:
+    if not alias_value:
+        return
+    existing_for_repo = conn.execute(
+        "select repo_alias_id, alias_value from repo_aliases where repo_id=? and alias_kind=?",
+        (repo_id, alias_kind),
+    ).fetchone()
+    if existing_for_repo:
+        existing_alias_id = int(existing_for_repo["repo_alias_id"])
+        existing_alias_value = str(existing_for_repo["alias_value"] or "")
+        if existing_alias_value != alias_value:
+            conflict = conn.execute(
+                "select repo_alias_id, repo_id from repo_aliases where alias_kind=? and alias_value=?",
+                (alias_kind, alias_value),
+            ).fetchone()
+            if conflict and int(conflict["repo_id"]) != repo_id:
+                return
+            conn.execute(
+                "update repo_aliases set alias_value=?, last_seen_epoch=? where repo_alias_id=?",
+                (alias_value, now, existing_alias_id),
+            )
+            return
+        conn.execute(
+            "update repo_aliases set last_seen_epoch=? where repo_alias_id=?",
+            (now, existing_alias_id),
+        )
+        return
+    conflict = conn.execute(
+        "select repo_alias_id, repo_id from repo_aliases where alias_kind=? and alias_value=?",
+        (alias_kind, alias_value),
+    ).fetchone()
+    if conflict and int(conflict["repo_id"]) != repo_id:
+        return
+    conn.execute(
+        """
+        insert into repo_aliases(repo_id, alias_kind, alias_value, first_seen_epoch, last_seen_epoch)
+        values (?, ?, ?, ?, ?)
+        """,
+        (repo_id, alias_kind, alias_value, now, now),
+    )
 
 
 def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
@@ -3081,16 +3153,7 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
     ]:
         if not value:
             continue
-        conn.execute(
-            """
-            insert into repo_aliases(repo_id, alias_kind, alias_value, first_seen_epoch, last_seen_epoch)
-            values (?, ?, ?, ?, ?)
-            on conflict(alias_kind, alias_value) do update set
-              repo_id=excluded.repo_id,
-              last_seen_epoch=excluded.last_seen_epoch
-            """,
-            (repo_id, kind, value, now, now),
-        )
+        upsert_repo_alias(conn, repo_id, kind, value, now)
     scrub_repo_identity_rows(conn, repo_id, context)
     scrub_source_record_rows(conn, root, repo_id)
     return repo_id
@@ -3810,6 +3873,38 @@ def parse_bool_int(raw: str | None) -> int | None:
     return None
 
 
+def parse_pass_result_bool(raw: Any, field: str) -> int | None:
+    if not has_meaningful_value(raw):
+        return None
+    parsed = parse_bool_int(str(raw))
+    if parsed is None:
+        raise ValueError(f"{field} must be one of: 0,1,yes,no,true,false,on,off")
+    return parsed
+
+
+def validate_pass_result_state(*, applicable: int | None, outcome: str) -> str | None:
+    if outcome == "planned":
+        if applicable is not None:
+            return "planned outcome requires applicable to be unset"
+        return None
+    if outcome == "unknown":
+        if applicable == 0:
+            return "applicable=0 requires outcome=not_applicable"
+        return None
+    if outcome == "not_applicable":
+        if applicable != 0:
+            return "not_applicable requires applicable=0"
+        return None
+    if applicable == 0:
+        return "applicable=0 requires outcome=not_applicable"
+    if outcome in PASS_OUTCOMES_REQUIRING_APPLICABLE_TRUE:
+        if applicable != 1:
+            return f"{outcome} requires applicable=1"
+    elif applicable is None:
+        return f"outcome={outcome} requires applicable=1"
+    return None
+
+
 def require_jsonl_int(raw: Any, field: str) -> int:
     if not isinstance(raw, int) or isinstance(raw, bool):
         raise TypeError(f"{field} must be an integer, got {type(raw).__name__}")
@@ -3831,6 +3926,15 @@ def has_meaningful_value(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip() != ""
     return True
+
+
+def parse_optional_dirty_paths(raw: Any) -> int | None:
+    if not has_meaningful_value(raw):
+        return None
+    text = str(raw).strip()
+    if not text.isdigit():
+        return None
+    return 1 if int(text) > 0 else 0
 
 
 def record_file_event(
@@ -4745,7 +4849,13 @@ def record_worktree_snapshot(
         )
     except (OSError, subprocess.CalledProcessError):
         raw = b""
-    entries = parse_git_porcelain_v1_z_entries(raw)
+    entries = []
+    for status_code, path, old_path in parse_git_porcelain_v1_z_entries(raw):
+        if not path or is_runtime_artifact_path(path):
+            continue
+        if old_path and is_runtime_artifact_path(old_path):
+            continue
+        entries.append((status_code, path, old_path))
     tracked = 0
     untracked = 0
     for status_code, path, _old_path in entries:
@@ -4778,7 +4888,7 @@ def record_worktree_snapshot(
     for status_code, path, old_path in entries:
         if not include_path_inventory:
             continue
-        if not path or worktree_snapshot_path_is_sensitive(path) or (old_path and worktree_snapshot_path_is_sensitive(old_path)):
+        if worktree_snapshot_path_is_sensitive(path) or (old_path and worktree_snapshot_path_is_sensitive(old_path)):
             continue
         meta = live_file_metadata(root, path)
         stored_path = pass_result_path_hmac(root, path)
@@ -4937,6 +5047,40 @@ def record_worktree_delta_events(
         after_snapshot["git_head_sha"] if after_snapshot else None,
     ) if before_snapshot is not None and after_snapshot is not None else set()
 
+    # If there is no pre-Codex snapshot, we cannot classify per-file diffs safely.
+    # Record known dirty files as a special baseline-missing signal and avoid
+    # emitting normal changed events that could be misattributed to this cycle.
+    if before_snapshot is None:
+        for path, after in after_paths.items():
+            after_status = after["status"] if after else "clean"
+            if after_status == "clean":
+                continue
+            file_id = after["file_id"] if after else None
+            if file_id is None:
+                file_id = ensure_file(conn, repo_id, path, source_id=source_id)
+            record_file_event(
+                conn,
+                repo_id,
+                "dirty_state_observed_without_baseline",
+                file_id=file_id,
+                cycle_pk=cycle_pk,
+                source_id=source_id,
+                path=path,
+                details={
+                    "source": "worktree_snapshot_delta",
+                    "before_worktree_snapshot_id": before_snapshot_id,
+                    "after_worktree_snapshot_id": after_snapshot_id,
+                    "before_status": "unknown",
+                    "after_status": after_status,
+                    "before_worktree_hash": None,
+                    "after_worktree_hash": after["worktree_hash"] if after else None,
+                    "before_worktree_head_sha": None,
+                    "after_worktree_head_sha": after_snapshot["git_head_sha"] if after_snapshot else None,
+                    "reason": "missing_before_snapshot",
+                },
+            )
+        return
+
     all_paths = sorted(set(before_paths) | set(after_paths))
     all_paths.extend(sorted(commit_changed_paths - set(all_paths)))
 
@@ -5029,10 +5173,12 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         selected_path = external_rel_path(selection.get("path", ""))
         stored_selected_path = stored_rel_path(selected_path) if selected_path else ""
         selected_file_state = "active"
+        selected_content_state = selection.get("content_state")
         if selected_path:
             _, selected_file_safety = source_safe_file_stat(root, selected_path)
             if selected_file_safety:
                 selected_file_state = "missing"
+                selected_content_state = "missing"
         selected_file_id = (
             ensure_file(conn, repo_id, selected_path, state=selected_file_state, source_id=source_id) if selected_path else None
         )
@@ -5040,14 +5186,41 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         gate = selector_priority_gate(mode)
         selected_rank = None
         eligible_count = int(selection.get("eligible_count") or 0)
-        excluded_count = 0
+        seen_candidates: dict[str, dict[str, Any]] = {}
         for index, row in enumerate(candidate_rows, start=1):
-            if row.get("candidate_state") == "excluded":
-                excluded_count += 1
-            if external_rel_path(str(row.get("path", ""))) == selected_path:
-                selected_rank = int(row.get("rank") or index)
+            path = external_rel_path(str(row.get("path", "")))
+            if not path:
+                continue
+            state = str(row.get("candidate_state", "eligible"))
+            state_priority = CANDIDATE_STATE_PRIORITY.get(state, CANDIDATE_STATE_PRIORITY["eligible"])
+            prior = seen_candidates.get(path)
+            if prior is None:
+                seen_candidates[path] = {"index": index, "state_priority": state_priority, "row": row}
+            elif state_priority > prior["state_priority"]:
+                prior["index"] = index
+                prior["state_priority"] = state_priority
+                prior["row"] = row
+        deduped_candidates: list[dict[str, Any]] = []
+        for path, info in seen_candidates.items():
+            row = dict(info["row"])
+            row["path"] = path
+            row["_lattice_input_index"] = info["index"]
+            if path == selected_path:
+                row["candidate_state"] = "selected"
+            deduped_candidates.append(row)
+        for row in deduped_candidates:
+            if row.get("path") == selected_path:
+                selected_rank = int(row.get("rank") or row.get("_lattice_input_index", 1))
+                break
         if selected_rank is None and selected_path:
             selected_rank = 1
+        calculated_excluded_count = len([r for r in deduped_candidates if r.get("candidate_state") == "excluded"])
+        calculated_eligible_count = len(
+            [r for r in deduped_candidates if r.get("candidate_state") in {"eligible", "selected"}]
+        )
+        if not eligible_count:
+            eligible_count = calculated_eligible_count
+        excluded_count = calculated_excluded_count
         cur = conn.execute(
             """
             insert into selection_runs(
@@ -5069,7 +5242,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                 epoch_now(),
                 repo_git_info(root)["head_sha"] or None,
                 None,
-                eligible_count or len([r for r in candidate_rows if r.get("candidate_state") in {"eligible", "selected"}]),
+                eligible_count,
                 excluded_count,
                 0,
                 None,
@@ -5080,18 +5253,19 @@ def command_record_preselect(args: argparse.Namespace) -> int:
             ),
         )
         selection_run_id = int(cur.lastrowid)
-        if candidate_rows:
-            for index, row in enumerate(candidate_rows, start=1):
-                path = external_rel_path(str(row.get("path", "")))
-                if not path:
-                    continue
+        if deduped_candidates:
+            for row in deduped_candidates:
+                path = row.get("path")
                 state = str(row.get("candidate_state", "eligible"))
+                file_state = "active"
                 if path == selected_path:
                     state = "selected"
-                file_id = ensure_file(conn, repo_id, path, source_id=source_id) if state != "forced_missing" else None
+                    file_state = selected_file_state
+                file_id = ensure_file(conn, repo_id, path, state=file_state, source_id=source_id) if state != "forced_missing" else None
                 rank = row.get("rank")
                 if state in {"eligible", "selected"} and rank is None:
-                    rank = index
+                    rank = row.get("_lattice_input_index", 1)
+                content_state = row.get("content_state") if path != selected_path else (selected_content_state if selected_content_state is not None else row.get("content_state"))
                 conn.execute(
                     """
                     insert or ignore into selection_candidates(
@@ -5107,7 +5281,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                         rank,
                         row.get("mtime_epoch"),
                         row.get("git_status"),
-                        row.get("content_state"),
+                        content_state,
                         row.get("head_blob"),
                         row.get("worktree_hash"),
                         row.get("exclusion_reason") or None,
@@ -5144,7 +5318,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                     stored_selected_path,
                     int(selection.get("epoch") or 0) or None,
                     selection.get("git_status"),
-                    selection.get("content_state"),
+                    selected_content_state,
                     selection.get("head_blob"),
                     selection.get("worktree_hash"),
                     source_id,
@@ -5263,6 +5437,8 @@ def normalize_review_summary_target(raw_target: str, repo_root: Path | None = No
     text = raw_target.strip().strip("<>")
     if not text:
         return ""
+    if re.search(r"^[A-Za-z][A-Za-z0-9+\-.]*:/", text):
+        return ""
     normalized = normalize_change_note_ref(text)
     if normalized:
         return normalized
@@ -5272,7 +5448,13 @@ def normalize_review_summary_target(raw_target: str, repo_root: Path | None = No
     candidates = [text]
     line_match = re.fullmatch(r"(.+):([0-9]+)", text)
     if line_match:
-        candidates.append(line_match.group(1))
+        # Only treat ":<line>" as a line suffix when the pre-colon path is not
+        # URL-like and does not contain a repo-relative colon-bearing filename.
+        line_target = line_match.group(1)
+        if Path(line_target).is_absolute() or re.match(r"^[A-Za-z]:[\\/]", line_target) or (
+            ":" not in line_target and "://" not in text
+        ):
+            candidates.append(line_target)
 
     if repo_root is None:
         return ""
@@ -5319,6 +5501,16 @@ def probe_review_summary_parsing() -> dict[str, Any]:
         ),
         "markdown_scheme_rejected": (
             "Selected file: [remote](https://example.invalid/file.sh)\nReview outcome: REVIEWED_CLEAN\n",
+            "",
+            "REVIEWED_CLEAN",
+        ),
+        "markdown_scheme_with_line_suffix_rejected": (
+            "Selected file: [remote](https://example.invalid/file.sh:443)\nReview outcome: REVIEWED_CLEAN\n",
+            "",
+            "REVIEWED_CLEAN",
+        ),
+        "markdown_scheme_single_slash_rejected": (
+            "Selected file: [remote](https:/example.invalid/file.sh)\nReview outcome: REVIEWED_CLEAN\n",
             "",
             "REVIEWED_CLEAN",
         ),
@@ -6139,6 +6331,8 @@ def create_artifact_ref(
         entry = p.lstat()
     except OSError:
         entry = None
+    if entry is not None and stat.S_ISLNK(entry.st_mode):
+        fail(f"artifact path is a symlink and cannot be hashed: {p}", EXIT_USAGE)
     exists = entry is not None and stat.S_ISREG(entry.st_mode)
     if expected_digest is not None and not exists:
         fail(f"expected artifact missing for {artifact_kind}: {p}", EXIT_INTEGRITY)
@@ -6753,6 +6947,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
             for item in accepted:
                 pass_code = normalize_pass_code(item["pass"])
                 reported_path = external_rel_path(item["file"])
+                outcome = item.get("outcome", "unknown")
                 if trusted_selected_path and reported_path != trusted_selected_path:
                     rejected_pairs.add((pass_code, trusted_selected_path))
                     ensure_source_record(
@@ -6777,10 +6972,77 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     rejected_count += 1
                     continue
                 path = trusted_selected_path or reported_path
-                applicable = parse_bool_int(item.get("applicable"))
-                changed = parse_bool_int(item.get("changed"))
-                regression = parse_bool_int(item.get("regression"))
-                outcome = item.get("outcome", "unknown")
+                try:
+                    applicable = parse_pass_result_bool(item.get("applicable"), "applicable")
+                    changed = parse_pass_result_bool(item.get("changed"), "changed")
+                    regression = parse_pass_result_bool(item.get("regression"), "regression")
+                except ValueError as exc:
+                    rejection = sanitize_rejected_pass_result(
+                        root,
+                        {
+                            "line_number": item.get("line_number", 0),
+                            "reason": str(exc),
+                            "fields": {
+                                "pass": item.get("pass"),
+                                "file": item.get("file"),
+                                "outcome": outcome,
+                                "applicable": item.get("applicable", ""),
+                                "changed": item.get("changed", ""),
+                                "regression": item.get("regression", ""),
+                            },
+                        },
+                        selected_path=trusted_selected_path,
+                        preserve_raw=preserve_raw,
+                    )
+                    rejection["validation_error"] = str(exc)
+                    ensure_source_record(
+                        conn,
+                        root,
+                        repo_id,
+                        "transcript",
+                        source_path=args.from_file,
+                        raw_ref=f"pass_result_rejected:{item.get('line_number')}",
+                        raw_text=item.get("raw_line", "") if preserve_raw else None,
+                        parsed=rejection,
+                        parse_status="rejected",
+                        fact_confidence="rejected",
+                        raw_storage_mode=raw_storage_mode,
+                    )
+                    rejected_count += 1
+                    continue
+                validation_error = validate_pass_result_state(applicable=applicable, outcome=outcome)
+                if validation_error:
+                    rejection = sanitize_rejected_pass_result(
+                        root,
+                        {
+                            "line_number": item.get("line_number", 0),
+                            "reason": validation_error,
+                            "fields": {
+                                "pass": item.get("pass"),
+                                "file": item.get("file"),
+                                "outcome": outcome,
+                                "applicable": item.get("applicable", ""),
+                            },
+                        },
+                        selected_path=trusted_selected_path,
+                        preserve_raw=preserve_raw,
+                    )
+                    rejection["validation_error"] = validation_error
+                    ensure_source_record(
+                        conn,
+                        root,
+                        repo_id,
+                        "transcript",
+                        source_path=args.from_file,
+                        raw_ref=f"pass_result_rejected:{item.get('line_number')}",
+                        raw_text=item.get("raw_line", "") if preserve_raw else None,
+                        parsed=rejection,
+                        parse_status="rejected",
+                        fact_confidence="rejected",
+                        raw_storage_mode=raw_storage_mode,
+                    )
+                    rejected_count += 1
+                    continue
                 record_one_pass_result(
                     conn,
                     root,
@@ -6805,6 +7067,16 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
             pass_code = normalize_pass_code(args.pass_code)
             path = external_rel_path(args.path)
             attrs = parse_attribute_args(args.attribute)
+            try:
+                applicable = parse_pass_result_bool(args.applicable, "--applicable")
+                changed = parse_pass_result_bool(args.changed, "--changed")
+                regression = parse_pass_result_bool(args.regression, "--regression")
+            except ValueError as exc:
+                fail(str(exc), EXIT_USAGE)
+            outcome = args.outcome
+            validation_error = validate_pass_result_state(applicable=applicable, outcome=outcome)
+            if validation_error:
+                fail(f"invalid pass-result state: {validation_error}", EXIT_USAGE)
             record_one_pass_result(
                 conn,
                 root,
@@ -6813,10 +7085,10 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 source_id=source_id,
                 pass_code=pass_code,
                 path=path,
-                applicable=parse_bool_int(args.applicable),
-                outcome=args.outcome,
-                changed=parse_bool_int(args.changed),
-                regression=parse_bool_int(args.regression),
+                applicable=applicable,
+                outcome=outcome,
+                changed=changed,
+                regression=regression,
                 raw_line=args.raw_line if preserve_raw else "",
                 planned=0,
                 attributes=attrs,
@@ -7456,6 +7728,8 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                 cycle_pk = ensure_cycle(conn, repo_id, cycle_id, run_hash, source_id=source_id)
                 if event == "cycle.start":
                     start_fields = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_CYCLE_START_SAFE_KEYS)
+                    dry_run = parse_bool_int(start_fields["dry_run"]) if "dry_run" in start_fields else None
+                    worktree_dirty = parse_optional_dirty_paths(start_fields.get("dirty_paths")) if "dirty_paths" in start_fields else None
                     ensure_cycle(
                         conn,
                         repo_id,
@@ -7463,8 +7737,8 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                         run_hash,
                         source_id=source_id,
                         execution_origin=start_fields.get("execution_origin"),
-                        worktree_dirty=1 if str(start_fields.get("dirty_paths", "0")).isdigit() and int(start_fields.get("dirty_paths", "0")) > 0 else 0,
-                        dry_run=parse_bool_int(str(start_fields.get("dry_run", ""))),
+                        worktree_dirty=worktree_dirty,
+                        dry_run=dry_run,
                     )
                 elif event == "review.preselect":
                     preselect_fields = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_REVIEW_PRESELECT_SAFE_KEYS)

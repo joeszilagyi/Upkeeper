@@ -123,7 +123,9 @@ Important:
   - Run backlog batches with orchestration/backlog_loop.sh, or call
     orchestration/backlog.sh directly for safe interactive watch mode: it cuts
     off stdin, keeps live output in the current terminal, and mirrors that
-    output to the private backlog loop log. Set BACKLOG_INTERACTIVE_MODE=detach
+    output to the private backlog loop log. Watch mode owns and drains its
+    formatter before returning control to the shell, so late child-process
+    output cannot write over the next prompt. Set BACKLOG_INTERACTIVE_MODE=detach
     or use orchestration/backlog_loop.sh when you want a fully detached
     background-style loop instead. Backlog launcher notices are shell-comment
     lines so accidental terminal input feedback stays a no-op, and live/feed-log

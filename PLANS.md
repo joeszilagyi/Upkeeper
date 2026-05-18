@@ -2844,3 +2844,34 @@ Validation:
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
 - `tools/validate_upkeeper.sh --quick`
+
+## Backlog Watch Prompt Ownership
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- stop interactive backlog watch mode from returning the operator's shell prompt
+  before the timestamp/color formatter has drained all child-process output
+- preserve current terminal watching, loop-log mirroring, visual block markers,
+  duplicate-owner behavior, and detached mode
+
+Constraints:
+- do not require a backend Codex call or GitHub network access for the focused
+  regression check
+- keep stdin cut off from the child run so accidental terminal input cannot be
+  consumed as commands or prompt content
+- preserve the child run's exit status through the watch wrapper
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`

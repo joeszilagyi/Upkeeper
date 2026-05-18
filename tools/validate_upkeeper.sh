@@ -371,7 +371,9 @@ check_backlog_launcher_contract() {
   log "checking backlog launcher safety contract"
   grep -Fq 'BACKLOG_ALLOW_INTERACTIVE_STDIO' orchestration/backlog.sh || fail "backlog launcher missing interactive-stdio override"
   grep -Fq 'BACKLOG_INTERACTIVE_MODE="${BACKLOG_INTERACTIVE_MODE:-watch}"' orchestration/backlog.sh || fail "backlog launcher does not default interactive use to watch mode"
-  grep -Fq 'backlog_timestamp_stream | tee -a "$log_file" | backlog_color_attention_stream' orchestration/backlog.sh || fail "backlog launcher does not keep timestamped interactive watch output visible while cutting off stdin"
+  grep -Fq 'backlog_run_owned_watch_pipeline' orchestration/backlog.sh || fail "backlog launcher does not own and wait on the interactive watch pipeline"
+  grep -Fq 'wait "$BACKLOG_WATCH_FORMATTER_PID"' orchestration/backlog.sh || fail "backlog launcher does not wait for watch formatter drain before returning to the shell"
+  ! grep -Fq '> >(backlog_timestamp_stream | tee -a "$log_file" | backlog_color_attention_stream)' orchestration/backlog.sh || fail "backlog launcher still uses asynchronous process substitution for watch output"
   grep -Fq 'backlog_timestamp_stream >>"$log_file"' orchestration/backlog.sh || fail "backlog launcher no longer exposes explicit timestamped detach mode"
   grep -Fq 'backlog_line_starts_with_timestamp' orchestration/backlog.sh || fail "backlog launcher does not avoid double-prefixing timestamped lines"
   grep -Fq 'backlog_attention_marker_for_line' orchestration/backlog.sh || fail "backlog launcher does not classify operator attention markers"
@@ -444,6 +446,43 @@ PY
       fail "backlog launcher watch notice is not timestamped with a visual block and attention marker"
     grep -Fq '# backlog: recent activity: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh' "$temp_dir/typescript" ||
       fail "backlog launcher did not parse timestamped recent activity"
+
+    cat >"$temp_dir/fake-watch-child" <<'SH'
+#!/usr/bin/env bash
+printf 'fake child first\n'
+printf 'fake child final\n'
+exit 7
+SH
+    chmod +x "$temp_dir/fake-watch-child"
+    status=0
+    BACKLOG_SOURCE_ONLY=1 BACKLOG_ALERT_COLOR=never bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./orchestration/backlog.sh
+      SCRIPT_PATH="$2"
+      set +e
+      backlog_run_owned_watch_pipeline "$3"
+      rc="$?"
+      set -e
+      printf "SENTINEL_AFTER_HELPER\n"
+      exit "$rc"
+    ' bash "$ROOT_DIR" "$temp_dir/fake-watch-child" "$temp_dir/owned-watch.log" >"$temp_dir/owned-watch.out" 2>"$temp_dir/owned-watch.err" || status="$?"
+    [[ "$status" == "7" ]] || fail "backlog owned watch pipeline did not preserve child exit status"
+    grep -Fq 'fake child final' "$temp_dir/owned-watch.log" ||
+      fail "backlog owned watch pipeline did not mirror final child output to the loop log"
+    python3 - "$temp_dir/owned-watch.out" <<'PY' ||
+import sys
+from pathlib import Path
+
+lines = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines()
+try:
+    final_index = next(index for index, line in enumerate(lines) if "fake child final" in line)
+    sentinel_index = next(index for index, line in enumerate(lines) if line == "SENTINEL_AFTER_HELPER")
+except StopIteration:
+    raise SystemExit(1)
+raise SystemExit(0 if final_index < sentinel_index else 1)
+PY
+      fail "backlog owned watch pipeline can return to the shell before formatter output drains"
   fi
 
   temp_dir="$VALIDATION_TMP_ROOT/backlog-alert-markers"

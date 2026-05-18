@@ -43,6 +43,10 @@ BACKLOG_OWNER_CLAIM_LOCK_STALE_SECONDS="${BACKLOG_OWNER_CLAIM_LOCK_STALE_SECONDS
 BACKLOG_ACTIVE_OWNER_START_TICKS=""
 BACKLOG_OWNER_HEARTBEAT_PID=""
 BACKLOG_PR_CHECKS_LAST_OUTPUT=""
+BACKLOG_WATCH_CHILD_PID=""
+BACKLOG_WATCH_FORMATTER_PID=""
+BACKLOG_WATCH_FIFO=""
+BACKLOG_WATCH_FIFO_DIR=""
 
 backlog_timestamp() {
   date '+%Y-%m-%dT%H:%M:%S'
@@ -316,6 +320,91 @@ backlog_timestamp_stream() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     backlog_format_attention_line "$line"
   done
+}
+
+backlog_cleanup_owned_watch_pipeline() {
+  local pid
+
+  for pid in "${BACKLOG_WATCH_CHILD_PID:-}" "${BACKLOG_WATCH_FORMATTER_PID:-}"; do
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
+  BACKLOG_WATCH_CHILD_PID=""
+  BACKLOG_WATCH_FORMATTER_PID=""
+  if [[ -n "${BACKLOG_WATCH_FIFO:-}" ]]; then
+    rm -f -- "$BACKLOG_WATCH_FIFO"
+    BACKLOG_WATCH_FIFO=""
+  fi
+  if [[ -n "${BACKLOG_WATCH_FIFO_DIR:-}" ]]; then
+    rmdir -- "$BACKLOG_WATCH_FIFO_DIR" 2>/dev/null || true
+    BACKLOG_WATCH_FIFO_DIR=""
+  fi
+}
+
+backlog_abort_owned_watch_pipeline() {
+  local status="${1:-130}"
+
+  backlog_cleanup_owned_watch_pipeline
+  exit "$status"
+}
+
+backlog_run_owned_watch_pipeline() {
+  local log_file="$1"
+  local fifo_parent status formatter_status had_errexit
+  shift
+  had_errexit=0
+  case "$-" in
+    *e*)
+      had_errexit=1
+      ;;
+  esac
+
+  fifo_parent="$(dirname -- "$log_file")"
+  BACKLOG_WATCH_FIFO_DIR="$(mktemp -d "$fifo_parent/backlog-watch.XXXXXX")"
+  chmod 700 "$BACKLOG_WATCH_FIFO_DIR" 2>/dev/null || true
+  BACKLOG_WATCH_FIFO="$BACKLOG_WATCH_FIFO_DIR/output.fifo"
+  mkfifo -- "$BACKLOG_WATCH_FIFO"
+  chmod 600 "$BACKLOG_WATCH_FIFO" 2>/dev/null || true
+
+  (
+    backlog_timestamp_stream <"$BACKLOG_WATCH_FIFO" |
+      tee -a "$log_file" |
+      backlog_color_attention_stream
+  ) &
+  BACKLOG_WATCH_FORMATTER_PID="$!"
+
+  trap 'backlog_abort_owned_watch_pipeline 130' INT
+  trap 'backlog_abort_owned_watch_pipeline 143' TERM
+  trap 'backlog_cleanup_owned_watch_pipeline' EXIT
+
+  BACKLOG_STDIO_WATCHED=1 "$SCRIPT_PATH" "$@" </dev/null >"$BACKLOG_WATCH_FIFO" 2>&1 &
+  BACKLOG_WATCH_CHILD_PID="$!"
+
+  set +e
+  wait "$BACKLOG_WATCH_CHILD_PID"
+  status="$?"
+  BACKLOG_WATCH_CHILD_PID=""
+  wait "$BACKLOG_WATCH_FORMATTER_PID"
+  formatter_status="$?"
+  BACKLOG_WATCH_FORMATTER_PID=""
+  if [[ "$had_errexit" == "1" ]]; then
+    set -e
+  else
+    set +e
+  fi
+
+  rm -f -- "$BACKLOG_WATCH_FIFO"
+  BACKLOG_WATCH_FIFO=""
+  rmdir -- "$BACKLOG_WATCH_FIFO_DIR" 2>/dev/null || true
+  BACKLOG_WATCH_FIFO_DIR=""
+  trap - INT TERM EXIT
+
+  if [[ "$status" -eq 0 && "$formatter_status" -ne 0 ]]; then
+    return "$formatter_status"
+  fi
+  return "$status"
 }
 
 log() {
@@ -870,7 +959,7 @@ claim_backlog_active_owner_or_exit() {
   start_backlog_owner_heartbeat
 }
 redirect_interactive_stdio() {
-  local state_root log_file active_pid
+  local state_root log_file active_pid status
 
   [[ "$BACKLOG_ALLOW_INTERACTIVE_STDIO" == "1" ]] && return 0
   [[ ! -t 0 && ! -t 1 && ! -t 2 ]] && return 0
@@ -912,8 +1001,11 @@ redirect_interactive_stdio() {
   case "$BACKLOG_INTERACTIVE_MODE" in
     watch)
       print_stdio_watch_notice "$log_file"
-      export BACKLOG_STDIO_WATCHED=1
-      exec "$SCRIPT_PATH" "$@" </dev/null > >(backlog_timestamp_stream | tee -a "$log_file" | backlog_color_attention_stream) 2>&1
+      set +e
+      backlog_run_owned_watch_pipeline "$log_file" "$@"
+      status="$?"
+      set -e
+      exit "$status"
       ;;
     detach)
       print_stdio_detach_notice "$log_file"

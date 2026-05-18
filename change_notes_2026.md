@@ -15,6 +15,7 @@ Version numbering note:
 	6. Model-derived transcript signals, live terminal status, review summaries, and malformed status-marker candidate logs now pass through a redaction boundary before normal logs or terminal output; protected raw transcripts remain the local evidence source.
 	7. Live backlog/watch terminal output normalizes column-one timestamps to local `YYYY-MM-DDTHH:MM:SS`; stored evidence logs keep timezone-rich timestamps where they are part of persisted run state.
 	8. Backlog watch output now adds a single visual block column after the timestamp and colors that block by attention class on TTY output, preserving plain marker text for logs and automation.
+	9. Backlog interactive watch mode now owns its formatter pipeline through a private FIFO and waits for it to drain before returning to the shell, preventing late PR-check or validation output from writing over the next prompt.
 
 2026-05-16: v1.2.26 changes:
 	1. Minimized quota/session metadata in normal logs, cooldown markers, postmortem incident context, and Lattice-facing validation by hashing local session sources and quota identity fields unless explicit verbose local diagnostics are requested.

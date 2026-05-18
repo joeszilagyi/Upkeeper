@@ -1434,10 +1434,16 @@ def sha256_text(text: str) -> str:
     return sha256_bytes(text.encode("utf-8", "surrogateescape"))
 
 
-def contributor_identity_hash(name: str, email: str) -> str:
-    if not name and not email:
+def normalize_contributor_identity_value(raw: str | None) -> str:
+    return "" if raw is None else raw
+
+
+def contributor_identity_hash(name: str | None, email: str | None) -> str:
+    normalized_name = normalize_contributor_identity_value(name)
+    normalized_email = normalize_contributor_identity_value(email)
+    if not normalized_name and not normalized_email:
         return ""
-    return CONTRIBUTOR_HASH_PREFIX + sha256_text(f"name={name}\0email={email}")
+    return CONTRIBUTOR_HASH_PREFIX + sha256_text(f"name={normalized_name}\0email={normalized_email}")
 
 
 def commit_subject_hash(subject: str) -> str:
@@ -7662,29 +7668,36 @@ def ensure_contributor(
     include_pii: bool = False,
 ) -> int | None:
     ensure_contributor_privacy_columns(conn)
-    if not name and not email:
+    normalized_name = normalize_contributor_identity_value(name)
+    normalized_email = normalize_contributor_identity_value(email)
+    if not normalized_name and not normalized_email:
         return None
-    identity_hash = contributor_identity_hash(name, email)
+    identity_hash = contributor_identity_hash(normalized_name, normalized_email)
     row = conn.execute(
         "select contributor_id, identity_hash from contributors where identity_hash=?",
         (identity_hash,),
     ).fetchone()
     if not row:
         row = conn.execute(
-            "select contributor_id, identity_hash from contributors where name is ? and email is ?",
-            (name or None, email or None),
+            """
+            select contributor_id, identity_hash from contributors
+            where coalesce(name, '') = ? and coalesce(email, '') = ?
+            order by contributor_id asc
+            limit 1
+            """,
+            (normalized_name, normalized_email),
         ).fetchone()
     if row:
         contributor_id = int(row["contributor_id"])
-        if include_pii:
-            conn.execute(
-                """
-                update contributors
-                set identity_hash=?, name=?, email=?, pii_included=1
-                where contributor_id=?
-                """,
-                (identity_hash, name or None, email or None, contributor_id),
-            )
+            if include_pii:
+                conn.execute(
+                    """
+                    update contributors
+                    set identity_hash=?, name=?, email=?, pii_included=1
+                    where contributor_id=?
+                    """,
+                    (identity_hash, normalized_name or None, normalized_email or None, contributor_id),
+                )
         elif not row["identity_hash"]:
             conn.execute(
                 """
@@ -7698,8 +7711,8 @@ def ensure_contributor(
     cur = conn.execute(
         "insert into contributors(name, email, identity_hash, pii_included) values (?, ?, ?, ?)",
         (
-            (name or None) if include_pii else None,
-            (email or None) if include_pii else None,
+            normalized_name or None if include_pii else None,
+            normalized_email or None if include_pii else None,
             identity_hash,
             1 if include_pii else 0,
         ),

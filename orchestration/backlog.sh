@@ -1865,7 +1865,8 @@ merge_and_clean() {
 
 main() {
   local pr_info pr_number branch issue_info issue_number issue_title target_hint count run_status
-  local job_target job_reason job_expected commit_result status
+  local job_target job_reason job_expected commit_result final_disposition status
+  local issue_deferred_after_noop
 
   redirect_interactive_stdio "$@"
   claim_backlog_active_owner_or_exit
@@ -1925,6 +1926,7 @@ main() {
   issue_number="$(awk -F '\t' '{print $1}' <<<"$issue_info")"
   issue_title="$(awk -F '\t' '{print $2}' <<<"$issue_info")"
   target_hint="$(target_hint_for_issue "$issue_number")"
+  issue_deferred_after_noop=0
   if [[ -n "$issue_number" ]]; then
     job_target="${target_hint:-wrapper-inferred target for issue #$issue_number}"
     job_reason="issue #$issue_number${issue_title:+: $issue_title}"
@@ -1969,6 +1971,12 @@ main() {
   else
     log "Upkeeper produced no tracked changes"
     commit_result="no tracked changes produced"
+    if [[ -n "$issue_number" ]]; then
+      defer_issue "$issue_number"
+      log "deferred no-change issue #$issue_number for this backlog branch"
+      commit_result="no tracked changes produced; deferred issue #$issue_number for this backlog branch"
+      issue_deferred_after_noop=1
+    fi
   fi
 
   count="$(fix_count "$pr_number")"
@@ -1988,7 +1996,12 @@ main() {
     fi
   else
     log "PR #$pr_number now has $count/$BACKLOG_BATCH_LIMIT recorded fixes"
-    backlog_emit_job_finish_summary "$commit_result" "PR #$pr_number has $count/$BACKLOG_BATCH_LIMIT recorded fixes; outer loop may sleep before next invocation"
+    if [[ "$issue_deferred_after_noop" == "1" ]]; then
+      final_disposition="deferred issue #$issue_number after no tracked changes; PR #$pr_number has $count/$BACKLOG_BATCH_LIMIT recorded fixes; outer loop may sleep before next invocation"
+    else
+      final_disposition="PR #$pr_number has $count/$BACKLOG_BATCH_LIMIT recorded fixes; outer loop may sleep before next invocation"
+    fi
+    backlog_emit_job_finish_summary "$commit_result" "$final_disposition"
   fi
 }
 

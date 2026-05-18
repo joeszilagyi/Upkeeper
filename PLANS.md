@@ -14,6 +14,8 @@ Goal:
   the marker text bold orange
 - add local-only green job start/finish summary blocks so operators can see
   what the current cycle is doing and how it ended without model involvement
+- defer issue-targeted no-change cycles locally so already-addressed issues do
+  not repeat forever on the same backlog branch
 - keep loop logs and non-color output free of ANSI sequences for scripts and
   assistive tooling
 
@@ -21,6 +23,8 @@ Constraints:
 - preserve `BACKLOG_ALERT_COLOR` and `BACKLOG_ALERT_BLINK`
 - keep blink off timestamps
 - keep green job summaries deterministic and local to the launcher
+- preserve open GitHub issues when a no-change cycle is only branch-local
+  evidence
 - keep the existing visual block and marker taxonomy
 
 Files likely touched:

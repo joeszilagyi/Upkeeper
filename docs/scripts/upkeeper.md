@@ -143,6 +143,11 @@ Important:
     local-only block with the target, outcome, start time, end time, runtime, and
     final disposition. Set `BACKLOG_JOB_SUMMARY=0` to disable these local
     summary blocks.
+  - If an issue-targeted backlog pass exits successfully but leaves no tracked
+    changes, the launcher defers that issue for the current backlog branch before
+    returning to the outer loop. This keeps a no-op or already-addressed issue
+    from being selected repeatedly while preserving the open issue for a later
+    branch or manual close.
   - Before backlog issue work starts, the launcher autoshelves dirty local work
     to a private `wip/backlog-autoshelve/*` branch. Ordinary dirty files stay
     shelved while the loop continues from a clean branch. If the dirty set

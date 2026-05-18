@@ -382,6 +382,7 @@ check_backlog_launcher_contract() {
   grep -Fq 'BACKLOG_JOB_SUMMARY_BAR="${BACKLOG_JOB_SUMMARY_BAR:-##### ##### #####}"' orchestration/backlog.sh || fail "backlog launcher green job summary bar default drifted"
   grep -Fq 'backlog_emit_job_start_summary' orchestration/backlog.sh || fail "backlog launcher does not emit local job start summaries"
   grep -Fq 'backlog_emit_job_finish_summary' orchestration/backlog.sh || fail "backlog launcher does not emit local job finish summaries"
+  grep -Fq 'deferred no-change issue #' orchestration/backlog.sh || fail "backlog launcher does not locally defer issue-targeted no-change cycles"
   grep -Fq 'PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO' orchestration/backlog.sh || fail "backlog launcher attention marker taxonomy drifted"
   grep -Fq '([+-][0-9][0-9][0-9][0-9])? /, "", candidate)' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not understand zone-suffixed timestamped loop logs"
   grep -Fq 'sub(/^[^[:space:]]+[[:space:]]+/, "", candidate)' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not strip visual block columns"

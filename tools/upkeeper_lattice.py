@@ -9642,8 +9642,10 @@ def query_changed_since_last_pass(conn: sqlite3.Connection, root: Path, repo_id:
         if file_id:
             latest_pass = conn.execute(
                 """
-                select max(created_epoch) from file_pass_runs
-                where repo_id=? and file_id=? and pass_code=? and outcome in ('clean','fixed','regression_found')
+                select max(coalesce(c.end_epoch, p.created_epoch))
+                from file_pass_runs p
+                left join cycles c on c.cycle_pk = p.cycle_pk
+                where p.repo_id=? and p.file_id=? and p.pass_code=? and p.outcome in ('clean','fixed','regression_found')
                 """,
                 (repo_id, file_id, pass_code),
             ).fetchone()[0]

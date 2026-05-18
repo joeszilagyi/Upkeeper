@@ -3200,6 +3200,14 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
     return repo_id
 
 
+def lookup_repository_id(conn: sqlite3.Connection, root: Path) -> int | None:
+    root = root.resolve()
+    info = repo_git_info(root)
+    repo_key = sha256_text(f"{root}|{info['git_common_dir']}|{info['remote_url']}")
+    row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
+    return int(row["repo_id"]) if row else None
+
+
 def ensure_source_record(
     conn: sqlite3.Connection,
     root: Path,
@@ -9395,8 +9403,15 @@ def command_query(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
+    conn.execute("PRAGMA query_only = ON")
     with conn:
-        repo_id = ensure_repository(conn, root)
+        repo_id = lookup_repository_id(conn, root)
+    if repo_id is None:
+        fail(
+            "repository metadata is not initialized in this lattice DB for this repository; "
+            "run a write command (for example `record-cycle-start` or `import-git`) before querying",
+            EXIT_USAGE,
+        )
     query_name = args.query_name
     if query_name == "never-pass":
         rows = query_never_pass(conn, root, repo_id, args)

@@ -3,6 +3,33 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Lattice Redacted JSONL Import Guard
+
+Status: completed locally
+
+Goal:
+- restore default JSONL import rejection for any row carrying `path-sha256:`
+  redacted path markers
+- reject malformed or truncated redacted path markers as sensitive instead of
+  requiring a syntactically complete 64-hex token before default imports fail
+- keep explicit `--anonymized-archive` as the opt-in path for importing
+  anonymized exports
+
+Constraints:
+- keep the fix local to Lattice import/redaction detection
+- do not launch backend Codex validation
+- preserve normal full-length redacted-token detection behavior
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_lattice.py`
+- `bash tests/lattice_test.bash`
+- `git diff --check`
+
 ## Lattice Unanchored Source Record Identity Guard
 
 Status: completed locally

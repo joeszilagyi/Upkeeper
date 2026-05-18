@@ -11,6 +11,7 @@ Version numbering note:
 	2. Autoshelve branch names now avoid timestamp collisions, and a failed control-plane transplant stops the launcher before stale automation can run while leaving the autoshelve branch as local evidence.
 	3. Lattice unavailable warnings now log a bounded detail summary with payload size, hash, status, and failed-check count/name; full raw init/doctor output is still spooled to private recovery JSONL for local diagnosis.
 	4. Lattice source-record replay now only reuses existing rows when the source identity is anchored by raw/parsed content hash or by a concrete source path plus line number, preventing unanchored wrapper observations from collapsing into one evidence row.
+	5. Lattice JSONL imports now reject any default import row carrying a `path-sha256:` redacted path marker, including malformed or truncated markers, unless the operator explicitly opts into anonymized archive import.
 
 2026-05-18: Lattice source-record recovery:
 	1. Lattice doctor now installs additive `source_records` identity columns before running internal source-record probes, so existing runtime databases can recover without an integrity-failure wall.

@@ -4365,8 +4365,9 @@ def has_redacted_path_token(payload: Any, current_key: str | None = None, *, che
             if has_redacted_path_token(value, current_key, check_any_context=check_any_context):
                 return True
     elif isinstance(payload, str):
-        if REDACTED_PATH_TOKEN_PATTERN.search(payload):
-            if check_any_context or key_requires_path_redaction(current_key):
+        redacted_context = check_any_context or key_requires_path_redaction(current_key)
+        if redacted_context:
+            if REDACTED_PATH_PREFIX in payload:
                 return True
         if looks_like_json_container_string(payload):
             try:

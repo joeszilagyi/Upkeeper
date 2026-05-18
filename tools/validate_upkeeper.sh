@@ -422,6 +422,9 @@ check_backlog_launcher_contract() {
   grep -Fq 'owner heartbeat: state=' orchestration/backlog.sh || fail "backlog launcher does not emit truthful owner heartbeats"
   grep -Fq 'waiting_on_pr_checks' orchestration/backlog.sh || fail "backlog launcher does not keep PR-check waits under the owner lease"
   grep -Fq 'gh pr checks "$pr_number" --watch=false' orchestration/backlog.sh || fail "backlog launcher PR check watcher is not local polling"
+  grep -Fq 'BACKLOG_PR_CHECK_PROGRESS="${BACKLOG_PR_CHECK_PROGRESS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default PR-check progress on"
+  grep -Fq 'BACKLOG_PR_CHECKS_PROGRESS_SUMMARY' orchestration/backlog.sh || fail "backlog launcher does not preserve PR-check progress details for pending polls"
+  grep -Fq 'gh run view "$run_id" --json jobs' orchestration/backlog.sh || fail "backlog launcher does not use local GitHub Actions job metadata for PR-check progress"
   grep -Fq 'BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE="${BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default PR-check gating before next issue"
   grep -Fq 'backlog_ensure_pr_checks_allow_next_issue' orchestration/backlog.sh || fail "backlog launcher does not gate issue selection on current PR checks"
   grep -Fq 'per-bug validation: python compile' orchestration/backlog.sh || fail "backlog launcher per-bug validation does not compile changed Python files"
@@ -674,6 +677,8 @@ PY
     fail "backlog launcher PR check hibernation did not sleep between pending polls"
   grep -Fq "checks pending; holding owner lease" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check hibernation did not explain local owner hold"
+  grep -Fq 'progress: checks total=1 pass=0 pending=1 fail=0 other=0; active="fake PR check"' "$temp_dir/pr.err" ||
+    fail "backlog launcher PR check hibernation did not emit local progress details"
   grep -Fq "owner heartbeat: state=waiting_on_pr_checks" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check hibernation did not refresh owner heartbeat"
 
@@ -1802,6 +1807,52 @@ check_log_path_symlink_guard() {
   after_size="$(wc -c <"$outside_target")"
   [[ "$after_size" == "$before_size" ]] || fail "symlinked Upkeeper.log target was modified"
   grep -Fqx "sentinel" "$outside_target" || fail "symlinked Upkeeper.log target content changed"
+
+  rm -r "$temp_dir"
+}
+
+check_custom_log_path_rotation_boundary() {
+  local temp_dir log_dir log_file archive_path rc
+
+  log "checking custom log path does not grant archive pruning"
+  temp_dir="$(mktemp -d /tmp/upkeeper-custom-log-boundary.XXXXXX)"
+  log_dir="$temp_dir/logs"
+  log_file="$log_dir/Upkeeper.log"
+  archive_path="$log_dir/Upkeeper.log.old.zip"
+  mkdir -p "$log_dir"
+  chmod 700 "$log_dir"
+  printf 'sentinel archive\n' >"$archive_path"
+  chmod 600 "$archive_path"
+  touch -d '10 days ago' "$archive_path"
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
+
+  set +e
+  CODEX_HOME="$temp_dir/codex-home" \
+    CODEX_LOG_FILE="$log_file" \
+    CODEX_LOG_ROTATE_KEEP_HOURS=1 \
+    CODEX_LOG_ROTATE_AFTER_HOURS=1 \
+    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "custom-log-boundary")" \
+    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
+    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
+    CODEX_TERMINAL_VERBOSITY=quiet \
+    CODEX_MODEL=gpt-5.5 \
+    CODEX_REASONING_EFFORT=xhigh \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_SCREEN_ENABLED=0 \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    UPKEEPER_DRY_RUN=1 \
+    ./Upkeeper --target-file=Upkeeper >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 0 ]] || fail "custom log path boundary dry-run exited $rc"
+  [[ -s "$log_file" ]] || fail "custom CODEX_LOG_FILE was not honored as the live log sink"
+  grep -Fq "log.rotate_blocked reason=custom_log_path_without_explicit_override" "$log_file" ||
+    fail "custom log path did not block archive rotation without explicit override"
+  [[ -f "$archive_path" ]] || fail "custom log path allowed pruning of a sibling archive"
+  grep -Fqx "sentinel archive" "$archive_path" || fail "custom log path archive sentinel changed"
 
   rm -r "$temp_dir"
 }
@@ -4810,6 +4861,7 @@ run_bounded_check force_added_gitignored_target_selection "$VALIDATION_INTEGRATI
 run_bounded_check symlink_target_selection_guard "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_symlink_target_selection_guard
 run_bounded_check cycle_start_log_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_cycle_start_log_contract
 run_bounded_check log_path_symlink_guard "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_log_path_symlink_guard
+run_bounded_check custom_log_path_rotation_boundary "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_custom_log_path_rotation_boundary
 run_bounded_check disk_preflight_log_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_disk_preflight_log_contract
 run_bounded_check disk_preflight_prompt_note_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_disk_preflight_prompt_note_contract
 run_bounded_check arg0_tmp_cleanup_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_arg0_tmp_cleanup_contract

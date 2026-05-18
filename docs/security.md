@@ -250,8 +250,13 @@ artifacts.
 Upkeeper refuses unsafe live log paths before its first wrapper log write. A
 repo-local `Upkeeper.log` that is a symlink, non-regular file, hard-linked file,
 or owned by another user is rejected before Codex launch; a symlink log parent
-directory is rejected as well. This prevents a contaminated checkout from
-redirecting wrapper log appends into an operator-writable file outside the repo.
+directory is rejected as well. Custom `CODEX_LOG_FILE` paths remain valid live
+log sinks for local validation and operator use, but log rotation and sibling
+archive pruning stay blocked for custom paths unless explicitly enabled with
+`CODEX_LOG_FILE_ALLOW_UNSAFE=1` and a trusted Upkeeper rotation marker. This
+prevents a contaminated checkout from redirecting wrapper log appends into an
+unsafe local file or using archive pruning to delete sibling zip files in an
+arbitrary log directory.
 
 ## Ignored Files
 

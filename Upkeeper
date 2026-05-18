@@ -353,23 +353,14 @@ load_upkeeper_local_env_file
 upkeeper_resolve_log_file() {
   local requested_log_file="$1"
   local requested_default="$ROOT_DIR/Upkeeper.log"
-  local allow_unsafe_override="0"
   local requested
 
   requested="${requested_log_file:-$requested_default}"
   [[ -n "$requested" ]] || requested="$requested_default"
 
-  case "${CODEX_LOG_FILE_ALLOW_UNSAFE:-0}" in
-    1|true|yes|on|TRUE|YES|ON)
-      allow_unsafe_override="1"
-      ;;
-  esac
-
-  if [[ "$requested" != "$requested_default" && "$allow_unsafe_override" != "1" ]]; then
-    printf '%s' "$requested_default"
-    return 0
-  fi
-
+  # CODEX_LOG_FILE selects the live log sink. Rotation and archive pruning are
+  # authorized separately by log_rotation_target_is_safe, so custom validation
+  # logs still work without granting custom archive deletion.
   printf '%s' "$requested"
 }
 

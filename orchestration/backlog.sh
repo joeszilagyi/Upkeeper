@@ -18,6 +18,8 @@ BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
 BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-0}"
 BACKLOG_PR_CHECK_INTERVAL_SECONDS="${BACKLOG_PR_CHECK_INTERVAL_SECONDS:-60}"
 BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE="${BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE:-1}"
+BACKLOG_PR_CHECK_PROGRESS="${BACKLOG_PR_CHECK_PROGRESS:-1}"
+BACKLOG_PR_CHECK_PROGRESS_STEPS="${BACKLOG_PR_CHECK_PROGRESS_STEPS:-1}"
 BACKLOG_PER_BUG_VALIDATION_MODE="${BACKLOG_PER_BUG_VALIDATION_MODE:-light}"
 BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"
 BACKLOG_AUTOSHELVE_BRANCH_PREFIX="${BACKLOG_AUTOSHELVE_BRANCH_PREFIX:-wip/backlog-autoshelve/}"
@@ -50,6 +52,7 @@ BACKLOG_OWNER_CLAIM_LOCK_STALE_SECONDS="${BACKLOG_OWNER_CLAIM_LOCK_STALE_SECONDS
 BACKLOG_ACTIVE_OWNER_START_TICKS=""
 BACKLOG_OWNER_HEARTBEAT_PID=""
 BACKLOG_PR_CHECKS_LAST_OUTPUT=""
+BACKLOG_PR_CHECKS_PROGRESS_SUMMARY=""
 BACKLOG_JOB_START_EPOCH=""
 BACKLOG_JOB_START_TIME=""
 BACKLOG_JOB_TARGET=""
@@ -596,6 +599,57 @@ backlog_positive_integer_or_default() {
     printf '%s\n' "$value"
   else
     printf '%s\n' "$default_value"
+  fi
+}
+
+backlog_format_duration_seconds() {
+  local seconds="$1"
+
+  if ! backlog_nonnegative_integer "$seconds"; then
+    printf 'unknown'
+    return 0
+  fi
+  if [[ "$seconds" -ge 3600 ]]; then
+    printf '%dh%02dm%02ds' "$((seconds / 3600))" "$(((seconds % 3600) / 60))" "$((seconds % 60))"
+  elif [[ "$seconds" -ge 60 ]]; then
+    printf '%dm%02ds' "$((seconds / 60))" "$((seconds % 60))"
+  else
+    printf '%ds' "$seconds"
+  fi
+}
+
+backlog_duration_since_iso() {
+  local started_at="$1"
+  local now_epoch="$2"
+  local start_epoch elapsed
+
+  [[ -n "$started_at" ]] || {
+    printf 'unknown'
+    return 0
+  }
+  start_epoch="$(date -d "$started_at" '+%s' 2>/dev/null)" || {
+    printf 'unknown'
+    return 0
+  }
+  if ! backlog_nonnegative_integer "$now_epoch" || [[ "$now_epoch" -lt "$start_epoch" ]]; then
+    printf 'unknown'
+    return 0
+  fi
+  elapsed=$((now_epoch - start_epoch))
+  backlog_format_duration_seconds "$elapsed"
+}
+
+backlog_log_value() {
+  local value="${1:-}"
+
+  value="${value//$'\r'/ }"
+  value="${value//$'\n'/ }"
+  value="${value//$'\t'/ }"
+  value="${value//\"/\'}"
+  if [[ -z "$value" || "$value" == *[[:space:]\;\,]* ]]; then
+    printf '"%s"' "$value"
+  else
+    printf '%s' "$value"
   fi
 }
 
@@ -1786,9 +1840,136 @@ commit_and_push_changes() {
   return 0
 }
 
+backlog_pr_check_progress_enabled() {
+  case "${BACKLOG_PR_CHECK_PROGRESS,,}" in
+    never|0|no|false|off)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+backlog_pr_check_progress_steps_enabled() {
+  case "${BACKLOG_PR_CHECK_PROGRESS_STEPS,,}" in
+    never|0|no|false|off)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+backlog_github_actions_current_step() {
+  local link="$1"
+  local run_id="" job_id="" run_json rc step
+
+  backlog_pr_check_progress_steps_enabled || return 1
+  if [[ "$link" =~ /actions/runs/([0-9]+) ]]; then
+    run_id="${BASH_REMATCH[1]}"
+  else
+    return 1
+  fi
+  if [[ "$link" =~ /job/([0-9]+) ]]; then
+    job_id="${BASH_REMATCH[1]}"
+  fi
+
+  set +e
+  run_json="$(gh run view "$run_id" --json jobs 2>/dev/null)"
+  rc="$?"
+  set -e
+  [[ "$rc" -eq 0 && -n "$run_json" ]] || return 1
+
+  step="$(jq -r --arg link "$link" --arg job_id "$job_id" '
+    def wanted_job:
+      if $job_id != "" then
+        ((.url // "") | contains("/job/" + $job_id))
+      else
+        ((.url // "") == $link)
+      end;
+    ([.jobs[]? | select(wanted_job)][0]) as $job
+    | if $job == null then
+        empty
+      else
+        ([$job.steps[]? | select((.status // "") == "in_progress") | .name][0]
+         // [$job.steps[]? | select((.status // "") == "queued") | .name][0]
+         // [$job.steps[]? | select((.status // "") != "completed") | .name][0]
+         // empty)
+      end
+  ' <<<"$run_json" 2>/dev/null)" || return 1
+  [[ -n "$step" && "$step" != "null" ]] || return 1
+  printf '%s\n' "$step"
+}
+
+backlog_pr_checks_progress_summary() {
+  local pr_number="$1"
+  local checks_json rc aggregate active_lines now_epoch summary
+  local name workflow bucket state started_at link duration step rendered count
+
+  backlog_pr_check_progress_enabled || return 1
+
+  set +e
+  checks_json="$(gh pr checks "$pr_number" --watch=false --json name,state,startedAt,completedAt,link,workflow,bucket 2>/dev/null)"
+  rc="$?"
+  set -e
+  [[ "$rc" -eq 0 || -n "$checks_json" ]] || return 1
+  [[ -n "$checks_json" ]] || return 1
+
+  aggregate="$(jq -r '
+    def bucket_name: ((.bucket // "unknown") | ascii_downcase);
+    def count_bucket($name): [.[] | select(bucket_name == $name)] | length;
+    def other_count:
+      [.[] | select((bucket_name != "pass") and (bucket_name != "pending") and (bucket_name != "fail") and (bucket_name != "skipping"))] | length;
+    "checks total=\(length) pass=\(count_bucket("pass")) pending=\(count_bucket("pending")) fail=\(count_bucket("fail")) other=\(other_count)"
+  ' <<<"$checks_json" 2>/dev/null)" || return 1
+  summary="$aggregate"
+
+  active_lines="$(jq -r '
+    def bucket_name: ((.bucket // "unknown") | ascii_downcase);
+    def sort_key:
+      if bucket_name == "pending" then 0
+      elif bucket_name == "fail" then 1
+      else 2
+      end;
+    [.[] | select(bucket_name != "pass") | . + {sort_key: sort_key}]
+    | sort_by(.sort_key, (.name // ""))
+    | .[0:3][]
+    | [(.name // "unnamed check"), (.workflow // ""), (.bucket // "unknown"), (.state // "unknown"), (.startedAt // ""), (.link // "")]
+    | @tsv
+  ' <<<"$checks_json" 2>/dev/null)" || active_lines=""
+
+  if [[ -n "$active_lines" ]]; then
+    now_epoch="$(backlog_now_epoch 2>/dev/null || date '+%s')"
+    count=0
+    while IFS=$'\t' read -r name workflow bucket state started_at link; do
+      [[ -n "$name" ]] || continue
+      count=$((count + 1))
+      duration="$(backlog_duration_since_iso "$started_at" "$now_epoch")"
+      rendered="active=$(backlog_log_value "$name") state=$(backlog_log_value "$state") bucket=$(backlog_log_value "$bucket") duration=$duration"
+      if [[ -n "$workflow" ]]; then
+        rendered="$rendered workflow=$(backlog_log_value "$workflow")"
+      fi
+      if step="$(backlog_github_actions_current_step "$link" 2>/dev/null)"; then
+        rendered="$rendered step=$(backlog_log_value "$step")"
+      fi
+      if [[ -n "$link" ]]; then
+        rendered="$rendered url=$link"
+      fi
+      summary="$summary; $rendered"
+    done <<<"$active_lines"
+    if [[ "$count" -ge 3 ]]; then
+      summary="$summary; active_list_truncated=1"
+    fi
+  fi
+
+  printf '%s\n' "$summary"
+}
+
 wait_for_pr_checks() {
   local pr_number="$1"
-  local interval timeout_seconds start_epoch now_epoch elapsed status output status_rc
+  local interval timeout_seconds start_epoch now_epoch elapsed status output status_rc progress
 
   log "waiting for PR #$pr_number checks"
   interval="$(backlog_positive_integer_or_default "$BACKLOG_PR_CHECK_INTERVAL_SECONDS" 60)"
@@ -1820,7 +2001,12 @@ wait_for_pr_checks() {
           return 2
         fi
         backlog_update_active_owner_heartbeat "waiting_on_pr_checks" "pr=$pr_number checks_pending elapsed=${elapsed}s next_check=${interval}s" "$pr_number" "pending"
-        log "PR #$pr_number checks pending; holding owner lease and checking again in ${interval}s"
+        progress="$BACKLOG_PR_CHECKS_PROGRESS_SUMMARY"
+        if [[ -n "$progress" ]]; then
+          log "PR #$pr_number checks pending; holding owner lease; progress: $progress; checking again in ${interval}s"
+        else
+          log "PR #$pr_number checks pending; holding owner lease and checking again in ${interval}s"
+        fi
         backlog_sleep_seconds "$interval"
         ;;
       *)
@@ -1834,8 +2020,9 @@ wait_for_pr_checks() {
 
 backlog_pr_checks_once() {
   local pr_number="$1"
-  local next_status rest output rc
+  local next_status rest output rc progress
 
+  BACKLOG_PR_CHECKS_PROGRESS_SUMMARY=""
   if [[ -n "${BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE:-}" ]]; then
     next_status="${BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE%%,*}"
     if [[ "$BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE" == *","* ]]; then
@@ -1848,14 +2035,17 @@ backlog_pr_checks_once() {
     case "$next_status" in
       pass|passed|success|ok)
         BACKLOG_PR_CHECKS_LAST_OUTPUT="pass"
+        BACKLOG_PR_CHECKS_PROGRESS_SUMMARY="checks total=1 pass=1 pending=0 fail=0 other=0"
         return 0
         ;;
       pending|wait|waiting|queued|in_progress)
         BACKLOG_PR_CHECKS_LAST_OUTPUT="pending"
+        BACKLOG_PR_CHECKS_PROGRESS_SUMMARY='checks total=1 pass=0 pending=1 fail=0 other=0; active="fake PR check" state=pending bucket=pending duration=unknown source=local-test'
         return 2
         ;;
       fail|failed|failure|error)
         BACKLOG_PR_CHECKS_LAST_OUTPUT="fail"
+        BACKLOG_PR_CHECKS_PROGRESS_SUMMARY="checks total=1 pass=0 pending=0 fail=1 other=0"
         return 1
         ;;
       *)
@@ -1872,14 +2062,23 @@ backlog_pr_checks_once() {
 
   if [[ "$rc" -eq 0 ]]; then
     BACKLOG_PR_CHECKS_LAST_OUTPUT="$(printf 'pass\n%s\n' "$output")"
+    if progress="$(backlog_pr_checks_progress_summary "$pr_number" 2>/dev/null)"; then
+      BACKLOG_PR_CHECKS_PROGRESS_SUMMARY="$progress"
+    fi
     return 0
   fi
   if grep -Eiq 'pending|queued|in.?progress|waiting' <<<"$output"; then
     BACKLOG_PR_CHECKS_LAST_OUTPUT="$(printf 'pending\n%s\n' "$output")"
+    if progress="$(backlog_pr_checks_progress_summary "$pr_number" 2>/dev/null)"; then
+      BACKLOG_PR_CHECKS_PROGRESS_SUMMARY="$progress"
+    fi
     return 2
   fi
 
   BACKLOG_PR_CHECKS_LAST_OUTPUT="$(printf 'fail\n%s\n' "$output")"
+  if progress="$(backlog_pr_checks_progress_summary "$pr_number" 2>/dev/null)"; then
+    BACKLOG_PR_CHECKS_PROGRESS_SUMMARY="$progress"
+  fi
   return 1
 }
 

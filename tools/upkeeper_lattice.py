@@ -2660,6 +2660,63 @@ def table_primary_key(conn: sqlite3.Connection, table: str) -> str | None:
     return None
 
 
+def table_foreign_key_parents(conn: sqlite3.Connection, table: str) -> list[str]:
+    """
+    Return distinct parent table names from SQLite foreign key declarations.
+    Only used to derive import ordering; callers validate the child table
+    against REQUIRED_TABLES before importing.
+    """
+    parents = []
+    seen = set[str]()
+    for row in conn.execute(f"PRAGMA foreign_key_list({table})"):
+        parent = row["table"]
+        if not isinstance(parent, str) or not parent:
+            continue
+        if parent in seen:
+            continue
+        seen.add(parent)
+        parents.append(parent)
+    return parents
+
+
+def table_import_dependency_order(conn: sqlite3.Connection, tables: set[str]) -> list[str]:
+    """
+    Compute a best-effort topological order of tables based on FK parent
+    relationships, using only tables in `tables`.
+    """
+    ordered: list[str] = []
+    requested = sorted(tables)
+    remaining = set(requested)
+    if not remaining:
+        return ordered
+
+    indegree: dict[str, int] = {table: 0 for table in remaining}
+    graph: dict[str, set[str]] = {table: set() for table in remaining}
+    for table in remaining:
+        for parent in table_foreign_key_parents(conn, table):
+            if parent == table or parent not in remaining:
+                continue
+            graph[parent].add(table)
+            indegree[table] += 1
+
+    ready = sorted([table for table, deps in indegree.items() if deps == 0])
+    while ready:
+        table = ready.pop(0)
+        ordered.append(table)
+        remaining.discard(table)
+        for child in sorted(graph.get(table, set())):
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                ready.append(child)
+                ready.sort()
+
+    if remaining:
+        # Cyclic/self-referential schemas and unknown external parent links are
+        # intentionally stable-ordered as a fallback.
+        ordered.extend(sorted(remaining))
+    return ordered
+
+
 def dedupe_git_file_changes(conn: sqlite3.Connection) -> int:
     row = conn.execute(
         """
@@ -8535,12 +8592,26 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             message = str(exc).lower()
             return "foreign key constraint failed" in message or "violates foreign key" in message
 
-        pending_rows = staged_import_rows
+        staged_tables = {
+            str(staged["table"])
+            for staged in staged_import_rows
+            if staged["mode"] != "recovery"
+        }
+        import_table_order = table_import_dependency_order(conn, staged_tables)
+        table_rank = {table: index for index, table in enumerate(import_table_order)}
+
+        def _pending_row_key(staged: dict[str, Any]) -> tuple[int, int]:
+            if staged["mode"] == "recovery":
+                return (-1, int(staged.get("line_number", 0)))
+            return (table_rank.get(str(staged.get("table", "")), len(table_rank)), int(staged.get("line_number", 0)))
+
+        pending_rows = sorted(staged_import_rows, key=_pending_row_key)
         max_import_rounds = len(staged_import_rows) if staged_import_rows else 0
         import_round = 0
         while pending_rows and import_round < max_import_rounds:
             import_round += 1
             next_round_rows: list[dict[str, Any]] = []
+            pending_rows.sort(key=_pending_row_key)
             for staged in pending_rows:
                 if staged["mode"] == "recovery":
                     if not isinstance(staged["payload"], dict):
@@ -8639,6 +8710,8 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                         incoming_semantic_hash,
                         f"integrity_error:{exc}",
                     )
+            if len(next_round_rows) == len(pending_rows):
+                break
             pending_rows = next_round_rows
 
         if pending_rows:

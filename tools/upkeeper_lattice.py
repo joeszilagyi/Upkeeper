@@ -1179,6 +1179,8 @@ CREATE_TABLE_SQL = [
 
 CREATE_INDEX_SQL = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_links_logical_edge ON cycle_links(repo_id, coalesce(parent_cycle_pk, -1), coalesce(child_cycle_pk, -1), link_kind, coalesce(trigger, ''), coalesce(parent_cycle_id_text, ''), coalesce(child_cycle_id_text, ''))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_change_log_entries_identity ON change_log_entries(repo_id, source_path, source_line, version, entry_date, item_number)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_change_log_file_refs_identity ON change_log_file_refs(change_log_entry_id, file_id, path, confidence)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, cycle_pk, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, cycle_pk, artifact_kind, path) WHERE sha256 IS NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_coalesced ON artifact_refs(repo_id, cycle_pk, artifact_kind, path, coalesce(sha256, ''))",
@@ -2949,6 +2951,141 @@ def dedupe_cycle_links(conn: sqlite3.Connection) -> int:
     return duplicate_groups
 
 
+def dedupe_change_log_identity(conn: sqlite3.Connection) -> int:
+    duplicate_entry_groups = 0
+    duplicate_ref_groups = 0
+    try:
+        row = conn.execute(
+            """
+            select count(*) from (
+              select 1
+              from change_log_entries
+              group by repo_id, source_path, source_line, version, entry_date, item_number
+              having count(*) > 1
+            )
+            """
+        ).fetchone()
+    except sqlite3.Error:
+        return 0
+    duplicate_entry_groups = int(row[0] or 0) if row else 0
+
+    if duplicate_entry_groups:
+        duplicate_keys = conn.execute(
+            """
+            select repo_id, source_path, source_line, version, entry_date, item_number
+            from change_log_entries
+            group by repo_id, source_path, source_line, version, entry_date, item_number
+            having count(*) > 1
+            """
+        ).fetchall()
+        for key in duplicate_keys:
+            entry_rows = conn.execute(
+                """
+                select change_log_entry_id, source_id, text
+                from change_log_entries
+                where repo_id=?
+                  and source_path=?
+                  and source_line=?
+                  and version=?
+                  and entry_date=?
+                  and item_number=?
+                order by change_log_entry_id
+                """,
+                (
+                    key["repo_id"],
+                    key["source_path"],
+                    key["source_line"],
+                    key["version"],
+                    key["entry_date"],
+                    key["item_number"],
+                ),
+            ).fetchall()
+            if len(entry_rows) < 2:
+                continue
+            canonical_id = int(entry_rows[0]["change_log_entry_id"])
+            duplicate_ids = [int(row_data["change_log_entry_id"]) for row_data in entry_rows[1:]]
+            placeholders = ",".join("?" for _ in duplicate_ids)
+            conn.execute(
+                f"update change_log_file_refs set change_log_entry_id=? where change_log_entry_id in ({placeholders})",
+                [canonical_id] + duplicate_ids,
+            )
+            if duplicate_ids:
+                conn.execute(
+                    f"delete from change_log_entries where change_log_entry_id in ({placeholders})",
+                    duplicate_ids,
+                )
+
+    try:
+        row = conn.execute(
+            """
+            select count(*) from (
+              select 1
+              from change_log_file_refs
+              group by change_log_entry_id, file_id, path, confidence
+              having count(*) > 1
+            )
+            """
+        ).fetchone()
+    except sqlite3.Error:
+        return duplicate_entry_groups
+    duplicate_ref_groups = int(row[0] or 0) if row else 0
+
+    if duplicate_ref_groups:
+        try:
+            conn.execute(
+                """
+                delete from change_log_file_refs
+                where change_log_file_ref_id not in (
+                  select min(change_log_file_ref_id)
+                  from change_log_file_refs
+                  group by change_log_entry_id, file_id, path, confidence
+                )
+                """
+            )
+        except sqlite3.Error:
+            return duplicate_entry_groups + duplicate_ref_groups
+
+    return duplicate_entry_groups + duplicate_ref_groups
+
+
+def ensure_change_log_identity_indexes(conn: sqlite3.Connection) -> int:
+    required = {
+        "change_log_entry_id",
+        "repo_id",
+        "source_path",
+        "source_line",
+        "version",
+        "entry_date",
+        "item_number",
+        "text",
+    }
+    try:
+        entry_columns = {row["name"] for row in conn.execute("pragma table_info(change_log_entries)").fetchall()}
+    except sqlite3.Error:
+        return 0
+    if not required.issubset(entry_columns):
+        return 0
+    deduped_groups = dedupe_change_log_identity(conn)
+    for index_name in (
+        "idx_change_log_entries_identity",
+        "idx_change_log_file_refs_identity",
+    ):
+        try:
+            conn.execute(f"DROP INDEX IF EXISTS {index_name}")
+        except sqlite3.Error:
+            pass
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_change_log_entries_identity ON change_log_entries(repo_id, source_path, source_line, version, entry_date, item_number)"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_change_log_file_refs_identity ON change_log_file_refs(change_log_entry_id, file_id, path, confidence)"
+        )
+    except sqlite3.Error:
+        return deduped_groups
+    return deduped_groups
+
+
 def ensure_cycle_links_logical_edge_index(conn: sqlite3.Connection) -> int:
     duplicate_groups = dedupe_cycle_links(conn)
     try:
@@ -3137,6 +3274,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
             conn.execute(sql)
         deduped_artifact_ref_groups = ensure_artifact_ref_identity_indexes(conn)
         deduped_cycle_link_groups = ensure_cycle_links_logical_edge_index(conn)
+        deduped_change_log_groups = ensure_change_log_identity_indexes(conn)
         deduped_git_change_groups = dedupe_git_file_changes(conn)
         ensure_file_snapshot_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_mtime_ns_column(conn)
@@ -3186,6 +3324,15 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
                 "insert or replace into schema_meta(key, value) values (?, ?)",
                 ("artifact_refs_deduped_epoch", str(now)),
             )
+        if deduped_change_log_groups:
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("change_log_deduped_groups", str(deduped_change_log_groups)),
+            )
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("change_log_deduped_epoch", str(now)),
+            )
         if deduped_cycle_link_groups:
             conn.execute(
                 "insert or replace into schema_meta(key, value) values (?, ?)",
@@ -3209,6 +3356,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     if int(user_version) != SCHEMA_VERSION:
         fail(f"PRAGMA user_version mismatch: expected {SCHEMA_VERSION}, got {user_version}", EXIT_SCHEMA_MISMATCH)
     ensure_artifact_ref_identity_indexes(conn)
+    ensure_change_log_identity_indexes(conn)
     ensure_cycle_links_logical_edge_index(conn)
     ensure_file_snapshot_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_mtime_ns_column(conn)
@@ -8362,7 +8510,7 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
     paths = [Path(p) for p in args.paths] if args.paths else sorted(root.glob("change_notes_*.md"))
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
-    rows_seen = rows_written = 0
+    rows_seen = rows_written = duplicates = 0
     with conn:
         repo_id = ensure_repository(conn, root)
         import_id = start_import(conn, repo_id, "change_notes", {"paths": [str(p) for p in paths]})
@@ -8380,6 +8528,7 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                 if not item or not current_date:
                     continue
                 rows_seen += 1
+                item_number = int(item.group(1))
                 text = item.group(2)
                 source_id = ensure_source_record(
                     conn,
@@ -8389,19 +8538,45 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                     source_path=str(path),
                     raw_ref=f"{current_version}:{line_number}",
                     raw_text=raw if args.raw else None,
-                    parsed={"version": current_version, "date": current_date, "item_number": int(item.group(1)), "text": text},
+                    parsed={"version": current_version, "date": current_date, "item_number": item_number, "text": text},
                     source_line=line_number,
                     raw_sha256=sha256_text(raw),
                     raw_storage_mode=raw_storage_mode,
                 )
-                cur = conn.execute(
+                existing_entry = conn.execute(
                     """
-                    insert into change_log_entries(repo_id, version, entry_date, item_number, source_path, source_line, text, source_id)
-                    values (?, ?, ?, ?, ?, ?, ?, ?)
+                    select change_log_entry_id
+                    from change_log_entries
+                    where repo_id=?
+                      and source_path=?
+                      and source_line=?
+                      and version=?
+                      and entry_date=?
+                      and item_number=?
                     """,
-                    (repo_id, current_version, current_date, int(item.group(1)), str(path), line_number, text, source_id),
-                )
-                entry_id = int(cur.lastrowid)
+                    (repo_id, str(path), line_number, current_version, current_date, item_number),
+                ).fetchone()
+                if existing_entry is not None:
+                    entry_id = int(existing_entry["change_log_entry_id"])
+                    duplicates += 1
+                    conn.execute(
+                        """
+                        update change_log_entries
+                        set text=?, source_id=?
+                        where change_log_entry_id=?
+                        """,
+                        (text, source_id, entry_id),
+                    )
+                else:
+                    cur = conn.execute(
+                        """
+                        insert into change_log_entries(repo_id, version, entry_date, item_number, source_path, source_line, text, source_id)
+                        values (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (repo_id, current_version, current_date, item_number, str(path), line_number, text, source_id),
+                    )
+                    entry_id = int(cur.lastrowid)
+                    rows_written += 1
                 for ref in re.findall(r"`([^`]+)`", text):
                     normalized_ref = normalize_repo_file_identity_ref(root, ref)
                     if not normalized_ref:
@@ -8412,6 +8587,17 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                         file_id = ensure_file(conn, repo_id, normalized_ref, source_id=source_id)
                     except ValueError:
                         continue
+                    existing_ref = conn.execute(
+                        """
+                        select change_log_file_ref_id
+                        from change_log_file_refs
+                        where change_log_entry_id=? and file_id=? and path=? and confidence=?
+                        """,
+                        (entry_id, file_id, ref, "explicit_path"),
+                    ).fetchone()
+                    if existing_ref is not None:
+                        duplicates += 1
+                        continue
                     conn.execute(
                         """
                         insert into change_log_file_refs(change_log_entry_id, file_id, path, confidence, source_id)
@@ -8419,9 +8605,9 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                         """,
                         (entry_id, file_id, ref, source_id),
                     )
-                rows_written += 1
+                    rows_written += 1
         finish_import(conn, import_id, "ok", rows_seen, rows_written, 0)
-    print_json({"status": "ok", "rows_seen": rows_seen, "rows_written": rows_written})
+    print_json({"status": "ok", "rows_seen": rows_seen, "rows_written": rows_written, "duplicates": duplicates})
     return EXIT_SUCCESS
 
 

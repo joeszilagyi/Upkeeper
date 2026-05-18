@@ -3,6 +3,45 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Backlog Autoshelve Local Remediation
+
+Status: completed locally
+
+Goal:
+- prevent backlog loops from autoshelving dirty Upkeeper control-plane fixes and
+  then continuing on stale wrapper code
+- preserve unrelated dirty local work on the autoshelve branch while promoting
+  wrapper/source/test/docs changes that are part of the local remediation bundle
+  back onto the active backlog branch automatically
+- keep Lattice unavailable terminal/log output bounded while preserving the full
+  doctor/init payload in private local recovery evidence
+
+Constraints:
+- keep the remediation deterministic, local-only, and pre-model
+- do not launch backend Codex validation
+- fail closed only when the local control-plane transplant cannot be applied
+  cleanly, and leave the autoshelve branch as evidence
+- avoid logging raw Lattice JSON walls to normal terminal/watch output
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `lib/upkeeper/lattice.bash`
+- `tools/validate_upkeeper.sh`
+- `tests/lattice_test.bash`
+- `docs/scripts/upkeeper.md`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `./Upkeeper --help`
+- `git diff --check`
+
 ## Lattice Source Record Identity And Outcome Compatibility
 
 Status: completed locally

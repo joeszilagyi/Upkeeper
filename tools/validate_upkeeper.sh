@@ -397,6 +397,10 @@ check_backlog_launcher_contract() {
   grep -Fq 'gh pr checks "$pr_number" --watch=false' orchestration/backlog.sh || fail "backlog launcher PR check watcher is not local polling"
   grep -Fq 'BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default dirty-worktree autoshelve on"
   grep -Fq 'autoshelving local changes to' orchestration/backlog.sh || fail "backlog launcher does not explain dirty-worktree autoshelve"
+  grep -Fq 'autoshelve_next_branch_name' orchestration/backlog.sh || fail "backlog launcher no longer avoids autoshelve branch-name collisions"
+  grep -Fq 'autoshelve_is_control_plane_trigger_path' orchestration/backlog.sh || fail "backlog launcher cannot identify dirty control-plane fixes"
+  grep -Fq 'Upkeeper remediation path(s)' orchestration/backlog.sh || fail "backlog launcher does not locally apply autoshelved control-plane remediation"
+  grep -Fq 'stopping before stale automation can run' orchestration/backlog.sh || fail "backlog launcher does not fail closed when control-plane remediation cannot apply"
   grep -Fq 'BACKLOG_QUOTA_HIBERNATE="${BACKLOG_QUOTA_HIBERNATE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default quota hibernation on"
   grep -Fq 'backlog_hibernate_until_epoch' orchestration/backlog.sh || fail "backlog launcher is missing quota hibernation helper"
   grep -Fq 'quota preflight: quota blocked bucket=' orchestration/backlog.sh || fail "backlog launcher does not explain quota hibernation"
@@ -666,7 +670,7 @@ check_backlog_quota_hibernation_contract() {
 }
 
 check_backlog_autoshelve_contract() {
-  local temp_dir output rc autoshelve_branch
+  local temp_dir output rc autoshelve_branch second_autoshelve_branch
 
   log "checking backlog dirty-worktree autoshelve contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-backlog-autoshelve.XXXXXX)"
@@ -696,6 +700,34 @@ check_backlog_autoshelve_contract() {
     [[ -n "$autoshelve_branch" ]] || fail "backlog autoshelve did not create a shelve branch"
     grep -Fq "autoshelved local changes on $autoshelve_branch" <<<"$output" || fail "backlog autoshelve did not report the shelve branch"
     git show "$autoshelve_branch:README.md" | grep -Fq 'dirty local work' || fail "backlog autoshelve branch did not preserve dirty work"
+    ! git show HEAD:README.md | grep -Fq 'dirty local work' || fail "ordinary dirty work was promoted onto the backlog branch"
+
+    printf 'dirty local work after control-plane change\n' >>README.md
+    printf '\n# validation control-plane dirty marker\n' >>orchestration/backlog.sh
+
+    set +e
+    output="$(BACKLOG_ALLOW_INTERACTIVE_STDIO=1 BACKLOG_AUTOSHELVE_PROBE=1 ./orchestration/backlog.sh 2>&1)"
+    rc=$?
+    set -e
+
+    [[ "$rc" -eq 0 ]] || fail "backlog control-plane autoshelve probe exited $rc output=$output"
+    [[ "$(git rev-parse --abbrev-ref HEAD)" == "main" ]] || fail "control-plane autoshelve did not return to main"
+    [[ -z "$(git status --short)" ]] || fail "control-plane autoshelve did not leave a clean worktree"
+    second_autoshelve_branch="$(git for-each-ref --format='%(refname:short)' 'refs/heads/wip/backlog-autoshelve/*' | sort | tail -1)"
+    [[ -n "$second_autoshelve_branch" && "$second_autoshelve_branch" != "$autoshelve_branch" ]] ||
+      fail "control-plane autoshelve did not create a second shelve branch"
+    grep -Fq "Upkeeper remediation path(s)" <<<"$output" || fail "control-plane autoshelve did not report local remediation"
+    grep -Fq "applied autoshelved Upkeeper control-plane changes" <<<"$output" || fail "control-plane autoshelve did not report applied remediation"
+    git show HEAD:orchestration/backlog.sh | grep -Fq 'validation control-plane dirty marker' ||
+      fail "control-plane autoshelve did not apply the launcher fix to main"
+    git log -1 --format=%s | grep -Fq 'Apply autoshelved Upkeeper control-plane changes' ||
+      fail "control-plane autoshelve did not leave an explicit remediation commit"
+    ! git show HEAD:README.md | grep -Fq 'dirty local work after control-plane change' ||
+      fail "control-plane autoshelve promoted unrelated dirty README work"
+    git show "$second_autoshelve_branch:README.md" | grep -Fq 'dirty local work after control-plane change' ||
+      fail "control-plane autoshelve branch did not preserve unrelated dirty work"
+    git show "$second_autoshelve_branch:orchestration/backlog.sh" | grep -Fq 'validation control-plane dirty marker' ||
+      fail "control-plane autoshelve branch did not preserve the dirty launcher fix"
   )
 
   rm -r "$temp_dir"
@@ -3164,6 +3196,10 @@ EOF
 
 check_lattice_contract() {
   log "checking Upkeeper Lattice"
+  grep -Fq "lattice_unavailable_detail_summary" lib/upkeeper/lattice.bash ||
+    fail "Lattice wrapper no longer summarizes unavailable details before logging"
+  ! grep -Fq 'detail=$(shell_quote "$detail")' lib/upkeeper/lattice.bash ||
+    fail "Lattice wrapper still logs raw unavailable detail payloads"
   bash tests/lattice_test.bash
   if rg -n '\b(curl|gh|requests|urllib3|urllib\.request|urllib\.error|http\.client|GITHUB_TOKEN)\b' tools/upkeeper_lattice.py lib/upkeeper/lattice.bash >/dev/null; then
     fail "Lattice implementation contains a default network/token surface"

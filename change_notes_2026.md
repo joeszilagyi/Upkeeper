@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-18: backlog autoshelve local remediation:
+	1. Backlog dirty-worktree autoshelve now distinguishes ordinary local work from Upkeeper control-plane fixes. Ordinary dirty files remain preserved on the private autoshelve branch, while dirty wrapper/modules/orchestration/tools/tests/prompts/config changes are reapplied and committed locally on the active backlog branch before issue work continues.
+	2. Autoshelve branch names now avoid timestamp collisions, and a failed control-plane transplant stops the launcher before stale automation can run while leaving the autoshelve branch as local evidence.
+	3. Lattice unavailable warnings now log a bounded detail summary with payload size, hash, status, and failed-check count/name; full raw init/doctor output is still spooled to private recovery JSONL for local diagnosis.
+
 2026-05-18: Lattice source-record recovery:
 	1. Lattice doctor now installs additive `source_records` identity columns before running internal source-record probes, so existing runtime databases can recover without an integrity-failure wall.
 	2. Lattice review-summary parsing again recognizes bare final-prose `REVIEWED_*` outcome lines while still rejecting quoted, fenced, or prose-only examples.

@@ -1039,29 +1039,141 @@ cleanup_ephemeral_artifacts() {
   rm -f -- "$ROOT_DIR/\$db" "$ROOT_DIR/\$db-shm" "$ROOT_DIR/\$db-wal" 2>/dev/null || true
 }
 
+autoshelve_next_branch_name() {
+  local base candidate suffix
+
+  base="${BACKLOG_AUTOSHELVE_BRANCH_PREFIX}$(date +%Y%m%d-%H%M%S)"
+  candidate="$base"
+  suffix=2
+  while git show-ref --verify --quiet "refs/heads/$candidate"; do
+    candidate="${base}-${suffix}"
+    suffix=$((suffix + 1))
+  done
+  printf '%s\n' "$candidate"
+}
+
+autoshelve_dirty_paths() {
+  local entry status path extra
+
+  while IFS= read -r -d '' entry; do
+    [[ "${#entry}" -ge 4 ]] || continue
+    status="${entry:0:2}"
+    path="${entry:3}"
+    [[ -n "$path" ]] && printf '%s\0' "${path#./}"
+    case "$status" in
+      R*|C*)
+        if IFS= read -r -d '' extra; then
+          [[ -n "$extra" ]] && printf '%s\0' "${extra#./}"
+        fi
+        ;;
+    esac
+  done < <(git status --porcelain=v1 -z --untracked-files=all)
+}
+
+autoshelve_is_control_plane_trigger_path() {
+  local path="${1#./}"
+
+  case "$path" in
+    Upkeeper|ChimneySweep|FlameOn|Upkeeper.conf)
+      return 0
+      ;;
+    configurations/*|lib/upkeeper/*|orchestration/*|prompts/*|testruns/*|tests/*|tools/*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+autoshelve_is_remediation_bundle_path() {
+  local path="${1#./}"
+
+  if autoshelve_is_control_plane_trigger_path "$path"; then
+    return 0
+  fi
+  case "$path" in
+    AGENTS.md|PLANS.md|change_notes_[0-9][0-9][0-9][0-9].md|docs/*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+autoshelve_apply_control_plane_from_shelve() {
+  local current_head="$1"
+  local shelved_commit="$2"
+  local shelve_branch="$3"
+  local current_branch="$4"
+  local promoted_summary
+  local -a promote_paths=()
+  shift 4
+  promote_paths=("$@")
+
+  if [[ "${#promote_paths[@]}" -eq 0 ]]; then
+    log "autoshelved local changes on $shelve_branch but found no remediation bundle paths to apply; backlog will continue on clean branch $current_branch"
+    return 0
+  fi
+
+  log "autoshelved local changes on $shelve_branch; applying ${#promote_paths[@]} Upkeeper remediation path(s) to $current_branch before issue work"
+  if ! git diff --binary "$current_head" "$shelved_commit" -- "${promote_paths[@]}" | git apply --index --whitespace=nowarn; then
+    git reset --hard "$current_head" >/dev/null 2>&1 || true
+    log "autoshelved local changes on $shelve_branch but could not apply Upkeeper control-plane remediation cleanly; stopping before stale automation can run"
+    exit 4
+  fi
+  git diff --cached --check
+  if git diff --cached --quiet; then
+    log "autoshelved local changes on $shelve_branch but no control-plane diff remained after cleanup; backlog will continue on clean branch $current_branch"
+    return 0
+  fi
+  git commit -m "Apply autoshelved Upkeeper control-plane changes from ${shelve_branch}" >/dev/null
+  promoted_summary="$(git rev-parse --short HEAD 2>/dev/null || printf 'unknown')"
+  require_clean_worktree
+  log "applied autoshelved Upkeeper control-plane changes from $shelve_branch onto $current_branch at $promoted_summary; backlog will continue with local remediation"
+}
+
 autoshelve_dirty_worktree_if_enabled() {
-  local status current_branch current_head shelve_branch shellved_summary
+  local status current_branch current_head shelve_branch shelved_commit shelved_summary
+  local path has_control_plane
+  local -a dirty_paths=()
+  local -a promote_paths=()
 
   status="$(dirty_worktree_status)"
   [[ -n "$status" ]] || return 0
   [[ "$BACKLOG_AUTOSHELVE_DIRTY_WORKTREE" == "1" ]] || return 0
 
+  cleanup_ephemeral_artifacts
+  status="$(dirty_worktree_status)"
+  [[ -n "$status" ]] || return 0
+  mapfile -d '' -t dirty_paths < <(autoshelve_dirty_paths)
+  has_control_plane=0
+  for path in "${dirty_paths[@]}"; do
+    if autoshelve_is_control_plane_trigger_path "$path"; then
+      has_control_plane=1
+    fi
+    if autoshelve_is_remediation_bundle_path "$path"; then
+      promote_paths+=("$path")
+    fi
+  done
+
   current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
   current_head="$(git rev-parse HEAD 2>/dev/null || printf '')"
   [[ -n "$current_head" ]] || fail "cannot autoshelve dirty worktree without a current HEAD"
-  shelve_branch="${BACKLOG_AUTOSHELVE_BRANCH_PREFIX}$(date +%Y%m%d-%H%M%S)"
+  shelve_branch="$(autoshelve_next_branch_name)"
 
   log "dirty worktree detected; autoshelving local changes to $shelve_branch before backlog issue work"
-  cleanup_ephemeral_artifacts
   git checkout -b "$shelve_branch" >/dev/null
   git add --all
   git diff --cached --check
   git commit -m "Preserve dirty backlog launcher worktree from ${current_branch}" >/dev/null
-  shellved_summary="$(git rev-parse --short HEAD 2>/dev/null || printf 'unknown')"
+  shelved_commit="$(git rev-parse HEAD)"
+  shelved_summary="$(git rev-parse --short HEAD 2>/dev/null || printf 'unknown')"
   git checkout "$current_branch" >/dev/null
   git reset --hard "$current_head" >/dev/null
   require_clean_worktree
-  log "autoshelved local changes on $shelve_branch at $shellved_summary; backlog will continue on clean branch $current_branch"
+  if [[ "$has_control_plane" == "1" ]]; then
+    autoshelve_apply_control_plane_from_shelve "$current_head" "$shelved_commit" "$shelve_branch" "$current_branch" "${promote_paths[@]}"
+  else
+    log "autoshelved local changes on $shelve_branch at $shelved_summary; backlog will continue on clean branch $current_branch"
+  fi
 
   if [[ "$BACKLOG_AUTOSHELVE_PROBE" == "1" ]]; then
     exit 0

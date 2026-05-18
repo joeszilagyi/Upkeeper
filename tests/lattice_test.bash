@@ -1357,6 +1357,8 @@ test_wrapper_required_policy() {
   [[ "$rc" -eq 0 ]] || fail "REQUIRED=0 unsafe DB dry-run exited $rc, expected 0"
   grep -Fq "lattice.unavailable required=0" "$repo/Upkeeper.log" ||
     fail "REQUIRED=0 did not warn about unavailable lattice"
+  grep -Fq "detail_summary=" "$repo/Upkeeper.log" ||
+    fail "REQUIRED=0 lattice warning did not use bounded detail_summary"
   [[ -s "$repo/runtime/upkeeper-lattice/recovery/lattice-unavailable.jsonl" ]] ||
     fail "REQUIRED=0 did not spool recovery evidence"
 
@@ -1392,6 +1394,24 @@ test_wrapper_required_policy() {
     fail "REQUIRED=1 did not fail before Codex launch with LATTICE_UNAVAILABLE"
   grep -Fq "codex_exec_started=0" "$repo/Upkeeper.log" ||
     fail "REQUIRED=1 failure did not record codex_exec_started=0"
+  grep -Fq "detail_summary=" "$repo/Upkeeper.log" ||
+    fail "REQUIRED=1 lattice failure did not use bounded detail_summary"
+}
+
+test_lattice_unavailable_summary_redacts_raw_detail() {
+  local detail summary
+
+  detail='{"status":"integrity_failure","checks":{"cycle_finish_report_only_outcome":{"ok":false,"selected_path":"/tmp/private/path.py"}}}'
+  # shellcheck source=/dev/null
+  source "$ROOT_DIR/lib/upkeeper/lattice.bash"
+  summary="$(lattice_unavailable_detail_summary "$detail")"
+  [[ "$summary" == *"detail_sha256="* ]] || fail "lattice unavailable summary missing detail hash"
+  [[ "$summary" == *"detail_bytes="* ]] || fail "lattice unavailable summary missing byte count"
+  [[ "$summary" == *"json_status=integrity_failure"* ]] || fail "lattice unavailable summary missing JSON status"
+  [[ "$summary" == *"first_failed_check=cycle_finish_report_only_outcome"* ]] ||
+    fail "lattice unavailable summary missing failed check name"
+  [[ "$summary" != *"/tmp/private"* ]] || fail "lattice unavailable summary leaked raw path"
+  [[ "$summary" != *"selected_path"* ]] || fail "lattice unavailable summary leaked raw detail key"
 }
 
 test_unsafe_lattice_db_path_is_rejected_by_default() {
@@ -2357,6 +2377,7 @@ test_backup_is_read_only
 test_missing_selection_path_stays_missing
 test_missing_selected_candidate_target_stays_missing
 test_wrapper_required_policy
+test_lattice_unavailable_summary_redacts_raw_detail
 test_unsafe_lattice_db_path_is_rejected_by_default
 test_default_runtime_symlink_db_path_is_rejected
 test_ordinary_command_does_not_create_missing_db

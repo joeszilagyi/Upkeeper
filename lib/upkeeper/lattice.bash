@@ -16,13 +16,75 @@ lattice_tool_path() {
   printf '%s/tools/upkeeper_lattice.py' "$UPKEEPER_IMPLEMENTATION_DIR"
 }
 
+lattice_unavailable_detail_summary() {
+  local detail="$1"
+
+  python3 - "$detail" <<'PY' 2>/dev/null || {
+import hashlib
+import json
+import re
+import sys
+
+detail = sys.argv[1]
+detail_bytes = len(detail.encode("utf-8", errors="replace"))
+detail_sha256 = hashlib.sha256(detail.encode("utf-8", errors="replace")).hexdigest()
+
+
+def token(value):
+    value = re.sub(r"[^A-Za-z0-9_.:-]+", "_", str(value))[:96]
+    return value or "empty"
+
+
+parts = [
+    f"detail_bytes={detail_bytes}",
+    f"detail_sha256={detail_sha256}",
+]
+try:
+    data = json.loads(detail)
+except Exception:
+    parts.append("format=text")
+else:
+    parts.append("format=json")
+    if isinstance(data, dict) and data.get("status") is not None:
+        parts.append(f"json_status={token(data.get('status'))}")
+    checks = data.get("checks") if isinstance(data, dict) else None
+    failed = []
+
+    def walk(value, prefix):
+        if isinstance(value, dict):
+            if value.get("ok") is False:
+                failed.append(prefix or "checks")
+            for key, child in value.items():
+                if key == "ok":
+                    continue
+                child_prefix = f"{prefix}.{key}" if prefix else str(key)
+                walk(child, child_prefix)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                walk(child, f"{prefix}.{index}" if prefix else str(index))
+
+    if isinstance(checks, dict):
+        walk(checks, "")
+    parts.append(f"failed_check_count={len(failed)}")
+    if failed:
+        parts.append(f"first_failed_check={token(failed[0])}")
+print(" ".join(parts))
+PY
+    local detail_bytes
+    detail_bytes="$(printf '%s' "$detail" | wc -c | tr -d ' ')"
+    printf 'detail_bytes=%s format=summary_failed\n' "${detail_bytes:-0}"
+  }
+}
+
 lattice_warn_once() {
   local detail="$1"
+  local detail_summary
 
   lattice_spool_unavailable_event "$detail"
   [[ "${UPKEEPER_LATTICE_WARNED:-0}" == "1" ]] && return 0
   UPKEEPER_LATTICE_WARNED="1"
-  log_line "WARN" "lattice.unavailable required=${UPKEEPER_LATTICE_REQUIRED:-0} db=$(shell_quote "${UPKEEPER_LATTICE_DB:-}") detail=$(shell_quote "$detail") action=continue_without_lattice"
+  detail_summary="$(lattice_unavailable_detail_summary "$detail")"
+  log_line "WARN" "lattice.unavailable required=${UPKEEPER_LATTICE_REQUIRED:-0} db=$(shell_quote "${UPKEEPER_LATTICE_DB:-}") detail_summary=$(shell_quote "$detail_summary") action=continue_without_lattice"
 }
 
 lattice_spool_unavailable_event() {
@@ -93,7 +155,7 @@ lattice_run() {
 }
 
 lattice_init_and_doctor_or_exit() {
-  local detail
+  local detail detail_summary
 
   UPKEEPER_LATTICE_AVAILABLE="0"
   lattice_enabled || return 0
@@ -111,8 +173,9 @@ lattice_init_and_doctor_or_exit() {
   if ! lattice_run init; then
     detail="${LATTICE_LAST_OUTPUT:-init_failed}"
     if lattice_required; then
-      log_line "ERROR" "lattice.unavailable required=1 reason=init_failed db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail=$(shell_quote "$detail")"
-      finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=init_failed detail=$(shell_quote "$detail")"
+      detail_summary="$(lattice_unavailable_detail_summary "$detail")"
+      log_line "ERROR" "lattice.unavailable required=1 reason=init_failed db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail_summary=$(shell_quote "$detail_summary")"
+      finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=init_failed detail_summary=$(shell_quote "$detail_summary")"
     fi
     lattice_warn_once "$detail"
     return 0
@@ -121,8 +184,9 @@ lattice_init_and_doctor_or_exit() {
   if ! lattice_run doctor; then
     detail="${LATTICE_LAST_OUTPUT:-doctor_failed}"
     if lattice_required; then
-      log_line "ERROR" "lattice.unavailable required=1 reason=doctor_failed db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail=$(shell_quote "$detail")"
-      finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=doctor_failed detail=$(shell_quote "$detail")"
+      detail_summary="$(lattice_unavailable_detail_summary "$detail")"
+      log_line "ERROR" "lattice.unavailable required=1 reason=doctor_failed db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail_summary=$(shell_quote "$detail_summary")"
+      finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=doctor_failed detail_summary=$(shell_quote "$detail_summary")"
     fi
     lattice_warn_once "$detail"
     return 0

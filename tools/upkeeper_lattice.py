@@ -116,6 +116,7 @@ BUILD_NAMES = {
 }
 TEST_DIRS = {"__tests__", "test", "tests"}
 REDACTED_PATH_PREFIX = "path-sha256:"
+REDACTED_PATH_TOKEN_PATTERN = re.compile(f"{re.escape(REDACTED_PATH_PREFIX)}[0-9a-f]{{64}}")
 PASS_RESULT_PATH_HMAC_PREFIX = "path-hmac-sha256:"
 METADATA_HMAC_PREFIX = "meta-hmac-sha256:"
 CONTENT_HMAC_PREFIX = "content-hmac-sha256:"
@@ -4354,24 +4355,25 @@ def has_redacted_inline_assignment_string(raw: str) -> bool:
     return False
 
 
-def has_redacted_path_token(payload: Any, current_key: str | None = None) -> bool:
+def has_redacted_path_token(payload: Any, current_key: str | None = None, *, check_any_context: bool = False) -> bool:
     if isinstance(payload, dict):
         for key, value in payload.items():
-            if has_redacted_path_token(value, key):
+            if has_redacted_path_token(value, key, check_any_context=check_any_context):
                 return True
     elif isinstance(payload, list):
         for value in payload:
-            if has_redacted_path_token(value, current_key):
+            if has_redacted_path_token(value, current_key, check_any_context=check_any_context):
                 return True
     elif isinstance(payload, str):
-        if key_requires_path_redaction(current_key) and payload.startswith(REDACTED_PATH_PREFIX):
-            return True
+        if REDACTED_PATH_TOKEN_PATTERN.search(payload):
+            if check_any_context or key_requires_path_redaction(current_key):
+                return True
         if looks_like_json_container_string(payload):
             try:
                 parsed = json.loads(payload)
             except (TypeError, json.JSONDecodeError):
                 return has_redacted_inline_assignment_string(payload)
-            return has_redacted_path_token(parsed, current_key)
+            return has_redacted_path_token(parsed, current_key, check_any_context=check_any_context)
         return has_redacted_inline_assignment_string(payload)
     return False
 
@@ -8532,7 +8534,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "unsupported_row")
                 continue
-            if has_redacted_path_token(payload):
+            if not getattr(args, "anonymized_archive", False) and has_redacted_path_token(row, check_any_context=True):
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "redacted_path_payload")
                 continue
@@ -10009,6 +10011,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("import-jsonl")
     p.add_argument("path")
     p.add_argument("--max-conflicts", type=int, default=0)
+    p.add_argument(
+        "--anonymized-archive",
+        dest="anonymized_archive",
+        action="store_true",
+        help="allow importing JSONL exports with redacted path-sha256 values (for explicit anonymized archives)",
+    )
     p.add_argument(
         "--redact-raw",
         dest="redact_raw",

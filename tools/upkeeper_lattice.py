@@ -403,6 +403,7 @@ REQUIRED_TABLES = [
 ]
 
 REQUIRED_INDEXES = {
+    "idx_cycle_links_logical_edge": "cycle_links",
     "idx_artifact_refs_unique_identity_digest": "artifact_refs",
     "idx_artifact_refs_unique_identity_missing_digest": "artifact_refs",
     "idx_artifact_refs_unique_identity_coalesced": "artifact_refs",
@@ -1177,6 +1178,7 @@ CREATE_TABLE_SQL = [
 ]
 
 CREATE_INDEX_SQL = [
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_links_logical_edge ON cycle_links(repo_id, coalesce(parent_cycle_pk, -1), coalesce(child_cycle_pk, -1), link_kind, coalesce(trigger, ''), coalesce(parent_cycle_id_text, ''), coalesce(child_cycle_id_text, ''))",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_digest ON artifact_refs(repo_id, cycle_pk, artifact_kind, path, sha256) WHERE sha256 IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_missing_digest ON artifact_refs(repo_id, cycle_pk, artifact_kind, path) WHERE sha256 IS NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_refs_unique_identity_coalesced ON artifact_refs(repo_id, cycle_pk, artifact_kind, path, coalesce(sha256, ''))",
@@ -2898,6 +2900,66 @@ def ensure_artifact_ref_identity_indexes(conn: sqlite3.Connection) -> int:
     return duplicate_groups
 
 
+def dedupe_cycle_links(conn: sqlite3.Connection) -> int:
+    try:
+        row = conn.execute(
+            """
+            select count(*) from (
+                select repo_id,
+                       coalesce(parent_cycle_pk, -1),
+                       coalesce(child_cycle_pk, -1),
+                       link_kind,
+                       coalesce(trigger, ''),
+                       coalesce(parent_cycle_id_text, ''),
+                       coalesce(child_cycle_id_text, '')
+                from cycle_links
+                group by repo_id,
+                         coalesce(parent_cycle_pk, -1),
+                         coalesce(child_cycle_pk, -1),
+                         link_kind,
+                         coalesce(trigger, ''),
+                         coalesce(parent_cycle_id_text, ''),
+                         coalesce(child_cycle_id_text, '')
+                having count(*) > 1
+            )
+            """
+        ).fetchone()
+    except sqlite3.Error:
+        return 0
+    duplicate_groups = int(row[0] or 0) if row else 0
+    if duplicate_groups:
+        try:
+            conn.execute(
+                """
+                delete from cycle_links
+                where cycle_link_id not in (
+                    select min(cycle_link_id) from cycle_links
+                    group by repo_id,
+                             coalesce(parent_cycle_pk, -1),
+                             coalesce(child_cycle_pk, -1),
+                             link_kind,
+                             coalesce(trigger, ''),
+                             coalesce(parent_cycle_id_text, ''),
+                             coalesce(child_cycle_id_text, '')
+                )
+                """
+            )
+        except sqlite3.Error:
+            return duplicate_groups
+    return duplicate_groups
+
+
+def ensure_cycle_links_logical_edge_index(conn: sqlite3.Connection) -> int:
+    duplicate_groups = dedupe_cycle_links(conn)
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_links_logical_edge ON cycle_links(repo_id, coalesce(parent_cycle_pk, -1), coalesce(child_cycle_pk, -1), link_kind, coalesce(trigger, ''), coalesce(parent_cycle_id_text, ''), coalesce(child_cycle_id_text, ''))"
+        )
+    except sqlite3.Error:
+        return duplicate_groups
+    return duplicate_groups
+
+
 def ensure_file_snapshot_mtime_ns_column(conn: sqlite3.Connection) -> None:
     try:
         columns = {row["name"] for row in conn.execute("pragma table_info(file_snapshots)").fetchall()}
@@ -3074,6 +3136,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
         for sql in CREATE_TABLE_SQL:
             conn.execute(sql)
         deduped_artifact_ref_groups = ensure_artifact_ref_identity_indexes(conn)
+        deduped_cycle_link_groups = ensure_cycle_links_logical_edge_index(conn)
         deduped_git_change_groups = dedupe_git_file_changes(conn)
         ensure_file_snapshot_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_mtime_ns_column(conn)
@@ -3123,6 +3186,15 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
                 "insert or replace into schema_meta(key, value) values (?, ?)",
                 ("artifact_refs_deduped_epoch", str(now)),
             )
+        if deduped_cycle_link_groups:
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("cycle_links_deduped_groups", str(deduped_cycle_link_groups)),
+            )
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("cycle_links_deduped_epoch", str(now)),
+            )
     install_pass_registry(conn, root or default_root(), raw_storage_mode=raw_storage_mode)
 
 
@@ -3137,6 +3209,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     if int(user_version) != SCHEMA_VERSION:
         fail(f"PRAGMA user_version mismatch: expected {SCHEMA_VERSION}, got {user_version}", EXIT_SCHEMA_MISMATCH)
     ensure_artifact_ref_identity_indexes(conn)
+    ensure_cycle_links_logical_edge_index(conn)
     ensure_file_snapshot_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_identity_columns(conn)
@@ -5009,6 +5082,7 @@ def record_cycle_link_from_env(conn: sqlite3.Connection, repo_id: int, cycle_pk:
           repo_id, parent_cycle_pk, child_cycle_pk, link_kind, trigger,
           parent_cycle_id_text, child_cycle_id_text, source_id, created_epoch
         ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        on conflict do nothing
         """,
         (
             repo_id,

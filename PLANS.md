@@ -3,6 +3,33 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Lattice Unanchored Source Record Identity Guard
+
+Status: completed locally
+
+Goal:
+- keep imported line/source evidence idempotent when it has a deterministic
+  path/line/hash identity
+- prevent unrelated local wrapper observations with no path, no line, and no
+  raw/parsed hash from collapsing into one `source_records` row
+- add deterministic regression coverage for unanchored source observations
+
+Constraints:
+- keep the fix local and focused on Lattice source-record identity
+- do not launch backend Codex validation
+- preserve the newly repaired bounded Lattice unavailable logging path
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_lattice.py`
+- `bash tests/lattice_test.bash`
+- `git diff --check`
+
 ## Backlog Autoshelve Local Remediation
 
 Status: completed locally

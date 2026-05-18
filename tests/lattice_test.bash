@@ -2272,6 +2272,8 @@ EOF
   lattice import-upkeeper-log --path "$log_path" >"$TEST_TMP_ROOT/source-record-identity-import-2.out"
   lattice record-cycle-start --cycle-id cycle-source-a --run-hash hash-source-a >"$TEST_TMP_ROOT/source-record-identity-start-a.out"
   lattice record-cycle-start --cycle-id cycle-source-b --run-hash hash-source-b >"$TEST_TMP_ROOT/source-record-identity-start-b.out"
+  lattice record-worktree-snapshot --snapshot-kind identity-unanchored >"$TEST_TMP_ROOT/source-record-identity-snapshot-1.out"
+  lattice record-worktree-snapshot --snapshot-kind identity-unanchored >"$TEST_TMP_ROOT/source-record-identity-snapshot-2.out"
 
   python3 - "$DB" <<'PY' || fail "source_records identity replay boundary regressed"
 import sqlite3
@@ -2294,6 +2296,12 @@ wrapper_count = conn.execute(
 ).fetchone()[0]
 if int(wrapper_count) != 2:
     raise AssertionError(f"wrapper observations without an anchored source identity collapsed: {wrapper_count}")
+
+unanchored_count = conn.execute(
+    "select count(*) from source_records where source_kind='wrapper_observed' and raw_ref='worktree_snapshot:identity-unanchored'"
+).fetchone()[0]
+if int(unanchored_count) != 2:
+    raise AssertionError(f"unanchored worktree snapshot source records collapsed: {unanchored_count}")
 PY
 }
 

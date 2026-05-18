@@ -3256,45 +3256,47 @@ def ensure_source_record(
     identity_path = stored_source_path or ""
     identity_line = stored_source_line if stored_source_line is not None else -1
     identity_sha = stored_raw_sha256 or ""
-    row = conn.execute(
-        """
-        select source_id
-        from source_records
-        where repo_id=?
-          and source_kind=?
-          and coalesce(source_path, '') = ?
-          and coalesce(source_line, -1) = ?
-          and coalesce(raw_sha256, '') = ?
-        order by imported_epoch desc, source_id desc
-        limit 1
-        """,
-        (repo_id, source_kind, identity_path, identity_line, identity_sha),
-    ).fetchone()
-    if row:
-        source_id = int(row["source_id"])
-        conn.execute(
+    has_anchored_identity = bool(identity_sha or (identity_path and stored_source_line is not None))
+    if has_anchored_identity:
+        row = conn.execute(
             """
-            update source_records
-            set source_path=?, source_uri=?, source_epoch=?, source_line=?, raw_ref=?, raw_text=coalesce(?, raw_text),
-                parsed_json=coalesce(?, parsed_json), parse_status=?, fact_confidence=?, raw_sha256=?, imported_epoch=?
-            where source_id=?
+            select source_id
+            from source_records
+            where repo_id=?
+              and source_kind=?
+              and coalesce(source_path, '') = ?
+              and coalesce(source_line, -1) = ?
+              and coalesce(raw_sha256, '') = ?
+            order by imported_epoch desc, source_id desc
+            limit 1
             """,
-            (
-                stored_source_path,
-                stored_source_uri,
-                source_epoch,
-                stored_source_line,
-                raw_ref or None,
-                stored_raw_text,
-                parsed_payload_text,
-                parse_status,
-                fact_confidence,
-                stored_raw_sha256,
-                now,
-                source_id,
-            ),
-        )
-        return source_id
+            (repo_id, source_kind, identity_path, identity_line, identity_sha),
+        ).fetchone()
+        if row:
+            source_id = int(row["source_id"])
+            conn.execute(
+                """
+                update source_records
+                set source_path=?, source_uri=?, source_epoch=?, source_line=?, raw_ref=?, raw_text=coalesce(?, raw_text),
+                    parsed_json=coalesce(?, parsed_json), parse_status=?, fact_confidence=?, raw_sha256=?, imported_epoch=?
+                where source_id=?
+                """,
+                (
+                    stored_source_path,
+                    stored_source_uri,
+                    source_epoch,
+                    stored_source_line,
+                    raw_ref or None,
+                    stored_raw_text,
+                    parsed_payload_text,
+                    parse_status,
+                    fact_confidence,
+                    stored_raw_sha256,
+                    now,
+                    source_id,
+                ),
+            )
+            return source_id
     cur = conn.execute(
         """
         insert into source_records(
@@ -8405,6 +8407,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             {"path": str(input_path)},
             forced_id=max(existing_import_max, imported_import_max) + 1,
         )
+        staged_import_rows: list[dict[str, Any]] = []
         for line_number, raw in enumerate(input_lines, start=1):
             if not raw:
                 continue
@@ -8477,22 +8480,17 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 # Recovery spool rows can contain DB paths and prior failure text;
                 # default imports keep only a hashed summary unless raw retention
                 # is explicitly requested and raw storage mode allows it.
-                ensure_source_record(
-                    conn,
-                    root,
-                    repo_id,
-                    "recovery",
-                    source_path=str(input_path),
-                    raw_ref=logical_key,
-                    raw_text=raw if not getattr(args, "redact_raw", False) else None,
-                    parsed=summarize_lattice_unavailable_payload(payload, raw),
-                    parse_status="spooled_lattice_unavailable",
-                    fact_confidence="observed",
-                    source_line=line_number,
-                    raw_sha256=sha256_text(raw),
-                    raw_storage_mode=raw_storage_mode,
+                staged_import_rows.append(
+                    {
+                        "mode": "recovery",
+                        "line_number": rows_seen,
+                        "logical_key": logical_key,
+                        "payload_sha256": incoming_raw_hash,
+                        "raw": raw,
+                        "payload": payload,
+                        "source_path": str(input_path),
+                    }
                 )
-                rows_written += 1
                 continue
             if table not in REQUIRED_TABLES:
                 conflicts += 1
@@ -8519,41 +8517,147 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_raw_hash, "empty_filtered_payload")
                 continue
             incoming_semantic_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
-            existing = None
-            if pk and filtered.get(pk) is not None:
-                existing = conn.execute(f"select * from {table} where {pk}=?", (filtered[pk],)).fetchone()
-            if existing:
-                existing_payload = semantic_import_payload(table, {key: existing[key] for key in columns})
-                existing_hash = sha256_text(json_dumps(existing_payload))
-                incoming_compare_payload = align_redacted_import_compare_payload(
-                    semantic_import_payload(table, filtered),
-                    existing_payload,
-                )
-                incoming_compare_hash = sha256_text(json_dumps(incoming_compare_payload))
-                if existing_hash == incoming_compare_hash:
-                    duplicates += 1
+            staged_import_rows.append(
+                {
+                    "mode": "insert",
+                    "line_number": rows_seen,
+                    "logical_key": logical_key,
+                    "incoming_raw_hash": incoming_raw_hash,
+                    "incoming_semantic_hash": incoming_semantic_hash,
+                    "table": table,
+                    "payload_columns": columns,
+                    "payload_pk": pk,
+                    "filtered_payload": filtered,
+                }
+            )
+
+        def _is_foreign_key_integrity_error(exc: sqlite3.IntegrityError) -> bool:
+            message = str(exc).lower()
+            return "foreign key constraint failed" in message or "violates foreign key" in message
+
+        pending_rows = staged_import_rows
+        max_import_rounds = len(staged_import_rows) if staged_import_rows else 0
+        import_round = 0
+        while pending_rows and import_round < max_import_rounds:
+            import_round += 1
+            next_round_rows: list[dict[str, Any]] = []
+            for staged in pending_rows:
+                if staged["mode"] == "recovery":
+                    if not isinstance(staged["payload"], dict):
+                        conflicts += 1
+                        record_import_conflict(
+                            conn,
+                            import_id,
+                            repo_id,
+                            "lattice_unavailable",
+                            str(staged["logical_key"]),
+                            "",
+                            str(staged["payload_sha256"]),
+                            "unsupported_row",
+                        )
+                        continue
+                    source_line = int(staged["line_number"])
+                    summarize_payload = summarize_lattice_unavailable_payload(staged["payload"], staged["raw"])
+                    ensure_source_record(
+                        conn,
+                        root,
+                        repo_id,
+                        "recovery",
+                        source_path=staged["source_path"],
+                        raw_ref=staged["logical_key"],
+                        raw_text=staged["raw"] if not getattr(args, "redact_raw", False) else None,
+                        parsed=summarize_payload,
+                        parse_status="spooled_lattice_unavailable",
+                        fact_confidence="observed",
+                        source_line=source_line,
+                        raw_sha256=sha256_text(staged["raw"]),
+                        raw_storage_mode=raw_storage_mode,
+                    )
+                    rows_written += 1
                     continue
+
+                table = str(staged["table"])
+                logical_key = str(staged["logical_key"])
+                incoming_raw_hash = str(staged["incoming_raw_hash"])
+                incoming_semantic_hash = str(staged["incoming_semantic_hash"])
+                columns = list(staged["payload_columns"])
+                pk = staged["payload_pk"]
+                filtered = dict(staged["filtered_payload"])
+                try:
+                    existing = None
+                    if pk and filtered.get(pk) is not None:
+                        existing = conn.execute(f"select * from {table} where {pk}=?", (filtered[pk],)).fetchone()
+                    if existing:
+                        existing_payload = semantic_import_payload(table, {key: existing[key] for key in columns})
+                        existing_hash = sha256_text(json_dumps(existing_payload))
+                        incoming_compare_payload = align_redacted_import_compare_payload(
+                            semantic_import_payload(table, filtered),
+                            existing_payload,
+                        )
+                        incoming_compare_hash = sha256_text(json_dumps(incoming_compare_payload))
+                        if existing_hash == incoming_compare_hash:
+                            duplicates += 1
+                            continue
+                        conflicts += 1
+                        record_import_conflict(
+                            conn,
+                            import_id,
+                            repo_id,
+                            table,
+                            logical_key,
+                            existing_hash,
+                            incoming_compare_hash,
+                            "kept_existing",
+                        )
+                        continue
+                    colnames = list(filtered.keys())
+                    placeholders = ",".join("?" for _ in colnames)
+                    conn.execute(
+                        f"insert into {table}({', '.join(colnames)}) values ({placeholders})",
+                        [filtered[key] for key in colnames],
+                    )
+                    rows_written += 1
+                    if table == "file_pass_runs":
+                        try:
+                            pass_file_id = int(filtered.get("file_id", 0))
+                        except (TypeError, ValueError):
+                            pass_file_id = 0
+                        if pass_file_id > 0:
+                            refresh_pass_rollup_file_ids.add(pass_file_id)
+                except sqlite3.IntegrityError as exc:
+                    if _is_foreign_key_integrity_error(exc):
+                        next_round_rows.append(staged)
+                        continue
+                    conflicts += 1
+                    record_import_conflict(
+                        conn,
+                        import_id,
+                        repo_id,
+                        table,
+                        logical_key,
+                        "",
+                        incoming_semantic_hash,
+                        f"integrity_error:{exc}",
+                    )
+            pending_rows = next_round_rows
+
+        if pending_rows:
+            for staged in pending_rows:
+                table = str(staged["table"]) if staged["mode"] == "insert" else "lattice_unavailable"
+                logical_key = str(staged["logical_key"])
+                incoming_semantic_hash = str(staged["incoming_semantic_hash"]) if staged["mode"] == "insert" else ""
+                incoming_raw_hash = str(staged["incoming_raw_hash"]) if staged["mode"] == "insert" else str(staged["payload_sha256"])
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, table, logical_key, existing_hash, incoming_compare_hash, "kept_existing")
-                continue
-            colnames = list(filtered.keys())
-            placeholders = ",".join("?" for _ in colnames)
-            try:
-                conn.execute(
-                    f"insert into {table}({', '.join(colnames)}) values ({placeholders})",
-                    [filtered[key] for key in colnames],
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    table,
+                    logical_key,
+                    "",
+                    incoming_raw_hash if table == "lattice_unavailable" else incoming_semantic_hash,
+                    "integrity_error:deferred_foreign_key",
                 )
-                rows_written += 1
-                if table == "file_pass_runs":
-                    try:
-                        pass_file_id = int(filtered.get("file_id", 0))
-                    except (TypeError, ValueError):
-                        pass_file_id = 0
-                    if pass_file_id > 0:
-                        refresh_pass_rollup_file_ids.add(pass_file_id)
-            except sqlite3.IntegrityError as exc:
-                conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_semantic_hash, f"integrity_error:{exc}")
         finish_import(
             conn,
             import_id,

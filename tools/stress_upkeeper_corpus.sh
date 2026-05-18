@@ -220,7 +220,7 @@ run_upkeeper_dry() {
     CODEX_HOME="$codex_home" \
       CODEX_LOG_FILE="$log_file" \
       CODEX_TRANSCRIPT_DIR="$evidence_dir/transcripts" \
-      CODEX_ACTIVE_LOCK_DIR="$evidence_dir/active.lock" \
+      CODEX_ACTIVE_LOCK_DIR="$repo/runtime/upkeeper-stress-$safe_run_id.active.lock" \
       CODEX_WRAPPER_HEALTH_STATE_DIR="$evidence_dir/health" \
       CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$evidence_dir/startup-gates" \
       CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \

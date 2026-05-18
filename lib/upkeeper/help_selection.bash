@@ -152,6 +152,16 @@ Important:
     returning to the outer loop. This keeps a no-op or already-addressed issue
     from being selected repeatedly while preserving the open issue for a later
     branch or manual close.
+  - Once a backlog PR has recorded fixes, the next invocation waits for that
+    PR's checks before selecting another issue. Passing checks allow the next
+    issue, pending checks keep the local owner lease alive, and failed checks
+    stop the launcher before more work stacks on a red branch. Set
+    BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE=0 only for an intentional manual
+    override.
+  - Light per-bug validation still avoids the full batch suite, but it now
+    compiles changed Python files before commit. Lattice issue fixes that touch
+    tools/upkeeper_lattice.py also run tests/lattice_test.bash before the fix is
+    recorded.
   - Before backlog issue work starts, the launcher autoshelves dirty local work
     to a private wip/backlog-autoshelve/* branch. Ordinary dirty files stay
     shelved while the loop continues from a clean branch. If the dirty set

@@ -11,6 +11,13 @@ Version numbering note:
 	2. Backlog invocations now emit local-only green `##### ##### #####` start and finish blocks around the locked-in job, showing the target, reason, expected outcome, result, start/end time, runtime, and final disposition before the outer loop sleeps.
 	3. Issue-targeted backlog passes that exit cleanly with no tracked changes are now deferred for the current backlog branch, preventing already-addressed or no-op issues from being selected repeatedly in the same loop.
 
+2026-05-18: backlog quality gates:
+	1. Backlog invocations with recorded fixes now wait for the current PR checks before selecting another issue, stopping on failed checks and holding the local owner lease while checks remain pending.
+	2. Light per-bug validation now compiles changed Python files, and Lattice issue fixes that touch `tools/upkeeper_lattice.py` run focused `tests/lattice_test.bash` coverage before the fix can be committed and recorded.
+	3. CI and operator validation examples now make the `tests/*.bash` sweep fail fast explicitly, preventing a later passing test command from masking an earlier unit-test failure in copied local commands.
+	4. Startup-anomaly validation fixtures now include the owner and schema fields required by the hardened state reader, keeping the local quick validator aligned with the resolver safety contract.
+	5. Active-lock release now removes the ownership marker introduced by the stale-lock hardening, and full-validation plus stress-corpus dry-run fixtures now place lock directories under the relevant checkout's `runtime/` tree.
+
 2026-05-18: Lattice JSONL import validation:
 	1. Lattice JSONL import keeps verifying `payload_sha256` against the canonical exported payload before staging a row, but no longer rechecks the hash after importer-side sanitization and raw-storage normalization rewrite local evidence fields.
 

@@ -192,7 +192,9 @@ done
 cd "$ROOT_DIR"
 
 VALIDATION_TMP_ROOT="$(mktemp -d /tmp/upkeeper-validate.XXXXXX)"
-trap 'rm -r "$VALIDATION_TMP_ROOT" 2>/dev/null || true' EXIT
+VALIDATION_ACTIVE_LOCK_TOKEN="upkeeper-validate-active-locks/${VALIDATION_TMP_ROOT##*/}.$$"
+VALIDATION_ACTIVE_LOCK_ROOT="$ROOT_DIR/runtime/$VALIDATION_ACTIVE_LOCK_TOKEN"
+trap 'rm -r "$VALIDATION_TMP_ROOT" "$VALIDATION_ACTIVE_LOCK_ROOT" 2>/dev/null || true' EXIT
 export CODEX_POSTMORTEM_DIR="$VALIDATION_TMP_ROOT/postmortems"
 export UPKEEPER_PRECONTACT_BACKUP_ROOT="$VALIDATION_TMP_ROOT/precontact-vault"
 export UPKEEPER_AUTOMATION_LEDGER_DIR="$VALIDATION_TMP_ROOT/automation-ledger"
@@ -213,6 +215,20 @@ export UPKEEPER_PRECONTACT_BACKUP_MODE=auto
 export UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
 export UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
 export UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT=""
+
+validation_active_lock_dir() {
+  local checkout_root="$1"
+  local name="${2:-active}"
+  local safe_name
+  local lock_root
+
+  [[ -n "$checkout_root" ]] || checkout_root="$ROOT_DIR"
+  safe_name="${name//[^A-Za-z0-9_.-]/_}"
+  [[ -n "$safe_name" ]] || safe_name="active"
+  lock_root="$checkout_root/runtime/$VALIDATION_ACTIVE_LOCK_TOKEN"
+  mkdir -p "$lock_root"
+  printf '%s/%s.lock\n' "$lock_root" "$safe_name"
+}
 
 require_command() {
   local command_name="$1"
@@ -357,11 +373,18 @@ check_test_invocation_mode_contract() {
 
   grep -Fq 'bash "$test_script"' .github/workflows/ci.yml ||
     fail "CI no longer invokes tests through bash"
+  python3 - <<'PY' || fail "CI unit-test step does not fail fast explicitly"
+from pathlib import Path
+
+text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+unit_block = text.split("- name: Unit tests", 1)[1].split("- name: Public docs", 1)[0]
+raise SystemExit(0 if "set -euo pipefail" in unit_block else 1)
+PY
   grep -Fq 'unit tests invoked with Bash from' README.md ||
     fail "README no longer documents Bash-invoked tests"
-  grep -Fq 'for test_script in tests/*.bash; do bash "$test_script"; done' docs/dependencies.md ||
+  grep -Fq 'set -e; for test_script in tests/*.bash; do bash "$test_script"; done' docs/dependencies.md ||
     fail "dependencies docs no longer show Bash-invoked tests"
-  grep -Fq 'for test_script in tests/*.bash; do bash "$test_script"; done' AGENTS.md ||
+  grep -Fq 'set -e; for test_script in tests/*.bash; do bash "$test_script"; done' AGENTS.md ||
     fail "agent contract no longer shows Bash-invoked tests"
 }
 
@@ -399,6 +422,10 @@ check_backlog_launcher_contract() {
   grep -Fq 'owner heartbeat: state=' orchestration/backlog.sh || fail "backlog launcher does not emit truthful owner heartbeats"
   grep -Fq 'waiting_on_pr_checks' orchestration/backlog.sh || fail "backlog launcher does not keep PR-check waits under the owner lease"
   grep -Fq 'gh pr checks "$pr_number" --watch=false' orchestration/backlog.sh || fail "backlog launcher PR check watcher is not local polling"
+  grep -Fq 'BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE="${BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default PR-check gating before next issue"
+  grep -Fq 'backlog_ensure_pr_checks_allow_next_issue' orchestration/backlog.sh || fail "backlog launcher does not gate issue selection on current PR checks"
+  grep -Fq 'per-bug validation: python compile' orchestration/backlog.sh || fail "backlog launcher per-bug validation does not compile changed Python files"
+  grep -Fq 'per-bug validation: lattice focused coverage (tests/lattice_test.bash)' orchestration/backlog.sh || fail "backlog launcher per-bug validation does not run focused Lattice coverage"
   grep -Fq 'BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default dirty-worktree autoshelve on"
   grep -Fq 'autoshelving local changes to' orchestration/backlog.sh || fail "backlog launcher does not explain dirty-worktree autoshelve"
   grep -Fq 'autoshelve_next_branch_name' orchestration/backlog.sh || fail "backlog launcher no longer avoids autoshelve branch-name collisions"
@@ -649,6 +676,32 @@ PY
     fail "backlog launcher PR check hibernation did not explain local owner hold"
   grep -Fq "owner heartbeat: state=waiting_on_pr_checks" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check hibernation did not refresh owner heartbeat"
+
+  temp_dir="$VALIDATION_TMP_ROOT/backlog-pr-check-next-issue-gate"
+  mkdir -p "$temp_dir"
+  if ! BACKLOG_SOURCE_ONLY=1 \
+    BACKLOG_STATE_ROOT="$temp_dir/state" \
+    BACKLOG_TEST_OWNER_MATCH=1 \
+    BACKLOG_TEST_NOW_EPOCH=1000 \
+    bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./orchestration/backlog.sh
+      write_backlog_active_owner
+      backlog_ensure_pr_checks_allow_next_issue 397 0
+      BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE=fail
+      export BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE
+      set +e
+      backlog_ensure_pr_checks_allow_next_issue 397 1
+      rc="$?"
+      set -e
+      [[ "$rc" == "1" ]]
+    ' bash "$ROOT_DIR" >"$temp_dir/gate.out" 2>"$temp_dir/gate.err"; then
+    cat "$temp_dir/gate.err" >&2
+    fail "backlog launcher did not stop issue selection when current PR checks failed"
+  fi
+  grep -Fq "checks failed; stopping before selecting another issue" "$temp_dir/gate.err" ||
+    fail "backlog launcher did not explain PR-check gate failure before next issue"
 }
 
 check_backlog_quota_hibernation_contract() {
@@ -1261,7 +1314,7 @@ check_force_added_gitignored_target_selection() {
       CODEX_HOME="$temp_dir/codex-home" \
         CODEX_LOG_FILE="$log_file" \
         CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-        CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+        CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$client" "gitignored-target")" \
         CODEX_POSTMORTEM_DIR="$temp_dir/postmortems" \
         CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
         CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
@@ -1358,7 +1411,7 @@ check_symlink_target_selection_guard() {
       CODEX_HOME="$temp_dir/codex-home" \
         CODEX_LOG_FILE="$log_file" \
         CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-        CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+        CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$client" "symlink-target")" \
         CODEX_POSTMORTEM_DIR="$temp_dir/postmortems" \
         CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
         CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
@@ -1665,7 +1718,7 @@ check_cycle_start_log_contract() {
   CODEX_HOME="$temp_dir/codex home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "cycle-start-default")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
     CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -1697,7 +1750,7 @@ check_cycle_start_log_contract() {
   CODEX_HOME="$temp_dir/codex home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "cycle-start-verbose")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
     CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -2144,7 +2197,7 @@ check_wrapper_health_log_quoting() {
   CODEX_HOME="$temp_dir/codex home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "wrapper-health-initial")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$health_dir" \
     CODEX_WRAPPER_HEALTH_ARCHIVE_DIR="$archive_dir" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
@@ -2188,7 +2241,7 @@ PY
   CODEX_HOME="$temp_dir/codex home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "wrapper-health-archive")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$health_dir" \
     CODEX_WRAPPER_HEALTH_ARCHIVE_DIR="$archive_dir" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
@@ -2225,7 +2278,7 @@ check_operator_guide_bootstrap_race() {
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log"
     CODEX_TERMINAL_VERBOSITY=silent
     CODEX_HOME="$temp_dir/codex-home"
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock"
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "operator-guide")"
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health"
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates"
     source "$ROOT_DIR/Upkeeper"
@@ -2250,17 +2303,18 @@ check_operator_guide_bootstrap_race() {
 }
 
 check_active_lock_incomplete_guard() {
-  local temp_dir rc
+  local temp_dir active_lock_dir rc
 
   log "checking active lock incomplete-acquisition guard"
   temp_dir="$(mktemp -d /tmp/upkeeper-active-lock.XXXXXX)"
-  mkdir "$temp_dir/active.lock"
+  active_lock_dir="$(validation_active_lock_dir "$ROOT_DIR" "active-lock-incomplete")"
+  mkdir "$active_lock_dir"
 
   set +e
   CODEX_HOME="$temp_dir/codex-home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$active_lock_dir" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
     CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -2278,7 +2332,8 @@ check_active_lock_incomplete_guard() {
   [[ "$rc" -eq 7 ]] || fail "incomplete active lock exited $rc, expected 7"
   grep -Fq "active_lock.incomplete" "$temp_dir/Upkeeper.log" || fail "incomplete active lock was not logged"
   grep -Fq "reason=UPKEEPER_ACTIVE_LOCK_HELD" "$temp_dir/Upkeeper.log" || fail "incomplete active lock did not use held exit reason"
-  [[ -d "$temp_dir/active.lock" ]] || fail "incomplete active lock guard removed a fresh lock directory"
+  [[ -d "$active_lock_dir" ]] || fail "incomplete active lock guard removed a fresh lock directory"
+  rm -rf "$active_lock_dir"
   rm -r "$temp_dir"
 }
 
@@ -2293,7 +2348,7 @@ check_quota_fallback_exit_contract() {
   CODEX_HOME="$temp_dir/codex-home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "quota-fallback")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
     CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -2321,7 +2376,7 @@ check_review_module_flags() {
   CODEX_HOME="$temp_dir/codex-home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "review-modules")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
     CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -2395,7 +2450,7 @@ EOF
   CODEX_HOME="$temp_dir/codex-home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "config-file")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
     CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -2414,7 +2469,7 @@ EOF
   CODEX_HOME="$temp_dir/codex-home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "config-cli-override")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
     CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -2433,7 +2488,7 @@ EOF
     CODEX_HOME="$temp_dir/codex-home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "config-env")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
     CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -2474,7 +2529,7 @@ check_file_manifest_selection() {
     CODEX_HOME="$temp_dir/codex-home" \
       CODEX_LOG_FILE="$log_file" \
       CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-      CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+      CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "file-manifest")" \
       CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
       CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
       CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -2942,7 +2997,7 @@ PY
   CODEX_HOME="$temp_dir/codex-home" \
     CODEX_LOG_FILE="$temp_dir/selection.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "failure-queue")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
     CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/selection-failures" \
@@ -2964,7 +3019,7 @@ PY
   CODEX_HOME="$temp_dir/codex-home" \
     CODEX_LOG_FILE="$temp_dir/bypass.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts-bypass" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active-bypass.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "failure-queue-bypass")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health-bypass" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates-bypass" \
     CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/selection-failures" \
@@ -3362,6 +3417,8 @@ fields = {
     "root_dir": "/private/customer/project",
     "run_hash": "hash with spaces",
     "self_path": "/private/customer/project/Upkeeper",
+    "owner": "upkeeper_startup_anomaly_gate",
+    "schema_version": "1",
     "state_path": str(path),
     "status": "unresolved",
     "updated_epoch": "456",
@@ -3424,6 +3481,8 @@ fields = {
     "root_dir": "/private/customer/project",
     "run_hash": "state-hash",
     "self_path": "/private/customer/project/Upkeeper",
+    "owner": "upkeeper_startup_anomaly_gate",
+    "schema_version": "1",
     "state_path": str(path),
     "status": "unresolved",
     "updated_epoch": "456",
@@ -3571,7 +3630,7 @@ check_postmortem_sequence_marker_contract() {
     if ! CODEX_LOG_FILE="$case_dir/Upkeeper.log" \
       CODEX_POSTMORTEM_DIR="$case_dir/postmortems" \
       CODEX_TRANSCRIPT_DIR="$case_dir/transcripts" \
-      CODEX_ACTIVE_LOCK_DIR="$case_dir/active.lock" \
+      CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "postmortem-$case_name")" \
       CODEX_WRAPPER_HEALTH_STATE_DIR="$case_dir/health" \
       CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
       CODEX_TERMINAL_VERBOSITY=silent \
@@ -4216,7 +4275,7 @@ check_central_dry_runs() {
   CODEX_HOME="$temp_dir/codex-home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "central-dry-run-target")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
     CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -4232,7 +4291,7 @@ check_central_dry_runs() {
   CODEX_HOME="$temp_dir/codex-home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "central-dry-run-default")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
     CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -4399,7 +4458,7 @@ PY
     CODEX_HOME="$temp_dir/codex-home" \
     CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
     CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$temp_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "fake-backend")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
     CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
@@ -4504,7 +4563,7 @@ run_fault_injection_dry_run() {
     CODEX_HOME="$fixture_dir/codex-home" \
       CODEX_LOG_FILE="$fixture_dir/$phase.log" \
       CODEX_TRANSCRIPT_DIR="$fixture_dir/transcripts" \
-      CODEX_ACTIVE_LOCK_DIR="$fixture_dir/active.lock" \
+      CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$fixture_dir" "$phase")" \
       CODEX_WRAPPER_HEALTH_STATE_DIR="$fixture_dir/health" \
       CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$fixture_dir/startup-gates" \
       CODEX_TOOL_FAILURE_QUEUE_DIR="$fixture_dir/failures" \
@@ -4531,7 +4590,7 @@ run_fault_injection_fake_backend() {
     CODEX_HOME="$fixture_dir/codex-home" \
     CODEX_LOG_FILE="$fixture_dir/$phase.log" \
     CODEX_TRANSCRIPT_DIR="$fixture_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$fixture_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "fault-injection-$phase")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$fixture_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$fixture_dir/startup-gates" \
     CODEX_TOOL_FAILURE_QUEUE_DIR="$fixture_dir/failures" \
@@ -4553,7 +4612,7 @@ run_fault_injection_root_dry_run() {
   CODEX_HOME="$fixture_dir/codex-home" \
     CODEX_LOG_FILE="$fixture_dir/$phase.log" \
     CODEX_TRANSCRIPT_DIR="$fixture_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$fixture_dir/active.lock" \
+    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "fault-injection-root-$phase")" \
     CODEX_WRAPPER_HEALTH_STATE_DIR="$fixture_dir/health" \
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$fixture_dir/startup-gates" \
     CODEX_TOOL_FAILURE_QUEUE_DIR="$fixture_dir/failures" \
@@ -4633,7 +4692,7 @@ check_fault_injection_first_scenarios() {
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$fixture_dir/control.log" || fail "FI-022 control dry-run did not finish cleanly"
   check_upkeeper_log_invariants "$fixture_dir/control.log" --scan "$fixture_dir/control.out" --scan "$fixture_dir/control.err"
 
-  lock_dir="$fixture_dir/active.lock"
+  lock_dir="$(validation_active_lock_dir "$ROOT_DIR" "fault-injection-root-injection")"
   mkdir -p "$lock_dir"
   {
     printf 'cycle_id=stale-fixture\n'
@@ -4642,6 +4701,11 @@ check_fault_injection_first_scenarios() {
     printf 'wrapper_start=stale-fixture\n'
     printf 'boot_id=unknown\n'
   } >"$lock_dir/state"
+  {
+    printf 'root_dir=%s\n' "$ROOT_DIR"
+    printf 'self_path=%s\n' "$ROOT_DIR/Upkeeper"
+    printf 'created_epoch=%s\n' "$(date '+%s')"
+  } >"$lock_dir/.upkeeper_active_lock.owner"
   printf 'unexpected child\n' >"$lock_dir/unexpected-child"
   stale_epoch="$(($(date '+%s') - 120))"
   python3 - "$lock_dir" "$stale_epoch" <<'PY'
@@ -4654,7 +4718,7 @@ os.utime(path, (epoch, epoch))
 PY
 
   set +e
-  run_fault_injection_root_dry_run "$fixture_dir" injection --target-file=Upkeeper
+  UPKEEPER_VERBOSE_METADATA=1 run_fault_injection_root_dry_run "$fixture_dir" injection --target-file=Upkeeper
   rc=$?
   set -e
   [[ "$rc" -eq 7 ]] || fail "FI-022 injection exited $rc, expected 7"

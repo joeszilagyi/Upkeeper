@@ -112,6 +112,7 @@ jobs:
       - name: Unit tests
         if: steps.scope.outputs.docs_only != '1'
         run: |
+          set -euo pipefail
           for test_script in tests/*.bash; do
             bash "$test_script"
           done

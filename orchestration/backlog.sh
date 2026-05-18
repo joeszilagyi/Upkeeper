@@ -17,6 +17,7 @@ BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-xhigh}"
 BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
 BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-0}"
 BACKLOG_PR_CHECK_INTERVAL_SECONDS="${BACKLOG_PR_CHECK_INTERVAL_SECONDS:-60}"
+BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE="${BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE:-1}"
 BACKLOG_PER_BUG_VALIDATION_MODE="${BACKLOG_PER_BUG_VALIDATION_MODE:-light}"
 BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"
 BACKLOG_AUTOSHELVE_BRANCH_PREFIX="${BACKLOG_AUTOSHELVE_BRANCH_PREFIX:-wip/backlog-autoshelve/}"
@@ -1669,7 +1670,45 @@ has_worktree_changes() {
   [[ -n "$(git status --short)" ]]
 }
 
+backlog_git_path_changed() {
+  local path="$1"
+
+  git diff --name-only --diff-filter=ACMR -- "$path" | grep -Fxq "$path"
+}
+
+run_changed_python_compile_validation() {
+  local -a python_files=()
+  local python_file
+
+  while IFS= read -r -d '' python_file; do
+    [[ -n "$python_file" ]] || continue
+    python_files+=("$python_file")
+  done < <(git diff --name-only -z --diff-filter=ACMR -- '*.py')
+
+  [[ "${#python_files[@]}" -gt 0 ]] || return 0
+  require_command python3
+  log "per-bug validation: python compile (${#python_files[@]} changed file(s))"
+  python3 -m py_compile "${python_files[@]}"
+}
+
+run_focused_issue_validation() {
+  local issue_number="${1:-}"
+  local target_hint="${2:-}"
+
+  [[ -n "$issue_number" ]] || return 0
+  if [[ "$target_hint" == "tools/upkeeper_lattice.py" ]] || backlog_git_path_changed "tools/upkeeper_lattice.py"; then
+    if backlog_git_path_changed "tools/upkeeper_lattice.py"; then
+      require_command python3
+      log "per-bug validation: lattice focused coverage (tests/lattice_test.bash)"
+      python3 -m py_compile tools/upkeeper_lattice.py
+      bash tests/lattice_test.bash
+    fi
+  fi
+}
+
 run_per_bug_validation() {
+  local issue_number="${1:-}"
+  local target_hint="${2:-}"
   local validation_start
 
   [[ "${BACKLOG_SKIP_LOCAL_VALIDATION:-0}" == "1" ]] && return 0
@@ -1678,6 +1717,8 @@ run_per_bug_validation() {
   backlog_update_active_owner_heartbeat "validating" "per_bug_validation" "" "owner_pid_start_cwd_verified"
   log "per-bug validation: bash syntax"
   bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh
+  run_changed_python_compile_validation
+  run_focused_issue_validation "$issue_number" "$target_hint"
   log "per-bug validation: diff whitespace"
   git diff --check
   log "per-bug validation: complete in $((SECONDS - validation_start))s"
@@ -1708,6 +1749,7 @@ run_batch_validation() {
 commit_and_push_changes() {
   local issue_number="${1:-}"
   local commit_message="${2:-}"
+  local target_hint="${3:-}"
   local message
 
   cleanup_ephemeral_artifacts
@@ -1717,7 +1759,7 @@ commit_and_push_changes() {
       log "per-bug validation: skipped by BACKLOG_PER_BUG_VALIDATION_MODE=none"
       ;;
     light)
-      run_per_bug_validation
+      run_per_bug_validation "$issue_number" "$target_hint"
       ;;
     full)
       run_batch_validation
@@ -1841,6 +1883,28 @@ backlog_pr_checks_once() {
   return 1
 }
 
+backlog_ensure_pr_checks_allow_next_issue() {
+  local pr_number="$1"
+  local count="$2"
+  local status
+
+  [[ "$BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE" == "1" ]] || return 0
+  [[ "$count" -gt 0 ]] || return 0
+
+  log "checking PR #$pr_number checks before selecting another issue"
+  if wait_for_pr_checks "$pr_number"; then
+    return 0
+  else
+    status="$?"
+  fi
+  if [[ "$status" -eq 2 ]]; then
+    log "PR #$pr_number checks are still pending; no new issue selected this cycle"
+    return 2
+  fi
+  log "PR #$pr_number checks failed; stopping before selecting another issue"
+  return "$status"
+}
+
 merge_and_clean() {
   local pr_number="$1"
   local branch="$2"
@@ -1912,6 +1976,14 @@ main() {
     exit 0
   fi
 
+  if backlog_ensure_pr_checks_allow_next_issue "$pr_number" "$count"; then
+    :
+  else
+    status="$?"
+    [[ "$status" -eq 2 ]] && exit 0
+    exit "$status"
+  fi
+
   if quota_preflight_allows_backlog_run; then
     quota_status=0
   else
@@ -1947,7 +2019,7 @@ main() {
   if [[ "$run_status" -eq 2 ]]; then
     commit_result="blocked with no partial tracked changes"
     if has_worktree_changes; then
-      if commit_and_push_changes "" "Preserve partial backlog work for issue #$issue_number"; then
+      if commit_and_push_changes "" "Preserve partial backlog work for issue #$issue_number" "$target_hint"; then
         log "preserved partial work for blocked issue #$issue_number"
         commit_result="blocked; partial work committed and pushed"
       else
@@ -1963,7 +2035,7 @@ main() {
     exit "$run_status"
   fi
 
-  if commit_and_push_changes "$issue_number"; then
+  if commit_and_push_changes "$issue_number" "" "$target_hint"; then
     commit_result="tracked changes committed and pushed"
     if [[ -n "$issue_number" ]]; then
       append_pr_fix_line "$pr_number" "$issue_number"

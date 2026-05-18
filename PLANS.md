@@ -3042,3 +3042,47 @@ Validation:
 - `tools/validate_upkeeper.sh --full`
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
+
+## Backlog Quality Gates
+
+Status: in progress
+
+Goal:
+- prevent the backlog launcher from stacking new issue work while the current
+  backlog PR is red or still unvalidated
+- catch Python syntax regressions during per-bug validation instead of waiting
+  for batch CI
+- give Lattice issue fixes a focused local coverage gate before recording them
+  as completed fixes
+- make documented unit-test commands fail fast so an earlier failing test cannot
+  be masked by later passing commands
+- reconcile the issue #166 active-lock hardening with local full-validation
+  fixtures so safe dry-runs use repo-runtime lock paths and release their
+  ownership markers
+
+Constraints:
+- do not launch real backend Codex during validation
+- preserve the existing light/full validation mode split while making the light
+  path catch cheap deterministic regressions
+- keep the default unattended path conservative, with explicit environment
+  overrides only for manual operator intervention
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `.github/workflows/ci.yml`
+- `lib/upkeeper/active_lock.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `lib/upkeeper/help_selection.bash`
+- `docs/dependencies.md`
+- `docs/release-checklist.md`
+- `AGENTS.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`

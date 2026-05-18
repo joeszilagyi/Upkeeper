@@ -7689,15 +7689,15 @@ def ensure_contributor(
         ).fetchone()
     if row:
         contributor_id = int(row["contributor_id"])
-            if include_pii:
-                conn.execute(
-                    """
-                    update contributors
-                    set identity_hash=?, name=?, email=?, pii_included=1
-                    where contributor_id=?
-                    """,
-                    (identity_hash, normalized_name or None, normalized_email or None, contributor_id),
-                )
+        if include_pii:
+            conn.execute(
+                """
+                update contributors
+                set identity_hash=?, name=?, email=?, pii_included=1
+                where contributor_id=?
+                """,
+                (identity_hash, normalized_name or None, normalized_email or None, contributor_id),
+            )
         elif not row["identity_hash"]:
             conn.execute(
                 """

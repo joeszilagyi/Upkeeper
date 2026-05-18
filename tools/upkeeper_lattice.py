@@ -5437,6 +5437,8 @@ def normalize_review_summary_target(raw_target: str, repo_root: Path | None = No
     text = raw_target.strip().strip("<>")
     if not text:
         return ""
+    if re.search(r"^[A-Za-z][A-Za-z0-9+\-.]*:/", text):
+        return ""
     normalized = normalize_change_note_ref(text)
     if normalized:
         return normalized
@@ -5449,7 +5451,9 @@ def normalize_review_summary_target(raw_target: str, repo_root: Path | None = No
         # Only treat ":<line>" as a line suffix when the pre-colon path is not
         # URL-like and does not contain a repo-relative colon-bearing filename.
         line_target = line_match.group(1)
-        if re.match(r"^[A-Za-z]:[\\/]", line_target) or (":" not in line_target and "://" not in text):
+        if Path(line_target).is_absolute() or re.match(r"^[A-Za-z]:[\\/]", line_target) or (
+            ":" not in line_target and "://" not in text
+        ):
             candidates.append(line_target)
 
     if repo_root is None:
@@ -6940,16 +6944,16 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     raw_storage_mode=raw_storage_mode,
                 )
                 rejected_count += 1
-        for item in accepted:
-            pass_code = normalize_pass_code(item["pass"])
-            reported_path = external_rel_path(item["file"])
-            outcome = item.get("outcome", "unknown")
-            if trusted_selected_path and reported_path != trusted_selected_path:
-                rejected_pairs.add((pass_code, trusted_selected_path))
-                ensure_source_record(
-                    conn,
-                    root,
-                    repo_id,
+            for item in accepted:
+                pass_code = normalize_pass_code(item["pass"])
+                reported_path = external_rel_path(item["file"])
+                outcome = item.get("outcome", "unknown")
+                if trusted_selected_path and reported_path != trusted_selected_path:
+                    rejected_pairs.add((pass_code, trusted_selected_path))
+                    ensure_source_record(
+                        conn,
+                        root,
+                        repo_id,
                         "transcript",
                         source_path=args.from_file,
                         raw_ref=f"pass_result_rejected:{item.get('line_number')}",
@@ -6964,101 +6968,101 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         parse_status="rejected",
                         fact_confidence="rejected",
                         raw_storage_mode=raw_storage_mode,
-                )
-                rejected_count += 1
-                continue
-            path = trusted_selected_path or reported_path
-            try:
-                applicable = parse_pass_result_bool(item.get("applicable"), "applicable")
-                changed = parse_pass_result_bool(item.get("changed"), "changed")
-                regression = parse_pass_result_bool(item.get("regression"), "regression")
-            except ValueError as exc:
-                rejection = sanitize_rejected_pass_result(
-                    root,
-                    {
-                        "line_number": item.get("line_number", 0),
-                        "reason": str(exc),
-                        "fields": {
-                            "pass": item.get("pass"),
-                            "file": item.get("file"),
-                            "outcome": outcome,
-                            "applicable": item.get("applicable", ""),
-                            "changed": item.get("changed", ""),
-                            "regression": item.get("regression", ""),
+                    )
+                    rejected_count += 1
+                    continue
+                path = trusted_selected_path or reported_path
+                try:
+                    applicable = parse_pass_result_bool(item.get("applicable"), "applicable")
+                    changed = parse_pass_result_bool(item.get("changed"), "changed")
+                    regression = parse_pass_result_bool(item.get("regression"), "regression")
+                except ValueError as exc:
+                    rejection = sanitize_rejected_pass_result(
+                        root,
+                        {
+                            "line_number": item.get("line_number", 0),
+                            "reason": str(exc),
+                            "fields": {
+                                "pass": item.get("pass"),
+                                "file": item.get("file"),
+                                "outcome": outcome,
+                                "applicable": item.get("applicable", ""),
+                                "changed": item.get("changed", ""),
+                                "regression": item.get("regression", ""),
+                            },
                         },
-                    },
-                    selected_path=trusted_selected_path,
-                    preserve_raw=preserve_raw,
-                )
-                rejection["validation_error"] = str(exc)
-                ensure_source_record(
+                        selected_path=trusted_selected_path,
+                        preserve_raw=preserve_raw,
+                    )
+                    rejection["validation_error"] = str(exc)
+                    ensure_source_record(
+                        conn,
+                        root,
+                        repo_id,
+                        "transcript",
+                        source_path=args.from_file,
+                        raw_ref=f"pass_result_rejected:{item.get('line_number')}",
+                        raw_text=item.get("raw_line", "") if preserve_raw else None,
+                        parsed=rejection,
+                        parse_status="rejected",
+                        fact_confidence="rejected",
+                        raw_storage_mode=raw_storage_mode,
+                    )
+                    rejected_count += 1
+                    continue
+                validation_error = validate_pass_result_state(applicable=applicable, outcome=outcome)
+                if validation_error:
+                    rejection = sanitize_rejected_pass_result(
+                        root,
+                        {
+                            "line_number": item.get("line_number", 0),
+                            "reason": validation_error,
+                            "fields": {
+                                "pass": item.get("pass"),
+                                "file": item.get("file"),
+                                "outcome": outcome,
+                                "applicable": item.get("applicable", ""),
+                            },
+                        },
+                        selected_path=trusted_selected_path,
+                        preserve_raw=preserve_raw,
+                    )
+                    rejection["validation_error"] = validation_error
+                    ensure_source_record(
+                        conn,
+                        root,
+                        repo_id,
+                        "transcript",
+                        source_path=args.from_file,
+                        raw_ref=f"pass_result_rejected:{item.get('line_number')}",
+                        raw_text=item.get("raw_line", "") if preserve_raw else None,
+                        parsed=rejection,
+                        parse_status="rejected",
+                        fact_confidence="rejected",
+                        raw_storage_mode=raw_storage_mode,
+                    )
+                    rejected_count += 1
+                    continue
+                record_one_pass_result(
                     conn,
                     root,
                     repo_id,
-                    "transcript",
-                    source_path=args.from_file,
-                    raw_ref=f"pass_result_rejected:{item.get('line_number')}",
-                    raw_text=item.get("raw_line", "") if preserve_raw else None,
-                    parsed=rejection,
-                    parse_status="rejected",
-                    fact_confidence="rejected",
-                    raw_storage_mode=raw_storage_mode,
-                )
-                rejected_count += 1
-                continue
-            validation_error = validate_pass_result_state(applicable=applicable, outcome=outcome)
-            if validation_error:
-                rejection = sanitize_rejected_pass_result(
-                    root,
-                    {
-                        "line_number": item.get("line_number", 0),
-                        "reason": validation_error,
-                        "fields": {
-                            "pass": item.get("pass"),
-                            "file": item.get("file"),
-                            "outcome": outcome,
-                            "applicable": item.get("applicable", ""),
-                        },
+                    cycle_pk=cycle_pk,
+                    source_id=source_id,
+                    pass_code=pass_code,
+                    path=path,
+                    applicable=applicable,
+                    outcome=outcome,
+                    changed=changed,
+                    regression=regression,
+                    raw_line=item.get("raw_line", "") if preserve_raw else "",
+                    planned=0,
+                    attributes={
+                        "upkeeper.pass_result:path_hmac": pass_result_path_hmac(root, path),
                     },
-                    selected_path=trusted_selected_path,
-                    preserve_raw=preserve_raw,
                 )
-                rejection["validation_error"] = validation_error
-                ensure_source_record(
-                    conn,
-                    root,
-                    repo_id,
-                    "transcript",
-                    source_path=args.from_file,
-                    raw_ref=f"pass_result_rejected:{item.get('line_number')}",
-                    raw_text=item.get("raw_line", "") if preserve_raw else None,
-                    parsed=rejection,
-                    parse_status="rejected",
-                    fact_confidence="rejected",
-                    raw_storage_mode=raw_storage_mode,
-                )
-                rejected_count += 1
-                continue
-            record_one_pass_result(
-                conn,
-                root,
-                repo_id,
-                cycle_pk=cycle_pk,
-                source_id=source_id,
-                pass_code=pass_code,
-                path=path,
-                applicable=applicable,
-                outcome=outcome,
-                changed=changed,
-                regression=regression,
-                raw_line=item.get("raw_line", "") if preserve_raw else "",
-                planned=0,
-                attributes={
-                    "upkeeper.pass_result:path_hmac": pass_result_path_hmac(root, path),
-                },
-            )
-            seen.add((pass_code, path))
-            recorded += 1
+                seen.add((pass_code, path))
+                recorded += 1
         elif args.pass_code and args.path:
             pass_code = normalize_pass_code(args.pass_code)
             path = external_rel_path(args.path)

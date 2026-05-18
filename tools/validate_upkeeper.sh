@@ -2615,13 +2615,52 @@ check_file_manifest_selection() {
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/manifest.log" || fail "manifest dry-run did not finish cleanly"
   jq -e '.schema_version == 2 and ((.root_hash // "") | length == 64) and (has("root") | not) and (.files | length) > 0 and ((.files[0].rel_path // "") | length > 0) and ([.files[] | select(has("abs_path"))] | length == 0)' "$manifest_path" >/dev/null || fail "manifest JSON contract is invalid"
 
+  python3 - "$manifest_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+with path.open("r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+files = payload.get("files")
+if not isinstance(files, list):
+    raise SystemExit(1)
+files.extend(
+    [
+        {
+            "rel_path": "/tmp/poisoned-absolute.sh",
+            "mtime_ns": 1,
+            "size": 1,
+            "mode": "0644",
+            "mtime": 1,
+        },
+        {
+            "rel_path": "../poisoned-parent.sh",
+            "mtime_ns": 2,
+            "size": 2,
+            "mode": "0644",
+            "mtime": 2,
+        },
+    ]
+)
+with path.open("w", encoding="utf-8") as handle:
+    json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+    handle.write("\n")
+PY
+
   run_manifest_dry_run "$temp_dir/newest.log" \
     --target-root=lib/upkeeper \
     --target-depth=1 \
     --selection-source=manifest \
     --selection-order=newest
 
-  if ! grep -Fq "file_manifest.ready action=reused reason=current" "$temp_dir/newest.log"; then
+  if grep -Fq "file_manifest.ready action=reused reason=current" "$temp_dir/newest.log"; then
+    log "manifest reuse check passed on healthy manifest cache state"
+  elif grep -Fq "file_manifest.ready action=rebuilt reason=missing_or_invalid" "$temp_dir/newest.log"; then
+    jq -e 'all(.files[]?; if (.rel_path | type) != "string" then false else ((.rel_path | test("^/")) | not) and ((.rel_path | test("(^|/)\\.{2}(/|$)")) | not) end)' "$manifest_path" >/dev/null || fail "poisoned manifest entries were not rebuilt out"
+  else
     local manifest_fingerprint newest_fingerprint
     manifest_fingerprint="$(sed -n 's/.*file_manifest.ready .* fingerprint=\([^ ]*\).*/\1/p' "$temp_dir/manifest.log" | tail -1)"
     newest_fingerprint="$(sed -n 's/.*file_manifest.ready .* fingerprint=\([^ ]*\).*/\1/p' "$temp_dir/newest.log" | tail -1)"

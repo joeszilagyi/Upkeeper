@@ -3797,11 +3797,10 @@ def file_id_for_path(conn: sqlite3.Connection, repo_id: int, path: str) -> int |
         from file_paths p
         join files f on f.file_id=p.file_id
         where f.repo_id=? and p.path=?
-        and (f.current_path=? or f.canonical_path=?)
         order by case when f.current_path=? then 0 else 1 end, f.last_seen_epoch desc, f.file_id
         limit 1
         """,
-        (repo_id, path, path, path, path),
+        (repo_id, path, path),
     ).fetchone()
     return int(row["file_id"]) if row else None
 

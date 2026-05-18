@@ -5279,25 +5279,25 @@ def record_worktree_delta_events(
     if before_snapshot is None:
         for path, after in after_paths.items():
             after_status = after["status"] if after else "clean"
-        if after_status == "clean":
-            continue
-        file_id = after["file_id"] if after else None
-        if file_id is None:
-            file_id = ensure_file(conn, repo_id, path, source_id=source_id)
-        record_file_event(
-            conn,
-            repo_id,
-            "dirty_state_observed_without_baseline",
-            file_id=file_id,
-            cycle_pk=cycle_pk,
-            source_id=source_id,
-            path=path,
-            dedupe_by_cycle=True,
-            details={
-                "source": "worktree_snapshot_delta",
-                "before_worktree_snapshot_id": before_snapshot_id,
-                "after_worktree_snapshot_id": after_snapshot_id,
-                "before_status": "unknown",
+            if after_status == "clean":
+                continue
+            file_id = after["file_id"] if after else None
+            if file_id is None:
+                file_id = ensure_file(conn, repo_id, path, source_id=source_id)
+            record_file_event(
+                conn,
+                repo_id,
+                "dirty_state_observed_without_baseline",
+                file_id=file_id,
+                cycle_pk=cycle_pk,
+                source_id=source_id,
+                path=path,
+                dedupe_by_cycle=True,
+                details={
+                    "source": "worktree_snapshot_delta",
+                    "before_worktree_snapshot_id": before_snapshot_id,
+                    "after_worktree_snapshot_id": after_snapshot_id,
+                    "before_status": "unknown",
                     "after_status": after_status,
                     "before_worktree_hash": None,
                     "after_worktree_hash": after["worktree_hash"] if after else None,
@@ -6532,19 +6532,19 @@ def record_selected_file_delta(
         "select * from file_snapshots where snapshot_id=? and repo_id=?",
         (after_snapshot_id, repo_id),
     ).fetchone()
-        if not before or not after:
-            if has_clean_finish_evidence(conn, repo_id=repo_id, cycle_pk=cycle_pk, file_id=file_id, review_outcome=review_outcome):
-                record_file_event(
-                    conn,
-                    repo_id,
-                    "clean_without_touch_evidence",
-                    file_id=file_id,
-                    cycle_pk=cycle_pk,
-                    source_id=source_id,
-                    path=path,
-                    details={"reason": "missing_before_or_after_snapshot", "after_snapshot_id": after_snapshot_id},
-                    dedupe_by_cycle=True,
-                )
+    if not before or not after:
+        if has_clean_finish_evidence(conn, repo_id=repo_id, cycle_pk=cycle_pk, file_id=file_id, review_outcome=review_outcome):
+            record_file_event(
+                conn,
+                repo_id,
+                "clean_without_touch_evidence",
+                file_id=file_id,
+                cycle_pk=cycle_pk,
+                source_id=source_id,
+                path=path,
+                details={"reason": "missing_before_or_after_snapshot", "after_snapshot_id": after_snapshot_id},
+                dedupe_by_cycle=True,
+            )
         return
 
     before_hash = before["worktree_hash"]

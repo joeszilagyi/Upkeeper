@@ -379,6 +379,9 @@ check_backlog_launcher_contract() {
   grep -Fq 'backlog_attention_marker_for_line' orchestration/backlog.sh || fail "backlog launcher does not classify operator attention markers"
   grep -Fq 'backlog_color_attention_stream' orchestration/backlog.sh || fail "backlog launcher does not color pageable terminal alerts separately from the loop log"
   grep -Fq 'BACKLOG_VISUAL_BLOCK="${BACKLOG_VISUAL_BLOCK:-█}"' orchestration/backlog.sh || fail "backlog launcher visual status block default drifted"
+  grep -Fq 'BACKLOG_JOB_SUMMARY_BAR="${BACKLOG_JOB_SUMMARY_BAR:-##### ##### #####}"' orchestration/backlog.sh || fail "backlog launcher green job summary bar default drifted"
+  grep -Fq 'backlog_emit_job_start_summary' orchestration/backlog.sh || fail "backlog launcher does not emit local job start summaries"
+  grep -Fq 'backlog_emit_job_finish_summary' orchestration/backlog.sh || fail "backlog launcher does not emit local job finish summaries"
   grep -Fq 'PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO' orchestration/backlog.sh || fail "backlog launcher attention marker taxonomy drifted"
   grep -Fq '([+-][0-9][0-9][0-9][0-9])? /, "", candidate)' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not understand zone-suffixed timestamped loop logs"
   grep -Fq 'sub(/^[^[:space:]]+[[:space:]]+/, "", candidate)' orchestration/backlog.sh || fail "backlog launcher recent-activity parser does not strip visual block columns"
@@ -507,6 +510,14 @@ PY
     BACKLOG_ALERT_COLOR=always BACKLOG_ALERT_BLINK=0 backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:06 [ERROR] wrapper exploded")" >"$2/page-no-blink-color.out"
     BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:04 previous_run.anomaly_summary x")" >"$2/fyi-color.out"
     BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:05 backlog: running Upkeeper for issue #1")" >"$2/run-color.out"
+    BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$BACKLOG_JOB_SUMMARY_BAR" >"$2/job-bar-color.out"
+    backlog_emit_job_start_summary "tools/example.sh" "issue #1: example" "fix locally" >"$2/job-start.out" 2>&1
+    BACKLOG_JOB_START_EPOCH=100
+    BACKLOG_TEST_NOW_EPOCH=145
+    BACKLOG_JOB_START_TIME="2026-05-16T18:21:07"
+    BACKLOG_JOB_TARGET="tools/example.sh"
+    backlog_emit_job_finish_summary "tracked changes committed and pushed" "PR #1 has 1/10 recorded fixes" >"$2/job-finish.out" 2>&1
+    printf "%s\n" "$BACKLOG_JOB_SUMMARY_BLANK_SENTINEL" "$BACKLOG_JOB_SUMMARY_BAR_SENTINEL" "${BACKLOG_JOB_SUMMARY_LINE_SENTINEL}2026-05-16T18:21:08 file being worked: tools/example.sh" | backlog_timestamp_stream >"$2/job-stream.out"
   ' bash "$ROOT_DIR" "$temp_dir"
   grep -Fq '2026-05-16T17:00:37 █ WORKER  [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s' "$temp_dir/worker.out" ||
     fail "backlog launcher did not classify worker command failures separately from pageable errors"
@@ -532,6 +543,32 @@ PY
     fail "backlog launcher did not color FYI timestamp/block/marker with the expected bold boundary"
   grep -Fq $'\033[1;36m█\033[0m RUN' "$temp_dir/run-color.out" ||
     fail "backlog launcher did not color RUN visual block cyan"
+  grep -Fq $'\033[5;1;32m##### ##### #####\033[0m' "$temp_dir/job-bar-color.out" ||
+    fail "backlog launcher did not color job summary bars bold blinking green"
+  [[ "$(grep -Fc '##### ##### #####' "$temp_dir/job-start.out")" -eq 2 ]] ||
+    fail "backlog launcher job start summary did not emit two green bars"
+  grep -Fq 'file being worked: tools/example.sh' "$temp_dir/job-start.out" ||
+    fail "backlog launcher job start summary omitted target file"
+  grep -Fq 'why: issue #1: example' "$temp_dir/job-start.out" ||
+    fail "backlog launcher job start summary omitted reason"
+  grep -Fq 'expected outcome: fix locally' "$temp_dir/job-start.out" ||
+    fail "backlog launcher job start summary omitted expected outcome"
+  [[ "$(grep -Fc '##### ##### #####' "$temp_dir/job-finish.out")" -eq 2 ]] ||
+    fail "backlog launcher job finish summary did not emit two green bars"
+  grep -Fq 'file worked: tools/example.sh' "$temp_dir/job-finish.out" ||
+    fail "backlog launcher job finish summary omitted target file"
+  grep -Fq 'outcome/results: tracked changes committed and pushed' "$temp_dir/job-finish.out" ||
+    fail "backlog launcher job finish summary omitted outcome"
+  grep -Fq 'run time: 45s' "$temp_dir/job-finish.out" ||
+    fail "backlog launcher job finish summary did not calculate runtime"
+  python3 - "$temp_dir/job-stream.out" <<'PY' || fail "backlog launcher job summary sentinel stream was not rendered as plain local output"
+import sys
+from pathlib import Path
+
+lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+if lines[:3] != ["", "##### ##### #####", "2026-05-16T18:21:08 file being worked: tools/example.sh"]:
+    raise SystemExit(1)
+PY
 
   temp_dir="$VALIDATION_TMP_ROOT/backlog-burn-env"
   mkdir -p "$temp_dir"

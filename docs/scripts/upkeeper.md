@@ -135,6 +135,14 @@ Important:
     and assistive tooling. Set `BACKLOG_ALERT_COLOR=never` to disable terminal
     block color, `BACKLOG_ALERT_COLOR=always` to force it, or
     `BACKLOG_ALERT_BLINK=0` to keep `PAGE` red without blink.
+  - When a backlog invocation locks in its local job, it prints a local-only
+    green `##### ##### #####` summary block before backend work starts. The
+    block names the target file or selection mode, why this cycle is doing that
+    work, and the expected outcome. When the invocation finishes that job and is
+    about to return to the outer sleep/next invocation, it prints the matching
+    local-only block with the target, outcome, start time, end time, runtime, and
+    final disposition. Set `BACKLOG_JOB_SUMMARY=0` to disable these local
+    summary blocks.
   - Before backlog issue work starts, the launcher autoshelves dirty local work
     to a private `wip/backlog-autoshelve/*` branch. Ordinary dirty files stay
     shelved while the loop continues from a clean branch. If the dirty set

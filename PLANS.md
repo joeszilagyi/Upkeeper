@@ -12,12 +12,15 @@ Goal:
   timestamp red, and coloring/blinking both the block and `PAGE` marker text
 - make interactive backlog `--FYI--` lines color the timestamp orange and color
   the marker text bold orange
+- add local-only green job start/finish summary blocks so operators can see
+  what the current cycle is doing and how it ended without model involvement
 - keep loop logs and non-color output free of ANSI sequences for scripts and
   assistive tooling
 
 Constraints:
 - preserve `BACKLOG_ALERT_COLOR` and `BACKLOG_ALERT_BLINK`
 - keep blink off timestamps
+- keep green job summaries deterministic and local to the launcher
 - keep the existing visual block and marker taxonomy
 
 Files likely touched:
@@ -30,6 +33,7 @@ Files likely touched:
 
 Validation:
 - `bash -n orchestration/backlog.sh tools/validate_upkeeper.sh lib/upkeeper/help_selection.bash`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
 - `tools/validate_upkeeper.sh --quick`
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`

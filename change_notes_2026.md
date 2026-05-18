@@ -8,6 +8,7 @@ Version numbering note:
 
 2026-05-18: backlog live-output emphasis:
 	1. Interactive backlog watch output now colors `PAGE` timestamps red without blink, keeps the `PAGE` block and marker bold/blinking red, and colors `--FYI--` timestamps orange with bold orange marker text while preserving plain loop logs.
+	2. Backlog invocations now emit local-only green `##### ##### #####` start and finish blocks around the locked-in job, showing the target, reason, expected outcome, result, start/end time, runtime, and final disposition before the outer loop sleeps.
 
 2026-05-18: backlog autoshelve local remediation:
 	1. Backlog dirty-worktree autoshelve now distinguishes ordinary local work from Upkeeper control-plane fixes. Ordinary dirty files remain preserved on the private autoshelve branch, while dirty wrapper/modules/orchestration/tools/tests/prompts/config changes are reapplied and committed locally on the active backlog branch before issue work continues.

@@ -8063,7 +8063,7 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                     (repo_id, current_version, current_date, int(item.group(1)), str(path), line_number, text, source_id),
                 )
                 entry_id = int(cur.lastrowid)
-                for ref in re.findall(r"`([^`]+\.[A-Za-z0-9]+)`", text):
+                for ref in re.findall(r"`([^`]+)`", text):
                     normalized_ref = normalize_repo_file_identity_ref(root, ref)
                     if not normalized_ref:
                         continue

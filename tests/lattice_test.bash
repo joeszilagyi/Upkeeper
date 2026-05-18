@@ -1563,6 +1563,187 @@ for path, retained in rows:
 PY
 }
 
+test_prune_scopes_actions_to_current_repo() {
+  local repo_a repo_b old_epoch now
+
+  repo_a="$TEST_TMP_ROOT/lattice-prune-shared-db-a"
+  repo_b="$TEST_TMP_ROOT/lattice-prune-shared-db-b"
+  DB="$repo_a/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo_a"
+  make_repo "$repo_b"
+
+  "$LATTICE_TOOL" --root "$repo_a" --db "$DB" init >"$TEST_TMP_ROOT/prune-shared-init-a.out"
+  "$LATTICE_TOOL" --root "$repo_b" --db "$DB" init >"$TEST_TMP_ROOT/prune-shared-init-b.out"
+
+  now=$(date +%s)
+  old_epoch=$((now - 172800))
+  fresh_epoch=$((now - 3600))
+
+  python3 - "$DB" "$repo_a" "$repo_b" "$old_epoch" "$fresh_epoch" <<'PY' || fail "failed to seed shared-db prune fixtures"
+import sqlite3
+import sys
+
+db, repo_a, repo_b, old_epoch, fresh_epoch = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
+
+with sqlite3.connect(db) as conn:
+    conn.execute("PRAGMA foreign_keys=ON")
+    rows = conn.execute(
+        "select root_path, repo_id from repositories where root_path in (?, ?)",
+        (repo_a, repo_b),
+    ).fetchall()
+    ids = {path: repo_id for path, repo_id in rows}
+    if len(ids) != 2:
+        raise AssertionError(f"expected both repos in shared db, got {ids}")
+
+    repo_a_id = ids[repo_a]
+    repo_b_id = ids[repo_b]
+
+    conn.executemany(
+        """
+        insert into source_records (repo_id, source_kind, source_epoch, imported_epoch, raw_ref, raw_text)
+        values (?, 'operator', ?, ?, 'prune-regression', ?)
+        """,
+        [
+            (repo_a_id, old_epoch, old_epoch, "repo-a-old"),
+            (repo_b_id, old_epoch, old_epoch, "repo-b-old"),
+        ],
+    )
+
+    conn.execute(
+        """
+        insert into selection_runs (
+          repo_id, selector_version, source_safe_boundary_version, mode_requested, mode_effective, priority_gate, generated_epoch
+        )
+        values (?, 'help-selection', 'help-selection', 'oldest-mtime', 'oldest-mtime', 'default', ?)
+        """,
+        (repo_a_id, old_epoch),
+    )
+    run_a = int(conn.execute("select last_insert_rowid()").fetchone()[0])
+    conn.execute(
+        """
+        insert into selection_runs (
+          repo_id, selector_version, source_safe_boundary_version, mode_requested, mode_effective, priority_gate, generated_epoch
+        )
+        values (?, 'help-selection', 'help-selection', 'oldest-mtime', 'oldest-mtime', 'default', ?)
+        """,
+        (repo_b_id, old_epoch),
+    )
+    run_b = int(conn.execute("select last_insert_rowid()").fetchone()[0])
+
+    conn.executemany(
+        """
+        insert into selection_candidates (selection_run_id, path, candidate_state, rank, mtime_epoch)
+        values (?, ?, ?, 100, ?)
+        """,
+        [
+            (run_a, "shared-old-a", "excluded", old_epoch),
+            (run_b, "shared-old-b", "excluded", old_epoch),
+        ],
+    )
+
+    conn.executemany(
+        """
+        insert into artifact_refs (
+          repo_id, cycle_pk, source_id, artifact_kind, path, exists_at_record_time, observed_epoch, retained
+        )
+        values (?, null, null, 'transcript', ?, 1, ?, 1)
+        """,
+        [
+            (repo_a_id, "runtime/transcripts/shared-old-a.log", old_epoch),
+            (repo_a_id, "runtime/transcripts/shared-fresh-a.log", fresh_epoch),
+            (repo_b_id, "runtime/transcripts/shared-old-b.log", old_epoch),
+            (repo_b_id, "runtime/transcripts/shared-fresh-b.log", fresh_epoch),
+        ],
+    )
+PY
+
+  REPO="$repo_a"
+  lattice prune \
+    --older-than-days 1 \
+    --raw-only \
+    --candidate-details \
+    --transient-artifacts >"$TEST_TMP_ROOT/prune-shared.out"
+
+  python3 - "$DB" "$repo_a" "$repo_b" <<'PY' || fail "prune scoped-by-repo test assertions failed"
+import sqlite3
+import sys
+
+db, repo_a, repo_b = sys.argv[1], sys.argv[2], sys.argv[3]
+
+with sqlite3.connect(db) as conn:
+    rows = conn.execute(
+        "select root_path, repo_id from repositories where root_path in (?, ?)",
+        (repo_a, repo_b),
+    ).fetchall()
+    repo_id_by_root = {root_path: repo_id for root_path, repo_id in rows}
+    if len(repo_id_by_root) != 2:
+        raise AssertionError(f"expected both repos in shared db, got {repo_id_by_root}")
+
+    repo_a_id = repo_id_by_root[repo_a]
+    repo_b_id = repo_id_by_root[repo_b]
+
+    repo_a_rows = conn.execute(
+        "select raw_text from source_records where repo_id = ?",
+        (repo_a_id,),
+    ).fetchall()
+    repo_b_rows = conn.execute(
+        "select raw_text from source_records where repo_id = ?",
+        (repo_b_id,),
+    ).fetchall()
+    if repo_a_rows.count((None,)) != 1:
+        raise AssertionError(f"repo_a raw_text rows not nulled as expected: {repo_a_rows}")
+    if repo_b_rows != [("repo-b-old",)]:
+        raise AssertionError(f"repo_b raw_text rows were modified unexpectedly: {repo_b_rows}")
+
+    repo_a_candidates = conn.execute(
+        """
+        select count(*) from selection_candidates
+        where selection_run_id in (select selection_run_id from selection_runs where repo_id=?)
+          and candidate_state != 'selected'
+        """,
+        (repo_a_id,),
+    ).fetchone()[0]
+    repo_b_candidates = conn.execute(
+        """
+        select count(*) from selection_candidates
+        where selection_run_id in (select selection_run_id from selection_runs where repo_id=?)
+          and candidate_state != 'selected'
+        """,
+        (repo_b_id,),
+    ).fetchone()[0]
+    if repo_a_candidates != 0:
+        raise AssertionError(f"repo_a candidate details were not fully cleaned: {repo_a_candidates}")
+    if repo_b_candidates != 1:
+        raise AssertionError(f"repo_b candidate details were modified unexpectedly: {repo_b_candidates}")
+
+    repo_a_old_artifact_retained = conn.execute(
+        "select retained from artifact_refs where repo_id = ? and path = 'runtime/transcripts/shared-old-a.log'",
+        (repo_a_id,),
+    ).fetchone()[0]
+    repo_b_old_artifact_retained = conn.execute(
+        "select retained from artifact_refs where repo_id = ? and path = 'runtime/transcripts/shared-old-b.log'",
+        (repo_b_id,),
+    ).fetchone()[0]
+    repo_a_fresh_artifact_retained = conn.execute(
+        "select retained from artifact_refs where repo_id = ? and path = 'runtime/transcripts/shared-fresh-a.log'",
+        (repo_a_id,),
+    ).fetchone()[0]
+    repo_b_fresh_artifact_retained = conn.execute(
+        "select retained from artifact_refs where repo_id = ? and path = 'runtime/transcripts/shared-fresh-b.log'",
+        (repo_b_id,),
+    ).fetchone()[0]
+
+    if repo_a_old_artifact_retained not in (0, None):
+        raise AssertionError(f"repo_a old artifact not unretained as expected: {repo_a_old_artifact_retained}")
+    if repo_b_old_artifact_retained != 1:
+        raise AssertionError(f"repo_b old artifact was modified unexpectedly: {repo_b_old_artifact_retained}")
+    if repo_a_fresh_artifact_retained != 1:
+        raise AssertionError(f"repo_a fresh artifact was modified unexpectedly: {repo_a_fresh_artifact_retained}")
+    if repo_b_fresh_artifact_retained != 1:
+        raise AssertionError(f"repo_b fresh artifact was modified unexpectedly: {repo_b_fresh_artifact_retained}")
+PY
+}
+
 test_recover_no_backup_first_toggle() {
   local repo rc
 
@@ -2147,6 +2328,7 @@ test_ordinary_command_does_not_create_missing_db
 test_lattice_jsonl_input_guardrails
 test_export_backup_output_collision
 test_prune_respects_transient_artifact_older_than_days
+test_prune_scopes_actions_to_current_repo
 test_recover_no_backup_first_toggle
 test_recover_backup_first_preserves_pre_recovery_provenance
 test_review_parser_and_redaction

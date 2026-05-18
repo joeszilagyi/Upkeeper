@@ -9348,34 +9348,43 @@ def command_prune(args: argparse.Namespace) -> int:
                 raw_storage_mode=raw_storage_mode,
             )
         if args.raw_only:
-            sql = "update source_records set raw_text=null where raw_text is not null"
-            params: tuple[Any, ...] = ()
-            if cutoff:
-                sql += " and imported_epoch<?"
-                params = (cutoff,)
-            count = conn.execute("select count(*) from source_records where raw_text is not null" + (" and imported_epoch<?" if cutoff else ""), params).fetchone()[0]
-            actions.append({"action": "raw_text_null", "rows": count})
-            if not args.dry_run:
-                conn.execute(sql, params)
-        if args.candidate_details:
-            sql = """
-                delete from selection_candidates
-                where candidate_state != 'selected'
-                  and selection_run_id in (select selection_run_id from selection_runs where generated_epoch<?)
-            """
-            count = 0
-            if cutoff:
-                count = conn.execute(
-                    """
-                    select count(*) from selection_candidates
-                    where candidate_state != 'selected'
-                      and selection_run_id in (select selection_run_id from selection_runs where generated_epoch<?)
-                    """,
-                    (cutoff,),
-                ).fetchone()[0]
-                actions.append({"action": "candidate_details_delete", "rows": count})
+            if repo_id is None and args.dry_run:
+                actions.append({"action": "raw_text_null", "rows": 0, "skipped": "repo_not_registered"})
+            else:
+                sql = "update source_records set raw_text=null where repo_id=? and raw_text is not null"
+                params: list[Any] = [repo_id]
+                if cutoff:
+                    sql += " and imported_epoch<?"
+                    params.append(cutoff)
+                select_sql = "select count(*) from source_records where repo_id=? and raw_text is not null"
+                if cutoff:
+                    select_sql += " and imported_epoch<?"
+                count = conn.execute(select_sql, tuple(params)).fetchone()[0]
+                actions.append({"action": "raw_text_null", "rows": count})
                 if not args.dry_run:
-                    conn.execute(sql, (cutoff,))
+                    conn.execute(sql, tuple(params))
+        if args.candidate_details:
+            if repo_id is None and args.dry_run:
+                actions.append({"action": "candidate_details_delete", "rows": 0, "skipped": "repo_not_registered"})
+            else:
+                sql = """
+                delete from selection_candidates
+                  where candidate_state != 'selected'
+                  and selection_run_id in (select selection_run_id from selection_runs where repo_id=? and generated_epoch<?)
+                """
+                count = 0
+                if cutoff:
+                    count = conn.execute(
+                        """
+                        select count(*) from selection_candidates
+                        where candidate_state != 'selected'
+                          and selection_run_id in (select selection_run_id from selection_runs where repo_id=? and generated_epoch<?)
+                        """,
+                        (repo_id, cutoff),
+                    ).fetchone()[0]
+                    actions.append({"action": "candidate_details_delete", "rows": count})
+                    if not args.dry_run:
+                        conn.execute(sql, (repo_id, cutoff))
         if args.transient_artifacts:
             transient_kinds = tuple(sorted(TRANSIENT_ARTIFACT_KINDS))
             placeholders = ",".join("?" for _ in transient_kinds)

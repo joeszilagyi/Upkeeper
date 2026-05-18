@@ -9325,19 +9325,28 @@ def command_prune(args: argparse.Namespace) -> int:
     raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
+    if args.dry_run:
+        conn.execute("PRAGMA query_only = ON")
     cutoff = epoch_now() - int(args.older_than_days or 0) * 86400 if args.older_than_days else None
     actions: list[dict[str, Any]] = []
+    repo_id: int | None = None
     with conn:
-        repo_id = ensure_repository(conn, root)
-        source_id = ensure_source_record(
-            conn,
-            root,
-            repo_id,
-            "operator",
-            raw_ref="prune",
-            parsed=vars(args),
-            raw_storage_mode=raw_storage_mode,
-        )
+        if args.dry_run:
+            info = repo_git_info(root)
+            repo_key = sha256_text(f"{root}|{info['git_common_dir']}|{info['remote_url']}")
+            row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
+            repo_id = int(row["repo_id"]) if row else None
+        else:
+            repo_id = ensure_repository(conn, root)
+            source_id = ensure_source_record(
+                conn,
+                root,
+                repo_id,
+                "operator",
+                raw_ref="prune",
+                parsed=vars(args),
+                raw_storage_mode=raw_storage_mode,
+            )
         if args.raw_only:
             sql = "update source_records set raw_text=null where raw_text is not null"
             params: tuple[Any, ...] = ()
@@ -9370,55 +9379,41 @@ def command_prune(args: argparse.Namespace) -> int:
         if args.transient_artifacts:
             transient_kinds = tuple(sorted(TRANSIENT_ARTIFACT_KINDS))
             placeholders = ",".join("?" for _ in transient_kinds)
-            sql = f"""
-                select count(*) from artifact_refs
-                where repo_id=? and retained=1 and artifact_kind in ({placeholders})
-            """
-            sql_params: list[Any] = [repo_id, *transient_kinds]
-            if cutoff:
-                sql += " and observed_epoch < ?"
-                sql_params.append(cutoff)
-            row_count = int(conn.execute(sql, sql_params).fetchone()[0] or 0)
-            actions.append({"action": "transient_artifacts_unretain", "rows": row_count})
-            if not args.dry_run:
-                update_sql = f"""
-                    update artifact_refs
-                    set retained=0
+            if repo_id is None and args.dry_run:
+                actions.append({"action": "transient_artifacts_unretain", "rows": 0, "skipped": "repo_not_registered"})
+            else:
+                sql = f"""
+                    select count(*) from artifact_refs
                     where repo_id=? and retained=1 and artifact_kind in ({placeholders})
                 """
-                update_params: list[Any] = [repo_id, *transient_kinds]
+                sql_params: list[Any] = [repo_id, *transient_kinds]
                 if cutoff:
-                    update_sql += " and observed_epoch < ?"
-                    update_params.append(cutoff)
-                conn.execute(
-                    update_sql,
-                    update_params,
-                )
+                    sql += " and observed_epoch < ?"
+                    sql_params.append(cutoff)
+                row_count = int(conn.execute(sql, sql_params).fetchone()[0] or 0)
+                actions.append({"action": "transient_artifacts_unretain", "rows": row_count})
+                if not args.dry_run:
+                    update_sql = f"""
+                        update artifact_refs
+                        set retained=0
+                        where repo_id=? and retained=1 and artifact_kind in ({placeholders})
+                    """
+                    update_params: list[Any] = [repo_id, *transient_kinds]
+                    if cutoff:
+                        update_sql += " and observed_epoch < ?"
+                        update_params.append(cutoff)
+                    conn.execute(
+                        update_sql,
+                        update_params,
+                    )
         if args.scrub_transient_metadata:
             transient_kinds = tuple(sorted(TRANSIENT_ARTIFACT_KINDS))
             placeholders = ",".join("?" for _ in transient_kinds)
-            sql = f"""
-                select count(*) from artifact_refs
-                where repo_id=?
-                  and artifact_kind in ({placeholders})
-                  and (
-                    retained=1
-                    or path is not null
-                    or size_bytes is not null
-                    or sha256 is not null
-                    or details_json is not null
-                  )
-            """
-            sql_params: list[Any] = [repo_id, *transient_kinds]
-            if cutoff:
-                sql += " and observed_epoch < ?"
-                sql_params.append(cutoff)
-            row_count = int(conn.execute(sql, sql_params).fetchone()[0] or 0)
-            actions.append({"action": "transient_artifacts_scrub", "rows": row_count})
-            if not args.dry_run:
-                update_sql = f"""
-                    update artifact_refs
-                    set retained=0, path=null, size_bytes=null, sha256=null, details_json=null
+            if repo_id is None and args.dry_run:
+                actions.append({"action": "transient_artifacts_scrub", "rows": 0, "skipped": "repo_not_registered"})
+            else:
+                sql = f"""
+                    select count(*) from artifact_refs
                     where repo_id=?
                       and artifact_kind in ({placeholders})
                       and (
@@ -9429,15 +9424,36 @@ def command_prune(args: argparse.Namespace) -> int:
                         or details_json is not null
                       )
                 """
-                update_params: list[Any] = [repo_id, *transient_kinds]
+                sql_params: list[Any] = [repo_id, *transient_kinds]
                 if cutoff:
-                    update_sql += " and observed_epoch < ?"
-                    update_params.append(cutoff)
-                conn.execute(
-                    update_sql,
-                    update_params,
-                )
-        record_file_event(conn, repo_id, "operator_annotation", source_id=source_id, details={"prune_actions": actions, "dry_run": args.dry_run})
+                    sql += " and observed_epoch < ?"
+                    sql_params.append(cutoff)
+                row_count = int(conn.execute(sql, sql_params).fetchone()[0] or 0)
+                actions.append({"action": "transient_artifacts_scrub", "rows": row_count})
+                if not args.dry_run:
+                    update_sql = f"""
+                        update artifact_refs
+                        set retained=0, path=null, size_bytes=null, sha256=null, details_json=null
+                        where repo_id=?
+                          and artifact_kind in ({placeholders})
+                          and (
+                            retained=1
+                            or path is not null
+                            or size_bytes is not null
+                            or sha256 is not null
+                            or details_json is not null
+                          )
+                    """
+                    update_params: list[Any] = [repo_id, *transient_kinds]
+                    if cutoff:
+                        update_sql += " and observed_epoch < ?"
+                        update_params.append(cutoff)
+                    conn.execute(
+                        update_sql,
+                        update_params,
+                    )
+        if not args.dry_run:
+            record_file_event(conn, repo_id, "operator_annotation", source_id=source_id, details={"prune_actions": actions, "dry_run": args.dry_run})
         if args.vacuum and not args.dry_run:
             conn.execute("commit")
             conn.execute("vacuum")

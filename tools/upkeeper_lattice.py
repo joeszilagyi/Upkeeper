@@ -9741,27 +9741,50 @@ def command_mark_regression(args: argparse.Namespace) -> int:
                 (repo_id, args.cycle_id),
             ).fetchone()
             cycle_pk = int(row["cycle_pk"]) if row else None
-        cur = conn.execute(
+        existing = conn.execute(
             """
-            insert into regression_events(repo_id, file_id, cycle_pk, marked_epoch, confidence, detector, reason, status, source_id)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            select regression_id
+            from regression_events
+            where repo_id=? and file_id=? and detector=? and reason=? and status=?
+            order by regression_id desc
+            limit 1
             """,
-            (repo_id, file_id, cycle_pk, epoch_now(), args.confidence, args.detector, args.reason, args.status, source_id),
-        )
-        regression_id = int(cur.lastrowid)
-        if args.cause_commit:
-            commit_row = conn.execute(
-                "select commit_id from git_commits where repo_id=? and sha=?",
-                (repo_id, args.cause_commit),
-            ).fetchone()
-            conn.execute(
+            (repo_id, file_id, args.detector, args.reason, args.status),
+        ).fetchone()
+        regression_created = existing is None
+        if regression_created:
+            cur = conn.execute(
                 """
-                insert into regression_causes(regression_id, suspected_cause_commit_id, cause_file_id, confidence, reason)
-                values (?, ?, ?, ?, ?)
+                insert into regression_events(repo_id, file_id, cycle_pk, marked_epoch, confidence, detector, reason, status, source_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (regression_id, int(commit_row["commit_id"]) if commit_row else None, file_id, args.confidence, args.reason),
+                (repo_id, file_id, cycle_pk, epoch_now(), args.confidence, args.detector, args.reason, args.status, source_id),
             )
-        record_file_event(conn, repo_id, "regression_marked", file_id=file_id, cycle_pk=cycle_pk, source_id=source_id, path=args.path, confidence=args.confidence)
+            regression_id = int(cur.lastrowid)
+            if args.cause_commit:
+                commit_row = conn.execute(
+                    "select commit_id from git_commits where repo_id=? and sha=?",
+                    (repo_id, args.cause_commit),
+                ).fetchone()
+                conn.execute(
+                    """
+                    insert into regression_causes(regression_id, suspected_cause_commit_id, cause_file_id, confidence, reason)
+                    values (?, ?, ?, ?, ?)
+                    """,
+                    (regression_id, int(commit_row["commit_id"]) if commit_row else None, file_id, args.confidence, args.reason),
+                )
+            record_file_event(
+                conn,
+                repo_id,
+                "regression_marked",
+                file_id=file_id,
+                cycle_pk=cycle_pk,
+                source_id=source_id,
+                path=args.path,
+                confidence=args.confidence,
+            )
+        else:
+            regression_id = int(existing["regression_id"])
     print_json({"status": "ok", "regression_id": regression_id})
     return EXIT_SUCCESS
 

@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import secrets
 from urllib.parse import urlsplit
 from pathlib import Path
 from typing import Any, Iterable
@@ -1201,6 +1202,11 @@ CREATE_INDEX_SQL = [
 
 def epoch_now() -> int:
     return int(time.time())
+
+
+def artifact_now() -> str:
+    """Return a high-entropy timestamp token for durable artifact filenames."""
+    return f"{time.time_ns():d}-{secrets.token_hex(4)}"
 
 
 def safe_output_text(raw: str) -> str:
@@ -8563,7 +8569,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
     context = repo_identity_context(root)
     output = validate_lattice_output_path(
         root,
-        args.output if args.output else db_path.parent / "exports" / f"lattice-export-{epoch_now()}.jsonl",
+        args.output if args.output else db_path.parent / "exports" / f"lattice-export-{artifact_now()}.jsonl",
         allow_existing=args.overwrite,
         journal_mode=args.journal_mode,
         db_path=db_path,
@@ -9026,7 +9032,7 @@ def create_backup(
         if not backup_dir.exists():
             backup_dir.mkdir(parents=True, exist_ok=True)
             chmod_private(backup_dir, is_dir=True, created_by_invocation=True)
-        backup_path = backup_dir / f"lattice-backup-{epoch_now()}.sqlite3"
+        backup_path = backup_dir / f"lattice-backup-{artifact_now()}.sqlite3"
     if not backup_path.parent.exists():
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         chmod_private(backup_path.parent, is_dir=True, created_by_invocation=True)
@@ -9241,7 +9247,7 @@ def command_recover(args: argparse.Namespace) -> int:
     sources = []
     backup_path = None
     if args.backup_first and preexisting_db:
-        backup_path = db_path.parent / "backups" / f"lattice-backup-{epoch_now()}.sqlite3"
+        backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -9346,7 +9352,7 @@ def command_recover(args: argparse.Namespace) -> int:
     if not recovery_dir.exists():
         recovery_dir.mkdir(parents=True, exist_ok=True)
         chmod_private(recovery_dir, is_dir=True, created_by_invocation=True)
-    report_path = recovery_dir / f"recovery-{epoch_now()}.json"
+    report_path = recovery_dir / f"recovery-{artifact_now()}.json"
     report = {"status": status, "sources": sources}
     report_path.write_text(json_dumps(report) + "\n", encoding="utf-8")
     chmod_private(report_path)

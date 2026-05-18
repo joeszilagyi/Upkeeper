@@ -4347,10 +4347,24 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
             try:
                 obj = json.loads(raw)
             except json.JSONDecodeError:
-                rows.append({"path": "", "candidate_state": "excluded", "exclusion_reason": "malformed_candidate_json"})
+                rows.append(
+                    {
+                        "path": "",
+                        "candidate_state": "excluded",
+                        "exclusion_reason": "malformed_candidate_json",
+                    }
+                )
                 continue
             if isinstance(obj, dict):
                 rows.append(obj)
+                continue
+            rows.append(
+                {
+                    "path": "",
+                    "candidate_state": "excluded",
+                    "exclusion_reason": "malformed_candidate_json",
+                }
+            )
     return rows
 
 
@@ -5422,7 +5436,10 @@ def command_record_preselect(args: argparse.Namespace) -> int:
         eligible_count = int(selection.get("eligible_count") or 0)
         seen_candidates: dict[str, dict[str, Any]] = {}
         for index, row in enumerate(candidate_rows, start=1):
-            path = external_rel_path(str(row.get("path", "")))
+            path_value = row.get("path", "")
+            if not isinstance(path_value, str) or path_value == "":
+                continue
+            path = external_rel_path(path_value)
             if not path:
                 continue
             state = str(row.get("candidate_state", "eligible"))

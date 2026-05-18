@@ -10,6 +10,9 @@ Version numbering note:
 	1. Interactive backlog watch output now colors `PAGE` timestamps red without blink, keeps the `PAGE` block and marker bold/blinking red, and colors `--FYI--` timestamps orange with bold orange marker text while preserving plain loop logs.
 	2. Backlog invocations now emit local-only green `##### ##### #####` start and finish blocks around the locked-in job, showing the target, reason, expected outcome, result, start/end time, runtime, and final disposition before the outer loop sleeps.
 
+2026-05-18: Lattice JSONL import validation:
+	1. Lattice JSONL import keeps verifying `payload_sha256` against the canonical exported payload before staging a row, but no longer rechecks the hash after importer-side sanitization and raw-storage normalization rewrite local evidence fields.
+
 2026-05-18: backlog autoshelve local remediation:
 	1. Backlog dirty-worktree autoshelve now distinguishes ordinary local work from Upkeeper control-plane fixes. Ordinary dirty files remain preserved on the private autoshelve branch, while dirty wrapper/modules/orchestration/tools/tests/prompts/config changes are reapplied and committed locally on the active backlog branch before issue work continues.
 	2. Autoshelve branch names now avoid timestamp collisions, and a failed control-plane transplant stops the launcher before stale automation can run while leaving the autoshelve branch as local evidence.

@@ -8764,26 +8764,12 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 # Recovery spool rows can contain DB paths and prior failure text;
                 # default imports keep only a hashed summary unless raw retention
                 # is explicitly requested and raw storage mode allows it.
-                incoming_payload_hash = sha256_text(json_dumps(payload))
-                if declared_payload_hash != incoming_payload_hash:
-                    conflicts += 1
-                    record_import_conflict(
-                        conn,
-                        import_id,
-                        repo_id,
-                        str(table),
-                        logical_key,
-                        "",
-                        incoming_payload_hash,
-                        "payload_hash_mismatch",
-                    )
-                    continue
                 staged_import_rows.append(
                     {
                         "mode": "recovery",
                         "line_number": rows_seen,
                         "logical_key": logical_key,
-                        "payload_sha256": incoming_payload_hash,
+                        "payload_sha256": incoming_raw_hash,
                         "raw": raw,
                         "payload": payload,
                         "source_path": str(input_path),
@@ -8814,21 +8800,6 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_raw_hash, "empty_filtered_payload")
                 continue
-            incoming_payload_hash = sha256_text(json_dumps(filtered))
-            if declared_payload_hash != incoming_payload_hash:
-                conflicts += 1
-                record_import_conflict(
-                    conn,
-                    import_id,
-                    repo_id,
-                    table,
-                    logical_key,
-                    "",
-                    incoming_payload_hash,
-                    "payload_hash_mismatch",
-                )
-                continue
-            incoming_raw_hash = incoming_payload_hash
             incoming_semantic_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
             staged_import_rows.append(
                 {

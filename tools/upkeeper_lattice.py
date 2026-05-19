@@ -10052,7 +10052,10 @@ def query_changed_since_last_pass(conn: sqlite3.Connection, root: Path, repo_id:
                     (repo_id, file_id, latest_pass),
                 ).fetchone()
                 current_hash = live_file_metadata(root, path).get("worktree_hash")
-                if snap and snap["worktree_hash"] and current_hash and snap["worktree_hash"] != current_hash:
+                if snap is None:
+                    changed = True
+                    reason = "missing_snapshot_at_latest_completed_pass"
+                elif snap["worktree_hash"] and current_hash and snap["worktree_hash"] != current_hash:
                     changed = True
                     reason = "worktree_hash_changed"
                 else:

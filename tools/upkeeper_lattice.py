@@ -5315,6 +5315,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["candidate_symlink_exclusion"] = candidate_symlink_probe
         candidate_text_sample_probe = probe_candidate_text_sample_limit()
         result["checks"]["candidate_text_sample_limit"] = candidate_text_sample_probe
+        worktree_snapshot_path_probe = probe_worktree_snapshot_path_round_trip()
+        result["checks"]["worktree_snapshot_path_round_trip"] = worktree_snapshot_path_probe
         export_redaction_probe = probe_export_redaction()
         result["checks"]["export_redaction"] = export_redaction_probe
         recover_primary_sources_probe = probe_recover_requires_primary_sources()
@@ -5345,6 +5347,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(candidate_text_sample_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(worktree_snapshot_path_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(export_redaction_probe.get("ok")):
@@ -5562,9 +5567,11 @@ def record_worktree_snapshot(
         if worktree_snapshot_path_is_sensitive(path) or (old_path and worktree_snapshot_path_is_sensitive(old_path)):
             continue
         meta = live_file_metadata(root, path)
-        stored_path = pass_result_path_hmac(root, path)
-        stored_old_path = pass_result_path_hmac(root, old_path) if old_path else None
-        if not stored_path:
+        stored_path = stored_rel_path(path)
+        stored_old_path = stored_rel_path(old_path) if old_path else None
+        stored_path_hmac = pass_result_path_hmac(root, path)
+        stored_old_path_hmac = pass_result_path_hmac(root, old_path) if old_path else None
+        if not stored_path or not stored_path_hmac:
             continue
         conn.execute(
             """
@@ -5577,11 +5584,11 @@ def record_worktree_snapshot(
                 snapshot_id,
                 None,
                 stored_path,
-                stored_path,
+                stored_path_hmac,
                 worktree_snapshot_path_class(status_code),
                 status_code,
                 stored_old_path,
-                stored_old_path,
+                stored_old_path_hmac,
                 worktree_snapshot_path_class(status_code, is_old=True),
                 meta.get("head_blob"),
                 meta.get("worktree_hash"),
@@ -6829,6 +6836,120 @@ def probe_candidate_text_sample_limit() -> dict[str, Any]:
             and all(size == TEXT_SAMPLE_SIZE for size in read_sizes)
         )
         return result
+
+
+def probe_worktree_snapshot_path_round_trip() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-worktree-paths-") as repo_dir:
+        root = Path(repo_dir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", str(root), "config", "user.email", "probe@example.com"], check=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "Probe User"], check=True)
+        target = root / "a.py"
+        target.write_text("print('before')\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "a.py"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "probe"], check=True)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "delete", allow_unsafe_db=False, create_parent=True, create_if_missing=True)
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+            with conn:
+                repo_id = ensure_repository(conn, root)
+                source_id = ensure_source_record(
+                    conn,
+                    root,
+                    repo_id,
+                    "wrapper_observed",
+                    raw_ref="probe_worktree_snapshot_path_round_trip",
+                    raw_storage_mode="minimal",
+                )
+                cycle_pk = ensure_cycle(conn, repo_id, "cycle-worktree-paths", "run-worktree-paths", source_id=source_id)
+                target.write_text("print('middle')\n", encoding="utf-8")
+                before_snapshot_id = record_worktree_snapshot(
+                    conn,
+                    root,
+                    repo_id,
+                    cycle_pk,
+                    "before_codex",
+                    source_id=source_id,
+                    untracked_files_mode="normal",
+                )
+                target.write_text("print('after')\n", encoding="utf-8")
+                after_snapshot_id = record_worktree_snapshot(
+                    conn,
+                    root,
+                    repo_id,
+                    cycle_pk,
+                    "after_codex",
+                    source_id=source_id,
+                    untracked_files_mode="normal",
+                )
+                record_worktree_delta_events(
+                    conn,
+                    repo_id=repo_id,
+                    root=root,
+                    cycle_pk=cycle_pk,
+                    source_id=source_id,
+                    after_snapshot_id=after_snapshot_id,
+                )
+                stored_target = stored_rel_path("a.py")
+                expected_hmac = pass_result_path_hmac(root, "a.py")
+                before_row = conn.execute(
+                    """
+                    select path, path_hmac, status
+                    from worktree_snapshot_paths
+                    where worktree_snapshot_id=?
+                    order by worktree_snapshot_path_id
+                    limit 1
+                    """,
+                    (before_snapshot_id,),
+                ).fetchone()
+                round_trip_row = worktree_snapshot_path_row(
+                    conn,
+                    repo_id=repo_id,
+                    cycle_pk=cycle_pk,
+                    path="a.py",
+                    snapshot_kind="before_codex",
+                )
+                changed_event = conn.execute(
+                    """
+                    select path
+                    from file_events
+                    where repo_id=? and cycle_pk=? and event_kind='changed'
+                    order by event_id desc
+                    limit 1
+                    """,
+                    (repo_id, cycle_pk),
+                ).fetchone()
+                hashed_file_rows = int(
+                    conn.execute(
+                        "select count(*) from files where repo_id=? and current_path like ?",
+                        (repo_id, f"{PASS_RESULT_PATH_HMAC_PREFIX}%"),
+                    ).fetchone()[0]
+                    or 0
+                )
+        finally:
+            conn.close()
+    return {
+        "before_snapshot_path": before_row["path"] if before_row else None,
+        "before_snapshot_path_hmac": before_row["path_hmac"] if before_row else None,
+        "before_snapshot_status": before_row["status"] if before_row else None,
+        "expected_path": stored_target,
+        "expected_path_hmac": expected_hmac,
+        "round_trip_row_found": round_trip_row is not None,
+        "changed_event_path": changed_event["path"] if changed_event else None,
+        "hashed_file_rows": hashed_file_rows,
+        "ok": all(
+            (
+                before_row is not None,
+                before_row["path"] == stored_target,
+                before_row["path_hmac"] == expected_hmac,
+                round_trip_row is not None,
+                changed_event is not None,
+                changed_event["path"] == stored_target,
+                hashed_file_rows == 0,
+            )
+        ),
+    }
 
 
 def probe_export_redaction() -> dict[str, Any]:

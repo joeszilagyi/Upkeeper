@@ -132,10 +132,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   current user, and symlink log parent directories are rejected instead of
   being appended to.
 - Unsafe `$CODEX_HOME/sessions` paths fail closed before Codex launch:
-  symlinked, non-directory, and wrong-owner session stores are rejected before
-  Upkeeper writes a probe file. Owned session stores with weak inherited
-  permissions are repaired to `0700` and rechecked before probing; stores that
-  remain group/other writable after repair are rejected.
+  missing session stores are created private, while symlinked, non-directory,
+  and wrong-owner session stores are rejected before Upkeeper writes a probe
+  file. Owned session stores with weak inherited permissions are also rejected
+  without chmod repair so operators correct the local environment explicitly
+  before backend work starts.
 - Review summaries continue to log outcome, selected file, findings, changes,
   verification, Codex exit, and final status-marker evidence when available.
 - Runtime artifacts stay under documented local paths such as `runtime/`,

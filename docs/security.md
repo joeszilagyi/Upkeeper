@@ -212,13 +212,14 @@ metadata, and fragments of prior Codex interactions. Treat `$CODEX_HOME` as
 local private state. Do not commit it, attach it to public issues, or copy it
 into client repositories.
 
-If `$CODEX_HOME/sessions` is missing, stale, unreadable, unwritable, symlinked,
-not owned by the current user, or cannot be made private, Upkeeper should fail
-or degrade with local-environment evidence rather than spending more backend
-work. An existing session directory owned by the operator but created with weak
-inherited permissions is repaired to `0700` before probing. Session-store write
-probes use an unpredictable private probe directory instead of a predictable
-marker file.
+If `$CODEX_HOME/sessions` is missing, Upkeeper creates it with private
+permissions before probing. If it is stale, unreadable, unwritable, symlinked,
+not owned by the current user, or otherwise unsafe, Upkeeper should fail or
+degrade with local-environment evidence rather than spending more backend work.
+An existing session directory owned by the operator but created with weak
+inherited permissions is rejected without chmod repair so the operator can fix
+the local environment deliberately. Session-store write probes use an
+unpredictable private probe directory instead of a predictable marker file.
 
 ## Logs, Transcripts, And Runtime Artifacts
 

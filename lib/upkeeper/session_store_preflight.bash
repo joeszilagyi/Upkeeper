@@ -59,23 +59,8 @@ try:
 
     mode = stat.S_IMODE(st.st_mode)
     if mode & 0o022:
-        try:
-            os.fchmod(fd, 0o700)
-        except OSError as exc:
-            print(f"unsafe_permissions:mode={mode:04o} path={path} chmod_failed={exc.strerror or exc}")
-            sys.exit(1)
-
-        st = os.fstat(fd)
-        mode = stat.S_IMODE(st.st_mode)
-        if not stat.S_ISDIR(st.st_mode):
-            print(f"not_directory:{path}")
-            sys.exit(1)
-        if st.st_uid != expected_uid:
-            print(f"unsafe_owner:expected={expected_uid} actual={st.st_uid} path={path}")
-            sys.exit(1)
-        if mode & 0o022:
-            print(f"unsafe_permissions:mode={mode:04o} path={path}")
-            sys.exit(1)
+        print(f"unsafe_permissions:mode={mode:04o} path={path}")
+        sys.exit(1)
 
     print("ok")
 finally:
@@ -107,7 +92,10 @@ codex_session_store_write_check() {
     return 1
   fi
 
-  if ! mkdir -p -- "$marker_dir" 2>"$err_file"; then
+  if ! (
+    umask 077
+    mkdir -p -- "$marker_dir"
+  ) 2>"$err_file"; then
     printf 'mkdir_failed:%s' "$(tr '\n' ' ' <"$err_file")"
     rm -f -- "$err_file"
     return 1

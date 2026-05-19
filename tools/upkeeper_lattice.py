@@ -4580,21 +4580,65 @@ def parse_key_value_file(path: Path) -> dict[str, str]:
     data: dict[str, str] = {}
     if not path or not path.exists():
         return data
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        data[key.strip()] = value.strip()
-    return data
+    return parse_key_value_text(path.read_text(encoding="utf-8", errors="replace"))
 
 
 def parse_key_value_text(text: str) -> dict[str, str]:
-    data: dict[str, str] = {}
-    for line in text.splitlines():
-        if "=" in line:
-            key, value = line.split("=", 1)
-            data[key.strip()] = value.strip()
-    return data
+    def normalize_key_value_blob(raw: str) -> dict[str, str]:
+        data: dict[str, str] = {}
+        current_key: str | None = None
+        current_value_parts: list[str] = []
+
+        for raw_line in raw.splitlines():
+            if "=" in raw_line:
+                if current_key is not None:
+                    value = "\n".join(current_value_parts)
+                    if key_requires_path_redaction(current_key):
+                        value = decode_path_text(value)
+                    data[current_key] = value.strip()
+                key, value = raw_line.split("=", 1)
+                key = key.strip()
+                if not key:
+                    current_key = None
+                    current_value_parts = []
+                    continue
+                current_key = key
+                current_value_parts = [value]
+                continue
+            if current_key is not None:
+                current_value_parts.append(raw_line)
+
+        if current_key is not None:
+            value = "\n".join(current_value_parts)
+            if key_requires_path_redaction(current_key):
+                value = decode_path_text(value)
+            data[current_key] = value.strip()
+        return data
+
+    if not text:
+        return {}
+    text = text.strip()
+    if not text:
+        return {}
+    if text[0] == "{" and text[-1] == "}":
+        try:
+            payload = json.loads(text)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+        else:
+            if isinstance(payload, dict):
+                for key, value in payload.items():
+                    key_text = str(key).strip()
+                    if not key_text:
+                        continue
+                    value_text = "" if value is None else str(value)
+                    if key_requires_path_redaction(key_text) and isinstance(value, str):
+                        value_text = decode_path_text(value_text)
+                    data[key_text] = value_text.strip()
+                return data
+            if payload is not None:
+                return {}
+    return normalize_key_value_blob(text)
 
 
 def selector_priority_gate(selection_mode: str) -> str:

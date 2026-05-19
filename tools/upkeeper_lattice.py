@@ -5306,6 +5306,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["candidate_text_sample_limit"] = candidate_text_sample_probe
         export_redaction_probe = probe_export_redaction()
         result["checks"]["export_redaction"] = export_redaction_probe
+        recover_primary_sources_probe = probe_recover_requires_primary_sources()
+        result["checks"]["recover_requires_primary_sources"] = recover_primary_sources_probe
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
@@ -5333,6 +5335,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(export_redaction_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(recover_primary_sources_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
@@ -6868,6 +6873,70 @@ def probe_export_redaction() -> dict[str, Any]:
         "parsed_json_redacted": local_remote not in str(redacted.get("parsed_json") or ""),
         "redacted_payload_detected": has_redacted_path_token(redacted),
     }
+
+
+def probe_recover_requires_primary_sources() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recover-primary-") as tmpdir:
+        temp_root = Path(tmpdir).resolve()
+        root = temp_root / "repo"
+        root.mkdir(parents=True, exist_ok=True)
+        health_dir = temp_root / "wrapper-health"
+        health_dir.mkdir(parents=True, exist_ok=True)
+        (health_dir / "state.json").write_text("{\"status\":\"open\"}\n", encoding="utf-8")
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            backup_first=True,
+            max_conflicts=999999,
+            limit=None,
+        )
+        env_name = "CODEX_WRAPPER_HEALTH_STATE_DIR"
+        previous_env = os.environ.get(env_name)
+        stdout = io.StringIO()
+        try:
+            os.environ[env_name] = str(health_dir)
+            with contextlib.redirect_stdout(stdout):
+                exit_code = command_recover(args)
+        finally:
+            if previous_env is None:
+                os.environ.pop(env_name, None)
+            else:
+                os.environ[env_name] = previous_env
+        payload_text = stdout.getvalue().strip()
+        payload = json.loads(payload_text) if payload_text else {}
+        report_path = Path(str(payload.get("recovery_report") or ""))
+        report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+        backup_dir = db_path.parent / "backups"
+        backup_count = len(list(backup_dir.glob("*.sqlite3"))) if backup_dir.exists() else 0
+        artifact_sources = payload.get("artifact_sources")
+        expected_artifact = "wrapper_health_state:operator_local:1"
+        ok = all(
+            (
+                exit_code == EXIT_RECOVERY_INCOMPLETE,
+                payload.get("status") == "incomplete",
+                payload.get("sources") == [],
+                report.get("status") == "incomplete",
+                report.get("sources") == [],
+                isinstance(artifact_sources, list),
+                expected_artifact in artifact_sources,
+                report.get("artifact_sources") == artifact_sources,
+                backup_count == 0,
+            )
+        )
+        return {
+            "exit_code": exit_code,
+            "status": payload.get("status"),
+            "sources": payload.get("sources"),
+            "artifact_sources": artifact_sources,
+            "report_status": report.get("status"),
+            "report_sources": report.get("sources"),
+            "backup_count": backup_count,
+            "ok": ok,
+        }
 
 
 def snapshot_row_for_event(
@@ -9723,7 +9792,8 @@ def command_recover(args: argparse.Namespace) -> int:
         create_if_missing=True,
     )
     init_schema(conn, root, raw_storage_mode=raw_storage_mode)
-    sources = []
+    sources: list[str] = []
+    artifact_sources: list[str] = []
     backup_path = None
     if args.backup_first and preexisting_db:
         backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
@@ -9816,14 +9886,14 @@ def command_recover(args: argparse.Namespace) -> int:
                 raw_storage_mode=raw_storage_mode,
             )
             sources.append("tool_failure_marker_import:1")
-    sources.extend(
-        recover_artifact_refs(
-            root,
-            db_path,
-            args.journal_mode,
-            allow_unsafe_db=args.allow_unsafe_db,
-            raw_storage_mode=raw_storage_mode,
-        )
+    # Artifact refs preserve operator-local evidence, but they do not turn an
+    # otherwise empty recovery into a successful one.
+    artifact_sources = recover_artifact_refs(
+        root,
+        db_path,
+        args.journal_mode,
+        allow_unsafe_db=args.allow_unsafe_db,
+        raw_storage_mode=raw_storage_mode,
     )
     if not sources:
         status = "incomplete"
@@ -9833,9 +9903,14 @@ def command_recover(args: argparse.Namespace) -> int:
         chmod_private(recovery_dir, is_dir=True, created_by_invocation=True)
     report_path = recovery_dir / f"recovery-{artifact_now()}.json"
     report = {"status": status, "sources": sources}
+    if artifact_sources:
+        report["artifact_sources"] = artifact_sources
     report_path.write_text(json_dumps(report) + "\n", encoding="utf-8")
     chmod_private(report_path)
-    print_json({"status": status, "sources": sources, "recovery_report": str(report_path)})
+    response = {"status": status, "sources": sources, "recovery_report": str(report_path)}
+    if artifact_sources:
+        response["artifact_sources"] = artifact_sources
+    print_json(response)
     return EXIT_SUCCESS if status == "ok" else EXIT_RECOVERY_INCOMPLETE
 
 

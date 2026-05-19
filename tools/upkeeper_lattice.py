@@ -8047,6 +8047,8 @@ def command_import_git(args: argparse.Namespace) -> int:
             if len(parts) < 8:
                 continue
             commit_sha, an, ae, at, cn, ce, ct, subject = parts[:8]
+            author_epoch = int(at or 0) if str(at).isdigit() else None
+            committer_epoch = int(ct or 0) if str(ct).isdigit() else None
             commit_row = conn.execute(
                 "select commit_id, source_id from git_commits where repo_id=? and sha=?",
                 (repo_id, commit_sha),
@@ -8075,7 +8077,7 @@ def command_import_git(args: argparse.Namespace) -> int:
                         subject,
                         include_commit_subjects=include_commit_subjects,
                     ),
-                    source_epoch=int(at or 0) if str(at).isdigit() else None,
+                    source_epoch=author_epoch,
                     parse_status="parsed",
                     raw_storage_mode=raw_storage_mode,
                 )
@@ -8091,8 +8093,8 @@ def command_import_git(args: argparse.Namespace) -> int:
                         commit_sha,
                         author_id,
                         committer_id,
-                        int(at or 0) if str(at).isdigit() else None,
-                        int(ct or 0) if str(ct).isdigit() else None,
+                        author_epoch,
+                        committer_epoch,
                         subject_summary["subject"],
                         subject_summary["subject_hash"],
                         subject_summary["subject_length"],
@@ -8223,7 +8225,7 @@ def command_import_git(args: argparse.Namespace) -> int:
                         stored_old_path,
                         None,
                         None,
-                        int(at or 0) if str(at).isdigit() else None,
+                        committer_epoch,
                         commit_source_id,
                     ),
                 )
@@ -8237,7 +8239,7 @@ def command_import_git(args: argparse.Namespace) -> int:
                         set file_id=?,
                             additions=coalesce(additions, ?),
                             deletions=coalesce(deletions, ?),
-                            change_epoch=coalesce(change_epoch, ?),
+                            change_epoch=coalesce(?, change_epoch),
                             source_id=coalesce(source_id, ?)
                         where repo_id=?
                           and commit_id=?
@@ -8249,7 +8251,7 @@ def command_import_git(args: argparse.Namespace) -> int:
                             file_id,
                             None,
                             None,
-                            int(at or 0) if str(at).isdigit() else None,
+                            committer_epoch,
                             commit_source_id,
                             repo_id,
                             commit_id,

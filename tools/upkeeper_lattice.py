@@ -5964,6 +5964,9 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                 if state in {"eligible", "selected"} and rank is None:
                     rank = row.get("_lattice_input_index", 1)
                 content_state = row.get("content_state") if path != selected_path else (selected_content_state if selected_content_state is not None else row.get("content_state"))
+                score_json = row.get("score_json")
+                if score_json is None and row.get("score") is not None:
+                    score_json = json_dumps(row["score"])
                 conn.execute(
                     """
                     insert or ignore into selection_candidates(
@@ -5983,7 +5986,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                         row.get("head_blob"),
                         row.get("worktree_hash"),
                         row.get("exclusion_reason") or None,
-                        json_dumps(row.get("score", row.get("score_json"))) if row.get("score") is not None or row.get("score_json") is not None else None,
+                        score_json,
                         source_id,
                     ),
                 )

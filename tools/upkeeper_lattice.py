@@ -10232,12 +10232,16 @@ def pass_coverage_counts_for_file(conn: sqlite3.Connection, repo_id: int, file_i
 
 
 def annotate_max_cover_scores(conn: sqlite3.Connection, repo_id: int, rows: list[dict[str, Any]]) -> None:
+    registry_order = {item["pass_code"]: i for i, item in enumerate(PASS_REGISTRY)}
     for row in rows:
         if row["candidate_state"] != "eligible":
             continue
         file_id = file_id_for_path(conn, repo_id, row["path"])
         counts = pass_coverage_counts_for_file(conn, repo_id, file_id)
-        unrun = sorted(pass_code for pass_code, count in counts.items() if count == 0)
+        unrun = sorted(
+            (pass_code for pass_code, count in counts.items() if count == 0),
+            key=lambda code: registry_order.get(code, 999_999),
+        )
         min_count = min(counts.values()) if counts else 0
         row["score_json"] = json_dumps(
             {

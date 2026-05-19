@@ -81,8 +81,10 @@ Loop stop semantics:
     current bucket can make a decision or a current bucket is projected below
     threshold
   - live primary and auxiliary Codex calls also preflight the local session store;
-    a read-only $CODEX_HOME_DIR/sessions is classified as a local environment
-    failure before starting recursive fallback or post-mortem Codex work
+    missing $CODEX_HOME_DIR/sessions directories are created private, while
+    read-only, symlinked, wrong-owner, non-directory, or group/other-writable
+    session stores are classified as local environment failures before writing
+    a probe or starting recursive fallback or post-mortem Codex work
   - live primary, fallback, and auxiliary Codex calls also preflight Codex's
     shared bubblewrap temp registry; a stale root-owned registry is classified
     as a local environment failure before launching another Codex process

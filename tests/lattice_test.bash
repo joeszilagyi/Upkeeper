@@ -24,6 +24,9 @@ from pathlib import Path
 path = Path(sys.argv[1])
 model = sys.argv[2]
 path.parent.mkdir(parents=True, exist_ok=True)
+if "sessions" in path.parts:
+    session_root = Path(*path.parts[: path.parts.index("sessions") + 1])
+    session_root.chmod(0o700)
 now = int(time.time())
 ts = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
 rows = [

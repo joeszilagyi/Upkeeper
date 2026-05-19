@@ -3,6 +3,44 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Session Store Fail-Closed Alignment
+
+Status: completed locally
+
+Goal:
+- align full validation, docs, and focused tests with issue `#128` behavior:
+  owned weak-mode `$CODEX_HOME/sessions` directories fail closed instead of
+  being chmod-repaired by Upkeeper
+- keep the unpredictable session-store write probe and symlink rejection
+  contracts intact
+- clear PR `#410` CI after the preserved partial `#128` change
+
+Constraints:
+- do not launch real backend Codex validation
+- keep local environment failures deterministic and pre-model
+- document the operator-visible behavior change in current docs and notes
+
+Files likely touched:
+- `lib/upkeeper/session_store_preflight.bash`
+- `tools/validate_upkeeper.sh`
+- `tests/lattice_test.bash`
+- `tests/session_store_preflight_test.bash`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `docs/security.md`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/session_store_preflight_test.bash`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
+- `git diff --check`
+
 ## Backlog Validation Gate And Lattice Snapshot Privacy Repair
 
 Status: completed locally

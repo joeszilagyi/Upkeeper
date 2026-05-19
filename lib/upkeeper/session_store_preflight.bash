@@ -92,7 +92,10 @@ codex_session_store_write_check() {
     return 1
   fi
 
-  if ! mkdir -p -- "$marker_dir" 2>"$err_file"; then
+  if ! (
+    umask 077
+    mkdir -p -- "$marker_dir"
+  ) 2>"$err_file"; then
     printf 'mkdir_failed:%s' "$(tr '\n' ' ' <"$err_file")"
     rm -f -- "$err_file"
     return 1

@@ -1747,6 +1747,9 @@ model = sys.argv[2]
 primary_reset_offset = int(sys.argv[3])
 secondary_reset_offset = int(sys.argv[4])
 path.parent.mkdir(parents=True, exist_ok=True)
+if "sessions" in path.parts:
+    session_root = Path(*path.parts[: path.parts.index("sessions") + 1])
+    session_root.chmod(0o700)
 now = int(time.time())
 event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
 rows = [
@@ -2259,11 +2262,11 @@ check_session_store_preflight_contract() {
   rc=$?
   set -e
 
-  [[ "$rc" -eq 0 ]] || fail "session store owned weak-mode repair exited $rc, expected 0"
-  [[ "$output" == "ok" ]] || fail "session store owned weak-mode repair returned unexpected output: $output"
-  [[ "$(stat -c '%a' "$temp_dir/codex-home/sessions")" == "700" ]] || fail "session store owned weak-mode repair did not chmod sessions to 700"
+  [[ "$rc" -eq 1 ]] || fail "session store owned weak-mode rejection exited $rc, expected 1"
+  [[ "$output" == unsafe_permissions:* ]] || fail "session store owned weak-mode rejection returned unexpected output: $output"
+  [[ "$(stat -c '%a' "$temp_dir/codex-home/sessions")" == "777" ]] || fail "session store owned weak-mode rejection changed directory permissions"
   if compgen -G "$temp_dir/codex-home/sessions/.upkeeper-write-test.*" >/dev/null; then
-    fail "session store owned weak-mode repair left a probe directory behind"
+    fail "session store owned weak-mode rejection left a probe directory behind"
   fi
 
   rm -r -- "$temp_dir"
@@ -4562,6 +4565,7 @@ check_empty_transcript_failure() {
   log "checking empty transcript failure classification"
   temp_dir="$(mktemp -d /tmp/upkeeper-empty-transcript.XXXXXX)"
   mkdir -p "$temp_dir/bin" "$temp_dir/codex-home/sessions/2026/05/07"
+  chmod 0700 "$temp_dir/codex-home/sessions"
 
   cat >"$temp_dir/bin/codex" <<'SH'
 #!/usr/bin/env bash

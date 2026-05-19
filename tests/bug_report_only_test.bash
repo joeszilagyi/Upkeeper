@@ -16,7 +16,6 @@ reset_bug_report_env() {
   RUN_GENIE_GH_CONFIG_DIR=""
   RUN_GENIE_REAL_GH_BIN=""
   RUN_TMP_DIR="$TEST_TMP_ROOT/run-tmp"
-  mkdir -p "$RUN_TMP_DIR"
   CODEX_BUG_REPORT_ONLY=1
   UPKEEPER_BUG_REPORT_ONLY=1
   CYCLE_ID="bug-report-only-test"

@@ -2232,6 +2232,58 @@ def parse_git_porcelain_v1_z_entries(raw: bytes) -> list[tuple[str, str, str | N
     return entries
 
 
+def parse_git_porcelain_status_map(raw: bytes) -> dict[str, str]:
+    status_by_path: dict[str, str] = {}
+    for status_code, path, old_path in parse_git_porcelain_v1_z_entries(raw):
+        if path:
+            status_by_path[path] = status_code
+        if old_path:
+            status_by_path[old_path] = status_code
+    return status_by_path
+
+
+def git_porcelain_status_map(root: Path) -> dict[str, str]:
+    try:
+        raw = subprocess.check_output(
+            ["git", "-C", str(root), "status", "--porcelain=v1", "-z"],
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError, UnicodeEncodeError, UnicodeError, ValueError):
+        return {}
+    return parse_git_porcelain_status_map(raw)
+
+
+def parse_git_ls_files_s_map(raw: bytes, *, wanted: set[str] | None = None) -> dict[str, str]:
+    wanted_set = wanted if wanted is None else set(wanted)
+    head_by_path: dict[str, str] = {}
+    for item in raw.split(b"\0"):
+        if not item:
+            continue
+        try:
+            meta, path_raw = item.split(b"\t", 1)
+        except ValueError:
+            continue
+        parts = meta.split()
+        if len(parts) < 2:
+            continue
+        path = decode_git_output(path_raw)
+        if wanted_set is not None and path not in wanted_set:
+            continue
+        head_by_path[path] = parts[1].decode("utf-8", "surrogateescape")
+    return head_by_path
+
+
+def git_head_blob_map(root: Path, paths: Iterable[str]) -> dict[str, str]:
+    if not paths:
+        return {}
+    wanted = set(paths)
+    try:
+        raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-s", "-z"], stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError, UnicodeEncodeError, UnicodeError, ValueError):
+        return {}
+    return parse_git_ls_files_s_map(raw, wanted=wanted)
+
+
 def git_porcelain_status_for_path(root: Path, rel_path: str) -> str:
     rel_path = operational_rel_path(rel_path)
     if has_surrogate_codepoint(rel_path):
@@ -4468,7 +4520,14 @@ def record_file_event(
     )
 
 
-def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
+def live_file_metadata(
+    root: Path,
+    rel_path: str,
+    *,
+    git_status: str | None = None,
+    head_blob: str | None = None,
+    include_worktree_hash: bool = True,
+) -> dict[str, Any]:
     rel_path = operational_rel_path(rel_path)
     meta: dict[str, Any] = {"path": stored_rel_path(rel_path)}
     if has_surrogate_codepoint(rel_path):
@@ -4513,12 +4572,22 @@ def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
         meta["test_path"] = 1 if is_test_path(rel_path) else 0
         meta["generated"] = 0
         return meta
-    status = git_porcelain_status_for_path(root, rel_path)
+    status = git_status if git_status is not None else git_porcelain_status_for_path(root, rel_path)
     meta["git_status"] = stored_git_status_code(status) if status else "clean"
-    raw_worktree_hash = git_output(root, ["hash-object", "--", rel_path], "missing") if st is not None else "unavailable"
-    raw_head_blob = git_output(root, ["rev-parse", f"HEAD:{rel_path}"], "none")
+    if include_worktree_hash and st is not None:
+        raw_worktree_hash = git_output(root, ["hash-object", "--", rel_path], "missing")
+    else:
+        raw_worktree_hash = "unavailable"
+    if head_blob is not None:
+        raw_head_blob = head_blob
+    elif status == "??":
+        raw_head_blob = "none"
+    else:
+        raw_head_blob = git_output(root, ["rev-parse", f"HEAD:{rel_path}"], "none")
     if raw_head_blob == "none":
         meta["content_state"] = "untracked"
+    elif not include_worktree_hash:
+        meta["content_state"] = "unknown"
     elif raw_head_blob == raw_worktree_hash:
         meta["content_state"] = "matches_head"
     else:
@@ -4775,12 +4844,17 @@ def is_test_path(path: str) -> bool:
 def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper_ignore_file: str | None = None) -> list[dict[str, Any]]:
     upkeeperignore_patterns = load_upkeeperignore_patterns(root, upkeeper_ignore_file)
     inside_git = inside_git_repo(root)
+    git_status_map: dict[str, str] = {}
+    head_blob_map: dict[str, str] = {}
     if inside_git:
         if candidate_scope == "current-tracked":
             raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"])
         else:
             raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "-z"])
         paths = [p for p in decode_git_output(raw).split("\0") if p]
+        if paths:
+            git_status_map = git_porcelain_status_map(root)
+            head_blob_map = git_head_blob_map(root, paths)
     else:
         paths = []
         for dirpath, dirnames, filenames in os.walk(root):
@@ -4790,11 +4864,16 @@ def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper
                 if rel:
                     paths.append(rel)
     git_ignored = git_ignored_paths(root, paths) if inside_git else set()
+    text_reason_cache: dict[str, str] = {}
+    stat_cache: dict[str, tuple[os.stat_result | None, str]] = {}
     rows = []
     for rel in paths:
         reason = ""
         state = "eligible"
         p = root / rel
+        if rel not in stat_cache:
+            stat_cache[rel] = source_safe_file_stat(root, rel)
+        st, reason = stat_cache[rel]
         if rel == "Upkeeper.log":
             reason = "excluded_exact"
         elif rel.startswith(".git/") or rel.startswith("runtime/"):
@@ -4804,10 +4883,9 @@ def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper
         elif rel in git_ignored:
             reason = "gitignore"
         else:
-            st, reason = source_safe_file_stat(root, rel)
             if not reason and st is not None:
                 if candidate_scope == "current-tracked":
-                    _, reason = source_safe_file_stat(root, rel, require_text=True)
+                    _, reason = text_reason_cache.setdefault(rel, source_safe_file_stat(root, rel, require_text=True))
                 else:
                     if is_test_path(rel):
                         reason = "test_path"
@@ -4815,17 +4893,23 @@ def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper
                     ext = p.suffix.lower()
                     candidate = name in BUILD_NAMES or ext in SCRIPT_EXTS
                     if not candidate and st.st_mode & 0o111:
-                        _, text_reason = source_safe_file_stat(root, rel, require_text=True)
+                        _, text_reason = text_reason_cache.setdefault(rel, source_safe_file_stat(root, rel, require_text=True))
                         candidate = not text_reason
                         if text_reason:
                             reason = "executable_not_text"
                     if candidate and not reason:
-                        _, reason = source_safe_file_stat(root, rel, require_text=True)
+                        _, reason = text_reason_cache.setdefault(rel, source_safe_file_stat(root, rel, require_text=True))
                     if not candidate and not reason:
                         reason = "unsupported_extension"
         if reason:
             state = "excluded"
-        meta = live_file_metadata(root, rel)
+        meta = live_file_metadata(
+            root,
+            rel,
+            git_status=git_status_map.get(rel, ""),
+            head_blob=head_blob_map.get(rel),
+            include_worktree_hash=(state == "eligible"),
+        )
         rows.append(
             {
                 "path": stored_rel_path(rel),

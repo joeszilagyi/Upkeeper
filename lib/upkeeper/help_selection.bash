@@ -103,6 +103,9 @@ Loop stop semantics:
     that reset time passes
   - root log rotation archives live logs older than ${CODEX_LOG_ROTATE_AFTER_HOURS} hours
     and prunes sibling zip archives older than ${CODEX_LOG_ROTATE_KEEP_HOURS} hours on startup.
+    Custom CODEX_LOG_FILE paths are still honored as live log sinks, but
+    rotation and sibling archive pruning stay blocked unless explicitly enabled
+    with CODEX_LOG_FILE_ALLOW_UNSAFE=1 and a trusted Upkeeper rotation marker.
   - by default, live terminal output is basic: routine INFO logs and full
     backend transcripts stay in log/transcript artifacts, while selected target,
     Codex start/finish, long-running heartbeats, status, checks/tests/validation
@@ -155,9 +158,14 @@ Important:
   - Once a backlog PR has recorded fixes, the next invocation waits for that
     PR's checks before selecting another issue. Passing checks allow the next
     issue, pending checks keep the local owner lease alive, and failed checks
-    stop the launcher before more work stacks on a red branch. Set
-    BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE=0 only for an intentional manual
-    override.
+    stop the launcher before more work stacks on a red branch. While checks are
+    pending, the wait line includes local gh/jq progress details such as
+    pass/pending/fail counts, the active check name, state, elapsed check time,
+    Actions step when available, and the check URL. Set
+    BACKLOG_PR_CHECK_PROGRESS=0 to return to the terse pending line, or
+    BACKLOG_PR_CHECK_PROGRESS_STEPS=0 to keep the summary without the extra
+    Actions job lookup. Set BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE=0 only for
+    an intentional manual override.
   - Light per-bug validation still avoids the full batch suite, but it now
     compiles changed Python files before commit. Lattice issue fixes that touch
     tools/upkeeper_lattice.py also run tests/lattice_test.bash before the fix is
@@ -1178,10 +1186,14 @@ def manifest_paths(path: str) -> tuple[list[tuple[float, str]], str]:
         stat_result, error = source_safe_file_stat(rel_path)
         if error:
             continue
-        try:
-            mtime = float(stat_result.st_mtime)
-        except (AttributeError, TypeError, ValueError):
-            mtime = 0.0
+        if isinstance(item.get("mtime_ns"), (int, float)):
+            mtime_ns = int(item["mtime_ns"])
+        else:
+            try:
+                mtime_ns = int(item.get("mtime", 0) * 1_000_000_000)
+            except (TypeError, ValueError):
+                mtime_ns = int(getattr(stat_result, "st_mtime_ns", 0))
+        mtime = mtime_ns / 1_000_000_000
         paths.append((mtime, rel_path))
     return paths, "manifest"
 
@@ -1424,7 +1436,7 @@ for manifest_mtime, path in paths:
             continue
         stat_result = text_stat
     if is_candidate:
-        mtime = stat_result.st_mtime
+        mtime = manifest_mtime
         candidates.append((mtime, path))
 
 if startup_anomaly_gate == "1" and startup_force_upkeeper == "1":

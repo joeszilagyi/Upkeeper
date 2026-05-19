@@ -3059,6 +3059,11 @@ Goal:
 - reconcile the issue #166 active-lock hardening with local full-validation
   fixtures so safe dry-runs use repo-runtime lock paths and release their
   ownership markers
+- preserve custom validation log sinks while keeping custom log rotation and
+  archive pruning blocked unless explicitly authorized and marker-anchored
+- make PR-check hibernation explain the true current CI position from local
+  `gh`/`jq` metadata, including active check and Actions step, instead of
+  repeating an undifferentiated pending line
 
 Constraints:
 - do not launch real backend Codex during validation

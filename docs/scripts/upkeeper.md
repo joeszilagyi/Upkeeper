@@ -96,7 +96,10 @@ Loop stop semantics:
     same model stop before launching another fallback/post-mortem chain until
     that reset time passes
   - root log rotation archives live logs older than 72 hours and prunes sibling
-    zip archives older than 144 hours on startup.
+    zip archives older than 144 hours on startup. Custom `CODEX_LOG_FILE` paths
+    are still honored as live log sinks, but rotation and sibling archive
+    pruning stay blocked unless explicitly enabled with
+    `CODEX_LOG_FILE_ALLOW_UNSAFE=1` and a trusted Upkeeper rotation marker.
 
 Transcript and live terminal behavior:
   - Default live terminal mode is `basic`: routine INFO logs stay in
@@ -151,9 +154,14 @@ Important:
   - Once a backlog PR has recorded fixes, the next invocation waits for that
     PR's checks before selecting another issue. Passing checks allow the next
     issue, pending checks keep the local owner lease alive, and failed checks
-    stop the launcher before more work stacks on a red branch. Set
-    `BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE=0` only for an intentional manual
-    override.
+    stop the launcher before more work stacks on a red branch. While checks are
+    pending, the wait line includes local `gh`/`jq` progress details such as
+    pass/pending/fail counts, the active check name, state, elapsed check time,
+    Actions step when available, and the check URL. Set
+    `BACKLOG_PR_CHECK_PROGRESS=0` to return to the terse pending line, or
+    `BACKLOG_PR_CHECK_PROGRESS_STEPS=0` to keep the summary without the extra
+    Actions job lookup. Set `BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE=0` only
+    for an intentional manual override.
   - Light per-bug validation still avoids the full batch suite, but it now
     compiles changed Python files before commit. Lattice issue fixes that touch
     `tools/upkeeper_lattice.py` also run `tests/lattice_test.bash` before the

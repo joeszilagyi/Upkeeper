@@ -1,12 +1,61 @@
+transcript_artifacts_marker_path() {
+  local transcript_dir="$1"
+  printf '%s/.upkeeper-transcript-artifacts.marker' "$transcript_dir"
+}
+
+transcript_artifacts_marker_expected() {
+  local transcript_dir="$1"
+  upkeeper_path_hmac "$transcript_dir"
+}
+
+transcript_artifacts_marker_readable() {
+  local marker_path="$1"
+  local marker_current
+
+  [[ -f "$marker_path" && ! -L "$marker_path" ]] || return 1
+  IFS= read -r marker_current < "$marker_path" || true
+  [[ -n "$marker_current" ]] || return 1
+  printf '%s' "$marker_current"
+}
+
 prune_transcript_artifacts() {
   local transcript_dir="$CODEX_TRANSCRIPT_DIR"
-  local keep_hours max_mb
+  local transcript_dir_abs marker_path marker_expected marker_current
+  local default_transcript_dir keep_hours max_mb
+  local owner mode
 
   [[ -n "$transcript_dir" ]] || return 0
+  transcript_dir_abs="$(resolve_upkeeper_config_path "$transcript_dir")"
+  default_transcript_dir="$ROOT_DIR/runtime/upkeeper-transcripts"
+
+  if [[ -L "$transcript_dir_abs" ]]; then
+    log_line "WARN" "transcript.prune_blocked reason=path_is_symlink path_redacted=1"
+    return 0
+  fi
+  if [[ "$transcript_dir_abs" != "$default_transcript_dir" ]]; then
+    marker_path="$(transcript_artifacts_marker_path "$transcript_dir_abs")"
+    marker_expected="$(transcript_artifacts_marker_expected "$transcript_dir_abs")"
+    marker_current="$(transcript_artifacts_marker_readable "$marker_path" || true)"
+    if [[ "$marker_current" != "$marker_expected" ]]; then
+      log_line "WARN" "transcript.prune_blocked reason=missing_ownership_marker path_redacted=1"
+      return 0
+    fi
+    owner="$(stat -Lc '%u' -- "$marker_path" 2>/dev/null || printf '')"
+    mode="$(stat -Lc '%a' -- "$marker_path" 2>/dev/null || printf '')"
+    [[ "$owner" == "$(id -u)" ]] || {
+      log_line "WARN" "transcript.prune_blocked reason=marker_wrong_owner path_redacted=1"
+      return 0
+    }
+    [[ "$mode" == "600" ]] || {
+      log_line "WARN" "transcript.prune_blocked reason=marker_wrong_mode path_redacted=1"
+      return 0
+    }
+  fi
+
   keep_hours="$(sanitize_nonnegative_integer "$CODEX_TRANSCRIPT_KEEP_HOURS" "24")"
   max_mb="$(sanitize_nonnegative_integer "$CODEX_TRANSCRIPT_KEEP_MAX_MB" "200")"
 
-  python3 - "$transcript_dir" "$keep_hours" "$max_mb" <<'PY' || true
+  python3 - "$transcript_dir_abs" "$keep_hours" "$max_mb" <<'PY' || true
 from pathlib import Path
 import sys
 import time

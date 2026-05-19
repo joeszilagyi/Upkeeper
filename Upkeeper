@@ -350,7 +350,22 @@ preparse_upkeeper_config_args "$@"
 load_upkeeper_config_file
 load_upkeeper_local_env_file
 
-LOG_FILE="${CODEX_LOG_FILE:-$ROOT_DIR/Upkeeper.log}"
+upkeeper_resolve_log_file() {
+  local requested_log_file="$1"
+  local requested_default="$ROOT_DIR/Upkeeper.log"
+  local requested
+
+  requested="${requested_log_file:-$requested_default}"
+  [[ -n "$requested" ]] || requested="$requested_default"
+
+  # CODEX_LOG_FILE selects the live log sink. Rotation and archive pruning are
+  # authorized separately by log_rotation_target_is_safe, so custom validation
+  # logs still work without granting custom archive deletion.
+  printf '%s' "$requested"
+}
+
+LOG_FILE="$(upkeeper_resolve_log_file "${CODEX_LOG_FILE:-$ROOT_DIR/Upkeeper.log}")"
+CODEX_LOG_FILE="$LOG_FILE"
 LOG_FILE_DIR="$(dirname -- "$LOG_FILE")"
 LOG_FILE_NAME="$(basename -- "$LOG_FILE")"
 LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
@@ -675,6 +690,62 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
   source_upkeeper_module "$upkeeper_module"
 done
  unset upkeeper_module
+
+# Keep prune behavior anchored to Upkeeper-managed markers so archive cleanup only
+# applies to log trees that this wrapper instance explicitly owns.
+upkeeper_log_rotation_marker_is_trusted() {
+  local marker_path marker_expected marker_current
+
+  marker_path="$(log_rotation_marker_path)"
+  marker_expected="$(log_rotation_marker_expected)"
+  marker_current="$(log_rotation_marker_readable "$marker_path" || true)"
+
+  [[ "$marker_current" == "$marker_expected" ]] || return 1
+  [[ -f "$marker_path" ]] || return 1
+  [[ "$(stat -Lc '%u' -- "$marker_path" 2>/dev/null || printf '')" == "$(id -u)" ]] || return 1
+  [[ "$(stat -Lc '%a' -- "$marker_path" 2>/dev/null || printf '')" == "600" ]] || return 1
+  return 0
+}
+
+prune_wrapper_log_archives() {
+  local keep_hours keep_minutes keep_seconds now_epoch cutoff
+  local candidate candidate_mtime candidate_name
+
+  if ! upkeeper_log_rotation_marker_is_trusted; then
+    log_line "WARN" "log.prune_blocked reason=log_rotation_marker_untrusted path_redacted=1"
+    return 0
+  fi
+
+  keep_hours="$(sanitize_nonnegative_integer "$CODEX_LOG_ROTATE_KEEP_HOURS" "144")"
+  keep_minutes="$((keep_hours * 60))"
+  if [[ "$keep_minutes" -le 0 ]]; then
+    return 0
+  fi
+  keep_seconds=$((keep_minutes * 60))
+  now_epoch="$(date '+%s')"
+  cutoff="$((now_epoch - keep_seconds))"
+
+  shopt -s nullglob
+  for candidate in "$LOG_FILE_DIR"/$LOG_ARCHIVE_GLOB; do
+    [[ -f "$candidate" ]] || continue
+    candidate_name="${candidate##*/}"
+    [[ "$candidate_name" == $LOG_ARCHIVE_GLOB ]] || continue
+
+    if ! [[ "$(stat -Lc '%u' -- "$candidate" 2>/dev/null || printf '')" == "$(id -u)" ]]; then
+      continue
+    fi
+    if ! [[ "$(stat -Lc '%a' -- "$candidate" 2>/dev/null || printf '')" == "600" ]]; then
+      continue
+    fi
+    candidate_mtime="$(stat -Lc '%Y' -- "$candidate" 2>/dev/null || printf '')"
+    if ! [[ "$candidate_mtime" =~ ^[0-9]+$ ]] || (( candidate_mtime >= cutoff )); then
+      continue
+    fi
+
+    rm -f -- "$candidate" 2>/dev/null || true
+  done
+  shopt -u nullglob
+}
 
 # Keep this review-parser override in the entrypoint so selected-target-only
 # repair cycles can harden startup anomaly acknowledgment parsing without

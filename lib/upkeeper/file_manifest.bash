@@ -114,6 +114,38 @@ def root_relative(path: Path) -> str:
     return rel.as_posix()
 
 
+def validate_manifest_rel_path(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    if not value or "\x00" in value or any(ord(char) < 32 for char in value):
+        return None
+    if "/" in value or "\\" in value:
+        parts = value.split("/")
+        if value.startswith("/"):
+            return None
+        if any(part in (".", "..", "") for part in parts):
+            return None
+    else:
+        if value in (".", "..", ""):
+            return None
+
+    normalized = os.path.normpath(value)
+    if normalized in (".", "") or os.path.isabs(normalized):
+        return None
+    if normalized.startswith(".."):
+        return None
+    if any(part in (".", "..", "") for part in normalized.split(os.sep)):
+        return None
+
+    candidate = (root / normalized).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+
+    return normalized.replace(os.sep, "/")
+
+
 def load_upkeeperignore_patterns() -> list[tuple[bool, str]]:
     patterns: list[tuple[bool, str]] = []
     try:
@@ -306,21 +338,24 @@ def existing_payload() -> dict[str, object] | None:
             payload_source = str(payload.get("source", "git"))
             payload_entries = [
                 {
-                    "rel_path": entry.get("rel_path"),
+                    "rel_path": rel_path,
                     "mtime_ns": entry.get("mtime_ns"),
                     "size": entry.get("size"),
                     "mode": entry.get("mode"),
                 }
                 for entry in existing_files
+                for rel_path in [validate_manifest_rel_path(entry.get("rel_path", ""))]
                 if isinstance(entry, dict)
-                and isinstance(entry.get("rel_path"), str)
+                and rel_path is not None
                 and isinstance(entry.get("mtime_ns"), (int, float))
                 and isinstance(entry.get("size"), (int, float))
                 and isinstance(entry.get("mode"), str)
             ]
+            if isinstance(payload.get("files_fingerprint"), str) is False:
+                return None
             computed = compute_files_fingerprint(payload_source, payload_entries)
             payload_files_fingerprint = payload.get("files_fingerprint")
-            if isinstance(payload_files_fingerprint, str) and payload_files_fingerprint != computed:
+            if payload_files_fingerprint != computed:
                 return None
         except Exception:
             return None

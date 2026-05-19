@@ -86,8 +86,30 @@ upkeeper_value_has_control_chars() {
   esac
 }
 
+upkeeper_path_contains_symlink_component() {
+  local path="${1:-}"
+  local candidate
+
+  [[ -n "$path" ]] || return 1
+  if [[ "$path" == "/" ]]; then
+    [[ -L "/" ]]
+    return
+  fi
+
+  path="${path%/}"
+  candidate="$path"
+  while [[ -n "$candidate" && "$candidate" != "." && "$candidate" != "/" ]]; do
+    if [[ -L "$candidate" ]]; then
+      return 0
+    fi
+    candidate="$(dirname -- "$candidate")"
+  done
+
+  return 1
+}
+
 upkeeper_redaction_key_material() {
-  local key_file key_value token
+  local key_file key_dir key_value token persist_key key_owner key_mode
 
   if [[ -n "${UPKEEPER_REDACTION_KEY:-}" ]]; then
     printf '%s' "$UPKEEPER_REDACTION_KEY"
@@ -99,7 +121,39 @@ upkeeper_redaction_key_material() {
   fi
 
   key_file="${UPKEEPER_REDACTION_KEY_FILE:-${ROOT_DIR:-$PWD}/runtime/upkeeper-redaction.key}"
-  if [[ -r "$key_file" ]]; then
+  key_dir="$(dirname -- "$key_file")"
+  persist_key=1
+  if [[ -e "$key_file" ]]; then
+    if [[ -L "$key_file" || ! -f "$key_file" ]]; then
+      persist_key=0
+    fi
+    key_owner="$(stat -Lc '%u' -- "$key_file" 2>/dev/null || printf '')"
+    key_mode="$(stat -Lc '%a' -- "$key_file" 2>/dev/null || printf '')"
+    if [[ -r "$key_file" && "$key_owner" == "$(id -u)" && "$key_mode" == "600" ]]; then
+      IFS= read -r key_value <"$key_file" || key_value=""
+      if [[ -n "$key_value" ]]; then
+        printf '%s' "$key_value"
+        return 0
+      fi
+    fi
+    if [[ -n "$key_owner" && "$key_owner" != "$(id -u)" ]]; then
+      persist_key=0
+    fi
+  fi
+
+  if upkeeper_path_contains_symlink_component "$key_dir"; then
+    persist_key=0
+  elif ! mkdir -p -m 700 -- "$key_dir" 2>/dev/null; then
+    persist_key=0
+  elif ! chmod 700 "$key_dir" 2>/dev/null; then
+    persist_key=0
+  elif [[ "$(stat -Lc '%u' -- "$key_dir" 2>/dev/null || printf '')" != "$(id -u)" ]]; then
+    persist_key=0
+  elif [[ "$(stat -Lc '%a' -- "$key_dir" 2>/dev/null || printf '')" != "700" ]]; then
+    persist_key=0
+  fi
+
+  if [[ "$persist_key" == "1" && -r "$key_file" ]]; then
     IFS= read -r key_value <"$key_file" || key_value=""
     if [[ -n "$key_value" ]]; then
       printf '%s' "$key_value"
@@ -107,8 +161,6 @@ upkeeper_redaction_key_material() {
     fi
   fi
 
-  mkdir -p -- "$(dirname -- "$key_file")" 2>/dev/null || true
-  chmod 700 "$(dirname -- "$key_file")" 2>/dev/null || true
   if [[ -r /dev/urandom ]]; then
     token="$(od -An -N 32 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
   else
@@ -118,8 +170,13 @@ upkeeper_redaction_key_material() {
     token="$(printf '%s' "${ROOT_DIR:-$PWD}|${CYCLE_ID:-unknown}|$$|$(date '+%s%N' 2>/dev/null || date '+%s')" | sha256sum 2>/dev/null | awk '{print $1}')"
   fi
   if [[ -n "$token" ]]; then
-    printf '%s\n' "$token" >"$key_file" 2>/dev/null || true
-    chmod 600 "$key_file" 2>/dev/null || true
+    if [[ "$persist_key" == "1" ]]; then
+      if printf '%s\n' "$token" >"$key_file" 2>/dev/null && chmod 600 "$key_file" 2>/dev/null; then
+        printf '%s' "$token"
+        return 0
+      fi
+      rm -f -- "$key_file" 2>/dev/null || true
+    fi
     printf '%s' "$token"
     return 0
   fi
@@ -551,6 +608,10 @@ log_line() {
 
 ensure_log_parent() {
   if [[ -n "$LOG_FILE_DIR" && "$LOG_FILE_DIR" != "." ]]; then
+    if upkeeper_path_contains_symlink_component "$LOG_FILE_DIR"; then
+      printf '%s [ERROR] cycle=%s log.parent_failed path=%s reason=symlink_parent\n' "$(terminal_timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
+      exit 3
+    fi
     if ! mkdir -p -- "$LOG_FILE_DIR"; then
       printf '%s [ERROR] cycle=%s log.parent_failed path=%s\n' "$(terminal_timestamp_now)" "$CYCLE_ID" "$LOG_FILE_DIR" >&2
       exit 3
@@ -586,12 +647,18 @@ ensure_log_parent() {
 }
 
 ensure_run_tmp_dir() {
+  local tmp_base="${TMPDIR:-/tmp}"
+  local mode owner
+
   if [[ -n "$RUN_TMP_DIR" ]]; then
-    if [[ -L "$RUN_TMP_DIR" ]]; then
+    if upkeeper_path_contains_symlink_component "$RUN_TMP_DIR"; then
       die "run temp directory is a symlink $RUN_TMP_DIR"
     fi
-    if [[ ! -d "$RUN_TMP_DIR" ]]; then
+    if [[ -e "$RUN_TMP_DIR" && ! -d "$RUN_TMP_DIR" ]]; then
       die "run temp directory is not a directory $RUN_TMP_DIR"
+    fi
+    if ! mkdir -p -m 700 -- "$RUN_TMP_DIR"; then
+      die "failed to create run temp directory $RUN_TMP_DIR"
     fi
     if ! chmod 700 "$RUN_TMP_DIR"; then
       die "run temp directory is not writable $RUN_TMP_DIR"
@@ -608,12 +675,17 @@ ensure_run_tmp_dir() {
     return 0
   fi
 
-  local tmp_base="${TMPDIR:-/tmp}"
-  local mode owner
+  if upkeeper_path_contains_symlink_component "$tmp_base"; then
+    die "run temp base is a symlink $tmp_base"
+  fi
   if ! RUN_TMP_DIR="$(mktemp -d "$tmp_base/upkeeper-XXXXXX")"; then
     die "failed to create run temp directory under $tmp_base"
   fi
 
+  if upkeeper_path_contains_symlink_component "$RUN_TMP_DIR"; then
+    rm -rf -- "$RUN_TMP_DIR"
+    die "run temp directory is a symlink $RUN_TMP_DIR"
+  fi
   if ! chmod 700 "$RUN_TMP_DIR"; then
     die "run temp directory is not writable $RUN_TMP_DIR"
   fi
@@ -624,10 +696,6 @@ ensure_run_tmp_dir() {
   mode="$(stat -Lc '%a' -- "$RUN_TMP_DIR" 2>/dev/null || printf '')"
   if [[ -z "$mode" || "$mode" != 700 ]]; then
     die "run temp directory permissions are insecure $RUN_TMP_DIR"
-  fi
-  if [[ -L "$RUN_TMP_DIR" ]]; then
-    rm -rf -- "$RUN_TMP_DIR"
-    die "run temp directory is a symlink $RUN_TMP_DIR"
   fi
   log_line "INFO" "run.tmp_dir path=$(shell_quote "$RUN_TMP_DIR")" >/dev/null
 }

@@ -3,6 +3,40 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Backlog Validation Gate And Lattice Snapshot Privacy Repair
+
+Status: completed locally
+
+Goal:
+- make backlog per-bug and batch validation failures stop the commit path even
+  when the commit helper is invoked from an `if` condition
+- repair the issue `#141` Lattice snapshot change so opt-in worktree path
+  inventory remains HMAC-only while still supporting cycle-local round-trip
+  checks and delta event recording
+- unblock PR `#410` by fixing the current `tests/lattice_test.bash` failure
+
+Constraints:
+- do not launch real backend Codex validation
+- keep raw worktree path inventory out of `worktree_snapshot_paths`
+- keep the backlog PR-check gate stopping before new issue selection when CI
+  fails
+- add deterministic local validation so this commit-gate regression cannot
+  silently return
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/upkeeper_lattice.py`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/lattice_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Backend Usage Limit Cooldown
 
 Status: completed locally

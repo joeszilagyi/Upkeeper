@@ -1759,9 +1759,9 @@ run_changed_python_compile_validation() {
   done < <(git diff --name-only -z --diff-filter=ACMR -- '*.py')
 
   [[ "${#python_files[@]}" -gt 0 ]] || return 0
-  require_command python3
+  require_command python3 || return $?
   log "per-bug validation: python compile (${#python_files[@]} changed file(s))"
-  python3 -m py_compile "${python_files[@]}"
+  python3 -m py_compile "${python_files[@]}" || return $?
 }
 
 run_focused_issue_validation() {
@@ -1771,10 +1771,10 @@ run_focused_issue_validation() {
   [[ -n "$issue_number" ]] || return 0
   if [[ "$target_hint" == "tools/upkeeper_lattice.py" ]] || backlog_git_path_changed "tools/upkeeper_lattice.py"; then
     if backlog_git_path_changed "tools/upkeeper_lattice.py"; then
-      require_command python3
+      require_command python3 || return $?
       log "per-bug validation: lattice focused coverage (tests/lattice_test.bash)"
-      python3 -m py_compile tools/upkeeper_lattice.py
-      bash tests/lattice_test.bash
+      python3 -m py_compile tools/upkeeper_lattice.py || return $?
+      bash tests/lattice_test.bash || return $?
     fi
   fi
 }
@@ -1789,11 +1789,11 @@ run_per_bug_validation() {
   validation_start="$SECONDS"
   backlog_update_active_owner_heartbeat "validating" "per_bug_validation" "" "owner_pid_start_cwd_verified"
   log "per-bug validation: bash syntax"
-  bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh
-  run_changed_python_compile_validation
-  run_focused_issue_validation "$issue_number" "$target_hint"
+  bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || return $?
+  run_changed_python_compile_validation || return $?
+  run_focused_issue_validation "$issue_number" "$target_hint" || return $?
   log "per-bug validation: diff whitespace"
-  git diff --check
+  git diff --check || return $?
   log "per-bug validation: complete in $((SECONDS - validation_start))s"
 }
 
@@ -1805,17 +1805,17 @@ run_batch_validation() {
   validation_start="$SECONDS"
   backlog_update_active_owner_heartbeat "validating" "batch_validation" "" "owner_pid_start_cwd_verified"
   log "batch validation: bash syntax"
-  bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh
+  bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || return $?
   log "batch validation: unit tests"
   for test_script in tests/*.bash; do
-    bash "$test_script"
+    bash "$test_script" || return $?
   done
   log "batch validation: docs quick checks"
-  tools/check_public_docs.sh --quick
+  tools/check_public_docs.sh --quick || return $?
   log "batch validation: diff whitespace"
-  git diff --check
+  git diff --check || return $?
   log "batch validation: quick validator"
-  tools/validate_upkeeper.sh --quick
+  tools/validate_upkeeper.sh --quick || return $?
   log "batch validation: complete in $((SECONDS - validation_start))s"
 }
 
@@ -1825,26 +1825,26 @@ commit_and_push_changes() {
   local target_hint="${3:-}"
   local message
 
-  cleanup_ephemeral_artifacts
+  cleanup_ephemeral_artifacts || return $?
   has_worktree_changes || return 1
   case "$BACKLOG_PER_BUG_VALIDATION_MODE" in
     none)
       log "per-bug validation: skipped by BACKLOG_PER_BUG_VALIDATION_MODE=none"
       ;;
     light)
-      run_per_bug_validation "$issue_number" "$target_hint"
+      run_per_bug_validation "$issue_number" "$target_hint" || return $?
       ;;
     full)
-      run_batch_validation
+      run_batch_validation || return $?
       ;;
     *)
       fail "unsupported BACKLOG_PER_BUG_VALIDATION_MODE: $BACKLOG_PER_BUG_VALIDATION_MODE"
       ;;
   esac
-  cleanup_ephemeral_artifacts
+  cleanup_ephemeral_artifacts || return $?
   log "staging tracked changes"
-  git add --all
-  git diff --cached --check
+  git add --all || return $?
+  git diff --cached --check || return $?
   if [[ -n "$commit_message" ]]; then
     message="$commit_message"
   elif [[ -n "$issue_number" ]]; then
@@ -1853,9 +1853,9 @@ commit_and_push_changes() {
     message="Apply backlog Upkeeper pass"
   fi
   log "committing: $message"
-  git commit -m "$message"
+  git commit -m "$message" || return $?
   log "pushing branch updates"
-  git push
+  git push || return $?
   return 0
 }
 

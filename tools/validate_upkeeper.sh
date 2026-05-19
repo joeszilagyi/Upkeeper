@@ -443,6 +443,40 @@ check_backlog_launcher_contract() {
   grep -Fq 'BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota cooldown bypass on"
   grep -Fq 'quota preflight: burn bypass continuing despite stale quota evidence' orchestration/backlog.sh || fail "backlog launcher does not explain stale quota bypass"
   grep -Fq 'BACKLOG_SOURCE_ONLY' orchestration/backlog.sh || fail "backlog launcher cannot be source-tested without running main"
+  BACKLOG_SOURCE_ONLY=1 bash -lc '
+    set -euo pipefail
+    cd "$1"
+    source ./orchestration/backlog.sh
+    log() { :; }
+    backlog_update_active_owner_heartbeat() { :; }
+    run_changed_python_compile_validation() { return 0; }
+    run_focused_issue_validation() { return 0; }
+    git() { return 0; }
+    bash() { return 42; }
+    status=0
+    if run_per_bug_validation 1 tools/upkeeper_lattice.py; then
+      status=0
+    else
+      status="$?"
+    fi
+    [[ "$status" == "42" ]]
+  ' bash "$ROOT_DIR" || fail "backlog per-bug validation does not propagate failed commands when called from a conditional"
+  BACKLOG_SOURCE_ONLY=1 bash -lc '
+    set -euo pipefail
+    cd "$1"
+    source ./orchestration/backlog.sh
+    cleanup_ephemeral_artifacts() { :; }
+    has_worktree_changes() { return 0; }
+    run_per_bug_validation() { return 43; }
+    git() { printf "git should not run after validation failure\n" >&2; return 99; }
+    status=0
+    if commit_and_push_changes 1 "" tools/upkeeper_lattice.py; then
+      status=0
+    else
+      status="$?"
+    fi
+    [[ "$status" == "43" ]]
+  ' bash "$ROOT_DIR" || fail "backlog commit path does not stop after per-bug validation failure"
   grep -Fq 'rm -f -- "$ROOT_DIR/\$db"' orchestration/backlog.sh || fail "backlog launcher does not clean literal db scratch artifacts before staging"
   python3 - <<'PY' || fail "backlog autoshelve no longer runs before gh/jq/rg dependency gates"
 from pathlib import Path

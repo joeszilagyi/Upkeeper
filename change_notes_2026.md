@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-19: backlog validation gate and Lattice snapshot repair:
+	1. Backlog per-bug and batch validation now explicitly return on failed syntax, compile, focused test, docs, diff, quick-validator, commit, or push commands, so Bash conditional invocation cannot mask a failed local validation step and continue to commit.
+	2. The local quick validator now source-tests the backlog commit gate with simulated failing validation commands, covering the exact failure mode where a focused Lattice test failed but the launcher still staged and committed.
+	3. Lattice opt-in worktree snapshot inventory again stores HMAC-only path identities in `worktree_snapshot_paths` while preserving cycle-local lookup and delta-event recording by `path_hmac`, fixing the failing `tests/lattice_test.bash` privacy assertion from PR `#410`.
+
 2026-05-18: backlog live-output emphasis:
 	1. Interactive backlog watch output now colors `PAGE` timestamps red without blink, keeps the `PAGE` block and marker bold/blinking red, and colors `--FYI--` timestamps orange with bold orange marker text while preserving plain loop logs.
 	2. Backlog invocations now emit local-only green `##### ##### #####` start and finish blocks around the locked-in job, showing the target, reason, expected outcome, result, start/end time, runtime, and final disposition before the outer loop sleeps.

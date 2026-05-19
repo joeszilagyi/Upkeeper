@@ -1420,6 +1420,22 @@ def worktree_snapshot_path_class(status_code: str, *, is_old: bool = False) -> s
     return WORKTREE_PATH_CLASS_TRACKED
 
 
+def stored_worktree_snapshot_path(root: Path, path: str) -> str:
+    return pass_result_path_hmac(root, path)
+
+
+def worktree_snapshot_path_identity(row: sqlite3.Row) -> str:
+    path_hmac = str(row["path_hmac"] or "")
+    if path_hmac.startswith(PASS_RESULT_PATH_HMAC_PREFIX):
+        return path_hmac
+    path = str(row["path"] or "")
+    return path
+
+
+def worktree_snapshot_identity_is_private(path_identity: str) -> bool:
+    return str(path_identity or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX)
+
+
 def json_dumps(value: Any) -> str:
     return json.dumps(
         sanitize_json_value(value),
@@ -5567,10 +5583,10 @@ def record_worktree_snapshot(
         if worktree_snapshot_path_is_sensitive(path) or (old_path and worktree_snapshot_path_is_sensitive(old_path)):
             continue
         meta = live_file_metadata(root, path)
-        stored_path = stored_rel_path(path)
-        stored_old_path = stored_rel_path(old_path) if old_path else None
-        stored_path_hmac = pass_result_path_hmac(root, path)
-        stored_old_path_hmac = pass_result_path_hmac(root, old_path) if old_path else None
+        stored_path = stored_worktree_snapshot_path(root, path)
+        stored_old_path = stored_worktree_snapshot_path(root, old_path) if old_path else None
+        stored_path_hmac = stored_path
+        stored_old_path_hmac = stored_old_path
         if not stored_path or not stored_path_hmac:
             continue
         conn.execute(
@@ -5625,6 +5641,7 @@ def latest_worktree_snapshot_id(
 def worktree_snapshot_path_row(
     conn: sqlite3.Connection,
     *,
+    root: Path,
     repo_id: int,
     cycle_pk: int | None,
     path: str,
@@ -5643,11 +5660,18 @@ def worktree_snapshot_path_row(
         select p.*
         from worktree_snapshot_paths p
         join worktree_snapshots s on s.worktree_snapshot_id=p.worktree_snapshot_id
-        where s.repo_id=? and p.worktree_snapshot_id=? and p.path=?
+        where s.repo_id=? and p.worktree_snapshot_id=?
+          and (p.path_hmac=? or p.path=? or p.path=?)
         order by p.worktree_snapshot_path_id desc
         limit 1
         """,
-        (repo_id, snapshot_id, stored_rel_path(path)),
+        (
+            repo_id,
+            snapshot_id,
+            stored_worktree_snapshot_path(root, path),
+            stored_worktree_snapshot_path(root, path),
+            stored_rel_path(path),
+        ),
     ).fetchone()
 
 
@@ -5662,7 +5686,7 @@ def worktree_snapshot_path_map(conn: sqlite3.Connection, snapshot_id: int | None
         """,
         (snapshot_id,),
     ).fetchall()
-    return {operational_rel_path(str(row["path"])): row for row in rows}
+    return {worktree_snapshot_path_identity(row): row for row in rows}
 
 
 def worktree_snapshot(conn: sqlite3.Connection, snapshot_id: int | None) -> sqlite3.Row | None:
@@ -5724,6 +5748,7 @@ def record_worktree_delta_events(
         before_snapshot["git_head_sha"] if before_snapshot else None,
         after_snapshot["git_head_sha"] if after_snapshot else None,
     ) if before_snapshot is not None and after_snapshot is not None else set()
+    commit_changed_path_keys = {stored_worktree_snapshot_path(root, path) for path in commit_changed_paths}
 
     # If there is no pre-Codex snapshot, we cannot classify per-file diffs safely.
     # Record known dirty files as a special baseline-missing signal and avoid
@@ -5734,7 +5759,7 @@ def record_worktree_delta_events(
             if after_status == "clean":
                 continue
             file_id = after["file_id"] if after else None
-            if file_id is None:
+            if file_id is None and not worktree_snapshot_identity_is_private(path):
                 file_id = ensure_file(conn, repo_id, path, source_id=source_id)
             record_file_event(
                 conn,
@@ -5761,7 +5786,7 @@ def record_worktree_delta_events(
         return
 
     all_paths = sorted(set(before_paths) | set(after_paths))
-    all_paths.extend(sorted(commit_changed_paths - set(all_paths)))
+    all_paths.extend(sorted(commit_changed_path_keys - set(all_paths)))
 
     for path in all_paths:
         before = before_paths.get(path)
@@ -5773,7 +5798,7 @@ def record_worktree_delta_events(
         if before and after and before_status == after_status and before_hash == after_hash:
             continue
         file_id = after["file_id"] if after else before["file_id"] if before else None
-        if file_id is None:
+        if file_id is None and not worktree_snapshot_identity_is_private(path):
             file_id = ensure_file(conn, repo_id, path, source_id=source_id)
         record_file_event(
             conn,
@@ -5794,7 +5819,7 @@ def record_worktree_delta_events(
                 "after_worktree_hash": after_hash,
                 "before_worktree_head_sha": before_snapshot["git_head_sha"] if before_snapshot else None,
                 "after_worktree_head_sha": after_snapshot["git_head_sha"] if after_snapshot else None,
-                "head_delta_source": "git diff" if path in commit_changed_paths else None,
+                "head_delta_source": "git diff" if path in commit_changed_path_keys else None,
             },
         )
 
@@ -6891,8 +6916,8 @@ def probe_worktree_snapshot_path_round_trip() -> dict[str, Any]:
                     source_id=source_id,
                     after_snapshot_id=after_snapshot_id,
                 )
-                stored_target = stored_rel_path("a.py")
-                expected_hmac = pass_result_path_hmac(root, "a.py")
+                stored_target = stored_worktree_snapshot_path(root, "a.py")
+                expected_hmac = stored_target
                 before_row = conn.execute(
                     """
                     select path, path_hmac, status
@@ -6905,6 +6930,7 @@ def probe_worktree_snapshot_path_round_trip() -> dict[str, Any]:
                 ).fetchone()
                 round_trip_row = worktree_snapshot_path_row(
                     conn,
+                    root=root,
                     repo_id=repo_id,
                     cycle_pk=cycle_pk,
                     path="a.py",
@@ -7197,6 +7223,7 @@ def has_clean_finish_evidence(
 def record_selected_file_delta(
     conn: sqlite3.Connection,
     *,
+    root: Path,
     repo_id: int,
     cycle_pk: int | None,
     file_id: int | None,
@@ -7215,6 +7242,7 @@ def record_selected_file_delta(
     if not before and path:
         before = worktree_snapshot_path_row(
             conn,
+            root=root,
             repo_id=repo_id,
             cycle_pk=cycle_pk,
             path=path,
@@ -7660,6 +7688,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
             )
             record_selected_file_delta(
                 conn,
+                root=root,
                 repo_id=repo_id,
                 cycle_pk=cycle_pk,
                 file_id=cycle_selected_file_id,

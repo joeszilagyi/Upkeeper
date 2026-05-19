@@ -7431,6 +7431,17 @@ def record_one_pass_result(
     file_id = ensure_file_identity(conn, repo_id, path, source_id=source_id)
     attempted = 1 if outcome not in {"planned", "unknown"} else 0
     resolved_planned = 1 if (planned is not None and bool(planned)) or (planned is None and outcome == "planned") else 0
+    result_epoch = epoch_now()
+    if outcome in COMPLETED_OUTCOMES:
+        insert_file_snapshot(
+            conn,
+            root,
+            repo_id,
+            path,
+            file_id=file_id,
+            source_id=source_id,
+            observed_epoch=result_epoch,
+        )
     cur = conn.execute(
         """
         insert into file_pass_runs(
@@ -7453,7 +7464,7 @@ def record_one_pass_result(
             confidence,
             source_id,
             raw_line or None,
-            epoch_now(),
+            result_epoch,
         ),
     )
     run_id = int(cur.lastrowid)

@@ -8020,6 +8020,7 @@ def command_import_git(args: argparse.Namespace) -> int:
             print_json({"status": "unavailable", "reason": "git_rev_list_failed"})
             return EXIT_GIT_UNAVAILABLE
         shas = [line.strip() for line in revs.splitlines() if line.strip()]
+        limited_import = args.limit is not None
         if args.limit:
             shas = shas[-int(args.limit) :]
         head_sha = git_output(root, ["rev-parse", "--verify", "HEAD"], "")
@@ -8273,7 +8274,14 @@ def command_import_git(args: argparse.Namespace) -> int:
               incomplete_reason=excluded.incomplete_reason,
               source_id=excluded.source_id
             """,
-            (repo_id, shas[-1] if shas else "", epoch_now(), 0 if shallow else 1, "shallow_repository" if shallow else None, source_id),
+            (
+                repo_id,
+                shas[-1] if shas else "",
+                epoch_now(),
+                0 if limited_import or shallow else 1,
+                "limited_import" if limited_import else ("shallow_repository" if shallow else None),
+                source_id,
+            ),
         )
         finish_import(
             conn,

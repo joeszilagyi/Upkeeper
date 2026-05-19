@@ -1,9 +1,11 @@
 oldest_wrapper_log_epoch() {
-  if [[ ! -s "$LOG_FILE" ]]; then
+  local log_path="${1:-$LOG_FILE}"
+
+  if [[ ! -s "$log_path" ]]; then
     return 1
   fi
 
-  python3 - "$LOG_FILE" <<'PY'
+  python3 - "$log_path" <<'PY'
 from datetime import datetime
 from pathlib import Path
 import sys
@@ -142,6 +144,239 @@ log_rotation_target_is_safe() {
   return 0
 }
 
+# Rotation cannot safely read or truncate the live log by pathname alone because
+# the file can be swapped after startup; take a verified snapshot and truncate
+# through no-follow file descriptors instead.
+copy_wrapper_live_log_secure() {
+  local destination_path="$1"
+
+  python3 - "$LOG_FILE" "$destination_path" <<'PY'
+import errno
+import os
+import shutil
+import stat
+import sys
+
+path_raw = sys.argv[1]
+destination_path = sys.argv[2]
+uid = os.getuid()
+parent = os.path.dirname(path_raw) or "."
+name = os.path.basename(path_raw)
+
+
+def fail(reason: str) -> None:
+    print(reason)
+    raise SystemExit(1)
+
+
+def mode_text(mode: int) -> str:
+    return oct(stat.S_IMODE(mode))
+
+
+if not name or name in {".", ".."}:
+    fail("invalid_log_filename")
+
+dir_flags = os.O_RDONLY
+for attr in ("O_DIRECTORY", "O_CLOEXEC", "O_NOFOLLOW"):
+    dir_flags |= getattr(os, attr, 0)
+
+
+def open_log_parent(raw_parent: str) -> int:
+    if raw_parent in ("", "."):
+        return os.open(".", dir_flags)
+
+    if os.path.isabs(raw_parent):
+        fd = os.open(os.path.sep, dir_flags)
+        parts = raw_parent.lstrip(os.path.sep).split(os.path.sep)
+    else:
+        fd = os.open(".", dir_flags)
+        parts = raw_parent.split(os.path.sep)
+
+    for part in parts:
+        if not part or part == ".":
+            continue
+        try:
+            next_fd = os.open(part, dir_flags, dir_fd=fd)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                fail("log_parent_symlink")
+            if exc.errno == errno.ENOENT:
+                fail("log_parent_missing")
+            if exc.errno == errno.ENOTDIR:
+                fail("log_parent_not_directory")
+            fail(f"log_parent_open_failed errno={exc.errno}")
+        os.close(fd)
+        fd = next_fd
+
+    return fd
+
+
+try:
+    parent_fd = open_log_parent(parent)
+except OSError as exc:
+    fail(f"log_parent_open_failed errno={exc.errno}")
+
+try:
+    try:
+        fd = os.open(name, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            fail("symlink_log_file")
+        fail(f"log_file_open_failed errno={exc.errno}")
+
+    try:
+        opened_stat = os.fstat(fd)
+        if not stat.S_ISREG(opened_stat.st_mode):
+            fail(f"non_regular_log_file mode={mode_text(opened_stat.st_mode)}")
+        if opened_stat.st_uid != uid:
+            fail(f"wrong_log_owner uid={opened_stat.st_uid} expected_uid={uid}")
+        if opened_stat.st_nlink != 1:
+            fail(f"hardlinked_log_file links={opened_stat.st_nlink}")
+
+        try:
+            dest_fd = os.open(
+                destination_path,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_CLOEXEC", 0),
+                0o600,
+            )
+        except OSError as exc:
+            fail(f"log_snapshot_open_failed errno={exc.errno}")
+        try:
+            try:
+                with os.fdopen(fd, "rb", closefd=False) as src, os.fdopen(dest_fd, "wb", closefd=False) as dest:
+                    shutil.copyfileobj(src, dest)
+            except OSError as exc:
+                fail(f"log_snapshot_copy_failed errno={exc.errno}")
+            try:
+                os.fchmod(dest_fd, 0o600)
+            except OSError as exc:
+                fail(f"log_snapshot_chmod_failed errno={exc.errno}")
+        finally:
+            os.close(dest_fd)
+    finally:
+        os.close(fd)
+finally:
+    os.close(parent_fd)
+PY
+}
+
+truncate_wrapper_live_log_secure() {
+  python3 - "$LOG_FILE" <<'PY'
+import errno
+import os
+import stat
+import sys
+
+path_raw = sys.argv[1]
+uid = os.getuid()
+parent = os.path.dirname(path_raw) or "."
+name = os.path.basename(path_raw)
+
+
+def fail(reason: str) -> None:
+    print(reason)
+    raise SystemExit(1)
+
+
+def mode_text(mode: int) -> str:
+    return oct(stat.S_IMODE(mode))
+
+
+if not name or name in {".", ".."}:
+    fail("invalid_log_filename")
+
+dir_flags = os.O_RDONLY
+for attr in ("O_DIRECTORY", "O_CLOEXEC", "O_NOFOLLOW"):
+    dir_flags |= getattr(os, attr, 0)
+
+
+def open_log_parent(raw_parent: str) -> int:
+    if raw_parent in ("", "."):
+        return os.open(".", dir_flags)
+
+    if os.path.isabs(raw_parent):
+        fd = os.open(os.path.sep, dir_flags)
+        parts = raw_parent.lstrip(os.path.sep).split(os.path.sep)
+    else:
+        fd = os.open(".", dir_flags)
+        parts = raw_parent.split(os.path.sep)
+
+    for part in parts:
+        if not part or part == ".":
+            continue
+        try:
+            next_fd = os.open(part, dir_flags, dir_fd=fd)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                fail("log_parent_symlink")
+            if exc.errno == errno.ENOENT:
+                fail("log_parent_missing")
+            if exc.errno == errno.ENOTDIR:
+                fail("log_parent_not_directory")
+            fail(f"log_parent_open_failed errno={exc.errno}")
+        os.close(fd)
+        fd = next_fd
+
+    return fd
+
+
+try:
+    parent_fd = open_log_parent(parent)
+except OSError as exc:
+    fail(f"log_parent_open_failed errno={exc.errno}")
+
+try:
+    flags = os.O_WRONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(name, flags, dir_fd=parent_fd)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            fail("symlink_log_file")
+        fail(f"log_file_open_failed errno={exc.errno}")
+
+    try:
+        opened_stat = os.fstat(fd)
+        if not stat.S_ISREG(opened_stat.st_mode):
+            fail(f"non_regular_log_file mode={mode_text(opened_stat.st_mode)}")
+        if opened_stat.st_uid != uid:
+            fail(f"wrong_log_owner uid={opened_stat.st_uid} expected_uid={uid}")
+        if opened_stat.st_nlink != 1:
+            fail(f"hardlinked_log_file links={opened_stat.st_nlink}")
+        try:
+            os.fchmod(fd, 0o600)
+        except OSError as exc:
+            fail(f"log_file_chmod_failed errno={exc.errno}")
+        try:
+            os.ftruncate(fd, 0)
+        except OSError as exc:
+            fail(f"log_file_truncate_failed errno={exc.errno}")
+    finally:
+        os.close(fd)
+finally:
+    os.close(parent_fd)
+PY
+}
+
+write_wrapper_log_archive_from_snapshot() {
+  local snapshot_path="$1"
+  local archive_temp_path="$2"
+
+  python3 - "$snapshot_path" "$archive_temp_path" "$LOG_FILE_NAME" <<'PY'
+import os
+import sys
+import zipfile
+
+snapshot_path = sys.argv[1]
+archive_path = sys.argv[2]
+archive_name = sys.argv[3]
+
+with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    archive.write(snapshot_path, arcname=archive_name)
+
+os.chmod(archive_path, 0o600)
+PY
+}
+
 prune_wrapper_log_archives() {
   local keep_hours keep_minutes
 
@@ -178,7 +413,7 @@ rotate_wrapper_log_if_needed() {
   local archive_path archive_temp_path archive_timestamp rotation_line
   local archive_owner archive_mode archive_retained archive_reason
   local live_log_hash archive_path_hash
-  local rotation_safety_error
+  local rotation_safety_error live_log_snapshot
 
   rotation_safety_error="$(log_rotation_target_is_safe || true)"
   if [[ -n "$rotation_safety_error" ]]; then
@@ -195,21 +430,43 @@ rotate_wrapper_log_if_needed() {
     return 0
   fi
 
+  live_log_snapshot="$(mktemp "${LOG_FILE}.rotation.XXXXXX")" || {
+    rotation_line="$(printf '%s [WARN] cycle=%s run_hash=%s log.rotate_blocked reason=snapshot_create_failed path_redacted=1' \
+      "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH")"
+    append_log_line_secure "$rotation_line" "log_rotate_blocked"
+    printf '%s\n' "$rotation_line"
+    return 0
+  }
+  chmod 600 "$live_log_snapshot" 2>/dev/null || true
+
+  rotation_safety_error="$(copy_wrapper_live_log_secure "$live_log_snapshot" 2>/dev/null || true)"
+  if [[ -n "$rotation_safety_error" ]]; then
+    rm -f -- "$live_log_snapshot"
+    rotation_line="$(printf '%s [WARN] cycle=%s run_hash=%s log.rotate_blocked reason=%s path_redacted=1' \
+      "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$rotation_safety_error")"
+    append_log_line_secure "$rotation_line" "log_rotate_blocked"
+    printf '%s\n' "$rotation_line"
+    return 0
+  fi
+
   rotate_after_hours="$(sanitize_nonnegative_integer "$CODEX_LOG_ROTATE_AFTER_HOURS" "72")"
   keep_hours="$(sanitize_nonnegative_integer "$CODEX_LOG_ROTATE_KEEP_HOURS" "144")"
 
   if [[ "$rotate_after_hours" -eq 0 ]]; then
+    rm -f -- "$live_log_snapshot"
     return 0
   fi
 
-  oldest_epoch="$(oldest_wrapper_log_epoch || true)"
+  oldest_epoch="$(oldest_wrapper_log_epoch "$live_log_snapshot" || true)"
   if [[ -z "$oldest_epoch" || ! "$oldest_epoch" =~ ^[0-9]+$ ]]; then
+    rm -f -- "$live_log_snapshot"
     return 0
   fi
 
   rotate_after_seconds=$((rotate_after_hours * 3600))
   now_epoch="$(date '+%s')"
   if (( now_epoch - oldest_epoch < rotate_after_seconds )); then
+    rm -f -- "$live_log_snapshot"
     return 0
   fi
 
@@ -223,8 +480,7 @@ rotate_wrapper_log_if_needed() {
 
   if wrapper_log_archive_parent_is_private; then
     archive_reason="zip_failed"
-    if zip -qj "$archive_temp_path" "$LOG_FILE" >/dev/null 2>&1 \
-      && chmod 600 "$archive_temp_path" 2>/dev/null; then
+    if write_wrapper_log_archive_from_snapshot "$live_log_snapshot" "$archive_temp_path" >/dev/null 2>&1; then
       archive_owner="$(stat -Lc '%u' -- "$archive_temp_path" 2>/dev/null || printf '')"
       archive_mode="$(stat -Lc '%a' -- "$archive_temp_path" 2>/dev/null || printf '')"
       if [[ "$archive_owner" == "$(id -u)" && "$archive_mode" == "600" ]] \
@@ -239,7 +495,9 @@ rotate_wrapper_log_if_needed() {
     fi
   fi
 
-  if : > "$LOG_FILE" 2>/dev/null && chmod 600 "$LOG_FILE" 2>/dev/null; then
+  rotation_safety_error="$(truncate_wrapper_live_log_secure 2>/dev/null || true)"
+  rm -f -- "$live_log_snapshot"
+  if [[ -z "$rotation_safety_error" ]]; then
     if [[ "$archive_retained" -eq 1 ]]; then
       rotation_line="$(printf '%s [INFO] cycle=%s run_hash=%s log.rotate live_hash=%s archive_hash=%s path_redacted=1 rotate_after_hours=%s keep_hours=%s oldest_entry_epoch=%s' \
         "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$live_log_hash" "$archive_path_hash" "$rotate_after_hours" "$keep_hours" "$oldest_epoch")"
@@ -254,8 +512,8 @@ rotate_wrapper_log_if_needed() {
     fi
   else
     rm -f -- "$archive_temp_path" "$archive_path"
-    rotation_line="$(printf '%s [WARN] cycle=%s run_hash=%s log.rotate_failed live_hash=%s attempted_archive_hash=%s path_redacted=1 reason=truncate_failed archive_reason=%s' \
-      "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$live_log_hash" "$archive_path_hash" "$archive_reason")"
+    rotation_line="$(printf '%s [WARN] cycle=%s run_hash=%s log.rotate_failed live_hash=%s attempted_archive_hash=%s path_redacted=1 reason=truncate_failed archive_reason=%s safety_reason=%s' \
+      "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$live_log_hash" "$archive_path_hash" "$archive_reason" "$rotation_safety_error")"
     append_log_line_secure "$rotation_line" "log_rotate_failed"
     printf '%s\n' "$rotation_line"
   fi

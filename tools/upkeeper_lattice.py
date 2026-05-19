@@ -2141,6 +2141,17 @@ def print_json(value: Any) -> None:
     print(json.dumps(sanitize_json_value(value), sort_keys=True, indent=2))
 
 
+def load_single_json_document(raw: str) -> Any:
+    text = raw.strip()
+    if not text:
+        raise ValueError("missing JSON document")
+    decoder = json.JSONDecoder(parse_constant=reject_nonfinite_json_constant)
+    value, end = decoder.raw_decode(text)
+    if text[end:].strip():
+        raise ValueError("multiple JSON documents")
+    return value
+
+
 def redirect_stdout_to_devnull() -> None:
     devnull_fd = None
     try:
@@ -6945,20 +6956,6 @@ def probe_recover_requires_primary_sources() -> dict[str, Any]:
 
 
 def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
-    def _last_json_object(text: str) -> dict[str, Any]:
-        decoder = json.JSONDecoder()
-        position = 0
-        payload: dict[str, Any] | None = None
-        while position < len(text):
-            while position < len(text) and text[position].isspace():
-                position += 1
-            if position >= len(text):
-                break
-            parsed, position = decoder.raw_decode(text, position)
-            if isinstance(parsed, dict):
-                payload = parsed
-        return payload or {}
-
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recover-conflicts-") as tmpdir:
         root = Path(tmpdir).resolve()
         subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -6984,7 +6981,8 @@ def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             exit_code = command_recover(args)
-        payload = _last_json_object(stdout.getvalue())
+        payload_text = stdout.getvalue().strip()
+        payload = load_single_json_document(payload_text) if payload_text else {}
         report_path = Path(str(payload.get("recovery_report") or ""))
         report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
         import_results = payload.get("import_results")
@@ -6997,12 +6995,15 @@ def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
                 report.get("status") == "conflicts",
                 isinstance(import_results, list),
                 import_results == report_import_results,
+                bool(payload_text),
                 any(int(row.get("exit_code", -1)) == EXIT_IMPORT_CONFLICT for row in jsonl_results),
+                any(isinstance(row.get("result"), dict) and row["result"].get("status") == "conflicts" for row in jsonl_results),
             )
         )
         return {
             "exit_code": exit_code,
             "status": payload.get("status"),
+            "payload_text": payload_text,
             "report_status": report.get("status"),
             "import_results": import_results,
             "report_import_results": report_import_results,
@@ -9141,7 +9142,7 @@ def reject_nonfinite_json_constant(token: str) -> None:
 
 
 def load_strict_json(raw: str) -> Any:
-    return json.loads(raw, parse_constant=reject_nonfinite_json_constant)
+    return load_single_json_document(raw)
 
 
 def sanitize_import_identity_payload(table: str, payload: dict[str, Any], context: tuple[str, str, str]) -> dict[str, Any]:
@@ -9849,6 +9850,20 @@ def recover_artifact_refs(
     return recorded
 
 
+def run_json_subcommand(command: Any, args: argparse.Namespace) -> tuple[int, dict[str, Any] | None]:
+    stdout = io.StringIO()
+    with contextlib.redirect_stdout(stdout):
+        rc = int(command(args))
+    payload_text = stdout.getvalue().strip()
+    if not payload_text:
+        return rc, None
+    try:
+        payload = load_single_json_document(payload_text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return rc, {"status": "invalid_subcommand_stdout"}
+    return rc, payload if isinstance(payload, dict) else {"payload": payload}
+
+
 def command_recover(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
@@ -9911,12 +9926,26 @@ def command_recover(args: argparse.Namespace) -> int:
     exit_code = EXIT_SUCCESS
     import_results: list[dict[str, Any]] = []
 
-    def note_import_result(source: str, rc: int, *, path: str | None = None) -> None:
+    def note_import_result(
+        source: str,
+        rc: int,
+        *,
+        path: str | None = None,
+        subcommand_result: dict[str, Any] | None = None,
+    ) -> None:
         nonlocal status, exit_code
-        result: dict[str, Any] = {"source": source, "exit_code": rc}
+        result_row: dict[str, Any] = {"source": source, "exit_code": rc}
         if path is not None:
-            result["path"] = path
-        import_results.append(result)
+            result_row["path"] = path
+        if subcommand_result is not None:
+            result_row["result"] = subcommand_result
+        import_results.append(result_row)
+        if subcommand_result and subcommand_result.get("status") == "invalid_subcommand_stdout":
+            if status == "ok":
+                status = "incomplete"
+            if exit_code == EXIT_SUCCESS:
+                exit_code = EXIT_RECOVERY_INCOMPLETE
+            return
         if rc == EXIT_SUCCESS:
             return
         if rc == EXIT_IMPORT_CONFLICT:
@@ -9930,35 +9959,35 @@ def command_recover(args: argparse.Namespace) -> int:
 
     if inside_git_repo(root):
         args.raw_storage_mode = raw_storage_mode
-        rc = command_import_git(args)
+        rc, payload = run_json_subcommand(command_import_git, args)
         sources.append(f"git:{rc}")
-        note_import_result("import-git", rc)
+        note_import_result("import-git", rc, subcommand_result=payload)
     log_path = root / "Upkeeper.log"
     if log_path.exists():
         log_args = argparse.Namespace(**vars(args))
         log_args.path = str(log_path)
         log_args.raw = False
         log_args.raw_storage_mode = raw_storage_mode
-        rc = command_import_upkeeper_log(log_args)
+        rc, payload = run_json_subcommand(command_import_upkeeper_log, log_args)
         sources.append("upkeeper_log_import:1")
-        note_import_result("import-upkeeper-log", rc, path=str(log_path))
+        note_import_result("import-upkeeper-log", rc, path=str(log_path), subcommand_result=payload)
     change_notes = sorted(root.glob("change_notes_*.md"))
     if change_notes:
         notes_args = argparse.Namespace(**vars(args))
         notes_args.paths = [str(p) for p in change_notes]
         notes_args.raw = False
         notes_args.raw_storage_mode = raw_storage_mode
-        rc = command_import_change_notes(notes_args)
+        rc, payload = run_json_subcommand(command_import_change_notes, notes_args)
         sources.append(f"change_notes_import:{len(change_notes)}")
-        note_import_result("import-change-notes", rc)
+        note_import_result("import-change-notes", rc, subcommand_result=payload)
     exports = sorted((db_path.parent / "exports").glob("*.jsonl"))
     for export in exports:
         import_args = argparse.Namespace(**vars(args))
         import_args.path = str(export)
         import_args.max_conflicts = args.max_conflicts
         import_args.raw_storage_mode = raw_storage_mode
-        rc = command_import_jsonl(import_args)
-        note_import_result("import-jsonl", rc, path=str(export))
+        rc, payload = run_json_subcommand(command_import_jsonl, import_args)
+        note_import_result("import-jsonl", rc, path=str(export), subcommand_result=payload)
     if exports:
         sources.append(f"export_import:{len(exports)}")
     recovery_jsonls = sorted((db_path.parent / "recovery").glob("*.jsonl"))
@@ -9967,8 +9996,8 @@ def command_recover(args: argparse.Namespace) -> int:
         import_args.path = str(recovery_jsonl)
         import_args.max_conflicts = args.max_conflicts
         import_args.raw_storage_mode = raw_storage_mode
-        rc = command_import_jsonl(import_args)
-        note_import_result("import-jsonl", rc, path=str(recovery_jsonl))
+        rc, payload = run_json_subcommand(command_import_jsonl, import_args)
+        note_import_result("import-jsonl", rc, path=str(recovery_jsonl), subcommand_result=payload)
     if recovery_jsonls:
         sources.append(f"recovery_import:{len(recovery_jsonls)}")
     for marker_root in [root / "runtime/unaddressed-tool-failures/open", root / "runtime/unaddressed-tool-failures/resolved"]:

@@ -159,7 +159,39 @@ EOF
   fi
 }
 
+test_write_primary_usage_limit_block_marker_writes_hard_marker() {
+  local tmp_dir public_root private_root marker_path private_marker_path now_epoch
+
+  tmp_dir="$TEST_TMP_ROOT/usage-limit"
+  public_root="$tmp_dir/public"
+  private_root="$tmp_dir/private"
+  mkdir -p "$public_root"
+  now_epoch="$(date '+%s')"
+
+  CODEX_POSTMORTEM_DIR="$public_root"
+  UPKEEPER_QUOTA_PRIMARY_BLOCK_MARKER_DIR="$private_root"
+  CYCLE_ID="20260507T001000-0700-test"
+  CODEX_MODEL="gpt-test"
+
+  write_primary_usage_limit_block_marker "$((now_epoch + 3600))" "May 7, 2026 1:00 AM" "after_run" ||
+    fail "usage-limit marker writer returned failure"
+
+  marker_path="$public_root/$CYCLE_ID/primary-quota-blocked-until.txt"
+  private_marker_path="$private_root/$CYCLE_ID/primary-quota-blocked-until.txt"
+  [[ -s "$marker_path" ]] || fail "usage-limit public marker was not written"
+  [[ -s "$private_marker_path" ]] || fail "usage-limit private marker was not written"
+  grep -qx 'blocked_bucket: backend_usage_limit' "$marker_path" ||
+    fail "usage-limit marker hard bucket missing"
+  grep -qx 'reason: backend_usage_limit' "$marker_path" ||
+    fail "usage-limit marker reason missing"
+  grep -qx 'hard_block: 1' "$marker_path" ||
+    fail "usage-limit marker hard_block missing"
+  grep -qx 'primary_model: gpt-test' "$private_marker_path" ||
+    fail "usage-limit private marker primary_model missing"
+}
+
 test_latest_active_primary_quota_block_marker_rejects_nonfinite_epoch
 test_write_primary_quota_blocked_marker_writes_final_marker
 test_latest_active_primary_quota_block_marker_ignores_postmortem_only_marker
+test_write_primary_usage_limit_block_marker_writes_hard_marker
 printf 'ok - quota_block_markers\n'

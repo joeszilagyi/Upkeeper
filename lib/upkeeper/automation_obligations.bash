@@ -198,7 +198,7 @@ automation_cycle_exit_requires_obligation() {
 
   [[ "$exit_code" != "0" ]] || return 1
   case "$reason" in
-    DRY_RUN|NO_ISSUE_FIX_TARGET)
+    DRY_RUN|NO_ISSUE_FIX_TARGET|PRIMARY_BACKEND_USAGE_LIMIT|QUOTA_HANDOFF_COOLDOWN)
       return 1
       ;;
   esac

@@ -137,10 +137,11 @@ Important:
     loose terminal watching. TTY output colors the block by marker: green OK,
     red blinking PAGE, white INFO, orange --FYI--, cyan RUN, magenta ACTION,
     yellow WAIT/HEALTH, and blue WORKER. PAGE and --FYI-- also color their
-    timestamp and bold marker text; PAGE puts the timestamp in white on a red
-    background and highlights the ERROR text inside [ERROR] in the same
-    red/blink style as the PAGE marker. Loop logs keep the same block and marker
-    text without ANSI color for scripts and assistive tooling. Set
+    timestamp and bold marker text; PAGE puts the timestamp in bright white on a
+    red background, renders the non-error payload text bright white, and
+    highlights the ERROR text inside [ERROR] in the same red/blink style as the
+    PAGE marker. Loop logs keep the same block and marker text without ANSI
+    color for scripts and assistive tooling. Set
     BACKLOG_ALERT_COLOR=never to disable terminal block color,
     BACKLOG_ALERT_COLOR=always to force it, or BACKLOG_ALERT_BLINK=0 to keep
     PAGE red without blink.
@@ -184,9 +185,10 @@ Important:
     evidence.
   - Backlog batches default to gpt-5.3-codex-spark with xhigh reasoning and a
     zero weekly stop floor for reset-window burn-down runs. Backlog burn mode
-    also bypasses stale local quota snapshots and active quota-cooldown markers
-    by default so a provider-side reset can be used immediately. Override with
-    BACKLOG_CODEX_MODEL, BACKLOG_CODEX_REASONING_EFFORT,
+    also bypasses stale local quota snapshots and ordinary active
+    quota-cooldown markers by default so a provider-side reset can be used
+    immediately. Hard backend usage-limit markers are still honored even in
+    burn mode. Override with BACKLOG_CODEX_MODEL, BACKLOG_CODEX_REASONING_EFFORT,
     BACKLOG_WEEK_STOP_PERCENT, BACKLOG_QUOTA_GUARDRAIL_BYPASS=0, or
     BACKLOG_QUOTA_COOLDOWN_BYPASS=0 when a guarded or non-Spark run is wanted.
   - The backlog launcher hibernates by default when its quota preflight sees a
@@ -195,6 +197,11 @@ Important:
     available, sleeps locally without backend model work until the reset grace
     passes, then lets the next backlog cycle retry. Set
     BACKLOG_QUOTA_HIBERNATE=0 to restore one-cycle deferral instead.
+  - If the backend exits before any agent message and says the selected model hit
+    a usage limit, Upkeeper records that reset time as a hard local quota marker
+    instead of opening a target repair obligation for a missing status marker.
+    A backlog loop then exits the current job cleanly, and the next preflight
+    hibernates until the reset or until the operator switches models.
   - The living repo-local operator guide is:
       $(resolved_operator_guide_path)
     If that guide is missing, normal startup bootstraps it once from this help

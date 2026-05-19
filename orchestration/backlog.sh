@@ -274,7 +274,7 @@ backlog_alert_color_enabled() {
 backlog_color_attention_line() {
   local line="$1"
   local ts rest marker payload reset
-  local timestamp_style block_style marker_style page_error_style
+  local timestamp_style block_style marker_style page_error_style page_payload_style
   local ts_text block_text marker_field marker_text payload_text
 
   if [[ "$line" == "$BACKLOG_JOB_SUMMARY_BAR" ]]; then
@@ -302,9 +302,11 @@ backlog_color_attention_line() {
   block_style=""
   marker_style=""
   page_error_style=""
+  page_payload_style=""
   case "$marker" in
     PAGE)
-      timestamp_style=$'\033[37;41m'
+      timestamp_style=$'\033[97;41m'
+      page_payload_style=$'\033[97m'
       if [[ "$BACKLOG_ALERT_BLINK" == "1" ]]; then
         block_style=$'\033[5;1;31m'
         page_error_style=$'\033[5;1;31m'
@@ -354,7 +356,14 @@ backlog_color_attention_line() {
     marker_text="${marker_style}${marker_field}${reset}"
   fi
   if [[ "$marker" == "PAGE" && -n "$page_error_style" && "$payload_text" == *"[ERROR]"* ]]; then
-    payload_text="${payload_text//\[ERROR\]/[${page_error_style}ERROR${reset}]}"
+    if [[ -n "$page_payload_style" ]]; then
+      payload_text="${payload_text//\[ERROR\]/[${page_error_style}ERROR${reset}${page_payload_style}]}"
+    else
+      payload_text="${payload_text//\[ERROR\]/[${page_error_style}ERROR${reset}]}"
+    fi
+  fi
+  if [[ "$marker" == "PAGE" && -n "$page_payload_style" && -n "$payload_text" ]]; then
+    payload_text="${page_payload_style}${payload_text}${reset}"
   fi
   if [[ -n "$payload_text" ]]; then
     printf '%s %s %s %s\n' "$ts_text" "$block_text" "$marker_text" "$payload_text"
@@ -1460,11 +1469,13 @@ quota_preflight_allows_backlog_run() {
   source "$ROOT_DIR/lib/upkeeper/quota_guardrails.bash"
   source "$ROOT_DIR/lib/upkeeper/quota_block_markers.bash"
 
-  if [[ "$BACKLOG_QUOTA_COOLDOWN_BYPASS" != "1" ]] && marker_path="$(latest_active_primary_quota_block_marker "$CODEX_MODEL" 2>/dev/null)"; then
+  if marker_path="$(latest_active_primary_quota_block_marker "$CODEX_MODEL" 2>/dev/null)"; then
     marker_epoch="$(backlog_marker_field "$marker_path" "blocked_until_epoch")"
     marker_bucket="$(backlog_marker_field "$marker_path" "blocked_bucket")"
     marker_reason="$(backlog_marker_field "$marker_path" "reason")"
-    backlog_hibernate_until_epoch "$marker_epoch" "${marker_bucket:-primary}" "${marker_reason:-active quota marker}" "quota_marker" || return "$?"
+    if [[ "$BACKLOG_QUOTA_COOLDOWN_BYPASS" != "1" || "$marker_bucket" == "backend_usage_limit" || "$marker_reason" == "backend_usage_limit" ]]; then
+      backlog_hibernate_until_epoch "$marker_epoch" "${marker_bucket:-primary}" "${marker_reason:-active quota marker}" "quota_marker" || return "$?"
+    fi
   fi
 
   quota_json="$(quota_state_json "$CODEX_MODEL")" || return 0
@@ -2236,6 +2247,9 @@ main() {
     defer_issue "$issue_number"
     log "deferred blocked issue #$issue_number for this backlog branch"
     backlog_emit_job_finish_summary "$commit_result" "deferred issue #$issue_number for this backlog branch"
+    exit 0
+  elif [[ "$run_status" -eq 7 ]]; then
+    backlog_emit_job_finish_summary "Upkeeper deferred on quota or backend usage limit" "quota cooldown marker recorded; outer loop may sleep before the next preflight"
     exit 0
   elif [[ "$run_status" -ne 0 ]]; then
     backlog_emit_job_finish_summary "Upkeeper exited with status $run_status" "launcher exiting with status $run_status"

@@ -646,9 +646,50 @@ ensure_log_parent() {
   fi
 }
 
+run_tmp_dir_ownership_marker_path() {
+  local run_tmp_dir="$1"
+
+  printf '%s/.upkeeper-run-tmp-owner\n' "$run_tmp_dir"
+}
+
+run_tmp_dir_is_wrapper_managed() {
+  local run_tmp_dir="${1:-}"
+  local tmp_base="${TMPDIR:-/tmp}"
+
+  [[ -n "$run_tmp_dir" && "$run_tmp_dir" == "$tmp_base"/upkeeper-* ]]
+}
+
+run_tmp_dir_ownership_marker_is_trusted() {
+  local run_tmp_dir="$1"
+  local marker_path marker_owner marker_mode marker_header
+
+  marker_path="$(run_tmp_dir_ownership_marker_path "$run_tmp_dir")"
+  [[ -f "$marker_path" && ! -L "$marker_path" ]] || return 1
+
+  marker_owner="$(stat -Lc '%u' -- "$marker_path" 2>/dev/null || printf '')"
+  marker_mode="$(stat -Lc '%a' -- "$marker_path" 2>/dev/null || printf '')"
+  [[ "$marker_owner" == "$(id -u)" && "$marker_mode" == "600" ]] || return 1
+
+  IFS= read -r marker_header <"$marker_path" || return 1
+  [[ "$marker_header" == "upkeeper-run-tmp-owner-v1" ]]
+}
+
+write_run_tmp_dir_ownership_marker() {
+  local run_tmp_dir="$1"
+  local marker_path
+
+  marker_path="$(run_tmp_dir_ownership_marker_path "$run_tmp_dir")"
+  {
+    printf 'upkeeper-run-tmp-owner-v1\n'
+    printf 'uid=%s\n' "$(id -u)"
+    printf 'cycle=%s\n' "${CYCLE_ID:-unknown}"
+  } >"$marker_path" || return 1
+  chmod 600 "$marker_path"
+}
+
 ensure_run_tmp_dir() {
   local tmp_base="${TMPDIR:-/tmp}"
-  local mode owner
+  local mode owner run_tmp_dir_preexisted=0
 
   if [[ -n "$RUN_TMP_DIR" ]]; then
     if upkeeper_path_contains_symlink_component "$RUN_TMP_DIR"; then
@@ -656,6 +697,17 @@ ensure_run_tmp_dir() {
     fi
     if [[ -e "$RUN_TMP_DIR" && ! -d "$RUN_TMP_DIR" ]]; then
       die "run temp directory is not a directory $RUN_TMP_DIR"
+    fi
+    if [[ -e "$RUN_TMP_DIR" ]]; then
+      run_tmp_dir_preexisted=1
+    fi
+    # Cleanup later only deletes wrapper-managed tmp roots, so reusing an
+    # existing matching directory is safe only when a trusted earlier run
+    # stamped it as wrapper-owned.
+    if (( run_tmp_dir_preexisted )) &&
+      run_tmp_dir_is_wrapper_managed "$RUN_TMP_DIR" &&
+      ! run_tmp_dir_ownership_marker_is_trusted "$RUN_TMP_DIR"; then
+      die "run temp directory is missing a trusted ownership marker $RUN_TMP_DIR"
     fi
     if ! mkdir -p -m 700 -- "$RUN_TMP_DIR"; then
       die "failed to create run temp directory $RUN_TMP_DIR"
@@ -670,6 +722,10 @@ ensure_run_tmp_dir() {
     mode="$(stat -Lc '%a' -- "$RUN_TMP_DIR" 2>/dev/null || printf '')"
     if [[ -z "$mode" || "$mode" != 700 ]]; then
       die "run temp directory permissions are insecure $RUN_TMP_DIR"
+    fi
+    if run_tmp_dir_is_wrapper_managed "$RUN_TMP_DIR" &&
+      ! write_run_tmp_dir_ownership_marker "$RUN_TMP_DIR"; then
+      die "failed to stamp run temp directory ownership marker $RUN_TMP_DIR"
     fi
     log_line "INFO" "run.tmp_dir path=$(shell_quote "$RUN_TMP_DIR")" >/dev/null
     return 0
@@ -696,6 +752,9 @@ ensure_run_tmp_dir() {
   mode="$(stat -Lc '%a' -- "$RUN_TMP_DIR" 2>/dev/null || printf '')"
   if [[ -z "$mode" || "$mode" != 700 ]]; then
     die "run temp directory permissions are insecure $RUN_TMP_DIR"
+  fi
+  if ! write_run_tmp_dir_ownership_marker "$RUN_TMP_DIR"; then
+    die "failed to stamp run temp directory ownership marker $RUN_TMP_DIR"
   fi
   log_line "INFO" "run.tmp_dir path=$(shell_quote "$RUN_TMP_DIR")" >/dev/null
 }

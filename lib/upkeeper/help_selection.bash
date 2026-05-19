@@ -137,11 +137,13 @@ Important:
     loose terminal watching. TTY output colors the block by marker: green OK,
     red blinking PAGE, white INFO, orange --FYI--, cyan RUN, magenta ACTION,
     yellow WAIT/HEALTH, and blue WORKER. PAGE and --FYI-- also color their
-    timestamp and bold marker text; PAGE keeps blink off the timestamp. Loop
-    logs keep the same block and marker text without ANSI color for scripts and
-    assistive tooling. Set BACKLOG_ALERT_COLOR=never to disable terminal block
-    color, BACKLOG_ALERT_COLOR=always to force it, or BACKLOG_ALERT_BLINK=0 to
-    keep PAGE red without blink.
+    timestamp and bold marker text; PAGE puts the timestamp in white on a red
+    background and highlights the ERROR text inside [ERROR] in the same
+    red/blink style as the PAGE marker. Loop logs keep the same block and marker
+    text without ANSI color for scripts and assistive tooling. Set
+    BACKLOG_ALERT_COLOR=never to disable terminal block color,
+    BACKLOG_ALERT_COLOR=always to force it, or BACKLOG_ALERT_BLINK=0 to keep
+    PAGE red without blink.
   - When a backlog invocation locks in its local job, it prints a local-only
     green ##### ##### ##### summary block before backend work starts. The block
     names the target file or selection mode, why this cycle is doing that work,

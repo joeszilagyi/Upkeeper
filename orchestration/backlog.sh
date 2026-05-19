@@ -274,7 +274,8 @@ backlog_alert_color_enabled() {
 backlog_color_attention_line() {
   local line="$1"
   local ts rest marker payload reset
-  local timestamp_style block_style marker_style ts_text block_text marker_field marker_text
+  local timestamp_style block_style marker_style page_error_style
+  local ts_text block_text marker_field marker_text payload_text
 
   if [[ "$line" == "$BACKLOG_JOB_SUMMARY_BAR" ]]; then
     if backlog_alert_color_enabled; then
@@ -300,13 +301,16 @@ backlog_color_attention_line() {
   timestamp_style=""
   block_style=""
   marker_style=""
+  page_error_style=""
   case "$marker" in
     PAGE)
-      timestamp_style=$'\033[31m'
+      timestamp_style=$'\033[37;41m'
       if [[ "$BACKLOG_ALERT_BLINK" == "1" ]]; then
         block_style=$'\033[5;1;31m'
+        page_error_style=$'\033[5;1;31m'
       else
         block_style=$'\033[1;31m'
+        page_error_style=$'\033[1;31m'
       fi
       marker_style="$block_style"
       ;;
@@ -339,6 +343,7 @@ backlog_color_attention_line() {
   block_text="$BACKLOG_VISUAL_BLOCK"
   printf -v marker_field '%-7s' "$marker"
   marker_text="$marker_field"
+  payload_text="$payload"
   if [[ -n "$timestamp_style" ]]; then
     ts_text="${timestamp_style}${ts}${reset}"
   fi
@@ -348,8 +353,11 @@ backlog_color_attention_line() {
   if [[ -n "$marker_style" ]]; then
     marker_text="${marker_style}${marker_field}${reset}"
   fi
-  if [[ -n "$payload" ]]; then
-    printf '%s %s %s %s\n' "$ts_text" "$block_text" "$marker_text" "$payload"
+  if [[ "$marker" == "PAGE" && -n "$page_error_style" && "$payload_text" == *"[ERROR]"* ]]; then
+    payload_text="${payload_text//\[ERROR\]/[${page_error_style}ERROR${reset}]}"
+  fi
+  if [[ -n "$payload_text" ]]; then
+    printf '%s %s %s %s\n' "$ts_text" "$block_text" "$marker_text" "$payload_text"
   else
     printf '%s %s %s\n' "$ts_text" "$block_text" "$marker_text"
   fi

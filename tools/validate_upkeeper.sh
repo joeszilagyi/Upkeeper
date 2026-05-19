@@ -566,10 +566,10 @@ PY
     fail "backlog launcher duplicated an existing visual block marker"
   grep -Fq $'\033[1;32m█\033[0m OK' "$temp_dir/ok-color.out" ||
     fail "backlog launcher did not color OK visual block green"
-  grep -Fq $'\033[31m2026-05-16T18:21:03\033[0m \033[5;1;31m█\033[0m \033[5;1;31mPAGE   \033[0m [ERROR] wrapper exploded' "$temp_dir/page-color.out" ||
-    fail "backlog launcher did not color PAGE timestamp/block/marker with the expected blink boundary"
-  grep -Fq $'\033[31m2026-05-16T18:21:06\033[0m \033[1;31m█\033[0m \033[1;31mPAGE   \033[0m [ERROR] wrapper exploded' "$temp_dir/page-no-blink-color.out" ||
-    fail "backlog launcher did not honor BACKLOG_ALERT_BLINK=0 for PAGE block and marker"
+  grep -Fq $'\033[37;41m2026-05-16T18:21:03\033[0m \033[5;1;31m█\033[0m \033[5;1;31mPAGE   \033[0m [\033[5;1;31mERROR\033[0m] wrapper exploded' "$temp_dir/page-color.out" ||
+    fail "backlog launcher did not color PAGE timestamp/block/marker and ERROR text with the expected blink boundary"
+  grep -Fq $'\033[37;41m2026-05-16T18:21:06\033[0m \033[1;31m█\033[0m \033[1;31mPAGE   \033[0m [\033[1;31mERROR\033[0m] wrapper exploded' "$temp_dir/page-no-blink-color.out" ||
+    fail "backlog launcher did not honor BACKLOG_ALERT_BLINK=0 for PAGE block, marker, and ERROR text"
   grep -Fq $'\033[38;5;208m2026-05-16T18:21:04\033[0m \033[1;38;5;208m█\033[0m \033[1;38;5;208m--FYI--\033[0m previous_run.anomaly_summary x' "$temp_dir/fyi-color.out" ||
     fail "backlog launcher did not color FYI timestamp/block/marker with the expected bold boundary"
   grep -Fq $'\033[1;36m█\033[0m RUN' "$temp_dir/run-color.out" ||

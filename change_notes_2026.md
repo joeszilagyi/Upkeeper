@@ -12,6 +12,7 @@ Version numbering note:
 	3. Issue-targeted backlog passes that exit cleanly with no tracked changes are now deferred for the current backlog branch, preventing already-addressed or no-op issues from being selected repeatedly in the same loop.
 	4. Custom `CODEX_LOG_FILE` paths remain honored as live log sinks, while log rotation and sibling archive pruning stay blocked for custom paths unless explicitly enabled with `CODEX_LOG_FILE_ALLOW_UNSAFE=1` and a trusted Upkeeper rotation marker.
 	5. Backlog PR-check waits now print local `gh`/`jq` progress details while holding the owner lease, including pass/pending/fail counts, the active check, elapsed check time, the current Actions step when available, and the check URL.
+	6. Interactive `PAGE` lines now render the timestamp as white text on a red background and highlight the `ERROR` text inside `[ERROR]` with the same bold red blink used by the `PAGE` marker.
 
 2026-05-18: backlog quality gates:
 	1. Backlog invocations with recorded fixes now wait for the current PR checks before selecting another issue, stopping on failed checks and holding the local owner lease while checks remain pending.

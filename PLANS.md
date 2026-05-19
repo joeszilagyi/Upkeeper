@@ -10,6 +10,9 @@ Status: completed locally
 Goal:
 - make interactive backlog `PAGE` lines visually harder to miss by coloring the
   timestamp red, and coloring/blinking both the block and `PAGE` marker text
+- strengthen interactive `PAGE` lines by rendering the timestamp as white on a
+  red background and highlighting the `ERROR` text inside `[ERROR]` with the
+  same red/blink style as the `PAGE` marker
 - make interactive backlog `--FYI--` lines color the timestamp orange and color
   the marker text bold orange
 - add local-only green job start/finish summary blocks so operators can see

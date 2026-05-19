@@ -3,6 +3,119 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Session Store Fail-Closed Alignment
+
+Status: completed locally
+
+Goal:
+- align full validation, docs, and focused tests with issue `#128` behavior:
+  owned weak-mode `$CODEX_HOME/sessions` directories fail closed instead of
+  being chmod-repaired by Upkeeper
+- keep the unpredictable session-store write probe and symlink rejection
+  contracts intact
+- clear PR `#410` CI after the preserved partial `#128` change
+
+Constraints:
+- do not launch real backend Codex validation
+- keep local environment failures deterministic and pre-model
+- document the operator-visible behavior change in current docs and notes
+
+Files likely touched:
+- `lib/upkeeper/session_store_preflight.bash`
+- `tools/validate_upkeeper.sh`
+- `tests/lattice_test.bash`
+- `tests/session_store_preflight_test.bash`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `docs/security.md`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/session_store_preflight_test.bash`
+- `for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
+- `git diff --check`
+
+## Backlog Validation Gate And Lattice Snapshot Privacy Repair
+
+Status: completed locally
+
+Goal:
+- make backlog per-bug and batch validation failures stop the commit path even
+  when the commit helper is invoked from an `if` condition
+- repair the issue `#141` Lattice snapshot change so opt-in worktree path
+  inventory remains HMAC-only while still supporting cycle-local round-trip
+  checks and delta event recording
+- unblock PR `#410` by fixing the current `tests/lattice_test.bash` failure
+
+Constraints:
+- do not launch real backend Codex validation
+- keep raw worktree path inventory out of `worktree_snapshot_paths`
+- keep the backlog PR-check gate stopping before new issue selection when CI
+  fails
+- add deterministic local validation so this commit-gate regression cannot
+  silently return
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/upkeeper_lattice.py`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/lattice_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Backend Usage Limit Cooldown
+
+Status: completed locally
+
+Goal:
+- classify backend "usage limit" startup exits as quota exhaustion instead of a
+  missing status-marker contract failure
+- write a hard local quota cooldown marker from the backend-provided reset time
+  so unattended backlog loops stop retrying the exhausted model
+- make backlog honor hard backend usage-limit markers even when burn-mode quota
+  guardrail bypass is enabled
+- avoid opening target-repair automation obligations for machine-local backend
+  quota exhaustion
+
+Constraints:
+- keep the detection deterministic and local to wrapper transcript/session
+  evidence
+- do not launch real backend Codex validation
+- preserve existing missing-marker failures for empty successful output and
+  other malformed model responses
+- keep normal burn-mode quota bypass behavior for soft projected quota
+  guardrails
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/status_session.bash`
+- `lib/upkeeper/quota_block_markers.bash`
+- `lib/upkeeper/automation_obligations.bash`
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- focused fake-backend usage-limit validation through `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Backlog Live Output Attention Emphasis
 
 Status: completed locally
@@ -10,6 +123,10 @@ Status: completed locally
 Goal:
 - make interactive backlog `PAGE` lines visually harder to miss by coloring the
   timestamp red, and coloring/blinking both the block and `PAGE` marker text
+- strengthen interactive `PAGE` lines by rendering the timestamp as bright white
+  on a red background, making the non-error payload text bright white, and
+  highlighting the `ERROR` text inside `[ERROR]` with the same red/blink style
+  as the `PAGE` marker
 - make interactive backlog `--FYI--` lines color the timestamp orange and color
   the marker text bold orange
 - add local-only green job start/finish summary blocks so operators can see

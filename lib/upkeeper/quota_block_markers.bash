@@ -214,6 +214,58 @@ EOF
   log_line "WARN" "quota.blocked_marker target_model=$CODEX_MODEL marker_source_phase=$marker_source_phase blocked_bucket=$blocked_buckets quota_identity_changed=$marker_identity_changed$(quota_hashed_path_log_field path "$marker_path")$(quota_sensitive_log_field path "$marker_path")$(quota_sensitive_log_field blocked_until "$(format_epoch_local "$blocked_until_epoch")")"
 }
 
+write_primary_usage_limit_block_marker() {
+  local blocked_until_epoch="$1"
+  local reset_text="${2:-}"
+  local marker_source_phase="${3:-after_run}"
+  local pm_root marker_path marker_tmp_path created_at now_epoch marker_reason
+  local recommended_action="wait_until_reset_or_switch_primary_model"
+
+  [[ "$blocked_until_epoch" =~ ^[0-9]+$ ]] || return 1
+  now_epoch="$(date '+%s')"
+  [[ "$blocked_until_epoch" -gt "$now_epoch" ]] || return 1
+
+  marker_reason="backend_usage_limit"
+  pm_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID"
+  marker_path="$pm_root/primary-quota-blocked-until.txt"
+  created_at="$(timestamp_now)"
+
+  if ! mkdir -p -- "$pm_root"; then
+    log_line "ERROR" "quota.blocked_marker_failed$(quota_hashed_path_log_field path "$marker_path")$(quota_sensitive_log_field path "$marker_path") reason=mkdir_failed"
+    return 1
+  fi
+  marker_tmp_path="$marker_path.tmp.$$"
+  if ! {
+    cat <<EOF
+incident_cycle_id: $CYCLE_ID
+created_at: $created_at
+marker_source_phase: $marker_source_phase
+primary_model: $CODEX_MODEL
+blocked_bucket: backend_usage_limit
+blocked_until_epoch: $blocked_until_epoch
+blocked_until: $(format_epoch_local "$blocked_until_epoch")
+reason: $marker_reason
+hard_block: 1
+recommended_operator_action: $recommended_action
+EOF
+    if [[ -n "$reset_text" ]]; then
+      printf 'backend_reset_text: %s\n' "$reset_text"
+    fi
+  } >"$marker_tmp_path"; then
+    rm -f -- "$marker_tmp_path"
+    log_line "ERROR" "quota.blocked_marker_failed$(quota_hashed_path_log_field path "$marker_path")$(quota_sensitive_log_field path "$marker_path") reason=write_failed"
+    return 1
+  fi
+  if ! mv -f -- "$marker_tmp_path" "$marker_path"; then
+    rm -f -- "$marker_tmp_path"
+    log_line "ERROR" "quota.blocked_marker_failed$(quota_hashed_path_log_field path "$marker_path")$(quota_sensitive_log_field path "$marker_path") reason=rename_failed"
+    return 1
+  fi
+  quota_block_copy_marker_to_private_store "$marker_path" "$(quota_block_marker_root)"
+
+  log_line "WARN" "quota.blocked_marker target_model=$CODEX_MODEL marker_source_phase=$marker_source_phase blocked_bucket=backend_usage_limit hard_block=1$(quota_hashed_path_log_field path "$marker_path")$(quota_sensitive_log_field path "$marker_path") blocked_until=$(shell_quote "$(format_epoch_local "$blocked_until_epoch")")"
+}
+
 enforce_primary_quota_block_marker() {
   if [[ "$CODEX_ATTEMPT_ROLE" != "primary" || "$CODEX_FALLBACK_CHAIN_ACTIVE" == "1" ]]; then
     return 0

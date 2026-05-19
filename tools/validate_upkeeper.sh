@@ -443,6 +443,40 @@ check_backlog_launcher_contract() {
   grep -Fq 'BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota cooldown bypass on"
   grep -Fq 'quota preflight: burn bypass continuing despite stale quota evidence' orchestration/backlog.sh || fail "backlog launcher does not explain stale quota bypass"
   grep -Fq 'BACKLOG_SOURCE_ONLY' orchestration/backlog.sh || fail "backlog launcher cannot be source-tested without running main"
+  BACKLOG_SOURCE_ONLY=1 bash -lc '
+    set -euo pipefail
+    cd "$1"
+    source ./orchestration/backlog.sh
+    log() { :; }
+    backlog_update_active_owner_heartbeat() { :; }
+    run_changed_python_compile_validation() { return 0; }
+    run_focused_issue_validation() { return 0; }
+    git() { return 0; }
+    bash() { return 42; }
+    status=0
+    if run_per_bug_validation 1 tools/upkeeper_lattice.py; then
+      status=0
+    else
+      status="$?"
+    fi
+    [[ "$status" == "42" ]]
+  ' bash "$ROOT_DIR" || fail "backlog per-bug validation does not propagate failed commands when called from a conditional"
+  BACKLOG_SOURCE_ONLY=1 bash -lc '
+    set -euo pipefail
+    cd "$1"
+    source ./orchestration/backlog.sh
+    cleanup_ephemeral_artifacts() { :; }
+    has_worktree_changes() { return 0; }
+    run_per_bug_validation() { return 43; }
+    git() { printf "git should not run after validation failure\n" >&2; return 99; }
+    status=0
+    if commit_and_push_changes 1 "" tools/upkeeper_lattice.py; then
+      status=0
+    else
+      status="$?"
+    fi
+    [[ "$status" == "43" ]]
+  ' bash "$ROOT_DIR" || fail "backlog commit path does not stop after per-bug validation failure"
   grep -Fq 'rm -f -- "$ROOT_DIR/\$db"' orchestration/backlog.sh || fail "backlog launcher does not clean literal db scratch artifacts before staging"
   python3 - <<'PY' || fail "backlog autoshelve no longer runs before gh/jq/rg dependency gates"
 from pathlib import Path
@@ -566,10 +600,10 @@ PY
     fail "backlog launcher duplicated an existing visual block marker"
   grep -Fq $'\033[1;32m█\033[0m OK' "$temp_dir/ok-color.out" ||
     fail "backlog launcher did not color OK visual block green"
-  grep -Fq $'\033[31m2026-05-16T18:21:03\033[0m \033[5;1;31m█\033[0m \033[5;1;31mPAGE   \033[0m [ERROR] wrapper exploded' "$temp_dir/page-color.out" ||
-    fail "backlog launcher did not color PAGE timestamp/block/marker with the expected blink boundary"
-  grep -Fq $'\033[31m2026-05-16T18:21:06\033[0m \033[1;31m█\033[0m \033[1;31mPAGE   \033[0m [ERROR] wrapper exploded' "$temp_dir/page-no-blink-color.out" ||
-    fail "backlog launcher did not honor BACKLOG_ALERT_BLINK=0 for PAGE block and marker"
+  grep -Fq $'\033[97;41m2026-05-16T18:21:03\033[0m \033[5;1;31m█\033[0m \033[5;1;31mPAGE   \033[0m \033[97m[\033[5;1;31mERROR\033[0m\033[97m] wrapper exploded\033[0m' "$temp_dir/page-color.out" ||
+    fail "backlog launcher did not color PAGE timestamp/block/marker, white payload, and ERROR text with the expected blink boundary"
+  grep -Fq $'\033[97;41m2026-05-16T18:21:06\033[0m \033[1;31m█\033[0m \033[1;31mPAGE   \033[0m \033[97m[\033[1;31mERROR\033[0m\033[97m] wrapper exploded\033[0m' "$temp_dir/page-no-blink-color.out" ||
+    fail "backlog launcher did not honor BACKLOG_ALERT_BLINK=0 for PAGE block, marker, payload, and ERROR text"
   grep -Fq $'\033[38;5;208m2026-05-16T18:21:04\033[0m \033[1;38;5;208m█\033[0m \033[1;38;5;208m--FYI--\033[0m previous_run.anomaly_summary x' "$temp_dir/fyi-color.out" ||
     fail "backlog launcher did not color FYI timestamp/block/marker with the expected bold boundary"
   grep -Fq $'\033[1;36m█\033[0m RUN' "$temp_dir/run-color.out" ||
@@ -710,7 +744,7 @@ PY
 }
 
 check_backlog_quota_hibernation_contract() {
-  local temp_dir status output
+  local temp_dir status output hard_marker_root hard_marker_epoch
 
   log "checking backlog quota hibernation contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-backlog-quota-hibernate.XXXXXX)"
@@ -764,6 +798,42 @@ check_backlog_quota_hibernation_contract() {
   [[ "$status" -eq 4 ]] || fail "malformed quota hibernation input exited $status output=$output"
   grep -Fq "hibernation unavailable; invalid blocked_until_epoch=1e999" <<<"$output" ||
     fail "malformed quota hibernation input did not fail closed plainly"
+
+  hard_marker_root="$temp_dir/hard-marker-root"
+  hard_marker_epoch="$(($(date '+%s') + 120))"
+  mkdir -p "$hard_marker_root/cycle-hard"
+  chmod 700 "$hard_marker_root" "$hard_marker_root/cycle-hard"
+  cat >"$hard_marker_root/cycle-hard/primary-quota-blocked-until.txt" <<EOF
+primary_model: gpt-hard
+blocked_bucket: backend_usage_limit
+blocked_until_epoch: $hard_marker_epoch
+reason: backend_usage_limit
+hard_block: 1
+EOF
+  if ! BACKLOG_SOURCE_ONLY=1 \
+    BACKLOG_CODEX_MODEL=gpt-hard \
+    BACKLOG_QUOTA_COOLDOWN_BYPASS=1 \
+    BACKLOG_TEST_NOW_EPOCH="$(date '+%s')" \
+    BACKLOG_TEST_FAKE_SLEEP=1 \
+    BACKLOG_TEST_SLEEP_LOG="$temp_dir/hard-marker-sleeps.log" \
+    BACKLOG_LOOP_LOG_FILE="$temp_dir/hard-marker-loop.log" \
+    UPKEEPER_QUOTA_PRIMARY_BLOCK_MARKER_DIR="$hard_marker_root" \
+    bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./orchestration/backlog.sh
+      status=0
+      quota_preflight_allows_backlog_run || status="$?"
+      [[ "$status" == "3" ]] || {
+        printf "unexpected hard marker preflight status: %s\n" "$status" >&2
+        exit 1
+      }
+    ' bash "$ROOT_DIR" >"$temp_dir/hard-marker.out" 2>"$temp_dir/hard-marker.err"; then
+    cat "$temp_dir/hard-marker.err" >&2
+    fail "backlog did not honor hard backend usage-limit marker under cooldown bypass"
+  fi
+  grep -Fq "quota blocked bucket=backend_usage_limit" "$temp_dir/hard-marker.err" ||
+    fail "hard backend usage-limit marker did not drive quota hibernation"
 
   rm -r "$temp_dir"
 }
@@ -1677,6 +1747,9 @@ model = sys.argv[2]
 primary_reset_offset = int(sys.argv[3])
 secondary_reset_offset = int(sys.argv[4])
 path.parent.mkdir(parents=True, exist_ok=True)
+if "sessions" in path.parts:
+    session_root = Path(*path.parts[: path.parts.index("sessions") + 1])
+    session_root.chmod(0o700)
 now = int(time.time())
 event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
 rows = [
@@ -2189,11 +2262,11 @@ check_session_store_preflight_contract() {
   rc=$?
   set -e
 
-  [[ "$rc" -eq 0 ]] || fail "session store owned weak-mode repair exited $rc, expected 0"
-  [[ "$output" == "ok" ]] || fail "session store owned weak-mode repair returned unexpected output: $output"
-  [[ "$(stat -c '%a' "$temp_dir/codex-home/sessions")" == "700" ]] || fail "session store owned weak-mode repair did not chmod sessions to 700"
+  [[ "$rc" -eq 1 ]] || fail "session store owned weak-mode rejection exited $rc, expected 1"
+  [[ "$output" == unsafe_permissions:* ]] || fail "session store owned weak-mode rejection returned unexpected output: $output"
+  [[ "$(stat -c '%a' "$temp_dir/codex-home/sessions")" == "777" ]] || fail "session store owned weak-mode rejection changed directory permissions"
   if compgen -G "$temp_dir/codex-home/sessions/.upkeeper-write-test.*" >/dev/null; then
-    fail "session store owned weak-mode repair left a probe directory behind"
+    fail "session store owned weak-mode rejection left a probe directory behind"
   fi
 
   rm -r -- "$temp_dir"
@@ -4492,6 +4565,7 @@ check_empty_transcript_failure() {
   log "checking empty transcript failure classification"
   temp_dir="$(mktemp -d /tmp/upkeeper-empty-transcript.XXXXXX)"
   mkdir -p "$temp_dir/bin" "$temp_dir/codex-home/sessions/2026/05/07"
+  chmod 0700 "$temp_dir/codex-home/sessions"
 
   cat >"$temp_dir/bin/codex" <<'SH'
 #!/usr/bin/env bash
@@ -4590,11 +4664,16 @@ write_fault_injection_fake_codex() {
 #!/usr/bin/env bash
 mode="${UPKEEPER_FAKE_CODEX_MODE:-success}"
 out_file=""
+model="gpt-5.5"
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     -o)
       out_file="${2:-}"
+      shift 2
+      ;;
+    -m)
+      model="${2:-$model}"
       shift 2
       ;;
     *)
@@ -4616,6 +4695,26 @@ case "$mode" in
       : >"$out_file"
     fi
     exit 0
+    ;;
+  usage-limit)
+    if [[ -n "$out_file" ]]; then
+      : >"$out_file"
+    fi
+    reset_epoch="$(($(date '+%s') + 3600))"
+    reset_text="$(date -d "@$reset_epoch" '+%B %-d, %Y %-I:%M %p')"
+    session_dir="${CODEX_HOME:-$HOME/.codex}/sessions/2026/05/07"
+    mkdir -p "$session_dir"
+    session_file="$session_dir/usage-limit-$$.jsonl"
+    now_iso="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    cat >"$session_file" <<EOF
+{"type":"turn_context","payload":{"model":"$model"}}
+{"timestamp":"$now_iso","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"validation-$model","limit_name":"$model validation","plan_type":"validation","rate_limit_reached_type":"primary","primary":{"used_percent":100.0,"window_minutes":300,"resets_at":$reset_epoch},"secondary":{"used_percent":10.0,"window_minutes":10080,"resets_at":$((reset_epoch + 86400))}}}}
+{"timestamp":"$now_iso","type":"event_msg","payload":{"type":"task_complete","last_agent_message":null}}
+EOF
+    printf 'Reading prompt from stdin...\n'
+    printf 'OpenAI Codex v0.130.0\n'
+    printf 'ERROR: You'\''ve hit your usage limit for %s. Switch to another model now, or try again at %s.\n' "$model" "$reset_text"
+    exit 1
     ;;
   *)
     printf 'unknown fake codex mode: %s\n' "$mode" >&2
@@ -4714,7 +4813,37 @@ run_fault_injection_root_dry_run() {
     CODEX_FALLBACK_SCREEN_ENABLED=0 \
     CODEX_POSTMORTEM_ENABLED=0 \
     UPKEEPER_DRY_RUN=1 \
-    "$ROOT_DIR/Upkeeper" "$@" >"$fixture_dir/$phase.out" 2>"$fixture_dir/$phase.err"
+      "$ROOT_DIR/Upkeeper" "$@" >"$fixture_dir/$phase.out" 2>"$fixture_dir/$phase.err"
+}
+
+check_backend_usage_limit_contract() {
+  local temp_dir rc marker_path
+
+  log "checking backend usage-limit cooldown contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-backend-usage-limit.XXXXXX)"
+  chmod 700 "$temp_dir" 2>/dev/null || true
+  write_fault_injection_fake_codex "$temp_dir/bin"
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/before-session.jsonl" "gpt-5.5"
+
+  set +e
+  run_fault_injection_fake_backend "$temp_dir" injection usage-limit --target-file=launcher_examples/spark_5.3_burn_out_xhigh.sh
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 7 ]] || fail "backend usage-limit injection exited $rc, expected 7"
+  grep -Fq "primary.backend_usage_limit_detected" "$temp_dir/injection.log" || fail "backend usage-limit transcript was not classified"
+  grep -Fq "quota.blocked_marker target_model=gpt-5.5" "$temp_dir/injection.log" || fail "backend usage-limit marker was not logged"
+  grep -Fq "blocked_bucket=backend_usage_limit" "$temp_dir/injection.log" || fail "backend usage-limit marker did not identify hard bucket"
+  grep -Fq "cycle.exit exit_code=7 reason=PRIMARY_BACKEND_USAGE_LIMIT" "$temp_dir/injection.log" || fail "backend usage-limit did not exit with quota cooldown reason"
+  if grep -Fq "automation.obligation.open" "$temp_dir/injection.log"; then
+    fail "backend usage-limit opened a target repair obligation"
+  fi
+  marker_path="$(find "$temp_dir/codex-home/upkeeper/quota-primary-block-markers" -name primary-quota-blocked-until.txt -print -quit)"
+  [[ -s "$marker_path" ]] || fail "backend usage-limit did not write private quota marker"
+  grep -Fxq "blocked_bucket: backend_usage_limit" "$marker_path" || fail "backend usage-limit marker missing hard bucket"
+  grep -Fxq "hard_block: 1" "$marker_path" || fail "backend usage-limit marker missing hard_block"
+  check_upkeeper_log_invariants "$temp_dir/injection.log" --scan "$temp_dir/injection.out" --scan "$temp_dir/injection.err"
+  rm -r "$temp_dir"
 }
 
 check_fault_injection_first_scenarios() {
@@ -4882,6 +5011,7 @@ run_check process_control_guards check_process_control_guards
 run_check backlog_launcher_contract check_backlog_launcher_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract
+run_bounded_check backend_usage_limit_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_backend_usage_limit_contract
 
 if [[ "$MODE" == "smoke" ]]; then
   log "$MODE validation passed"

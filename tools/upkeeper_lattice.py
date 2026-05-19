@@ -1420,6 +1420,22 @@ def worktree_snapshot_path_class(status_code: str, *, is_old: bool = False) -> s
     return WORKTREE_PATH_CLASS_TRACKED
 
 
+def stored_worktree_snapshot_path(root: Path, path: str) -> str:
+    return pass_result_path_hmac(root, path)
+
+
+def worktree_snapshot_path_identity(row: sqlite3.Row) -> str:
+    path_hmac = str(row["path_hmac"] or "")
+    if path_hmac.startswith(PASS_RESULT_PATH_HMAC_PREFIX):
+        return path_hmac
+    path = str(row["path"] or "")
+    return path
+
+
+def worktree_snapshot_identity_is_private(path_identity: str) -> bool:
+    return str(path_identity or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX)
+
+
 def json_dumps(value: Any) -> str:
     return json.dumps(
         sanitize_json_value(value),
@@ -2141,6 +2157,17 @@ def print_json(value: Any) -> None:
     print(json.dumps(sanitize_json_value(value), sort_keys=True, indent=2))
 
 
+def load_single_json_document(raw: str) -> Any:
+    text = raw.strip()
+    if not text:
+        raise ValueError("missing JSON document")
+    decoder = json.JSONDecoder(parse_constant=reject_nonfinite_json_constant)
+    value, end = decoder.raw_decode(text)
+    if text[end:].strip():
+        raise ValueError("multiple JSON documents")
+    return value
+
+
 def redirect_stdout_to_devnull() -> None:
     devnull_fd = None
     try:
@@ -2230,6 +2257,58 @@ def parse_git_porcelain_v1_z_entries(raw: bytes) -> list[tuple[str, str, str | N
                 i += 1
         entries.append((status_code, path, old_path))
     return entries
+
+
+def parse_git_porcelain_status_map(raw: bytes) -> dict[str, str]:
+    status_by_path: dict[str, str] = {}
+    for status_code, path, old_path in parse_git_porcelain_v1_z_entries(raw):
+        if path:
+            status_by_path[path] = status_code
+        if old_path:
+            status_by_path[old_path] = status_code
+    return status_by_path
+
+
+def git_porcelain_status_map(root: Path) -> dict[str, str]:
+    try:
+        raw = subprocess.check_output(
+            ["git", "-C", str(root), "status", "--porcelain=v1", "-z"],
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError, UnicodeEncodeError, UnicodeError, ValueError):
+        return {}
+    return parse_git_porcelain_status_map(raw)
+
+
+def parse_git_ls_files_s_map(raw: bytes, *, wanted: set[str] | None = None) -> dict[str, str]:
+    wanted_set = wanted if wanted is None else set(wanted)
+    head_by_path: dict[str, str] = {}
+    for item in raw.split(b"\0"):
+        if not item:
+            continue
+        try:
+            meta, path_raw = item.split(b"\t", 1)
+        except ValueError:
+            continue
+        parts = meta.split()
+        if len(parts) < 2:
+            continue
+        path = decode_git_output(path_raw)
+        if wanted_set is not None and path not in wanted_set:
+            continue
+        head_by_path[path] = parts[1].decode("utf-8", "surrogateescape")
+    return head_by_path
+
+
+def git_head_blob_map(root: Path, paths: Iterable[str]) -> dict[str, str]:
+    if not paths:
+        return {}
+    wanted = set(paths)
+    try:
+        raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-s", "-z"], stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError, UnicodeEncodeError, UnicodeError, ValueError):
+        return {}
+    return parse_git_ls_files_s_map(raw, wanted=wanted)
 
 
 def git_porcelain_status_for_path(root: Path, rel_path: str) -> str:
@@ -4468,7 +4547,14 @@ def record_file_event(
     )
 
 
-def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
+def live_file_metadata(
+    root: Path,
+    rel_path: str,
+    *,
+    git_status: str | None = None,
+    head_blob: str | None = None,
+    include_worktree_hash: bool = True,
+) -> dict[str, Any]:
     rel_path = operational_rel_path(rel_path)
     meta: dict[str, Any] = {"path": stored_rel_path(rel_path)}
     if has_surrogate_codepoint(rel_path):
@@ -4513,12 +4599,22 @@ def live_file_metadata(root: Path, rel_path: str) -> dict[str, Any]:
         meta["test_path"] = 1 if is_test_path(rel_path) else 0
         meta["generated"] = 0
         return meta
-    status = git_porcelain_status_for_path(root, rel_path)
+    status = git_status if git_status is not None else git_porcelain_status_for_path(root, rel_path)
     meta["git_status"] = stored_git_status_code(status) if status else "clean"
-    raw_worktree_hash = git_output(root, ["hash-object", "--", rel_path], "missing") if st is not None else "unavailable"
-    raw_head_blob = git_output(root, ["rev-parse", f"HEAD:{rel_path}"], "none")
+    if include_worktree_hash and st is not None:
+        raw_worktree_hash = git_output(root, ["hash-object", "--", rel_path], "missing")
+    else:
+        raw_worktree_hash = "unavailable"
+    if head_blob is not None:
+        raw_head_blob = head_blob
+    elif status == "??":
+        raw_head_blob = "none"
+    else:
+        raw_head_blob = git_output(root, ["rev-parse", f"HEAD:{rel_path}"], "none")
     if raw_head_blob == "none":
         meta["content_state"] = "untracked"
+    elif not include_worktree_hash:
+        meta["content_state"] = "unknown"
     elif raw_head_blob == raw_worktree_hash:
         meta["content_state"] = "matches_head"
     else:
@@ -4580,21 +4676,65 @@ def parse_key_value_file(path: Path) -> dict[str, str]:
     data: dict[str, str] = {}
     if not path or not path.exists():
         return data
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        data[key.strip()] = value.strip()
-    return data
+    return parse_key_value_text(path.read_text(encoding="utf-8", errors="replace"))
 
 
 def parse_key_value_text(text: str) -> dict[str, str]:
-    data: dict[str, str] = {}
-    for line in text.splitlines():
-        if "=" in line:
-            key, value = line.split("=", 1)
-            data[key.strip()] = value.strip()
-    return data
+    def normalize_key_value_blob(raw: str) -> dict[str, str]:
+        data: dict[str, str] = {}
+        current_key: str | None = None
+        current_value_parts: list[str] = []
+
+        for raw_line in raw.splitlines():
+            if "=" in raw_line:
+                if current_key is not None:
+                    value = "\n".join(current_value_parts)
+                    if key_requires_path_redaction(current_key):
+                        value = decode_path_text(value)
+                    data[current_key] = value.strip()
+                key, value = raw_line.split("=", 1)
+                key = key.strip()
+                if not key:
+                    current_key = None
+                    current_value_parts = []
+                    continue
+                current_key = key
+                current_value_parts = [value]
+                continue
+            if current_key is not None:
+                current_value_parts.append(raw_line)
+
+        if current_key is not None:
+            value = "\n".join(current_value_parts)
+            if key_requires_path_redaction(current_key):
+                value = decode_path_text(value)
+            data[current_key] = value.strip()
+        return data
+
+    if not text:
+        return {}
+    text = text.strip()
+    if not text:
+        return {}
+    if text[0] == "{" and text[-1] == "}":
+        try:
+            payload = json.loads(text)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+        else:
+            if isinstance(payload, dict):
+                for key, value in payload.items():
+                    key_text = str(key).strip()
+                    if not key_text:
+                        continue
+                    value_text = "" if value is None else str(value)
+                    if key_requires_path_redaction(key_text) and isinstance(value, str):
+                        value_text = decode_path_text(value_text)
+                    data[key_text] = value_text.strip()
+                return data
+            if payload is not None:
+                return {}
+    return normalize_key_value_blob(text)
 
 
 def selector_priority_gate(selection_mode: str) -> str:
@@ -4731,12 +4871,17 @@ def is_test_path(path: str) -> bool:
 def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper_ignore_file: str | None = None) -> list[dict[str, Any]]:
     upkeeperignore_patterns = load_upkeeperignore_patterns(root, upkeeper_ignore_file)
     inside_git = inside_git_repo(root)
+    git_status_map: dict[str, str] = {}
+    head_blob_map: dict[str, str] = {}
     if inside_git:
         if candidate_scope == "current-tracked":
             raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"])
         else:
             raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "-z"])
         paths = [p for p in decode_git_output(raw).split("\0") if p]
+        if paths:
+            git_status_map = git_porcelain_status_map(root)
+            head_blob_map = git_head_blob_map(root, paths)
     else:
         paths = []
         for dirpath, dirnames, filenames in os.walk(root):
@@ -4746,11 +4891,16 @@ def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper
                 if rel:
                     paths.append(rel)
     git_ignored = git_ignored_paths(root, paths) if inside_git else set()
+    text_reason_cache: dict[str, str] = {}
+    stat_cache: dict[str, tuple[os.stat_result | None, str]] = {}
     rows = []
     for rel in paths:
         reason = ""
         state = "eligible"
         p = root / rel
+        if rel not in stat_cache:
+            stat_cache[rel] = source_safe_file_stat(root, rel)
+        st, reason = stat_cache[rel]
         if rel == "Upkeeper.log":
             reason = "excluded_exact"
         elif rel.startswith(".git/") or rel.startswith("runtime/"):
@@ -4760,10 +4910,9 @@ def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper
         elif rel in git_ignored:
             reason = "gitignore"
         else:
-            st, reason = source_safe_file_stat(root, rel)
             if not reason and st is not None:
                 if candidate_scope == "current-tracked":
-                    _, reason = source_safe_file_stat(root, rel, require_text=True)
+                    _, reason = text_reason_cache.setdefault(rel, source_safe_file_stat(root, rel, require_text=True))
                 else:
                     if is_test_path(rel):
                         reason = "test_path"
@@ -4771,17 +4920,23 @@ def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper
                     ext = p.suffix.lower()
                     candidate = name in BUILD_NAMES or ext in SCRIPT_EXTS
                     if not candidate and st.st_mode & 0o111:
-                        _, text_reason = source_safe_file_stat(root, rel, require_text=True)
+                        _, text_reason = text_reason_cache.setdefault(rel, source_safe_file_stat(root, rel, require_text=True))
                         candidate = not text_reason
                         if text_reason:
                             reason = "executable_not_text"
                     if candidate and not reason:
-                        _, reason = source_safe_file_stat(root, rel, require_text=True)
+                        _, reason = text_reason_cache.setdefault(rel, source_safe_file_stat(root, rel, require_text=True))
                     if not candidate and not reason:
                         reason = "unsupported_extension"
         if reason:
             state = "excluded"
-        meta = live_file_metadata(root, rel)
+        meta = live_file_metadata(
+            root,
+            rel,
+            git_status=git_status_map.get(rel, ""),
+            head_blob=head_blob_map.get(rel),
+            include_worktree_hash=(state == "eligible"),
+        )
         rows.append(
             {
                 "path": stored_rel_path(rel),
@@ -5176,8 +5331,14 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["candidate_symlink_exclusion"] = candidate_symlink_probe
         candidate_text_sample_probe = probe_candidate_text_sample_limit()
         result["checks"]["candidate_text_sample_limit"] = candidate_text_sample_probe
+        worktree_snapshot_path_probe = probe_worktree_snapshot_path_round_trip()
+        result["checks"]["worktree_snapshot_path_round_trip"] = worktree_snapshot_path_probe
         export_redaction_probe = probe_export_redaction()
         result["checks"]["export_redaction"] = export_redaction_probe
+        recover_primary_sources_probe = probe_recover_requires_primary_sources()
+        result["checks"]["recover_requires_primary_sources"] = recover_primary_sources_probe
+        recover_import_conflicts_probe = probe_recover_propagates_import_conflicts()
+        result["checks"]["recover_propagates_import_conflicts"] = recover_import_conflicts_probe
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
@@ -5204,7 +5365,16 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if not bool(candidate_text_sample_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
+        if not bool(worktree_snapshot_path_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
         if not bool(export_redaction_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(recover_primary_sources_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(recover_import_conflicts_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
@@ -5413,9 +5583,11 @@ def record_worktree_snapshot(
         if worktree_snapshot_path_is_sensitive(path) or (old_path and worktree_snapshot_path_is_sensitive(old_path)):
             continue
         meta = live_file_metadata(root, path)
-        stored_path = pass_result_path_hmac(root, path)
-        stored_old_path = pass_result_path_hmac(root, old_path) if old_path else None
-        if not stored_path:
+        stored_path = stored_worktree_snapshot_path(root, path)
+        stored_old_path = stored_worktree_snapshot_path(root, old_path) if old_path else None
+        stored_path_hmac = stored_path
+        stored_old_path_hmac = stored_old_path
+        if not stored_path or not stored_path_hmac:
             continue
         conn.execute(
             """
@@ -5428,11 +5600,11 @@ def record_worktree_snapshot(
                 snapshot_id,
                 None,
                 stored_path,
-                stored_path,
+                stored_path_hmac,
                 worktree_snapshot_path_class(status_code),
                 status_code,
                 stored_old_path,
-                stored_old_path,
+                stored_old_path_hmac,
                 worktree_snapshot_path_class(status_code, is_old=True),
                 meta.get("head_blob"),
                 meta.get("worktree_hash"),
@@ -5469,6 +5641,7 @@ def latest_worktree_snapshot_id(
 def worktree_snapshot_path_row(
     conn: sqlite3.Connection,
     *,
+    root: Path,
     repo_id: int,
     cycle_pk: int | None,
     path: str,
@@ -5487,11 +5660,18 @@ def worktree_snapshot_path_row(
         select p.*
         from worktree_snapshot_paths p
         join worktree_snapshots s on s.worktree_snapshot_id=p.worktree_snapshot_id
-        where s.repo_id=? and p.worktree_snapshot_id=? and p.path=?
+        where s.repo_id=? and p.worktree_snapshot_id=?
+          and (p.path_hmac=? or p.path=? or p.path=?)
         order by p.worktree_snapshot_path_id desc
         limit 1
         """,
-        (repo_id, snapshot_id, stored_rel_path(path)),
+        (
+            repo_id,
+            snapshot_id,
+            stored_worktree_snapshot_path(root, path),
+            stored_worktree_snapshot_path(root, path),
+            stored_rel_path(path),
+        ),
     ).fetchone()
 
 
@@ -5506,7 +5686,7 @@ def worktree_snapshot_path_map(conn: sqlite3.Connection, snapshot_id: int | None
         """,
         (snapshot_id,),
     ).fetchall()
-    return {operational_rel_path(str(row["path"])): row for row in rows}
+    return {worktree_snapshot_path_identity(row): row for row in rows}
 
 
 def worktree_snapshot(conn: sqlite3.Connection, snapshot_id: int | None) -> sqlite3.Row | None:
@@ -5568,6 +5748,7 @@ def record_worktree_delta_events(
         before_snapshot["git_head_sha"] if before_snapshot else None,
         after_snapshot["git_head_sha"] if after_snapshot else None,
     ) if before_snapshot is not None and after_snapshot is not None else set()
+    commit_changed_path_keys = {stored_worktree_snapshot_path(root, path) for path in commit_changed_paths}
 
     # If there is no pre-Codex snapshot, we cannot classify per-file diffs safely.
     # Record known dirty files as a special baseline-missing signal and avoid
@@ -5578,7 +5759,7 @@ def record_worktree_delta_events(
             if after_status == "clean":
                 continue
             file_id = after["file_id"] if after else None
-            if file_id is None:
+            if file_id is None and not worktree_snapshot_identity_is_private(path):
                 file_id = ensure_file(conn, repo_id, path, source_id=source_id)
             record_file_event(
                 conn,
@@ -5605,7 +5786,7 @@ def record_worktree_delta_events(
         return
 
     all_paths = sorted(set(before_paths) | set(after_paths))
-    all_paths.extend(sorted(commit_changed_paths - set(all_paths)))
+    all_paths.extend(sorted(commit_changed_path_keys - set(all_paths)))
 
     for path in all_paths:
         before = before_paths.get(path)
@@ -5617,7 +5798,7 @@ def record_worktree_delta_events(
         if before and after and before_status == after_status and before_hash == after_hash:
             continue
         file_id = after["file_id"] if after else before["file_id"] if before else None
-        if file_id is None:
+        if file_id is None and not worktree_snapshot_identity_is_private(path):
             file_id = ensure_file(conn, repo_id, path, source_id=source_id)
         record_file_event(
             conn,
@@ -5638,7 +5819,7 @@ def record_worktree_delta_events(
                 "after_worktree_hash": after_hash,
                 "before_worktree_head_sha": before_snapshot["git_head_sha"] if before_snapshot else None,
                 "after_worktree_head_sha": after_snapshot["git_head_sha"] if after_snapshot else None,
-                "head_delta_source": "git diff" if path in commit_changed_paths else None,
+                "head_delta_source": "git diff" if path in commit_changed_path_keys else None,
             },
         )
 
@@ -5836,6 +6017,9 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                 if state in {"eligible", "selected"} and rank is None:
                     rank = row.get("_lattice_input_index", 1)
                 content_state = row.get("content_state") if path != selected_path else (selected_content_state if selected_content_state is not None else row.get("content_state"))
+                score_json = row.get("score_json")
+                if score_json is None and row.get("score") is not None:
+                    score_json = json_dumps(row["score"])
                 conn.execute(
                     """
                     insert or ignore into selection_candidates(
@@ -5855,7 +6039,7 @@ def command_record_preselect(args: argparse.Namespace) -> int:
                         row.get("head_blob"),
                         row.get("worktree_hash"),
                         row.get("exclusion_reason") or None,
-                        json_dumps(row.get("score", row.get("score_json"))) if row.get("score") is not None or row.get("score_json") is not None else None,
+                        score_json,
                         source_id,
                     ),
                 )
@@ -6679,6 +6863,121 @@ def probe_candidate_text_sample_limit() -> dict[str, Any]:
         return result
 
 
+def probe_worktree_snapshot_path_round_trip() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-worktree-paths-") as repo_dir:
+        root = Path(repo_dir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", str(root), "config", "user.email", "probe@example.com"], check=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "Probe User"], check=True)
+        target = root / "a.py"
+        target.write_text("print('before')\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "a.py"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "probe"], check=True)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "delete", allow_unsafe_db=False, create_parent=True, create_if_missing=True)
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+            with conn:
+                repo_id = ensure_repository(conn, root)
+                source_id = ensure_source_record(
+                    conn,
+                    root,
+                    repo_id,
+                    "wrapper_observed",
+                    raw_ref="probe_worktree_snapshot_path_round_trip",
+                    raw_storage_mode="minimal",
+                )
+                cycle_pk = ensure_cycle(conn, repo_id, "cycle-worktree-paths", "run-worktree-paths", source_id=source_id)
+                target.write_text("print('middle')\n", encoding="utf-8")
+                before_snapshot_id = record_worktree_snapshot(
+                    conn,
+                    root,
+                    repo_id,
+                    cycle_pk,
+                    "before_codex",
+                    source_id=source_id,
+                    untracked_files_mode="normal",
+                )
+                target.write_text("print('after')\n", encoding="utf-8")
+                after_snapshot_id = record_worktree_snapshot(
+                    conn,
+                    root,
+                    repo_id,
+                    cycle_pk,
+                    "after_codex",
+                    source_id=source_id,
+                    untracked_files_mode="normal",
+                )
+                record_worktree_delta_events(
+                    conn,
+                    repo_id=repo_id,
+                    root=root,
+                    cycle_pk=cycle_pk,
+                    source_id=source_id,
+                    after_snapshot_id=after_snapshot_id,
+                )
+                stored_target = stored_worktree_snapshot_path(root, "a.py")
+                expected_hmac = stored_target
+                before_row = conn.execute(
+                    """
+                    select path, path_hmac, status
+                    from worktree_snapshot_paths
+                    where worktree_snapshot_id=?
+                    order by worktree_snapshot_path_id
+                    limit 1
+                    """,
+                    (before_snapshot_id,),
+                ).fetchone()
+                round_trip_row = worktree_snapshot_path_row(
+                    conn,
+                    root=root,
+                    repo_id=repo_id,
+                    cycle_pk=cycle_pk,
+                    path="a.py",
+                    snapshot_kind="before_codex",
+                )
+                changed_event = conn.execute(
+                    """
+                    select path
+                    from file_events
+                    where repo_id=? and cycle_pk=? and event_kind='changed'
+                    order by event_id desc
+                    limit 1
+                    """,
+                    (repo_id, cycle_pk),
+                ).fetchone()
+                hashed_file_rows = int(
+                    conn.execute(
+                        "select count(*) from files where repo_id=? and current_path like ?",
+                        (repo_id, f"{PASS_RESULT_PATH_HMAC_PREFIX}%"),
+                    ).fetchone()[0]
+                    or 0
+                )
+        finally:
+            conn.close()
+    return {
+        "before_snapshot_path": before_row["path"] if before_row else None,
+        "before_snapshot_path_hmac": before_row["path_hmac"] if before_row else None,
+        "before_snapshot_status": before_row["status"] if before_row else None,
+        "expected_path": stored_target,
+        "expected_path_hmac": expected_hmac,
+        "round_trip_row_found": round_trip_row is not None,
+        "changed_event_path": changed_event["path"] if changed_event else None,
+        "hashed_file_rows": hashed_file_rows,
+        "ok": all(
+            (
+                before_row is not None,
+                before_row["path"] == stored_target,
+                before_row["path_hmac"] == expected_hmac,
+                round_trip_row is not None,
+                changed_event is not None,
+                changed_event["path"] == stored_target,
+                hashed_file_rows == 0,
+            )
+        ),
+    }
+
+
 def probe_export_redaction() -> dict[str, Any]:
     args = argparse.Namespace(
         redact_paths=True,
@@ -6737,6 +7036,126 @@ def probe_export_redaction() -> dict[str, Any]:
         "parsed_json_redacted": local_remote not in str(redacted.get("parsed_json") or ""),
         "redacted_payload_detected": has_redacted_path_token(redacted),
     }
+
+
+def probe_recover_requires_primary_sources() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recover-primary-") as tmpdir:
+        temp_root = Path(tmpdir).resolve()
+        root = temp_root / "repo"
+        root.mkdir(parents=True, exist_ok=True)
+        health_dir = temp_root / "wrapper-health"
+        health_dir.mkdir(parents=True, exist_ok=True)
+        (health_dir / "state.json").write_text("{\"status\":\"open\"}\n", encoding="utf-8")
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            backup_first=True,
+            max_conflicts=999999,
+            limit=None,
+        )
+        env_name = "CODEX_WRAPPER_HEALTH_STATE_DIR"
+        previous_env = os.environ.get(env_name)
+        stdout = io.StringIO()
+        try:
+            os.environ[env_name] = str(health_dir)
+            with contextlib.redirect_stdout(stdout):
+                exit_code = command_recover(args)
+        finally:
+            if previous_env is None:
+                os.environ.pop(env_name, None)
+            else:
+                os.environ[env_name] = previous_env
+        payload_text = stdout.getvalue().strip()
+        payload = json.loads(payload_text) if payload_text else {}
+        report_path = Path(str(payload.get("recovery_report") or ""))
+        report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+        backup_dir = db_path.parent / "backups"
+        backup_count = len(list(backup_dir.glob("*.sqlite3"))) if backup_dir.exists() else 0
+        artifact_sources = payload.get("artifact_sources")
+        expected_artifact = "wrapper_health_state:operator_local:1"
+        ok = all(
+            (
+                exit_code == EXIT_RECOVERY_INCOMPLETE,
+                payload.get("status") == "incomplete",
+                payload.get("sources") == [],
+                report.get("status") == "incomplete",
+                report.get("sources") == [],
+                isinstance(artifact_sources, list),
+                expected_artifact in artifact_sources,
+                report.get("artifact_sources") == artifact_sources,
+                backup_count == 0,
+            )
+        )
+        return {
+            "exit_code": exit_code,
+            "status": payload.get("status"),
+            "sources": payload.get("sources"),
+            "artifact_sources": artifact_sources,
+            "report_status": report.get("status"),
+            "report_sources": report.get("sources"),
+            "backup_count": backup_count,
+            "ok": ok,
+        }
+
+
+def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recover-conflicts-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", str(root), "config", "user.email", "probe@example.com"], check=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "Probe User"], check=True)
+        (root / "a.sh").write_text("echo probe\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "a.sh"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "init"], check=True)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        recovery_dir = db_path.parent / "recovery"
+        recovery_dir.mkdir(parents=True, exist_ok=True)
+        (recovery_dir / "bad.jsonl").write_text("{bad json\n", encoding="utf-8")
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            backup_first=True,
+            max_conflicts=0,
+            limit=None,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_recover(args)
+        payload_text = stdout.getvalue().strip()
+        payload = load_single_json_document(payload_text) if payload_text else {}
+        report_path = Path(str(payload.get("recovery_report") or ""))
+        report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+        import_results = payload.get("import_results")
+        report_import_results = report.get("import_results")
+        jsonl_results = [row for row in import_results or [] if row.get("source") == "import-jsonl"]
+        ok = all(
+            (
+                exit_code == EXIT_IMPORT_CONFLICT,
+                payload.get("status") == "conflicts",
+                report.get("status") == "conflicts",
+                isinstance(import_results, list),
+                import_results == report_import_results,
+                bool(payload_text),
+                any(int(row.get("exit_code", -1)) == EXIT_IMPORT_CONFLICT for row in jsonl_results),
+                any(isinstance(row.get("result"), dict) and row["result"].get("status") == "conflicts" for row in jsonl_results),
+            )
+        )
+        return {
+            "exit_code": exit_code,
+            "status": payload.get("status"),
+            "payload_text": payload_text,
+            "report_status": report.get("status"),
+            "import_results": import_results,
+            "report_import_results": report_import_results,
+            "ok": ok,
+        }
 
 
 def snapshot_row_for_event(
@@ -6804,6 +7223,7 @@ def has_clean_finish_evidence(
 def record_selected_file_delta(
     conn: sqlite3.Connection,
     *,
+    root: Path,
     repo_id: int,
     cycle_pk: int | None,
     file_id: int | None,
@@ -6822,6 +7242,7 @@ def record_selected_file_delta(
     if not before and path:
         before = worktree_snapshot_path_row(
             conn,
+            root=root,
             repo_id=repo_id,
             cycle_pk=cycle_pk,
             path=path,
@@ -7267,6 +7688,7 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
             )
             record_selected_file_delta(
                 conn,
+                root=root,
                 repo_id=repo_id,
                 cycle_pk=cycle_pk,
                 file_id=cycle_selected_file_id,
@@ -7431,6 +7853,17 @@ def record_one_pass_result(
     file_id = ensure_file_identity(conn, repo_id, path, source_id=source_id)
     attempted = 1 if outcome not in {"planned", "unknown"} else 0
     resolved_planned = 1 if (planned is not None and bool(planned)) or (planned is None and outcome == "planned") else 0
+    result_epoch = epoch_now()
+    if outcome in COMPLETED_OUTCOMES:
+        insert_file_snapshot(
+            conn,
+            root,
+            repo_id,
+            path,
+            file_id=file_id,
+            source_id=source_id,
+            observed_epoch=result_epoch,
+        )
     cur = conn.execute(
         """
         insert into file_pass_runs(
@@ -7453,7 +7886,7 @@ def record_one_pass_result(
             confidence,
             source_id,
             raw_line or None,
-            epoch_now(),
+            result_epoch,
         ),
     )
     run_id = int(cur.lastrowid)
@@ -8020,6 +8453,7 @@ def command_import_git(args: argparse.Namespace) -> int:
             print_json({"status": "unavailable", "reason": "git_rev_list_failed"})
             return EXIT_GIT_UNAVAILABLE
         shas = [line.strip() for line in revs.splitlines() if line.strip()]
+        limited_import = args.limit is not None
         if args.limit:
             shas = shas[-int(args.limit) :]
         head_sha = git_output(root, ["rev-parse", "--verify", "HEAD"], "")
@@ -8273,7 +8707,14 @@ def command_import_git(args: argparse.Namespace) -> int:
               incomplete_reason=excluded.incomplete_reason,
               source_id=excluded.source_id
             """,
-            (repo_id, shas[-1] if shas else "", epoch_now(), 0 if shallow else 1, "shallow_repository" if shallow else None, source_id),
+            (
+                repo_id,
+                shas[-1] if shas else "",
+                epoch_now(),
+                0 if limited_import or shallow else 1,
+                "limited_import" if limited_import else ("shallow_repository" if shallow else None),
+                source_id,
+            ),
         )
         finish_import(
             conn,
@@ -8851,7 +9292,7 @@ def reject_nonfinite_json_constant(token: str) -> None:
 
 
 def load_strict_json(raw: str) -> Any:
-    return json.loads(raw, parse_constant=reject_nonfinite_json_constant)
+    return load_single_json_document(raw)
 
 
 def sanitize_import_identity_payload(table: str, payload: dict[str, Any], context: tuple[str, str, str]) -> dict[str, Any]:
@@ -9559,6 +10000,20 @@ def recover_artifact_refs(
     return recorded
 
 
+def run_json_subcommand(command: Any, args: argparse.Namespace) -> tuple[int, dict[str, Any] | None]:
+    stdout = io.StringIO()
+    with contextlib.redirect_stdout(stdout):
+        rc = int(command(args))
+    payload_text = stdout.getvalue().strip()
+    if not payload_text:
+        return rc, None
+    try:
+        payload = load_single_json_document(payload_text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return rc, {"status": "invalid_subcommand_stdout"}
+    return rc, payload if isinstance(payload, dict) else {"payload": payload}
+
+
 def command_recover(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
@@ -9573,7 +10028,8 @@ def command_recover(args: argparse.Namespace) -> int:
         create_if_missing=True,
     )
     init_schema(conn, root, raw_storage_mode=raw_storage_mode)
-    sources = []
+    sources: list[str] = []
+    artifact_sources: list[str] = []
     backup_path = None
     if args.backup_first and preexisting_db:
         backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
@@ -9617,33 +10073,71 @@ def command_recover(args: argparse.Namespace) -> int:
         sources.append("backup:1")
     conn.close()
     status = "ok"
+    exit_code = EXIT_SUCCESS
+    import_results: list[dict[str, Any]] = []
+
+    def note_import_result(
+        source: str,
+        rc: int,
+        *,
+        path: str | None = None,
+        subcommand_result: dict[str, Any] | None = None,
+    ) -> None:
+        nonlocal status, exit_code
+        result_row: dict[str, Any] = {"source": source, "exit_code": rc}
+        if path is not None:
+            result_row["path"] = path
+        if subcommand_result is not None:
+            result_row["result"] = subcommand_result
+        import_results.append(result_row)
+        if subcommand_result and subcommand_result.get("status") == "invalid_subcommand_stdout":
+            if status == "ok":
+                status = "incomplete"
+            if exit_code == EXIT_SUCCESS:
+                exit_code = EXIT_RECOVERY_INCOMPLETE
+            return
+        if rc == EXIT_SUCCESS:
+            return
+        if rc == EXIT_IMPORT_CONFLICT:
+            status = "conflicts"
+            exit_code = EXIT_IMPORT_CONFLICT
+            return
+        if status == "ok":
+            status = "incomplete"
+        if exit_code == EXIT_SUCCESS:
+            exit_code = EXIT_RECOVERY_INCOMPLETE
+
     if inside_git_repo(root):
         args.raw_storage_mode = raw_storage_mode
-        rc = command_import_git(args)
+        rc, payload = run_json_subcommand(command_import_git, args)
         sources.append(f"git:{rc}")
+        note_import_result("import-git", rc, subcommand_result=payload)
     log_path = root / "Upkeeper.log"
     if log_path.exists():
         log_args = argparse.Namespace(**vars(args))
         log_args.path = str(log_path)
         log_args.raw = False
         log_args.raw_storage_mode = raw_storage_mode
-        command_import_upkeeper_log(log_args)
+        rc, payload = run_json_subcommand(command_import_upkeeper_log, log_args)
         sources.append("upkeeper_log_import:1")
+        note_import_result("import-upkeeper-log", rc, path=str(log_path), subcommand_result=payload)
     change_notes = sorted(root.glob("change_notes_*.md"))
     if change_notes:
         notes_args = argparse.Namespace(**vars(args))
         notes_args.paths = [str(p) for p in change_notes]
         notes_args.raw = False
         notes_args.raw_storage_mode = raw_storage_mode
-        command_import_change_notes(notes_args)
+        rc, payload = run_json_subcommand(command_import_change_notes, notes_args)
         sources.append(f"change_notes_import:{len(change_notes)}")
+        note_import_result("import-change-notes", rc, subcommand_result=payload)
     exports = sorted((db_path.parent / "exports").glob("*.jsonl"))
     for export in exports:
         import_args = argparse.Namespace(**vars(args))
         import_args.path = str(export)
         import_args.max_conflicts = args.max_conflicts
         import_args.raw_storage_mode = raw_storage_mode
-        command_import_jsonl(import_args)
+        rc, payload = run_json_subcommand(command_import_jsonl, import_args)
+        note_import_result("import-jsonl", rc, path=str(export), subcommand_result=payload)
     if exports:
         sources.append(f"export_import:{len(exports)}")
     recovery_jsonls = sorted((db_path.parent / "recovery").glob("*.jsonl"))
@@ -9652,7 +10146,8 @@ def command_recover(args: argparse.Namespace) -> int:
         import_args.path = str(recovery_jsonl)
         import_args.max_conflicts = args.max_conflicts
         import_args.raw_storage_mode = raw_storage_mode
-        command_import_jsonl(import_args)
+        rc, payload = run_json_subcommand(command_import_jsonl, import_args)
+        note_import_result("import-jsonl", rc, path=str(recovery_jsonl), subcommand_result=payload)
     if recovery_jsonls:
         sources.append(f"recovery_import:{len(recovery_jsonls)}")
     for marker_root in [root / "runtime/unaddressed-tool-failures/open", root / "runtime/unaddressed-tool-failures/resolved"]:
@@ -9666,27 +10161,38 @@ def command_recover(args: argparse.Namespace) -> int:
                 raw_storage_mode=raw_storage_mode,
             )
             sources.append("tool_failure_marker_import:1")
-    sources.extend(
-        recover_artifact_refs(
-            root,
-            db_path,
-            args.journal_mode,
-            allow_unsafe_db=args.allow_unsafe_db,
-            raw_storage_mode=raw_storage_mode,
-        )
+    # Artifact refs preserve operator-local evidence, but they do not turn an
+    # otherwise empty recovery into a successful one.
+    artifact_sources = recover_artifact_refs(
+        root,
+        db_path,
+        args.journal_mode,
+        allow_unsafe_db=args.allow_unsafe_db,
+        raw_storage_mode=raw_storage_mode,
     )
-    if not sources:
+    if not sources and status == "ok":
         status = "incomplete"
+        if exit_code == EXIT_SUCCESS:
+            exit_code = EXIT_RECOVERY_INCOMPLETE
     recovery_dir = db_path.parent / "recovery"
     if not recovery_dir.exists():
         recovery_dir.mkdir(parents=True, exist_ok=True)
         chmod_private(recovery_dir, is_dir=True, created_by_invocation=True)
     report_path = recovery_dir / f"recovery-{artifact_now()}.json"
     report = {"status": status, "sources": sources}
+    if artifact_sources:
+        report["artifact_sources"] = artifact_sources
+    if import_results:
+        report["import_results"] = import_results
     report_path.write_text(json_dumps(report) + "\n", encoding="utf-8")
     chmod_private(report_path)
-    print_json({"status": status, "sources": sources, "recovery_report": str(report_path)})
-    return EXIT_SUCCESS if status == "ok" else EXIT_RECOVERY_INCOMPLETE
+    response = {"status": status, "sources": sources, "recovery_report": str(report_path)}
+    if artifact_sources:
+        response["artifact_sources"] = artifact_sources
+    if import_results:
+        response["import_results"] = import_results
+    print_json(response)
+    return EXIT_SUCCESS if exit_code == EXIT_SUCCESS else exit_code
 
 
 def import_failure_markers(
@@ -10044,7 +10550,10 @@ def query_changed_since_last_pass(conn: sqlite3.Connection, root: Path, repo_id:
                     (repo_id, file_id, latest_pass),
                 ).fetchone()
                 current_hash = live_file_metadata(root, path).get("worktree_hash")
-                if snap and snap["worktree_hash"] and current_hash and snap["worktree_hash"] != current_hash:
+                if snap is None:
+                    changed = True
+                    reason = "missing_snapshot_at_latest_completed_pass"
+                elif snap["worktree_hash"] and current_hash and snap["worktree_hash"] != current_hash:
                     changed = True
                     reason = "worktree_hash_changed"
                 else:
@@ -10082,12 +10591,16 @@ def pass_coverage_counts_for_file(conn: sqlite3.Connection, repo_id: int, file_i
 
 
 def annotate_max_cover_scores(conn: sqlite3.Connection, repo_id: int, rows: list[dict[str, Any]]) -> None:
+    registry_order = {item["pass_code"]: i for i, item in enumerate(PASS_REGISTRY)}
     for row in rows:
         if row["candidate_state"] != "eligible":
             continue
         file_id = file_id_for_path(conn, repo_id, row["path"])
         counts = pass_coverage_counts_for_file(conn, repo_id, file_id)
-        unrun = sorted(pass_code for pass_code, count in counts.items() if count == 0)
+        unrun = sorted(
+            (pass_code for pass_code, count in counts.items() if count == 0),
+            key=lambda code: registry_order.get(code, 999_999),
+        )
         min_count = min(counts.values()) if counts else 0
         row["score_json"] = json_dumps(
             {

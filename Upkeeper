@@ -5833,6 +5833,8 @@ main() {
   local session_last_rate_limit_primary_used_percent session_last_rate_limit_secondary_used_percent
   local quota_session_identity_changed
   local primary_failure_classification
+  local backend_usage_limit_detection backend_usage_limit_model backend_usage_limit_reset_text backend_usage_limit_reset_epoch
+  local backend_usage_limit_detected=0
   local post_run_should_stop=0
   local post_run_stop_reason=""
   local primary_session_diagnostics_source=""
@@ -5886,6 +5888,21 @@ main() {
       IFS=$'	' read -r status_marker status_marker_blocker_reason _ <<<"$status_marker_blocker_recovery"
       status_marker_source="blocker_request"
       log_line "WARN" "status_marker.recovered_from_blocker_request marker=$status_marker reason=$status_marker_blocker_reason codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
+    fi
+  fi
+  if [[ "$codex_exit" -ne 0 && -z "$status_marker" ]]; then
+    if backend_usage_limit_detection="$(backend_usage_limit_summary_from_transcript "$RUN_TRANSCRIPT_FILE")"; then
+      IFS=$'	' read -r backend_usage_limit_model backend_usage_limit_reset_text backend_usage_limit_reset_epoch <<<"$backend_usage_limit_detection"
+      if ! [[ "$backend_usage_limit_reset_epoch" =~ ^[0-9]+$ && "$backend_usage_limit_reset_epoch" -gt "$(date '+%s')" ]]; then
+        backend_usage_limit_reset_epoch="$(($(date '+%s') + 3600))"
+        backend_usage_limit_reset_text="${backend_usage_limit_reset_text:-unparsed_reset_time}"
+      fi
+      backend_usage_limit_detected=1
+      primary_failure_classification="PRIMARY_BACKEND_USAGE_LIMIT"
+      log_line "WARN" "primary.backend_usage_limit_detected target_model=$CODEX_MODEL reported_model=$(shell_quote "${backend_usage_limit_model:-unknown}") codex_exit=$codex_exit status_marker=missing session_end_state=$session_end_state blocked_until=$(shell_quote "$(format_epoch_local "$backend_usage_limit_reset_epoch")") transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1"
+      if ! write_primary_usage_limit_block_marker "$backend_usage_limit_reset_epoch" "${backend_usage_limit_reset_text:-}" "after_run"; then
+        log_line "WARN" "primary.backend_usage_limit_marker_unavailable target_model=$CODEX_MODEL codex_exit=$codex_exit reset_epoch=${backend_usage_limit_reset_epoch:-unknown}"
+      fi
     fi
   fi
   if upkeeper_source_mutation_guard_enabled && [[ -n "$source_mutation_guard_before" ]]; then
@@ -5966,6 +5983,10 @@ main() {
     log_line "WARN" "quota.guardrails bypassed=1 phase=after_run target_model=$CODEX_MODEL reason=$(shell_quote "$(quota_public_stop_reason "$post_run_stop_reason")") primary_decision=$after_primary_guardrail_decision secondary_decision=$after_secondary_guardrail_decision codex_exit=$codex_exit status_marker=${status_marker:-missing}"
     post_run_should_stop=0
   fi
+  if [[ "$post_run_should_stop" -eq 1 && "$backend_usage_limit_detected" == "1" ]]; then
+    log_line "WARN" "quota.guardrails phase=after_run target_model=$CODEX_MODEL action=defer_to_backend_usage_limit primary_decision=$after_primary_guardrail_decision secondary_decision=$after_secondary_guardrail_decision codex_exit=$codex_exit status_marker=${status_marker:-missing}"
+    post_run_should_stop=0
+  fi
 
   if [[ "$post_run_should_stop" -eq 1 ]]; then
     if [[ "$codex_exit" -ne 0 ]]; then
@@ -6041,6 +6062,15 @@ main() {
         ensure_codex_session_store_writable_or_exit "after_run" "1"
         ensure_codex_arg0_tmp_clean_or_exit "after_run" "1"
         ensure_codex_bwrap_tmp_writable_or_exit "after_run" "1"
+      fi
+      if [[ "$backend_usage_limit_detected" == "1" ]]; then
+        if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
+          local fallback_exit=0
+          run_locked_fallback_cycle "primary_backend_usage_limit" "target_model=$CODEX_MODEL codex_exit=$codex_exit status_marker=${status_marker:-missing} session_end_state=$session_end_state blocked_until_epoch=$backend_usage_limit_reset_epoch" || fallback_exit=$?
+          finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=primary_backend_usage_limit final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
+        fi
+        log_line "WARN" "primary.backend_usage_limit stop target_model=$CODEX_MODEL blocked_until=$(shell_quote "$(format_epoch_local "$backend_usage_limit_reset_epoch")") action=wait_until_reset_or_switch_primary_model"
+        finish_cycle 7 PRIMARY_BACKEND_USAGE_LIMIT WARN "codex_exit=$codex_exit session_end_state=$session_end_state target_model=$CODEX_MODEL blocked_until_epoch=$backend_usage_limit_reset_epoch"
       fi
       if [[ "$codex_exit" -ne 0 && "$session_end_state" == "codex_no_output" ]]; then
         log_line "ERROR" "codex exited non-zero without transcript output"

@@ -6,12 +6,20 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-19: backlog validation gate and Lattice snapshot repair:
+	1. Backlog per-bug and batch validation now explicitly return on failed syntax, compile, focused test, docs, diff, quick-validator, commit, or push commands, so Bash conditional invocation cannot mask a failed local validation step and continue to commit.
+	2. The local quick validator now source-tests the backlog commit gate with simulated failing validation commands, covering the exact failure mode where a focused Lattice test failed but the launcher still staged and committed.
+	3. Lattice opt-in worktree snapshot inventory again stores HMAC-only path identities in `worktree_snapshot_paths` while preserving cycle-local lookup and delta-event recording by `path_hmac`, fixing the failing `tests/lattice_test.bash` privacy assertion from PR `#410`.
+	4. Session-store preflight validation and docs now match the fail-closed issue `#128` behavior: missing `$CODEX_HOME/sessions` directories are created private, while owned weak-mode directories are rejected without chmod repair before any write probe or backend Codex launch.
+
 2026-05-18: backlog live-output emphasis:
 	1. Interactive backlog watch output now colors `PAGE` timestamps red without blink, keeps the `PAGE` block and marker bold/blinking red, and colors `--FYI--` timestamps orange with bold orange marker text while preserving plain loop logs.
 	2. Backlog invocations now emit local-only green `##### ##### #####` start and finish blocks around the locked-in job, showing the target, reason, expected outcome, result, start/end time, runtime, and final disposition before the outer loop sleeps.
 	3. Issue-targeted backlog passes that exit cleanly with no tracked changes are now deferred for the current backlog branch, preventing already-addressed or no-op issues from being selected repeatedly in the same loop.
 	4. Custom `CODEX_LOG_FILE` paths remain honored as live log sinks, while log rotation and sibling archive pruning stay blocked for custom paths unless explicitly enabled with `CODEX_LOG_FILE_ALLOW_UNSAFE=1` and a trusted Upkeeper rotation marker.
 	5. Backlog PR-check waits now print local `gh`/`jq` progress details while holding the owner lease, including pass/pending/fail counts, the active check, elapsed check time, the current Actions step when available, and the check URL.
+	6. Interactive `PAGE` lines now render the timestamp as bright white text on a red background, render the non-error payload text bright white, and highlight the `ERROR` text inside `[ERROR]` with the same bold red blink used by the `PAGE` marker.
+	7. Backend "usage limit" exits before any agent message now become hard local quota cooldown markers instead of missing-status repair obligations. Backlog honors those hard markers even in burn-mode bypass and hibernates until reset instead of retrying the exhausted model.
 
 2026-05-18: backlog quality gates:
 	1. Backlog invocations with recorded fixes now wait for the current PR checks before selecting another issue, stopping on failed checks and holding the local owner lease while checks remain pending.

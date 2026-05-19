@@ -274,7 +274,8 @@ backlog_alert_color_enabled() {
 backlog_color_attention_line() {
   local line="$1"
   local ts rest marker payload reset
-  local timestamp_style block_style marker_style ts_text block_text marker_field marker_text
+  local timestamp_style block_style marker_style page_error_style page_payload_style
+  local ts_text block_text marker_field marker_text payload_text
 
   if [[ "$line" == "$BACKLOG_JOB_SUMMARY_BAR" ]]; then
     if backlog_alert_color_enabled; then
@@ -300,13 +301,18 @@ backlog_color_attention_line() {
   timestamp_style=""
   block_style=""
   marker_style=""
+  page_error_style=""
+  page_payload_style=""
   case "$marker" in
     PAGE)
-      timestamp_style=$'\033[31m'
+      timestamp_style=$'\033[97;41m'
+      page_payload_style=$'\033[97m'
       if [[ "$BACKLOG_ALERT_BLINK" == "1" ]]; then
         block_style=$'\033[5;1;31m'
+        page_error_style=$'\033[5;1;31m'
       else
         block_style=$'\033[1;31m'
+        page_error_style=$'\033[1;31m'
       fi
       marker_style="$block_style"
       ;;
@@ -339,6 +345,7 @@ backlog_color_attention_line() {
   block_text="$BACKLOG_VISUAL_BLOCK"
   printf -v marker_field '%-7s' "$marker"
   marker_text="$marker_field"
+  payload_text="$payload"
   if [[ -n "$timestamp_style" ]]; then
     ts_text="${timestamp_style}${ts}${reset}"
   fi
@@ -348,8 +355,18 @@ backlog_color_attention_line() {
   if [[ -n "$marker_style" ]]; then
     marker_text="${marker_style}${marker_field}${reset}"
   fi
-  if [[ -n "$payload" ]]; then
-    printf '%s %s %s %s\n' "$ts_text" "$block_text" "$marker_text" "$payload"
+  if [[ "$marker" == "PAGE" && -n "$page_error_style" && "$payload_text" == *"[ERROR]"* ]]; then
+    if [[ -n "$page_payload_style" ]]; then
+      payload_text="${payload_text//\[ERROR\]/[${page_error_style}ERROR${reset}${page_payload_style}]}"
+    else
+      payload_text="${payload_text//\[ERROR\]/[${page_error_style}ERROR${reset}]}"
+    fi
+  fi
+  if [[ "$marker" == "PAGE" && -n "$page_payload_style" && -n "$payload_text" ]]; then
+    payload_text="${page_payload_style}${payload_text}${reset}"
+  fi
+  if [[ -n "$payload_text" ]]; then
+    printf '%s %s %s %s\n' "$ts_text" "$block_text" "$marker_text" "$payload_text"
   else
     printf '%s %s %s\n' "$ts_text" "$block_text" "$marker_text"
   fi
@@ -1452,11 +1469,13 @@ quota_preflight_allows_backlog_run() {
   source "$ROOT_DIR/lib/upkeeper/quota_guardrails.bash"
   source "$ROOT_DIR/lib/upkeeper/quota_block_markers.bash"
 
-  if [[ "$BACKLOG_QUOTA_COOLDOWN_BYPASS" != "1" ]] && marker_path="$(latest_active_primary_quota_block_marker "$CODEX_MODEL" 2>/dev/null)"; then
+  if marker_path="$(latest_active_primary_quota_block_marker "$CODEX_MODEL" 2>/dev/null)"; then
     marker_epoch="$(backlog_marker_field "$marker_path" "blocked_until_epoch")"
     marker_bucket="$(backlog_marker_field "$marker_path" "blocked_bucket")"
     marker_reason="$(backlog_marker_field "$marker_path" "reason")"
-    backlog_hibernate_until_epoch "$marker_epoch" "${marker_bucket:-primary}" "${marker_reason:-active quota marker}" "quota_marker" || return "$?"
+    if [[ "$BACKLOG_QUOTA_COOLDOWN_BYPASS" != "1" || "$marker_bucket" == "backend_usage_limit" || "$marker_reason" == "backend_usage_limit" ]]; then
+      backlog_hibernate_until_epoch "$marker_epoch" "${marker_bucket:-primary}" "${marker_reason:-active quota marker}" "quota_marker" || return "$?"
+    fi
   fi
 
   quota_json="$(quota_state_json "$CODEX_MODEL")" || return 0
@@ -1740,9 +1759,9 @@ run_changed_python_compile_validation() {
   done < <(git diff --name-only -z --diff-filter=ACMR -- '*.py')
 
   [[ "${#python_files[@]}" -gt 0 ]] || return 0
-  require_command python3
+  require_command python3 || return $?
   log "per-bug validation: python compile (${#python_files[@]} changed file(s))"
-  python3 -m py_compile "${python_files[@]}"
+  python3 -m py_compile "${python_files[@]}" || return $?
 }
 
 run_focused_issue_validation() {
@@ -1752,10 +1771,10 @@ run_focused_issue_validation() {
   [[ -n "$issue_number" ]] || return 0
   if [[ "$target_hint" == "tools/upkeeper_lattice.py" ]] || backlog_git_path_changed "tools/upkeeper_lattice.py"; then
     if backlog_git_path_changed "tools/upkeeper_lattice.py"; then
-      require_command python3
+      require_command python3 || return $?
       log "per-bug validation: lattice focused coverage (tests/lattice_test.bash)"
-      python3 -m py_compile tools/upkeeper_lattice.py
-      bash tests/lattice_test.bash
+      python3 -m py_compile tools/upkeeper_lattice.py || return $?
+      bash tests/lattice_test.bash || return $?
     fi
   fi
 }
@@ -1770,11 +1789,11 @@ run_per_bug_validation() {
   validation_start="$SECONDS"
   backlog_update_active_owner_heartbeat "validating" "per_bug_validation" "" "owner_pid_start_cwd_verified"
   log "per-bug validation: bash syntax"
-  bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh
-  run_changed_python_compile_validation
-  run_focused_issue_validation "$issue_number" "$target_hint"
+  bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || return $?
+  run_changed_python_compile_validation || return $?
+  run_focused_issue_validation "$issue_number" "$target_hint" || return $?
   log "per-bug validation: diff whitespace"
-  git diff --check
+  git diff --check || return $?
   log "per-bug validation: complete in $((SECONDS - validation_start))s"
 }
 
@@ -1786,17 +1805,17 @@ run_batch_validation() {
   validation_start="$SECONDS"
   backlog_update_active_owner_heartbeat "validating" "batch_validation" "" "owner_pid_start_cwd_verified"
   log "batch validation: bash syntax"
-  bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh
+  bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || return $?
   log "batch validation: unit tests"
   for test_script in tests/*.bash; do
-    bash "$test_script"
+    bash "$test_script" || return $?
   done
   log "batch validation: docs quick checks"
-  tools/check_public_docs.sh --quick
+  tools/check_public_docs.sh --quick || return $?
   log "batch validation: diff whitespace"
-  git diff --check
+  git diff --check || return $?
   log "batch validation: quick validator"
-  tools/validate_upkeeper.sh --quick
+  tools/validate_upkeeper.sh --quick || return $?
   log "batch validation: complete in $((SECONDS - validation_start))s"
 }
 
@@ -1806,26 +1825,26 @@ commit_and_push_changes() {
   local target_hint="${3:-}"
   local message
 
-  cleanup_ephemeral_artifacts
+  cleanup_ephemeral_artifacts || return $?
   has_worktree_changes || return 1
   case "$BACKLOG_PER_BUG_VALIDATION_MODE" in
     none)
       log "per-bug validation: skipped by BACKLOG_PER_BUG_VALIDATION_MODE=none"
       ;;
     light)
-      run_per_bug_validation "$issue_number" "$target_hint"
+      run_per_bug_validation "$issue_number" "$target_hint" || return $?
       ;;
     full)
-      run_batch_validation
+      run_batch_validation || return $?
       ;;
     *)
       fail "unsupported BACKLOG_PER_BUG_VALIDATION_MODE: $BACKLOG_PER_BUG_VALIDATION_MODE"
       ;;
   esac
-  cleanup_ephemeral_artifacts
+  cleanup_ephemeral_artifacts || return $?
   log "staging tracked changes"
-  git add --all
-  git diff --cached --check
+  git add --all || return $?
+  git diff --cached --check || return $?
   if [[ -n "$commit_message" ]]; then
     message="$commit_message"
   elif [[ -n "$issue_number" ]]; then
@@ -1834,9 +1853,9 @@ commit_and_push_changes() {
     message="Apply backlog Upkeeper pass"
   fi
   log "committing: $message"
-  git commit -m "$message"
+  git commit -m "$message" || return $?
   log "pushing branch updates"
-  git push
+  git push || return $?
   return 0
 }
 
@@ -2228,6 +2247,9 @@ main() {
     defer_issue "$issue_number"
     log "deferred blocked issue #$issue_number for this backlog branch"
     backlog_emit_job_finish_summary "$commit_result" "deferred issue #$issue_number for this backlog branch"
+    exit 0
+  elif [[ "$run_status" -eq 7 ]]; then
+    backlog_emit_job_finish_summary "Upkeeper deferred on quota or backend usage limit" "quota cooldown marker recorded; outer loop may sleep before the next preflight"
     exit 0
   elif [[ "$run_status" -ne 0 ]]; then
     backlog_emit_job_finish_summary "Upkeeper exited with status $run_status" "launcher exiting with status $run_status"

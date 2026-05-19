@@ -162,6 +162,74 @@ print(state)
 PY
 }
 
+backend_usage_limit_summary_from_transcript() {
+  local transcript_file="$1"
+  [[ -n "$transcript_file" && -f "$transcript_file" ]] || return 1
+
+  python3 - "$transcript_file" <<'PY'
+import calendar
+from datetime import datetime
+from pathlib import Path
+import re
+import sys
+import time
+
+path = Path(sys.argv[1])
+try:
+    with path.open("rb") as handle:
+        handle.seek(0, 2)
+        size = handle.tell()
+        handle.seek(max(0, size - 256 * 1024))
+        data = handle.read()
+except OSError:
+    raise SystemExit(1)
+
+text = data.decode("utf-8", errors="replace")
+patterns = [
+    re.compile(
+        r"You(?:'ve| have) hit your usage limit for\s+"
+        r"([A-Za-z0-9._:-]+)\.\s+"
+        r"Switch to another model now, or try again at\s+([^\n.]+)\.",
+        re.IGNORECASE,
+    ),
+]
+
+
+def parse_local_epoch(value: str) -> int:
+    cleaned = re.sub(r"\b(\d{1,2})(st|nd|rd|th)\b", r"\1", value.strip(), flags=re.I)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    formats = (
+        "%B %d, %Y %I:%M %p",
+        "%b %d, %Y %I:%M %p",
+        "%B %d, %Y %H:%M",
+        "%b %d, %Y %H:%M",
+    )
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(cleaned, fmt)
+        except ValueError:
+            continue
+        return int(time.mktime(parsed.timetuple()))
+    try:
+        return int(calendar.timegm(datetime.fromisoformat(cleaned).timetuple()))
+    except ValueError:
+        return 0
+
+
+matches = []
+for pattern in patterns:
+    matches.extend(pattern.findall(text))
+
+if not matches:
+    raise SystemExit(1)
+
+model, reset_text = matches[-1]
+reset_text = re.sub(r"\s+", " ", reset_text.strip())
+reset_epoch = parse_local_epoch(reset_text)
+print(f"{model}\t{reset_text}\t{reset_epoch}")
+PY
+}
+
 session_diagnostics_json() {
   local session_file="$1"
   [[ -n "$session_file" && -f "$session_file" ]] || {

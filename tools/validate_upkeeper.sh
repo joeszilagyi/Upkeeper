@@ -9,6 +9,7 @@ MODE="quick"
 VALIDATION_PROFILE="0"
 VALIDATION_INTEGRATION_TIMEOUT_SECONDS="${VALIDATION_INTEGRATION_TIMEOUT_SECONDS:-300}"
 VALIDATION_FULL_TIMEOUT_SECONDS="${VALIDATION_FULL_TIMEOUT_SECONDS:-420}"
+VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS="${VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS:-600}"
 
 WRAPPER_REQUIRED_COMMANDS=(
   awk
@@ -1382,7 +1383,7 @@ check_force_added_gitignored_target_selection() {
   log "checking force-added Git-ignored target exclusion"
   temp_dir="$(mktemp -d /tmp/upkeeper-gitignored-target.XXXXXX)"
   client="$temp_dir/client"
-  manifest_path="$temp_dir/manifest.json"
+  manifest_path="$client/runtime/upkeeper-file-manifest-validation.json"
   lattice_db_path="$temp_dir/client/runtime/upkeeper-lattice/lattice-direct.sqlite3"
   mkdir -p "$client"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/10/fake-session.jsonl" "gpt-5.5"
@@ -1478,7 +1479,7 @@ check_symlink_target_selection_guard() {
   log "checking symlink target selection guard"
   temp_dir="$(mktemp -d /tmp/upkeeper-symlink-target.XXXXXX)"
   client="$temp_dir/client"
-  manifest_path="$temp_dir/manifest.json"
+  manifest_path="$client/runtime/upkeeper-file-manifest-validation.json"
   outside_target="$temp_dir/outside-sentinel.txt"
   lattice_db_path="$temp_dir/client/runtime/upkeeper-lattice/lattice-direct.sqlite3"
   mkdir -p "$client"
@@ -2663,11 +2664,12 @@ EOF
 }
 
 check_file_manifest_selection() {
-  local temp_dir manifest_path output rc lattice_db_path
+  local temp_dir manifest_path output rc lattice_db_path unsafe_manifest_path
 
   log "checking file manifest selection"
   temp_dir="$(mktemp -d /tmp/upkeeper-file-manifest.XXXXXX)"
-  manifest_path="$temp_dir/manifest.json"
+  manifest_path="runtime/upkeeper-file-manifest-validation-${temp_dir##*/}.json"
+  unsafe_manifest_path="$temp_dir/unsafe-manifest.json"
   lattice_db_path="runtime/upkeeper-lattice/file-manifest-${temp_dir##*/}.sqlite3"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
   mkdir -p runtime/upkeeper-lattice
@@ -2712,6 +2714,16 @@ check_file_manifest_selection() {
   grep -Fq "target_depth=1" "$temp_dir/manifest.log" || fail "manifest target depth was not logged"
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/manifest.log" || fail "manifest dry-run did not finish cleanly"
   jq -e '.schema_version == 2 and ((.root_hash // "") | length == 64) and (has("root") | not) and (.files | length) > 0 and ((.files[0].rel_path // "") | length > 0) and ([.files[] | select(has("abs_path"))] | length == 0)' "$manifest_path" >/dev/null || fail "manifest JSON contract is invalid"
+
+  (
+    # Keep the unsafe-path contract covered without adding another expensive
+    # dry-run invocation to this already broad full-validation fixture.
+    source "$ROOT_DIR/lib/upkeeper/codex_io.bash"
+    source "$ROOT_DIR/lib/upkeeper/file_manifest.bash"
+    manifest_path_is_safe "$manifest_path" 0 || exit 1
+    ! manifest_path_is_safe "$unsafe_manifest_path" 0 || exit 2
+    manifest_path_is_safe "$unsafe_manifest_path" 1 || exit 3
+  ) || fail "manifest path safety helper did not enforce runtime-local default and explicit unsafe override"
 
   python3 - "$manifest_path" <<'PY'
 import json
@@ -3002,6 +3014,7 @@ EOF
   [[ "$rc" -eq 3 ]] || fail "invalid selection review module exited $rc, expected 3"
   grep -Fq "unknown review module filter: nope" <<<"$output" || fail "invalid selection review module error was not clear"
 
+  rm -f "$manifest_path" "$manifest_path".tmp
   rm -f "$lattice_db_path" "$lattice_db_path-journal" "$lattice_db_path-wal" "$lattice_db_path-shm"
   rm -r "$temp_dir"
 }
@@ -5066,7 +5079,7 @@ run_bounded_check wrapper_health_log_quoting "$VALIDATION_INTEGRATION_TIMEOUT_SE
 run_bounded_check operator_guide_bootstrap_race "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_operator_guide_bootstrap_race
 run_bounded_check active_lock_incomplete_guard "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_active_lock_incomplete_guard
 run_bounded_check quota_fallback_exit_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_quota_fallback_exit_contract
-run_bounded_check file_manifest_selection "$VALIDATION_FULL_TIMEOUT_SECONDS" check_file_manifest_selection
+run_bounded_check file_manifest_selection "$VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS" check_file_manifest_selection
 run_bounded_check issue_workflow_comment_relay "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_issue_workflow_comment_relay
 run_bounded_check issue_workflow_backend_mode_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_issue_workflow_backend_mode_contract
 run_bounded_check genie_protocol_backend_boundary "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_genie_protocol_backend_boundary

@@ -3,6 +3,36 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Manifest Path Safety Validation Alignment
+
+Status: completed locally
+
+Goal:
+- align full validation with issue `#118` manifest path hardening so fixtures
+  write custom manifests under safe runtime-local paths
+- add deterministic coverage that unsafe manifest paths are rejected unless the
+  explicit unsafe override is active
+- update operator-facing manifest path docs for the unsafe override
+
+Constraints:
+- do not launch real backend Codex validation
+- keep manifest selection deterministic and pre-model
+- preserve the runtime guard; fix the stale tests instead of weakening safety
+
+Files likely touched:
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
+- `git diff --check`
+
 ## Lattice Backup-First Provenance Repair
 
 Status: completed locally

@@ -476,6 +476,8 @@ Prompt behavior:
     bypasses it for this cycle. --refresh-manifest rebuilds and uses the
     manifest immediately.
   - --manifest-file=PATH selects a different local manifest path for this cycle.
+    Manifest paths must stay under runtime/ or another ignored local path unless
+    --allow-unsafe-manifest-path is explicitly set for a trusted one-cycle run.
   - --include-glob=PATTERN and --exclude-glob=PATTERN add local path filters;
     --include-globs=a,b and --exclude-globs=a,b replace the configured lists.
   - --selection-review-modules=p24,p25,p26,p27,p28,p29,p30 filters candidates using

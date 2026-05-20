@@ -17,6 +17,24 @@ Tracked prompts:
 - [`p30-stark-protocol-review.md`](p30-stark-protocol-review.md) - P30 opt-in review module for permanent hardening and non-regression barriers.
 - [`p31-fault-injection-review.md`](p31-fault-injection-review.md) - reserved future P31 contract for deterministic fault-injection scenarios with explicit oracles and recovery proof; not wired as a `--review-module` flag yet.
 
+Reusable review-module contract:
+
+All files matching `prompts/pNN-*.md` intended as reusable review modules should keep a shared structure so future modules can be validated consistently:
+
+- A clear title/header (typically `# PNN ...`)
+- A bounded scope section (applicability and non-goals/boundaries)
+- A trigger/assumption section
+- Verification guidance (what to run locally before/after applying)
+- An output contract + final status/marker discipline
+- A discoverability section covering prompt index/help/compatibility visibility
+
+When adding or modifying a prompt module:
+
+1. Keep this index current with the module file.
+2. Keep operator-facing help/docs/compatibility docs updated when visibility changes.
+3. Add a structural-check in `tools/validate_upkeeper.sh` (or an equivalent validator) so drift fails fast instead of being rediscovered later.
+4. Add/update a focused prompt or fixture to enforce the new contract.
+
 Numbering compatibility:
 
 - P29 remains the public reuse-harvesting review module and its aliases keep

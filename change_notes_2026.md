@@ -6,11 +6,22 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-20: Lattice client-root contract validation repair:
+	1. Lattice pass-registry installation now validates reusable wrapper contracts against the central wrapper source tree instead of the target repository root, so symlinked or client-root Lattice runs no longer fail only because the client checkout does not contain `lib/upkeeper`.
+	2. Future or local pass codes matching the documented `P[0-9A-Za-z_.-]+` shape, such as `P999`, remain accepted as Lattice evidence rows while built-in prompt metadata still comes from the registered pass list.
+	3. Backlog launcher validation now clears inherited watched-stdio state before asserting literal green job-summary bars, so batch validation does not fail just because it is itself being displayed through the backlog watch formatter.
+
 2026-05-19: backlog validation gate and Lattice snapshot repair:
 	1. Backlog per-bug and batch validation now explicitly return on failed syntax, compile, focused test, docs, diff, quick-validator, commit, or push commands, so Bash conditional invocation cannot mask a failed local validation step and continue to commit.
 	2. The local quick validator now source-tests the backlog commit gate with simulated failing validation commands, covering the exact failure mode where a focused Lattice test failed but the launcher still staged and committed.
 	3. Lattice opt-in worktree snapshot inventory again stores HMAC-only path identities in `worktree_snapshot_paths` while preserving cycle-local lookup and delta-event recording by `path_hmac`, fixing the failing `tests/lattice_test.bash` privacy assertion from PR `#410`.
 	4. Session-store preflight validation and docs now match the fail-closed issue `#128` behavior: missing `$CODEX_HOME/sessions` directories are created private, while owned weak-mode directories are rejected without chmod repair before any write probe or backend Codex launch.
+	5. Backlog batch merge now explicitly returns on failed local batch validation even when the merge helper is invoked from a Bash conditional, and the quick validator's interactive-stdio probe now clears inherited watch-mode state so it tests a fresh launcher invocation.
+	6. Preset `RUN_TMP_DIR` paths now record whether the directory existed before private-directory repair, so a fresh wrapper-managed temp directory can be created and stamped locally while truly stale preexisting directories still require a trusted ownership marker.
+	7. Codex arg0 temp cleanup now removes stale matching shim directories only with a trusted Upkeeper/Codex ownership marker and quarantines unmarked matching directories instead of deleting their contents.
+	8. Lattice `recover --backup-first` again records the recovery source before the backup copy and stamps that backup with a pre-recovery artifact reference, preserving the provenance boundary before later local Git imports run.
+	9. Custom file manifest paths are documented and validated as runtime-local or otherwise ignored local state by default; unsafe paths now have explicit full-validator coverage proving they require the one-cycle unsafe override, and the broad file-manifest fixture has its own timeout budget instead of sharing the tighter generic full-check limit.
+	10. Lattice JSONL same-key import conflicts again use the stable `kept_existing` resolution token, malformed-row JSONL fixtures avoid tripping repository-identity fail-closed checks before their intended assertions, and worktree snapshot inventories update file state without linking HMAC-only path rows back to raw `files` identities.
 
 2026-05-18: backlog live-output emphasis:
 	1. Interactive backlog watch output now colors `PAGE` timestamps red without blink, keeps the `PAGE` block and marker bold/blinking red, and colors `--FYI--` timestamps orange with bold orange marker text while preserving plain loop logs.

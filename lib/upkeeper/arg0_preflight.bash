@@ -1,8 +1,11 @@
 ## Codex arg0 temp cleanup.
 ##
 ## Upkeeper owns cleanup for stale Codex `codex-arg0*` shim directories before a
-## live backend launch. Nonmatching directories under the same root are not
-## Upkeeper-managed state and must be left alone.
+## live backend launch. Matching directories under the same root are only
+## deleted when they carry an Upkeeper/Codex ownership marker and must otherwise
+## be quarantined.
+
+ARG0_TMP_OWNERSHIP_MARKER=".upkeeper-arg0.owner"
 
 remove_flat_codex_arg0_dir() {
   local dir="$1"
@@ -17,6 +20,20 @@ remove_flat_codex_arg0_dir() {
   if ! rmdir "$dir" 2>"$err_file"; then
     return 1
   fi
+}
+
+arg0_tmp_is_owned_by_upkeeper() {
+  local dir="$1"
+  local marker_path="$dir/$ARG0_TMP_OWNERSHIP_MARKER"
+  local marker_owner marker_mode marker_header
+
+  [[ -f "$marker_path" && ! -L "$marker_path" ]] || return 1
+  marker_owner="$(stat -Lc '%u' -- "$marker_path" 2>/dev/null || printf '')"
+  marker_mode="$(stat -Lc '%a' -- "$marker_path" 2>/dev/null || printf '')"
+  [[ "$marker_owner" == "$(id -u)" && "$marker_mode" == "600" ]] || return 1
+
+  IFS= read -r marker_header <"$marker_path" || return 1
+  [[ "$marker_header" == "upkeeper-arg0-owner-v1" ]]
 }
 
 codex_arg0_tmp_cleanup_check() {
@@ -72,6 +89,28 @@ codex_arg0_tmp_cleanup_check() {
   for candidate in "${candidates[@]}"; do
     [[ -d "$candidate" && ! -L "$candidate" ]] || continue
     : >"$err_file"
+
+    if ! arg0_tmp_is_owned_by_upkeeper "$candidate"; then
+      if ! mkdir -p "$quarantine_root" 2>"$err_file"; then
+        detail="$(tr '\n' ' ' <"$err_file")"
+        blocked+=("$candidate:quarantine_mkdir_failed:${detail:-unknown_error}")
+        continue
+      fi
+
+      base="$(basename -- "$candidate")"
+      quarantine="$quarantine_root/${base}-$(date '+%Y%m%dT%H%M%S%z')-$$"
+      : >"$err_file"
+      if mv -- "$candidate" "$quarantine" 2>"$err_file"; then
+        quarantined=$((quarantined + 1))
+        quarantines+=("$candidate->missing_marker:$quarantine")
+        continue
+      fi
+
+      detail="$(tr '\n' ' ' <"$err_file")"
+      blocked+=("$candidate:quarantine_failed_missing_marker:${detail:-unknown_error}")
+      continue
+    fi
+
     if remove_flat_codex_arg0_dir "$candidate" "$err_file"; then
       removed=$((removed + 1))
       continue

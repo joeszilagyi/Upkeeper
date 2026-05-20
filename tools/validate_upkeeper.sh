@@ -9,6 +9,7 @@ MODE="quick"
 VALIDATION_PROFILE="0"
 VALIDATION_INTEGRATION_TIMEOUT_SECONDS="${VALIDATION_INTEGRATION_TIMEOUT_SECONDS:-300}"
 VALIDATION_FULL_TIMEOUT_SECONDS="${VALIDATION_FULL_TIMEOUT_SECONDS:-420}"
+VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS="${VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS:-600}"
 
 WRAPPER_REQUIRED_COMMANDS=(
   awk
@@ -477,6 +478,22 @@ check_backlog_launcher_contract() {
     fi
     [[ "$status" == "43" ]]
   ' bash "$ROOT_DIR" || fail "backlog commit path does not stop after per-bug validation failure"
+  BACKLOG_SOURCE_ONLY=1 bash -lc '
+    set -euo pipefail
+    cd "$1"
+    source ./orchestration/backlog.sh
+    run_batch_validation() { return 44; }
+    wait_for_pr_checks() { printf "wait_for_pr_checks should not run after batch validation failure\n" >&2; return 99; }
+    gh() { printf "gh should not run after batch validation failure\n" >&2; return 98; }
+    git() { printf "git should not run after batch validation failure\n" >&2; return 97; }
+    status=0
+    if merge_and_clean 410 backlog/test; then
+      status=0
+    else
+      status="$?"
+    fi
+    [[ "$status" == "44" ]]
+  ' bash "$ROOT_DIR" || fail "backlog merge path does not stop after batch validation failure"
   grep -Fq 'rm -f -- "$ROOT_DIR/\$db"' orchestration/backlog.sh || fail "backlog launcher does not clean literal db scratch artifacts before staging"
   python3 - <<'PY' || fail "backlog autoshelve no longer runs before gh/jq/rg dependency gates"
 from pathlib import Path
@@ -500,7 +517,9 @@ PY
     mkdir -p "$temp_dir"
     printf '2026-05-15T17:21:47 █ RUN     backlog: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh\n' >"$temp_dir/loop.log"
     status=0
-    BACKLOG_STDIO_AUTODETACH_PROBE=1 BACKLOG_LOOP_LOG_FILE="$temp_dir/loop.log" \
+    env -u BACKLOG_STDIO_WATCHED -u BACKLOG_STDIO_AUTODETACHED \
+      -u BACKLOG_ALLOW_INTERACTIVE_STDIO -u BACKLOG_ALLOW_INTERACTIVE_STDIN \
+      BACKLOG_STDIO_AUTODETACH_PROBE=1 BACKLOG_LOOP_LOG_FILE="$temp_dir/loop.log" \
       script -qfec ./orchestration/backlog.sh "$temp_dir/typescript" >/dev/null 2>&1 || status="$?"
     [[ "$status" == "0" ]] || fail "backlog launcher interactive stdio auto-detach probe exited $status"
     grep -Fq '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to '"$temp_dir/loop.log" "$temp_dir/typescript" ||
@@ -576,6 +595,8 @@ PY
     BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:04 previous_run.anomaly_summary x")" >"$2/fyi-color.out"
     BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:05 backlog: running Upkeeper for issue #1")" >"$2/run-color.out"
     BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$BACKLOG_JOB_SUMMARY_BAR" >"$2/job-bar-color.out"
+    BACKLOG_STDIO_WATCHED=0
+    BACKLOG_STDIO_AUTODETACHED=0
     backlog_emit_job_start_summary "tools/example.sh" "issue #1: example" "fix locally" >"$2/job-start.out" 2>&1
     BACKLOG_JOB_START_EPOCH=100
     BACKLOG_TEST_NOW_EPOCH=145
@@ -1364,7 +1385,7 @@ check_force_added_gitignored_target_selection() {
   log "checking force-added Git-ignored target exclusion"
   temp_dir="$(mktemp -d /tmp/upkeeper-gitignored-target.XXXXXX)"
   client="$temp_dir/client"
-  manifest_path="$temp_dir/manifest.json"
+  manifest_path="$client/runtime/upkeeper-file-manifest-validation.json"
   lattice_db_path="$temp_dir/client/runtime/upkeeper-lattice/lattice-direct.sqlite3"
   mkdir -p "$client"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/10/fake-session.jsonl" "gpt-5.5"
@@ -1460,7 +1481,7 @@ check_symlink_target_selection_guard() {
   log "checking symlink target selection guard"
   temp_dir="$(mktemp -d /tmp/upkeeper-symlink-target.XXXXXX)"
   client="$temp_dir/client"
-  manifest_path="$temp_dir/manifest.json"
+  manifest_path="$client/runtime/upkeeper-file-manifest-validation.json"
   outside_target="$temp_dir/outside-sentinel.txt"
   lattice_db_path="$temp_dir/client/runtime/upkeeper-lattice/lattice-direct.sqlite3"
   mkdir -p "$client"
@@ -2040,17 +2061,21 @@ check_disk_preflight_prompt_note_contract() {
 }
 
 check_arg0_tmp_cleanup_contract() {
-  local temp_dir arg0_root quarantine_root output
+  local temp_dir arg0_root quarantine_root output marker_name
 
   log "checking Codex arg0 temp cleanup contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-arg0-cleanup.XXXXXX)"
   arg0_root="$temp_dir/arg0"
   quarantine_root="$temp_dir/quarantine"
+  marker_name=".upkeeper-arg0.owner"
 
-  mkdir -p "$arg0_root/codex-arg0-old" "$arg0_root/unmanaged-cache"
-  printf 'shim\n' >"$arg0_root/codex-arg0-old/shim"
+  mkdir -p "$arg0_root/codex-arg0-owned" "$arg0_root/codex-arg0-unmarked" "$arg0_root/unmanaged-cache"
+  printf 'upkeeper-arg0-owner-v1\n' >"$arg0_root/codex-arg0-owned/$marker_name"
+  chmod 600 "$arg0_root/codex-arg0-owned/$marker_name"
+  printf 'shim\n' >"$arg0_root/codex-arg0-owned/shim"
+  printf 'unknown\n' >"$arg0_root/codex-arg0-unmarked/unknown"
   printf 'keep\n' >"$arg0_root/unmanaged-cache/keep"
-  touch -t 202001010000 "$arg0_root/codex-arg0-old" "$arg0_root/unmanaged-cache"
+  touch -t 202001010000 "$arg0_root/codex-arg0-owned" "$arg0_root/codex-arg0-unmarked" "$arg0_root/unmanaged-cache"
 
   if ! output="$(
     CODEX_ARG0_TMP_ROOT="$arg0_root" \
@@ -2064,8 +2089,11 @@ check_arg0_tmp_cleanup_contract() {
     fail "arg0 cleanup contract check failed"
   fi
 
-  [[ "$output" == "ok removed=1 quarantined=0" ]] || fail "arg0 cleanup returned unexpected output: $output"
-  [[ ! -e "$arg0_root/codex-arg0-old" ]] || fail "stale codex-arg0 shim directory was not removed"
+  [[ "$output" == ok\ removed=1\ quarantined=1\ quarantine_paths=*missing_marker:* ]] || fail "arg0 cleanup returned unexpected output: $output"
+  [[ ! -e "$arg0_root/codex-arg0-owned" ]] || fail "owned stale codex-arg0 shim directory was not removed"
+  [[ ! -e "$arg0_root/codex-arg0-unmarked" ]] || fail "unmarked stale codex-arg0 directory remained in the live arg0 root"
+  find "$quarantine_root" -mindepth 1 -maxdepth 1 -type d -name 'codex-arg0-unmarked-*' | grep -q . ||
+    fail "unmarked stale codex-arg0 directory was not quarantined"
   [[ -f "$arg0_root/unmanaged-cache/keep" ]] || fail "non-codex stale directory was modified"
 
   rm -r "$temp_dir"
@@ -2638,11 +2666,12 @@ EOF
 }
 
 check_file_manifest_selection() {
-  local temp_dir manifest_path output rc lattice_db_path
+  local temp_dir manifest_path output rc lattice_db_path unsafe_manifest_path
 
   log "checking file manifest selection"
   temp_dir="$(mktemp -d /tmp/upkeeper-file-manifest.XXXXXX)"
-  manifest_path="$temp_dir/manifest.json"
+  manifest_path="runtime/upkeeper-file-manifest-validation-${temp_dir##*/}.json"
+  unsafe_manifest_path="$temp_dir/unsafe-manifest.json"
   lattice_db_path="runtime/upkeeper-lattice/file-manifest-${temp_dir##*/}.sqlite3"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
   mkdir -p runtime/upkeeper-lattice
@@ -2687,6 +2716,16 @@ check_file_manifest_selection() {
   grep -Fq "target_depth=1" "$temp_dir/manifest.log" || fail "manifest target depth was not logged"
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/manifest.log" || fail "manifest dry-run did not finish cleanly"
   jq -e '.schema_version == 2 and ((.root_hash // "") | length == 64) and (has("root") | not) and (.files | length) > 0 and ((.files[0].rel_path // "") | length > 0) and ([.files[] | select(has("abs_path"))] | length == 0)' "$manifest_path" >/dev/null || fail "manifest JSON contract is invalid"
+
+  (
+    # Keep the unsafe-path contract covered without adding another expensive
+    # dry-run invocation to this already broad full-validation fixture.
+    source "$ROOT_DIR/lib/upkeeper/codex_io.bash"
+    source "$ROOT_DIR/lib/upkeeper/file_manifest.bash"
+    manifest_path_is_safe "$manifest_path" 0 || exit 1
+    ! manifest_path_is_safe "$unsafe_manifest_path" 0 || exit 2
+    manifest_path_is_safe "$unsafe_manifest_path" 1 || exit 3
+  ) || fail "manifest path safety helper did not enforce runtime-local default and explicit unsafe override"
 
   python3 - "$manifest_path" <<'PY'
 import json
@@ -2977,6 +3016,7 @@ EOF
   [[ "$rc" -eq 3 ]] || fail "invalid selection review module exited $rc, expected 3"
   grep -Fq "unknown review module filter: nope" <<<"$output" || fail "invalid selection review module error was not clear"
 
+  rm -f "$manifest_path" "$manifest_path".tmp
   rm -f "$lattice_db_path" "$lattice_db_path-journal" "$lattice_db_path-wal" "$lattice_db_path-shm"
   rm -r "$temp_dir"
 }
@@ -5041,7 +5081,7 @@ run_bounded_check wrapper_health_log_quoting "$VALIDATION_INTEGRATION_TIMEOUT_SE
 run_bounded_check operator_guide_bootstrap_race "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_operator_guide_bootstrap_race
 run_bounded_check active_lock_incomplete_guard "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_active_lock_incomplete_guard
 run_bounded_check quota_fallback_exit_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_quota_fallback_exit_contract
-run_bounded_check file_manifest_selection "$VALIDATION_FULL_TIMEOUT_SECONDS" check_file_manifest_selection
+run_bounded_check file_manifest_selection "$VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS" check_file_manifest_selection
 run_bounded_check issue_workflow_comment_relay "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_issue_workflow_comment_relay
 run_bounded_check issue_workflow_backend_mode_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_issue_workflow_backend_mode_contract
 run_bounded_check genie_protocol_backend_boundary "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_genie_protocol_backend_boundary

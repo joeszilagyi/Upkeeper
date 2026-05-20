@@ -15,6 +15,48 @@ resolve_upkeeper_manifest_path() {
   fi
 }
 
+manifest_path_is_safe() {
+  local raw_path="$1"
+  local allow_unsafe="$2"
+  local manifest_abs
+  local root_abs
+  local runtime_dir
+  local rel
+
+  [[ "$allow_unsafe" == "1" ]] && return 0
+
+  if [[ -z "$ROOT_DIR" ]]; then
+    return 1
+  fi
+
+  root_abs="$(resolve_path "$ROOT_DIR")"
+  runtime_dir="$root_abs/runtime"
+  manifest_abs="$(resolve_path "$raw_path")"
+
+  case "$manifest_abs" in
+    "$root_abs")
+      return 1
+      ;;
+    "$root_abs/"*)
+      :
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  if [[ "$manifest_abs" == "$runtime_dir" || "$manifest_abs" == "$runtime_dir/"* ]]; then
+    return 0
+  fi
+
+  rel="${manifest_abs#${root_abs}/}"
+  if git -C "$root_abs" check-ignore -q -- "$rel"; then
+    return 0
+  fi
+
+  return 1
+}
+
 ensure_file_manifest_for_selection() {
   local manifest_path manifest_dir output rc
 
@@ -29,6 +71,12 @@ ensure_file_manifest_for_selection() {
 
   if [[ "$CODEX_SELECTION_SOURCE" != "manifest" ]]; then
     log_line "INFO" "file_manifest.skip reason=selection_source_disabled source=$CODEX_SELECTION_SOURCE mode=$CODEX_FILE_MANIFEST_MODE path=$(shell_quote "$manifest_path")"
+    return 0
+  fi
+
+  if ! manifest_path_is_safe "$manifest_path" "${CODEX_ALLOW_UNSAFE_MANIFEST_PATH:-0}"; then
+    log_line "WARN" "file_manifest.skip reason=manifest_path_unsafe path=$(shell_quote "$manifest_path") action=fall_back_to_enumerate"
+    CODEX_SELECTION_SOURCE="enumerate"
     return 0
   fi
 

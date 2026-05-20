@@ -2127,7 +2127,7 @@ merge_and_clean() {
   local pr_number="$1"
   local branch="$2"
 
-  run_batch_validation
+  run_batch_validation || return $?
   wait_for_pr_checks "$pr_number" || {
     local status="$?"
     [[ "$status" -eq 2 ]] && return 2

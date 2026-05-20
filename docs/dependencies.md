@@ -105,6 +105,16 @@ These commands are required by normal Upkeeper startup/runtime paths:
 - `tr`
 - `wc`
 
+## Validation-Only Dependencies
+
+These commands are required for local validation paths and validation-helper
+scripts, but not for normal startup/runtime operation:
+
+- `bash`
+- `cp`
+- `diff`
+- `touch`
+
 ## jq Decision And Install Commands
 
 `jq` remains a required runtime and validation dependency for the current
@@ -188,6 +198,17 @@ backend-visible environments.
   fallback.
 - `zip` is used for log rotation archives. If it is missing, Upkeeper disables
   wrapper log rotation for that cycle and logs a warning.
+- `shellcheck` is an optional shell linting dependency for shell validation. It is
+  not required for runtime startup, startup safety, or validation command success.
+
+When `shellcheck` is available, operators and agents should run it opportunistically
+on modified shell files touched in a cycle (for example:
+`Upkeeper`, `lib/upkeeper/*.bash`, `tools/*.sh`, `testruns/*.sh`,
+`tests/*.bash`) to catch shell abstraction and POSIX portability issues before
+merge.
+
+If `shellcheck` is unavailable, record that it is unavailable and continue; it
+must never turn an operator-visible run into a hard failure.
 
 ## Dependency Change Discipline
 

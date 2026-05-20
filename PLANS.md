@@ -3,6 +3,97 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Manifest Path Safety Validation Alignment
+
+Status: completed locally
+
+Goal:
+- align full validation with issue `#118` manifest path hardening so fixtures
+  write custom manifests under safe runtime-local paths
+- add deterministic coverage that unsafe manifest paths are rejected unless the
+  explicit unsafe override is active
+- update operator-facing manifest path docs for the unsafe override
+
+Constraints:
+- do not launch real backend Codex validation
+- keep manifest selection deterministic and pre-model
+- preserve the runtime guard; fix the stale tests instead of weakening safety
+
+Files likely touched:
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
+- `git diff --check`
+
+## Lattice Backup-First Provenance Repair
+
+Status: completed locally
+
+Goal:
+- restore `recover --backup-first` provenance so the backup copy includes the
+  recovery source and its pre-recovery backup artifact reference
+- keep post-recovery local Git imports out of the backup DB, preserving the
+  before/after recovery boundary
+- unblock PR `#411` after an autoshelved control-plane patch removed the
+  backup-side artifact reference
+
+Constraints:
+- do not launch real backend Codex validation
+- keep recovery backup creation local and deterministic
+- preserve the existing Lattice backup test contract
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash tests/lattice_test.bash`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Arg0 Cleanup Ownership Marker Alignment
+
+Status: completed locally
+
+Goal:
+- align full validation and operator docs with issue `#121` behavior: stale
+  `codex-arg0*` directories are deleted only when a trusted Upkeeper/Codex
+  marker proves wrapper ownership
+- keep unmarked matching directories out of the live arg0 root by quarantining
+  them instead of deleting their contents
+- unblock PR `#411` after the issue `#121` fix changed runtime behavior but
+  left the validation contract expecting the old delete-any-match path
+
+Constraints:
+- do not launch real backend Codex validation
+- keep the cleanup pre-model and deterministic
+- preserve the no-recursion safety boundary for unknown or nested arg0 contents
+
+Files likely touched:
+- `lib/upkeeper/arg0_preflight.bash`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
+- `git diff --check`
+
 ## Session Store Fail-Closed Alignment
 
 Status: completed locally
@@ -39,6 +130,31 @@ Validation:
 - `tools/validate_upkeeper.sh --full`
 - `tools/check_public_docs.sh --quick`
 - `./Upkeeper --help`
+- `git diff --check`
+
+## Backlog Batch Merge Validation Stop
+
+Status: completed locally
+
+Goal:
+- ensure a failed local batch validation stops PR merge and cleanup even when
+  the merge helper is invoked from a Bash conditional
+- make the quick validator's interactive-stdio probe test a fresh launcher
+  process instead of inheriting the parent backlog watch-mode state
+
+Constraints:
+- do not launch backend Codex validation
+- keep validation deterministic and local
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
 - `git diff --check`
 
 ## Backlog Validation Gate And Lattice Snapshot Privacy Repair

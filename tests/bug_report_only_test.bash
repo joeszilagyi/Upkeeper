@@ -127,6 +127,8 @@ EOF
 export PROJECT_ROOT
 export ROOT_DIR="$PROJECT_ROOT"
 export UPROOT="$PROJECT_ROOT"
+export CODEX_LOG_FILE="$TEST_TMP_ROOT/Upkeeper.log"
+export UPKEEPER_CONFIG_DISABLE=1
 source "$PROJECT_ROOT/Upkeeper"
 
 test_bug_report_draft_extracts_issue_ready_block

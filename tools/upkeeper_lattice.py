@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import errno
+import ast
 import fnmatch
 import hashlib
 import hmac
@@ -340,6 +341,13 @@ PASS_RESULT_ALLOWED_KEYS = {
     "outcome",
     "changed",
     "regression",
+    "candidate",
+    "reason",
+    "owner",
+    "likely_owner",
+    "proof_needed",
+    "validation_command",
+    "validation_cmd",
 }
 RAW_STORAGE_MODES = {"none", "minimal", "limited", "full"}
 RAW_STORAGE_COMPAT_MODES = RAW_STORAGE_MODES | {"debug"}
@@ -414,6 +422,7 @@ REQUIRED_INDEXES = {
     "idx_selection_candidates_run_path": "selection_candidates",
     "idx_selection_candidates_run_state_rank": "selection_candidates",
     "idx_file_pass_runs_repo_file_pass": "file_pass_runs",
+    "idx_file_pass_runs_identity": "file_pass_runs",
     "idx_file_pass_runs_repo_pass_outcome": "file_pass_runs",
     "idx_file_events_repo_file_epoch": "file_events",
     "idx_git_commits_repo_sha": "git_commits",
@@ -422,6 +431,20 @@ REQUIRED_INDEXES = {
     "idx_regression_events_repo_file_epoch": "regression_events",
     "idx_extension_facts_lookup": "extension_facts",
     "idx_pass_run_attributes_lookup": "pass_run_attributes",
+}
+WORKTREE_STATE_BASH = "lib/upkeeper/worktree_state.bash"
+TOOL_FAILURE_KIND_ALLOWLIST_PATHS = (
+    "lib/upkeeper/tool_failure_queue.bash",
+    "lib/upkeeper/transcript_output.bash",
+)
+KNOWN_TOOL_FAILURE_KINDS = {
+    "check",
+    "validation",
+    "tests",
+    "build",
+    "command",
+    "search",
+    "git",
 }
 
 
@@ -561,6 +584,10 @@ PASS_REGISTRY.extend(
         },
     ]
 )
+
+
+PASS_REGISTRY_BY_CODE = {str(item["pass_code"]).upper(): item for item in PASS_REGISTRY}
+KNOWN_PASS_CODES = sorted(PASS_REGISTRY_BY_CODE.keys())
 
 
 CREATE_TABLE_SQL = [
@@ -1110,7 +1137,7 @@ CREATE_TABLE_SQL = [
       confidence text,
       source_id integer references source_records(source_id),
       created_epoch integer not null,
-      unique(namespace, key, subject_type, subject_pk, source_id)
+      unique(namespace, key, subject_type, subject_pk)
     )
     """,
     """
@@ -1190,6 +1217,7 @@ CREATE_INDEX_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_file_paths_file_path ON file_paths(file_id, path)",
     "CREATE INDEX IF NOT EXISTS idx_selection_candidates_run_path ON selection_candidates(selection_run_id, path)",
     "CREATE INDEX IF NOT EXISTS idx_selection_candidates_run_state_rank ON selection_candidates(selection_run_id, candidate_state, rank)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_file_pass_runs_identity ON file_pass_runs(repo_id, file_id, coalesce(cycle_pk, -1), pass_code, confidence)",
     "CREATE INDEX IF NOT EXISTS idx_file_pass_runs_repo_file_pass ON file_pass_runs(repo_id, file_id, pass_code)",
     "CREATE INDEX IF NOT EXISTS idx_file_pass_runs_repo_pass_outcome ON file_pass_runs(repo_id, pass_code, outcome)",
     "CREATE INDEX IF NOT EXISTS idx_file_events_repo_file_epoch ON file_events(repo_id, file_id, event_epoch)",
@@ -1199,6 +1227,7 @@ CREATE_INDEX_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_git_file_changes_repo_path_epoch ON git_file_changes(repo_id, path, change_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_regression_events_repo_file_epoch ON regression_events(repo_id, file_id, marked_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_extension_facts_lookup ON extension_facts(namespace, key, subject_type, subject_pk)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_extension_facts_identity ON extension_facts(namespace, key, subject_type, subject_pk)",
     "CREATE INDEX IF NOT EXISTS idx_pass_run_attributes_lookup ON pass_run_attributes(file_pass_run_id, namespace, key)",
     "CREATE INDEX IF NOT EXISTS idx_source_records_identity ON source_records(repo_id, source_kind, coalesce(source_path, ''), coalesce(source_line, -1), coalesce(raw_sha256, ''))",
 ]
@@ -1418,6 +1447,15 @@ def worktree_snapshot_path_class(status_code: str, *, is_old: bool = False) -> s
     if "R" in status_code or "C" in status_code:
         return WORKTREE_PATH_CLASS_RENAMED_OLD if is_old else WORKTREE_PATH_CLASS_RENAMED_NEW
     return WORKTREE_PATH_CLASS_TRACKED
+
+
+def worktree_snapshot_status_to_file_state(status_code: str) -> str:
+    status = str(status_code or "")
+    if "D" in status and status.strip() != "??":
+        return "deleted"
+    if "R" in status:
+        return "renamed"
+    return "active"
 
 
 def stored_worktree_snapshot_path(root: Path, path: str) -> str:
@@ -1820,6 +1858,44 @@ def repo_identity_value_hmac(context: tuple[str, str, str], namespace: str, valu
     material = f"{namespace}\0{value}"
     digest = hmac.digest(repo_identity_hmac_key(context, "repo-identity"), material.encode("utf-8", "surrogateescape"), "sha256").hex()
     return prefix + digest
+
+
+def repo_identity_stable_key(root: Path, git_common_dir: str) -> str:
+    return sha256_text(f"{root}|{git_common_dir}")
+
+
+def lookup_repository_id_by_identity(conn: sqlite3.Connection, root: Path, info: dict[str, str]) -> int | None:
+    root = root.resolve()
+    git_common_dir = info.get("git_common_dir", "")
+    repo_key = repo_identity_stable_key(root, git_common_dir)
+    row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
+    if row:
+        return int(row["repo_id"])
+    legacy_remote = info.get("remote_url", "")
+    if legacy_remote:
+        legacy_repo_key = sha256_text(f"{root}|{git_common_dir}|{legacy_remote}")
+        row = conn.execute("select repo_id from repositories where repo_key=?", (legacy_repo_key,)).fetchone()
+        if row:
+            repo_id = int(row["repo_id"])
+            conn.execute("update repositories set repo_key=? where repo_id=?", (repo_key, repo_id))
+            return repo_id
+    alias_row = conn.execute(
+        "select repo_id from repo_aliases where alias_kind=? and alias_value=?",
+        ("root_path", str(root)),
+    ).fetchone()
+    if alias_row:
+        repo_id = int(alias_row["repo_id"])
+        conn.execute("update repositories set repo_key=? where repo_id=?", (repo_key, repo_id))
+        return repo_id
+    alias_row = conn.execute(
+        "select repo_id from repo_aliases where alias_kind=? and alias_value=?",
+        ("git_common_dir", git_common_dir),
+    ).fetchone()
+    if alias_row:
+        repo_id = int(alias_row["repo_id"])
+        conn.execute("update repositories set repo_key=? where repo_id=?", (repo_key, repo_id))
+        return repo_id
+    return None
 
 
 def git_common_dir_path(root: Path) -> str:
@@ -2338,6 +2414,13 @@ def inside_git_repo(root: Path) -> bool:
 
 def default_root() -> Path:
     return Path(os.environ.get("UPKEEPER_ROOT", os.getcwd())).resolve()
+
+
+def wrapper_source_root() -> Path:
+    raw = os.environ.get("UPKEEPER_SOURCE_ROOT")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return Path(__file__).resolve().parent.parent
 
 
 def default_db_path(root: Path) -> Path:
@@ -3176,6 +3259,163 @@ def ensure_cycle_links_logical_edge_index(conn: sqlite3.Connection) -> int:
     return duplicate_groups
 
 
+def dedupe_file_pass_runs(conn: sqlite3.Connection) -> int:
+    try:
+        row = conn.execute(
+            """
+            select count(*) from (
+              select 1
+              from file_pass_runs
+              group by repo_id, file_id, coalesce(cycle_pk, -1), pass_code, confidence
+              having count(*) > 1
+            )
+            """
+        ).fetchone()
+    except sqlite3.Error:
+        return 0
+    duplicate_groups = int(row[0] or 0) if row else 0
+    if not duplicate_groups:
+        return 0
+
+    duplicate_keys = conn.execute(
+        """
+        select repo_id, file_id, coalesce(cycle_pk, -1) as cycle_pk_key, pass_code, coalesce(confidence, '') as confidence_key
+        from file_pass_runs
+        group by repo_id, file_id, coalesce(cycle_pk, -1), pass_code, coalesce(confidence, '')
+        having count(*) > 1
+        """
+    ).fetchall()
+    for key in duplicate_keys:
+        rows = conn.execute(
+            """
+            select file_pass_run_id
+            from file_pass_runs
+            where repo_id=?
+              and file_id=?
+              and coalesce(cycle_pk, -1)=?
+              and pass_code=?
+              and coalesce(confidence, '')=?
+            order by coalesce(created_epoch, 0) desc, file_pass_run_id desc
+            """,
+            (
+                int(key["repo_id"]),
+                int(key["file_id"]),
+                int(key["cycle_pk_key"]),
+                str(key["pass_code"]),
+                str(key["confidence_key"]),
+            ),
+        ).fetchall()
+        if len(rows) <= 1:
+            continue
+        duplicate_run_ids = [int(row["file_pass_run_id"]) for row in rows[1:]]
+        if duplicate_run_ids:
+            placeholders = ",".join(["?"] * len(duplicate_run_ids))
+            conn.execute(
+                f"delete from pass_run_attributes where file_pass_run_id in ({placeholders})",
+                duplicate_run_ids,
+            )
+            conn.execute(
+                f"delete from file_pass_runs where file_pass_run_id in ({placeholders})",
+                duplicate_run_ids,
+            )
+    return duplicate_groups
+
+
+def ensure_file_pass_runs_identity_index(conn: sqlite3.Connection) -> int:
+    required = {"repo_id", "file_id", "pass_id", "pass_code", "cycle_pk", "confidence"}
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(file_pass_runs)").fetchall()}
+    except sqlite3.Error:
+        return 0
+    if not required.issubset(columns):
+        return 0
+    duplicate_groups = dedupe_file_pass_runs(conn)
+    try:
+        conn.execute("DROP INDEX IF EXISTS idx_file_pass_runs_identity")
+    except sqlite3.Error:
+        pass
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_file_pass_runs_identity ON file_pass_runs(repo_id, file_id, coalesce(cycle_pk, -1), pass_code, confidence)"
+        )
+    except sqlite3.Error:
+        return duplicate_groups
+    return duplicate_groups
+
+
+def ensure_extension_facts_identity_index(conn: sqlite3.Connection) -> int:
+    try:
+        indexes = {row["name"] for row in conn.execute("pragma index_list(extension_facts)").fetchall()}
+    except sqlite3.Error:
+        return 0
+    duplicate_groups = 0
+    try:
+        duplicate_groups = int(
+            conn.execute(
+                """
+                select count(*) from (
+                  select namespace, key, subject_type, subject_pk
+                  from extension_facts
+                  group by namespace, key, subject_type, subject_pk
+                  having count(*) > 1
+                )
+                """
+            ).fetchone()[0]
+            or 0
+        )
+    except sqlite3.Error:
+        return 0
+    if duplicate_groups:
+        try:
+            conn.execute(
+                """
+                delete from extension_facts
+                where extension_fact_id in (
+                  select extension_fact_id
+                  from (
+                    select
+                      extension_fact_id,
+                      row_number() over (
+                        partition by namespace, key, subject_type, subject_pk
+                        order by coalesce(created_epoch, 0) desc,
+                                 coalesce(source_id, -1) desc,
+                                 extension_fact_id desc
+                      ) as row_number
+                    from extension_facts
+                  )
+                  where row_number > 1
+                )
+                """
+            )
+        except sqlite3.Error:
+            return duplicate_groups
+        try:
+            duplicate_groups = int(
+                conn.execute(
+                    """
+                    select count(*) from (
+                      select namespace, key, subject_type, subject_pk
+                      from extension_facts
+                      group by namespace, key, subject_type, subject_pk
+                      having count(*) > 1
+                    )
+                    """
+                ).fetchone()[0]
+                or 0
+            )
+        except sqlite3.Error:
+            duplicate_groups = 0
+    if "idx_extension_facts_identity" in indexes:
+        return duplicate_groups
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_extension_facts_identity ON extension_facts(namespace, key, subject_type, subject_pk)"
+        )
+    except sqlite3.Error:
+        return duplicate_groups
+    return duplicate_groups
+
+
 def ensure_file_snapshot_mtime_ns_column(conn: sqlite3.Connection) -> None:
     try:
         columns = {row["name"] for row in conn.execute("pragma table_info(file_snapshots)").fetchall()}
@@ -3355,6 +3595,8 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
         deduped_cycle_link_groups = ensure_cycle_links_logical_edge_index(conn)
         deduped_change_log_groups = ensure_change_log_identity_indexes(conn)
         deduped_git_change_groups = dedupe_git_file_changes(conn)
+        deduped_extension_fact_groups = ensure_extension_facts_identity_index(conn)
+        deduped_file_pass_run_groups = ensure_file_pass_runs_identity_index(conn)
         ensure_file_snapshot_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_identity_columns(conn)
@@ -3385,6 +3627,15 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
             """,
             (1, 0, 1, now, "applied", sha256_text("\n".join(CREATE_TABLE_SQL + CREATE_INDEX_SQL)), "{}"),
         )
+        if deduped_file_pass_run_groups:
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("file_pass_runs_identity_deduped_groups", str(deduped_file_pass_run_groups)),
+            )
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("file_pass_runs_identity_deduped_epoch", str(now)),
+            )
         if deduped_git_change_groups:
             conn.execute(
                 "insert or replace into schema_meta(key, value) values (?, ?)",
@@ -3412,6 +3663,15 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
                 "insert or replace into schema_meta(key, value) values (?, ?)",
                 ("change_log_deduped_epoch", str(now)),
             )
+        if deduped_extension_fact_groups:
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("extension_facts_identity_deduped_groups", str(deduped_extension_fact_groups)),
+            )
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("extension_facts_identity_deduped_epoch", str(now)),
+            )
         if deduped_cycle_link_groups:
             conn.execute(
                 "insert or replace into schema_meta(key, value) values (?, ?)",
@@ -3434,9 +3694,11 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     user_version = conn.execute("PRAGMA user_version").fetchone()[0]
     if int(user_version) != SCHEMA_VERSION:
         fail(f"PRAGMA user_version mismatch: expected {SCHEMA_VERSION}, got {user_version}", EXIT_SCHEMA_MISMATCH)
+    ensure_file_pass_runs_identity_index(conn)
     ensure_artifact_ref_identity_indexes(conn)
     ensure_change_log_identity_indexes(conn)
     ensure_cycle_links_logical_edge_index(conn)
+    ensure_extension_facts_identity_index(conn)
     ensure_file_snapshot_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_identity_columns(conn)
@@ -3516,8 +3778,7 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
     info = repo_git_info(root)
     common = info["git_common_dir"]
     context = repo_identity_context(root, info)
-    repo_key_src = f"{root}|{common}|{info['remote_url']}"
-    repo_key = sha256_text(repo_key_src)
+    repo_key = repo_identity_stable_key(root, common)
     identity = sanitize_repository_payload(
         {
             "root_path": str(root),
@@ -3532,9 +3793,8 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
         context,
     )
     origin_hash = str(identity.get("origin_url_hash") or "")
-    row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
-    if row:
-        repo_id = int(row["repo_id"])
+    repo_id = lookup_repository_id_by_identity(conn, root, info)
+    if repo_id is not None:
         conn.execute(
             """
             update repositories
@@ -3598,9 +3858,7 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
 def lookup_repository_id(conn: sqlite3.Connection, root: Path) -> int | None:
     root = root.resolve()
     info = repo_git_info(root)
-    repo_key = sha256_text(f"{root}|{info['git_common_dir']}|{info['remote_url']}")
-    row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
-    return int(row["repo_id"]) if row else None
+    return lookup_repository_id_by_identity(conn, root, info)
 
 
 def ensure_source_record(
@@ -4281,7 +4539,7 @@ def ensure_cycle(
 
 def ensure_pass(conn: sqlite3.Connection, pass_code: str) -> int:
     pass_code = normalize_pass_code(pass_code)
-    item = next((p for p in PASS_REGISTRY if p["pass_code"].upper() == pass_code.upper()), None)
+    item = get_registered_pass_item(pass_code)
     title = item["title"] if item else None
     prompt_source_path = item["prompt_source_path"] if item else None
     introduced_version = item["introduced_version"] if item else None
@@ -4303,6 +4561,9 @@ def ensure_pass(conn: sqlite3.Connection, pass_code: str) -> int:
 
 
 def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_mode: str | None = None) -> None:
+    validation_errors = validate_reuse_contract_definitions()
+    if validation_errors:
+        fail(f"embedded contract validation failed: {'; '.join(validation_errors)}", EXIT_INTEGRITY)
     now = epoch_now()
     with conn:
         repo_id = ensure_repository(conn, root)
@@ -4361,11 +4622,19 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_m
                 value_integer = value if value_type == "integer" else None
                 value_json = json_dumps(value) if value_type == "json" else None
                 conn.execute(
-                    """
-                    insert or replace into extension_facts(
+                """
+                insert or replace into extension_facts(
                       namespace, key, subject_type, subject_pk, value_type, value_text,
                       value_integer, value_json, confidence, source_id, created_epoch
                     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    on conflict(namespace, key, subject_type, subject_pk) do update set
+                      value_type=excluded.value_type,
+                      value_text=excluded.value_text,
+                      value_integer=excluded.value_integer,
+                      value_json=excluded.value_json,
+                      confidence=excluded.confidence,
+                      source_id=excluded.source_id,
+                      created_epoch=excluded.created_epoch
                     """,
                     (
                         "upkeeper.review_pass_registry",
@@ -4383,11 +4652,359 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_m
                 )
 
 
+def get_registered_pass_item(pass_code: Any) -> dict[str, Any] | None:
+    if pass_code is None:
+        return None
+    raw = str(pass_code).strip()
+    if not raw:
+        return None
+    if not re.fullmatch(r"P[0-9A-Za-z_.-]+", raw, re.I):
+        return None
+    key = raw.upper()
+    if re.fullmatch(r"p[0-9]+", key, re.I):
+        key = key.upper()
+    return PASS_REGISTRY_BY_CODE.get(key)
+
+
+def is_registered_pass_code(pass_code: Any) -> bool:
+    return get_registered_pass_item(pass_code) is not None
+
+
+def validate_pass_registry_contract() -> list[str]:
+    issues: list[str] = []
+    seen: set[str] = set()
+    required_fields = {
+        "pass_code",
+        "title",
+        "prompt_source_path",
+        "introduced_version",
+        "default_in_repertoire",
+        "applicability_hint",
+        "schedule_hint",
+        "module_prompt",
+        "aliases",
+        "active",
+    }
+    for idx, item in enumerate(PASS_REGISTRY):
+        if not isinstance(item, dict):
+            issues.append(f"PASS_REGISTRY[{idx}] must be dict")
+            continue
+        missing = sorted(required_fields - set(item.keys()))
+        if missing:
+            issues.append(f"PASS_REGISTRY[{idx}] missing keys: {', '.join(missing)}")
+        pass_code = str(item.get("pass_code", "")).strip()
+        if not re.fullmatch(r"P[0-9]+", pass_code, re.I):
+            if not re.fullmatch(r"P[0-9A-Za-z_.-]+", pass_code, re.I):
+                issues.append(f"PASS_REGISTRY[{idx}] invalid pass_code={pass_code!r}")
+                continue
+        normalized = pass_code.upper()
+        if normalized in seen:
+            issues.append(f"PASS_REGISTRY duplicate pass_code={normalized}")
+            continue
+        seen.add(normalized)
+        aliases = item.get("aliases")
+        if aliases is None:
+            continue
+        if not isinstance(aliases, (list, tuple)):
+            issues.append(f"PASS_REGISTRY[{normalized}] aliases must be list-like")
+            continue
+        for alias in aliases:
+            if not isinstance(alias, str) or not alias.strip():
+                issues.append(f"PASS_REGISTRY[{normalized}] alias must be non-empty string")
+    return issues
+
+
+def _extract_shell_collection(text: str, name: str) -> tuple[str, ...] | None:
+    pattern = re.compile(rf"^[ \t]*{re.escape(name)}\s*=\s*", re.MULTILINE)
+    for match in pattern.finditer(text):
+        index = match.end()
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text):
+            continue
+        opener = text[index]
+        if opener not in "({":
+            continue
+        closer = ")}"[ "({".index(opener)]
+        depth = 0
+        quote: str | None = None
+        escape = False
+        parsed = ""
+        for end in range(index, len(text)):
+            ch = text[end]
+            if quote:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == quote:
+                    quote = None
+                continue
+            if ch in "\"'":
+                quote = ch
+                continue
+            if ch == opener:
+                depth += 1
+            elif ch == closer:
+                depth -= 1
+                if depth == 0:
+                    parsed = text[index : end + 1]
+                    break
+            if ch in "\n" and end == index:
+                break
+        if not parsed:
+            continue
+        string_literals = re.findall(r'"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"|\'([^\'\\\\]*(?:\\\\.[^\'\\\\]*)*)\'', parsed)
+        if not string_literals:
+            continue
+        values = tuple(
+            item
+            for pair in string_literals
+            for item in pair
+            if item is not None and str(item).strip() != ""
+        )
+        if values:
+            return tuple(sorted(set(values)))
+    return None
+
+
+def _command_kind_values_from_file(path: Path) -> tuple[str, ...] | None:
+    if not path.exists():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    body = _extract_function_body(text, "command_kind")
+    if not body:
+        return None
+    values = tuple(sorted(_extract_return_literals(body)))
+    if not values:
+        return None
+    return tuple(sorted({value.lower() for value in values if value}))
+
+
+def _tool_failure_kind_contract_issues(root: Path) -> list[str]:
+    issues: list[str] = []
+    if not root.is_dir():
+        return issues
+    path_values: list[tuple[Path, tuple[str, ...]]] = []
+    for path in (root / p for p in TOOL_FAILURE_KIND_ALLOWLIST_PATHS):
+        kind_values = _command_kind_values_from_file(path)
+        if kind_values is None:
+            issues.append(f"{path} missing/invalid command_kind return map")
+            continue
+        path_values.append((path, kind_values))
+        extra = sorted(set(kind_values) - KNOWN_TOOL_FAILURE_KINDS)
+        if extra:
+            issues.append(f"{path} command_kind returns unknown values {extra}")
+        missing = sorted(KNOWN_TOOL_FAILURE_KINDS - set(kind_values))
+        if missing:
+            issues.append(f"{path} command_kind missing values {missing}")
+    if len(path_values) > 1 and all(values is not None for _, values in path_values):
+        base_path, base_values = path_values[0]
+        for path, values in path_values[1:]:
+            if values != base_values:
+                issues.append(
+                    f"command_kind return values differ: {base_path}={base_values}, {path}={values}"
+                )
+    return issues
+
+
+def _extract_allowed_lists_from_worktree_state(body: str) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    exact_values = _extract_shell_collection(body, "allowed_exact")
+    prefix_values = _extract_shell_collection(body, "allowed_prefixes")
+    if not exact_values or not prefix_values:
+        return None
+    return tuple(sorted(set(exact_values))), tuple(sorted(set(prefix_values)))
+
+
+def _startup_anomaly_allowlist_contract_issues(source_root: Path) -> list[str]:
+    issues: list[str] = []
+    path = source_root / WORKTREE_STATE_BASH
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [f"cannot read {WORKTREE_STATE_BASH}"]
+    discovered: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
+    for function_name in ("write_git_status_snapshot_json", "startup_anomaly_gate_changed_path_violations"):
+        body = _extract_function_body(text, function_name)
+        if not body:
+            continue
+        extracted = _extract_allowed_lists_from_worktree_state(body)
+        if extracted is None:
+            issues.append(f"{WORKTREE_STATE_BASH}:{function_name} missing allowed_exact/allowed_prefixes")
+            continue
+        exact_values, prefix_values = extracted
+        if not exact_values:
+            issues.append(f"{WORKTREE_STATE_BASH}:{function_name} has empty allowed_exact")
+        for value in prefix_values:
+            if not value.endswith("/"):
+                issues.append(f"{WORKTREE_STATE_BASH}:{function_name} allowed_prefixes value should end with '/': {value}")
+        for value in exact_values:
+            if not value or "/" in value and value.startswith("/"):
+                issues.append(f"{WORKTREE_STATE_BASH}:{function_name} disallow absolute allowed_exact entry: {value}")
+        discovered.append((function_name, exact_values, prefix_values))
+    if not discovered:
+        issues.append(f"{WORKTREE_STATE_BASH} command missing allowed path tables")
+        return issues
+    first_exact, first_prefixes = discovered[0][1], discovered[0][2]
+    for function_name, exact_values, prefix_values in discovered[1:]:
+        if exact_values != first_exact:
+            issues.append(
+                f"{WORKTREE_STATE_BASH}:{function_name} allowed_exact differs from write_git_status_snapshot_json"
+            )
+        if prefix_values != first_prefixes:
+            issues.append(
+                f"{WORKTREE_STATE_BASH}:{function_name} allowed_prefixes differs from write_git_status_snapshot_json"
+            )
+    return issues
+
+
+def validate_reuse_contract_definitions() -> list[str]:
+    source_root = wrapper_source_root()
+    issues = validate_pass_registry_contract()
+    issues.extend(_tool_failure_kind_contract_issues(source_root))
+    issues.extend(_startup_anomaly_allowlist_contract_issues(source_root))
+    return issues
+
+
 def normalize_pass_code(raw: str) -> str:
     raw = raw.strip()
     if not re.fullmatch(r"P[0-9A-Za-z_.-]+", raw):
         fail(f"invalid pass code: {raw}", EXIT_USAGE)
     return raw.upper() if re.fullmatch(r"P[0-9]+", raw, re.I) else raw
+
+
+def _safe_parse_python_collection(value: str) -> tuple[str, ...] | None:
+    if not value:
+        return None
+    try:
+        parsed = ast.literal_eval(value)
+    except (SyntaxError, ValueError):
+        return None
+    if isinstance(parsed, str):
+        return (parsed,)
+    if isinstance(parsed, (set, list, tuple, frozenset)):
+        items = []
+        for item in parsed:
+            if isinstance(item, str):
+                items.append(item)
+        return tuple(sorted(items))
+    return None
+
+
+def _extract_embedded_python_collections(text: str, name: str) -> list[tuple[str, ...]]:
+    pattern = re.compile(rf"^[ \t]*{re.escape(name)}\s*=\s*", re.MULTILINE)
+    collections: list[tuple[str, ...]] = []
+    matches = list(pattern.finditer(text))
+    for match in matches:
+        index = match.end()
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text):
+            continue
+        opener = text[index]
+        if opener not in "({[":
+            continue
+        closer = ")]}"[ "({[".index(opener)]
+        parsed: str = ""
+        depth = 0
+        quote: str | None = None
+        escape = False
+        for end in range(index, len(text)):
+            ch = text[end]
+            if quote:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == quote:
+                    quote = None
+                continue
+            if ch in "\"'":
+                quote = ch
+                continue
+            if ch == opener:
+                depth += 1
+            elif ch == closer:
+                depth -= 1
+                if depth == 0:
+                    parsed = text[index : end + 1]
+                    break
+            if ch in "\n" and end == index:
+                break
+        if not parsed:
+            continue
+        values = _safe_parse_python_collection(parsed)
+        if values is None:
+            continue
+        collections.append(values)
+    return collections
+
+
+def _extract_function_body(text: str, function_name: str) -> str:
+    lines = text.splitlines()
+    python_marker = re.compile(rf"^[ \t]*def\s+{re.escape(function_name)}\s*\(")
+    for idx, line in enumerate(lines):
+        if not python_marker.match(line):
+            continue
+        body_lines: list[str] = []
+        for body in lines[idx + 1 :]:
+            if body.startswith((" ", "\t")):
+                body_lines.append(body)
+                continue
+            if body.strip() == "":
+                body_lines.append(body)
+                continue
+            break
+        return "\n".join(body_lines)
+
+    shell_marker = re.compile(
+        rf"^[ \t]*(?:function[ \t]+)?{re.escape(function_name)}\s*\(\)\s*\{{",
+        re.MULTILINE,
+    )
+    source = "\n".join(lines)
+    for match in shell_marker.finditer(source):
+        start = match.end() - 1
+        depth = 0
+        quote: str | None = None
+        escape = False
+        for pos in range(start, len(source)):
+            ch = source[pos]
+            if quote:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == quote:
+                    quote = None
+            else:
+                if ch in "\"'":
+                    quote = ch
+                    continue
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return source[match.start() : pos + 1]
+        return ""
+    return ""
+
+
+def _extract_return_literals(body: str) -> set[str]:
+    return {match.group(1).strip() for match in re.finditer(r"\breturn\s+['\"]([A-Za-z0-9_-]+)['\"]", body)}
+
+
+def _extract_curly_set_literal(body: str) -> tuple[str, ...] | None:
+    matches = re.findall(r"\{[^{}]*\}", body)
+    for match in matches:
+        values = _safe_parse_python_collection(match)
+        if values is None:
+            continue
+        return values
+    return None
 
 
 def parse_bool_int(raw: str | None) -> int | None:
@@ -5333,6 +5950,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["candidate_text_sample_limit"] = candidate_text_sample_probe
         worktree_snapshot_path_probe = probe_worktree_snapshot_path_round_trip()
         result["checks"]["worktree_snapshot_path_round_trip"] = worktree_snapshot_path_probe
+        worktree_snapshot_deleted_state_probe = probe_worktree_snapshot_deleted_file_state()
+        result["checks"]["worktree_snapshot_deleted_file_state"] = worktree_snapshot_deleted_state_probe
         export_redaction_probe = probe_export_redaction()
         result["checks"]["export_redaction"] = export_redaction_probe
         recover_primary_sources_probe = probe_recover_requires_primary_sources()
@@ -5366,6 +5985,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(worktree_snapshot_path_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(worktree_snapshot_deleted_state_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(export_redaction_probe.get("ok")):
@@ -5589,6 +6211,12 @@ def record_worktree_snapshot(
         stored_old_path_hmac = stored_old_path
         if not stored_path or not stored_path_hmac:
             continue
+        existing_file_id = file_id_for_path(conn, repo_id, path)
+        if existing_file_id is not None:
+            conn.execute(
+                "update files set current_state=?, last_seen_epoch=? where file_id=?",
+                (worktree_snapshot_status_to_file_state(status_code), observed, existing_file_id),
+            )
         conn.execute(
             """
             insert into worktree_snapshot_paths(
@@ -6528,7 +7156,7 @@ def probe_cycle_finish_transient_artifact_scope() -> dict[str, Any]:
                 ).fetchone()
                 compiled = conn.execute(
                     """
-                    select path
+                    select path, retained
                       from artifact_refs
                      where repo_id=? and cycle_pk=? and artifact_kind='compiled_prompt'
                     """,
@@ -6536,7 +7164,7 @@ def probe_cycle_finish_transient_artifact_scope() -> dict[str, Any]:
                 ).fetchone()
                 last_message = conn.execute(
                     """
-                    select path
+                    select path, retained
                       from artifact_refs
                      where repo_id=? and cycle_pk=? and artifact_kind='last_message'
                     """,
@@ -6558,12 +7186,16 @@ def probe_cycle_finish_transient_artifact_scope() -> dict[str, Any]:
     if cycle:
         ok = ok and bool(compiled) and isinstance(compiled["path"], str) and compiled["path"].startswith(PASS_RESULT_PATH_HMAC_PREFIX)
         ok = ok and bool(last_message) and isinstance(last_message["path"], str) and last_message["path"].startswith(PASS_RESULT_PATH_HMAC_PREFIX)
+        ok = ok and isinstance(int(compiled["retained"]), int) and int(compiled["retained"]) == 0
+        ok = ok and isinstance(int(last_message["retained"]), int) and int(last_message["retained"]) == 0
     return {
         "cycle_id": "cycle-temp-scope",
         "run_hash": "run-temp-scope",
         "cycle_return_code": code,
         "compiled_prompt_path": compiled["path"] if compiled else None,
         "last_message_path": last_message["path"] if last_message else None,
+        "compiled_prompt_retained": int(compiled["retained"]) if compiled else None,
+        "last_message_retained": int(last_message["retained"]) if last_message else None,
         "ok": ok,
     }
 
@@ -6978,6 +7610,117 @@ def probe_worktree_snapshot_path_round_trip() -> dict[str, Any]:
     }
 
 
+def probe_worktree_snapshot_deleted_file_state() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-worktree-deleted-") as repo_dir:
+        root = Path(repo_dir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", str(root), "config", "user.email", "probe@example.com"], check=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "Probe User"], check=True)
+        target = root / "gone.sh"
+        target.write_text("print('keep')\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "gone.sh"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "probe"], check=True)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "delete", allow_unsafe_db=False, create_parent=True, create_if_missing=True)
+        target_path = "gone.sh"
+        target_hmac = stored_worktree_snapshot_path(root, target_path)
+        before_file_state_row: dict[str, Any] | None = None
+        after_file_state_row: dict[str, Any] | None = None
+        deleted_snapshot_row: dict[str, Any] | None = None
+        file_row: dict[str, Any] | None = None
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+            with conn:
+                repo_id = ensure_repository(conn, root)
+                source_id = ensure_source_record(
+                    conn,
+                    root,
+                    repo_id,
+                    "wrapper_observed",
+                    raw_ref="probe_worktree_snapshot_deleted_file_state",
+                    raw_storage_mode="minimal",
+                )
+                cycle_pk = ensure_cycle(conn, repo_id, "cycle-worktree-deleted", "run-worktree-deleted", source_id=source_id)
+                ensure_file_identity(conn, repo_id, target_path, source_id=source_id)
+                before_snapshot_id = record_worktree_snapshot(
+                    conn,
+                    root,
+                    repo_id,
+                    cycle_pk,
+                    "before_codex",
+                    source_id=source_id,
+                    untracked_files_mode="normal",
+                )
+                before_file_state = conn.execute(
+                    "select file_id, current_state from files where repo_id=? and (current_path=? or canonical_path=?)",
+                    (repo_id, target_path, target_path),
+                ).fetchone()
+                before_file_state_row = dict(before_file_state) if before_file_state is not None else None
+                target.unlink()
+                after_snapshot_id = record_worktree_snapshot(
+                    conn,
+                    root,
+                    repo_id,
+                    cycle_pk,
+                    "after_codex",
+                    source_id=source_id,
+                    untracked_files_mode="normal",
+                )
+                deleted_state_row = conn.execute(
+                    """
+                    select current_state from files
+                    where repo_id=? and (current_path=? or canonical_path=?)
+                    order by last_seen_epoch desc, file_id desc
+                    limit 1
+                    """,
+                    (repo_id, target_path, target_path),
+                ).fetchone()
+                after_file_state_row = deleted_state_row
+                deleted_snapshot_path = target_hmac
+                deleted_snapshot_row = conn.execute(
+                    """
+                    select file_id, status
+                    from worktree_snapshot_paths
+                    where worktree_snapshot_id=? and path_hmac=?
+                    order by worktree_snapshot_path_id desc
+                    limit 1
+                    """,
+                    (after_snapshot_id, deleted_snapshot_path),
+                ).fetchone()
+                file_id = conn.execute(
+                    "select file_id from files where repo_id=? and (current_path=? or canonical_path=?) order by file_id desc limit 1",
+                    (repo_id, target_path, target_path),
+                ).fetchone()
+                file_row = dict(file_id) if file_id is not None else None
+        finally:
+            conn.close()
+    before_state = str(before_file_state_row["current_state"]) if before_file_state_row is not None else None
+    after_state = str(after_file_state_row["current_state"]) if after_file_state_row is not None else None
+    deleted_path = str(target_hmac) if "target_hmac" in locals() else None
+    deleted_status = str(deleted_snapshot_row["status"]) if deleted_snapshot_row is not None else None
+    deleted_snapshot_file_id = int(deleted_snapshot_row["file_id"]) if deleted_snapshot_row and deleted_snapshot_row["file_id"] is not None else None
+    current_file_id = int(file_row["file_id"]) if file_row is not None else None
+    snapshot_file_id_private = deleted_snapshot_row is not None and deleted_snapshot_file_id is None
+    return {
+        "before_state": before_state,
+        "after_state": after_state,
+        "snapshot_status": deleted_status,
+        "snapshot_path": deleted_path,
+        "snapshot_path_matched": deleted_path != "" and deleted_snapshot_row is not None,
+        "snapshot_file_id_private": snapshot_file_id_private,
+        "current_file_id_present": current_file_id is not None,
+        "ok": all(
+            (
+                after_state == "deleted",
+                deleted_status is not None and "D" in deleted_status,
+                deleted_snapshot_row is not None,
+                current_file_id is not None,
+                snapshot_file_id_private,
+            )
+        ),
+    }
+
+
 def probe_export_redaction() -> dict[str, Any]:
     args = argparse.Namespace(
         redact_paths=True,
@@ -7345,6 +8088,19 @@ def record_selected_file_delta(
             details=details,
             dedupe_by_cycle=True,
         )
+    else:
+        details["reason"] = "clean_hash_and_mtime_match"
+        record_file_event(
+            conn,
+            repo_id,
+            "reviewed_clean_unchanged",
+            file_id=file_id,
+            cycle_pk=cycle_pk,
+            source_id=source_id,
+            path=path,
+            details=details,
+            dedupe_by_cycle=True,
+        )
 
 
 def create_artifact_ref(
@@ -7419,6 +8175,7 @@ def create_artifact_ref(
             return
     stored_digest = digest_hmac or ""
     observed_epoch = epoch_now()
+    retained = 0 if artifact_kind in OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS else 1 if exists else 0
     if dedupe_identity:
         existing = conn.execute(
             """
@@ -7449,7 +8206,7 @@ def create_artifact_ref(
                     1 if exists else 0,
                     size,
                     observed_epoch,
-                    1 if exists else 0,
+                    retained,
                     json_dumps(stored_details),
                     existing["artifact_id"],
                 ),
@@ -7474,7 +8231,7 @@ def create_artifact_ref(
                 size,
                 stored_digest,
                 observed_epoch,
-                1 if exists else 0,
+                retained,
                 json_dumps(stored_details),
             ),
         )
@@ -7501,7 +8258,7 @@ def create_artifact_ref(
                 1 if exists else 0,
                 size,
                 observed_epoch,
-                1 if exists else 0,
+                retained,
                 json_dumps(stored_details),
                 repo_id,
                 *cycle_params,
@@ -7831,6 +8588,32 @@ def parse_pass_result_lines(path: Path) -> tuple[list[dict[str, Any]], list[dict
     return accepted, rejected
 
 
+def build_p29_reuse_debt_attributes(item: dict[str, Any], pass_code: str) -> dict[str, Any]:
+    if normalize_pass_code(pass_code) != "P29":
+        return {}
+    debt: dict[str, Any] = {}
+    candidate = item.get("candidate")
+    if has_meaningful_value(candidate):
+        debt["reuse_debt_candidate"] = candidate
+    reason = item.get("reason")
+    if has_meaningful_value(reason):
+        debt["reuse_debt_reason"] = reason
+    owner = item.get("owner")
+    if not has_meaningful_value(owner):
+        owner = item.get("likely_owner")
+    if has_meaningful_value(owner):
+        debt["reuse_debt_owner"] = owner
+    proof_needed = item.get("proof_needed")
+    if has_meaningful_value(proof_needed):
+        debt["reuse_debt_proof_needed"] = proof_needed
+    validation_command = item.get("validation_command")
+    if not has_meaningful_value(validation_command):
+        validation_command = item.get("validation_cmd")
+    if has_meaningful_value(validation_command):
+        debt["reuse_debt_validation_command"] = validation_command
+    return debt
+
+
 def record_one_pass_result(
     conn: sqlite3.Connection,
     root: Path,
@@ -7851,6 +8634,7 @@ def record_one_pass_result(
 ) -> int:
     pass_id = ensure_pass(conn, pass_code)
     file_id = ensure_file_identity(conn, repo_id, path, source_id=source_id)
+    pass_code = normalize_pass_code(pass_code)
     attempted = 1 if outcome not in {"planned", "unknown"} else 0
     resolved_planned = 1 if (planned is not None and bool(planned)) or (planned is None and outcome == "planned") else 0
     result_epoch = epoch_now()
@@ -7864,32 +8648,75 @@ def record_one_pass_result(
             source_id=source_id,
             observed_epoch=result_epoch,
         )
-    cur = conn.execute(
+    cycle_pk_key = int(cycle_pk) if cycle_pk is not None else -1
+    existing = conn.execute(
         """
-        insert into file_pass_runs(
-          repo_id, file_id, cycle_pk, pass_id, pass_code, planned, applicable,
-          attempted, outcome, changed, regression, confidence, source_id, raw_line, created_epoch
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        select file_pass_run_id
+        from file_pass_runs
+        where repo_id=? and file_id=? and pass_code=?
+          and coalesce(cycle_pk, -1)=? and coalesce(confidence, '')=?
+        order by coalesce(created_epoch, 0) desc, file_pass_run_id desc
+        limit 1
         """,
         (
             repo_id,
             file_id,
-            cycle_pk,
-            pass_id,
-            normalize_pass_code(pass_code),
-            resolved_planned,
-            applicable,
-            attempted,
-            outcome,
-            changed,
-            regression,
-            confidence,
-            source_id,
-            raw_line or None,
-            result_epoch,
+            pass_code,
+            cycle_pk_key,
+            confidence or "",
         ),
-    )
-    run_id = int(cur.lastrowid)
+    ).fetchone()
+    if existing is not None:
+        run_id = int(existing["file_pass_run_id"])
+        conn.execute(
+            """
+            update file_pass_runs
+            set pass_id=?, pass_code=?, planned=?, applicable=?, attempted=?, outcome=?,
+                changed=?, regression=?, source_id=?, raw_line=?, created_epoch=?
+            where file_pass_run_id=?
+            """,
+            (
+                pass_id,
+                pass_code,
+                resolved_planned,
+                applicable,
+                attempted,
+                outcome,
+                changed,
+                regression,
+                source_id,
+                raw_line or None,
+                result_epoch,
+                run_id,
+            ),
+        )
+    else:
+        cur = conn.execute(
+            """
+            insert into file_pass_runs(
+              repo_id, file_id, cycle_pk, pass_id, pass_code, planned, applicable,
+              attempted, outcome, changed, regression, confidence, source_id, raw_line, created_epoch
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                repo_id,
+                file_id,
+                cycle_pk,
+                pass_id,
+                pass_code,
+                resolved_planned,
+                applicable,
+                attempted,
+                outcome,
+                changed,
+                regression,
+                confidence,
+                source_id,
+                raw_line or None,
+                result_epoch,
+            ),
+        )
+        run_id = int(cur.lastrowid)
     record_file_event(
         conn,
         repo_id,
@@ -8184,6 +9011,10 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     planned=0,
                     attributes={
                         "upkeeper.pass_result:path_hmac": pass_result_path_hmac(root, path),
+                        **{
+                            f"upkeeper.pass_result:{k}": v
+                            for k, v in build_p29_reuse_debt_attributes(item, pass_code).items()
+                        },
                     },
                 )
                 seen.add((pass_code, path))
@@ -9337,6 +10168,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
     ensure_schema(conn)
     repo_id = ensure_repository(conn, root)
     context = repo_identity_context(root)
+    repo_key = repo_identity_stable_key(root, context[1])
     output = validate_lattice_output_path(
         root,
         args.output if args.output else db_path.parent / "exports" / f"lattice-export-{artifact_now()}.jsonl",
@@ -9373,6 +10205,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
                     },
                     "repo_identity": {
                         "repo_id": repo_id,
+                        "repo_key": repo_key,
                         "root_path": (
                             REDACTED_PATH_PREFIX + sha256_text(str(root))
                             if args.redact_paths
@@ -9426,6 +10259,65 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
     rows_seen = rows_written = conflicts = duplicates = 0
     refresh_pass_rollup_file_ids: set[int] = set()
     imported_import_max = 0
+    incoming_repo_identity: dict[str, str] = {}
+
+    def _extract_repo_identity(raw_identity: Any) -> dict[str, str]:
+        if not isinstance(raw_identity, dict):
+            return {}
+        observed: dict[str, str] = {}
+        repo_id_value = raw_identity.get("repo_id")
+        if repo_id_value is not None:
+            observed["repo_id"] = str(repo_id_value)
+        repo_key = str(raw_identity.get("repo_key") or "").strip()
+        if repo_key:
+            observed["repo_key"] = repo_key
+        root_path = str(raw_identity.get("root_path") or "").strip()
+        if root_path:
+            observed["root_path"] = root_path
+        return observed
+
+    def _repo_identity_mismatch_error(
+        expected: dict[str, str],
+        observed: dict[str, str],
+        line_number: int,
+        raw_line: str,
+    ) -> tuple[str, dict[str, str]]:
+        if not observed:
+            if not expected:
+                return ("", {})
+            return ("missing", {"line_number": str(line_number), "raw_line": raw_line[:TEXT_SAMPLE_SIZE]})
+        if not expected:
+            return ("", {})
+        repo_id_mismatch = (
+            expected.get("repo_id") and observed.get("repo_id") and expected.get("repo_id") != observed.get("repo_id")
+        )
+        repo_key_mismatch = (
+            expected.get("repo_key") and observed.get("repo_key") and expected.get("repo_key") != observed.get("repo_key")
+        )
+        root_path_mismatch = (
+            expected.get("root_path") and observed.get("root_path")
+            and expected.get("root_path") != observed.get("root_path")
+        )
+        if not (repo_key_mismatch or root_path_mismatch or repo_id_mismatch):
+            return ("", {})
+        details: dict[str, str] = {
+            "line_number": str(line_number),
+            "raw_line": raw_line[:TEXT_SAMPLE_SIZE],
+        }
+        if repo_key_mismatch:
+            details["expected_repo_key"] = expected["repo_key"]
+            details["incoming_repo_key"] = observed.get("repo_key", "")
+            return ("repo_key_mismatch", details)
+        if root_path_mismatch:
+            details["expected_repo_root_path"] = expected["root_path"]
+            details["incoming_repo_root_path"] = observed.get("root_path", "")
+            return ("repo_root_path_mismatch", details)
+        if repo_id_mismatch:
+            details["expected_repo_id"] = expected["repo_id"]
+            details["incoming_repo_id"] = observed.get("repo_id", "")
+            return ("repo_id_mismatch", details)
+        return ("", {})
+
     try:
         input_lines = input_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -9440,18 +10332,69 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             continue
         if not isinstance(row, dict):
             continue
-        if row.get("row_type") != "lattice_imports":
-            continue
         payload = row.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        try:
-            imported_import_max = max(imported_import_max, int(payload.get("import_id") or 0))
-        except (TypeError, ValueError):
-            continue
+        if isinstance(payload, dict) and row.get("row_type") == "lattice_imports":
+            try:
+                imported_import_max = max(imported_import_max, int(payload.get("import_id") or 0))
+            except (TypeError, ValueError):
+                pass
+        observed_repo_identity = _extract_repo_identity(row.get("repo_identity"))
+        if not incoming_repo_identity:
+            incoming_repo_identity = dict(observed_repo_identity)
+        elif observed_repo_identity:
+            for key in ("repo_id", "repo_key", "root_path"):
+                if key not in observed_repo_identity:
+                    continue
+                if key in incoming_repo_identity and incoming_repo_identity[key] != observed_repo_identity[key]:
+                    print_json({
+                        "status": "unavailable",
+                        "reason": "repo_identity_conflict",
+                        "path": str(input_path),
+                        f"incoming_{key}": observed_repo_identity[key],
+                        f"previous_{key}": incoming_repo_identity[key],
+                    })
+                    return EXIT_INTEGRITY
+                incoming_repo_identity[key] = observed_repo_identity[key]
     with conn:
         repo_id = ensure_repository(conn, root)
         context = repo_identity_context(root)
+        expected_repo_identity = {
+            "repo_id": str(repo_id),
+            "repo_key": repo_identity_stable_key(root, context[1]),
+            "root_path": protected_repo_path(context, str(root)),
+        }
+        expected_repo_id = expected_repo_identity["repo_id"]
+        expected_repo_key = expected_repo_identity["repo_key"]
+        expected_repo_root = expected_repo_identity["root_path"]
+
+        if incoming_repo_identity:
+            incoming_repo_id = incoming_repo_identity.get("repo_id", "")
+            incoming_repo_key = incoming_repo_identity.get("repo_key", "")
+            incoming_repo_root = incoming_repo_identity.get("root_path", "")
+            if incoming_repo_key and expected_repo_key != incoming_repo_key:
+                print_json({
+                    "status": "unavailable",
+                    "reason": "repo_identity_mismatch",
+                    "expected_repo_id": expected_repo_id,
+                    "expected_repo_key": expected_repo_key,
+                    "expected_repo_root_path": expected_repo_root,
+                    "incoming_repo_id": incoming_repo_id,
+                    "incoming_repo_key": incoming_repo_key,
+                    "incoming_repo_root_path": incoming_repo_root,
+                    "path": str(input_path),
+                })
+                return EXIT_INTEGRITY
+            if incoming_repo_root and expected_repo_root != incoming_repo_root:
+                print_json({
+                    "status": "unavailable",
+                    "reason": "repo_root_path_mismatch",
+                    "expected_repo_id": expected_repo_id,
+                    "expected_repo_root_path": expected_repo_root,
+                    "incoming_repo_id": incoming_repo_id,
+                    "incoming_repo_root_path": incoming_repo_root,
+                    "path": str(input_path),
+                })
+                return EXIT_INTEGRITY
         conn.execute("PRAGMA defer_foreign_keys=ON")
         existing_import_max = int(conn.execute("select coalesce(max(import_id), 0) from lattice_imports").fetchone()[0] or 0)
         import_id = start_import(
@@ -9476,10 +10419,34 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, "jsonl", f"line:{rows_seen}", "", "", "unsupported_row")
                 continue
-            table = row.get("row_type")
-            payload = row.get("payload")
+            table = row.get("row_type") or ""
             logical_key = str(row.get("logical_key", ""))
             declared_payload_hash = str(row.get("payload_sha256", ""))
+            observed_repo_identity = _extract_repo_identity(row.get("repo_identity"))
+            identity_expected = {"repo_id": str(repo_id), "repo_key": expected_repo_key, "root_path": expected_repo_root}
+            if not incoming_repo_identity:
+                identity_expected = {}
+            mismatch_reason, mismatch_details = _repo_identity_mismatch_error(
+                identity_expected,
+                observed_repo_identity,
+                rows_seen,
+                raw,
+            )
+            if mismatch_reason:
+                conflicts += 1
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    declared_payload_hash,
+                    f"repo_identity_{mismatch_reason}",
+                    details=mismatch_details,
+                )
+                continue
+            payload = row.get("payload")
             schema_version = row.get("schema_version")
             row_version = row.get("row_version")
             try:
@@ -9518,16 +10485,43 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 continue
             if not isinstance(payload, dict):
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "unsupported_row")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    declared_payload_hash,
+                    "unsupported_row",
+                )
                 continue
             if not getattr(args, "anonymized_archive", False) and has_redacted_path_token(row, check_any_context=True):
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "redacted_path_payload")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    declared_payload_hash,
+                    "redacted_path_payload",
+                )
                 continue
             incoming_raw_hash = sha256_text(json_dumps(payload))
             if declared_payload_hash != incoming_raw_hash:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", incoming_raw_hash, "payload_hash_mismatch")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    incoming_raw_hash,
+                    "payload_hash_mismatch",
+                )
                 continue
             payload = sanitize_import_identity_payload(str(table), payload, context)
             if table == "lattice_unavailable" and isinstance(payload, dict):
@@ -9548,11 +10542,22 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 continue
             if table not in REQUIRED_TABLES:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", incoming_raw_hash, "unsupported_row")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    incoming_raw_hash,
+                    "unsupported_row",
+                )
                 continue
             columns = table_columns(conn, table)
             pk = table_primary_key(conn, table)
             filtered = {k: v for k, v in payload.items() if k in columns}
+            if "repo_id" in filtered:
+                filtered["repo_id"] = repo_id
             if table == "source_records":
                 filtered = sanitize_imported_source_record_row(
                     filtered,
@@ -9564,11 +10569,29 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 filtered = normalize_imported_stored_rel_path_payload(str(table), filtered)
             except ValueError as exc:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", incoming_raw_hash, str(exc))
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    incoming_raw_hash,
+                    str(exc),
+                )
                 continue
             if not filtered:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_raw_hash, "empty_filtered_payload")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    table,
+                    logical_key,
+                    "",
+                    incoming_raw_hash,
+                    "empty_filtered_payload",
+                )
                 continue
             incoming_semantic_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
             staged_import_rows.append(
@@ -10019,6 +11042,7 @@ def command_recover(args: argparse.Namespace) -> int:
     db_path = normalize_db_path(args.db, root)
     raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     preexisting_db = db_path.exists()
+    backup_first = True if args.backup_first is None else bool(args.backup_first)
     conn = connect_checked(
         root,
         db_path,
@@ -10027,12 +11051,10 @@ def command_recover(args: argparse.Namespace) -> int:
         create_parent=True,
         create_if_missing=True,
     )
-    init_schema(conn, root, raw_storage_mode=raw_storage_mode)
     sources: list[str] = []
     artifact_sources: list[str] = []
     backup_path = None
-    if args.backup_first and preexisting_db:
-        backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
+    init_schema(conn, root, raw_storage_mode=raw_storage_mode)
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -10044,7 +11066,8 @@ def command_recover(args: argparse.Namespace) -> int:
             parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
             raw_storage_mode=raw_storage_mode,
         )
-    if args.backup_first and preexisting_db:
+    if backup_first and preexisting_db:
+        backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
         backup_path = create_backup(
             conn,
             root,
@@ -10070,7 +11093,6 @@ def command_recover(args: argparse.Namespace) -> int:
             backup_conn.commit()
         finally:
             backup_conn.close()
-        sources.append("backup:1")
     conn.close()
     status = "ok"
     exit_code = EXIT_SUCCESS
@@ -10216,12 +11238,22 @@ def import_failure_markers(
             target, marker_id, raw_marker_id = tool_failure_marker_identity(root, path, data)
             if not target or not marker_id:
                 continue
+            first_failure_kind = normalize_tool_failure_kind(data.get("first_failure_kind"), "first_failure_kind")
+            last_failure_kind = normalize_tool_failure_kind(data.get("last_failure_kind"), "last_failure_kind")
+            kind_issues = []
+            if data.get("first_failure_kind") is not None and first_failure_kind is None:
+                kind_issues.append("invalid first_failure_kind")
+            if data.get("last_failure_kind") is not None and last_failure_kind is None:
+                kind_issues.append("invalid last_failure_kind")
             marker_status = str(data.get("status", "open")).strip()
             first_seen_epoch = int(data.get("first_seen_epoch") or 0) or None
             last_seen_epoch = int(data.get("last_seen_epoch") or 0) or None
             resolved_epoch = int(data.get("resolved_epoch") or 0) or None
             failure_count = int(data.get("failure_count") or 0) or None
             file_id = ensure_file_identity(conn, repo_id, target)
+            marker_payload = dict(data)
+            if kind_issues:
+                marker_payload["validation_issues"] = kind_issues
             source_id = ensure_source_record(
                 conn,
                 root,
@@ -10229,7 +11261,8 @@ def import_failure_markers(
                 "tool_failure_marker",
                 source_path=str(path),
                 raw_ref=raw_marker_id,
-                parsed=data,
+                parsed=marker_payload,
+                parse_status="invalid" if kind_issues else "parsed",
                 raw_storage_mode=raw_storage_mode,
             )
             existing = conn.execute(
@@ -10252,11 +11285,11 @@ def import_failure_markers(
                         first_seen_epoch,
                         last_seen_epoch,
                         resolved_epoch,
-                        data.get("first_failure_kind"),
-                        data.get("last_failure_kind"),
+                        first_failure_kind,
+                        last_failure_kind,
                         failure_count,
                         source_id,
-                        json_dumps(data),
+                        json_dumps(marker_payload),
                         int(existing["tool_failure_id"]),
                     ),
                 )
@@ -10264,7 +11297,7 @@ def import_failure_markers(
                 conn.execute(
                     """
                     insert into tool_failures(
-                      repo_id, file_id, marker_id, status, first_seen_epoch, last_seen_epoch, resolved_epoch,
+                        repo_id, file_id, marker_id, status, first_seen_epoch, last_seen_epoch, resolved_epoch,
                       first_failure_kind, last_failure_kind, failure_count, source_id, raw_json
                     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
@@ -10276,11 +11309,11 @@ def import_failure_markers(
                         first_seen_epoch,
                         last_seen_epoch,
                         resolved_epoch,
-                        data.get("first_failure_kind"),
-                        data.get("last_failure_kind"),
+                        first_failure_kind,
+                        last_failure_kind,
                         failure_count,
                         source_id,
-                        json_dumps(data),
+                        json_dumps(marker_payload),
                     ),
                 )
             record_file_event(
@@ -10290,9 +11323,18 @@ def import_failure_markers(
                 file_id=file_id,
                 source_id=source_id,
                 path=target,
-                details=data,
+                details=marker_payload,
                 dedupe_by_source=True,
             )
+
+
+def normalize_tool_failure_kind(raw: Any, field_name: str) -> str | None:
+    if not has_meaningful_value(raw):
+        return None
+    value = str(raw).strip().lower()
+    if value not in KNOWN_TOOL_FAILURE_KINDS:
+        return None
+    return value
 
 
 def pass_counts_for_path(conn: sqlite3.Connection, repo_id: int, path: str, pass_code: str | None = None) -> list[dict[str, Any]]:
@@ -10849,9 +11891,7 @@ def command_prune(args: argparse.Namespace) -> int:
     with conn:
         if args.dry_run:
             info = repo_git_info(root)
-            repo_key = sha256_text(f"{root}|{info['git_common_dir']}|{info['remote_url']}")
-            row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
-            repo_id = int(row["repo_id"]) if row else None
+            repo_id = lookup_repository_id_by_identity(conn, root, info)
         else:
             repo_id = ensure_repository(conn, root)
             source_id = ensure_source_record(
@@ -11163,7 +12203,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=command_backup)
 
     p = sub.add_parser("recover")
-    p.add_argument("--backup-first", nargs="?", const=True, default=True, type=parse_bool_flag)
+    p.add_argument(
+        "--backup-first",
+        nargs="?",
+        const=True,
+        default=None,
+        type=parse_bool_flag,
+        help="(legacy) pass --backup-first 0/1 or --backup-first[=true|false]",
+    )
     p.add_argument("--no-backup-first", dest="backup_first", action="store_false")
     p.add_argument("--max-conflicts", type=int, default=999999)
     p.add_argument("--limit", type=int)
@@ -11240,6 +12287,8 @@ def add_scope(parser: argparse.ArgumentParser, default: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "backup_first", None) is None:
+        args.backup_first = True
     if getattr(args, "raw_repo_identity", False):
         os.environ[UPKEEPER_RAW_REPO_IDENTITY_ENV] = "1"
     try:

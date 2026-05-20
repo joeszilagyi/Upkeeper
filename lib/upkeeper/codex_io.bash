@@ -1495,6 +1495,14 @@ parse_args() {
       --manifest-file)
         die "use --manifest-file=PATH (spaced form is intentionally unsupported)"
         ;;
+      --allow-unsafe-manifest-path=*)
+        CODEX_ALLOW_UNSAFE_MANIFEST_PATH="$(config_truthy "${1#*=}" && printf 1 || printf 0)"
+        shift
+        ;;
+      --allow-unsafe-manifest-path)
+        CODEX_ALLOW_UNSAFE_MANIFEST_PATH="1"
+        shift
+        ;;
       --include-glob=*)
         CODEX_SELECTION_INCLUDE_GLOBS="$(append_csv_value "$CODEX_SELECTION_INCLUDE_GLOBS" "${1#--include-glob=}")"
         shift

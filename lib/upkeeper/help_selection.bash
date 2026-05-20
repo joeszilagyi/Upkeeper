@@ -22,7 +22,7 @@ help_selection_path_hmac() {
 
 show_help() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
+Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: $UPKEEPER_VERSION
@@ -89,11 +89,11 @@ Loop stop semantics:
     shared bubblewrap temp registry; a stale root-owned registry is classified
     as a local environment failure before launching another Codex process
   - live primary and auxiliary Codex calls also preflight $CODEX_ARG0_TMP_ROOT;
-    stale flat codex-arg0* shim directories are removed when owned by the
-    operator and moved to $CODEX_ARG0_TMP_QUARANTINE_ROOT when they are stale
-    but root-owned; if a stale root-owned child cannot be moved individually,
-    the wrapper rotates the whole arg0 root and recreates it empty, avoiding
-    Codex's vague stale-arg0 cleanup warning
+    stale flat codex-arg0* shim directories are removed only when they carry a
+    trusted Upkeeper/Codex ownership marker, while unmarked matching directories
+    are moved to $CODEX_ARG0_TMP_QUARANTINE_ROOT; if a stale child cannot be
+    moved individually, the wrapper rotates the whole arg0 root and recreates it
+    empty, avoiding Codex's vague stale-arg0 cleanup warning
   - if you press Ctrl-C while the primary wrapper is watching a detached recovery
     screen session, the wrapper first checks whether the child already finished,
     then tears down any still-running recovery session before exiting
@@ -476,6 +476,8 @@ Prompt behavior:
     bypasses it for this cycle. --refresh-manifest rebuilds and uses the
     manifest immediately.
   - --manifest-file=PATH selects a different local manifest path for this cycle.
+    Manifest paths must stay under runtime/ or another ignored local path unless
+    --allow-unsafe-manifest-path is explicitly set for a trusted one-cycle run.
   - --include-glob=PATTERN and --exclude-glob=PATTERN add local path filters;
     --include-globs=a,b and --exclude-globs=a,b replace the configured lists.
   - --selection-review-modules=p24,p25,p26,p27,p28,p29,p30 filters candidates using

@@ -25,8 +25,15 @@ remove_flat_codex_arg0_dir() {
 arg0_tmp_is_owned_by_upkeeper() {
   local dir="$1"
   local marker_path="$dir/$ARG0_TMP_OWNERSHIP_MARKER"
+  local marker_owner marker_mode marker_header
 
-  [[ -f "$marker_path" ]] && [[ ! -L "$marker_path" ]]
+  [[ -f "$marker_path" && ! -L "$marker_path" ]] || return 1
+  marker_owner="$(stat -Lc '%u' -- "$marker_path" 2>/dev/null || printf '')"
+  marker_mode="$(stat -Lc '%a' -- "$marker_path" 2>/dev/null || printf '')"
+  [[ "$marker_owner" == "$(id -u)" && "$marker_mode" == "600" ]] || return 1
+
+  IFS= read -r marker_header <"$marker_path" || return 1
+  [[ "$marker_header" == "upkeeper-arg0-owner-v1" ]]
 }
 
 codex_arg0_tmp_cleanup_check() {

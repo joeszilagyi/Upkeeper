@@ -89,11 +89,11 @@ Loop stop semantics:
     shared bubblewrap temp registry; a stale root-owned registry is classified
     as a local environment failure before launching another Codex process
   - live primary and auxiliary Codex calls also preflight $CODEX_ARG0_TMP_ROOT;
-    stale flat codex-arg0* shim directories are removed when owned by the
-    operator and moved to $CODEX_ARG0_TMP_QUARANTINE_ROOT when they are stale
-    but root-owned; if a stale root-owned child cannot be moved individually,
-    the wrapper rotates the whole arg0 root and recreates it empty, avoiding
-    Codex's vague stale-arg0 cleanup warning
+    stale flat codex-arg0* shim directories are removed only when they carry a
+    trusted Upkeeper/Codex ownership marker, while unmarked matching directories
+    are moved to $CODEX_ARG0_TMP_QUARANTINE_ROOT; if a stale child cannot be
+    moved individually, the wrapper rotates the whole arg0 root and recreates it
+    empty, avoiding Codex's vague stale-arg0 cleanup warning
   - if you press Ctrl-C while the primary wrapper is watching a detached recovery
     screen session, the wrapper first checks whether the child already finished,
     then tears down any still-running recovery session before exiting

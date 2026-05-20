@@ -3,6 +3,39 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Arg0 Cleanup Ownership Marker Alignment
+
+Status: completed locally
+
+Goal:
+- align full validation and operator docs with issue `#121` behavior: stale
+  `codex-arg0*` directories are deleted only when a trusted Upkeeper/Codex
+  marker proves wrapper ownership
+- keep unmarked matching directories out of the live arg0 root by quarantining
+  them instead of deleting their contents
+- unblock PR `#411` after the issue `#121` fix changed runtime behavior but
+  left the validation contract expecting the old delete-any-match path
+
+Constraints:
+- do not launch real backend Codex validation
+- keep the cleanup pre-model and deterministic
+- preserve the no-recursion safety boundary for unknown or nested arg0 contents
+
+Files likely touched:
+- `lib/upkeeper/arg0_preflight.bash`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
+- `git diff --check`
+
 ## Session Store Fail-Closed Alignment
 
 Status: completed locally

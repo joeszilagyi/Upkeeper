@@ -2058,17 +2058,21 @@ check_disk_preflight_prompt_note_contract() {
 }
 
 check_arg0_tmp_cleanup_contract() {
-  local temp_dir arg0_root quarantine_root output
+  local temp_dir arg0_root quarantine_root output marker_name
 
   log "checking Codex arg0 temp cleanup contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-arg0-cleanup.XXXXXX)"
   arg0_root="$temp_dir/arg0"
   quarantine_root="$temp_dir/quarantine"
+  marker_name=".upkeeper-arg0.owner"
 
-  mkdir -p "$arg0_root/codex-arg0-old" "$arg0_root/unmanaged-cache"
-  printf 'shim\n' >"$arg0_root/codex-arg0-old/shim"
+  mkdir -p "$arg0_root/codex-arg0-owned" "$arg0_root/codex-arg0-unmarked" "$arg0_root/unmanaged-cache"
+  printf 'upkeeper-arg0-owner-v1\n' >"$arg0_root/codex-arg0-owned/$marker_name"
+  chmod 600 "$arg0_root/codex-arg0-owned/$marker_name"
+  printf 'shim\n' >"$arg0_root/codex-arg0-owned/shim"
+  printf 'unknown\n' >"$arg0_root/codex-arg0-unmarked/unknown"
   printf 'keep\n' >"$arg0_root/unmanaged-cache/keep"
-  touch -t 202001010000 "$arg0_root/codex-arg0-old" "$arg0_root/unmanaged-cache"
+  touch -t 202001010000 "$arg0_root/codex-arg0-owned" "$arg0_root/codex-arg0-unmarked" "$arg0_root/unmanaged-cache"
 
   if ! output="$(
     CODEX_ARG0_TMP_ROOT="$arg0_root" \
@@ -2082,8 +2086,11 @@ check_arg0_tmp_cleanup_contract() {
     fail "arg0 cleanup contract check failed"
   fi
 
-  [[ "$output" == "ok removed=1 quarantined=0" ]] || fail "arg0 cleanup returned unexpected output: $output"
-  [[ ! -e "$arg0_root/codex-arg0-old" ]] || fail "stale codex-arg0 shim directory was not removed"
+  [[ "$output" == ok\ removed=1\ quarantined=1\ quarantine_paths=*missing_marker:* ]] || fail "arg0 cleanup returned unexpected output: $output"
+  [[ ! -e "$arg0_root/codex-arg0-owned" ]] || fail "owned stale codex-arg0 shim directory was not removed"
+  [[ ! -e "$arg0_root/codex-arg0-unmarked" ]] || fail "unmarked stale codex-arg0 directory remained in the live arg0 root"
+  find "$quarantine_root" -mindepth 1 -maxdepth 1 -type d -name 'codex-arg0-unmarked-*' | grep -q . ||
+    fail "unmarked stale codex-arg0 directory was not quarantined"
   [[ -f "$arg0_root/unmanaged-cache/keep" ]] || fail "non-codex stale directory was modified"
 
   rm -r "$temp_dir"

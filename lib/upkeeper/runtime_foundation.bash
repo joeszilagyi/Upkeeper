@@ -108,6 +108,41 @@ upkeeper_path_contains_symlink_component() {
   return 1
 }
 
+upkeeper_private_directory_is_secure() {
+  local path="${1:-}"
+  local owner
+  local mode
+
+  [[ -n "$path" ]] || return 1
+  if upkeeper_path_contains_symlink_component "$path"; then
+    return 1
+  fi
+  if [[ -L "$path" ]]; then
+    return 1
+  fi
+  if [[ -e "$path" ]] && ! [[ -d "$path" ]]; then
+    return 1
+  fi
+
+  if [[ -e "$path" ]]; then
+    if ! chmod 700 "$path" 2>/dev/null; then
+      return 1
+    fi
+  else
+    if ! mkdir -p -m 700 -- "$path" 2>/dev/null; then
+      return 1
+    fi
+  fi
+
+  owner="$(stat -Lc '%u' -- "$path" 2>/dev/null || printf '')"
+  mode="$(stat -Lc '%a' -- "$path" 2>/dev/null || printf '')"
+  [[ -n "$owner" && -n "$mode" ]] || return 1
+  [[ "$owner" == "$(id -u)" ]] || return 1
+  [[ "$mode" == "700" ]] || return 1
+
+  return 0
+}
+
 upkeeper_redaction_key_material() {
   local key_file key_dir key_value token persist_key key_owner key_mode
 
@@ -683,20 +718,17 @@ write_run_tmp_dir_ownership_marker() {
     printf 'upkeeper-run-tmp-owner-v1\n'
     printf 'uid=%s\n' "$(id -u)"
     printf 'cycle=%s\n' "${CYCLE_ID:-unknown}"
-  } >"$marker_path" || return 1
-  chmod 600 "$marker_path"
+  } >"$marker_path" 2>/dev/null || return 1
+  chmod 600 "$marker_path" 2>/dev/null || return 1
 }
 
 ensure_run_tmp_dir() {
   local tmp_base="${TMPDIR:-/tmp}"
-  local mode owner run_tmp_dir_preexisted=0
+  local run_tmp_dir_preexisted=0
 
   if [[ -n "$RUN_TMP_DIR" ]]; then
-    if upkeeper_path_contains_symlink_component "$RUN_TMP_DIR"; then
-      die "run temp directory is a symlink $RUN_TMP_DIR"
-    fi
-    if [[ -e "$RUN_TMP_DIR" && ! -d "$RUN_TMP_DIR" ]]; then
-      die "run temp directory is not a directory $RUN_TMP_DIR"
+    if ! upkeeper_private_directory_is_secure "$RUN_TMP_DIR"; then
+      die "run temp directory is not secure $RUN_TMP_DIR"
     fi
     if [[ -e "$RUN_TMP_DIR" ]]; then
       run_tmp_dir_preexisted=1
@@ -708,20 +740,6 @@ ensure_run_tmp_dir() {
       run_tmp_dir_is_wrapper_managed "$RUN_TMP_DIR" &&
       ! run_tmp_dir_ownership_marker_is_trusted "$RUN_TMP_DIR"; then
       die "run temp directory is missing a trusted ownership marker $RUN_TMP_DIR"
-    fi
-    if ! mkdir -p -m 700 -- "$RUN_TMP_DIR"; then
-      die "failed to create run temp directory $RUN_TMP_DIR"
-    fi
-    if ! chmod 700 "$RUN_TMP_DIR"; then
-      die "run temp directory is not writable $RUN_TMP_DIR"
-    fi
-    owner="$(stat -Lc '%u' -- "$RUN_TMP_DIR" 2>/dev/null || printf '')"
-    if [[ -z "$owner" || "$owner" != "$(id -u)" ]]; then
-      die "run temp directory has unexpected owner $RUN_TMP_DIR"
-    fi
-    mode="$(stat -Lc '%a' -- "$RUN_TMP_DIR" 2>/dev/null || printf '')"
-    if [[ -z "$mode" || "$mode" != 700 ]]; then
-      die "run temp directory permissions are insecure $RUN_TMP_DIR"
     fi
     if run_tmp_dir_is_wrapper_managed "$RUN_TMP_DIR" &&
       ! write_run_tmp_dir_ownership_marker "$RUN_TMP_DIR"; then
@@ -738,20 +756,9 @@ ensure_run_tmp_dir() {
     die "failed to create run temp directory under $tmp_base"
   fi
 
-  if upkeeper_path_contains_symlink_component "$RUN_TMP_DIR"; then
+  if ! upkeeper_private_directory_is_secure "$RUN_TMP_DIR"; then
     rm -rf -- "$RUN_TMP_DIR"
-    die "run temp directory is a symlink $RUN_TMP_DIR"
-  fi
-  if ! chmod 700 "$RUN_TMP_DIR"; then
-    die "run temp directory is not writable $RUN_TMP_DIR"
-  fi
-  owner="$(stat -Lc '%u' -- "$RUN_TMP_DIR" 2>/dev/null || printf '')"
-  if [[ -z "$owner" || "$owner" != "$(id -u)" ]]; then
-    die "run temp directory has unexpected owner $RUN_TMP_DIR"
-  fi
-  mode="$(stat -Lc '%a' -- "$RUN_TMP_DIR" 2>/dev/null || printf '')"
-  if [[ -z "$mode" || "$mode" != 700 ]]; then
-    die "run temp directory permissions are insecure $RUN_TMP_DIR"
+    die "run temp directory is not secure $RUN_TMP_DIR"
   fi
   if ! write_run_tmp_dir_ownership_marker "$RUN_TMP_DIR"; then
     die "failed to stamp run temp directory ownership marker $RUN_TMP_DIR"

@@ -206,8 +206,21 @@ except OSError as exc:
 
 try:
     st = os.fstat(fd)
+    if stat.S_IMODE(st.st_mode) != 0o600:
+        try:
+            os.fchmod(fd, 0o600)
+        except OSError as exc:
+            print(f"unsafe_permissions:mode={oct(stat.S_IMODE(st.st_mode))} path={path} chmod_failed={exc.strerror or exc}")
+            sys.exit(1)
+        st = os.fstat(fd)
+        if stat.S_IMODE(st.st_mode) != 0o600:
+            print(f"unsafe_permissions:mode={oct(stat.S_IMODE(st.st_mode))} path={path}")
+            sys.exit(1)
     if not stat.S_ISREG(st.st_mode):
         print(f"lock_not_regular:{path}")
+        sys.exit(1)
+    if st.st_uid != os.geteuid():
+        print(f"unsafe_owner:expected={os.geteuid()} actual={st.st_uid} path={path}")
         sys.exit(1)
 finally:
     os.close(fd)

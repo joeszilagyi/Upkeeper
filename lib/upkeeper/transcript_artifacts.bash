@@ -103,10 +103,9 @@ new_transcript_file() {
   local transcript_dir="$CODEX_TRANSCRIPT_DIR"
   label="${label//[^A-Za-z0-9_.-]/_}"
   [[ -n "$transcript_dir" ]] || transcript_dir="$ROOT_DIR/runtime/upkeeper-transcripts"
-  if ! mkdir -p -- "$transcript_dir"; then
-    die "failed to create transcript directory $transcript_dir"
+  if ! upkeeper_private_directory_is_secure "$transcript_dir"; then
+    die "transcript directory is not private $transcript_dir"
   fi
-  chmod 700 "$transcript_dir" 2>/dev/null || true
   prune_transcript_artifacts
   mktemp "$transcript_dir/$CYCLE_ID.$CYCLE_RUN_HASH.$label.XXXXXX.log"
 }

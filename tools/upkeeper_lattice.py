@@ -9754,6 +9754,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
     ensure_schema(conn)
     repo_id = ensure_repository(conn, root)
     context = repo_identity_context(root)
+    repo_key = repo_identity_stable_key(root, context[1])
     output = validate_lattice_output_path(
         root,
         args.output if args.output else db_path.parent / "exports" / f"lattice-export-{artifact_now()}.jsonl",
@@ -9790,6 +9791,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
                     },
                     "repo_identity": {
                         "repo_id": repo_id,
+                        "repo_key": repo_key,
                         "root_path": (
                             REDACTED_PATH_PREFIX + sha256_text(str(root))
                             if args.redact_paths
@@ -9843,6 +9845,65 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
     rows_seen = rows_written = conflicts = duplicates = 0
     refresh_pass_rollup_file_ids: set[int] = set()
     imported_import_max = 0
+    incoming_repo_identity: dict[str, str] = {}
+
+    def _extract_repo_identity(raw_identity: Any) -> dict[str, str]:
+        if not isinstance(raw_identity, dict):
+            return {}
+        observed: dict[str, str] = {}
+        repo_id_value = raw_identity.get("repo_id")
+        if repo_id_value is not None:
+            observed["repo_id"] = str(repo_id_value)
+        repo_key = str(raw_identity.get("repo_key") or "").strip()
+        if repo_key:
+            observed["repo_key"] = repo_key
+        root_path = str(raw_identity.get("root_path") or "").strip()
+        if root_path:
+            observed["root_path"] = root_path
+        return observed
+
+    def _repo_identity_mismatch_error(
+        expected: dict[str, str],
+        observed: dict[str, str],
+        line_number: int,
+        raw_line: str,
+    ) -> tuple[str, dict[str, str]]:
+        if not observed:
+            if not expected:
+                return ("", {})
+            return ("missing", {"line_number": str(line_number), "raw_line": raw_line[:TEXT_SAMPLE_SIZE]})
+        if not expected:
+            return ("", {})
+        repo_id_mismatch = (
+            expected.get("repo_id") and observed.get("repo_id") and expected.get("repo_id") != observed.get("repo_id")
+        )
+        repo_key_mismatch = (
+            expected.get("repo_key") and observed.get("repo_key") and expected.get("repo_key") != observed.get("repo_key")
+        )
+        root_path_mismatch = (
+            expected.get("root_path") and observed.get("root_path")
+            and expected.get("root_path") != observed.get("root_path")
+        )
+        if not (repo_key_mismatch or root_path_mismatch or repo_id_mismatch):
+            return ("", {})
+        details: dict[str, str] = {
+            "line_number": str(line_number),
+            "raw_line": raw_line[:TEXT_SAMPLE_SIZE],
+        }
+        if repo_key_mismatch:
+            details["expected_repo_key"] = expected["repo_key"]
+            details["incoming_repo_key"] = observed.get("repo_key", "")
+            return ("repo_key_mismatch", details)
+        if root_path_mismatch:
+            details["expected_repo_root_path"] = expected["root_path"]
+            details["incoming_repo_root_path"] = observed.get("root_path", "")
+            return ("repo_root_path_mismatch", details)
+        if repo_id_mismatch:
+            details["expected_repo_id"] = expected["repo_id"]
+            details["incoming_repo_id"] = observed.get("repo_id", "")
+            return ("repo_id_mismatch", details)
+        return ("", {})
+
     try:
         input_lines = input_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -9857,18 +9918,69 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             continue
         if not isinstance(row, dict):
             continue
-        if row.get("row_type") != "lattice_imports":
-            continue
         payload = row.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        try:
-            imported_import_max = max(imported_import_max, int(payload.get("import_id") or 0))
-        except (TypeError, ValueError):
-            continue
+        if isinstance(payload, dict) and row.get("row_type") == "lattice_imports":
+            try:
+                imported_import_max = max(imported_import_max, int(payload.get("import_id") or 0))
+            except (TypeError, ValueError):
+                pass
+        observed_repo_identity = _extract_repo_identity(row.get("repo_identity"))
+        if not incoming_repo_identity:
+            incoming_repo_identity = dict(observed_repo_identity)
+        elif observed_repo_identity:
+            for key in ("repo_id", "repo_key", "root_path"):
+                if key not in observed_repo_identity:
+                    continue
+                if key in incoming_repo_identity and incoming_repo_identity[key] != observed_repo_identity[key]:
+                    print_json({
+                        "status": "unavailable",
+                        "reason": "repo_identity_conflict",
+                        "path": str(input_path),
+                        f"incoming_{key}": observed_repo_identity[key],
+                        f"previous_{key}": incoming_repo_identity[key],
+                    })
+                    return EXIT_INTEGRITY
+                incoming_repo_identity[key] = observed_repo_identity[key]
     with conn:
         repo_id = ensure_repository(conn, root)
         context = repo_identity_context(root)
+        expected_repo_identity = {
+            "repo_id": str(repo_id),
+            "repo_key": repo_identity_stable_key(root, context[1]),
+            "root_path": protected_repo_path(context, str(root)),
+        }
+        expected_repo_id = expected_repo_identity["repo_id"]
+        expected_repo_key = expected_repo_identity["repo_key"]
+        expected_repo_root = expected_repo_identity["root_path"]
+
+        if incoming_repo_identity:
+            incoming_repo_id = incoming_repo_identity.get("repo_id", "")
+            incoming_repo_key = incoming_repo_identity.get("repo_key", "")
+            incoming_repo_root = incoming_repo_identity.get("root_path", "")
+            if incoming_repo_key and expected_repo_key != incoming_repo_key:
+                print_json({
+                    "status": "unavailable",
+                    "reason": "repo_identity_mismatch",
+                    "expected_repo_id": expected_repo_id,
+                    "expected_repo_key": expected_repo_key,
+                    "expected_repo_root_path": expected_repo_root,
+                    "incoming_repo_id": incoming_repo_id,
+                    "incoming_repo_key": incoming_repo_key,
+                    "incoming_repo_root_path": incoming_repo_root,
+                    "path": str(input_path),
+                })
+                return EXIT_INTEGRITY
+            if incoming_repo_root and expected_repo_root != incoming_repo_root:
+                print_json({
+                    "status": "unavailable",
+                    "reason": "repo_root_path_mismatch",
+                    "expected_repo_id": expected_repo_id,
+                    "expected_repo_root_path": expected_repo_root,
+                    "incoming_repo_id": incoming_repo_id,
+                    "incoming_repo_root_path": incoming_repo_root,
+                    "path": str(input_path),
+                })
+                return EXIT_INTEGRITY
         conn.execute("PRAGMA defer_foreign_keys=ON")
         existing_import_max = int(conn.execute("select coalesce(max(import_id), 0) from lattice_imports").fetchone()[0] or 0)
         import_id = start_import(
@@ -9893,10 +10005,34 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 conflicts += 1
                 record_import_conflict(conn, import_id, repo_id, "jsonl", f"line:{rows_seen}", "", "", "unsupported_row")
                 continue
-            table = row.get("row_type")
-            payload = row.get("payload")
+            table = row.get("row_type") or ""
             logical_key = str(row.get("logical_key", ""))
             declared_payload_hash = str(row.get("payload_sha256", ""))
+            observed_repo_identity = _extract_repo_identity(row.get("repo_identity"))
+            identity_expected = {"repo_id": str(repo_id), "repo_key": expected_repo_key, "root_path": expected_repo_root}
+            if not incoming_repo_identity:
+                identity_expected = {}
+            mismatch_reason, mismatch_details = _repo_identity_mismatch_error(
+                identity_expected,
+                observed_repo_identity,
+                rows_seen,
+                raw,
+            )
+            if mismatch_reason:
+                conflicts += 1
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    declared_payload_hash,
+                    f"repo_identity_{mismatch_reason}",
+                    details=mismatch_details,
+                )
+                continue
+            payload = row.get("payload")
             schema_version = row.get("schema_version")
             row_version = row.get("row_version")
             try:
@@ -9935,16 +10071,43 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 continue
             if not isinstance(payload, dict):
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "unsupported_row")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    declared_payload_hash,
+                    "unsupported_row",
+                )
                 continue
             if not getattr(args, "anonymized_archive", False) and has_redacted_path_token(row, check_any_context=True):
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", declared_payload_hash, "redacted_path_payload")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    declared_payload_hash,
+                    "redacted_path_payload",
+                )
                 continue
             incoming_raw_hash = sha256_text(json_dumps(payload))
             if declared_payload_hash != incoming_raw_hash:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", incoming_raw_hash, "payload_hash_mismatch")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    incoming_raw_hash,
+                    "payload_hash_mismatch",
+                )
                 continue
             payload = sanitize_import_identity_payload(str(table), payload, context)
             if table == "lattice_unavailable" and isinstance(payload, dict):
@@ -9965,11 +10128,22 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 continue
             if table not in REQUIRED_TABLES:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", incoming_raw_hash, "unsupported_row")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    incoming_raw_hash,
+                    "unsupported_row",
+                )
                 continue
             columns = table_columns(conn, table)
             pk = table_primary_key(conn, table)
             filtered = {k: v for k, v in payload.items() if k in columns}
+            if "repo_id" in filtered:
+                filtered["repo_id"] = repo_id
             if table == "source_records":
                 filtered = sanitize_imported_source_record_row(
                     filtered,
@@ -9981,11 +10155,29 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 filtered = normalize_imported_stored_rel_path_payload(str(table), filtered)
             except ValueError as exc:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, str(table), logical_key, "", incoming_raw_hash, str(exc))
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    incoming_raw_hash,
+                    str(exc),
+                )
                 continue
             if not filtered:
                 conflicts += 1
-                record_import_conflict(conn, import_id, repo_id, table, logical_key, "", incoming_raw_hash, "empty_filtered_payload")
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    table,
+                    logical_key,
+                    "",
+                    incoming_raw_hash,
+                    "empty_filtered_payload",
+                )
                 continue
             incoming_semantic_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
             staged_import_rows.append(
@@ -10092,7 +10284,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                             logical_key,
                             existing_hash,
                             incoming_compare_hash,
-                            "kept_existing",
+                            "existing_row_preserved",
                         )
                         continue
                     colnames = list(filtered.keys())

@@ -6528,7 +6528,7 @@ def probe_cycle_finish_transient_artifact_scope() -> dict[str, Any]:
                 ).fetchone()
                 compiled = conn.execute(
                     """
-                    select path
+                    select path, retained
                       from artifact_refs
                      where repo_id=? and cycle_pk=? and artifact_kind='compiled_prompt'
                     """,
@@ -6536,7 +6536,7 @@ def probe_cycle_finish_transient_artifact_scope() -> dict[str, Any]:
                 ).fetchone()
                 last_message = conn.execute(
                     """
-                    select path
+                    select path, retained
                       from artifact_refs
                      where repo_id=? and cycle_pk=? and artifact_kind='last_message'
                     """,
@@ -6558,12 +6558,16 @@ def probe_cycle_finish_transient_artifact_scope() -> dict[str, Any]:
     if cycle:
         ok = ok and bool(compiled) and isinstance(compiled["path"], str) and compiled["path"].startswith(PASS_RESULT_PATH_HMAC_PREFIX)
         ok = ok and bool(last_message) and isinstance(last_message["path"], str) and last_message["path"].startswith(PASS_RESULT_PATH_HMAC_PREFIX)
+        ok = ok and isinstance(int(compiled["retained"]), int) and int(compiled["retained"]) == 0
+        ok = ok and isinstance(int(last_message["retained"]), int) and int(last_message["retained"]) == 0
     return {
         "cycle_id": "cycle-temp-scope",
         "run_hash": "run-temp-scope",
         "cycle_return_code": code,
         "compiled_prompt_path": compiled["path"] if compiled else None,
         "last_message_path": last_message["path"] if last_message else None,
+        "compiled_prompt_retained": int(compiled["retained"]) if compiled else None,
+        "last_message_retained": int(last_message["retained"]) if last_message else None,
         "ok": ok,
     }
 
@@ -7419,6 +7423,7 @@ def create_artifact_ref(
             return
     stored_digest = digest_hmac or ""
     observed_epoch = epoch_now()
+    retained = 0 if artifact_kind in OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS else 1 if exists else 0
     if dedupe_identity:
         existing = conn.execute(
             """
@@ -7449,7 +7454,7 @@ def create_artifact_ref(
                     1 if exists else 0,
                     size,
                     observed_epoch,
-                    1 if exists else 0,
+                    retained,
                     json_dumps(stored_details),
                     existing["artifact_id"],
                 ),
@@ -7474,7 +7479,7 @@ def create_artifact_ref(
                 size,
                 stored_digest,
                 observed_epoch,
-                1 if exists else 0,
+                retained,
                 json_dumps(stored_details),
             ),
         )
@@ -7501,7 +7506,7 @@ def create_artifact_ref(
                 1 if exists else 0,
                 size,
                 observed_epoch,
-                1 if exists else 0,
+                retained,
                 json_dumps(stored_details),
                 repo_id,
                 *cycle_params,

@@ -237,12 +237,26 @@ def normalize_open_marker_path(value: object) -> Path | None:
     else:
         path = Path(os.path.abspath(path))
     try:
-        relative = path.relative_to(open_dir)
+        normalized = path.resolve().relative_to(open_dir.resolve())
     except ValueError:
         return None
-    if relative.parent != Path("."):
+    except OSError:
+        return None
+    if path.suffix != ".json":
+        return None
+    if normalized.parent != Path("."):
         return None
     return path
+
+
+def selected_marker_path_matches_target(path: Path, expected_target_path: str) -> bool:
+    if path.suffix != ".json":
+        return False
+    data = read_json(path)
+    if not isinstance(data, dict):
+        return False
+    marker_target = normalize_target_path(data.get("target_path"))
+    return marker_target == expected_target_path
 
 
 def command_kind(line: str) -> str:
@@ -484,7 +498,13 @@ def main() -> None:
         raise ValueError("target_path_invalid")
     marker_id = marker_id_for(normalized_target_path)
     marker_path = open_dir / f"{marker_id}.json"
-    selected_marker_path = normalize_open_marker_path(selected_marker_raw) or marker_path
+    selected_marker_path = normalize_open_marker_path(selected_marker_raw)
+    if (
+        not selected_marker_path
+        or not selected_marker_path.exists()
+        or not selected_marker_path_matches_target(selected_marker_path, normalized_target_path)
+    ):
+        selected_marker_path = marker_path
     now = int(time.time())
     failures, unresolved_failures, successful_command_signatures = transcript_failure_state(transcript_path)
     ensure_private_dir(queue_dir)

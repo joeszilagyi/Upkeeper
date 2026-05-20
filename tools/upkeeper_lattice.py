@@ -340,6 +340,13 @@ PASS_RESULT_ALLOWED_KEYS = {
     "outcome",
     "changed",
     "regression",
+    "candidate",
+    "reason",
+    "owner",
+    "likely_owner",
+    "proof_needed",
+    "validation_command",
+    "validation_cmd",
 }
 RAW_STORAGE_MODES = {"none", "minimal", "limited", "full"}
 RAW_STORAGE_COMPAT_MODES = RAW_STORAGE_MODES | {"debug"}
@@ -8204,6 +8211,32 @@ def parse_pass_result_lines(path: Path) -> tuple[list[dict[str, Any]], list[dict
     return accepted, rejected
 
 
+def build_p29_reuse_debt_attributes(item: dict[str, Any], pass_code: str) -> dict[str, Any]:
+    if normalize_pass_code(pass_code) != "P29":
+        return {}
+    debt: dict[str, Any] = {}
+    candidate = item.get("candidate")
+    if has_meaningful_value(candidate):
+        debt["reuse_debt_candidate"] = candidate
+    reason = item.get("reason")
+    if has_meaningful_value(reason):
+        debt["reuse_debt_reason"] = reason
+    owner = item.get("owner")
+    if not has_meaningful_value(owner):
+        owner = item.get("likely_owner")
+    if has_meaningful_value(owner):
+        debt["reuse_debt_owner"] = owner
+    proof_needed = item.get("proof_needed")
+    if has_meaningful_value(proof_needed):
+        debt["reuse_debt_proof_needed"] = proof_needed
+    validation_command = item.get("validation_command")
+    if not has_meaningful_value(validation_command):
+        validation_command = item.get("validation_cmd")
+    if has_meaningful_value(validation_command):
+        debt["reuse_debt_validation_command"] = validation_command
+    return debt
+
+
 def record_one_pass_result(
     conn: sqlite3.Connection,
     root: Path,
@@ -8601,6 +8634,10 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     planned=0,
                     attributes={
                         "upkeeper.pass_result:path_hmac": pass_result_path_hmac(root, path),
+                        **{
+                            f"upkeeper.pass_result:{k}": v
+                            for k, v in build_p29_reuse_debt_attributes(item, pass_code).items()
+                        },
                     },
                 )
                 seen.add((pass_code, path))

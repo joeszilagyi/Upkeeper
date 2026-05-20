@@ -24,6 +24,8 @@ BACKLOG_PER_BUG_VALIDATION_MODE="${BACKLOG_PER_BUG_VALIDATION_MODE:-light}"
 BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"
 BACKLOG_AUTOSHELVE_BRANCH_PREFIX="${BACKLOG_AUTOSHELVE_BRANCH_PREFIX:-wip/backlog-autoshelve/}"
 BACKLOG_AUTOSHELVE_PROBE="${BACKLOG_AUTOSHELVE_PROBE:-0}"
+BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_WAIT_SECONDS="${BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_WAIT_SECONDS:-120}"
+BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_POLL_SECONDS="${BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_POLL_SECONDS:-5}"
 BACKLOG_ALLOW_INTERACTIVE_STDIN="${BACKLOG_ALLOW_INTERACTIVE_STDIN:-0}"
 BACKLOG_ALLOW_INTERACTIVE_STDIO="${BACKLOG_ALLOW_INTERACTIVE_STDIO:-$BACKLOG_ALLOW_INTERACTIVE_STDIN}"
 BACKLOG_INTERACTIVE_MODE="${BACKLOG_INTERACTIVE_MODE:-watch}"
@@ -1329,6 +1331,70 @@ autoshelve_is_remediation_bundle_path() {
   return 1
 }
 
+backlog_active_validation_process_pids() {
+  local ps_line pid cmd cwd
+  local output
+
+  output="$(ps -eo pid=,args= -ww 2>/dev/null | sed 's/^ *//')"
+  [[ -n "$output" ]] || return 1
+
+  while IFS= read -r ps_line; do
+    [[ -n "$ps_line" ]] || continue
+    pid="${ps_line%% *}"
+    cmd="${ps_line#* }"
+    [[ "$pid" == "$$" ]] && continue
+    [[ "$cmd" == *"validate_upkeeper.sh"* ]] || continue
+    if [[ -r "/proc/$pid/cwd" ]]; then
+      cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+      [[ -n "$cwd" ]] || continue
+      [[ "${cwd%/}" == "${ROOT_DIR%/}" ]] || continue
+    fi
+    printf '%s\n' "$pid"
+  done <<<"$output"
+}
+
+backlog_wait_for_active_validation_readers_for_autoshelve() {
+  local wait_seconds poll_seconds end_epoch now_epoch active_pids active_count wait_left
+  local pids
+
+  wait_seconds="${BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_WAIT_SECONDS:-0}"
+  poll_seconds="${BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_POLL_SECONDS:-5}"
+  backlog_nonnegative_integer "$wait_seconds" || wait_seconds=0
+  backlog_nonnegative_integer "$poll_seconds" || poll_seconds=5
+  [[ "$poll_seconds" -gt 0 ]] || poll_seconds=5
+
+  if [[ "$wait_seconds" -eq 0 ]]; then
+    pids="$(backlog_active_validation_process_pids || true)"
+    if [[ -n "$pids" ]]; then
+      active_count="$(wc -l <<<"$pids" | tr -d ' ')"
+      log "control-plane autoshelve is blocked by active validation process(es) (${active_count} detected); stopping before stale automation can run"
+      log "blocked process ids: ${pids//$'\n'/, }"
+      return 4
+    fi
+    return 0
+  fi
+
+  end_epoch="$(( $(backlog_now_epoch 2>/dev/null || date '+%s') + wait_seconds ))"
+  while true; do
+    pids="$(backlog_active_validation_process_pids || true)"
+    if [[ -n "$pids" ]]; then
+      active_count="$(wc -l <<<"$pids" | tr -d ' ')"
+      now_epoch="$(backlog_now_epoch 2>/dev/null || date '+%s')"
+      if [[ "$now_epoch" -ge "$end_epoch" ]]; then
+        log "control-plane autoshelve still sees active validation process(es) (${active_count} detected) after ${wait_seconds}s; stopping before stale automation can run"
+        log "blocked process ids: ${pids//$'\n'/, }"
+        return 4
+      fi
+      wait_left=$((end_epoch - now_epoch))
+      log "control-plane autoshelve is waiting for ${active_count} active validation process(es) to finish; retrying in ${poll_seconds}s (${wait_left}s left)"
+      log "blocked process ids: ${pids//$'\n'/, }"
+      backlog_sleep_seconds "$poll_seconds"
+      continue
+    fi
+    return 0
+  done
+}
+
 autoshelve_apply_control_plane_from_shelve() {
   local current_head="$1"
   local shelved_commit="$2"
@@ -1345,6 +1411,10 @@ autoshelve_apply_control_plane_from_shelve() {
   fi
 
   log "autoshelved local changes on $shelve_branch; applying ${#promote_paths[@]} Upkeeper remediation path(s) to $current_branch before issue work"
+  if ! backlog_wait_for_active_validation_readers_for_autoshelve; then
+    log "autoshelved local changes on $shelve_branch but could not safely apply control-plane remediation while validation readers were active; stopping before stale automation can run"
+    exit 4
+  fi
   if ! git diff --binary "$current_head" "$shelved_commit" -- "${promote_paths[@]}" | git apply --index --whitespace=nowarn; then
     git reset --hard "$current_head" >/dev/null 2>&1 || true
     log "autoshelved local changes on $shelve_branch but could not apply Upkeeper control-plane remediation cleanly; stopping before stale automation can run"

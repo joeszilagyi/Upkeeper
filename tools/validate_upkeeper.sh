@@ -860,7 +860,7 @@ EOF
 }
 
 check_backlog_autoshelve_contract() {
-  local temp_dir output rc autoshelve_branch second_autoshelve_branch
+  local temp_dir output rc autoshelve_branch second_autoshelve_branch active_validation_pid
 
   log "checking backlog dirty-worktree autoshelve contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-backlog-autoshelve.XXXXXX)"
@@ -918,6 +918,27 @@ check_backlog_autoshelve_contract() {
       fail "control-plane autoshelve branch did not preserve unrelated dirty work"
     git show "$second_autoshelve_branch:orchestration/backlog.sh" | grep -Fq 'validation control-plane dirty marker' ||
       fail "control-plane autoshelve branch did not preserve the dirty launcher fix"
+
+    printf '\n# validation control-plane active-reader race marker\n' >>orchestration/backlog.sh
+    (
+      cd "$temp_dir"
+      bash -c 'while true; do sleep 1; done' tools/validate_upkeeper.sh >/dev/null 2>&1 &
+      printf '%s\n' "$!" >"$temp_dir/active_validation_reader.pid"
+    )
+    active_validation_pid="$(cat "$temp_dir/active_validation_reader.pid")"
+    trap 'kill "$active_validation_pid" 2>/dev/null || true; wait "$active_validation_pid" 2>/dev/null || true' RETURN
+
+    set +e
+    output="$(BACKLOG_ALLOW_INTERACTIVE_STDIO=1 BACKLOG_AUTOSHELVE_PROBE=1 BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_WAIT_SECONDS=1 BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_POLL_SECONDS=1 ./orchestration/backlog.sh 2>&1)"
+    rc=$?
+    set -e
+    [[ "$rc" -eq 4 ]] || fail "backlog autoshelve did not block on active validation readers rc=$rc output=$output"
+    grep -Fq "active validation process" <<<"$output" ||
+      fail "backlog autoshelve did not report active validation-process blocking"
+    [[ -n "$(git status --short)" ]] && fail "backlog autoshelve left unexpected git state while blocked on validation readers"
+    ! git show HEAD:orchestration/backlog.sh | grep -Fq 'validation control-plane active-reader race marker' ||
+      fail "blocked autoshelve unexpectedly applied dirty launcher fix while validation reader was active"
+
   )
 
   rm -r "$temp_dir"

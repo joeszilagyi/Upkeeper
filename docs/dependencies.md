@@ -105,6 +105,16 @@ These commands are required by normal Upkeeper startup/runtime paths:
 - `tr`
 - `wc`
 
+## Validation-Only Dependencies
+
+These commands are required for local validation paths and validation-helper
+scripts, but not for normal startup/runtime operation:
+
+- `bash`
+- `cp`
+- `diff`
+- `touch`
+
 ## jq Decision And Install Commands
 
 `jq` remains a required runtime and validation dependency for the current

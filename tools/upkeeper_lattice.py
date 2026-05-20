@@ -1111,7 +1111,7 @@ CREATE_TABLE_SQL = [
       confidence text,
       source_id integer references source_records(source_id),
       created_epoch integer not null,
-      unique(namespace, key, subject_type, subject_pk, source_id)
+      unique(namespace, key, subject_type, subject_pk)
     )
     """,
     """
@@ -1201,6 +1201,7 @@ CREATE_INDEX_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_git_file_changes_repo_path_epoch ON git_file_changes(repo_id, path, change_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_regression_events_repo_file_epoch ON regression_events(repo_id, file_id, marked_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_extension_facts_lookup ON extension_facts(namespace, key, subject_type, subject_pk)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_extension_facts_identity ON extension_facts(namespace, key, subject_type, subject_pk)",
     "CREATE INDEX IF NOT EXISTS idx_pass_run_attributes_lookup ON pass_run_attributes(file_pass_run_id, namespace, key)",
     "CREATE INDEX IF NOT EXISTS idx_source_records_identity ON source_records(repo_id, source_kind, coalesce(source_path, ''), coalesce(source_line, -1), coalesce(raw_sha256, ''))",
 ]
@@ -3271,6 +3272,79 @@ def ensure_file_pass_runs_identity_index(conn: sqlite3.Connection) -> int:
     return duplicate_groups
 
 
+def ensure_extension_facts_identity_index(conn: sqlite3.Connection) -> int:
+    try:
+        indexes = {row["name"] for row in conn.execute("pragma index_list(extension_facts)").fetchall()}
+    except sqlite3.Error:
+        return 0
+    duplicate_groups = 0
+    try:
+        duplicate_groups = int(
+            conn.execute(
+                """
+                select count(*) from (
+                  select namespace, key, subject_type, subject_pk
+                  from extension_facts
+                  group by namespace, key, subject_type, subject_pk
+                  having count(*) > 1
+                )
+                """
+            ).fetchone()[0]
+            or 0
+        )
+    except sqlite3.Error:
+        return 0
+    if duplicate_groups:
+        try:
+            conn.execute(
+                """
+                delete from extension_facts
+                where extension_fact_id in (
+                  select extension_fact_id
+                  from (
+                    select
+                      extension_fact_id,
+                      row_number() over (
+                        partition by namespace, key, subject_type, subject_pk
+                        order by coalesce(created_epoch, 0) desc,
+                                 coalesce(source_id, -1) desc,
+                                 extension_fact_id desc
+                      ) as row_number
+                    from extension_facts
+                  )
+                  where row_number > 1
+                )
+                """
+            )
+        except sqlite3.Error:
+            return duplicate_groups
+        try:
+            duplicate_groups = int(
+                conn.execute(
+                    """
+                    select count(*) from (
+                      select namespace, key, subject_type, subject_pk
+                      from extension_facts
+                      group by namespace, key, subject_type, subject_pk
+                      having count(*) > 1
+                    )
+                    """
+                ).fetchone()[0]
+                or 0
+            )
+        except sqlite3.Error:
+            duplicate_groups = 0
+    if "idx_extension_facts_identity" in indexes:
+        return duplicate_groups
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_extension_facts_identity ON extension_facts(namespace, key, subject_type, subject_pk)"
+        )
+    except sqlite3.Error:
+        return duplicate_groups
+    return duplicate_groups
+
+
 def ensure_file_snapshot_mtime_ns_column(conn: sqlite3.Connection) -> None:
     try:
         columns = {row["name"] for row in conn.execute("pragma table_info(file_snapshots)").fetchall()}
@@ -3450,6 +3524,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
         deduped_cycle_link_groups = ensure_cycle_links_logical_edge_index(conn)
         deduped_change_log_groups = ensure_change_log_identity_indexes(conn)
         deduped_git_change_groups = dedupe_git_file_changes(conn)
+        deduped_extension_fact_groups = ensure_extension_facts_identity_index(conn)
         deduped_file_pass_run_groups = ensure_file_pass_runs_identity_index(conn)
         ensure_file_snapshot_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_mtime_ns_column(conn)
@@ -3517,6 +3592,15 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
                 "insert or replace into schema_meta(key, value) values (?, ?)",
                 ("change_log_deduped_epoch", str(now)),
             )
+        if deduped_extension_fact_groups:
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("extension_facts_identity_deduped_groups", str(deduped_extension_fact_groups)),
+            )
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("extension_facts_identity_deduped_epoch", str(now)),
+            )
         if deduped_cycle_link_groups:
             conn.execute(
                 "insert or replace into schema_meta(key, value) values (?, ?)",
@@ -3543,6 +3627,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     ensure_artifact_ref_identity_indexes(conn)
     ensure_change_log_identity_indexes(conn)
     ensure_cycle_links_logical_edge_index(conn)
+    ensure_extension_facts_identity_index(conn)
     ensure_file_snapshot_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_mtime_ns_column(conn)
     ensure_worktree_snapshot_path_identity_columns(conn)
@@ -4467,11 +4552,19 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_m
                 value_integer = value if value_type == "integer" else None
                 value_json = json_dumps(value) if value_type == "json" else None
                 conn.execute(
-                    """
-                    insert or replace into extension_facts(
+                """
+                insert or replace into extension_facts(
                       namespace, key, subject_type, subject_pk, value_type, value_text,
                       value_integer, value_json, confidence, source_id, created_epoch
                     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    on conflict(namespace, key, subject_type, subject_pk) do update set
+                      value_type=excluded.value_type,
+                      value_text=excluded.value_text,
+                      value_integer=excluded.value_integer,
+                      value_json=excluded.value_json,
+                      confidence=excluded.confidence,
+                      source_id=excluded.source_id,
+                      created_epoch=excluded.created_epoch
                     """,
                     (
                         "upkeeper.review_pass_registry",

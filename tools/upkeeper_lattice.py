@@ -1422,6 +1422,15 @@ def worktree_snapshot_path_class(status_code: str, *, is_old: bool = False) -> s
     return WORKTREE_PATH_CLASS_TRACKED
 
 
+def worktree_snapshot_status_to_file_state(status_code: str) -> str:
+    status = str(status_code or "")
+    if "D" in status and status.strip() != "??":
+        return "deleted"
+    if "R" in status:
+        return "renamed"
+    return "active"
+
+
 def stored_worktree_snapshot_path(root: Path, path: str) -> str:
     return pass_result_path_hmac(root, path)
 
@@ -5430,6 +5439,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["candidate_text_sample_limit"] = candidate_text_sample_probe
         worktree_snapshot_path_probe = probe_worktree_snapshot_path_round_trip()
         result["checks"]["worktree_snapshot_path_round_trip"] = worktree_snapshot_path_probe
+        worktree_snapshot_deleted_state_probe = probe_worktree_snapshot_deleted_file_state()
+        result["checks"]["worktree_snapshot_deleted_file_state"] = worktree_snapshot_deleted_state_probe
         export_redaction_probe = probe_export_redaction()
         result["checks"]["export_redaction"] = export_redaction_probe
         recover_primary_sources_probe = probe_recover_requires_primary_sources()
@@ -5463,6 +5474,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(worktree_snapshot_path_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(worktree_snapshot_deleted_state_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(export_redaction_probe.get("ok")):
@@ -5686,6 +5700,14 @@ def record_worktree_snapshot(
         stored_old_path_hmac = stored_old_path
         if not stored_path or not stored_path_hmac:
             continue
+        file_state = worktree_snapshot_status_to_file_state(status_code)
+        file_id = ensure_file(
+            conn,
+            repo_id,
+            path,
+            state=file_state,
+            source_id=source_id,
+        )
         conn.execute(
             """
             insert into worktree_snapshot_paths(
@@ -5695,7 +5717,7 @@ def record_worktree_snapshot(
             """,
             (
                 snapshot_id,
-                None,
+                file_id,
                 stored_path,
                 stored_path_hmac,
                 worktree_snapshot_path_class(status_code),
@@ -7074,6 +7096,115 @@ def probe_worktree_snapshot_path_round_trip() -> dict[str, Any]:
                 changed_event is not None,
                 changed_event["path"] == stored_target,
                 hashed_file_rows == 0,
+            )
+        ),
+    }
+
+
+def probe_worktree_snapshot_deleted_file_state() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-worktree-deleted-") as repo_dir:
+        root = Path(repo_dir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", str(root), "config", "user.email", "probe@example.com"], check=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "Probe User"], check=True)
+        target = root / "gone.sh"
+        target.write_text("print('keep')\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "gone.sh"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "probe"], check=True)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "delete", allow_unsafe_db=False, create_parent=True, create_if_missing=True)
+        target_path = "gone.sh"
+        target_hmac = stored_worktree_snapshot_path(root, target_path)
+        before_file_state_row: dict[str, Any] | None = None
+        after_file_state_row: dict[str, Any] | None = None
+        deleted_snapshot_row: dict[str, Any] | None = None
+        file_row: dict[str, Any] | None = None
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+            with conn:
+                repo_id = ensure_repository(conn, root)
+                source_id = ensure_source_record(
+                    conn,
+                    root,
+                    repo_id,
+                    "wrapper_observed",
+                    raw_ref="probe_worktree_snapshot_deleted_file_state",
+                    raw_storage_mode="minimal",
+                )
+                cycle_pk = ensure_cycle(conn, repo_id, "cycle-worktree-deleted", "run-worktree-deleted", source_id=source_id)
+                before_snapshot_id = record_worktree_snapshot(
+                    conn,
+                    root,
+                    repo_id,
+                    cycle_pk,
+                    "before_codex",
+                    source_id=source_id,
+                    untracked_files_mode="normal",
+                )
+                before_file_state = conn.execute(
+                    "select file_id, current_state from files where repo_id=? and (current_path=? or canonical_path=?)",
+                    (repo_id, target_path, target_path),
+                ).fetchone()
+                before_file_state_row = dict(before_file_state) if before_file_state is not None else None
+                target.unlink()
+                after_snapshot_id = record_worktree_snapshot(
+                    conn,
+                    root,
+                    repo_id,
+                    cycle_pk,
+                    "after_codex",
+                    source_id=source_id,
+                    untracked_files_mode="normal",
+                )
+                deleted_state_row = conn.execute(
+                    """
+                    select current_state from files
+                    where repo_id=? and (current_path=? or canonical_path=?)
+                    order by last_seen_epoch desc, file_id desc
+                    limit 1
+                    """,
+                    (repo_id, target_path, target_path),
+                ).fetchone()
+                after_file_state_row = deleted_state_row
+                deleted_snapshot_path = target_hmac
+                deleted_snapshot_row = conn.execute(
+                    """
+                    select file_id, status
+                    from worktree_snapshot_paths
+                    where worktree_snapshot_id=? and path_hmac=?
+                    order by worktree_snapshot_path_id desc
+                    limit 1
+                    """,
+                    (after_snapshot_id, deleted_snapshot_path),
+                ).fetchone()
+                file_id = conn.execute(
+                    "select file_id from files where repo_id=? and (current_path=? or canonical_path=?) order by file_id desc limit 1",
+                    (repo_id, target_path, target_path),
+                ).fetchone()
+                file_row = dict(file_id) if file_id is not None else None
+        finally:
+            conn.close()
+    before_state = str(before_file_state_row["current_state"]) if before_file_state_row is not None else None
+    after_state = str(after_file_state_row["current_state"]) if after_file_state_row is not None else None
+    deleted_path = str(target_hmac) if "target_hmac" in locals() else None
+    deleted_status = str(deleted_snapshot_row["status"]) if deleted_snapshot_row is not None else None
+    deleted_snapshot_file_id = int(deleted_snapshot_row["file_id"]) if deleted_snapshot_row and deleted_snapshot_row["file_id"] is not None else None
+    current_file_id = int(file_row["file_id"]) if file_row is not None else None
+    return {
+        "before_state": before_state,
+        "after_state": after_state,
+        "snapshot_status": deleted_status,
+        "snapshot_path": deleted_path,
+        "snapshot_path_matched": deleted_path != "" and deleted_snapshot_row is not None,
+        "snapshot_file_id_match": bool(current_file_id and deleted_snapshot_file_id == current_file_id),
+        "ok": all(
+            (
+                after_state == "deleted",
+                deleted_status is not None and "D" in deleted_status,
+                deleted_snapshot_row is not None,
+                deleted_snapshot_file_id is not None,
+                current_file_id is not None,
+                deleted_snapshot_file_id == current_file_id,
             )
         ),
     }

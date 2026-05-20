@@ -10019,6 +10019,7 @@ def command_recover(args: argparse.Namespace) -> int:
     db_path = normalize_db_path(args.db, root)
     raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     preexisting_db = db_path.exists()
+    backup_first = True if args.backup_first is None else bool(args.backup_first)
     conn = connect_checked(
         root,
         db_path,
@@ -10031,7 +10032,7 @@ def command_recover(args: argparse.Namespace) -> int:
     sources: list[str] = []
     artifact_sources: list[str] = []
     backup_path = None
-    if args.backup_first and preexisting_db:
+    if backup_first and preexisting_db:
         backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
     with conn:
         repo_id = ensure_repository(conn, root)
@@ -10044,7 +10045,7 @@ def command_recover(args: argparse.Namespace) -> int:
             parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
             raw_storage_mode=raw_storage_mode,
         )
-    if args.backup_first and preexisting_db:
+    if backup_first and preexisting_db:
         backup_path = create_backup(
             conn,
             root,
@@ -10070,7 +10071,6 @@ def command_recover(args: argparse.Namespace) -> int:
             backup_conn.commit()
         finally:
             backup_conn.close()
-        sources.append("backup:1")
     conn.close()
     status = "ok"
     exit_code = EXIT_SUCCESS
@@ -11163,7 +11163,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=command_backup)
 
     p = sub.add_parser("recover")
-    p.add_argument("--backup-first", nargs="?", const=True, default=True, type=parse_bool_flag)
+    p.add_argument(
+        "--backup-first",
+        nargs="?",
+        const=True,
+        default=None,
+        type=parse_bool_flag,
+        help="(legacy) pass --backup-first 0/1 or --backup-first[=true|false]",
+    )
     p.add_argument("--no-backup-first", dest="backup_first", action="store_false")
     p.add_argument("--max-conflicts", type=int, default=999999)
     p.add_argument("--limit", type=int)
@@ -11240,6 +11247,8 @@ def add_scope(parser: argparse.ArgumentParser, default: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "backup_first", None) is None:
+        args.backup_first = True
     if getattr(args, "raw_repo_identity", False):
         os.environ[UPKEEPER_RAW_REPO_IDENTITY_ENV] = "1"
     try:

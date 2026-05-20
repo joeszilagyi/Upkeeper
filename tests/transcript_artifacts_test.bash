@@ -35,6 +35,7 @@ run_new_transcript_file() {
 
   set +e
   NEW_TRANSCRIPT_FILE="$(UPROOT="$PROJECT_ROOT" \
+  CODEX_LOG_FILE="$TEST_LOG_FILE" \
   CODEX_TRANSCRIPT_DIR="$transcript_dir" \
   CODEX_TRANSCRIPT_KEEP_HOURS=0 \
   CODEX_TRANSCRIPT_KEEP_MAX_MB=1 \
@@ -118,8 +119,9 @@ test_new_transcript_file_rejects_non_directory() {
   [[ "$rc" != "0" ]] || fail "new transcript file accepted a non-directory transcript path"
 }
 
-test_new_transcript_file_rejects_insecure_directory_mode() {
+test_new_transcript_file_repairs_owned_directory_mode() {
   local transcript_dir="$TEST_TMP_ROOT/transcripts-no-write"
+  local mode
   local rc
 
   mkdir -p "$transcript_dir"
@@ -128,13 +130,16 @@ test_new_transcript_file_rejects_insecure_directory_mode() {
   run_new_transcript_file "$transcript_dir"
   rc="$NEW_TRANSCRIPT_FILE_RC"
 
-  [[ "$rc" != "0" ]] || fail "new transcript file accepted directory mode that could not be secured"
+  [[ "$rc" == "0" ]] || fail "new transcript file rejected an owner-repairable directory mode"
+  [[ -f "$NEW_TRANSCRIPT_FILE" ]] || fail "new transcript file was not created after repairing directory mode"
+  mode="$(stat -Lc '%a' -- "$transcript_dir" 2>/dev/null || printf '')"
+  [[ "$mode" == "700" ]] || fail "new transcript file did not repair directory mode to 700"
 }
 
 test_transcript_prune_skips_unowned_directory
 test_transcript_prune_allows_owned_directory
 test_new_transcript_file_rejects_symlink_directory
 test_new_transcript_file_rejects_non_directory
-test_new_transcript_file_rejects_insecure_directory_mode
+test_new_transcript_file_repairs_owned_directory_mode
 
 printf 'transcript_artifacts_test: ok\n'

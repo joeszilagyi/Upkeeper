@@ -727,11 +727,11 @@ ensure_run_tmp_dir() {
   local run_tmp_dir_preexisted=0
 
   if [[ -n "$RUN_TMP_DIR" ]]; then
-    if ! upkeeper_private_directory_is_secure "$RUN_TMP_DIR"; then
-      die "run temp directory is not secure $RUN_TMP_DIR"
-    fi
     if [[ -e "$RUN_TMP_DIR" ]]; then
       run_tmp_dir_preexisted=1
+    fi
+    if ! upkeeper_private_directory_is_secure "$RUN_TMP_DIR"; then
+      die "run temp directory is not secure $RUN_TMP_DIR"
     fi
     # Cleanup later only deletes wrapper-managed tmp roots, so reusing an
     # existing matching directory is safe only when a trusted earlier run

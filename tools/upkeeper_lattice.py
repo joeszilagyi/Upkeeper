@@ -414,6 +414,7 @@ REQUIRED_INDEXES = {
     "idx_selection_candidates_run_path": "selection_candidates",
     "idx_selection_candidates_run_state_rank": "selection_candidates",
     "idx_file_pass_runs_repo_file_pass": "file_pass_runs",
+    "idx_file_pass_runs_identity": "file_pass_runs",
     "idx_file_pass_runs_repo_pass_outcome": "file_pass_runs",
     "idx_file_events_repo_file_epoch": "file_events",
     "idx_git_commits_repo_sha": "git_commits",
@@ -1190,6 +1191,7 @@ CREATE_INDEX_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_file_paths_file_path ON file_paths(file_id, path)",
     "CREATE INDEX IF NOT EXISTS idx_selection_candidates_run_path ON selection_candidates(selection_run_id, path)",
     "CREATE INDEX IF NOT EXISTS idx_selection_candidates_run_state_rank ON selection_candidates(selection_run_id, candidate_state, rank)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_file_pass_runs_identity ON file_pass_runs(repo_id, file_id, coalesce(cycle_pk, -1), pass_code, confidence)",
     "CREATE INDEX IF NOT EXISTS idx_file_pass_runs_repo_file_pass ON file_pass_runs(repo_id, file_id, pass_code)",
     "CREATE INDEX IF NOT EXISTS idx_file_pass_runs_repo_pass_outcome ON file_pass_runs(repo_id, pass_code, outcome)",
     "CREATE INDEX IF NOT EXISTS idx_file_events_repo_file_epoch ON file_events(repo_id, file_id, event_epoch)",
@@ -3176,6 +3178,90 @@ def ensure_cycle_links_logical_edge_index(conn: sqlite3.Connection) -> int:
     return duplicate_groups
 
 
+def dedupe_file_pass_runs(conn: sqlite3.Connection) -> int:
+    try:
+        row = conn.execute(
+            """
+            select count(*) from (
+              select 1
+              from file_pass_runs
+              group by repo_id, file_id, coalesce(cycle_pk, -1), pass_code, confidence
+              having count(*) > 1
+            )
+            """
+        ).fetchone()
+    except sqlite3.Error:
+        return 0
+    duplicate_groups = int(row[0] or 0) if row else 0
+    if not duplicate_groups:
+        return 0
+
+    duplicate_keys = conn.execute(
+        """
+        select repo_id, file_id, coalesce(cycle_pk, -1) as cycle_pk_key, pass_code, coalesce(confidence, '') as confidence_key
+        from file_pass_runs
+        group by repo_id, file_id, coalesce(cycle_pk, -1), pass_code, coalesce(confidence, '')
+        having count(*) > 1
+        """
+    ).fetchall()
+    for key in duplicate_keys:
+        rows = conn.execute(
+            """
+            select file_pass_run_id
+            from file_pass_runs
+            where repo_id=?
+              and file_id=?
+              and coalesce(cycle_pk, -1)=?
+              and pass_code=?
+              and coalesce(confidence, '')=?
+            order by coalesce(created_epoch, 0) desc, file_pass_run_id desc
+            """,
+            (
+                int(key["repo_id"]),
+                int(key["file_id"]),
+                int(key["cycle_pk_key"]),
+                str(key["pass_code"]),
+                str(key["confidence_key"]),
+            ),
+        ).fetchall()
+        if len(rows) <= 1:
+            continue
+        duplicate_run_ids = [int(row["file_pass_run_id"]) for row in rows[1:]]
+        if duplicate_run_ids:
+            placeholders = ",".join(["?"] * len(duplicate_run_ids))
+            conn.execute(
+                f"delete from pass_run_attributes where file_pass_run_id in ({placeholders})",
+                duplicate_run_ids,
+            )
+            conn.execute(
+                f"delete from file_pass_runs where file_pass_run_id in ({placeholders})",
+                duplicate_run_ids,
+            )
+    return duplicate_groups
+
+
+def ensure_file_pass_runs_identity_index(conn: sqlite3.Connection) -> int:
+    required = {"repo_id", "file_id", "pass_id", "pass_code", "cycle_pk", "confidence"}
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(file_pass_runs)").fetchall()}
+    except sqlite3.Error:
+        return 0
+    if not required.issubset(columns):
+        return 0
+    duplicate_groups = dedupe_file_pass_runs(conn)
+    try:
+        conn.execute("DROP INDEX IF EXISTS idx_file_pass_runs_identity")
+    except sqlite3.Error:
+        pass
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_file_pass_runs_identity ON file_pass_runs(repo_id, file_id, coalesce(cycle_pk, -1), pass_code, confidence)"
+        )
+    except sqlite3.Error:
+        return duplicate_groups
+    return duplicate_groups
+
+
 def ensure_file_snapshot_mtime_ns_column(conn: sqlite3.Connection) -> None:
     try:
         columns = {row["name"] for row in conn.execute("pragma table_info(file_snapshots)").fetchall()}
@@ -3355,6 +3441,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
         deduped_cycle_link_groups = ensure_cycle_links_logical_edge_index(conn)
         deduped_change_log_groups = ensure_change_log_identity_indexes(conn)
         deduped_git_change_groups = dedupe_git_file_changes(conn)
+        deduped_file_pass_run_groups = ensure_file_pass_runs_identity_index(conn)
         ensure_file_snapshot_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_mtime_ns_column(conn)
         ensure_worktree_snapshot_path_identity_columns(conn)
@@ -3385,6 +3472,15 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
             """,
             (1, 0, 1, now, "applied", sha256_text("\n".join(CREATE_TABLE_SQL + CREATE_INDEX_SQL)), "{}"),
         )
+        if deduped_file_pass_run_groups:
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("file_pass_runs_identity_deduped_groups", str(deduped_file_pass_run_groups)),
+            )
+            conn.execute(
+                "insert or replace into schema_meta(key, value) values (?, ?)",
+                ("file_pass_runs_identity_deduped_epoch", str(now)),
+            )
         if deduped_git_change_groups:
             conn.execute(
                 "insert or replace into schema_meta(key, value) values (?, ?)",
@@ -3434,6 +3530,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     user_version = conn.execute("PRAGMA user_version").fetchone()[0]
     if int(user_version) != SCHEMA_VERSION:
         fail(f"PRAGMA user_version mismatch: expected {SCHEMA_VERSION}, got {user_version}", EXIT_SCHEMA_MISMATCH)
+    ensure_file_pass_runs_identity_index(conn)
     ensure_artifact_ref_identity_indexes(conn)
     ensure_change_log_identity_indexes(conn)
     ensure_cycle_links_logical_edge_index(conn)
@@ -7869,6 +7966,7 @@ def record_one_pass_result(
 ) -> int:
     pass_id = ensure_pass(conn, pass_code)
     file_id = ensure_file_identity(conn, repo_id, path, source_id=source_id)
+    pass_code = normalize_pass_code(pass_code)
     attempted = 1 if outcome not in {"planned", "unknown"} else 0
     resolved_planned = 1 if (planned is not None and bool(planned)) or (planned is None and outcome == "planned") else 0
     result_epoch = epoch_now()
@@ -7882,32 +7980,75 @@ def record_one_pass_result(
             source_id=source_id,
             observed_epoch=result_epoch,
         )
-    cur = conn.execute(
+    cycle_pk_key = int(cycle_pk) if cycle_pk is not None else -1
+    existing = conn.execute(
         """
-        insert into file_pass_runs(
-          repo_id, file_id, cycle_pk, pass_id, pass_code, planned, applicable,
-          attempted, outcome, changed, regression, confidence, source_id, raw_line, created_epoch
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        select file_pass_run_id
+        from file_pass_runs
+        where repo_id=? and file_id=? and pass_code=?
+          and coalesce(cycle_pk, -1)=? and coalesce(confidence, '')=?
+        order by coalesce(created_epoch, 0) desc, file_pass_run_id desc
+        limit 1
         """,
         (
             repo_id,
             file_id,
-            cycle_pk,
-            pass_id,
-            normalize_pass_code(pass_code),
-            resolved_planned,
-            applicable,
-            attempted,
-            outcome,
-            changed,
-            regression,
-            confidence,
-            source_id,
-            raw_line or None,
-            result_epoch,
+            pass_code,
+            cycle_pk_key,
+            confidence or "",
         ),
-    )
-    run_id = int(cur.lastrowid)
+    ).fetchone()
+    if existing is not None:
+        run_id = int(existing["file_pass_run_id"])
+        conn.execute(
+            """
+            update file_pass_runs
+            set pass_id=?, pass_code=?, planned=?, applicable=?, attempted=?, outcome=?,
+                changed=?, regression=?, source_id=?, raw_line=?, created_epoch=?
+            where file_pass_run_id=?
+            """,
+            (
+                pass_id,
+                pass_code,
+                resolved_planned,
+                applicable,
+                attempted,
+                outcome,
+                changed,
+                regression,
+                source_id,
+                raw_line or None,
+                result_epoch,
+                run_id,
+            ),
+        )
+    else:
+        cur = conn.execute(
+            """
+            insert into file_pass_runs(
+              repo_id, file_id, cycle_pk, pass_id, pass_code, planned, applicable,
+              attempted, outcome, changed, regression, confidence, source_id, raw_line, created_epoch
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                repo_id,
+                file_id,
+                cycle_pk,
+                pass_id,
+                pass_code,
+                resolved_planned,
+                applicable,
+                attempted,
+                outcome,
+                changed,
+                regression,
+                confidence,
+                source_id,
+                raw_line or None,
+                result_epoch,
+            ),
+        )
+        run_id = int(cur.lastrowid)
     record_file_event(
         conn,
         repo_id,

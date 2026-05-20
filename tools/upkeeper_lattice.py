@@ -586,6 +586,10 @@ PASS_REGISTRY.extend(
 )
 
 
+PASS_REGISTRY_BY_CODE = {str(item["pass_code"]).upper(): item for item in PASS_REGISTRY}
+KNOWN_PASS_CODES = sorted(PASS_REGISTRY_BY_CODE.keys())
+
+
 CREATE_TABLE_SQL = [
     """
     CREATE TABLE IF NOT EXISTS schema_meta (
@@ -4527,8 +4531,10 @@ def ensure_cycle(
 
 
 def ensure_pass(conn: sqlite3.Connection, pass_code: str) -> int:
+    if not is_registered_pass_code(pass_code):
+        fail(f"unknown pass_code in pass registry path: {pass_code}", EXIT_INTEGRITY)
     pass_code = normalize_pass_code(pass_code)
-    item = next((p for p in PASS_REGISTRY if p["pass_code"].upper() == pass_code.upper()), None)
+    item = get_registered_pass_item(pass_code)
     title = item["title"] if item else None
     prompt_source_path = item["prompt_source_path"] if item else None
     introduced_version = item["introduced_version"] if item else None
@@ -4550,6 +4556,9 @@ def ensure_pass(conn: sqlite3.Connection, pass_code: str) -> int:
 
 
 def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_mode: str | None = None) -> None:
+    validation_errors = validate_reuse_contract_definitions(root)
+    if validation_errors:
+        fail(f"embedded contract validation failed: {'; '.join(validation_errors)}", EXIT_INTEGRITY)
     now = epoch_now()
     with conn:
         repo_id = ensure_repository(conn, root)
@@ -4638,6 +4647,222 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_m
                 )
 
 
+def get_registered_pass_item(pass_code: Any) -> dict[str, Any] | None:
+    if pass_code is None:
+        return None
+    raw = str(pass_code).strip()
+    if not raw:
+        return None
+    if not re.fullmatch(r"P[0-9A-Za-z_.-]+", raw, re.I):
+        return None
+    key = raw.upper()
+    if re.fullmatch(r"p[0-9]+", key, re.I):
+        key = key.upper()
+    return PASS_REGISTRY_BY_CODE.get(key)
+
+
+def is_registered_pass_code(pass_code: Any) -> bool:
+    return get_registered_pass_item(pass_code) is not None
+
+
+def validate_pass_registry_contract() -> list[str]:
+    issues: list[str] = []
+    seen: set[str] = set()
+    required_fields = {
+        "pass_code",
+        "title",
+        "prompt_source_path",
+        "introduced_version",
+        "default_in_repertoire",
+        "applicability_hint",
+        "schedule_hint",
+        "module_prompt",
+        "aliases",
+        "active",
+    }
+    for idx, item in enumerate(PASS_REGISTRY):
+        if not isinstance(item, dict):
+            issues.append(f"PASS_REGISTRY[{idx}] must be dict")
+            continue
+        missing = sorted(required_fields - set(item.keys()))
+        if missing:
+            issues.append(f"PASS_REGISTRY[{idx}] missing keys: {', '.join(missing)}")
+        pass_code = str(item.get("pass_code", "")).strip()
+        if not re.fullmatch(r"P[0-9]+", pass_code, re.I):
+            if not re.fullmatch(r"P[0-9A-Za-z_.-]+", pass_code, re.I):
+                issues.append(f"PASS_REGISTRY[{idx}] invalid pass_code={pass_code!r}")
+                continue
+        normalized = pass_code.upper()
+        if normalized in seen:
+            issues.append(f"PASS_REGISTRY duplicate pass_code={normalized}")
+            continue
+        seen.add(normalized)
+        aliases = item.get("aliases")
+        if aliases is None:
+            continue
+        if not isinstance(aliases, (list, tuple)):
+            issues.append(f"PASS_REGISTRY[{normalized}] aliases must be list-like")
+            continue
+        for alias in aliases:
+            if not isinstance(alias, str) or not alias.strip():
+                issues.append(f"PASS_REGISTRY[{normalized}] alias must be non-empty string")
+    return issues
+
+
+def _extract_shell_collection(text: str, name: str) -> tuple[str, ...] | None:
+    pattern = re.compile(rf"^[ \t]*{re.escape(name)}\s*=\s*", re.MULTILINE)
+    for match in pattern.finditer(text):
+        index = match.end()
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text):
+            continue
+        opener = text[index]
+        if opener not in "({":
+            continue
+        closer = ")}"[ "({".index(opener)]
+        depth = 0
+        quote: str | None = None
+        escape = False
+        parsed = ""
+        for end in range(index, len(text)):
+            ch = text[end]
+            if quote:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == quote:
+                    quote = None
+                continue
+            if ch in "\"'":
+                quote = ch
+                continue
+            if ch == opener:
+                depth += 1
+            elif ch == closer:
+                depth -= 1
+                if depth == 0:
+                    parsed = text[index : end + 1]
+                    break
+            if ch in "\n" and end == index:
+                break
+        if not parsed:
+            continue
+        string_literals = re.findall(r'"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"|\'([^\'\\\\]*(?:\\\\.[^\'\\\\]*)*)\'', parsed)
+        if not string_literals:
+            continue
+        values = tuple(
+            item
+            for pair in string_literals
+            for item in pair
+            if item is not None and str(item).strip() != ""
+        )
+        if values:
+            return tuple(sorted(set(values)))
+    return None
+
+
+def _command_kind_values_from_file(path: Path) -> tuple[str, ...] | None:
+    if not path.exists():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    body = _extract_function_body(text, "command_kind")
+    if not body:
+        return None
+    values = tuple(sorted(_extract_return_literals(body)))
+    if not values:
+        return None
+    return tuple(sorted({value.lower() for value in values if value}))
+
+
+def _tool_failure_kind_contract_issues(root: Path) -> list[str]:
+    issues: list[str] = []
+    if not root.is_dir():
+        return issues
+    path_values: list[tuple[Path, tuple[str, ...]]] = []
+    for path in (root / p for p in TOOL_FAILURE_KIND_ALLOWLIST_PATHS):
+        kind_values = _command_kind_values_from_file(path)
+        if kind_values is None:
+            issues.append(f"{path} missing/invalid command_kind return map")
+            continue
+        path_values.append((path, kind_values))
+        extra = sorted(set(kind_values) - KNOWN_TOOL_FAILURE_KINDS)
+        if extra:
+            issues.append(f"{path} command_kind returns unknown values {extra}")
+        missing = sorted(KNOWN_TOOL_FAILURE_KINDS - set(kind_values))
+        if missing:
+            issues.append(f"{path} command_kind missing values {missing}")
+    if len(path_values) > 1 and all(values is not None for _, values in path_values):
+        base_path, base_values = path_values[0]
+        for path, values in path_values[1:]:
+            if values != base_values:
+                issues.append(
+                    f"command_kind return values differ: {base_path}={base_values}, {path}={values}"
+                )
+    return issues
+
+
+def _extract_allowed_lists_from_worktree_state(body: str) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    exact_values = _extract_shell_collection(body, "allowed_exact")
+    prefix_values = _extract_shell_collection(body, "allowed_prefixes")
+    if not exact_values or not prefix_values:
+        return None
+    return tuple(sorted(set(exact_values))), tuple(sorted(set(prefix_values)))
+
+
+def _startup_anomaly_allowlist_contract_issues() -> list[str]:
+    issues: list[str] = []
+    path = Path(WORKTREE_STATE_BASH)
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [f"cannot read {WORKTREE_STATE_BASH}"]
+    discovered: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
+    for function_name in ("write_git_status_snapshot_json", "startup_anomaly_gate_changed_path_violations"):
+        body = _extract_function_body(text, function_name)
+        if not body:
+            continue
+        extracted = _extract_allowed_lists_from_worktree_state(body)
+        if extracted is None:
+            issues.append(f"{WORKTREE_STATE_BASH}:{function_name} missing allowed_exact/allowed_prefixes")
+            continue
+        exact_values, prefix_values = extracted
+        if not exact_values:
+            issues.append(f"{WORKTREE_STATE_BASH}:{function_name} has empty allowed_exact")
+        for value in prefix_values:
+            if not value.endswith("/"):
+                issues.append(f"{WORKTREE_STATE_BASH}:{function_name} allowed_prefixes value should end with '/': {value}")
+        for value in exact_values:
+            if not value or "/" in value and value.startswith("/"):
+                issues.append(f"{WORKTREE_STATE_BASH}:{function_name} disallow absolute allowed_exact entry: {value}")
+        discovered.append((function_name, exact_values, prefix_values))
+    if not discovered:
+        issues.append(f"{WORKTREE_STATE_BASH} command missing allowed path tables")
+        return issues
+    first_exact, first_prefixes = discovered[0][1], discovered[0][2]
+    for function_name, exact_values, prefix_values in discovered[1:]:
+        if exact_values != first_exact:
+            issues.append(
+                f"{WORKTREE_STATE_BASH}:{function_name} allowed_exact differs from write_git_status_snapshot_json"
+            )
+        if prefix_values != first_prefixes:
+            issues.append(
+                f"{WORKTREE_STATE_BASH}:{function_name} allowed_prefixes differs from write_git_status_snapshot_json"
+            )
+    return issues
+
+
+def validate_reuse_contract_definitions(root: Path) -> list[str]:
+    issues = validate_pass_registry_contract()
+    issues.extend(_tool_failure_kind_contract_issues(root))
+    issues.extend(_startup_anomaly_allowlist_contract_issues())
+    return issues
+
+
 def normalize_pass_code(raw: str) -> str:
     raw = raw.strip()
     if not re.fullmatch(r"P[0-9A-Za-z_.-]+", raw):
@@ -4714,9 +4939,9 @@ def _extract_embedded_python_collections(text: str, name: str) -> list[tuple[str
 
 def _extract_function_body(text: str, function_name: str) -> str:
     lines = text.splitlines()
-    marker = re.compile(rf"^[ \t]*def\s+{re.escape(function_name)}\s*\(")
+    python_marker = re.compile(rf"^[ \t]*def\s+{re.escape(function_name)}\s*\(")
     for idx, line in enumerate(lines):
-        if not marker.match(line):
+        if not python_marker.match(line):
             continue
         body_lines: list[str] = []
         for body in lines[idx + 1 :]:
@@ -4728,6 +4953,37 @@ def _extract_function_body(text: str, function_name: str) -> str:
                 continue
             break
         return "\n".join(body_lines)
+
+    shell_marker = re.compile(
+        rf"^[ \t]*(?:function[ \t]+)?{re.escape(function_name)}\s*\(\)\s*\{{",
+        re.MULTILINE,
+    )
+    source = "\n".join(lines)
+    for match in shell_marker.finditer(source):
+        start = match.end() - 1
+        depth = 0
+        quote: str | None = None
+        escape = False
+        for pos in range(start, len(source)):
+            ch = source[pos]
+            if quote:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == quote:
+                    quote = None
+            else:
+                if ch in "\"'":
+                    quote = ch
+                    continue
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return source[match.start() : pos + 1]
+        return ""
     return ""
 
 
@@ -8316,6 +8572,9 @@ def parse_pass_result_lines(path: Path) -> tuple[list[dict[str, Any]], list[dict
         if not re.fullmatch(r"P[0-9A-Za-z_.-]+", fields["pass"]):
             rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "invalid_pass", "fields": fields})
             continue
+        if not is_registered_pass_code(fields["pass"]):
+            rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "unknown_pass_code", "fields": fields})
+            continue
         outcome = fields.get("outcome", "unknown")
         if outcome not in ALLOWED_OUTCOMES:
             rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "invalid_outcome", "fields": fields})
@@ -8759,6 +9018,8 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 recorded += 1
         elif args.pass_code and args.path:
             pass_code = normalize_pass_code(args.pass_code)
+            if not is_registered_pass_code(pass_code):
+                fail(f"unknown pass code: {pass_code}", EXIT_USAGE)
             path = external_rel_path(args.path)
             attrs = parse_attribute_args(args.attribute)
             try:
@@ -8792,6 +9053,8 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
         target_path = external_rel_path(args.path or args.selected_path or "")
         for raw_pass in planned:
             pass_code = normalize_pass_code(raw_pass)
+            if not is_registered_pass_code(pass_code):
+                fail(f"unknown planned pass code: {pass_code}", EXIT_USAGE)
             if not target_path or (pass_code, target_path) in seen:
                 continue
             inferred_outcome = "unknown" if (pass_code, target_path) in rejected_pairs else "planned"
@@ -10976,12 +11239,22 @@ def import_failure_markers(
             target, marker_id, raw_marker_id = tool_failure_marker_identity(root, path, data)
             if not target or not marker_id:
                 continue
+            first_failure_kind = normalize_tool_failure_kind(data.get("first_failure_kind"), "first_failure_kind")
+            last_failure_kind = normalize_tool_failure_kind(data.get("last_failure_kind"), "last_failure_kind")
+            kind_issues = []
+            if data.get("first_failure_kind") is not None and first_failure_kind is None:
+                kind_issues.append("invalid first_failure_kind")
+            if data.get("last_failure_kind") is not None and last_failure_kind is None:
+                kind_issues.append("invalid last_failure_kind")
             marker_status = str(data.get("status", "open")).strip()
             first_seen_epoch = int(data.get("first_seen_epoch") or 0) or None
             last_seen_epoch = int(data.get("last_seen_epoch") or 0) or None
             resolved_epoch = int(data.get("resolved_epoch") or 0) or None
             failure_count = int(data.get("failure_count") or 0) or None
             file_id = ensure_file_identity(conn, repo_id, target)
+            marker_payload = dict(data)
+            if kind_issues:
+                marker_payload["validation_issues"] = kind_issues
             source_id = ensure_source_record(
                 conn,
                 root,
@@ -10989,7 +11262,8 @@ def import_failure_markers(
                 "tool_failure_marker",
                 source_path=str(path),
                 raw_ref=raw_marker_id,
-                parsed=data,
+                parsed=marker_payload,
+                parse_status="invalid" if kind_issues else "parsed",
                 raw_storage_mode=raw_storage_mode,
             )
             existing = conn.execute(
@@ -11012,11 +11286,11 @@ def import_failure_markers(
                         first_seen_epoch,
                         last_seen_epoch,
                         resolved_epoch,
-                        data.get("first_failure_kind"),
-                        data.get("last_failure_kind"),
+                        first_failure_kind,
+                        last_failure_kind,
                         failure_count,
                         source_id,
-                        json_dumps(data),
+                        json_dumps(marker_payload),
                         int(existing["tool_failure_id"]),
                     ),
                 )
@@ -11024,7 +11298,7 @@ def import_failure_markers(
                 conn.execute(
                     """
                     insert into tool_failures(
-                      repo_id, file_id, marker_id, status, first_seen_epoch, last_seen_epoch, resolved_epoch,
+                        repo_id, file_id, marker_id, status, first_seen_epoch, last_seen_epoch, resolved_epoch,
                       first_failure_kind, last_failure_kind, failure_count, source_id, raw_json
                     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
@@ -11036,11 +11310,11 @@ def import_failure_markers(
                         first_seen_epoch,
                         last_seen_epoch,
                         resolved_epoch,
-                        data.get("first_failure_kind"),
-                        data.get("last_failure_kind"),
+                        first_failure_kind,
+                        last_failure_kind,
                         failure_count,
                         source_id,
-                        json_dumps(data),
+                        json_dumps(marker_payload),
                     ),
                 )
             record_file_event(
@@ -11050,9 +11324,18 @@ def import_failure_markers(
                 file_id=file_id,
                 source_id=source_id,
                 path=target,
-                details=data,
+                details=marker_payload,
                 dedupe_by_source=True,
             )
+
+
+def normalize_tool_failure_kind(raw: Any, field_name: str) -> str | None:
+    if not has_meaningful_value(raw):
+        return None
+    value = str(raw).strip().lower()
+    if value not in KNOWN_TOOL_FAILURE_KINDS:
+        return None
+    return value
 
 
 def pass_counts_for_path(conn: sqlite3.Connection, repo_id: int, path: str, pass_code: str | None = None) -> list[dict[str, Any]]:

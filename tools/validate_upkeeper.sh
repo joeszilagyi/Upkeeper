@@ -595,6 +595,8 @@ PY
     BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:04 previous_run.anomaly_summary x")" >"$2/fyi-color.out"
     BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:05 backlog: running Upkeeper for issue #1")" >"$2/run-color.out"
     BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$BACKLOG_JOB_SUMMARY_BAR" >"$2/job-bar-color.out"
+    BACKLOG_STDIO_WATCHED=0
+    BACKLOG_STDIO_AUTODETACHED=0
     backlog_emit_job_start_summary "tools/example.sh" "issue #1: example" "fix locally" >"$2/job-start.out" 2>&1
     BACKLOG_JOB_START_EPOCH=100
     BACKLOG_TEST_NOW_EPOCH=145

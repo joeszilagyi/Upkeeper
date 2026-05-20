@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import errno
+import ast
 import fnmatch
 import hashlib
 import hmac
@@ -430,6 +431,20 @@ REQUIRED_INDEXES = {
     "idx_regression_events_repo_file_epoch": "regression_events",
     "idx_extension_facts_lookup": "extension_facts",
     "idx_pass_run_attributes_lookup": "pass_run_attributes",
+}
+WORKTREE_STATE_BASH = "lib/upkeeper/worktree_state.bash"
+TOOL_FAILURE_KIND_ALLOWLIST_PATHS = (
+    "lib/upkeeper/tool_failure_queue.bash",
+    "lib/upkeeper/transcript_output.bash",
+)
+KNOWN_TOOL_FAILURE_KINDS = {
+    "check",
+    "validation",
+    "tests",
+    "build",
+    "command",
+    "search",
+    "git",
 }
 
 
@@ -4628,6 +4643,106 @@ def normalize_pass_code(raw: str) -> str:
     if not re.fullmatch(r"P[0-9A-Za-z_.-]+", raw):
         fail(f"invalid pass code: {raw}", EXIT_USAGE)
     return raw.upper() if re.fullmatch(r"P[0-9]+", raw, re.I) else raw
+
+
+def _safe_parse_python_collection(value: str) -> tuple[str, ...] | None:
+    if not value:
+        return None
+    try:
+        parsed = ast.literal_eval(value)
+    except (SyntaxError, ValueError):
+        return None
+    if isinstance(parsed, str):
+        return (parsed,)
+    if isinstance(parsed, (set, list, tuple, frozenset)):
+        items = []
+        for item in parsed:
+            if isinstance(item, str):
+                items.append(item)
+        return tuple(sorted(items))
+    return None
+
+
+def _extract_embedded_python_collections(text: str, name: str) -> list[tuple[str, ...]]:
+    pattern = re.compile(rf"^[ \t]*{re.escape(name)}\s*=\s*", re.MULTILINE)
+    collections: list[tuple[str, ...]] = []
+    matches = list(pattern.finditer(text))
+    for match in matches:
+        index = match.end()
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text):
+            continue
+        opener = text[index]
+        if opener not in "(\{\[":
+            continue
+        closer = ")]}"[ "({[".index(opener)]
+        parsed: str = ""
+        depth = 0
+        quote: str | None = None
+        escape = False
+        for end in range(index, len(text)):
+            ch = text[end]
+            if quote:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == quote:
+                    quote = None
+                continue
+            if ch in "\"'":
+                quote = ch
+                continue
+            if ch == opener:
+                depth += 1
+            elif ch == closer:
+                depth -= 1
+                if depth == 0:
+                    parsed = text[index : end + 1]
+                    break
+            if ch in "\n" and end == index:
+                break
+        if not parsed:
+            continue
+        values = _safe_parse_python_collection(parsed)
+        if values is None:
+            continue
+        collections.append(values)
+    return collections
+
+
+def _extract_function_body(text: str, function_name: str) -> str:
+    lines = text.splitlines()
+    marker = re.compile(rf"^[ \t]*def\s+{re.escape(function_name)}\s*\(")
+    for idx, line in enumerate(lines):
+        if not marker.match(line):
+            continue
+        body_lines: list[str] = []
+        for body in lines[idx + 1 :]:
+            if body.startswith((" ", "\t")):
+                body_lines.append(body)
+                continue
+            if body.strip() == "":
+                body_lines.append(body)
+                continue
+            break
+        return "\n".join(body_lines)
+    return ""
+
+
+def _extract_return_literals(body: str) -> set[str]:
+    return {match.group(1).strip() for match in re.finditer(r"\breturn\s+['\"]([A-Za-z0-9_-]+)['\"]", body)}
+
+
+def _extract_curly_set_literal(body: str) -> tuple[str, ...] | None:
+    matches = re.findall(r"\{[^{}]*\}", body)
+    for match in matches:
+        values = _safe_parse_python_collection(match)
+        if values is None:
+            continue
+        return values
+    return None
 
 
 def parse_bool_int(raw: str | None) -> int | None:

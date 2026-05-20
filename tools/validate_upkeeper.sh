@@ -477,6 +477,22 @@ check_backlog_launcher_contract() {
     fi
     [[ "$status" == "43" ]]
   ' bash "$ROOT_DIR" || fail "backlog commit path does not stop after per-bug validation failure"
+  BACKLOG_SOURCE_ONLY=1 bash -lc '
+    set -euo pipefail
+    cd "$1"
+    source ./orchestration/backlog.sh
+    run_batch_validation() { return 44; }
+    wait_for_pr_checks() { printf "wait_for_pr_checks should not run after batch validation failure\n" >&2; return 99; }
+    gh() { printf "gh should not run after batch validation failure\n" >&2; return 98; }
+    git() { printf "git should not run after batch validation failure\n" >&2; return 97; }
+    status=0
+    if merge_and_clean 410 backlog/test; then
+      status=0
+    else
+      status="$?"
+    fi
+    [[ "$status" == "44" ]]
+  ' bash "$ROOT_DIR" || fail "backlog merge path does not stop after batch validation failure"
   grep -Fq 'rm -f -- "$ROOT_DIR/\$db"' orchestration/backlog.sh || fail "backlog launcher does not clean literal db scratch artifacts before staging"
   python3 - <<'PY' || fail "backlog autoshelve no longer runs before gh/jq/rg dependency gates"
 from pathlib import Path
@@ -500,7 +516,9 @@ PY
     mkdir -p "$temp_dir"
     printf '2026-05-15T17:21:47 █ RUN     backlog: running Upkeeper for issue #999 with gpt-5.3-codex-spark/xhigh target=tools/example.sh\n' >"$temp_dir/loop.log"
     status=0
-    BACKLOG_STDIO_AUTODETACH_PROBE=1 BACKLOG_LOOP_LOG_FILE="$temp_dir/loop.log" \
+    env -u BACKLOG_STDIO_WATCHED -u BACKLOG_STDIO_AUTODETACHED \
+      -u BACKLOG_ALLOW_INTERACTIVE_STDIO -u BACKLOG_ALLOW_INTERACTIVE_STDIN \
+      BACKLOG_STDIO_AUTODETACH_PROBE=1 BACKLOG_LOOP_LOG_FILE="$temp_dir/loop.log" \
       script -qfec ./orchestration/backlog.sh "$temp_dir/typescript" >/dev/null 2>&1 || status="$?"
     [[ "$status" == "0" ]] || fail "backlog launcher interactive stdio auto-detach probe exited $status"
     grep -Fq '# backlog: interactive stdin detected; keeping output in this terminal and mirroring to '"$temp_dir/loop.log" "$temp_dir/typescript" ||

@@ -41,6 +41,31 @@ Validation:
 - `./Upkeeper --help`
 - `git diff --check`
 
+## Backlog Batch Merge Validation Stop
+
+Status: completed locally
+
+Goal:
+- ensure a failed local batch validation stops PR merge and cleanup even when
+  the merge helper is invoked from a Bash conditional
+- make the quick validator's interactive-stdio probe test a fresh launcher
+  process instead of inheriting the parent backlog watch-mode state
+
+Constraints:
+- do not launch backend Codex validation
+- keep validation deterministic and local
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Backlog Validation Gate And Lattice Snapshot Privacy Repair
 
 Status: completed locally

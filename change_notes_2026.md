@@ -11,6 +11,7 @@ Version numbering note:
 	2. The local quick validator now source-tests the backlog commit gate with simulated failing validation commands, covering the exact failure mode where a focused Lattice test failed but the launcher still staged and committed.
 	3. Lattice opt-in worktree snapshot inventory again stores HMAC-only path identities in `worktree_snapshot_paths` while preserving cycle-local lookup and delta-event recording by `path_hmac`, fixing the failing `tests/lattice_test.bash` privacy assertion from PR `#410`.
 	4. Session-store preflight validation and docs now match the fail-closed issue `#128` behavior: missing `$CODEX_HOME/sessions` directories are created private, while owned weak-mode directories are rejected without chmod repair before any write probe or backend Codex launch.
+	5. Backlog batch merge now explicitly returns on failed local batch validation even when the merge helper is invoked from a Bash conditional, and the quick validator's interactive-stdio probe now clears inherited watch-mode state so it tests a fresh launcher invocation.
 
 2026-05-18: backlog live-output emphasis:
 	1. Interactive backlog watch output now colors `PAGE` timestamps red without blink, keeps the `PAGE` block and marker bold/blinking red, and colors `--FYI--` timestamps orange with bold orange marker text while preserving plain loop logs.

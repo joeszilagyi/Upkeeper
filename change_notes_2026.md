@@ -16,6 +16,7 @@ Version numbering note:
 	7. Codex arg0 temp cleanup now removes stale matching shim directories only with a trusted Upkeeper/Codex ownership marker and quarantines unmarked matching directories instead of deleting their contents.
 	8. Lattice `recover --backup-first` again records the recovery source before the backup copy and stamps that backup with a pre-recovery artifact reference, preserving the provenance boundary before later local Git imports run.
 	9. Custom file manifest paths are documented and validated as runtime-local or otherwise ignored local state by default; unsafe paths now have explicit full-validator coverage proving they require the one-cycle unsafe override, and the broad file-manifest fixture has its own timeout budget instead of sharing the tighter generic full-check limit.
+	10. Lattice JSONL same-key import conflicts again use the stable `kept_existing` resolution token, malformed-row JSONL fixtures avoid tripping repository-identity fail-closed checks before their intended assertions, and worktree snapshot inventories update file state without linking HMAC-only path rows back to raw `files` identities.
 
 2026-05-18: backlog live-output emphasis:
 	1. Interactive backlog watch output now colors `PAGE` timestamps red without blink, keeps the `PAGE` block and marker bold/blinking red, and colors `--FYI--` timestamps orange with bold orange marker text while preserving plain loop logs.

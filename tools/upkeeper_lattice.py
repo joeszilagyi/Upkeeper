@@ -5834,14 +5834,12 @@ def record_worktree_snapshot(
         stored_old_path_hmac = stored_old_path
         if not stored_path or not stored_path_hmac:
             continue
-        file_state = worktree_snapshot_status_to_file_state(status_code)
-        file_id = ensure_file(
-            conn,
-            repo_id,
-            path,
-            state=file_state,
-            source_id=source_id,
-        )
+        existing_file_id = file_id_for_path(conn, repo_id, path)
+        if existing_file_id is not None:
+            conn.execute(
+                "update files set current_state=?, last_seen_epoch=? where file_id=?",
+                (worktree_snapshot_status_to_file_state(status_code), observed, existing_file_id),
+            )
         conn.execute(
             """
             insert into worktree_snapshot_paths(
@@ -5851,7 +5849,7 @@ def record_worktree_snapshot(
             """,
             (
                 snapshot_id,
-                file_id,
+                None,
                 stored_path,
                 stored_path_hmac,
                 worktree_snapshot_path_class(status_code),
@@ -7266,6 +7264,7 @@ def probe_worktree_snapshot_deleted_file_state() -> dict[str, Any]:
                     raw_storage_mode="minimal",
                 )
                 cycle_pk = ensure_cycle(conn, repo_id, "cycle-worktree-deleted", "run-worktree-deleted", source_id=source_id)
+                ensure_file_identity(conn, repo_id, target_path, source_id=source_id)
                 before_snapshot_id = record_worktree_snapshot(
                     conn,
                     root,
@@ -7324,21 +7323,22 @@ def probe_worktree_snapshot_deleted_file_state() -> dict[str, Any]:
     deleted_status = str(deleted_snapshot_row["status"]) if deleted_snapshot_row is not None else None
     deleted_snapshot_file_id = int(deleted_snapshot_row["file_id"]) if deleted_snapshot_row and deleted_snapshot_row["file_id"] is not None else None
     current_file_id = int(file_row["file_id"]) if file_row is not None else None
+    snapshot_file_id_private = deleted_snapshot_row is not None and deleted_snapshot_file_id is None
     return {
         "before_state": before_state,
         "after_state": after_state,
         "snapshot_status": deleted_status,
         "snapshot_path": deleted_path,
         "snapshot_path_matched": deleted_path != "" and deleted_snapshot_row is not None,
-        "snapshot_file_id_match": bool(current_file_id and deleted_snapshot_file_id == current_file_id),
+        "snapshot_file_id_private": snapshot_file_id_private,
+        "current_file_id_present": current_file_id is not None,
         "ok": all(
             (
                 after_state == "deleted",
                 deleted_status is not None and "D" in deleted_status,
                 deleted_snapshot_row is not None,
-                deleted_snapshot_file_id is not None,
                 current_file_id is not None,
-                deleted_snapshot_file_id == current_file_id,
+                snapshot_file_id_private,
             )
         ),
     }
@@ -10321,7 +10321,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                             logical_key,
                             existing_hash,
                             incoming_compare_hash,
-                            "existing_row_preserved",
+                            "kept_existing",
                         )
                         continue
                     colnames = list(filtered.keys())

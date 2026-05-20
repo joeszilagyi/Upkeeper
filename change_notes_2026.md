@@ -10,6 +10,7 @@ Version numbering note:
 	1. Lattice pass-registry installation now validates reusable wrapper contracts against the central wrapper source tree instead of the target repository root, so symlinked or client-root Lattice runs no longer fail only because the client checkout does not contain `lib/upkeeper`.
 	2. Future or local pass codes matching the documented `P[0-9A-Za-z_.-]+` shape, such as `P999`, remain accepted as Lattice evidence rows while built-in prompt metadata still comes from the registered pass list.
 	3. Backlog launcher validation now clears inherited watched-stdio state before asserting literal green job-summary bars, so batch validation does not fail just because it is itself being displayed through the backlog watch formatter.
+	4. Backlog autoshelve active-validation detection now ignores validation processes that are ancestors of the autoshelve probe itself, preventing the validation harness from waiting on its own caller while still blocking on independent active validators.
 
 2026-05-19: backlog validation gate and Lattice snapshot repair:
 	1. Backlog per-bug and batch validation now explicitly return on failed syntax, compile, focused test, docs, diff, quick-validator, commit, or push commands, so Bash conditional invocation cannot mask a failed local validation step and continue to commit.

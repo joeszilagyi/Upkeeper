@@ -1331,6 +1331,21 @@ autoshelve_is_remediation_bundle_path() {
   return 1
 }
 
+backlog_process_is_ancestor() {
+  local candidate_pid="$1"
+  local current_pid parent_pid
+
+  [[ "$candidate_pid" =~ ^[0-9]+$ ]] || return 1
+  current_pid="$$"
+  while [[ "$current_pid" =~ ^[0-9]+$ && "$current_pid" -gt 1 ]]; do
+    parent_pid="$(ps -o ppid= -p "$current_pid" 2>/dev/null | tr -d ' ')"
+    [[ -n "$parent_pid" ]] || return 1
+    [[ "$parent_pid" == "$candidate_pid" ]] && return 0
+    current_pid="$parent_pid"
+  done
+  return 1
+}
+
 backlog_active_validation_process_pids() {
   local ps_line pid cmd cwd
   local output
@@ -1343,6 +1358,7 @@ backlog_active_validation_process_pids() {
     pid="${ps_line%% *}"
     cmd="${ps_line#* }"
     [[ "$pid" == "$$" ]] && continue
+    backlog_process_is_ancestor "$pid" && continue
     [[ "$cmd" == *"validate_upkeeper.sh"* ]] || continue
     if [[ -r "/proc/$pid/cwd" ]]; then
       cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"

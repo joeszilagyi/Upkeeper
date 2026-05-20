@@ -2416,6 +2416,13 @@ def default_root() -> Path:
     return Path(os.environ.get("UPKEEPER_ROOT", os.getcwd())).resolve()
 
 
+def wrapper_source_root() -> Path:
+    raw = os.environ.get("UPKEEPER_SOURCE_ROOT")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return Path(__file__).resolve().parent.parent
+
+
 def default_db_path(root: Path) -> Path:
     raw = os.environ.get("UPKEEPER_LATTICE_DB")
     if raw:
@@ -4531,8 +4538,6 @@ def ensure_cycle(
 
 
 def ensure_pass(conn: sqlite3.Connection, pass_code: str) -> int:
-    if not is_registered_pass_code(pass_code):
-        fail(f"unknown pass_code in pass registry path: {pass_code}", EXIT_INTEGRITY)
     pass_code = normalize_pass_code(pass_code)
     item = get_registered_pass_item(pass_code)
     title = item["title"] if item else None
@@ -4556,7 +4561,7 @@ def ensure_pass(conn: sqlite3.Connection, pass_code: str) -> int:
 
 
 def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_mode: str | None = None) -> None:
-    validation_errors = validate_reuse_contract_definitions(root)
+    validation_errors = validate_reuse_contract_definitions()
     if validation_errors:
         fail(f"embedded contract validation failed: {'; '.join(validation_errors)}", EXIT_INTEGRITY)
     now = epoch_now()
@@ -4814,9 +4819,9 @@ def _extract_allowed_lists_from_worktree_state(body: str) -> tuple[tuple[str, ..
     return tuple(sorted(set(exact_values))), tuple(sorted(set(prefix_values)))
 
 
-def _startup_anomaly_allowlist_contract_issues() -> list[str]:
+def _startup_anomaly_allowlist_contract_issues(source_root: Path) -> list[str]:
     issues: list[str] = []
-    path = Path(WORKTREE_STATE_BASH)
+    path = source_root / WORKTREE_STATE_BASH
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -4856,10 +4861,11 @@ def _startup_anomaly_allowlist_contract_issues() -> list[str]:
     return issues
 
 
-def validate_reuse_contract_definitions(root: Path) -> list[str]:
+def validate_reuse_contract_definitions() -> list[str]:
+    source_root = wrapper_source_root()
     issues = validate_pass_registry_contract()
-    issues.extend(_tool_failure_kind_contract_issues(root))
-    issues.extend(_startup_anomaly_allowlist_contract_issues())
+    issues.extend(_tool_failure_kind_contract_issues(source_root))
+    issues.extend(_startup_anomaly_allowlist_contract_issues(source_root))
     return issues
 
 
@@ -4899,7 +4905,7 @@ def _extract_embedded_python_collections(text: str, name: str) -> list[tuple[str
         if index >= len(text):
             continue
         opener = text[index]
-        if opener not in "(\{\[":
+        if opener not in "({[":
             continue
         closer = ")]}"[ "({[".index(opener)]
         parsed: str = ""
@@ -8572,9 +8578,6 @@ def parse_pass_result_lines(path: Path) -> tuple[list[dict[str, Any]], list[dict
         if not re.fullmatch(r"P[0-9A-Za-z_.-]+", fields["pass"]):
             rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "invalid_pass", "fields": fields})
             continue
-        if not is_registered_pass_code(fields["pass"]):
-            rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "unknown_pass_code", "fields": fields})
-            continue
         outcome = fields.get("outcome", "unknown")
         if outcome not in ALLOWED_OUTCOMES:
             rejected.append({"raw_line": raw_line, "line_number": line_number, "reason": "invalid_outcome", "fields": fields})
@@ -9018,8 +9021,6 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 recorded += 1
         elif args.pass_code and args.path:
             pass_code = normalize_pass_code(args.pass_code)
-            if not is_registered_pass_code(pass_code):
-                fail(f"unknown pass code: {pass_code}", EXIT_USAGE)
             path = external_rel_path(args.path)
             attrs = parse_attribute_args(args.attribute)
             try:
@@ -9053,8 +9054,6 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
         target_path = external_rel_path(args.path or args.selected_path or "")
         for raw_pass in planned:
             pass_code = normalize_pass_code(raw_pass)
-            if not is_registered_pass_code(pass_code):
-                fail(f"unknown planned pass code: {pass_code}", EXIT_USAGE)
             if not target_path or (pass_code, target_path) in seen:
                 continue
             inferred_outcome = "unknown" if (pass_code, target_path) in rejected_pairs else "planned"

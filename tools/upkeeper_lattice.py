@@ -1834,6 +1834,44 @@ def repo_identity_value_hmac(context: tuple[str, str, str], namespace: str, valu
     return prefix + digest
 
 
+def repo_identity_stable_key(root: Path, git_common_dir: str) -> str:
+    return sha256_text(f"{root}|{git_common_dir}")
+
+
+def lookup_repository_id_by_identity(conn: sqlite3.Connection, root: Path, info: dict[str, str]) -> int | None:
+    root = root.resolve()
+    git_common_dir = info.get("git_common_dir", "")
+    repo_key = repo_identity_stable_key(root, git_common_dir)
+    row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
+    if row:
+        return int(row["repo_id"])
+    legacy_remote = info.get("remote_url", "")
+    if legacy_remote:
+        legacy_repo_key = sha256_text(f"{root}|{git_common_dir}|{legacy_remote}")
+        row = conn.execute("select repo_id from repositories where repo_key=?", (legacy_repo_key,)).fetchone()
+        if row:
+            repo_id = int(row["repo_id"])
+            conn.execute("update repositories set repo_key=? where repo_id=?", (repo_key, repo_id))
+            return repo_id
+    alias_row = conn.execute(
+        "select repo_id from repo_aliases where alias_kind=? and alias_value=?",
+        ("root_path", str(root)),
+    ).fetchone()
+    if alias_row:
+        repo_id = int(alias_row["repo_id"])
+        conn.execute("update repositories set repo_key=? where repo_id=?", (repo_key, repo_id))
+        return repo_id
+    alias_row = conn.execute(
+        "select repo_id from repo_aliases where alias_kind=? and alias_value=?",
+        ("git_common_dir", git_common_dir),
+    ).fetchone()
+    if alias_row:
+        repo_id = int(alias_row["repo_id"])
+        conn.execute("update repositories set repo_key=? where repo_id=?", (repo_key, repo_id))
+        return repo_id
+    return None
+
+
 def git_common_dir_path(root: Path) -> str:
     common = git_output(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], "")
     if not common:
@@ -3707,8 +3745,7 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
     info = repo_git_info(root)
     common = info["git_common_dir"]
     context = repo_identity_context(root, info)
-    repo_key_src = f"{root}|{common}|{info['remote_url']}"
-    repo_key = sha256_text(repo_key_src)
+    repo_key = repo_identity_stable_key(root, common)
     identity = sanitize_repository_payload(
         {
             "root_path": str(root),
@@ -3723,9 +3760,8 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
         context,
     )
     origin_hash = str(identity.get("origin_url_hash") or "")
-    row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
-    if row:
-        repo_id = int(row["repo_id"])
+    repo_id = lookup_repository_id_by_identity(conn, root, info)
+    if repo_id is not None:
         conn.execute(
             """
             update repositories
@@ -3789,9 +3825,7 @@ def ensure_repository(conn: sqlite3.Connection, root: Path) -> int:
 def lookup_repository_id(conn: sqlite3.Connection, root: Path) -> int | None:
     root = root.resolve()
     info = repo_git_info(root)
-    repo_key = sha256_text(f"{root}|{info['git_common_dir']}|{info['remote_url']}")
-    row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
-    return int(row["repo_id"]) if row else None
+    return lookup_repository_id_by_identity(conn, root, info)
 
 
 def ensure_source_record(
@@ -11231,9 +11265,7 @@ def command_prune(args: argparse.Namespace) -> int:
     with conn:
         if args.dry_run:
             info = repo_git_info(root)
-            repo_key = sha256_text(f"{root}|{info['git_common_dir']}|{info['remote_url']}")
-            row = conn.execute("select repo_id from repositories where repo_key=?", (repo_key,)).fetchone()
-            repo_id = int(row["repo_id"]) if row else None
+            repo_id = lookup_repository_id_by_identity(conn, root, info)
         else:
             repo_id = ensure_repository(conn, root)
             source_id = ensure_source_record(

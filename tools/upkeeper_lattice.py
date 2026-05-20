@@ -7349,6 +7349,19 @@ def record_selected_file_delta(
             details=details,
             dedupe_by_cycle=True,
         )
+    else:
+        details["reason"] = "clean_hash_and_mtime_match"
+        record_file_event(
+            conn,
+            repo_id,
+            "reviewed_clean_unchanged",
+            file_id=file_id,
+            cycle_pk=cycle_pk,
+            source_id=source_id,
+            path=path,
+            details=details,
+            dedupe_by_cycle=True,
+        )
 
 
 def create_artifact_ref(

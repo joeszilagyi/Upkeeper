@@ -43,6 +43,33 @@ sanitize_positive_integer() {
   ' 2>/dev/null || printf '%s' "$fallback"
 }
 
+sanitize_bool() {
+  local raw_value="${1:-}"
+  local fallback="${2:-0}"
+  local normalized_fallback
+
+  case "${raw_value,,}" in
+    1|true|yes|on)
+      printf '1'
+      return 0
+      ;;
+    0|false|no|off)
+      printf '0'
+      return 0
+      ;;
+    *)
+      case "${fallback,,}" in
+        1|true|yes|on)
+          printf '1'
+          ;;
+        *)
+          printf '0'
+          ;;
+      esac
+      ;;
+  esac
+}
+
 sanitize_percent_threshold() {
   local raw_value="$1"
   local fallback="$2"
@@ -144,6 +171,7 @@ normalize_guardrail_thresholds() {
   CODEX_SELECTION_ORDER="$(sanitize_choice "${CODEX_SELECTION_ORDER}" oldest oldest newest random)"
   CODEX_FILE_MANIFEST_MODE="$(sanitize_choice "${CODEX_FILE_MANIFEST_MODE}" auto auto refresh off)"
   CODEX_FILE_MANIFEST_MAX_AGE_SECONDS="$(sanitize_nonnegative_integer "${CODEX_FILE_MANIFEST_MAX_AGE_SECONDS}" 300)"
+  CODEX_ALLOW_UNSAFE_MANIFEST_PATH="$(sanitize_bool "${CODEX_ALLOW_UNSAFE_MANIFEST_PATH}" 0)"
   if [[ -n "$CODEX_TARGET_MAX_DEPTH" ]]; then
     CODEX_TARGET_MAX_DEPTH="$(sanitize_nonnegative_integer "${CODEX_TARGET_MAX_DEPTH}" "")"
   fi

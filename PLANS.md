@@ -3,6 +3,34 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Lattice Backup-First Provenance Repair
+
+Status: completed locally
+
+Goal:
+- restore `recover --backup-first` provenance so the backup copy includes the
+  recovery source and its pre-recovery backup artifact reference
+- keep post-recovery local Git imports out of the backup DB, preserving the
+  before/after recovery boundary
+- unblock PR `#411` after an autoshelved control-plane patch removed the
+  backup-side artifact reference
+
+Constraints:
+- do not launch real backend Codex validation
+- keep recovery backup creation local and deterministic
+- preserve the existing Lattice backup test contract
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash tests/lattice_test.bash`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Arg0 Cleanup Ownership Marker Alignment
 
 Status: completed locally

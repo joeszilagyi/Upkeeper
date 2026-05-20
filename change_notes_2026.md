@@ -14,6 +14,7 @@ Version numbering note:
 	5. Backlog batch merge now explicitly returns on failed local batch validation even when the merge helper is invoked from a Bash conditional, and the quick validator's interactive-stdio probe now clears inherited watch-mode state so it tests a fresh launcher invocation.
 	6. Preset `RUN_TMP_DIR` paths now record whether the directory existed before private-directory repair, so a fresh wrapper-managed temp directory can be created and stamped locally while truly stale preexisting directories still require a trusted ownership marker.
 	7. Codex arg0 temp cleanup now removes stale matching shim directories only with a trusted Upkeeper/Codex ownership marker and quarantines unmarked matching directories instead of deleting their contents.
+	8. Lattice `recover --backup-first` again records the recovery source before the backup copy and stamps that backup with a pre-recovery artifact reference, preserving the provenance boundary before later local Git imports run.
 
 2026-05-18: backlog live-output emphasis:
 	1. Interactive backlog watch output now colors `PAGE` timestamps red without blink, keeps the `PAGE` block and marker bold/blinking red, and colors `--FYI--` timestamps orange with bold orange marker text while preserving plain loop logs.

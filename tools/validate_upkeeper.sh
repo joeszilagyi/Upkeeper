@@ -992,7 +992,7 @@ check_prompt_module_contract() {
   log "checking reusable review-module structure"
   [[ -s prompts/_review-module-template.md ]] || fail "prompt module template is missing or empty"
   for prompt_path in prompts/p[0-9][0-9]-*.md; do
-    module_id="$(basename "$prompt_path" | sed -n 's/^p\([0-9][0-9]\)-.*/\\1/p')"
+    module_id="$(basename "$prompt_path" | sed -n 's/^p\([0-9][0-9]\)-.*/\1/p')"
     [[ -n "$module_id" ]] || continue
     [[ -s "$prompt_path" ]] || fail "prompt module is missing or empty: $prompt_path"
 

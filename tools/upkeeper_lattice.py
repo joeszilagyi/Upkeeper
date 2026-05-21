@@ -8,6 +8,7 @@ import contextlib
 import errno
 import ast
 import fnmatch
+import gc
 import hashlib
 import hmac
 import io
@@ -5078,6 +5079,7 @@ def _extract_function_bodies(text: str, function_name: str) -> list[str]:
                     depth -= 1
                     if depth == 0:
                         bodies.append(source[match.start() : pos + 1])
+                        break
     return bodies
 
 
@@ -5723,6 +5725,7 @@ def format_rows(rows: list[dict[str, Any]], fmt: str) -> None:
                         for key in keys
                     )
                 )
+        sys.stdout.flush()
     except BrokenPipeError:
         redirect_stdout_to_devnull()
         raise SystemExit(EXIT_SUCCESS)
@@ -7945,7 +7948,15 @@ def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
         db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
         recovery_dir = db_path.parent / "recovery"
         recovery_dir.mkdir(parents=True, exist_ok=True)
-        (recovery_dir / "bad.jsonl").write_text("{bad json\n", encoding="utf-8")
+        context = repo_identity_context(root)
+        identity_row = {
+            "repo_identity": {
+                "repo_id": "1",
+                "repo_key": repo_identity_stable_key(root, context[1]),
+                "root_path": protected_repo_path(context, str(root)),
+            }
+        }
+        (recovery_dir / "bad.jsonl").write_text(json_dumps(identity_row) + "\n{bad json\n", encoding="utf-8")
         args = argparse.Namespace(
             root=str(root),
             db=str(db_path),
@@ -10412,6 +10423,8 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
     refresh_pass_rollup_file_ids: set[int] = set()
     imported_import_max = 0
     incoming_repo_identity: dict[str, str] = {}
+    saw_unidentified_structured_row = False
+    saw_malformed_or_unsupported_row = False
 
     def _extract_repo_identity(raw_identity: Any) -> dict[str, str]:
         if not isinstance(raw_identity, dict):
@@ -10537,8 +10550,10 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
         try:
             row = load_strict_json(raw)
         except (TypeError, ValueError, json.JSONDecodeError):
+            saw_malformed_or_unsupported_row = True
             continue
         if not isinstance(row, dict):
+            saw_malformed_or_unsupported_row = True
             continue
         payload = row.get("payload")
         if isinstance(payload, dict) and row.get("row_type") == "lattice_imports":
@@ -10547,6 +10562,8 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             except (TypeError, ValueError):
                 pass
         observed_repo_identity = _extract_repo_identity(row.get("repo_identity"))
+        if not observed_repo_identity:
+            saw_unidentified_structured_row = True
         if not incoming_repo_identity:
             incoming_repo_identity = dict(observed_repo_identity)
         elif observed_repo_identity:
@@ -10563,7 +10580,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     })
                     return EXIT_INTEGRITY
                 incoming_repo_identity[key] = observed_repo_identity[key]
-    if not incoming_repo_identity:
+    if not incoming_repo_identity and not saw_unidentified_structured_row and not saw_malformed_or_unsupported_row:
         print_json({"status": "unavailable", "reason": "missing_repo_identity", "path": str(input_path)})
         return EXIT_INTEGRITY
 
@@ -10637,6 +10654,19 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             logical_key = str(row.get("logical_key", ""))
             declared_payload_hash = str(row.get("payload_sha256", ""))
             observed_repo_identity = _extract_repo_identity(row.get("repo_identity"))
+            if not incoming_repo_identity and not observed_repo_identity:
+                conflicts += 1
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    declared_payload_hash,
+                    "repo_identity_missing",
+                )
+                continue
             identity_expected = {"repo_id": str(repo_id), "repo_key": expected_repo_key, "root_path": expected_repo_root}
             if not incoming_repo_identity:
                 identity_expected = {}
@@ -10917,7 +10947,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                             logical_key,
                             existing_hash,
                             incoming_compare_hash,
-                            "existing_row_preserved",
+                            "kept_existing",
                         )
                         continue
                     colnames = list(mapped_filtered.keys())
@@ -11247,7 +11277,13 @@ def recover_artifact_refs(
 def run_json_subcommand(command: Any, args: argparse.Namespace) -> tuple[int, dict[str, Any] | None]:
     stdout = io.StringIO()
     with contextlib.redirect_stdout(stdout):
-        rc = int(command(args))
+        try:
+            rc = int(command(args))
+        finally:
+            # Recovery reuses CLI command handlers in-process. The normal CLI
+            # path exits immediately, but here we must release any SQLite
+            # handles those handlers left for interpreter shutdown.
+            gc.collect()
     payload_text = stdout.getvalue().strip()
     if not payload_text:
         return rc, None
@@ -11275,15 +11311,6 @@ def command_recover(args: argparse.Namespace) -> int:
     sources: list[str] = []
     artifact_sources: list[str] = []
     backup_path = None
-    if backup_first and preexisting_db:
-        backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
-        backup_path = create_backup(
-            conn,
-            root,
-            db_path,
-            output=str(backup_path),
-            allow_overwrite=False,
-        )
     init_schema(conn, root, raw_storage_mode=raw_storage_mode, run_git_change_dedup=False)
     recovery_dedup_removed_ids: list[int] = []
     with conn:
@@ -11311,7 +11338,15 @@ def command_recover(args: argparse.Namespace) -> int:
                         "deleted_git_file_change_ids": recovery_dedup_removed_ids,
                     },
                 )
-    if backup_first and preexisting_db and backup_path is not None:
+    if backup_first and preexisting_db:
+        backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
+        backup_path = create_backup(
+            conn,
+            root,
+            db_path,
+            output=str(backup_path),
+            allow_overwrite=False,
+        )
         backup_conn = sqlite3.connect(str(backup_path))
         try:
             backup_conn.row_factory = sqlite3.Row

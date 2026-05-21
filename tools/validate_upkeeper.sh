@@ -1672,8 +1672,20 @@ check_release_readiness_docs_contract() {
   grep -Fq "## Next" docs/roadmap.md || fail "roadmap missing Next section"
   grep -Fq "tools/validate_upkeeper.sh --full" docs/release-checklist.md ||
     fail "release checklist missing full validation command"
+  grep -Fq "tools/validate_upkeeper.sh --quick" docs/release-checklist.md ||
+    fail "release checklist missing quick validation command"
+  grep -Fq "tools/validate_upkeeper.sh --deps" docs/release-checklist.md ||
+    fail "release checklist missing deps validation command"
+  grep -Fq "tools/stress_upkeeper_corpus.sh --local" docs/release-checklist.md ||
+    fail "release checklist missing local stress-corpus command"
+  grep -Fq "no real Codex" docs/release-checklist.md ||
+    fail "release checklist missing no-real-backend release-gate requirement"
+  grep -Fq "Taxonomy and Release Gate" docs/release-checklist.md ||
+    fail "release checklist missing issue taxonomy section"
   grep -Fq "Current Major Risk Areas" docs/known-issues.md ||
     fail "known issues missing major risk section"
+  grep -Fq "p0-release-blocker" docs/compatibility.md docs/release-checklist.md docs/scripts/upkeeper.md ||
+    fail "issue taxonomy labels for release gate are undocumented"
 }
 
 check_governance_docs_contract() {

@@ -525,6 +525,11 @@ Prompt behavior:
     wrapper withholds private issue title/body/comment text from the model; set
     `UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL=1` only when that exposure is
     explicitly required.
+    Documented local taxonomy is aligned to the operator release gate intent:
+    `p0-release-blocker`, `p1-trust`, `p1-validation`, `p1-safety`,
+    `p1-docs`, `p2-ux`, `p2-portability`, `p2-prompt`, and `p3-polish`,
+    with a conscious fallback to `security`, `data-integrity`, and `bug` when
+    dedicated labels are unavailable.
   - --fix-issue=NUMBER skips Upkeeper's issue ranking and locks this cycle to
     the named open GitHub issue. This is the handoff used by scripted fix
     launchers such as ChimneySweep after they have already ranked the queue.

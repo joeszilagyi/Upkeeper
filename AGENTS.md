@@ -152,6 +152,19 @@ Upkeeper is expected to stress test both itself and client repositories.
 - No failure should escape oversight. If a prior automated cycle failed, the
   next unattended launcher run should either repair that failure, keep it as a
   visible obligation, or fail closed with enough local evidence for the next run.
+- No observed finding should live only in chat history, terminal scrollback, or
+  private memory. This includes small but impactful operator-interface defects,
+  confusing output, contract gaps, repeated warnings, validation drift, stale
+  evidence, missing bug filing, or any other anomaly that is not a perfect clean
+  run. If the finding is not fixed in the same patch, catalog it as a GitHub
+  issue or local automation obligation with enough durable evidence for a later
+  unattended repair: the safe output excerpt or failing command, phase, current
+  branch/head when relevant, likely owner path, expected behavior, severity, and
+  acceptance criteria. Every anomaly is either evidence for a specific already
+  tracked bug, or it is a new bug. When an existing issue or obligation already
+  covers it, add or reference the fresh evidence there; when no existing tracked
+  item precisely covers it, file a focused new one. Minor severity can affect
+  priority, but not whether the finding must be captured.
 - Preserve a cheap scripted fast path. Clean queue checks, obligation
   enumeration, and local health checks should stay deterministic and pre-model.
   Do not put broad validation, live backend calls, or expensive scans on the

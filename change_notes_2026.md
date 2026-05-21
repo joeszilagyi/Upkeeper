@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-20: finding catalog contract:
+	1. The repository contract now requires any observed anomaly, confusing operator-interface defect, contract gap, repeated warning, validation drift, stale evidence, or missing bug filing that is not fixed immediately to be captured as a GitHub issue or local automation obligation with enough evidence for later repair.
+	2. Every anomaly must now be treated as evidence for a specific already tracked bug or as a new bug; existing tracked items should receive the fresh evidence, while uncovered anomalies need focused new issues or obligations.
+	3. Minor severity now affects priority, not whether the finding must be captured, so small process and human-interface defects cannot exist only in chat history or terminal scrollback.
+
 2026-05-20: Lattice client-root contract validation repair:
 	1. Lattice pass-registry installation now validates reusable wrapper contracts against the central wrapper source tree instead of the target repository root, so symlinked or client-root Lattice runs no longer fail only because the client checkout does not contain `lib/upkeeper`.
 	2. Future or local pass codes matching the documented `P[0-9A-Za-z_.-]+` shape, such as `P999`, remain accepted as Lattice evidence rows while built-in prompt metadata still comes from the registered pass list.

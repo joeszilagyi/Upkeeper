@@ -60,6 +60,7 @@ assert_local_ignores() {
 test_install_and_doctor_client_link() {
   local repo="$TEST_TMP_ROOT/install-client"
   local link_target
+  local doctor_log
 
   init_client_repo "$repo"
   install_fake_age
@@ -71,8 +72,12 @@ test_install_and_doctor_client_link() {
     fail "installed symlink target mismatch: $link_target"
   assert_local_ignores "$repo"
 
+  doctor_log="$TEST_TMP_ROOT/doctor-install.log"
   PATH="$TEST_TMP_ROOT/bin:$PATH" \
     CODEX_HOME="$TEST_TMP_ROOT/missing-codex-home" \
+    CODEX_HOME_DIR="$TEST_TMP_ROOT/missing-codex-home" \
+    CODEX_LOG_FILE="$doctor_log" \
+    CODEX_LOG_FILE_ALLOW_UNSAFE=1 \
     "$PROJECT_ROOT/tools/doctor_upkeeper.sh" --repo="$repo" >/dev/null
   "$PROJECT_ROOT/tools/install_client_link.sh" --repo="$repo" >/dev/null
   [[ -L "$repo/Upkeeper.sh" ]] || fail "idempotent reinstall removed symlink"
@@ -147,9 +152,47 @@ test_uninstall_removes_only_safe_symlink() {
     fail "uninstall modified non-symlink path"
 }
 
+test_doctor_client_link_reports_no_repo_local_upkeeper_candidate() {
+  local repo="$TEST_TMP_ROOT/startup-anomaly-client"
+  local attempt
+  local out
+  local err
+  local rc
+
+  init_client_repo "$repo"
+  install_fake_age
+  "$PROJECT_ROOT/tools/install_client_link.sh" --repo="$repo" >/dev/null
+
+  for attempt in 1 2; do
+    out="$TEST_TMP_ROOT/startup-anomaly-doctor-$attempt.out"
+    err="$TEST_TMP_ROOT/startup-anomaly-doctor-$attempt.err"
+
+    set +e
+    STARTUP_ANOMALY_GATE=1 \
+      CODEX_DISK_MIN_FREE_PERCENT=101 \
+      CODEX_LOG_FILE="$repo/startup-anomaly-doctor-$attempt.log" \
+      CODEX_LOG_FILE_ALLOW_UNSAFE=1 \
+      CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER=1 \
+      CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$TEST_TMP_ROOT/startup-anomaly-state-$attempt" \
+      CODEX_HOME="$TEST_TMP_ROOT/startup-anomaly-codex-home-$attempt" \
+      CODEX_HOME_DIR="$TEST_TMP_ROOT/startup-anomaly-codex-home-$attempt" \
+      PATH="$TEST_TMP_ROOT/bin:$PATH" \
+      "$PROJECT_ROOT/tools/doctor_upkeeper.sh" --repo="$repo" >"$out" 2>"$err"
+    rc="$?"
+    set -e
+
+    [[ "$rc" -ne 0 ]] || fail "doctor succeeded unexpectedly during startup-anomaly fixture attempt $attempt"
+    grep -Fq "startup_anomaly.gate_target status=missing action=fail_closed reason=no_repo_local_upkeeper_candidate" "$err" ||
+      fail "startup-anomaly gate did not report expected no local candidate on attempt $attempt"
+    grep -Fq "doctor_upkeeper: ERROR: client dry-run failed with exit 7" "$err" ||
+      fail "doctor did not surface exit 7 for startup-anomaly fixture attempt $attempt"
+  done
+}
+
 test_install_and_doctor_client_link
 test_install_refuses_overwrite_without_force
 test_update_requires_force_for_stale_symlink
 test_uninstall_removes_only_safe_symlink
+test_doctor_client_link_reports_no_repo_local_upkeeper_candidate
 
 printf 'client_link_tools_test: ok\n'

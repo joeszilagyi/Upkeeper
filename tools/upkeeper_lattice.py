@@ -7977,6 +7977,24 @@ def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
         import_results = payload.get("import_results")
         report_import_results = report.get("import_results")
         jsonl_results = [row for row in import_results or [] if row.get("source") == "import-jsonl"]
+        conflict_row = None
+        if db_path.exists():
+            conn = sqlite3.connect(str(db_path))
+            try:
+                conflict_row = conn.execute(
+                    """
+                    select resolution, details_json
+                    from lattice_import_conflicts
+                    where row_type='jsonl' and logical_key='line:2'
+                    order by conflict_id desc
+                    limit 1
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+        conflict_details = {}
+        if conflict_row is not None and conflict_row[1]:
+            conflict_details = json.loads(conflict_row[1])
         ok = all(
             (
                 exit_code == EXIT_IMPORT_CONFLICT,
@@ -7987,6 +8005,9 @@ def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
                 bool(payload_text),
                 any(int(row.get("exit_code", -1)) == EXIT_IMPORT_CONFLICT for row in jsonl_results),
                 any(isinstance(row.get("result"), dict) and row["result"].get("status") == "conflicts" for row in jsonl_results),
+                conflict_row is not None,
+                conflict_row[0] == "malformed_json",
+                conflict_details.get("resolution") == "malformed_json",
             )
         )
         return {
@@ -7996,6 +8017,8 @@ def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
             "report_status": report.get("status"),
             "import_results": import_results,
             "report_import_results": report_import_results,
+            "conflict_resolution": conflict_row[0] if conflict_row is not None else None,
+            "conflict_details_resolution": conflict_details.get("resolution"),
             "ok": ok,
         }
 

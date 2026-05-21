@@ -12088,6 +12088,276 @@ def query_reuse_debt(conn: sqlite3.Connection, root: Path, repo_id: int, args: a
     return rows
 
 
+def query_cycle_metrics(conn: sqlite3.Connection, root: Path, repo_id: int, args: argparse.Namespace) -> list[dict[str, Any]]:
+    del root
+    now_epoch = epoch_now()
+    window_from: int | None = None
+    window_to: int | None = None
+
+    if args.window_days is not None:
+        window_days = int(args.window_days)
+        if window_days < 0:
+            fail("window-days must be >= 0", EXIT_USAGE)
+        if args.since_epoch is not None or args.until_epoch is not None:
+            fail("window-days cannot be used with --since-epoch or --until-epoch", EXIT_USAGE)
+        window_to = now_epoch
+        window_from = max(0, now_epoch - (window_days * 86400))
+    else:
+        if args.since_epoch is not None:
+            window_from = int(args.since_epoch)
+        if args.until_epoch is not None:
+            window_to = int(args.until_epoch)
+    if window_from is not None and window_to is not None and window_to < window_from:
+        fail("until-epoch must be >= since-epoch", EXIT_USAGE)
+
+    where: list[str] = ["repo_id=?"]
+    params: list[Any] = [repo_id]
+    if window_from is not None:
+        where.append("coalesce(end_epoch, start_epoch) >= ?")
+        params.append(window_from)
+    if window_to is not None:
+        where.append("coalesce(end_epoch, start_epoch) <= ?")
+        params.append(window_to)
+    where_clause = " and ".join(where)
+
+    cycles = [
+        dict(row)
+        for row in conn.execute(
+            f"""
+            select
+              cycle_pk,
+              status_marker,
+              review_outcome,
+              start_epoch,
+              end_epoch,
+              worktree_dirty,
+              selected_path
+            from cycles
+            where {where_clause}
+            """,
+            params,
+        )
+    ]
+
+    completed = 0
+    blocked = 0
+    blocked_by_dirty = 0
+    operator_intervention_count = 0
+    selected_paths: list[str] = []
+    durations: list[int] = []
+
+    for row in cycles:
+        status = str(row.get("status_marker") or "").upper()
+        if status == "WORK_DONE":
+            completed += 1
+        if status == "BLOCKED":
+            blocked += 1
+            if int(row.get("worktree_dirty") or 0) == 1:
+                blocked_by_dirty += 1
+        if str(row.get("review_outcome") or "").upper() == "STOPPED_ON_BLOCKER":
+            operator_intervention_count += 1
+        if row.get("selected_path"):
+            selected_paths.append(str(row["selected_path"]))
+
+        start_epoch = row.get("start_epoch")
+        end_epoch = row.get("end_epoch")
+        try:
+            start_value = int(start_epoch) if start_epoch is not None else None
+            end_value = int(end_epoch) if end_epoch is not None else None
+        except (TypeError, ValueError):
+            continue
+        if start_value is not None and end_value is not None and end_value >= start_value:
+            durations.append(end_value - start_value)
+    average_cycle_duration_seconds = int(sum(durations) / len(durations)) if durations else None
+
+    total_selected = len(selected_paths)
+    unique_selected = len(set(selected_paths))
+    target_rotation_coverage = {
+        "selected_count": unique_selected,
+        "completed_selection_count": total_selected,
+        "rotation_ratio": round(unique_selected / total_selected, 4) if total_selected else None,
+    }
+
+    cycle_pks: list[int] = []
+    for row in cycles:
+        try:
+            if row.get("cycle_pk") is not None:
+                cycle_pks.append(int(row["cycle_pk"]))
+        except (TypeError, ValueError):
+            continue
+
+    blocked_by_quota_cycle_count = 0
+    postmortem_launch_count = 0
+    fallback_launch_count = 0
+    if cycle_pks:
+        placeholders = ",".join(["?"] * len(cycle_pks))
+        blocked_by_quota_cycle_count = int(
+            conn.execute(
+                f"""
+                select count(distinct cycle_pk)
+                from artifact_refs
+                where repo_id=? and artifact_kind='quota_block_marker' and cycle_pk is not null
+                  and cycle_pk in ({placeholders})
+                """,
+                (repo_id, *cycle_pks),
+            ).fetchone()[0]
+            or 0
+        )
+        postmortem_launch_count = int(
+            conn.execute(
+                f"""
+                select count(distinct cycle_pk)
+                from artifact_refs
+                where repo_id=? and artifact_kind='postmortem_report' and cycle_pk is not null
+                  and cycle_pk in ({placeholders})
+                """,
+                (repo_id, *cycle_pks),
+            ).fetchone()[0]
+            or 0
+        )
+        fallback_launch_count = int(
+            conn.execute(
+                f"""
+                select count(*)
+                from cycle_links
+                where repo_id=? and link_kind='fallback'
+                  and (parent_cycle_pk in ({placeholders}) or child_cycle_pk in ({placeholders}))
+                """,
+                (repo_id, *cycle_pks, *cycle_pks),
+            ).fetchone()[0]
+            or 0
+        )
+
+    open_failure_queue_count = int(
+        conn.execute("select count(*) from tool_failures where repo_id=? and status='open'", (repo_id,)).fetchone()[0] or 0
+    )
+    stale_lock_count = None
+    quota_delta_per_successful_cycle = None
+
+    return [
+        {
+            "metric": "cycles_completed_with_work_done",
+            "category": "product_contract",
+            "value": completed,
+            "scope": "cycles",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "cycles where status_marker == WORK_DONE",
+        },
+        {
+            "metric": "blocked_cycles_before_backend_start",
+            "category": "product_contract",
+            "value": blocked,
+            "scope": "cycles",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "proxy metric: blocked cycles are observed before successful backend work",
+        },
+        {
+            "metric": "blocked_cycles_by_dirty_worktree_or_env",
+            "category": "product_contract",
+            "value": blocked_by_dirty,
+            "scope": "cycles",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "proxy metric from worktree_dirty and BLOCKED status",
+        },
+        {
+            "metric": "fallback_launches",
+            "category": "product_contract",
+            "value": fallback_launch_count,
+            "scope": "cycle_links",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "count of fallback links touching selected cycles",
+        },
+        {
+            "metric": "postmortem_launches",
+            "category": "product_contract",
+            "value": postmortem_launch_count,
+            "scope": "artifact_refs",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "cycles with postmortem_report artifact references",
+        },
+        {
+            "metric": "open_failure_queue_count",
+            "category": "product_contract",
+            "value": open_failure_queue_count,
+            "scope": "tool_failures",
+            "availability": "local",
+            "window_epoch_from": None,
+            "window_epoch_to": None,
+            "notes": "open tool failure markers after latest queue updates",
+        },
+        {
+            "metric": "stale_lock_count",
+            "category": "exploratory",
+            "value": stale_lock_count,
+            "scope": "runtime",
+            "availability": "not_available_locally",
+            "window_epoch_from": None,
+            "window_epoch_to": None,
+            "notes": "not tracked by the current lattice schema",
+        },
+        {
+            "metric": "average_cycle_duration_seconds",
+            "category": "product_contract",
+            "value": average_cycle_duration_seconds,
+            "scope": "cycles",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "avg of end_epoch - start_epoch for rows with both values present",
+        },
+        {
+            "metric": "quota_delta_per_successful_cycle",
+            "category": "exploratory",
+            "value": quota_delta_per_successful_cycle,
+            "scope": "quota_events",
+            "availability": "not_available_locally",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "requires persisted per-cycle quota delta telemetry",
+        },
+        {
+            "metric": "target_rotation_coverage",
+            "category": "product_contract",
+            "value": target_rotation_coverage,
+            "scope": "cycles",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "unique selected paths divided by selected cycles",
+        },
+        {
+            "metric": "operator_intervention_count",
+            "category": "product_contract",
+            "value": operator_intervention_count,
+            "scope": "cycles",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "proxy metric for explicitly blocked cycles requiring operator input",
+        },
+        {
+            "metric": "quota_blocked_cycle_count",
+            "category": "exploratory",
+            "value": blocked_by_quota_cycle_count,
+            "scope": "artifact_refs",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "proxy metric from quota_block_marker artifact references",
+        },
+    ]
+
+
 def command_query(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
@@ -12122,6 +12392,8 @@ def command_query(args: argparse.Namespace) -> int:
         rows = query_explain_selection(conn, root, repo_id, args)
     elif query_name == "reuse-debt":
         rows = query_reuse_debt(conn, root, repo_id, args)
+    elif query_name == "metrics":
+        rows = query_cycle_metrics(conn, root, repo_id, args)
     else:
         fail(f"unknown query: {query_name}", EXIT_USAGE)
     format_rows(rows, args.format)
@@ -12566,6 +12838,22 @@ def build_parser() -> argparse.ArgumentParser:
     add_query_common(query_sub.add_parser("reuse-debt"))
     query_sub.choices["reuse-debt"].add_argument("--path")
     query_sub.choices["reuse-debt"].add_argument("--owner")
+    add_query_common(query_sub.add_parser("metrics"))
+    query_sub.choices["metrics"].add_argument(
+        "--window-days",
+        type=int,
+        help="summarize the trailing N days (0 means only from now); mutually exclusive with --since-epoch/--until-epoch",
+    )
+    query_sub.choices["metrics"].add_argument(
+        "--since-epoch",
+        type=int,
+        help="include cycles whose end/start epoch is >= this value",
+    )
+    query_sub.choices["metrics"].add_argument(
+        "--until-epoch",
+        type=int,
+        help="include cycles whose end/start epoch is <= this value",
+    )
     p.set_defaults(func=command_query)
 
     p = sub.add_parser("mark-regression")

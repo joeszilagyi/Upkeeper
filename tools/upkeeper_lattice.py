@@ -8655,26 +8655,70 @@ def build_p29_reuse_debt_attributes(item: dict[str, Any], pass_code: str) -> dic
     if normalize_pass_code(pass_code) != "P29":
         return {}
     debt: dict[str, Any] = {}
-    candidate = item.get("candidate")
+    candidate = item.get("candidate") or item.get("upkeeper.pass_result:reuse_debt_candidate")
     if has_meaningful_value(candidate):
         debt["reuse_debt_candidate"] = candidate
-    reason = item.get("reason")
+    reason = item.get("reason") or item.get("upkeeper.pass_result:reuse_debt_reason")
     if has_meaningful_value(reason):
         debt["reuse_debt_reason"] = reason
-    owner = item.get("owner")
+    owner = item.get("owner") or item.get("upkeeper.pass_result:reuse_debt_owner")
+    likely_owner = item.get("likely_owner") or item.get("upkeeper.pass_result:reuse_debt_likely_owner")
     if not has_meaningful_value(owner):
-        owner = item.get("likely_owner")
+        owner = likely_owner
     if has_meaningful_value(owner):
         debt["reuse_debt_owner"] = owner
-    proof_needed = item.get("proof_needed")
+    if has_meaningful_value(likely_owner):
+        debt["reuse_debt_likely_owner"] = likely_owner
+    proof_needed = item.get("proof_needed") or item.get("upkeeper.pass_result:reuse_debt_proof_needed")
     if has_meaningful_value(proof_needed):
         debt["reuse_debt_proof_needed"] = proof_needed
-    validation_command = item.get("validation_command")
+    validation_command = item.get("validation_command") or item.get("upkeeper.pass_result:reuse_debt_validation_command")
     if not has_meaningful_value(validation_command):
         validation_command = item.get("validation_cmd")
+    if not has_meaningful_value(validation_command):
+        validation_command = item.get("upkeeper.pass_result:validation_cmd") or item.get("upkeeper.pass_result:validation_command")
     if has_meaningful_value(validation_command):
         debt["reuse_debt_validation_command"] = validation_command
     return debt
+
+
+def build_p29_reuse_debt_event(item: dict[str, Any], pass_code: str) -> dict[str, Any]:
+    raw = build_p29_reuse_debt_attributes(item, pass_code)
+    debt: dict[str, Any] = {}
+    for key, value in raw.items():
+        debt[key.removeprefix("reuse_debt_")] = value
+    return debt
+
+
+def record_reuse_debt_event(
+    conn: sqlite3.Connection,
+    root: Path,
+    repo_id: int,
+    *,
+    cycle_pk: int | None,
+    source_id: int,
+    pass_code: str,
+    path: str,
+    item: dict[str, Any],
+) -> None:
+    if not item:
+        return
+    details = build_p29_reuse_debt_event(item, pass_code)
+    if not details:
+        return
+    file_id = ensure_file_identity(conn, repo_id, path, source_id=source_id)
+    record_file_event(
+        conn,
+        repo_id,
+        "reuse_debt",
+        file_id=file_id,
+        cycle_pk=cycle_pk,
+        source_id=source_id,
+        path=path,
+        confidence="observed",
+        details=details,
+        dedupe_by_cycle=True,
+    )
 
 
 def record_one_pass_result(
@@ -9058,7 +9102,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     )
                     rejected_count += 1
                     continue
-                record_one_pass_result(
+                run_id = record_one_pass_result(
                     conn,
                     root,
                     repo_id,
@@ -9080,6 +9124,16 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         },
                     },
                 )
+                record_reuse_debt_event(
+                    conn,
+                    root,
+                    repo_id,
+                    cycle_pk=cycle_pk,
+                    source_id=source_id,
+                    pass_code=pass_code,
+                    path=path,
+                    item=item,
+                )
                 seen.add((pass_code, path))
                 recorded += 1
         elif args.pass_code and args.path:
@@ -9096,7 +9150,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
             validation_error = validate_pass_result_state(applicable=applicable, outcome=outcome)
             if validation_error:
                 fail(f"invalid pass-result state: {validation_error}", EXIT_USAGE)
-            record_one_pass_result(
+            run_id = record_one_pass_result(
                 conn,
                 root,
                 repo_id,
@@ -9111,6 +9165,16 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 raw_line=args.raw_line if preserve_raw else "",
                 planned=0,
                 attributes=attrs,
+            )
+            record_reuse_debt_event(
+                conn,
+                root,
+                repo_id,
+                cycle_pk=cycle_pk,
+                source_id=source_id,
+                pass_code=pass_code,
+                path=path,
+                item=attrs,
             )
             seen.add((pass_code, path))
             recorded += 1
@@ -11921,6 +11985,49 @@ def query_explain_selection(conn: sqlite3.Connection, root: Path, repo_id: int, 
     return rows
 
 
+def query_reuse_debt(conn: sqlite3.Connection, root: Path, repo_id: int, args: argparse.Namespace) -> list[dict[str, Any]]:
+    del root
+    params: list[Any] = [repo_id]
+    where = "where f.repo_id=? and f.event_kind='reuse_debt'"
+    if args.path:
+        where += " and f.path=?"
+        params.append(stored_rel_path(external_rel_path(args.path)))
+    rows: list[dict[str, Any]] = []
+    for row in conn.execute(
+        f"""
+        select f.event_id, f.event_epoch as epoch, f.path, f.confidence, f.details_json, c.cycle_id
+        from file_events f
+        left join cycles c on c.cycle_pk=f.cycle_pk
+        {where}
+        order by f.event_epoch desc, f.event_id desc
+        """,
+        params,
+    ):
+        details = {}
+        if row["details_json"]:
+            try:
+                parsed = json.loads(row["details_json"])
+                if isinstance(parsed, dict):
+                    details = parsed
+            except (TypeError, ValueError):
+                details = {}
+        payload = dict(row)
+        payload.update(
+            {
+                "candidate": details.get("candidate"),
+                "reason": details.get("reason"),
+                "owner": details.get("owner"),
+                "likely_owner": details.get("likely_owner"),
+                "proof_needed": details.get("proof_needed"),
+                "validation_command": details.get("validation_command"),
+            }
+        )
+        if args.owner and not (payload.get("owner") == args.owner or payload.get("likely_owner") == args.owner):
+            continue
+        rows.append(payload)
+    return rows
+
+
 def command_query(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
@@ -11953,6 +12060,8 @@ def command_query(args: argparse.Namespace) -> int:
         rows = query_selection_candidates(conn, root, repo_id, args)
     elif query_name == "explain-selection":
         rows = query_explain_selection(conn, root, repo_id, args)
+    elif query_name == "reuse-debt":
+        rows = query_reuse_debt(conn, root, repo_id, args)
     else:
         fail(f"unknown query: {query_name}", EXIT_USAGE)
     format_rows(rows, args.format)
@@ -12394,6 +12503,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_query_common(query_sub.add_parser("explain-selection"))
     query_sub.choices["explain-selection"].add_argument("--cycle", dest="cycle_id")
     query_sub.choices["explain-selection"].add_argument("--path")
+    add_query_common(query_sub.add_parser("reuse-debt"))
+    query_sub.choices["reuse-debt"].add_argument("--path")
+    query_sub.choices["reuse-debt"].add_argument("--owner")
     p.set_defaults(func=command_query)
 
     p = sub.add_parser("mark-regression")

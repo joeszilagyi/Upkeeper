@@ -1879,6 +1879,14 @@ def lookup_repository_id_by_identity(conn: sqlite3.Connection, root: Path, info:
             repo_id = int(row["repo_id"])
             conn.execute("update repositories set repo_key=? where repo_id=?", (repo_key, repo_id))
             return repo_id
+    repo_row = conn.execute(
+        "select repo_id from repositories where git_common_dir=? order by last_seen_epoch desc, repo_id desc limit 1",
+        (git_common_dir,),
+    ).fetchone()
+    if repo_row:
+        repo_id = int(repo_row["repo_id"])
+        conn.execute("update repositories set repo_key=? where repo_id=?", (repo_key, repo_id))
+        return repo_id
     alias_row = conn.execute(
         "select repo_id from repo_aliases where alias_kind=? and alias_value=?",
         ("root_path", str(root)),

@@ -17,6 +17,27 @@ positive practice worth calling out.
 If there is no meaningful lesson from the selected-file review, state
 `P27: not applicable` and proceed with the normal applicable review only.
 
+## Scope and Boundaries
+
+Use P27 only when a single run produces a durable lesson beyond normal findings and
+the lesson can be stated as reusable operator guidance in transcript output.
+Do not use P27 for routine dry edits with no recurring operator value.
+Do not apply P27 to runs where another module already owns the behavior change and
+no additional debrief is useful.
+
+`P27: not applicable` is the boundary when no lesson applies.
+
+## Verification Guidance
+
+If P27 applies, verify that the selected-file response includes:
+
+- the required final-response block
+- a clear explanation of what happened and why it matters
+- at least one actionable "how to avoid it" point
+- whether any follow-up verification was run in this run
+
+No extra tooling is required beyond the normal selected-file work.
+
 ## P27 - Educational Debrief Review
 
 Goal:

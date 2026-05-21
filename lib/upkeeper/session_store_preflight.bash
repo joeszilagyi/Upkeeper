@@ -120,7 +120,7 @@ import os
 import sys
 
 path = sys.argv[1]
-flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
 for attr in ("O_NOFOLLOW", "O_CLOEXEC"):
     flags |= getattr(os, attr, 0)
 

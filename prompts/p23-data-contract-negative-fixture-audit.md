@@ -23,6 +23,13 @@ addition, run this P23 pass if the selected file is any of the following:
 If the selected file does not touch a data/input boundary, state
 `P23: not applicable` and proceed with the normal applicable P1-P22 review only.
 
+## Scope and Boundaries
+
+Use P23 when the selected file owns a data contract boundary where malformed
+inputs can become accepted output or side effects.
+Do not apply P23 when the selected file has no external, semi-external, or user
+supplied parsing/input boundary.
+
 ## P23 - Data Contract And Negative Fixture Audit
 
 Goal:
@@ -277,6 +284,11 @@ Include a `P23` section in the final report with:
   value.
 - If a valid input path is already well covered but malformed inputs are not,
   that is a real P23 test gap.
+
+## Final Marker Discipline
+
+Keep the final response in the normal Upkeeper envelope and report status in the
+normal `UPKEEPER_STATUS` contract.
 
 ## Short Inline Version
 

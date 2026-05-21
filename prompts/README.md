@@ -4,6 +4,7 @@ Store finished or in-progress prompts in this directory.
 
 Tracked prompts:
 
+- [`_review-module-template.md`](./_review-module-template.md) - reusable review-module scaffold and required structure contract.
 - [`default-review.md`](default-review.md) - runtime template loaded by Upkeeper.
 - [`caretaking_23_items.md`](caretaking_23_items.md) - full rotating review repertoire reference.
 - [`git_hard_clean.md`](git_hard_clean.md) - focused branch and backup cleanup prompt.
@@ -18,6 +19,8 @@ Tracked prompts:
 - [`p31-fault-injection-review.md`](p31-fault-injection-review.md) - reserved future P31 contract for deterministic fault-injection scenarios with explicit oracles and recovery proof; not wired as a `--review-module` flag yet.
 
 Reusable review-module contract:
+
+Use [`_review-module-template.md`](./_review-module-template.md) for `prompts/pNN-*.md` files that are intended as reusable review modules.
 
 All files matching `prompts/pNN-*.md` intended as reusable review modules should keep a shared structure so future modules can be validated consistently:
 
@@ -51,4 +54,5 @@ Guidelines:
 - Prefer practical prompts that solve a specific task.
 - Revise prompts based on real outputs and failure cases.
 
-If you are starting a new prompt, copy the template from `../templates/prompt-template.md`.
+If you are starting a new prompt, copy the general starter from `../templates/prompt-template.md`.
+For reusable review modules (`prompts/pNN-*.md`), use [`./_review-module-template.md`](./_review-module-template.md) first and then specialize requirements for the module surface.

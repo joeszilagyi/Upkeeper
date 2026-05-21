@@ -8,6 +8,7 @@ import contextlib
 import errno
 import ast
 import fnmatch
+import gc
 import hashlib
 import hmac
 import io
@@ -1879,6 +1880,14 @@ def lookup_repository_id_by_identity(conn: sqlite3.Connection, root: Path, info:
             repo_id = int(row["repo_id"])
             conn.execute("update repositories set repo_key=? where repo_id=?", (repo_key, repo_id))
             return repo_id
+    repo_row = conn.execute(
+        "select repo_id from repositories where git_common_dir=? order by last_seen_epoch desc, repo_id desc limit 1",
+        (git_common_dir,),
+    ).fetchone()
+    if repo_row:
+        repo_id = int(repo_row["repo_id"])
+        conn.execute("update repositories set repo_key=? where repo_id=?", (repo_key, repo_id))
+        return repo_id
     alias_row = conn.execute(
         "select repo_id from repo_aliases where alias_kind=? and alias_value=?",
         ("root_path", str(root)),
@@ -2858,6 +2867,22 @@ def table_foreign_key_parents(conn: sqlite3.Connection, table: str) -> list[str]
     return parents
 
 
+def table_foreign_key_columns(conn: sqlite3.Connection, table: str) -> list[tuple[str, str, str]]:
+    """
+    Return (child_column, parent_table, parent_column) tuples from
+    SQLite foreign-key declarations.
+    """
+    refs: list[tuple[str, str, str]] = []
+    for row in conn.execute(f"PRAGMA foreign_key_list({table})"):
+        parent_table = row["table"]
+        parent_column = row["to"]
+        child_column = row["from"]
+        if not parent_table or not parent_column or not child_column:
+            continue
+        refs.append((str(child_column), str(parent_table), str(parent_column)))
+    return refs
+
+
 def table_import_dependency_order(conn: sqlite3.Connection, tables: set[str]) -> list[str]:
     """
     Compute a best-effort topological order of tables based on FK parent
@@ -2920,6 +2945,22 @@ def dedupe_git_file_changes(conn: sqlite3.Connection) -> int:
             """
         )
     return duplicate_groups
+
+
+def git_file_change_ids_pruned_by_dedupe(conn: sqlite3.Connection) -> list[int]:
+    rows = conn.execute(
+        """
+        select git_file_change_id
+          from git_file_changes
+         where git_file_change_id not in (
+           select min(git_file_change_id)
+           from git_file_changes
+           group by repo_id, commit_id, path, coalesce(old_path, ''), coalesce(status, '')
+         )
+         order by git_file_change_id
+        """
+    ).fetchall()
+    return [int(row["git_file_change_id"]) for row in rows]
 
 
 def dedupe_artifact_refs(conn: sqlite3.Connection) -> int:
@@ -3348,6 +3389,8 @@ def ensure_extension_facts_identity_index(conn: sqlite3.Connection) -> int:
         indexes = {row["name"] for row in conn.execute("pragma index_list(extension_facts)").fetchall()}
     except sqlite3.Error:
         return 0
+    expected_index_columns = ("namespace", "key", "subject_type", "subject_pk")
+    index_name = "idx_extension_facts_identity"
     duplicate_groups = 0
     try:
         duplicate_groups = int(
@@ -3365,6 +3408,21 @@ def ensure_extension_facts_identity_index(conn: sqlite3.Connection) -> int:
         )
     except sqlite3.Error:
         return 0
+    if index_name in indexes:
+        try:
+            existing_columns = tuple(
+                row["name"]
+                for row in conn.execute(f"pragma index_info({index_name})").fetchall()
+                if row["name"]
+            )
+        except sqlite3.Error:
+            existing_columns = ()
+        if existing_columns and existing_columns != expected_index_columns:
+            try:
+                conn.execute(f"DROP INDEX IF EXISTS {index_name}")
+                indexes.discard(index_name)
+            except sqlite3.Error:
+                return duplicate_groups
     if duplicate_groups:
         try:
             conn.execute(
@@ -3405,11 +3463,11 @@ def ensure_extension_facts_identity_index(conn: sqlite3.Connection) -> int:
             )
         except sqlite3.Error:
             duplicate_groups = 0
-    if "idx_extension_facts_identity" in indexes:
+    if index_name in indexes:
         return duplicate_groups
     try:
         conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_extension_facts_identity ON extension_facts(namespace, key, subject_type, subject_pk)"
+            f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} ON extension_facts(namespace, key, subject_type, subject_pk)"
         )
     except sqlite3.Error:
         return duplicate_groups
@@ -3586,7 +3644,13 @@ def scrub_legacy_git_privacy_data(conn: sqlite3.Connection) -> None:
             )
 
 
-def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_storage_mode: str | None = None) -> None:
+def init_schema(
+    conn: sqlite3.Connection,
+    root: Path | None = None,
+    *,
+    raw_storage_mode: str | None = None,
+    run_git_change_dedup: bool = True,
+) -> None:
     now = epoch_now()
     with conn:
         for sql in CREATE_TABLE_SQL:
@@ -3594,7 +3658,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
         deduped_artifact_ref_groups = ensure_artifact_ref_identity_indexes(conn)
         deduped_cycle_link_groups = ensure_cycle_links_logical_edge_index(conn)
         deduped_change_log_groups = ensure_change_log_identity_indexes(conn)
-        deduped_git_change_groups = dedupe_git_file_changes(conn)
+        deduped_git_change_groups = dedupe_git_file_changes(conn) if run_git_change_dedup else 0
         deduped_extension_fact_groups = ensure_extension_facts_identity_index(conn)
         deduped_file_pass_run_groups = ensure_file_pass_runs_identity_index(conn)
         ensure_file_snapshot_mtime_ns_column(conn)
@@ -4768,20 +4832,21 @@ def _extract_shell_collection(text: str, name: str) -> tuple[str, ...] | None:
     return None
 
 
-def _command_kind_values_from_file(path: Path) -> tuple[str, ...] | None:
+def _command_kind_definitions_from_file(path: Path) -> list[tuple[str, ...]]:
     if not path.exists():
-        return None
+        return []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return None
-    body = _extract_function_body(text, "command_kind")
-    if not body:
-        return None
-    values = tuple(sorted(_extract_return_literals(body)))
-    if not values:
-        return None
-    return tuple(sorted({value.lower() for value in values if value}))
+        return []
+
+    definitions = []
+    for body in _extract_function_bodies(text, "command_kind"):
+        values = tuple(sorted(_extract_return_literals(body)))
+        if not values:
+            return []
+        definitions.append(tuple(sorted({value.lower() for value in values if value})))
+    return definitions
 
 
 def _tool_failure_kind_contract_issues(root: Path) -> list[str]:
@@ -4790,10 +4855,15 @@ def _tool_failure_kind_contract_issues(root: Path) -> list[str]:
         return issues
     path_values: list[tuple[Path, tuple[str, ...]]] = []
     for path in (root / p for p in TOOL_FAILURE_KIND_ALLOWLIST_PATHS):
-        kind_values = _command_kind_values_from_file(path)
-        if kind_values is None:
+        kind_definitions = _command_kind_definitions_from_file(path)
+        if not kind_definitions:
             issues.append(f"{path} missing/invalid command_kind return map")
             continue
+        unique_kind_values = sorted(set(kind_definitions))
+        if len(unique_kind_values) > 1:
+            issues.append(f"{path} command_kind definitions differ: {kind_definitions}")
+            continue
+        kind_values = unique_kind_values[0]
         path_values.append((path, kind_values))
         extra = sorted(set(kind_values) - KNOWN_TOOL_FAILURE_KINDS)
         if extra:
@@ -4828,14 +4898,24 @@ def _startup_anomaly_allowlist_contract_issues(source_root: Path) -> list[str]:
         return [f"cannot read {WORKTREE_STATE_BASH}"]
     discovered: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
     for function_name in ("write_git_status_snapshot_json", "startup_anomaly_gate_changed_path_violations"):
-        body = _extract_function_body(text, function_name)
-        if not body:
+        function_bodies = _extract_function_bodies(text, function_name)
+        if not function_bodies:
             continue
-        extracted = _extract_allowed_lists_from_worktree_state(body)
-        if extracted is None:
+        extracted_values: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+        for body in function_bodies:
+            extracted = _extract_allowed_lists_from_worktree_state(body)
+            if extracted is None:
+                issues.append(f"{WORKTREE_STATE_BASH}:{function_name} missing allowed_exact/allowed_prefixes")
+                continue
+            extracted_values.append(extracted)
+        if not extracted_values:
             issues.append(f"{WORKTREE_STATE_BASH}:{function_name} missing allowed_exact/allowed_prefixes")
             continue
-        exact_values, prefix_values = extracted
+        unique_extracted = sorted(set(extracted_values))
+        if len(unique_extracted) > 1:
+            issues.append(f"{WORKTREE_STATE_BASH}:{function_name} allowed_exact/allowed_prefixes definitions differ across duplicated functions")
+            continue
+        exact_values, prefix_values = unique_extracted[0]
         if not exact_values:
             issues.append(f"{WORKTREE_STATE_BASH}:{function_name} has empty allowed_exact")
         for value in prefix_values:
@@ -4844,6 +4924,10 @@ def _startup_anomaly_allowlist_contract_issues(source_root: Path) -> list[str]:
         for value in exact_values:
             if not value or "/" in value and value.startswith("/"):
                 issues.append(f"{WORKTREE_STATE_BASH}:{function_name} disallow absolute allowed_exact entry: {value}")
+        if len(extracted_values) > 1:
+            issues.append(
+                f"{WORKTREE_STATE_BASH}:{function_name} has {len(function_bodies)} duplicated definitions; all are identical"
+            )
         discovered.append((function_name, exact_values, prefix_values))
     if not discovered:
         issues.append(f"{WORKTREE_STATE_BASH} command missing allowed path tables")
@@ -4944,8 +5028,14 @@ def _extract_embedded_python_collections(text: str, name: str) -> list[tuple[str
 
 
 def _extract_function_body(text: str, function_name: str) -> str:
+    bodies = _extract_function_bodies(text, function_name)
+    return bodies[0] if bodies else ""
+
+
+def _extract_function_bodies(text: str, function_name: str) -> list[str]:
     lines = text.splitlines()
     python_marker = re.compile(rf"^[ \t]*def\s+{re.escape(function_name)}\s*\(")
+    bodies: list[str] = []
     for idx, line in enumerate(lines):
         if not python_marker.match(line):
             continue
@@ -4958,7 +5048,7 @@ def _extract_function_body(text: str, function_name: str) -> str:
                 body_lines.append(body)
                 continue
             break
-        return "\n".join(body_lines)
+        bodies.append("\n".join(body_lines))
 
     shell_marker = re.compile(
         rf"^[ \t]*(?:function[ \t]+)?{re.escape(function_name)}\s*\(\)\s*\{{",
@@ -4988,9 +5078,9 @@ def _extract_function_body(text: str, function_name: str) -> str:
                 elif ch == "}":
                     depth -= 1
                     if depth == 0:
-                        return source[match.start() : pos + 1]
-        return ""
-    return ""
+                        bodies.append(source[match.start() : pos + 1])
+                        break
+    return bodies
 
 
 def _extract_return_literals(body: str) -> set[str]:
@@ -5635,6 +5725,7 @@ def format_rows(rows: list[dict[str, Any]], fmt: str) -> None:
                         for key in keys
                     )
                 )
+        sys.stdout.flush()
     except BrokenPipeError:
         redirect_stdout_to_devnull()
         raise SystemExit(EXIT_SUCCESS)
@@ -7857,7 +7948,15 @@ def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
         db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
         recovery_dir = db_path.parent / "recovery"
         recovery_dir.mkdir(parents=True, exist_ok=True)
-        (recovery_dir / "bad.jsonl").write_text("{bad json\n", encoding="utf-8")
+        context = repo_identity_context(root)
+        identity_row = {
+            "repo_identity": {
+                "repo_id": "1",
+                "repo_key": repo_identity_stable_key(root, context[1]),
+                "root_path": protected_repo_path(context, str(root)),
+            }
+        }
+        (recovery_dir / "bad.jsonl").write_text(json_dumps(identity_row) + "\n{bad json\n", encoding="utf-8")
         args = argparse.Namespace(
             root=str(root),
             db=str(db_path),
@@ -8592,26 +8691,70 @@ def build_p29_reuse_debt_attributes(item: dict[str, Any], pass_code: str) -> dic
     if normalize_pass_code(pass_code) != "P29":
         return {}
     debt: dict[str, Any] = {}
-    candidate = item.get("candidate")
+    candidate = item.get("candidate") or item.get("upkeeper.pass_result:reuse_debt_candidate")
     if has_meaningful_value(candidate):
         debt["reuse_debt_candidate"] = candidate
-    reason = item.get("reason")
+    reason = item.get("reason") or item.get("upkeeper.pass_result:reuse_debt_reason")
     if has_meaningful_value(reason):
         debt["reuse_debt_reason"] = reason
-    owner = item.get("owner")
+    owner = item.get("owner") or item.get("upkeeper.pass_result:reuse_debt_owner")
+    likely_owner = item.get("likely_owner") or item.get("upkeeper.pass_result:reuse_debt_likely_owner")
     if not has_meaningful_value(owner):
-        owner = item.get("likely_owner")
+        owner = likely_owner
     if has_meaningful_value(owner):
         debt["reuse_debt_owner"] = owner
-    proof_needed = item.get("proof_needed")
+    if has_meaningful_value(likely_owner):
+        debt["reuse_debt_likely_owner"] = likely_owner
+    proof_needed = item.get("proof_needed") or item.get("upkeeper.pass_result:reuse_debt_proof_needed")
     if has_meaningful_value(proof_needed):
         debt["reuse_debt_proof_needed"] = proof_needed
-    validation_command = item.get("validation_command")
+    validation_command = item.get("validation_command") or item.get("upkeeper.pass_result:reuse_debt_validation_command")
     if not has_meaningful_value(validation_command):
         validation_command = item.get("validation_cmd")
+    if not has_meaningful_value(validation_command):
+        validation_command = item.get("upkeeper.pass_result:validation_cmd") or item.get("upkeeper.pass_result:validation_command")
     if has_meaningful_value(validation_command):
         debt["reuse_debt_validation_command"] = validation_command
     return debt
+
+
+def build_p29_reuse_debt_event(item: dict[str, Any], pass_code: str) -> dict[str, Any]:
+    raw = build_p29_reuse_debt_attributes(item, pass_code)
+    debt: dict[str, Any] = {}
+    for key, value in raw.items():
+        debt[key.removeprefix("reuse_debt_")] = value
+    return debt
+
+
+def record_reuse_debt_event(
+    conn: sqlite3.Connection,
+    root: Path,
+    repo_id: int,
+    *,
+    cycle_pk: int | None,
+    source_id: int,
+    pass_code: str,
+    path: str,
+    item: dict[str, Any],
+) -> None:
+    if not item:
+        return
+    details = build_p29_reuse_debt_event(item, pass_code)
+    if not details:
+        return
+    file_id = ensure_file_identity(conn, repo_id, path, source_id=source_id)
+    record_file_event(
+        conn,
+        repo_id,
+        "reuse_debt",
+        file_id=file_id,
+        cycle_pk=cycle_pk,
+        source_id=source_id,
+        path=path,
+        confidence="observed",
+        details=details,
+        dedupe_by_cycle=True,
+    )
 
 
 def record_one_pass_result(
@@ -8995,7 +9138,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     )
                     rejected_count += 1
                     continue
-                record_one_pass_result(
+                run_id = record_one_pass_result(
                     conn,
                     root,
                     repo_id,
@@ -9017,6 +9160,16 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                         },
                     },
                 )
+                record_reuse_debt_event(
+                    conn,
+                    root,
+                    repo_id,
+                    cycle_pk=cycle_pk,
+                    source_id=source_id,
+                    pass_code=pass_code,
+                    path=path,
+                    item=item,
+                )
                 seen.add((pass_code, path))
                 recorded += 1
         elif args.pass_code and args.path:
@@ -9033,7 +9186,7 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
             validation_error = validate_pass_result_state(applicable=applicable, outcome=outcome)
             if validation_error:
                 fail(f"invalid pass-result state: {validation_error}", EXIT_USAGE)
-            record_one_pass_result(
+            run_id = record_one_pass_result(
                 conn,
                 root,
                 repo_id,
@@ -9048,6 +9201,16 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                 raw_line=args.raw_line if preserve_raw else "",
                 planned=0,
                 attributes=attrs,
+            )
+            record_reuse_debt_event(
+                conn,
+                root,
+                repo_id,
+                cycle_pk=cycle_pk,
+                source_id=source_id,
+                pass_code=pass_code,
+                path=path,
+                item=attrs,
             )
             seen.add((pass_code, path))
             recorded += 1
@@ -10260,6 +10423,8 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
     refresh_pass_rollup_file_ids: set[int] = set()
     imported_import_max = 0
     incoming_repo_identity: dict[str, str] = {}
+    saw_unidentified_structured_row = False
+    saw_malformed_or_unsupported_row = False
 
     def _extract_repo_identity(raw_identity: Any) -> dict[str, str]:
         if not isinstance(raw_identity, dict):
@@ -10282,21 +10447,37 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
         line_number: int,
         raw_line: str,
     ) -> tuple[str, dict[str, str]]:
+        expected_repo_key = expected.get("repo_key") or ""
+        expected_repo_root = expected.get("root_path") or ""
+        expected_repo_id = expected.get("repo_id") or ""
         if not observed:
-            if not expected:
+            if not expected_repo_key and not expected_repo_root and not expected_repo_id:
                 return ("", {})
-            return ("missing", {"line_number": str(line_number), "raw_line": raw_line[:TEXT_SAMPLE_SIZE]})
-        if not expected:
+            return (
+                "missing",
+                {
+                    "line_number": str(line_number),
+                    "raw_line": raw_line[:TEXT_SAMPLE_SIZE],
+                },
+            )
+        if not expected_repo_key and not expected_repo_root and not expected_repo_id:
             return ("", {})
+        for key, value in (
+            ("repo_key", expected_repo_key),
+            ("root_path", expected_repo_root),
+            ("repo_id", expected_repo_id),
+        ):
+            if value and not observed.get(key):
+                return ("missing", {"line_number": str(line_number), "raw_line": raw_line[:TEXT_SAMPLE_SIZE], "missing_key": key})
         repo_id_mismatch = (
-            expected.get("repo_id") and observed.get("repo_id") and expected.get("repo_id") != observed.get("repo_id")
+            expected_repo_id and observed.get("repo_id") and expected_repo_id != observed.get("repo_id")
         )
         repo_key_mismatch = (
-            expected.get("repo_key") and observed.get("repo_key") and expected.get("repo_key") != observed.get("repo_key")
+            expected_repo_key and observed.get("repo_key") and expected_repo_key != observed.get("repo_key")
         )
         root_path_mismatch = (
-            expected.get("root_path") and observed.get("root_path")
-            and expected.get("root_path") != observed.get("root_path")
+            expected_repo_root and observed.get("root_path")
+            and expected_repo_root != observed.get("root_path")
         )
         if not (repo_key_mismatch or root_path_mismatch or repo_id_mismatch):
             return ("", {})
@@ -10318,6 +10499,46 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             return ("repo_id_mismatch", details)
         return ("", {})
 
+    def _as_int_id(value: Any) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _table_foreign_key_references(table_name: str) -> list[tuple[str, str, str]]:
+        refs = _FOREIGN_KEY_COLUMNS_BY_TABLE.get(table_name)
+        if refs is None:
+            refs = table_foreign_key_columns(conn, table_name)
+            _FOREIGN_KEY_COLUMNS_BY_TABLE[table_name] = refs
+        return refs
+
+    def _map_foreign_key_ids(table_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        mapped_payload = dict(payload)
+        for child_col, parent_table, _ in _table_foreign_key_references(table_name):
+            if child_col not in mapped_payload:
+                continue
+            source_parent_id = _as_int_id(mapped_payload.get(child_col))
+            if source_parent_id is None:
+                continue
+            parent_map = _SOURCE_TO_IMPORTED_IDS.get(parent_table)
+            if parent_map is None:
+                continue
+            if source_parent_id in parent_map:
+                mapped_payload[child_col] = parent_map[source_parent_id]
+        return mapped_payload
+
+    def _record_id_mapping(table_name: str, source_id: int | None, destination_id: int | None) -> None:
+        if source_id is None or destination_id is None:
+            return
+        if table_name == "repositories":
+            return
+        mapping = _SOURCE_TO_IMPORTED_IDS.setdefault(table_name, {})
+        mapping[source_id] = destination_id
+
     try:
         input_lines = input_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -10329,8 +10550,10 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
         try:
             row = load_strict_json(raw)
         except (TypeError, ValueError, json.JSONDecodeError):
+            saw_malformed_or_unsupported_row = True
             continue
         if not isinstance(row, dict):
+            saw_malformed_or_unsupported_row = True
             continue
         payload = row.get("payload")
         if isinstance(payload, dict) and row.get("row_type") == "lattice_imports":
@@ -10339,6 +10562,8 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             except (TypeError, ValueError):
                 pass
         observed_repo_identity = _extract_repo_identity(row.get("repo_identity"))
+        if not observed_repo_identity:
+            saw_unidentified_structured_row = True
         if not incoming_repo_identity:
             incoming_repo_identity = dict(observed_repo_identity)
         elif observed_repo_identity:
@@ -10355,6 +10580,12 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     })
                     return EXIT_INTEGRITY
                 incoming_repo_identity[key] = observed_repo_identity[key]
+    if not incoming_repo_identity and not saw_unidentified_structured_row and not saw_malformed_or_unsupported_row:
+        print_json({"status": "unavailable", "reason": "missing_repo_identity", "path": str(input_path)})
+        return EXIT_INTEGRITY
+
+    _FOREIGN_KEY_COLUMNS_BY_TABLE: dict[str, list[tuple[str, str, str]]] = {}
+    _SOURCE_TO_IMPORTED_IDS: dict[str, dict[int, int]] = {}
     with conn:
         repo_id = ensure_repository(conn, root)
         context = repo_identity_context(root)
@@ -10423,6 +10654,19 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             logical_key = str(row.get("logical_key", ""))
             declared_payload_hash = str(row.get("payload_sha256", ""))
             observed_repo_identity = _extract_repo_identity(row.get("repo_identity"))
+            if not incoming_repo_identity and not observed_repo_identity:
+                conflicts += 1
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    declared_payload_hash,
+                    "repo_identity_missing",
+                )
+                continue
             identity_expected = {"repo_id": str(repo_id), "repo_key": expected_repo_key, "root_path": expected_repo_root}
             if not incoming_repo_identity:
                 identity_expected = {}
@@ -10604,6 +10848,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     "table": table,
                     "payload_columns": columns,
                     "payload_pk": pk,
+                    "source_pk": _as_int_id(filtered.get(pk)) if pk else None,
                     "filtered_payload": filtered,
                 }
             )
@@ -10674,15 +10919,19 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 columns = list(staged["payload_columns"])
                 pk = staged["payload_pk"]
                 filtered = dict(staged["filtered_payload"])
+                source_pk = _as_int_id(staged.get("source_pk"))
                 try:
+                    mapped_filtered = _map_foreign_key_ids(table, filtered)
                     existing = None
-                    if pk and filtered.get(pk) is not None:
-                        existing = conn.execute(f"select * from {table} where {pk}=?", (filtered[pk],)).fetchone()
+                    if pk and mapped_filtered.get(pk) is not None:
+                        existing = conn.execute(f"select * from {table} where {pk}=?", (mapped_filtered[pk],)).fetchone()
                     if existing:
+                        destination_pk = _as_int_id(existing[pk]) if pk else None
+                        _record_id_mapping(table, source_pk, destination_pk)
                         existing_payload = semantic_import_payload(table, {key: existing[key] for key in columns})
                         existing_hash = sha256_text(json_dumps(existing_payload))
                         incoming_compare_payload = align_redacted_import_compare_payload(
-                            semantic_import_payload(table, filtered),
+                            semantic_import_payload(table, mapped_filtered),
                             existing_payload,
                         )
                         incoming_compare_hash = sha256_text(json_dumps(incoming_compare_payload))
@@ -10701,16 +10950,18 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                             "kept_existing",
                         )
                         continue
-                    colnames = list(filtered.keys())
+                    colnames = list(mapped_filtered.keys())
                     placeholders = ",".join("?" for _ in colnames)
-                    conn.execute(
+                    cur = conn.execute(
                         f"insert into {table}({', '.join(colnames)}) values ({placeholders})",
-                        [filtered[key] for key in colnames],
+                        [mapped_filtered[key] for key in colnames],
                     )
+                    destination_pk = int(cur.lastrowid) if pk else _as_int_id(mapped_filtered.get(pk))
+                    _record_id_mapping(table, source_pk, destination_pk)
                     rows_written += 1
                     if table == "file_pass_runs":
                         try:
-                            pass_file_id = int(filtered.get("file_id", 0))
+                            pass_file_id = int(mapped_filtered.get("file_id", 0))
                         except (TypeError, ValueError):
                             pass_file_id = 0
                         if pass_file_id > 0:
@@ -11026,7 +11277,13 @@ def recover_artifact_refs(
 def run_json_subcommand(command: Any, args: argparse.Namespace) -> tuple[int, dict[str, Any] | None]:
     stdout = io.StringIO()
     with contextlib.redirect_stdout(stdout):
-        rc = int(command(args))
+        try:
+            rc = int(command(args))
+        finally:
+            # Recovery reuses CLI command handlers in-process. The normal CLI
+            # path exits immediately, but here we must release any SQLite
+            # handles those handlers left for interpreter shutdown.
+            gc.collect()
     payload_text = stdout.getvalue().strip()
     if not payload_text:
         return rc, None
@@ -11054,7 +11311,8 @@ def command_recover(args: argparse.Namespace) -> int:
     sources: list[str] = []
     artifact_sources: list[str] = []
     backup_path = None
-    init_schema(conn, root, raw_storage_mode=raw_storage_mode)
+    init_schema(conn, root, raw_storage_mode=raw_storage_mode, run_git_change_dedup=False)
+    recovery_dedup_removed_ids: list[int] = []
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -11066,6 +11324,20 @@ def command_recover(args: argparse.Namespace) -> int:
             parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
             raw_storage_mode=raw_storage_mode,
         )
+        recovery_dedup_removed_ids = git_file_change_ids_pruned_by_dedupe(conn)
+        if recovery_dedup_removed_ids:
+            deduped_git_change_groups = dedupe_git_file_changes(conn)
+            if deduped_git_change_groups:
+                record_file_event(
+                    conn,
+                    repo_id,
+                    "recovery_git_file_changes_deduped",
+                    source_id=source_id,
+                    details={
+                        "deleted_git_file_change_count": len(recovery_dedup_removed_ids),
+                        "deleted_git_file_change_ids": recovery_dedup_removed_ids,
+                    },
+                )
     if backup_first and preexisting_db:
         backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
         backup_path = create_backup(
@@ -11080,17 +11352,22 @@ def command_recover(args: argparse.Namespace) -> int:
             backup_conn.row_factory = sqlite3.Row
             backup_conn.execute("PRAGMA busy_timeout=5000")
             backup_conn.execute("PRAGMA foreign_keys=ON")
-            create_artifact_ref(
-                backup_conn,
-                root,
-                repo_id,
-                cycle_pk=None,
-                source_id=source_id,
-                artifact_kind="backup",
-                path=str(backup_path),
-                details={"backup_event": "pre_recovery", "recorded_in": "backup"},
-            )
-            backup_conn.commit()
+            try:
+                create_artifact_ref(
+                    backup_conn,
+                    root,
+                    repo_id,
+                    cycle_pk=None,
+                    source_id=source_id,
+                    artifact_kind="backup",
+                    path=str(backup_path),
+                    details={"backup_event": "pre_recovery", "recorded_in": "backup"},
+                )
+                backup_conn.commit()
+            except sqlite3.OperationalError:
+                # Backup copy may be pre-schema in some recovery scenarios; keep
+                # the recovery moving when artifact lineage tables are absent.
+                pass
         finally:
             backup_conn.close()
     conn.close()
@@ -11768,6 +12045,319 @@ def query_explain_selection(conn: sqlite3.Connection, root: Path, repo_id: int, 
     return rows
 
 
+def query_reuse_debt(conn: sqlite3.Connection, root: Path, repo_id: int, args: argparse.Namespace) -> list[dict[str, Any]]:
+    del root
+    params: list[Any] = [repo_id]
+    where = "where f.repo_id=? and f.event_kind='reuse_debt'"
+    if args.path:
+        where += " and f.path=?"
+        params.append(stored_rel_path(external_rel_path(args.path)))
+    rows: list[dict[str, Any]] = []
+    for row in conn.execute(
+        f"""
+        select f.event_id, f.event_epoch as epoch, f.path, f.confidence, f.details_json, c.cycle_id
+        from file_events f
+        left join cycles c on c.cycle_pk=f.cycle_pk
+        {where}
+        order by f.event_epoch desc, f.event_id desc
+        """,
+        params,
+    ):
+        details = {}
+        if row["details_json"]:
+            try:
+                parsed = json.loads(row["details_json"])
+                if isinstance(parsed, dict):
+                    details = parsed
+            except (TypeError, ValueError):
+                details = {}
+        payload = dict(row)
+        payload.update(
+            {
+                "candidate": details.get("candidate"),
+                "reason": details.get("reason"),
+                "owner": details.get("owner"),
+                "likely_owner": details.get("likely_owner"),
+                "proof_needed": details.get("proof_needed"),
+                "validation_command": details.get("validation_command"),
+            }
+        )
+        if args.owner and not (payload.get("owner") == args.owner or payload.get("likely_owner") == args.owner):
+            continue
+        rows.append(payload)
+    return rows
+
+
+def query_cycle_metrics(conn: sqlite3.Connection, root: Path, repo_id: int, args: argparse.Namespace) -> list[dict[str, Any]]:
+    del root
+    now_epoch = epoch_now()
+    window_from: int | None = None
+    window_to: int | None = None
+
+    if args.window_days is not None:
+        window_days = int(args.window_days)
+        if window_days < 0:
+            fail("window-days must be >= 0", EXIT_USAGE)
+        if args.since_epoch is not None or args.until_epoch is not None:
+            fail("window-days cannot be used with --since-epoch or --until-epoch", EXIT_USAGE)
+        window_to = now_epoch
+        window_from = max(0, now_epoch - (window_days * 86400))
+    else:
+        if args.since_epoch is not None:
+            window_from = int(args.since_epoch)
+        if args.until_epoch is not None:
+            window_to = int(args.until_epoch)
+    if window_from is not None and window_to is not None and window_to < window_from:
+        fail("until-epoch must be >= since-epoch", EXIT_USAGE)
+
+    where: list[str] = ["repo_id=?"]
+    params: list[Any] = [repo_id]
+    if window_from is not None:
+        where.append("coalesce(end_epoch, start_epoch) >= ?")
+        params.append(window_from)
+    if window_to is not None:
+        where.append("coalesce(end_epoch, start_epoch) <= ?")
+        params.append(window_to)
+    where_clause = " and ".join(where)
+
+    cycles = [
+        dict(row)
+        for row in conn.execute(
+            f"""
+            select
+              cycle_pk,
+              status_marker,
+              review_outcome,
+              start_epoch,
+              end_epoch,
+              worktree_dirty,
+              selected_path
+            from cycles
+            where {where_clause}
+            """,
+            params,
+        )
+    ]
+
+    completed = 0
+    blocked = 0
+    blocked_by_dirty = 0
+    operator_intervention_count = 0
+    selected_paths: list[str] = []
+    durations: list[int] = []
+
+    for row in cycles:
+        status = str(row.get("status_marker") or "").upper()
+        if status == "WORK_DONE":
+            completed += 1
+        if status == "BLOCKED":
+            blocked += 1
+            if int(row.get("worktree_dirty") or 0) == 1:
+                blocked_by_dirty += 1
+        if str(row.get("review_outcome") or "").upper() == "STOPPED_ON_BLOCKER":
+            operator_intervention_count += 1
+        if row.get("selected_path"):
+            selected_paths.append(str(row["selected_path"]))
+
+        start_epoch = row.get("start_epoch")
+        end_epoch = row.get("end_epoch")
+        try:
+            start_value = int(start_epoch) if start_epoch is not None else None
+            end_value = int(end_epoch) if end_epoch is not None else None
+        except (TypeError, ValueError):
+            continue
+        if start_value is not None and end_value is not None and end_value >= start_value:
+            durations.append(end_value - start_value)
+    average_cycle_duration_seconds = int(sum(durations) / len(durations)) if durations else None
+
+    total_selected = len(selected_paths)
+    unique_selected = len(set(selected_paths))
+    target_rotation_coverage = {
+        "selected_count": unique_selected,
+        "completed_selection_count": total_selected,
+        "rotation_ratio": round(unique_selected / total_selected, 4) if total_selected else None,
+    }
+
+    cycle_pks: list[int] = []
+    for row in cycles:
+        try:
+            if row.get("cycle_pk") is not None:
+                cycle_pks.append(int(row["cycle_pk"]))
+        except (TypeError, ValueError):
+            continue
+
+    blocked_by_quota_cycle_count = 0
+    postmortem_launch_count = 0
+    fallback_launch_count = 0
+    if cycle_pks:
+        placeholders = ",".join(["?"] * len(cycle_pks))
+        blocked_by_quota_cycle_count = int(
+            conn.execute(
+                f"""
+                select count(distinct cycle_pk)
+                from artifact_refs
+                where repo_id=? and artifact_kind='quota_block_marker' and cycle_pk is not null
+                  and cycle_pk in ({placeholders})
+                """,
+                (repo_id, *cycle_pks),
+            ).fetchone()[0]
+            or 0
+        )
+        postmortem_launch_count = int(
+            conn.execute(
+                f"""
+                select count(distinct cycle_pk)
+                from artifact_refs
+                where repo_id=? and artifact_kind='postmortem_report' and cycle_pk is not null
+                  and cycle_pk in ({placeholders})
+                """,
+                (repo_id, *cycle_pks),
+            ).fetchone()[0]
+            or 0
+        )
+        fallback_launch_count = int(
+            conn.execute(
+                f"""
+                select count(*)
+                from cycle_links
+                where repo_id=? and link_kind='fallback'
+                  and (parent_cycle_pk in ({placeholders}) or child_cycle_pk in ({placeholders}))
+                """,
+                (repo_id, *cycle_pks, *cycle_pks),
+            ).fetchone()[0]
+            or 0
+        )
+
+    open_failure_queue_count = int(
+        conn.execute("select count(*) from tool_failures where repo_id=? and status='open'", (repo_id,)).fetchone()[0] or 0
+    )
+    stale_lock_count = None
+    quota_delta_per_successful_cycle = None
+
+    return [
+        {
+            "metric": "cycles_completed_with_work_done",
+            "category": "product_contract",
+            "value": completed,
+            "scope": "cycles",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "cycles where status_marker == WORK_DONE",
+        },
+        {
+            "metric": "blocked_cycles_before_backend_start",
+            "category": "product_contract",
+            "value": blocked,
+            "scope": "cycles",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "proxy metric: blocked cycles are observed before successful backend work",
+        },
+        {
+            "metric": "blocked_cycles_by_dirty_worktree_or_env",
+            "category": "product_contract",
+            "value": blocked_by_dirty,
+            "scope": "cycles",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "proxy metric from worktree_dirty and BLOCKED status",
+        },
+        {
+            "metric": "fallback_launches",
+            "category": "product_contract",
+            "value": fallback_launch_count,
+            "scope": "cycle_links",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "count of fallback links touching selected cycles",
+        },
+        {
+            "metric": "postmortem_launches",
+            "category": "product_contract",
+            "value": postmortem_launch_count,
+            "scope": "artifact_refs",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "cycles with postmortem_report artifact references",
+        },
+        {
+            "metric": "open_failure_queue_count",
+            "category": "product_contract",
+            "value": open_failure_queue_count,
+            "scope": "tool_failures",
+            "availability": "local",
+            "window_epoch_from": None,
+            "window_epoch_to": None,
+            "notes": "open tool failure markers after latest queue updates",
+        },
+        {
+            "metric": "stale_lock_count",
+            "category": "exploratory",
+            "value": stale_lock_count,
+            "scope": "runtime",
+            "availability": "not_available_locally",
+            "window_epoch_from": None,
+            "window_epoch_to": None,
+            "notes": "not tracked by the current lattice schema",
+        },
+        {
+            "metric": "average_cycle_duration_seconds",
+            "category": "product_contract",
+            "value": average_cycle_duration_seconds,
+            "scope": "cycles",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "avg of end_epoch - start_epoch for rows with both values present",
+        },
+        {
+            "metric": "quota_delta_per_successful_cycle",
+            "category": "exploratory",
+            "value": quota_delta_per_successful_cycle,
+            "scope": "quota_events",
+            "availability": "not_available_locally",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "requires persisted per-cycle quota delta telemetry",
+        },
+        {
+            "metric": "target_rotation_coverage",
+            "category": "product_contract",
+            "value": target_rotation_coverage,
+            "scope": "cycles",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "unique selected paths divided by selected cycles",
+        },
+        {
+            "metric": "operator_intervention_count",
+            "category": "product_contract",
+            "value": operator_intervention_count,
+            "scope": "cycles",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "proxy metric for explicitly blocked cycles requiring operator input",
+        },
+        {
+            "metric": "quota_blocked_cycle_count",
+            "category": "exploratory",
+            "value": blocked_by_quota_cycle_count,
+            "scope": "artifact_refs",
+            "availability": "local",
+            "window_epoch_from": window_from,
+            "window_epoch_to": window_to,
+            "notes": "proxy metric from quota_block_marker artifact references",
+        },
+    ]
+
+
 def command_query(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
@@ -11800,6 +12390,10 @@ def command_query(args: argparse.Namespace) -> int:
         rows = query_selection_candidates(conn, root, repo_id, args)
     elif query_name == "explain-selection":
         rows = query_explain_selection(conn, root, repo_id, args)
+    elif query_name == "reuse-debt":
+        rows = query_reuse_debt(conn, root, repo_id, args)
+    elif query_name == "metrics":
+        rows = query_cycle_metrics(conn, root, repo_id, args)
     else:
         fail(f"unknown query: {query_name}", EXIT_USAGE)
     format_rows(rows, args.format)
@@ -12209,7 +12803,8 @@ def build_parser() -> argparse.ArgumentParser:
         const=True,
         default=None,
         type=parse_bool_flag,
-        help="(legacy) pass --backup-first 0/1 or --backup-first[=true|false]",
+        help="(legacy) pass --backup-first 0/1 or --backup-first[=true|false];"
+        " when enabled, recovery first copies the existing database file",
     )
     p.add_argument("--no-backup-first", dest="backup_first", action="store_false")
     p.add_argument("--max-conflicts", type=int, default=999999)
@@ -12240,6 +12835,25 @@ def build_parser() -> argparse.ArgumentParser:
     add_query_common(query_sub.add_parser("explain-selection"))
     query_sub.choices["explain-selection"].add_argument("--cycle", dest="cycle_id")
     query_sub.choices["explain-selection"].add_argument("--path")
+    add_query_common(query_sub.add_parser("reuse-debt"))
+    query_sub.choices["reuse-debt"].add_argument("--path")
+    query_sub.choices["reuse-debt"].add_argument("--owner")
+    add_query_common(query_sub.add_parser("metrics"))
+    query_sub.choices["metrics"].add_argument(
+        "--window-days",
+        type=int,
+        help="summarize the trailing N days (0 means only from now); mutually exclusive with --since-epoch/--until-epoch",
+    )
+    query_sub.choices["metrics"].add_argument(
+        "--since-epoch",
+        type=int,
+        help="include cycles whose end/start epoch is >= this value",
+    )
+    query_sub.choices["metrics"].add_argument(
+        "--until-epoch",
+        type=int,
+        help="include cycles whose end/start epoch is <= this value",
+    )
     p.set_defaults(func=command_query)
 
     p = sub.add_parser("mark-regression")

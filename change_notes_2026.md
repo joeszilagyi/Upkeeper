@@ -6,10 +6,20 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-21: Lattice embedded contract validation parser repair:
+	1. Lattice reuse-contract validation now stops shell-function body extraction at the first balanced close for a matched definition, so braces later in the same Bash source file no longer make a single function appear as repeated identical definitions.
+	2. Lattice recovery validation now seeds malformed JSONL probes with explicit repo identity and releases in-process subcommand SQLite handles between recovery imports, preventing the doctor check from masking conflict-propagation assertions behind self-inflicted database locks.
+	3. Lattice JSONL same-key conflicts again use the stable `kept_existing` resolution token, keeping import evidence aligned with the schema default and local replay validation.
+	4. Malformed-only and identityless structured JSONL imports now reach conflict accounting instead of failing before import evidence is recorded; identityless structured rows are still skipped before replay as `repo_identity_missing` conflicts.
+	5. Lattice query formatting now flushes stdout inside the handled output block, so downstream tools such as `head` can close the pipe without producing shutdown-time BrokenPipe stderr.
+	6. `recover --backup-first` now creates the pre-recovery backup after the recovery source row is committed but before post-recovery imports, so the backup can record its own provenance artifact without foreign-key failures.
+	7. Prompt-module structure validation now extracts numeric module ids correctly instead of passing a literal backreference through `grep`.
+
 2026-05-20: Lattice client-root contract validation repair:
 	1. Lattice pass-registry installation now validates reusable wrapper contracts against the central wrapper source tree instead of the target repository root, so symlinked or client-root Lattice runs no longer fail only because the client checkout does not contain `lib/upkeeper`.
 	2. Future or local pass codes matching the documented `P[0-9A-Za-z_.-]+` shape, such as `P999`, remain accepted as Lattice evidence rows while built-in prompt metadata still comes from the registered pass list.
 	3. Backlog launcher validation now clears inherited watched-stdio state before asserting literal green job-summary bars, so batch validation does not fail just because it is itself being displayed through the backlog watch formatter.
+	4. Backlog autoshelve active-validation detection now ignores validation processes that are ancestors of the autoshelve probe itself, preventing the validation harness from waiting on its own caller while still blocking on independent active validators.
 
 2026-05-19: backlog validation gate and Lattice snapshot repair:
 	1. Backlog per-bug and batch validation now explicitly return on failed syntax, compile, focused test, docs, diff, quick-validator, commit, or push commands, so Bash conditional invocation cannot mask a failed local validation step and continue to commit.

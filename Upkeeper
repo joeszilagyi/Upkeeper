@@ -4604,6 +4604,87 @@ PY
   log_line "INFO" "issue.fix_prompt appended number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}") target_file=$(shell_quote "${CODEX_ISSUE_FIX_TARGET_FILE:-none}")"
 }
 
+issue_96_docs_contract_check_command() {
+  local check_name="$1"
+  shift
+  local rc=0
+  local -a command=("$@")
+
+  log_line "INFO" "issue96.docs_contract_check start name=$(shell_quote "$check_name") command=$(shell_quote "${command[*]}")"
+  "${command[@]}"
+  rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    log_line "ERROR" "issue96.docs_contract_check failed name=$(shell_quote "$check_name") command=$(shell_quote "${command[*]}") exit_code=$rc"
+    return "$rc"
+  fi
+
+  log_line "INFO" "issue96.docs_contract_check ok name=$(shell_quote "$check_name")"
+  return 0
+}
+
+run_issue_96_docs_contract_checks() {
+  local check_rc=0
+  local issue96_default_conf=""
+  local issue96_log_file=""
+  local issue96_tmp_dir=""
+
+  [[ "${CODEX_ISSUE_FIX_NUMBER:-}" == "96" ]] || return 0
+
+  log_line "INFO" "issue96.docs_contract_checks.start number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}") label=$(shell_quote "${CODEX_ISSUE_FIX_SELECTED_LABEL:-unknown}")"
+  issue96_log_file="${UPKEEPER_ISSUE96_LOG_FILE:-${XDG_STATE_HOME:-${HOME}/.local/state}/upkeeper/backlog/logs/upkeeper-issue96.log}"
+  issue96_tmp_dir="${UPKEEPER_ISSUE96_TMP_DIR:-${TMPDIR:-${XDG_RUNTIME_DIR:-/tmp}}}"
+
+  if ! mkdir -p "${issue96_log_file%/*}" 2>/dev/null; then
+    issue96_log_file="/tmp/upkeeper-issue96.log"
+  fi
+  if ! mkdir -p "$issue96_tmp_dir" 2>/dev/null; then
+    issue96_tmp_dir="/tmp"
+  fi
+
+  # Help/helpful drift surfaces are now part of explicit contract checks.
+  if ! issue_96_docs_contract_check_command "help" ./Upkeeper --help; then
+    check_rc=1
+  fi
+  if ! issue_96_docs_contract_check_command "version" ./Upkeeper --version; then
+    check_rc=1
+  fi
+  if ! issue_96_docs_contract_check_command "public_docs_contract_check" ./tools/check_public_docs.sh --quick; then
+    check_rc=1
+  fi
+  if ! issue_96_docs_contract_check_command "upkeeper_dry_run" CODEX_LOG_FILE="$issue96_log_file" UPKEEPER_DRY_RUN=1 ./Upkeeper; then
+    check_rc=1
+  fi
+  issue96_default_conf="$(mktemp "$issue96_tmp_dir/issue96-default.conf.XXXXXX")"
+  if cp configurations/default.conf "$issue96_default_conf" && chmod 600 "$issue96_default_conf"; then
+    if ! issue_96_docs_contract_check_command "upkeeper_dry_run_default_config_target" CODEX_LOG_FILE="$issue96_log_file" UPKEEPER_DRY_RUN=1 ./Upkeeper --config-file="$issue96_default_conf" --target-file=Upkeeper --p25; then
+      check_rc=1
+    fi
+  else
+    log_line "ERROR" "issue96.docs_contract_check failed name=$(shell_quote upkeeper_dry_run_default_config_target) reason=config_fixture_missing"
+    check_rc=1
+  fi
+  rm -f "$issue96_default_conf"
+  if ! issue_96_docs_contract_check_command "flameon_dry_run" FLAMEON_DRY_RUN=1 ./FlameOn; then
+    check_rc=1
+  fi
+  if ! issue_96_docs_contract_check_command "chimneysweep_dry_run" CHIMNEYSWEEP_DRY_RUN=1 ./ChimneySweep; then
+    check_rc=1
+  fi
+  if ! issue_96_docs_contract_check_command "stress_corpus_help" ./tools/stress_upkeeper_corpus.sh --local --help; then
+    check_rc=1
+  fi
+  if ! issue_96_docs_contract_check_command "launcher_examples_bash_syntax" bash -n launcher_examples/*.sh; then
+    check_rc=1
+  fi
+
+  if [[ "$check_rc" -ne 0 ]]; then
+    log_line "ERROR" "issue96.docs_contract_checks.failed number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
+    return "$check_rc"
+  fi
+  log_line "INFO" "issue96.docs_contract_checks.ok number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
+  return 0
+}
+
 # `cycle.start` needs enough context for support without copying raw paths,
 # process metadata, and selection policy into every run record by default.
 upkeeper_verbose_metadata_enabled() {
@@ -5516,6 +5597,9 @@ main() {
   automation_record_cycle_start || log_line "WARN" "automation.run_record.start_failed path=$(shell_quote "${RUN_AUTOMATION_RECORD_FILE:-unknown}")"
   precontact_backup_machine_preflight_or_exit
   resolve_issue_fix_next_or_exit
+  if ! run_issue_96_docs_contract_checks; then
+    finish_cycle 70 ISSUE_FIX_DOCS_CONTRACT_CHECK_FAILED ERROR "codex_exec_started=0 number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
+  fi
   lattice_init_and_doctor_or_exit
   lattice_record_cycle_start
   start_run_mark_heartbeat

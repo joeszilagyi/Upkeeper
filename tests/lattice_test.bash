@@ -923,6 +923,60 @@ PY
   [[ "$collision_rc" -ne 0 ]] || fail "export to db path should fail"
 }
 
+test_repository_identity_survives_origin_url_change() {
+  local repo
+
+  repo="$TEST_TMP_ROOT/repo-remote-identity"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$REPO"
+  git -C "$REPO" remote add origin https://example.com/one.git
+
+  lattice init >"$TEST_TMP_ROOT/remote-identity-init.json"
+  lattice record-cycle-start \
+    --cycle-id remote-cycle-1 \
+    --run-hash remote-hash-1 \
+    --execution-origin primary \
+    --dirty-path-count 0 \
+    --dry-run 1 >"$TEST_TMP_ROOT/remote-identity-start-1.json"
+
+  git -C "$REPO" remote set-url origin https://example.com/two.git
+  lattice record-cycle-start \
+    --cycle-id remote-cycle-2 \
+    --run-hash remote-hash-2 \
+    --execution-origin primary \
+    --dirty-path-count 0 \
+    --dry-run 1 >"$TEST_TMP_ROOT/remote-identity-start-2.json"
+
+  python3 - "$DB" <<'PY' || fail "origin URL change fragmented Lattice repository identity"
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+repo_ids = [row[0] for row in conn.execute("select repo_id from repositories order by repo_id")]
+if len(repo_ids) != 1:
+    raise AssertionError(f"expected one repository row after origin change, got {repo_ids}")
+
+cycle_repo_ids = {
+    cycle_id: repo_id
+    for cycle_id, repo_id in conn.execute(
+        "select cycle_id, repo_id from cycles where cycle_id like 'remote-cycle-%' order by cycle_id"
+    )
+}
+expected = {"remote-cycle-1": repo_ids[0], "remote-cycle-2": repo_ids[0]}
+if cycle_repo_ids != expected:
+    raise AssertionError(f"remote-change cycles did not share repo_id: {cycle_repo_ids}")
+
+for alias_kind in ("repo_key", "root_path", "git_common_dir", "remote_url_hash"):
+    count = conn.execute(
+        "select count(*) from repo_aliases where repo_id=? and alias_kind=?",
+        (repo_ids[0], alias_kind),
+    ).fetchone()[0]
+    if count != 1:
+        raise AssertionError(f"expected one {alias_kind} alias for repo {repo_ids[0]}, got {count}")
+PY
+}
+
 test_git_status_xy_preserves_index_worktree_columns() {
   local repo candidates_path
 
@@ -1056,6 +1110,32 @@ for table, column in (("files", "canonical_path"), ("files", "current_path"), ("
     if count:
         raise AssertionError(f"{table}.{column} leaked raw snapshot path count={count}")
 PY
+}
+
+test_worktree_snapshot_marks_existing_deleted_file_state() {
+  local repo
+
+  repo="$TEST_TMP_ROOT/lattice-worktree-deleted-state"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  mkdir -p "$repo"
+  (
+    cd "$repo"
+    git init -q
+    git config user.name "Lattice Test"
+    git config user.email "lattice@example.invalid"
+    printf 'runtime/\n' >.gitignore
+    printf '#!/usr/bin/env bash\nprintf "gone\\n"\n' >gone.sh
+    git add -A
+    git commit -q -m "track gone fixture"
+  )
+
+  lattice init >"$TEST_TMP_ROOT/deleted-state-init.json"
+  lattice import-git >"$TEST_TMP_ROOT/deleted-state-import.json"
+  assert_sql_value "active" "select current_state from files where canonical_path='gone.sh'"
+  rm "$repo/gone.sh"
+  lattice record-worktree-snapshot --snapshot-kind deleted-state --worktree-untracked-files normal >"$TEST_TMP_ROOT/deleted-state-snapshot.json"
+  assert_sql_value "deleted" "select current_state from files where canonical_path='gone.sh'"
 }
 
 test_no_git_import_and_recovery() {
@@ -2416,7 +2496,9 @@ PY
 }
 
 test_lattice_cli_contracts
+test_repository_identity_survives_origin_url_change
 test_git_status_xy_preserves_index_worktree_columns
+test_worktree_snapshot_marks_existing_deleted_file_state
 test_no_git_import_and_recovery
 test_import_git_prefers_checked_out_branch_state
 test_import_git_privacy_defaults_and_opt_in

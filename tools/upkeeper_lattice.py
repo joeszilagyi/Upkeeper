@@ -71,6 +71,13 @@ ALLOWED_OUTCOMES = {
     "regression_found",
     "unknown",
 }
+REVIEW_PASS_REGISTRY_FACT_TYPES = (
+    ("default_in_repertoire", "integer"),
+    ("module_prompt", "integer"),
+    ("aliases", "json"),
+    ("applicability_hint", "text"),
+    ("schedule_hint", "text"),
+)
 REVIEW_OUTCOME_MARKERS = (
     "REVIEWED_AND_FIXED",
     "REVIEWED_AND_REPORTED",
@@ -349,6 +356,30 @@ PASS_RESULT_ALLOWED_KEYS = {
     "proof_needed",
     "validation_command",
     "validation_cmd",
+}
+P29_REUSE_DEBT_FIELD_GROUPS = {
+    "candidate": ("candidate", "upkeeper.pass_result:reuse_debt_candidate"),
+    "reason": ("reason", "upkeeper.pass_result:reuse_debt_reason"),
+    "owner": (
+        "owner",
+        "likely_owner",
+        "upkeeper.pass_result:reuse_debt_owner",
+        "upkeeper.pass_result:reuse_debt_likely_owner",
+    ),
+    "proof_needed": ("proof_needed", "upkeeper.pass_result:reuse_debt_proof_needed"),
+    "validation_command": (
+        "validation_command",
+        "validation_cmd",
+        "upkeeper.pass_result:reuse_debt_validation_command",
+        "upkeeper.pass_result:validation_command",
+        "upkeeper.pass_result:validation_cmd",
+    ),
+}
+P29_REUSE_DEBT_TRIGGER_FIELDS = {
+    field
+    for group_name, group_fields in P29_REUSE_DEBT_FIELD_GROUPS.items()
+    for field in group_fields
+    if group_name != "reason" or field.startswith("upkeeper.pass_result:reuse_debt_")
 }
 RAW_STORAGE_MODES = {"none", "minimal", "limited", "full"}
 RAW_STORAGE_COMPAT_MODES = RAW_STORAGE_MODES | {"debug"}
@@ -1862,6 +1893,8 @@ def repo_identity_value_hmac(context: tuple[str, str, str], namespace: str, valu
 
 
 def repo_identity_stable_key(root: Path, git_common_dir: str) -> str:
+    # Remote URLs are mutable checkout metadata. Repository identity must stay
+    # anchored to local Git storage so origin changes do not fragment history.
     return sha256_text(f"{root}|{git_common_dir}")
 
 
@@ -2755,7 +2788,10 @@ def connect(
     create_parent: bool = False,
     create_if_missing: bool = False,
     emit_errors: bool = True,
+    read_only: bool = False,
 ) -> sqlite3.Connection:
+    if create_if_missing and read_only:
+        raise_command_error("read-only DB open cannot create a missing database", EXIT_DB_UNAVAILABLE, emit=emit_errors)
     try:
         existing = db_path.lstat()
     except FileNotFoundError:
@@ -2795,7 +2831,8 @@ def connect(
     if not create_if_missing:
         # Fail closed when callers expect an existing DB so a missing file never
         # becomes a newly created empty SQLite database during open-time races.
-        connect_target = f"{db_path.resolve().as_uri()}?mode=rw"
+        uri_mode = "ro" if read_only else "rw"
+        connect_target = f"{db_path.resolve().as_uri()}?mode={uri_mode}"
         connect_kwargs["uri"] = True
     try:
         conn = sqlite3.connect(connect_target, **connect_kwargs)
@@ -2804,6 +2841,9 @@ def connect(
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
+    if read_only:
+        conn.execute("PRAGMA query_only=ON")
+        return conn
     requested = journal_mode.lower()
     if requested not in {"delete", "wal"}:
         requested = "delete"
@@ -2827,6 +2867,7 @@ def connect_checked(
     allow_unsafe_db: bool,
     create_parent: bool = False,
     create_if_missing: bool = False,
+    read_only: bool = False,
 ) -> sqlite3.Connection:
     check_path_safe(root, db_path, journal_mode, allow_unsafe_db)
     return connect(
@@ -2834,7 +2875,13 @@ def connect_checked(
         journal_mode,
         create_parent=create_parent,
         create_if_missing=create_if_missing,
+        read_only=read_only,
     )
+
+
+def table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute("select 1 from sqlite_master where type='table' and name=? limit 1", (table,)).fetchone()
+    return row is not None
 
 
 def table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
@@ -4629,6 +4676,8 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_m
     if validation_errors:
         fail(f"embedded contract validation failed: {'; '.join(validation_errors)}", EXIT_INTEGRITY)
     now = epoch_now()
+    registry_payload = {"passes": PASS_REGISTRY}
+    registry_raw_sha256 = sha256_text(json_dumps(registry_payload))
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -4637,8 +4686,9 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_m
             repo_id,
             "wrapper_observed",
             raw_ref="pass_registry",
-            parsed={"passes": PASS_REGISTRY},
+            parsed=registry_payload,
             parse_status="registry",
+            raw_sha256=registry_raw_sha256,
             raw_storage_mode=raw_storage_mode,
         )
         conn.execute(
@@ -4655,13 +4705,7 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_m
                 source_id,
             ),
         )
-        for key, value_type in [
-            ("default_in_repertoire", "integer"),
-            ("module_prompt", "integer"),
-            ("aliases", "json"),
-            ("applicability_hint", "text"),
-            ("schedule_hint", "text"),
-        ]:
+        for key, value_type in REVIEW_PASS_REGISTRY_FACT_TYPES:
             conn.execute(
                 """
                 insert into extension_fact_types(namespace, key, subject_type, value_type, description)
@@ -4686,8 +4730,8 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_m
                 value_integer = value if value_type == "integer" else None
                 value_json = json_dumps(value) if value_type == "json" else None
                 conn.execute(
-                """
-                insert or replace into extension_facts(
+                    """
+                    insert into extension_facts(
                       namespace, key, subject_type, subject_pk, value_type, value_text,
                       value_integer, value_json, confidence, source_id, created_epoch
                     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -4953,6 +4997,70 @@ def validate_reuse_contract_definitions() -> list[str]:
     return issues
 
 
+def probe_pass_registry_replay_identity() -> dict[str, Any]:
+    result: dict[str, Any] = {"ok": False}
+    expected_facts = len(PASS_REGISTRY) * len(REVIEW_PASS_REGISTRY_FACT_TYPES)
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-pass-registry-") as tmpdir:
+        root = Path(tmpdir)
+        try:
+            subprocess.run(
+                ["git", "init", "-q", str(root)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            result["error"] = f"git init failed: {exc}"
+            return result
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        for _ in range(3):
+            conn = connect_checked(root, db_path, "delete", allow_unsafe_db=True, create_parent=True, create_if_missing=True)
+            try:
+                init_schema(conn, root, raw_storage_mode="minimal")
+            finally:
+                conn.close()
+        conn = connect_checked(root, db_path, "delete", allow_unsafe_db=True)
+        try:
+            source_count = int(
+                conn.execute(
+                    "select count(*) from source_records where source_kind='wrapper_observed' and raw_ref='pass_registry'"
+                ).fetchone()[0]
+                or 0
+            )
+            fact_count = int(
+                conn.execute(
+                    "select count(*) from extension_facts where namespace='upkeeper.review_pass_registry'"
+                ).fetchone()[0]
+                or 0
+            )
+            duplicate_fact_groups = int(
+                conn.execute(
+                    """
+                    select count(*) from (
+                      select namespace, key, subject_type, subject_pk
+                      from extension_facts
+                      where namespace='upkeeper.review_pass_registry'
+                      group by namespace, key, subject_type, subject_pk
+                      having count(*) > 1
+                    )
+                    """
+                ).fetchone()[0]
+                or 0
+            )
+        finally:
+            conn.close()
+    result.update(
+        {
+            "source_records": source_count,
+            "extension_facts": fact_count,
+            "expected_extension_facts": expected_facts,
+            "duplicate_fact_groups": duplicate_fact_groups,
+        }
+    )
+    result["ok"] = source_count == 1 and fact_count == expected_facts and duplicate_fact_groups == 0
+    return result
+
+
 def normalize_pass_code(raw: str) -> str:
     raw = raw.strip()
     if not re.fullmatch(r"P[0-9A-Za-z_.-]+", raw):
@@ -5138,6 +5246,20 @@ def validate_pass_result_state(*, applicable: int | None, outcome: str) -> str |
     elif applicable is None:
         return f"outcome={outcome} requires applicable=1"
     return None
+
+
+def p29_reuse_debt_missing_fields(item: dict[str, Any], pass_code: str) -> list[str]:
+    """Require durable P29 reuse-debt events to carry enough backlog context."""
+    if normalize_pass_code(pass_code) != "P29":
+        return []
+    debt_triggered = any(has_meaningful_value(item.get(key)) for key in P29_REUSE_DEBT_TRIGGER_FIELDS)
+    if not debt_triggered:
+        return []
+    missing = []
+    for group_name, keys in P29_REUSE_DEBT_FIELD_GROUPS.items():
+        if not any(has_meaningful_value(item.get(key)) for key in keys):
+            missing.append(group_name)
+    return missing
 
 
 def require_jsonl_int(raw: Any, field: str) -> int:
@@ -6025,6 +6147,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["raw_storage_effective"] = effective_lattice_raw_storage(configured_raw_storage)
         result["checks"]["raw_storage_valid"] = configured_raw_storage in RAW_STORAGE_COMPAT_MODES
         result["checks"]["raw_storage_enforcement"] = probe_raw_storage_enforcement(conn, root, ensure_repository(conn, root))
+        pass_registry_replay_probe = probe_pass_registry_replay_identity()
+        result["checks"]["pass_registry_replay_identity"] = pass_registry_replay_probe
         review_summary_probe = probe_review_summary_parsing()
         result["checks"]["review_summary_parsing"] = review_summary_probe
         cycle_finish_probe = probe_cycle_finish_target_mismatch()
@@ -6033,6 +6157,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         decorated_marker_probe = probe_cycle_finish_rejects_decorated_status_marker()
         result["checks"]["cycle_finish_report_only_outcome"] = report_only_cycle_probe
         result["checks"]["cycle_finish_rejects_decorated_status_marker"] = decorated_marker_probe
+        p29_reuse_debt_probe = probe_p29_reuse_debt_persistence()
+        result["checks"]["p29_reuse_debt_persistence"] = p29_reuse_debt_probe
         change_note_ref_probe = probe_change_note_file_identity_validation()
         result["checks"]["change_note_file_identity_validation"] = change_note_ref_probe
         candidate_symlink_probe = probe_candidate_symlink_exclusion()
@@ -6049,7 +6175,14 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["recover_requires_primary_sources"] = recover_primary_sources_probe
         recover_import_conflicts_probe = probe_recover_propagates_import_conflicts()
         result["checks"]["recover_propagates_import_conflicts"] = recover_import_conflicts_probe
+        import_repo_mismatch_probe = probe_import_jsonl_rejects_repo_identity_mismatch()
+        result["checks"]["import_jsonl_rejects_repo_identity_mismatch"] = import_repo_mismatch_probe
+        import_conflicted_fk_probe = probe_import_jsonl_rejects_unmapped_conflicted_parent_fk()
+        result["checks"]["import_jsonl_rejects_unmapped_conflicted_parent_fk"] = import_conflicted_fk_probe
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(pass_registry_replay_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(cycle_finish_probe.get("ok")):
@@ -6059,6 +6192,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(decorated_marker_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(p29_reuse_debt_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         transient_temp_scope_probe = probe_cycle_finish_transient_artifact_scope()
@@ -6087,7 +6223,18 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if not bool(recover_primary_sources_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
+        recover_backup_first_probe = probe_recover_backup_first_preserves_duplicate_git_changes()
+        result["checks"]["recover_backup_first_preserves_duplicate_git_changes"] = recover_backup_first_probe
+        if not bool(recover_backup_first_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
         if not bool(recover_import_conflicts_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(import_repo_mismatch_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(import_conflicted_fk_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
@@ -7449,6 +7596,109 @@ def probe_cycle_finish_rejects_decorated_status_marker() -> dict[str, Any]:
     }
 
 
+def probe_p29_reuse_debt_persistence() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-p29-reuse-debt-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        (root / "runtime").mkdir(parents=True, exist_ok=True)
+        (root / "README.md").write_text("# probe\n", encoding="utf-8")
+        transcript_path = root / "runtime" / "last-message.txt"
+        transcript_path.write_text(
+            'UPKEEPER_PASS_RESULT: pass=P29 file=README.md applicable=1 outcome=blocked changed=0 regression=0 '
+            'candidate="extract shared fixture" reason="needs second caller" likely_owner=tools/upkeeper_lattice.py '
+            'proof_needed="show repeated use" validation_command="tools/validate_upkeeper.sh --quick"\n'
+            "UPKEEPER_PASS_RESULT: pass=P29 file=README.md applicable=1 outcome=blocked changed=0 regression=0 "
+            "candidate=incomplete\n",
+            encoding="utf-8",
+        )
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "delete", allow_unsafe_db=False, create_parent=True, create_if_missing=True)
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+        finally:
+            conn.close()
+        record_args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            cycle_id="cycle-p29-debt",
+            run_hash="run-p29-debt",
+            pass_code=None,
+            path=None,
+            applicable="",
+            outcome="unknown",
+            changed="",
+            regression="",
+            raw_line="",
+            attribute=[],
+            from_file=str(transcript_path),
+            selected_path="README.md",
+            planned_pass=[],
+            planned_passes="P29",
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_record_pass_result(record_args)
+        payload = load_single_json_document(stdout.getvalue()) if stdout.getvalue().strip() else {}
+        conn = connect_checked(root, db_path, "delete", allow_unsafe_db=False)
+        try:
+            repo_id = lookup_repository_id(conn, root)
+            rows = query_reuse_debt(conn, root, int(repo_id or 0), argparse.Namespace(path="README.md", owner="")) if repo_id else []
+            rejected = int(conn.execute("select count(*) from source_records where parse_status='rejected'").fetchone()[0] or 0)
+            attrs = {
+                row["key"]: row["value_text"]
+                for row in conn.execute(
+                    """
+                    select key, value_text
+                    from pass_run_attributes
+                    where namespace='upkeeper.pass_result'
+                    """
+                )
+            }
+        finally:
+            conn.close()
+    row = rows[0] if rows else {}
+    expected_attrs = {
+        "reuse_debt_candidate",
+        "reuse_debt_reason",
+        "reuse_debt_owner",
+        "reuse_debt_likely_owner",
+        "reuse_debt_proof_needed",
+        "reuse_debt_validation_command",
+    }
+    return {
+        "exit_code": exit_code,
+        "recorded": payload.get("recorded"),
+        "rejected": payload.get("rejected"),
+        "query_rows": len(rows),
+        "candidate": row.get("candidate"),
+        "reason": row.get("reason"),
+        "owner": row.get("owner"),
+        "likely_owner": row.get("likely_owner"),
+        "proof_needed": row.get("proof_needed"),
+        "validation_command": row.get("validation_command"),
+        "rejected_source_records": rejected,
+        "attribute_keys_present": sorted(key for key in expected_attrs if has_meaningful_value(attrs.get(key))),
+        "ok": all(
+            (
+                exit_code == EXIT_SUCCESS,
+                payload.get("recorded") == 1,
+                payload.get("rejected") == 1,
+                len(rows) == 1,
+                row.get("candidate") == "extract shared fixture",
+                row.get("reason") == "needs second caller",
+                row.get("owner") == "tools/upkeeper_lattice.py",
+                row.get("likely_owner") == "tools/upkeeper_lattice.py",
+                row.get("proof_needed") == "show repeated use",
+                row.get("validation_command") == "tools/validate_upkeeper.sh --quick",
+                rejected == 1,
+                set(attrs) >= expected_attrs,
+            )
+        ),
+    }
+
+
 def probe_change_note_file_identity_validation() -> dict[str, Any]:
     results: dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-change-note-ref-") as repo_dir:
@@ -7936,6 +8186,173 @@ def probe_recover_requires_primary_sources() -> dict[str, Any]:
         }
 
 
+def seed_recovery_duplicate_git_change_db(root: Path, db_path: Path) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    chmod_private(db_path.parent, is_dir=True, created_by_invocation=True)
+    now = epoch_now()
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+        with conn:
+            for sql in CREATE_TABLE_SQL:
+                conn.execute(sql)
+            conn.execute(
+                """
+                insert into repositories(repo_id, root_path, created_epoch, last_seen_epoch)
+                values (1, ?, ?, ?)
+                """,
+                (str(root), now, now),
+            )
+            conn.execute(
+                """
+                insert into source_records(source_id, repo_id, source_kind, imported_epoch, parse_status)
+                values (1, 1, 'recovery', ?, 'parsed')
+                """,
+                (now,),
+            )
+            conn.execute(
+                "insert into git_commits(commit_id, repo_id, sha, source_id) values (1, 1, ?, 1)",
+                ("a" * 40,),
+            )
+            conn.execute(
+                """
+                insert into files(file_id, repo_id, canonical_path, first_seen_epoch, last_seen_epoch, current_path)
+                values (1, 1, 'a.py', ?, ?, 'a.py')
+                """,
+                (now, now),
+            )
+            for change_id in (1, 2):
+                conn.execute(
+                    """
+                    insert into git_file_changes(
+                      git_file_change_id, repo_id, commit_id, file_id, status, path, old_path,
+                      additions, deletions, change_epoch, source_id
+                    ) values (?, 1, 1, 1, 'M', 'a.py', '', 1, 0, ?, 1)
+                    """,
+                    (change_id, now),
+                )
+    finally:
+        conn.close()
+    chmod_private(db_path)
+
+
+def probe_recover_backup_first_preserves_duplicate_git_changes() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recover-backup-first-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        seed_recovery_duplicate_git_change_db(root, db_path)
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            backup_first=True,
+            max_conflicts=999999,
+            limit=None,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_recover(args)
+        backup_paths = sorted((db_path.parent / "backups").glob("*.sqlite3"))
+        backup_duplicate_count = None
+        backup_provenance_count = 0
+        backup_recovery_source_count = 0
+        recovered_duplicate_count = None
+        recovery_event_details: dict[str, Any] = {}
+        artifact_ref_count = 0
+        if backup_paths:
+            backup_conn = sqlite3.connect(str(backup_paths[0]))
+            try:
+                backup_duplicate_count = int(
+                    backup_conn.execute(
+                        """
+                        select count(*)
+                        from git_file_changes
+                        where repo_id=1 and commit_id=1 and path='a.py' and coalesce(old_path, '')='' and status='M'
+                        """
+                    ).fetchone()[0]
+                )
+                backup_provenance_count = int(
+                    backup_conn.execute(
+                        """
+                        select count(*)
+                        from artifact_refs
+                        where artifact_kind='backup' and details_json like '%pre_recovery%'
+                        """
+                    ).fetchone()[0]
+                )
+                backup_recovery_source_count = int(
+                    backup_conn.execute(
+                        """
+                        select count(*)
+                        from source_records
+                        where source_kind='recovery' and raw_ref='recover'
+                        """
+                    ).fetchone()[0]
+                )
+            finally:
+                backup_conn.close()
+        recovered_conn = sqlite3.connect(str(db_path))
+        try:
+            recovered_duplicate_count = int(
+                recovered_conn.execute(
+                    """
+                    select count(*)
+                    from git_file_changes
+                    where repo_id=1 and commit_id=1 and path='a.py' and coalesce(old_path, '')='' and status='M'
+                    """
+                ).fetchone()[0]
+            )
+            event_row = recovered_conn.execute(
+                """
+                select details_json
+                from file_events
+                where event_kind='recovery_git_file_changes_deduped'
+                order by event_id desc
+                limit 1
+                """
+            ).fetchone()
+            if event_row and event_row[0]:
+                recovery_event_details = json.loads(event_row[0])
+            artifact_ref_count = int(
+                recovered_conn.execute(
+                    "select count(*) from artifact_refs where artifact_kind='backup'"
+                ).fetchone()[0]
+            )
+        finally:
+            recovered_conn.close()
+        payload_text = stdout.getvalue().strip()
+        payload = load_single_json_document(payload_text) if payload_text else {}
+        ok = all(
+            (
+                exit_code == EXIT_RECOVERY_INCOMPLETE,
+                payload.get("status") == "incomplete",
+                len(backup_paths) == 1,
+                backup_duplicate_count == 2,
+                backup_provenance_count == 1,
+                backup_recovery_source_count == 1,
+                recovered_duplicate_count == 1,
+                recovery_event_details.get("deleted_git_file_change_count") == 1,
+                recovery_event_details.get("deleted_git_file_change_ids") == [2],
+                artifact_ref_count == 1,
+            )
+        )
+        return {
+            "exit_code": exit_code,
+            "status": payload.get("status"),
+            "backup_count": len(backup_paths),
+            "backup_duplicate_count": backup_duplicate_count,
+            "backup_provenance_count": backup_provenance_count,
+            "backup_recovery_source_count": backup_recovery_source_count,
+            "recovered_duplicate_count": recovered_duplicate_count,
+            "deleted_git_file_change_ids": recovery_event_details.get("deleted_git_file_change_ids"),
+            "artifact_ref_count": artifact_ref_count,
+            "ok": ok,
+        }
+
+
 def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recover-conflicts-") as tmpdir:
         root = Path(tmpdir).resolve()
@@ -7977,6 +8394,24 @@ def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
         import_results = payload.get("import_results")
         report_import_results = report.get("import_results")
         jsonl_results = [row for row in import_results or [] if row.get("source") == "import-jsonl"]
+        conflict_row = None
+        if db_path.exists():
+            conn = sqlite3.connect(str(db_path))
+            try:
+                conflict_row = conn.execute(
+                    """
+                    select resolution, details_json
+                    from lattice_import_conflicts
+                    where row_type='jsonl' and logical_key='line:2'
+                    order by conflict_id desc
+                    limit 1
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+        conflict_details = {}
+        if conflict_row is not None and conflict_row[1]:
+            conflict_details = json.loads(conflict_row[1])
         ok = all(
             (
                 exit_code == EXIT_IMPORT_CONFLICT,
@@ -7987,6 +8422,9 @@ def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
                 bool(payload_text),
                 any(int(row.get("exit_code", -1)) == EXIT_IMPORT_CONFLICT for row in jsonl_results),
                 any(isinstance(row.get("result"), dict) and row["result"].get("status") == "conflicts" for row in jsonl_results),
+                conflict_row is not None,
+                conflict_row[0] == "malformed_json",
+                conflict_details.get("resolution") == "malformed_json",
             )
         )
         return {
@@ -7996,6 +8434,228 @@ def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
             "report_status": report.get("status"),
             "import_results": import_results,
             "report_import_results": report_import_results,
+            "conflict_resolution": conflict_row[0] if conflict_row is not None else None,
+            "conflict_details_resolution": conflict_details.get("resolution"),
+            "ok": ok,
+        }
+
+
+def probe_import_jsonl_rejects_repo_identity_mismatch() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-import-repo-mismatch-") as tmpdir:
+        temp_root = Path(tmpdir).resolve()
+        source_root = temp_root / "source"
+        dest_root = temp_root / "dest"
+        for root in (source_root, dest_root):
+            root.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        source_context = repo_identity_context(source_root)
+        source_identity = {
+            "repo_id": "1",
+            "repo_key": repo_identity_stable_key(source_root, source_context[1]),
+            "root_path": protected_repo_path(source_context, str(source_root)),
+        }
+        payload = {
+            "file_id": 1,
+            "repo_id": 1,
+            "canonical_path": "from-source.py",
+            "first_seen_epoch": 1,
+            "last_seen_epoch": 1,
+            "current_path": "from-source.py",
+            "current_state": "active",
+        }
+        export_path = temp_root / "source-export.jsonl"
+        export_path.write_text(
+            json_dumps(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "row_type": "files",
+                    "row_version": SCHEMA_ROW_VERSION,
+                    "logical_key": "files:1",
+                    "repo_identity": source_identity,
+                    "payload": payload,
+                    "payload_sha256": sha256_text(json_dumps(payload)),
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        dest_db = dest_root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        dest_db.parent.mkdir(parents=True, exist_ok=True)
+        chmod_private(dest_db.parent, is_dir=True, created_by_invocation=True)
+        conn = sqlite3.connect(str(dest_db))
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+            init_schema(conn, dest_root, raw_storage_mode="minimal")
+            with conn:
+                ensure_repository(conn, dest_root)
+        finally:
+            conn.close()
+        args = argparse.Namespace(
+            root=str(dest_root),
+            db=str(dest_db),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            path=str(export_path),
+            max_conflicts=999999,
+            anonymized_archive=False,
+            redact_raw=True,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_import_jsonl(args)
+        payload_text = stdout.getvalue().strip()
+        result = load_single_json_document(payload_text) if payload_text else {}
+        imported_files = 0
+        if dest_db.exists():
+            conn = sqlite3.connect(str(dest_db))
+            try:
+                imported_files = int(
+                    conn.execute("select count(*) from files where current_path='from-source.py'").fetchone()[0]
+                )
+            finally:
+                conn.close()
+        ok = all(
+            (
+                exit_code == EXIT_INTEGRITY,
+                result.get("status") == "unavailable",
+                result.get("reason") in {"repo_identity_mismatch", "repo_root_path_mismatch"},
+                imported_files == 0,
+            )
+        )
+        return {
+            "exit_code": exit_code,
+            "status": result.get("status"),
+            "reason": result.get("reason"),
+            "imported_files": imported_files,
+            "ok": ok,
+        }
+
+
+def probe_import_jsonl_rejects_unmapped_conflicted_parent_fk() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-import-fk-map-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        chmod_private(db_path.parent, is_dir=True, created_by_invocation=True)
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+            init_schema(conn, root, raw_storage_mode="minimal")
+            repo_id = ensure_repository(conn, root)
+            with conn:
+                conn.execute(
+                    """
+                    insert into files(file_id, repo_id, canonical_path, first_seen_epoch, last_seen_epoch, current_path, current_state)
+                    values (1, ?, 'local.py', 1, 1, 'local.py', 'active')
+                    """,
+                    (repo_id,),
+                )
+        finally:
+            conn.close()
+        context = repo_identity_context(root)
+        repo_identity = {
+            "repo_id": str(repo_id),
+            "repo_key": repo_identity_stable_key(root, context[1]),
+            "root_path": protected_repo_path(context, str(root)),
+        }
+
+        def _row(table: str, logical_key: str, payload: dict[str, Any]) -> str:
+            return json_dumps(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "row_type": table,
+                    "row_version": SCHEMA_ROW_VERSION,
+                    "logical_key": logical_key,
+                    "repo_identity": repo_identity,
+                    "payload": payload,
+                    "payload_sha256": sha256_text(json_dumps(payload)),
+                }
+            )
+
+        incoming_file = {
+            "file_id": 1,
+            "repo_id": repo_id,
+            "canonical_path": "incoming.py",
+            "first_seen_epoch": 2,
+            "last_seen_epoch": 2,
+            "current_path": "incoming.py",
+            "current_state": "active",
+        }
+        incoming_cycle = {
+            "cycle_pk": 2,
+            "repo_id": repo_id,
+            "cycle_id": "incoming-cycle",
+            "run_hash": "incoming-run",
+            "selected_file_id": 1,
+            "selected_path": "incoming.py",
+        }
+        export_path = root / "incoming.jsonl"
+        export_path.write_text(
+            _row("files", "files:1", incoming_file) + "\n" + _row("cycles", "cycles:2", incoming_cycle) + "\n",
+            encoding="utf-8",
+        )
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            path=str(export_path),
+            max_conflicts=999999,
+            anonymized_archive=False,
+            redact_raw=True,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_import_jsonl(args)
+        result_text = stdout.getvalue().strip()
+        result = load_single_json_document(result_text) if result_text else {}
+        conn = sqlite3.connect(str(db_path))
+        try:
+            grafted_cycles = int(
+                conn.execute("select count(*) from cycles where cycle_id='incoming-cycle' and selected_file_id=1").fetchone()[0]
+            )
+            deferred_conflicts = int(
+                conn.execute(
+                    """
+                    select count(*)
+                    from lattice_import_conflicts
+                    where row_type='cycles' and resolution='integrity_error:deferred_foreign_key'
+                    """
+                ).fetchone()[0]
+            )
+            parent_conflicts = int(
+                conn.execute(
+                    """
+                    select count(*)
+                    from lattice_import_conflicts
+                    where row_type='files' and resolution='kept_existing'
+                    """
+                ).fetchone()[0]
+            )
+        finally:
+            conn.close()
+        ok = all(
+            (
+                exit_code == EXIT_SUCCESS,
+                result.get("status") == "conflicts",
+                int(result.get("conflicts", 0)) >= 2,
+                grafted_cycles == 0,
+                deferred_conflicts == 1,
+                parent_conflicts == 1,
+            )
+        )
+        return {
+            "exit_code": exit_code,
+            "status": result.get("status"),
+            "conflicts": result.get("conflicts"),
+            "grafted_cycles": grafted_cycles,
+            "deferred_conflicts": deferred_conflicts,
+            "parent_conflicts": parent_conflicts,
             "ok": ok,
         }
 
@@ -9138,6 +9798,47 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     )
                     rejected_count += 1
                     continue
+                missing_reuse_debt_fields = p29_reuse_debt_missing_fields(item, pass_code)
+                if missing_reuse_debt_fields:
+                    rejected_pairs.add((pass_code, path))
+                    rejection = sanitize_rejected_pass_result(
+                        root,
+                        {
+                            "line_number": item.get("line_number", 0),
+                            "reason": "incomplete_p29_reuse_debt",
+                            "fields": item,
+                        },
+                        selected_path=trusted_selected_path,
+                        preserve_raw=preserve_raw,
+                    )
+                    rejection["validation_error"] = (
+                        "P29 reuse debt requires candidate, reason, owner or likely_owner, "
+                        "proof_needed, and validation_command"
+                    )
+                    rejection["missing_fields"] = missing_reuse_debt_fields
+                    line_number = 0
+                    try:
+                        line_number = int(item.get("line_number", 0) or 0)
+                    except (TypeError, ValueError):
+                        line_number = 0
+                    raw_line = item.get("raw_line", "") if preserve_raw else ""
+                    ensure_source_record(
+                        conn,
+                        root,
+                        repo_id,
+                        "transcript",
+                        source_path=args.from_file,
+                        raw_ref=f"pass_result_rejected:{item.get('line_number')}",
+                        raw_text=raw_line if preserve_raw else None,
+                        parsed=rejection,
+                        parse_status="rejected",
+                        fact_confidence="rejected",
+                        source_line=line_number,
+                        raw_sha256=sha256_text(raw_line) if preserve_raw else sha256_text(str(line_number)),
+                        raw_storage_mode=raw_storage_mode,
+                    )
+                    rejected_count += 1
+                    continue
                 run_id = record_one_pass_result(
                     conn,
                     root,
@@ -9186,6 +9887,14 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
             validation_error = validate_pass_result_state(applicable=applicable, outcome=outcome)
             if validation_error:
                 fail(f"invalid pass-result state: {validation_error}", EXIT_USAGE)
+            missing_reuse_debt_fields = p29_reuse_debt_missing_fields(attrs, pass_code)
+            if missing_reuse_debt_fields:
+                fail(
+                    "P29 reuse debt requires candidate, reason, owner or likely_owner, "
+                    "proof_needed, and validation_command; missing: "
+                    + ",".join(missing_reuse_debt_fields),
+                    EXIT_USAGE,
+                )
             run_id = record_one_pass_result(
                 conn,
                 root,
@@ -10425,6 +11134,12 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
     incoming_repo_identity: dict[str, str] = {}
     saw_unidentified_structured_row = False
     saw_malformed_or_unsupported_row = False
+    _FOREIGN_KEY_COLUMNS_BY_TABLE: dict[str, list[tuple[str, str, str]]] = {}
+    _SOURCE_TO_IMPORTED_IDS: dict[str, dict[int, int]] = {}
+    _STAGED_SOURCE_IDS_BY_TABLE: dict[str, set[int]] = {}
+
+    class UnresolvedImportForeignKey(ValueError):
+        pass
 
     def _extract_repo_identity(raw_identity: Any) -> dict[str, str]:
         if not isinstance(raw_identity, dict):
@@ -10521,14 +11236,17 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
         for child_col, parent_table, _ in _table_foreign_key_references(table_name):
             if child_col not in mapped_payload:
                 continue
+            if parent_table == "repositories":
+                continue
             source_parent_id = _as_int_id(mapped_payload.get(child_col))
             if source_parent_id is None:
                 continue
             parent_map = _SOURCE_TO_IMPORTED_IDS.get(parent_table)
-            if parent_map is None:
-                continue
-            if source_parent_id in parent_map:
+            if parent_map is not None and source_parent_id in parent_map:
                 mapped_payload[child_col] = parent_map[source_parent_id]
+                continue
+            if source_parent_id in _STAGED_SOURCE_IDS_BY_TABLE.get(parent_table, set()):
+                raise UnresolvedImportForeignKey(f"{table_name}.{child_col}->{parent_table}:{source_parent_id}")
         return mapped_payload
 
     def _record_id_mapping(table_name: str, source_id: int | None, destination_id: int | None) -> None:
@@ -10584,8 +11302,6 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
         print_json({"status": "unavailable", "reason": "missing_repo_identity", "path": str(input_path)})
         return EXIT_INTEGRITY
 
-    _FOREIGN_KEY_COLUMNS_BY_TABLE: dict[str, list[tuple[str, str, str]]] = {}
-    _SOURCE_TO_IMPORTED_IDS: dict[str, dict[int, int]] = {}
     with conn:
         repo_id = ensure_repository(conn, root)
         context = repo_identity_context(root)
@@ -10838,6 +11554,9 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 )
                 continue
             incoming_semantic_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
+            source_pk = _as_int_id(filtered.get(pk)) if pk else None
+            if source_pk is not None:
+                _STAGED_SOURCE_IDS_BY_TABLE.setdefault(str(table), set()).add(source_pk)
             staged_import_rows.append(
                 {
                     "mode": "insert",
@@ -10848,7 +11567,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     "table": table,
                     "payload_columns": columns,
                     "payload_pk": pk,
-                    "source_pk": _as_int_id(filtered.get(pk)) if pk else None,
+                    "source_pk": source_pk,
                     "filtered_payload": filtered,
                 }
             )
@@ -10927,7 +11646,6 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                         existing = conn.execute(f"select * from {table} where {pk}=?", (mapped_filtered[pk],)).fetchone()
                     if existing:
                         destination_pk = _as_int_id(existing[pk]) if pk else None
-                        _record_id_mapping(table, source_pk, destination_pk)
                         existing_payload = semantic_import_payload(table, {key: existing[key] for key in columns})
                         existing_hash = sha256_text(json_dumps(existing_payload))
                         incoming_compare_payload = align_redacted_import_compare_payload(
@@ -10936,6 +11654,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                         )
                         incoming_compare_hash = sha256_text(json_dumps(incoming_compare_payload))
                         if existing_hash == incoming_compare_hash:
+                            _record_id_mapping(table, source_pk, destination_pk)
                             duplicates += 1
                             continue
                         conflicts += 1
@@ -10966,6 +11685,8 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                             pass_file_id = 0
                         if pass_file_id > 0:
                             refresh_pass_rollup_file_ids.add(pass_file_id)
+                except UnresolvedImportForeignKey:
+                    next_round_rows.append(staged)
                 except sqlite3.IntegrityError as exc:
                     if _is_foreign_key_integrity_error(exc):
                         next_round_rows.append(staged)
@@ -11102,6 +11823,47 @@ def create_backup(
         backup_conn.close()
     chmod_private(backup_path)
     return backup_path
+
+
+def record_pre_recovery_backup_provenance(
+    root: Path,
+    backup_path: Path,
+    *,
+    raw_storage_mode: str | None = None,
+) -> None:
+    backup_conn = sqlite3.connect(str(backup_path))
+    try:
+        backup_conn.row_factory = sqlite3.Row
+        backup_conn.execute("PRAGMA busy_timeout=5000")
+        backup_conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            with backup_conn:
+                repo_id = ensure_repository(backup_conn, root)
+                source_id = ensure_source_record(
+                    backup_conn,
+                    root,
+                    repo_id,
+                    "recovery",
+                    raw_ref="recover",
+                    parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
+                    raw_storage_mode=raw_storage_mode,
+                )
+                create_artifact_ref(
+                    backup_conn,
+                    root,
+                    repo_id,
+                    cycle_pk=None,
+                    source_id=source_id,
+                    artifact_kind="backup",
+                    path=str(backup_path),
+                    details={"backup_event": "pre_recovery", "recorded_in": "backup"},
+                )
+        except sqlite3.OperationalError:
+            # Some recovery inputs are pre-schema or partially damaged. The
+            # safety copy is still useful even when it cannot store provenance.
+            pass
+    finally:
+        backup_conn.close()
 
 
 def command_backup(args: argparse.Namespace) -> int:
@@ -11300,6 +12062,26 @@ def command_recover(args: argparse.Namespace) -> int:
     raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     preexisting_db = db_path.exists()
     backup_first = True if args.backup_first is None else bool(args.backup_first)
+    backup_path = None
+    if backup_first and preexisting_db:
+        backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
+        backup_source_conn = connect_checked(
+            root,
+            db_path,
+            args.journal_mode,
+            allow_unsafe_db=args.allow_unsafe_db,
+            read_only=True,
+        )
+        try:
+            backup_path = create_backup(
+                backup_source_conn,
+                root,
+                db_path,
+                output=str(backup_path),
+                allow_overwrite=False,
+            )
+        finally:
+            backup_source_conn.close()
     conn = connect_checked(
         root,
         db_path,
@@ -11310,9 +12092,10 @@ def command_recover(args: argparse.Namespace) -> int:
     )
     sources: list[str] = []
     artifact_sources: list[str] = []
-    backup_path = None
-    init_schema(conn, root, raw_storage_mode=raw_storage_mode, run_git_change_dedup=False)
     recovery_dedup_removed_ids: list[int] = []
+    if table_exists(conn, "git_file_changes"):
+        recovery_dedup_removed_ids = git_file_change_ids_pruned_by_dedupe(conn)
+    init_schema(conn, root, raw_storage_mode=raw_storage_mode)
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -11324,52 +12107,33 @@ def command_recover(args: argparse.Namespace) -> int:
             parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
             raw_storage_mode=raw_storage_mode,
         )
-        recovery_dedup_removed_ids = git_file_change_ids_pruned_by_dedupe(conn)
+        if backup_path is not None:
+            record_pre_recovery_backup_provenance(
+                root,
+                backup_path,
+                raw_storage_mode=raw_storage_mode,
+            )
+            create_artifact_ref(
+                conn,
+                root,
+                repo_id,
+                cycle_pk=None,
+                source_id=source_id,
+                artifact_kind="backup",
+                path=str(backup_path),
+                details={"backup_event": "pre_recovery", "recorded_in": "recovered_db"},
+            )
         if recovery_dedup_removed_ids:
-            deduped_git_change_groups = dedupe_git_file_changes(conn)
-            if deduped_git_change_groups:
-                record_file_event(
-                    conn,
-                    repo_id,
-                    "recovery_git_file_changes_deduped",
-                    source_id=source_id,
-                    details={
-                        "deleted_git_file_change_count": len(recovery_dedup_removed_ids),
-                        "deleted_git_file_change_ids": recovery_dedup_removed_ids,
-                    },
-                )
-    if backup_first and preexisting_db:
-        backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
-        backup_path = create_backup(
-            conn,
-            root,
-            db_path,
-            output=str(backup_path),
-            allow_overwrite=False,
-        )
-        backup_conn = sqlite3.connect(str(backup_path))
-        try:
-            backup_conn.row_factory = sqlite3.Row
-            backup_conn.execute("PRAGMA busy_timeout=5000")
-            backup_conn.execute("PRAGMA foreign_keys=ON")
-            try:
-                create_artifact_ref(
-                    backup_conn,
-                    root,
-                    repo_id,
-                    cycle_pk=None,
-                    source_id=source_id,
-                    artifact_kind="backup",
-                    path=str(backup_path),
-                    details={"backup_event": "pre_recovery", "recorded_in": "backup"},
-                )
-                backup_conn.commit()
-            except sqlite3.OperationalError:
-                # Backup copy may be pre-schema in some recovery scenarios; keep
-                # the recovery moving when artifact lineage tables are absent.
-                pass
-        finally:
-            backup_conn.close()
+            record_file_event(
+                conn,
+                repo_id,
+                "recovery_git_file_changes_deduped",
+                source_id=source_id,
+                details={
+                    "deleted_git_file_change_count": len(recovery_dedup_removed_ids),
+                    "deleted_git_file_change_ids": recovery_dedup_removed_ids,
+                },
+            )
     conn.close()
     status = "ok"
     exit_code = EXIT_SUCCESS
@@ -12703,7 +13467,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--worktree-untracked-files", choices=WORKTREE_SNAPSHOT_UNTRACKED_MODES, default=None)
     p.set_defaults(func=command_record_worktree_snapshot)
 
-    p = sub.add_parser("record-pass-result")
+    p = sub.add_parser(
+        "record-pass-result",
+        description=(
+            "Record additive review pass evidence. Complete P29 reuse-debt markers are stored "
+            "as local Lattice reuse_debt events; promote them to tracked work by querying "
+            "`query reuse-debt` and filing the chosen backlog item outside runtime evidence."
+        ),
+    )
     add_cycle_args(p, required=False)
     p.add_argument("--pass", dest="pass_code")
     p.add_argument("--file", dest="path")
@@ -12713,7 +13484,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--changed", default="")
     p.add_argument("--regression", default="")
     p.add_argument("--raw-line", default="")
-    p.add_argument("--attribute", action="append", default=[])
+    p.add_argument(
+        "--attribute",
+        action="append",
+        default=[],
+        help=(
+            "extra namespace:key=value attribute; P29 reuse debt requires candidate, reason, "
+            "owner or likely_owner, proof_needed, and validation_command"
+        ),
+    )
     p.add_argument("--from-file", default="")
     p.add_argument("--selected-path", default="")
     p.add_argument("--planned-pass", action="append", default=[])
@@ -12835,7 +13614,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_query_common(query_sub.add_parser("explain-selection"))
     query_sub.choices["explain-selection"].add_argument("--cycle", dest="cycle_id")
     query_sub.choices["explain-selection"].add_argument("--path")
-    add_query_common(query_sub.add_parser("reuse-debt"))
+    add_query_common(
+        query_sub.add_parser(
+            "reuse-debt",
+            description=(
+                "List local P29 reuse-debt backlog evidence with candidate, owner, reason, "
+                "proof needed, and validation command for optional promotion to tracked work."
+            ),
+        )
+    )
     query_sub.choices["reuse-debt"].add_argument("--path")
     query_sub.choices["reuse-debt"].add_argument("--owner")
     add_query_common(query_sub.add_parser("metrics"))

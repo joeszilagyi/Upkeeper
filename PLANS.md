@@ -3,6 +3,55 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Prior-Run Anomaly Custody
+
+Status: completed locally
+
+Goal:
+- add a deterministic backlog preflight that scans recent loop output before
+  normal issue selection and detects deviations from the healthy unattended-run
+  shape, not only pre-characterized signatures
+- write each actionable prior-run anomaly into local custody and open an
+  automation obligation so the next Upkeeper pass repairs, classifies, or
+  preserves it before new backlog issue work
+- keep expected negative-test fixtures local and non-actionable only when their
+  surrounding test success line proves they are fixture output
+- preserve a cheap no-backend fast path and make the operator output state
+  plainly whether anomaly custody found nothing or selected a remediation task
+
+Constraints:
+- do not launch real backend Codex validation while implementing this change
+- keep the scanner deterministic, local, and safe against raw private evidence
+  leakage by using bounded excerpts and runtime-only custody files
+- avoid GitHub issue writes in the scanner; issue filing or source repair
+  remains work for the selected repair pass
+
+Files likely touched:
+- `tools/upkeeper_anomaly_custody.py`
+- `orchestration/backlog.sh`
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added a deterministic prior-run anomaly custody scanner for recent backlog
+  loop output.
+- Wired backlog preflight to open local automation obligations for actionable
+  deviations before normal GitHub issue selection.
+- Preserved bounded evidence packets through obligation selection and repair
+  prompt generation.
+- Documented and validated the new custody contract, including expected
+  negative-test fixture handling.
+
 ## Issue 125 Rotation Marker Temp Hardening
 
 Status: completed locally

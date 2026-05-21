@@ -40,6 +40,9 @@ BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS="${BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS:-60
 BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS="${BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS:-0}"
 BACKLOG_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-1}"
 BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"
+BACKLOG_ANOMALY_CUSTODY="${BACKLOG_ANOMALY_CUSTODY:-1}"
+BACKLOG_ANOMALY_CUSTODY_LINES="${BACKLOG_ANOMALY_CUSTODY_LINES:-1200}"
+BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS="${BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS:-12}"
 BACKLOG_ALERT_COLOR="${BACKLOG_ALERT_COLOR:-auto}"
 BACKLOG_ALERT_BLINK="${BACKLOG_ALERT_BLINK:-1}"
 BACKLOG_VISUAL_BLOCK="${BACKLOG_VISUAL_BLOCK:-█}"
@@ -1555,10 +1558,63 @@ prepare_backlog_runtime_env() {
   export CODEX_POSTMORTEM_DIR="${BACKLOG_CODEX_POSTMORTEM_DIR:-$state_root/postmortems}"
   export UPKEEPER_BUG_REPORT_DRAFT_DIR="${BACKLOG_BUG_REPORT_DRAFT_DIR:-$state_root/bug-report-drafts}"
   export UPKEEPER_LATTICE_DB="${BACKLOG_LATTICE_DB:-$ROOT_DIR/runtime/upkeeper-backlog-lattice/lattice.sqlite3}"
+  export UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
   export UPKEEPER_PRECONTACT_BACKUP_ROOT="${BACKLOG_PRECONTACT_BACKUP_ROOT:-$state_root/precontact-vault}"
   export CODEX_HOME_DIR="${CODEX_HOME_DIR:-${CODEX_HOME:-$HOME/.codex}}"
   export CODEX_SESSION_SCAN_LIMIT="${CODEX_SESSION_SCAN_LIMIT:-200}"
   export LOG_FILE="${LOG_FILE:-$CODEX_LOG_FILE}"
+}
+
+run_backlog_anomaly_custody_audit() {
+  local state_root log_file custody_root obligation_root output rc line
+
+  [[ "$BACKLOG_ANOMALY_CUSTODY" == "1" ]] || return 0
+  [[ -x "$ROOT_DIR/tools/upkeeper_anomaly_custody.py" ]] || return 0
+
+  state_root="$(backlog_state_root)"
+  log_file="${BACKLOG_LOOP_LOG_FILE:-$state_root/loop.log}"
+  [[ -r "$log_file" ]] || return 0
+  custody_root="$ROOT_DIR/runtime/upkeeper-anomaly-custody"
+  obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
+  mkdir -p -- "$custody_root" "$obligation_root"
+  chmod 700 "$custody_root" "$obligation_root" 2>/dev/null || true
+
+  set +e
+  output="$(
+    "$ROOT_DIR/tools/upkeeper_anomaly_custody.py" \
+      --root "$ROOT_DIR" \
+      --loop-log "$log_file" \
+      --state-root "$custody_root" \
+      --obligation-root "$obligation_root" \
+      --recent-lines "$BACKLOG_ANOMALY_CUSTODY_LINES" \
+      --max-findings "$BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS" \
+      --write-obligations 2>&1
+  )"
+  rc="$?"
+  set -e
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    log "$line"
+  done <<<"$output"
+  if [[ "$rc" -ne 0 ]]; then
+    log "anomaly custody audit failed with status $rc; stopping before normal issue selection"
+    return "$rc"
+  fi
+  return 0
+}
+
+backlog_select_open_obligation_json() {
+  ROOT_DIR="$ROOT_DIR" \
+    UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
+    bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+}
+
+backlog_prepare_obligation_prompt_file() {
+  local obligation_json="$1"
+
+  ROOT_DIR="$ROOT_DIR" \
+    UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
+    bash -c 'source "$1"; automation_prepare_obligation_prompt_file "$2"' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash" "$obligation_json"
 }
 
 quota_preflight_allows_backlog_run() {
@@ -1845,6 +1901,41 @@ run_upkeeper_for_one_target() {
     backlog_update_active_owner_heartbeat "running_upkeeper" "normal_newest_file_pass" "" "owner_pid_start_cwd_verified"
     ./Upkeeper --selection-order=newest
   fi
+}
+
+run_upkeeper_for_obligation() {
+  local obligation_json="$1"
+  local obligation_id obligation_path obligation_kind obligation_summary target_hint prompt_file prompt_root
+  local upkeeper_status=0
+
+  prepare_backlog_runtime_env
+  obligation_id="$(jq -r '.id // ""' <<<"$obligation_json")"
+  obligation_path="$(jq -r '.path // ""' <<<"$obligation_json")"
+  obligation_kind="$(jq -r '.kind // "prior_run_anomaly"' <<<"$obligation_json")"
+  obligation_summary="$(jq -r '.summary // "automation obligation"' <<<"$obligation_json")"
+  target_hint="$(jq -r '.repair_target_file // .target_file // "Upkeeper"' <<<"$obligation_json")"
+  [[ -n "$target_hint" && "$target_hint" != "null" ]] || target_hint="Upkeeper"
+  prompt_file="$(backlog_prepare_obligation_prompt_file "$obligation_json")"
+  prompt_root="$(dirname -- "$prompt_file")"
+
+  log "running Upkeeper for automation obligation $obligation_id kind=$obligation_kind target=$target_hint"
+  backlog_update_active_owner_heartbeat "running_upkeeper" "obligation=$obligation_id target=$target_hint" "" "owner_pid_start_cwd_verified"
+  UPKEEPER_AUTOMATION_LAUNCHER="backlog" \
+    UPKEEPER_AUTOMATION_VARIANT="issue-batch" \
+    UPKEEPER_AUTOMATION_POLICY="pre-issue-health" \
+    UPKEEPER_AUTOMATION_WORKFLOW="obligation-repair" \
+    UPKEEPER_AUTOMATION_OBLIGATION_ID="$obligation_id" \
+    UPKEEPER_AUTOMATION_OBLIGATION_PATH="$obligation_path" \
+    UPKEEPER_PROMPT_TRUST_ROOT="$prompt_root" \
+    ./Upkeeper --ignore-failure-queue --target-file="$target_hint" --prompt-file "$prompt_file"
+  upkeeper_status="$?"
+  if [[ "$upkeeper_status" -ne 0 ]]; then
+    if [[ "$upkeeper_status" -eq 2 ]]; then
+      return 2
+    fi
+    return "$upkeeper_status"
+  fi
+  log "automation obligation $obligation_id completed: $obligation_summary"
 }
 
 has_worktree_changes() {
@@ -2291,8 +2382,11 @@ merge_and_clean() {
 main() {
   local pr_info pr_number branch issue_info issue_number issue_title target_hint count run_status
   local job_target job_reason job_expected commit_result final_disposition status
+  local obligation_json obligation_status obligation_id obligation_issue_number obligation_issue_title
+  local obligation_summary obligation_target obligation_selected
   local issue_deferred_after_noop
   commit_result="uninitialized backlog outcome"
+  obligation_selected=0
 
   redirect_interactive_stdio "$@"
   claim_backlog_active_owner_or_exit
@@ -2356,12 +2450,42 @@ main() {
     exit "$quota_status"
   fi
 
-  issue_info="$(selected_issue "$pr_number")"
-  issue_number="$(awk -F '\t' '{print $1}' <<<"$issue_info")"
-  issue_title="$(awk -F '\t' '{print $2}' <<<"$issue_info")"
-  target_hint="$(target_hint_for_issue "$issue_number")"
+  if ! run_backlog_anomaly_custody_audit; then
+    status="$?"
+    exit "$status"
+  fi
+
+  obligation_json="$(backlog_select_open_obligation_json)"
+  obligation_status="$(jq -r '.status // "clean"' <<<"$obligation_json")"
+  if [[ "$obligation_status" == "operator_action_required" ]]; then
+    obligation_id="$(jq -r '.id // "unknown"' <<<"$obligation_json")"
+    obligation_summary="$(jq -r '.summary // "machine-local automation obligation"' <<<"$obligation_json")"
+    log "automation obligation $obligation_id requires operator action before normal issue work: $obligation_summary"
+    exit 0
+  fi
+
+  if [[ "$obligation_status" == "ok" ]]; then
+    obligation_selected=1
+    obligation_id="$(jq -r '.id // "unknown"' <<<"$obligation_json")"
+    obligation_summary="$(jq -r '.summary // "automation obligation"' <<<"$obligation_json")"
+    obligation_target="$(jq -r '.repair_target_file // .target_file // "Upkeeper"' <<<"$obligation_json")"
+    obligation_issue_number="$(jq -r '.issue_number // ""' <<<"$obligation_json")"
+    obligation_issue_title="$(jq -r '.issue_title // ""' <<<"$obligation_json")"
+    issue_number="$obligation_issue_number"
+    issue_title="$obligation_issue_title"
+    target_hint="$obligation_target"
+  else
+    issue_info="$(selected_issue "$pr_number")"
+    issue_number="$(awk -F '\t' '{print $1}' <<<"$issue_info")"
+    issue_title="$(awk -F '\t' '{print $2}' <<<"$issue_info")"
+    target_hint="$(target_hint_for_issue "$issue_number")"
+  fi
   issue_deferred_after_noop=0
-  if [[ -n "$issue_number" ]]; then
+  if [[ "$obligation_selected" == "1" ]]; then
+    job_target="$target_hint"
+    job_reason="automation obligation $obligation_id: $obligation_summary"
+    job_expected="repair or classify prior-run anomaly custody before normal issue work"
+  elif [[ -n "$issue_number" ]]; then
     job_target="${target_hint:-wrapper-inferred target for issue #$issue_number}"
     job_reason="issue #$issue_number${issue_title:+: $issue_title}"
     job_expected="fix issue #$issue_number, validate locally, commit and push tracked changes"
@@ -2372,7 +2496,13 @@ main() {
   fi
   backlog_emit_job_start_summary "$job_target" "$job_reason" "$job_expected"
 
-  if run_upkeeper_for_one_target "$issue_number" "$target_hint"; then
+  if [[ "$obligation_selected" == "1" ]]; then
+    if run_upkeeper_for_obligation "$obligation_json"; then
+      run_status=0
+    else
+      run_status="$?"
+    fi
+  elif run_upkeeper_for_one_target "$issue_number" "$target_hint"; then
     run_status=0
   else
     run_status="$?"
@@ -2388,9 +2518,14 @@ main() {
         commit_result="blocked; partial work present but no commit was produced"
       fi
     fi
-    defer_issue "$issue_number"
-    log "deferred blocked issue #$issue_number for this backlog branch"
-    backlog_emit_job_finish_summary "$commit_result" "deferred issue #$issue_number for this backlog branch"
+    if [[ "$obligation_selected" == "1" ]]; then
+      log "automation obligation $obligation_id blocked and remains open"
+      backlog_emit_job_finish_summary "$commit_result" "automation obligation $obligation_id remains open"
+    else
+      defer_issue "$issue_number"
+      log "deferred blocked issue #$issue_number for this backlog branch"
+      backlog_emit_job_finish_summary "$commit_result" "deferred issue #$issue_number for this backlog branch"
+    fi
     exit 0
   elif [[ "$run_status" -eq 7 ]]; then
     backlog_emit_job_finish_summary "Upkeeper deferred on quota or backend usage limit" "quota cooldown marker recorded; outer loop may sleep before the next preflight"
@@ -2409,7 +2544,9 @@ main() {
   else
     log "Upkeeper produced no tracked changes"
     commit_result="no tracked changes produced"
-    if [[ -n "$issue_number" ]]; then
+    if [[ "$obligation_selected" == "1" ]]; then
+      log "automation obligation $obligation_id produced no tracked changes; obligation resolution state was left to Upkeeper"
+    elif [[ -n "$issue_number" ]]; then
       defer_issue "$issue_number"
       log "deferred no-change issue #$issue_number for this backlog branch"
       commit_result="no tracked changes produced; deferred issue #$issue_number for this backlog branch"

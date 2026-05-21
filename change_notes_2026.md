@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-21: prior-run anomaly custody:
+	1. Backlog now performs a deterministic local prior-run health scan before normal GitHub issue selection, treating deviations from the healthy unattended-run shape as actionable unless deterministic fixture context proves they are expected test output.
+	2. Actionable findings are written under `runtime/upkeeper-anomaly-custody` and opened as local automation obligations, so the next Upkeeper job receives a bounded evidence packet and repairs, classifies, or preserves the anomaly before fresh issue work starts.
+	3. The custody scanner deduplicates findings by fingerprint across open and resolved obligations, preventing repeated terminal evidence from opening duplicate local obligations while still keeping the original finding record available for later review.
+
 2026-05-21: backlog printf fixture classification repair:
 	1. Backlog watch output now treats model-emitted `printf` fixture text containing timestamped `[WARN] startup_anomaly.gate` content as informational transcript output instead of a pageable wrapper/control-plane error.
 	2. Formatter validation now covers both the existing echoed `ERROR:` fixture and the new `printf` warning fixture while preserving `PAGE [ERROR]` rendering for real wrapper/control-plane errors.

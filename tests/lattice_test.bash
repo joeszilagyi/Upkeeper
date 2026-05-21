@@ -1058,6 +1058,32 @@ for table, column in (("files", "canonical_path"), ("files", "current_path"), ("
 PY
 }
 
+test_worktree_snapshot_marks_existing_deleted_file_state() {
+  local repo
+
+  repo="$TEST_TMP_ROOT/lattice-worktree-deleted-state"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  mkdir -p "$repo"
+  (
+    cd "$repo"
+    git init -q
+    git config user.name "Lattice Test"
+    git config user.email "lattice@example.invalid"
+    printf 'runtime/\n' >.gitignore
+    printf '#!/usr/bin/env bash\nprintf "gone\\n"\n' >gone.sh
+    git add -A
+    git commit -q -m "track gone fixture"
+  )
+
+  lattice init >"$TEST_TMP_ROOT/deleted-state-init.json"
+  lattice import-git >"$TEST_TMP_ROOT/deleted-state-import.json"
+  assert_sql_value "active" "select current_state from files where canonical_path='gone.sh'"
+  rm "$repo/gone.sh"
+  lattice record-worktree-snapshot --snapshot-kind deleted-state --worktree-untracked-files normal >"$TEST_TMP_ROOT/deleted-state-snapshot.json"
+  assert_sql_value "deleted" "select current_state from files where canonical_path='gone.sh'"
+}
+
 test_no_git_import_and_recovery() {
   local no_git_dir no_git_db rc recover_repo recover_db
 
@@ -2417,6 +2443,7 @@ PY
 
 test_lattice_cli_contracts
 test_git_status_xy_preserves_index_worktree_columns
+test_worktree_snapshot_marks_existing_deleted_file_state
 test_no_git_import_and_recovery
 test_import_git_prefers_checked_out_branch_state
 test_import_git_privacy_defaults_and_opt_in

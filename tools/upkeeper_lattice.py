@@ -71,6 +71,13 @@ ALLOWED_OUTCOMES = {
     "regression_found",
     "unknown",
 }
+REVIEW_PASS_REGISTRY_FACT_TYPES = (
+    ("default_in_repertoire", "integer"),
+    ("module_prompt", "integer"),
+    ("aliases", "json"),
+    ("applicability_hint", "text"),
+    ("schedule_hint", "text"),
+)
 REVIEW_OUTCOME_MARKERS = (
     "REVIEWED_AND_FIXED",
     "REVIEWED_AND_REPORTED",
@@ -4643,6 +4650,8 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_m
     if validation_errors:
         fail(f"embedded contract validation failed: {'; '.join(validation_errors)}", EXIT_INTEGRITY)
     now = epoch_now()
+    registry_payload = {"passes": PASS_REGISTRY}
+    registry_raw_sha256 = sha256_text(json_dumps(registry_payload))
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -4651,8 +4660,9 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_m
             repo_id,
             "wrapper_observed",
             raw_ref="pass_registry",
-            parsed={"passes": PASS_REGISTRY},
+            parsed=registry_payload,
             parse_status="registry",
+            raw_sha256=registry_raw_sha256,
             raw_storage_mode=raw_storage_mode,
         )
         conn.execute(
@@ -4669,13 +4679,7 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_m
                 source_id,
             ),
         )
-        for key, value_type in [
-            ("default_in_repertoire", "integer"),
-            ("module_prompt", "integer"),
-            ("aliases", "json"),
-            ("applicability_hint", "text"),
-            ("schedule_hint", "text"),
-        ]:
+        for key, value_type in REVIEW_PASS_REGISTRY_FACT_TYPES:
             conn.execute(
                 """
                 insert into extension_fact_types(namespace, key, subject_type, value_type, description)
@@ -4700,8 +4704,8 @@ def install_pass_registry(conn: sqlite3.Connection, root: Path, *, raw_storage_m
                 value_integer = value if value_type == "integer" else None
                 value_json = json_dumps(value) if value_type == "json" else None
                 conn.execute(
-                """
-                insert or replace into extension_facts(
+                    """
+                    insert into extension_facts(
                       namespace, key, subject_type, subject_pk, value_type, value_text,
                       value_integer, value_json, confidence, source_id, created_epoch
                     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -4965,6 +4969,70 @@ def validate_reuse_contract_definitions() -> list[str]:
     issues.extend(_tool_failure_kind_contract_issues(source_root))
     issues.extend(_startup_anomaly_allowlist_contract_issues(source_root))
     return issues
+
+
+def probe_pass_registry_replay_identity() -> dict[str, Any]:
+    result: dict[str, Any] = {"ok": False}
+    expected_facts = len(PASS_REGISTRY) * len(REVIEW_PASS_REGISTRY_FACT_TYPES)
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-pass-registry-") as tmpdir:
+        root = Path(tmpdir)
+        try:
+            subprocess.run(
+                ["git", "init", "-q", str(root)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            result["error"] = f"git init failed: {exc}"
+            return result
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        for _ in range(3):
+            conn = connect_checked(root, db_path, "delete", allow_unsafe_db=True, create_parent=True, create_if_missing=True)
+            try:
+                init_schema(conn, root, raw_storage_mode="minimal")
+            finally:
+                conn.close()
+        conn = connect_checked(root, db_path, "delete", allow_unsafe_db=True)
+        try:
+            source_count = int(
+                conn.execute(
+                    "select count(*) from source_records where source_kind='wrapper_observed' and raw_ref='pass_registry'"
+                ).fetchone()[0]
+                or 0
+            )
+            fact_count = int(
+                conn.execute(
+                    "select count(*) from extension_facts where namespace='upkeeper.review_pass_registry'"
+                ).fetchone()[0]
+                or 0
+            )
+            duplicate_fact_groups = int(
+                conn.execute(
+                    """
+                    select count(*) from (
+                      select namespace, key, subject_type, subject_pk
+                      from extension_facts
+                      where namespace='upkeeper.review_pass_registry'
+                      group by namespace, key, subject_type, subject_pk
+                      having count(*) > 1
+                    )
+                    """
+                ).fetchone()[0]
+                or 0
+            )
+        finally:
+            conn.close()
+    result.update(
+        {
+            "source_records": source_count,
+            "extension_facts": fact_count,
+            "expected_extension_facts": expected_facts,
+            "duplicate_fact_groups": duplicate_fact_groups,
+        }
+    )
+    result["ok"] = source_count == 1 and fact_count == expected_facts and duplicate_fact_groups == 0
+    return result
 
 
 def normalize_pass_code(raw: str) -> str:
@@ -6039,6 +6107,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["raw_storage_effective"] = effective_lattice_raw_storage(configured_raw_storage)
         result["checks"]["raw_storage_valid"] = configured_raw_storage in RAW_STORAGE_COMPAT_MODES
         result["checks"]["raw_storage_enforcement"] = probe_raw_storage_enforcement(conn, root, ensure_repository(conn, root))
+        pass_registry_replay_probe = probe_pass_registry_replay_identity()
+        result["checks"]["pass_registry_replay_identity"] = pass_registry_replay_probe
         review_summary_probe = probe_review_summary_parsing()
         result["checks"]["review_summary_parsing"] = review_summary_probe
         cycle_finish_probe = probe_cycle_finish_target_mismatch()
@@ -6064,6 +6134,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         recover_import_conflicts_probe = probe_recover_propagates_import_conflicts()
         result["checks"]["recover_propagates_import_conflicts"] = recover_import_conflicts_probe
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(pass_registry_replay_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(cycle_finish_probe.get("ok")):

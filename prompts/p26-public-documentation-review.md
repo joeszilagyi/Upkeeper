@@ -23,6 +23,27 @@ If the selected file has no documentation, comment, public wording, or
 operator-facing explanation surface, state `P26: not applicable` and proceed
 with the normal applicable review only.
 
+## Scope and Boundaries
+
+Use P26 for selected files that affect public-facing understanding of behavior:
+
+- files that operators and maintainers read to learn "what this project does"
+- docs/help/compatibility/release text that governs external behavior
+- public-facing error messages, policy wording, or operator guidance
+
+Do not use P26 for purely local implementation details with no public contract
+impact.
+
+## Verification Guidance
+
+If P26 applies, verify wording against:
+
+- `docs/public-documentation-policy.md` for style and audience constraints
+- paired module docs (e.g., `README.md`, `docs/scripts/upkeeper.md`) for
+  consistency with implementation
+- change notes and `--help` text for any behavior referenced by the selected
+  module
+
 ## P26 - Public Documentation And Readability Review
 
 Goal:

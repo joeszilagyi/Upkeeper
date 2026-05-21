@@ -13,6 +13,18 @@ that next time" when the wrapper, launcher, docs, prompt, validator, test
 harness, or compatibility contract can make the repeat path impossible or
 visible before damage.
 
+## Scope and Boundaries
+
+Use P30 when the weakness can recur in future runs without a durable local
+guard, documentation update, or reproducible validation.
+
+Out of scope for P30:
+
+- exploratory quality improvements with no recurrence risk
+- purely style-only cleanup that does not reduce repeat failures
+- changes that would require a central behavior redesign beyond the selected-file
+  boundary
+
 Applicability:
 Run P30 when the selected file touches any of these:
 - automation obligations or prior failed-cycle recovery
@@ -87,6 +99,15 @@ P30 requires the final hardening barrier: the fix should leave a durable guard,
 test, validator assertion, documented invariant, obligation path, or explicit
 blocked follow-up so the same weakness cannot silently recur.
 
+## Verification Guidance
+
+- make the recurring weakness visible in a local check, validator assertion, or
+  stress fixture
+- when feasible, run the smallest reproducible validation proving the new guard
+  is present
+- if the fix is blocked, document one deterministic follow-up with owner and
+  trigger boundary
+
 Required output:
 When P30 applies, include this concise block in the final response:
 
@@ -115,3 +136,14 @@ P30: not applicable
 
 P30 does not invent a final Upkeeper status. Continue to use the normal
 `WORK_DONE`, `NO_CHANGES`, or `STOPPED_ON_BLOCKER` status contract.
+
+## Output Contract
+
+When P30 applies, include the exact `P30 Stark Protocol:` section with:
+
+- weakness class
+- permanent hardening
+- non-regression evidence
+- repeat path status
+
+If blocked, include the `blocked` form and exact follow-up requirement.

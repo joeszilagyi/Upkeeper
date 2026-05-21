@@ -5,6 +5,16 @@ future P31 fault-injection work, but `--review-module=p31` is not wired yet.
 Until that wiring exists, use this file only as a design contract or explicit
 `--prompt-file` input.
 
+## Scope and Boundaries
+
+Use P31 only for deterministic, bounded fault scenarios where an assumed
+component contract needs proof of failure handling, containment, and recovery.
+Out of scope:
+
+- exploratory breakage and random fuzzing
+- broad chaos experiments without clear oracles
+- speculative scenarios that cannot define an expected observable outcome
+
 ## Purpose
 
 Use P31 when a wrapper behavior needs deterministic fault-injection proof rather
@@ -86,6 +96,14 @@ Scenario registry action:
   backup state, transcript state, or other persisted state is touched, prove the
   next invocation is not poisoned by the injected fault.
 
+## Verification Guidance
+
+- run the control/injection/recovery sequence described above when safe
+- record which oracle classes were exercised and what evidence was collected in each
+  phase
+- when full execution is blocked, call the limitation out explicitly and keep the
+  scenario proposal honest about proof limits
+
 ## Oracle Classes
 
 Use one or more explicit oracle classes. At least one must be present before a
@@ -150,6 +168,11 @@ Unregistered fault ideas are not P31 output. They are notes.
 
 The tracked scenario registry is `docs/fault-injection-scenarios.md`. Use its
 stable `FI-###` ids when adding, proposing, rejecting, or retiring scenarios.
+
+## Final Marker Discipline
+
+Keep the final response in the normal Upkeeper completion envelope using the
+standard `UPKEEPER_STATUS` contract.
 
 ## Output Contract
 

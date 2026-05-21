@@ -12,6 +12,21 @@ Do not merely identify reusable things. Apply the smallest safe reuse
 improvement when the candidate has a stable contract, a clear owner location, no
 material portability loss, and focused verification.
 
+## Scope and Boundaries
+
+Use P29 when reusable knowledge is:
+
+- repeated across multiple modules, prompts, tests, or docs
+- stable in behavior and likely to recur
+- safe to consolidate behind one stable owner contract
+
+Out of scope for P29:
+
+- one-off refactors with only one current caller
+- abstractions that obscure exit behavior, stdin/stdout contracts, or control flow
+- abstractions that exist only to satisfy style preferences
+- wrappers that only move one call into another name
+
 What counts as reusable:
 - a shell helper used or plausibly needed by multiple modules
 - a Python snippet pattern repeated inside Bash heredocs or embedded scripts
@@ -73,6 +88,25 @@ Before extracting or consolidating, answer all of these:
 
 If the answer to 1, 2, 3, 4, 5, 8, 9, or 10 is no, do not extract. Report it as
 deferred or rejected.
+
+## Verification Guidance
+
+- run focused local validation in `tools/validate_upkeeper.sh` when behavior changes
+  ownership or check lists
+- update or add the smallest relevant test fixture so reuse claims become
+  regression-detectable
+- ensure the reusable asset appears in the discoverability path noted in
+  "Reusable Asset Discovery"
+
+## Output Contract
+
+When P29 applies, report:
+
+- what reusable boundary was chosen
+- where ownership moved (module/doc/test path)
+- why this is reusable now (with at least one current or credible next caller)
+- verification run and hardening signal (validation, test, or fixture result)
+- what was intentionally deferred (if any) and why
 
 Application rule:
 If a candidate passes the reuse candidate test, apply the smallest safe change:

@@ -18,6 +18,15 @@ locally.
 If the selected file has no practical deterministic test surface, state
 `P28: not applicable` and proceed with the normal applicable review only.
 
+## Scope and Boundaries
+
+Use P28 when the selected file has behavior that can be locked down with a
+small deterministic check and where that check would still be useful on the next
+run.
+
+Do not apply P28 for ad hoc manual validation, random experiments, or behavior
+that has no stable contract to assert.
+
 ## P28 - Unit Test Harvesting Review
 
 Goal:

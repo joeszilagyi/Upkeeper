@@ -986,6 +986,33 @@ check_module_map() {
   rm -f "$array_file" "$files_file"
 }
 
+check_prompt_module_contract() {
+  local prompt_path module_id
+
+  log "checking reusable review-module structure"
+  [[ -s prompts/_review-module-template.md ]] || fail "prompt module template is missing or empty"
+  for prompt_path in prompts/p[0-9][0-9]-*.md; do
+    module_id="$(basename "$prompt_path" | sed -n 's/^p\([0-9][0-9]\)-.*/\\1/p')"
+    [[ -n "$module_id" ]] || continue
+    [[ -s "$prompt_path" ]] || fail "prompt module is missing or empty: $prompt_path"
+
+    grep -Eq "^#\\s*P${module_id}([[:space:]]|-|:)" "$prompt_path" ||
+      fail "prompt module missing title/header for $module_id: $prompt_path"
+    grep -Eiq "P${module_id}: [a-z ]*applic" "$prompt_path" ||
+      fail "prompt module missing applicability statement for $module_id: $prompt_path"
+    grep -Eiq "\\bscope\\b" "$prompt_path" ||
+      fail "prompt module missing scope wording for $module_id: $prompt_path"
+    grep -Eiq "\\bboundar(y|ies)\\b|non-goal|out of scope|does not apply|not in scope" "$prompt_path" ||
+      fail "prompt module missing non-goal/boundary wording for $module_id: $prompt_path"
+    grep -Eiq "verification" "$prompt_path" ||
+      fail "prompt module missing verification guidance wording for $module_id: $prompt_path"
+    grep -Eiq "output contract|required output" "$prompt_path" ||
+      fail "prompt module missing output contract wording for $module_id: $prompt_path"
+    grep -Eiq "UPKEEPER_STATUS|final status|final marker|status contract" "$prompt_path" ||
+      fail "prompt module missing final marker/status wording for $module_id: $prompt_path"
+  done
+}
+
 check_prompt_template() {
   local p31_term
 
@@ -1090,6 +1117,15 @@ check_prompt_template() {
     grep -Fq "$p31_term" prompts/p31-fault-injection-review.md || fail "P31 contract missing required term: $p31_term"
   done
   grep -Fq "UPKEEPER_PASS_RESULT" prompts/default-review.md || fail "default prompt missing pass-result marker contract"
+  check_prompt_module_contract
+  grep -Fq "for \`prompts/pNN-*.md\`" prompts/_review-module-template.md ||
+    fail "template missing guidance for reusable pNN module targeting"
+  grep -Fq "Purpose and Scope" prompts/_review-module-template.md || fail "template missing Purpose and Scope section"
+  grep -Fq "Trigger / Applicability" prompts/_review-module-template.md || fail "template missing trigger/applicability section"
+  grep -Fq "Verification Guidance" prompts/_review-module-template.md || fail "template missing verification guidance section"
+  grep -Fq "Output Contract" prompts/_review-module-template.md || fail "template missing output contract section"
+  grep -Fq "Final Marker Discipline" prompts/_review-module-template.md || fail "template missing final marker section"
+  grep -Fq "Discoverability and Compatibility" prompts/_review-module-template.md || fail "template missing discoverability section"
   grep -Fq "UPKEEPER_LATTICE_ENABLED" Upkeeper.conf || fail "root config missing Lattice defaults"
   grep -Fq "UPKEEPER_LATTICE_ENABLED" configurations/default.conf || fail "default profile missing Lattice defaults"
   grep -Fq "UPKEEPER_IGNORE_FILE" Upkeeper.conf || fail "root config missing .upkeeperignore default"

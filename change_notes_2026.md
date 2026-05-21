@@ -15,6 +15,11 @@ Version numbering note:
 	6. `recover --backup-first` now creates the pre-recovery backup after the recovery source row is committed but before post-recovery imports, so the backup can record its own provenance artifact without foreign-key failures.
 	7. Prompt-module structure validation now extracts numeric module ids correctly instead of passing a literal backreference through `grep`.
 
+2026-05-20: finding catalog contract:
+	1. The repository contract now requires any observed anomaly, confusing operator-interface defect, contract gap, repeated warning, validation drift, stale evidence, or missing bug filing that is not fixed immediately to be captured as a GitHub issue or local automation obligation with enough evidence for later repair.
+	2. Every anomaly must now be treated as evidence for a specific already tracked bug or as a new bug; existing tracked items should receive the fresh evidence, while uncovered anomalies need focused new issues or obligations.
+	3. Minor severity now affects priority, not whether the finding must be captured, so small process and human-interface defects cannot exist only in chat history or terminal scrollback.
+
 2026-05-20: Lattice client-root contract validation repair:
 	1. Lattice pass-registry installation now validates reusable wrapper contracts against the central wrapper source tree instead of the target repository root, so symlinked or client-root Lattice runs no longer fail only because the client checkout does not contain `lib/upkeeper`.
 	2. Future or local pass codes matching the documented `P[0-9A-Za-z_.-]+` shape, such as `P999`, remain accepted as Lattice evidence rows while built-in prompt metadata still comes from the registered pass list.

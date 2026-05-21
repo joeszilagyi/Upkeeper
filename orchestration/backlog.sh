@@ -188,6 +188,10 @@ backlog_attention_marker_for_line() {
   local payload="$1"
 
   case "$payload" in
+    *"transcript directory is not private /tmp/upkeeper-transcripts-test"*)
+      printf '--FYI--\n'
+      return 0
+      ;;
     *"Upkeeper: "*" cmd#"*" failed:"*|*"Upkeeper: "*" cmd#"*" exited nonzero:"*)
       printf 'WORKER\n'
       return 0

@@ -766,6 +766,7 @@ current_cycle_log_review_present() {
   python3 - "$last_message_file" "$current_cycle" "$log_path" "$reasons" <<'PY'
 import hashlib
 import re
+import shlex
 import sys
 
 try:
@@ -775,41 +776,103 @@ except OSError:
     raise SystemExit(1)
 
 anomalies_expectation = "listed" if reasons and reasons != "unknown" else "none"
-cycle_pattern = re.compile(r"\bcycle={}\b".format(re.escape(current_cycle)))
+cycle_fragment = f"cycle={current_cycle} "
 status_pattern = re.compile(r"^UPKEEPER_STATUS: (WORK_DONE|NO_CHANGES|NO_BACKEND_TASK|BLOCKED)$")
 review_pattern = re.compile(
     r"^UPKEEPER_LOG_REVIEW: CHECKED cycle=([^\s`]+) anomalies=(none|listed) log_sha256=([0-9a-f]{64})$"
 )
 
-cycle_log_lines = []
+safe_keys = {
+    "action",
+    "anomalies",
+    "classification",
+    "codex_exit",
+    "coverage_gate_rc",
+    "detail_redacted",
+    "execution_origin",
+    "exit_code",
+    "final_exit",
+    "force_upkeeper",
+    "mode",
+    "owner_cycle",
+    "owner_pid",
+    "peer_cycle",
+    "peer_pid",
+    "phase",
+    "primary_decision",
+    "reason",
+    "reason_class",
+    "requested_parent_cycle",
+    "review_outcome",
+    "secondary_decision",
+    "session_end_state",
+    "stage",
+    "stale_seconds",
+    "state_id",
+    "status",
+    "status_marker",
+    "status_marker_source",
+    "task_complete_last_agent_message",
+    "trigger",
+}
+level_re = re.compile(r"^(\S+)\s+\[([A-Z]+)\]\s+(.*)$")
+sanitized_lines = []
 cycle_start_seen = False
-cycle_exit_seen = False
 run_start_seen = False
-run_finish_seen = False
+
+
+def sanitize_cycle_line(raw_line):
+    line = raw_line.rstrip("\n")
+    match = level_re.match(line)
+    if not match:
+        return "UNPARSED current_cycle_log_line"
+    timestamp, level, payload = match.groups()
+    try:
+        tokens = shlex.split(payload)
+    except ValueError:
+        return f"{timestamp} [{level}] parse_error"
+
+    event = "log"
+    fields = []
+    for token in tokens:
+        if token.startswith("cycle=") or token.startswith("run_hash="):
+            continue
+        if "=" not in token and event == "log":
+            event = token
+            continue
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        if key not in safe_keys:
+            continue
+        if "/" in value or value.startswith("sha256:") or value.startswith("content-hmac-"):
+            value = "redacted"
+        if len(value) > 120:
+            value = value[:117] + "..."
+        fields.append(f"{key}={value}")
+
+    summary = f"{timestamp} [{level}] {event}"
+    if fields:
+        summary = f"{summary} {' '.join(fields)}"
+    return summary
 
 try:
     with open(log_path, "r", encoding="utf-8", errors="replace") as log_file:
         for line in log_file:
-            if not cycle_pattern.search(line):
+            if cycle_fragment not in line:
                 continue
-            cycle_log_lines.append(line)
+            sanitized_lines.append(sanitize_cycle_line(line))
             if "cycle.start" in line:
                 cycle_start_seen = True
-            if "cycle.exit" in line:
-                cycle_exit_seen = True
             if "run.start" in line:
                 run_start_seen = True
-            if "run.finish" in line:
-                run_finish_seen = True
 except OSError:
     raise SystemExit(1)
 
-if not cycle_log_lines:
+if not sanitized_lines:
     raise SystemExit(1)
-if not (cycle_start_seen and cycle_exit_seen and run_start_seen and run_finish_seen):
+if not (cycle_start_seen and run_start_seen):
     raise SystemExit(1)
-
-cycle_log_sha = hashlib.sha256("".join(cycle_log_lines).encode("utf-8", "surrogateescape")).hexdigest()
 
 visible_lines = []
 in_code_fence = False
@@ -846,15 +909,78 @@ if matching_review_lines[0][0] != review_index:
 if review_index >= status_index:
     raise SystemExit(1)
 
+if review_match.group(1) != current_cycle:
+    raise SystemExit(1)
+
+review_anomalies = review_match.group(2)
+review_digest = review_match.group(3)
+
+# The model calls the sanitized helper before the wrapper appends run.finish,
+# cycle.summary, and cycle.exit lines. Accept the digest for any real helper
+# prefix that contains cycle.start and run.start, while still requiring the
+# final response marker to be unique and adjacent to UPKEEPER_STATUS.
+for end in range(len(sanitized_lines), 0, -1):
+    prefix = sanitized_lines[:end]
+    if not any("cycle.start" in line for line in prefix):
+        continue
+    if not any("run.start" in line for line in prefix):
+        continue
+    helper_view = prefix[-200:]
+    prefix_anomalies = "listed" if any("[WARN]" in line or "[ERROR]" in line for line in helper_view) else "none"
+    if prefix_anomalies != anomalies_expectation or prefix_anomalies != review_anomalies:
+        continue
+    prefix_digest = hashlib.sha256("\n".join(helper_view).encode("utf-8", "surrogateescape")).hexdigest()
+    if prefix_digest == review_digest:
+        raise SystemExit(0)
+
 if (
-    review_match.group(1) == current_cycle
-    and review_match.group(2) == anomalies_expectation
-    and review_match.group(3) == cycle_log_sha
+    review_anomalies == anomalies_expectation
+    and hashlib.sha256("\n".join(sanitized_lines[-200:]).encode("utf-8", "surrogateescape")).hexdigest() == review_digest
 ):
     raise SystemExit(0)
 
 raise SystemExit(1)
 PY
+}
+
+# A current changed-path violation or backend failure keeps the startup anomaly
+# gate unresolved, but a valid current-cycle log-review acknowledgment must be
+# able to clear older unresolved gate-state files. Otherwise the gate can only
+# reproduce its own previous unresolved state forever.
+record_startup_anomaly_gate_review() {
+  local last_message_file="$1"
+  local status_marker_value="${2:-missing}"
+  local codex_exit_value="${3:-unknown}"
+  [[ "$STARTUP_ANOMALY_GATE" == "1" ]] || return 0
+
+  if [[ "$STARTUP_ANOMALY_GATE_CHANGED_PATH_VIOLATION" == "1" ]]; then
+    log_line "WARN" "startup_anomaly.gate_unresolved reason=changed_path_violation reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    if ! write_startup_anomaly_gate_state "unresolved" "changed_path_violation"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
+  elif [[ "$codex_exit_value" != "0" ]]; then
+    log_line "WARN" "startup_anomaly.gate_unresolved reason=nonzero_codex_exit reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    if ! write_startup_anomaly_gate_state "unresolved" "nonzero_codex_exit"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
+  elif current_cycle_log_review_present "$last_message_file" "$CYCLE_ID" "$LOG_FILE" "$STARTUP_ANOMALY_REASONS"; then
+    STARTUP_ANOMALY_GATE_RESOLVED="1"
+    if ! write_startup_anomaly_gate_state "resolved" "log_review_ack_checked"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
+    mark_startup_anomaly_gate_states_resolved
+    log_line "INFO" "startup_anomaly.gate_resolved status=checked reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value"
+  elif startup_anomaly_gate_has_unresolved_state "$STARTUP_ANOMALY_REASONS"; then
+    log_line "WARN" "startup_anomaly.gate_unresolved reason=unresolved_startup_anomaly_state reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    if ! write_startup_anomaly_gate_state "unresolved" "unresolved_startup_anomaly_state"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
+  else
+    log_line "WARN" "startup_anomaly.gate_unresolved reason=missing_current_cycle_log_review_evidence reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    if ! write_startup_anomaly_gate_state "unresolved" "missing_current_cycle_log_review_evidence"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
+  fi
 }
 
 # Keep this review-summary override in the entrypoint so selected-target-only

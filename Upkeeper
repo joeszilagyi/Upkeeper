@@ -1861,6 +1861,7 @@ run_postmortem_sequence() {
   local report_last_message_private hardening_last_message_private
   local report_exit report_marker hardening_exit hardening_marker
   local incident_classification errexit_was_set
+  local report_path_log_field bug_record_path_log_field
 
   pm_root="$CODEX_POSTMORTEM_DIR/$CYCLE_ID"
   report_path="$pm_root/postmortem.md"
@@ -1870,6 +1871,9 @@ run_postmortem_sequence() {
   primary_last_message_metadata="$pm_root/primary-last-message.meta"
   report_last_message_private="$pm_root/postmortem.report-last-message.txt"
   hardening_last_message_private="$pm_root/postmortem.hardening-last-message.txt"
+
+  report_path_log_field="$(upkeeper_path_hmac "$report_path")"
+  bug_record_path_log_field="$(upkeeper_path_hmac "$bug_record_path")"
 
   postmortem_private_dir "$pm_root"
   POSTMORTEM_INCIDENT_LOG_PATH="$incident_log_path"
@@ -1883,7 +1887,7 @@ run_postmortem_sequence() {
   POSTMORTEM_CONTEXT_PATH="$context_path"
   POSTMORTEM_BUG_RECORD_PATH="$bug_record_path"
   write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
-  log_line "INFO" "postmortem.bug_record path=$bug_record_path trigger=$trigger status=$POSTMORTEM_SEQUENCE_STATUS"
+  log_line "INFO" "postmortem.bug_record bug_record_path=$bug_record_path_log_field path_redacted=1 trigger=$trigger status=$POSTMORTEM_SEQUENCE_STATUS"
 
   if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
     cat >"$report_path" <<EOF
@@ -1929,12 +1933,12 @@ EOF
   fi
   copy_postmortem_private_artifact "$report_last_message" "$report_last_message_private"
   report_marker="$(parse_postmortem_marker "$report_last_message")"
-  log_line "INFO" "postmortem.report.finish exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path report_exists=$([[ -e "$report_path" ]] && printf 1 || printf 0) report_nonempty=$([[ -s "$report_path" ]] && printf 1 || printf 0)"
+  log_line "INFO" "postmortem.report.finish exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path_log_field path_redacted=1 report_exists=$([[ -e "$report_path" ]] && printf 1 || printf 0) report_nonempty=$([[ -s "$report_path" ]] && printf 1 || printf 0)"
 
   if [[ "$report_exit" -eq 86 ]]; then
     POSTMORTEM_SEQUENCE_STATUS="report_quota_skipped"
     write_quota_skipped_postmortem_report "$report_path" "$trigger" "$detail_text" "$child_exit" "postmortem.report" "$CODEX_POSTMORTEM_MODEL"
-    log_line "WARN" "postmortem.report skipped reason=quota_guardrail exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path"
+    log_line "WARN" "postmortem.report skipped reason=quota_guardrail exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path_log_field path_redacted=1"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
     rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
@@ -1953,7 +1957,7 @@ EOF
     fi
     POSTMORTEM_SEQUENCE_STATUS="report_environment_skipped"
     write_environment_skipped_postmortem_report "$report_path" "$trigger" "$detail_text" "$child_exit" "postmortem.report" "$CODEX_POSTMORTEM_MODEL" "$report_environment_detail"
-    log_line "WARN" "postmortem.report skipped reason=local_codex_runtime_unwritable environment_reason=$(shell_quote "$report_environment_reason") exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path"
+    log_line "WARN" "postmortem.report skipped reason=local_codex_runtime_unwritable environment_reason=$(shell_quote "$report_environment_reason") exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path_log_field path_redacted=1"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
     rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
@@ -1962,7 +1966,7 @@ EOF
 
   if [[ "$report_exit" -ne 0 || "$report_marker" != "REPORT_WRITTEN" || ! -s "$report_path" ]]; then
     POSTMORTEM_SEQUENCE_STATUS="report_failed"
-    log_line "ERROR" "postmortem.report failed exit_code=$report_exit marker=${report_marker:-missing} expected_marker=REPORT_WRITTEN report_path=$report_path"
+    log_line "ERROR" "postmortem.report failed exit_code=$report_exit marker=${report_marker:-missing} expected_marker=REPORT_WRITTEN report_path=$report_path_log_field path_redacted=1"
     postmortem_set_private_file_mode "$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
@@ -1981,7 +1985,7 @@ EOF
 - After operator review of the report and private evidence, rerun with `CODEX_POSTMORTEM_HARDENING_OPT_IN=1` for an explicit hardening follow-up if it is still warranted.
 EOF
     postmortem_set_private_file_mode "$report_path"
-    log_line "INFO" "postmortem.hardening skipped reason=operator_opt_in_required report_path=$report_path"
+    log_line "INFO" "postmortem.hardening skipped reason=operator_opt_in_required report_path=$report_path_log_field path_redacted=1"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
     rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
@@ -2013,7 +2017,7 @@ EOF
 - The scripted hardening Codex pass was skipped before launch because \`$CODEX_POSTMORTEM_MODEL\` did not pass the auxiliary quota preflight.
 - The report was preserved and the wrapper stopped for manual relaunch instead of spending more recovery quota.
 EOF
-    log_line "WARN" "postmortem.hardening skipped reason=quota_guardrail exit_code=$hardening_exit marker=${hardening_marker:-missing} report_path=$report_path"
+    log_line "WARN" "postmortem.hardening skipped reason=quota_guardrail exit_code=$hardening_exit marker=${hardening_marker:-missing} report_path=$report_path_log_field path_redacted=1"
     postmortem_set_private_file_mode "$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
@@ -2029,7 +2033,7 @@ EOF
 - The scripted hardening Codex pass was skipped before launch because the local Codex runtime was not writable.
 - The report was preserved and the wrapper stopped for manual relaunch instead of recursively launching Codex in the same broken environment.
 EOF
-    log_line "WARN" "postmortem.hardening skipped reason=local_codex_runtime_unwritable exit_code=$hardening_exit marker=${hardening_marker:-missing} report_path=$report_path"
+    log_line "WARN" "postmortem.hardening skipped reason=local_codex_runtime_unwritable exit_code=$hardening_exit marker=${hardening_marker:-missing} report_path=$report_path_log_field path_redacted=1"
     postmortem_set_private_file_mode "$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
@@ -2039,7 +2043,7 @@ EOF
 
   if [[ "$hardening_exit" -ne 0 || "$hardening_marker" != "HARDENING_DONE" ]]; then
     POSTMORTEM_SEQUENCE_STATUS="hardening_failed"
-    log_line "ERROR" "postmortem.hardening failed exit_code=$hardening_exit marker=${hardening_marker:-missing} expected_marker=HARDENING_DONE report_path=$report_path"
+    log_line "ERROR" "postmortem.hardening failed exit_code=$hardening_exit marker=${hardening_marker:-missing} expected_marker=HARDENING_DONE report_path=$report_path_log_field path_redacted=1"
     postmortem_set_private_file_mode "$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
@@ -4685,6 +4689,60 @@ run_issue_96_docs_contract_checks() {
   return 0
 }
 
+run_issue_94_token_placeholder_scan() {
+  local hits
+  local pattern='sk-[A-Za-z0-9._-]{20,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[0-9A-Za-z-]{10,}|eyJ[a-zA-Z0-9_./-]{20,}'
+
+  hits="$(grep -RIn --binary-files=without-match -E "$pattern" docs README.md launcher_examples tools 2>/dev/null || true)"
+  if [[ -n "$hits" ]]; then
+    log_line "WARN" "issue94.token_placeholder_scan_detected pattern=$pattern sample=$(printf '%s' "$hits" | head -n 1)"
+    return 1
+  fi
+  return 0
+}
+
+run_issue_94_docs_contract_checks() {
+  local check_rc=0
+
+  [[ "${CODEX_ISSUE_FIX_NUMBER:-}" == "94" ]] || return 0
+
+  log_line "INFO" "issue94.docs_contract_checks.start number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}") label=$(shell_quote "${CODEX_ISSUE_FIX_SELECTED_LABEL:-unknown}")"
+
+  if ! issue_96_docs_contract_check_command "security_doc_present" bash -c '[[ -s docs/security.md ]]'; then
+    check_rc=1
+  fi
+  if ! issue_96_docs_contract_check_command "security_doc_runtime_handling_heading" grep -q -n "## Logs, Transcripts, And Runtime Artifacts" docs/security.md; then
+    check_rc=1
+  fi
+  if ! issue_96_docs_contract_check_command "security_doc_do_not_commit_presence" grep -q -i "Do not commit" docs/security.md; then
+    check_rc=1
+  fi
+  if ! issue_96_docs_contract_check_command "docs_token_placeholder_scan" run_issue_94_token_placeholder_scan; then
+    check_rc=1
+  fi
+
+  if [[ "$check_rc" -ne 0 ]]; then
+    log_line "ERROR" "issue94.docs_contract_checks.failed number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
+    return "$check_rc"
+  fi
+  log_line "INFO" "issue94.docs_contract_checks.ok number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
+  return 0
+}
+
+run_issue_docs_contract_checks() {
+  case "${CODEX_ISSUE_FIX_NUMBER:-}" in
+    94)
+      run_issue_94_docs_contract_checks
+      ;;
+    96)
+      run_issue_96_docs_contract_checks
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 # `cycle.start` needs enough context for support without copying raw paths,
 # process metadata, and selection policy into every run record by default.
 upkeeper_verbose_metadata_enabled() {
@@ -5597,7 +5655,7 @@ main() {
   automation_record_cycle_start || log_line "WARN" "automation.run_record.start_failed path=$(shell_quote "${RUN_AUTOMATION_RECORD_FILE:-unknown}")"
   precontact_backup_machine_preflight_or_exit
   resolve_issue_fix_next_or_exit
-  if ! run_issue_96_docs_contract_checks; then
+  if ! run_issue_docs_contract_checks; then
     finish_cycle 70 ISSUE_FIX_DOCS_CONTRACT_CHECK_FAILED ERROR "codex_exec_started=0 number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
   fi
   lattice_init_and_doctor_or_exit
@@ -5741,7 +5799,7 @@ main() {
     if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
       local fallback_exit=0
       run_locked_fallback_cycle "primary_quota_before_run" "$(quota_public_stop_reason "$stop_reason")" || fallback_exit=$?
-      finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=primary_quota_before_run final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
+      finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=primary_quota_before_run final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=$(upkeeper_path_hmac "${POSTMORTEM_REPORT_PATH:-}") path_redacted=1"
     fi
     log_line "WARN" "quota.stop reason=\"$(quota_public_stop_reason "$stop_reason")\""
     if stop_parent_loop; then
@@ -6097,7 +6155,7 @@ main() {
         [[ -n "$fallback_child_marker" ]] || fallback_child_marker="missing"
         log_line "INFO" "primary.no_agent_quota_exhausted.fallback child_exit=$fallback_exit fallback_child_id=$fallback_child_id fallback_child_marker=$fallback_child_marker fallback_screen_session=${FALLBACK_SCREEN_SESSION_NAME:-none}"
       fi
-      finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=primary_quota_after_run final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
+      finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=primary_quota_after_run final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=$(upkeeper_path_hmac "${POSTMORTEM_REPORT_PATH:-}") path_redacted=1"
     fi
     log_line "WARN" "quota.stop phase=after_run reason=\"$(quota_public_stop_reason "$post_run_stop_reason")\" codex_exit=$codex_exit status_marker=${status_marker:-missing}"
     if stop_parent_loop; then
@@ -6124,7 +6182,7 @@ main() {
         if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK" == "1" ]] && fallback_available; then
           local fallback_exit=0
           run_locked_fallback_cycle "dirty_no_backend_task" "dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT" || fallback_exit=$?
-          finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=dirty_no_backend_task final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
+          finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=dirty_no_backend_task final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=$(upkeeper_path_hmac "${POSTMORTEM_REPORT_PATH:-}") path_redacted=1"
         fi
         log_line "WARN" "cycle.stop no backend task reported on a dirty worktree; treating this as a soft miss and continuing the outer loop"
         finish_cycle 0 NO_BACKEND_TASK_DIRTY_CONTINUE WARN "dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT codex_exit=$codex_exit"
@@ -6140,7 +6198,7 @@ main() {
       if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_BLOCKED" == "1" ]] && fallback_available; then
         local fallback_exit=0
         run_locked_fallback_cycle "blocked" "codex_exit=$codex_exit" || fallback_exit=$?
-        finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=blocked final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
+        finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=blocked final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=$(upkeeper_path_hmac "${POSTMORTEM_REPORT_PATH:-}") path_redacted=1"
       fi
       finish_cycle 2 BLOCKED WARN "codex_exit=$codex_exit"
       ;;
@@ -6154,7 +6212,7 @@ main() {
         if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
           local fallback_exit=0
           run_locked_fallback_cycle "primary_backend_usage_limit" "target_model=$CODEX_MODEL codex_exit=$codex_exit status_marker=${status_marker:-missing} session_end_state=$session_end_state blocked_until_epoch=$backend_usage_limit_reset_epoch" || fallback_exit=$?
-          finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=primary_backend_usage_limit final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
+          finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=primary_backend_usage_limit final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=$(upkeeper_path_hmac "${POSTMORTEM_REPORT_PATH:-}") path_redacted=1"
         fi
         log_line "WARN" "primary.backend_usage_limit stop target_model=$CODEX_MODEL blocked_until=$(shell_quote "$(format_epoch_local "$backend_usage_limit_reset_epoch")") action=wait_until_reset_or_switch_primary_model"
         finish_cycle 7 PRIMARY_BACKEND_USAGE_LIMIT WARN "codex_exit=$codex_exit session_end_state=$session_end_state target_model=$CODEX_MODEL blocked_until_epoch=$backend_usage_limit_reset_epoch"
@@ -6166,7 +6224,7 @@ main() {
       if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_FAILURE" == "1" ]] && fallback_available; then
         local fallback_exit=0
         run_locked_fallback_cycle "failure" "codex_exit=$codex_exit session_end_state=$session_end_state status_marker=${status_marker:-missing} status_marker_source=$status_marker_source" || fallback_exit=$?
-        finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=failure final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none}"
+        finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=failure final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=$(upkeeper_path_hmac "${POSTMORTEM_REPORT_PATH:-}") path_redacted=1"
       fi
       if [[ "$codex_exit" -ne 0 ]]; then
         if [[ "$session_end_state" == turn_aborted:* ]]; then

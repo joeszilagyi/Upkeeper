@@ -357,6 +357,30 @@ PASS_RESULT_ALLOWED_KEYS = {
     "validation_command",
     "validation_cmd",
 }
+P29_REUSE_DEBT_FIELD_GROUPS = {
+    "candidate": ("candidate", "upkeeper.pass_result:reuse_debt_candidate"),
+    "reason": ("reason", "upkeeper.pass_result:reuse_debt_reason"),
+    "owner": (
+        "owner",
+        "likely_owner",
+        "upkeeper.pass_result:reuse_debt_owner",
+        "upkeeper.pass_result:reuse_debt_likely_owner",
+    ),
+    "proof_needed": ("proof_needed", "upkeeper.pass_result:reuse_debt_proof_needed"),
+    "validation_command": (
+        "validation_command",
+        "validation_cmd",
+        "upkeeper.pass_result:reuse_debt_validation_command",
+        "upkeeper.pass_result:validation_command",
+        "upkeeper.pass_result:validation_cmd",
+    ),
+}
+P29_REUSE_DEBT_TRIGGER_FIELDS = {
+    field
+    for group_name, group_fields in P29_REUSE_DEBT_FIELD_GROUPS.items()
+    for field in group_fields
+    if group_name != "reason" or field.startswith("upkeeper.pass_result:reuse_debt_")
+}
 RAW_STORAGE_MODES = {"none", "minimal", "limited", "full"}
 RAW_STORAGE_COMPAT_MODES = RAW_STORAGE_MODES | {"debug"}
 PASS_RESULT_DEBUG_STORAGE_VALUES = {"debug", "full"}
@@ -5224,6 +5248,20 @@ def validate_pass_result_state(*, applicable: int | None, outcome: str) -> str |
     return None
 
 
+def p29_reuse_debt_missing_fields(item: dict[str, Any], pass_code: str) -> list[str]:
+    """Require durable P29 reuse-debt events to carry enough backlog context."""
+    if normalize_pass_code(pass_code) != "P29":
+        return []
+    debt_triggered = any(has_meaningful_value(item.get(key)) for key in P29_REUSE_DEBT_TRIGGER_FIELDS)
+    if not debt_triggered:
+        return []
+    missing = []
+    for group_name, keys in P29_REUSE_DEBT_FIELD_GROUPS.items():
+        if not any(has_meaningful_value(item.get(key)) for key in keys):
+            missing.append(group_name)
+    return missing
+
+
 def require_jsonl_int(raw: Any, field: str) -> int:
     if not isinstance(raw, int) or isinstance(raw, bool):
         raise TypeError(f"{field} must be an integer, got {type(raw).__name__}")
@@ -6119,6 +6157,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         decorated_marker_probe = probe_cycle_finish_rejects_decorated_status_marker()
         result["checks"]["cycle_finish_report_only_outcome"] = report_only_cycle_probe
         result["checks"]["cycle_finish_rejects_decorated_status_marker"] = decorated_marker_probe
+        p29_reuse_debt_probe = probe_p29_reuse_debt_persistence()
+        result["checks"]["p29_reuse_debt_persistence"] = p29_reuse_debt_probe
         change_note_ref_probe = probe_change_note_file_identity_validation()
         result["checks"]["change_note_file_identity_validation"] = change_note_ref_probe
         candidate_symlink_probe = probe_candidate_symlink_exclusion()
@@ -6152,6 +6192,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(decorated_marker_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(p29_reuse_debt_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         transient_temp_scope_probe = probe_cycle_finish_transient_artifact_scope()
@@ -7550,6 +7593,109 @@ def probe_cycle_finish_rejects_decorated_status_marker() -> dict[str, Any]:
         "finish_level": cycle["finish_level"] if cycle else None,
         "actual_selected_path": cycle["selected_path"] if cycle else None,
         "ok": cycle is not None and cycle["status_marker"] is None,
+    }
+
+
+def probe_p29_reuse_debt_persistence() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-p29-reuse-debt-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        (root / "runtime").mkdir(parents=True, exist_ok=True)
+        (root / "README.md").write_text("# probe\n", encoding="utf-8")
+        transcript_path = root / "runtime" / "last-message.txt"
+        transcript_path.write_text(
+            'UPKEEPER_PASS_RESULT: pass=P29 file=README.md applicable=1 outcome=blocked changed=0 regression=0 '
+            'candidate="extract shared fixture" reason="needs second caller" likely_owner=tools/upkeeper_lattice.py '
+            'proof_needed="show repeated use" validation_command="tools/validate_upkeeper.sh --quick"\n'
+            "UPKEEPER_PASS_RESULT: pass=P29 file=README.md applicable=1 outcome=blocked changed=0 regression=0 "
+            "candidate=incomplete\n",
+            encoding="utf-8",
+        )
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "delete", allow_unsafe_db=False, create_parent=True, create_if_missing=True)
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+        finally:
+            conn.close()
+        record_args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            cycle_id="cycle-p29-debt",
+            run_hash="run-p29-debt",
+            pass_code=None,
+            path=None,
+            applicable="",
+            outcome="unknown",
+            changed="",
+            regression="",
+            raw_line="",
+            attribute=[],
+            from_file=str(transcript_path),
+            selected_path="README.md",
+            planned_pass=[],
+            planned_passes="P29",
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_record_pass_result(record_args)
+        payload = load_single_json_document(stdout.getvalue()) if stdout.getvalue().strip() else {}
+        conn = connect_checked(root, db_path, "delete", allow_unsafe_db=False)
+        try:
+            repo_id = lookup_repository_id(conn, root)
+            rows = query_reuse_debt(conn, root, int(repo_id or 0), argparse.Namespace(path="README.md", owner="")) if repo_id else []
+            rejected = int(conn.execute("select count(*) from source_records where parse_status='rejected'").fetchone()[0] or 0)
+            attrs = {
+                row["key"]: row["value_text"]
+                for row in conn.execute(
+                    """
+                    select key, value_text
+                    from pass_run_attributes
+                    where namespace='upkeeper.pass_result'
+                    """
+                )
+            }
+        finally:
+            conn.close()
+    row = rows[0] if rows else {}
+    expected_attrs = {
+        "reuse_debt_candidate",
+        "reuse_debt_reason",
+        "reuse_debt_owner",
+        "reuse_debt_likely_owner",
+        "reuse_debt_proof_needed",
+        "reuse_debt_validation_command",
+    }
+    return {
+        "exit_code": exit_code,
+        "recorded": payload.get("recorded"),
+        "rejected": payload.get("rejected"),
+        "query_rows": len(rows),
+        "candidate": row.get("candidate"),
+        "reason": row.get("reason"),
+        "owner": row.get("owner"),
+        "likely_owner": row.get("likely_owner"),
+        "proof_needed": row.get("proof_needed"),
+        "validation_command": row.get("validation_command"),
+        "rejected_source_records": rejected,
+        "attribute_keys_present": sorted(key for key in expected_attrs if has_meaningful_value(attrs.get(key))),
+        "ok": all(
+            (
+                exit_code == EXIT_SUCCESS,
+                payload.get("recorded") == 1,
+                payload.get("rejected") == 1,
+                len(rows) == 1,
+                row.get("candidate") == "extract shared fixture",
+                row.get("reason") == "needs second caller",
+                row.get("owner") == "tools/upkeeper_lattice.py",
+                row.get("likely_owner") == "tools/upkeeper_lattice.py",
+                row.get("proof_needed") == "show repeated use",
+                row.get("validation_command") == "tools/validate_upkeeper.sh --quick",
+                rejected == 1,
+                set(attrs) >= expected_attrs,
+            )
+        ),
     }
 
 
@@ -9652,6 +9798,47 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
                     )
                     rejected_count += 1
                     continue
+                missing_reuse_debt_fields = p29_reuse_debt_missing_fields(item, pass_code)
+                if missing_reuse_debt_fields:
+                    rejected_pairs.add((pass_code, path))
+                    rejection = sanitize_rejected_pass_result(
+                        root,
+                        {
+                            "line_number": item.get("line_number", 0),
+                            "reason": "incomplete_p29_reuse_debt",
+                            "fields": item,
+                        },
+                        selected_path=trusted_selected_path,
+                        preserve_raw=preserve_raw,
+                    )
+                    rejection["validation_error"] = (
+                        "P29 reuse debt requires candidate, reason, owner or likely_owner, "
+                        "proof_needed, and validation_command"
+                    )
+                    rejection["missing_fields"] = missing_reuse_debt_fields
+                    line_number = 0
+                    try:
+                        line_number = int(item.get("line_number", 0) or 0)
+                    except (TypeError, ValueError):
+                        line_number = 0
+                    raw_line = item.get("raw_line", "") if preserve_raw else ""
+                    ensure_source_record(
+                        conn,
+                        root,
+                        repo_id,
+                        "transcript",
+                        source_path=args.from_file,
+                        raw_ref=f"pass_result_rejected:{item.get('line_number')}",
+                        raw_text=raw_line if preserve_raw else None,
+                        parsed=rejection,
+                        parse_status="rejected",
+                        fact_confidence="rejected",
+                        source_line=line_number,
+                        raw_sha256=sha256_text(raw_line) if preserve_raw else sha256_text(str(line_number)),
+                        raw_storage_mode=raw_storage_mode,
+                    )
+                    rejected_count += 1
+                    continue
                 run_id = record_one_pass_result(
                     conn,
                     root,
@@ -9700,6 +9887,14 @@ def command_record_pass_result(args: argparse.Namespace) -> int:
             validation_error = validate_pass_result_state(applicable=applicable, outcome=outcome)
             if validation_error:
                 fail(f"invalid pass-result state: {validation_error}", EXIT_USAGE)
+            missing_reuse_debt_fields = p29_reuse_debt_missing_fields(attrs, pass_code)
+            if missing_reuse_debt_fields:
+                fail(
+                    "P29 reuse debt requires candidate, reason, owner or likely_owner, "
+                    "proof_needed, and validation_command; missing: "
+                    + ",".join(missing_reuse_debt_fields),
+                    EXIT_USAGE,
+                )
             run_id = record_one_pass_result(
                 conn,
                 root,
@@ -13272,7 +13467,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--worktree-untracked-files", choices=WORKTREE_SNAPSHOT_UNTRACKED_MODES, default=None)
     p.set_defaults(func=command_record_worktree_snapshot)
 
-    p = sub.add_parser("record-pass-result")
+    p = sub.add_parser(
+        "record-pass-result",
+        description=(
+            "Record additive review pass evidence. Complete P29 reuse-debt markers are stored "
+            "as local Lattice reuse_debt events; promote them to tracked work by querying "
+            "`query reuse-debt` and filing the chosen backlog item outside runtime evidence."
+        ),
+    )
     add_cycle_args(p, required=False)
     p.add_argument("--pass", dest="pass_code")
     p.add_argument("--file", dest="path")
@@ -13282,7 +13484,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--changed", default="")
     p.add_argument("--regression", default="")
     p.add_argument("--raw-line", default="")
-    p.add_argument("--attribute", action="append", default=[])
+    p.add_argument(
+        "--attribute",
+        action="append",
+        default=[],
+        help=(
+            "extra namespace:key=value attribute; P29 reuse debt requires candidate, reason, "
+            "owner or likely_owner, proof_needed, and validation_command"
+        ),
+    )
     p.add_argument("--from-file", default="")
     p.add_argument("--selected-path", default="")
     p.add_argument("--planned-pass", action="append", default=[])
@@ -13404,7 +13614,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_query_common(query_sub.add_parser("explain-selection"))
     query_sub.choices["explain-selection"].add_argument("--cycle", dest="cycle_id")
     query_sub.choices["explain-selection"].add_argument("--path")
-    add_query_common(query_sub.add_parser("reuse-debt"))
+    add_query_common(
+        query_sub.add_parser(
+            "reuse-debt",
+            description=(
+                "List local P29 reuse-debt backlog evidence with candidate, owner, reason, "
+                "proof needed, and validation command for optional promotion to tracked work."
+            ),
+        )
+    )
     query_sub.choices["reuse-debt"].add_argument("--path")
     query_sub.choices["reuse-debt"].add_argument("--owner")
     add_query_common(query_sub.add_parser("metrics"))

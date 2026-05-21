@@ -4831,20 +4831,21 @@ def _extract_shell_collection(text: str, name: str) -> tuple[str, ...] | None:
     return None
 
 
-def _command_kind_values_from_file(path: Path) -> tuple[str, ...] | None:
+def _command_kind_definitions_from_file(path: Path) -> list[tuple[str, ...]]:
     if not path.exists():
-        return None
+        return []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return None
-    body = _extract_function_body(text, "command_kind")
-    if not body:
-        return None
-    values = tuple(sorted(_extract_return_literals(body)))
-    if not values:
-        return None
-    return tuple(sorted({value.lower() for value in values if value}))
+        return []
+
+    definitions = []
+    for body in _extract_function_bodies(text, "command_kind"):
+        values = tuple(sorted(_extract_return_literals(body)))
+        if not values:
+            return []
+        definitions.append(tuple(sorted({value.lower() for value in values if value})))
+    return definitions
 
 
 def _tool_failure_kind_contract_issues(root: Path) -> list[str]:
@@ -4853,10 +4854,15 @@ def _tool_failure_kind_contract_issues(root: Path) -> list[str]:
         return issues
     path_values: list[tuple[Path, tuple[str, ...]]] = []
     for path in (root / p for p in TOOL_FAILURE_KIND_ALLOWLIST_PATHS):
-        kind_values = _command_kind_values_from_file(path)
-        if kind_values is None:
+        kind_definitions = _command_kind_definitions_from_file(path)
+        if not kind_definitions:
             issues.append(f"{path} missing/invalid command_kind return map")
             continue
+        unique_kind_values = sorted(set(kind_definitions))
+        if len(unique_kind_values) > 1:
+            issues.append(f"{path} command_kind definitions differ: {kind_definitions}")
+            continue
+        kind_values = unique_kind_values[0]
         path_values.append((path, kind_values))
         extra = sorted(set(kind_values) - KNOWN_TOOL_FAILURE_KINDS)
         if extra:
@@ -4891,14 +4897,24 @@ def _startup_anomaly_allowlist_contract_issues(source_root: Path) -> list[str]:
         return [f"cannot read {WORKTREE_STATE_BASH}"]
     discovered: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
     for function_name in ("write_git_status_snapshot_json", "startup_anomaly_gate_changed_path_violations"):
-        body = _extract_function_body(text, function_name)
-        if not body:
+        function_bodies = _extract_function_bodies(text, function_name)
+        if not function_bodies:
             continue
-        extracted = _extract_allowed_lists_from_worktree_state(body)
-        if extracted is None:
+        extracted_values: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+        for body in function_bodies:
+            extracted = _extract_allowed_lists_from_worktree_state(body)
+            if extracted is None:
+                issues.append(f"{WORKTREE_STATE_BASH}:{function_name} missing allowed_exact/allowed_prefixes")
+                continue
+            extracted_values.append(extracted)
+        if not extracted_values:
             issues.append(f"{WORKTREE_STATE_BASH}:{function_name} missing allowed_exact/allowed_prefixes")
             continue
-        exact_values, prefix_values = extracted
+        unique_extracted = sorted(set(extracted_values))
+        if len(unique_extracted) > 1:
+            issues.append(f"{WORKTREE_STATE_BASH}:{function_name} allowed_exact/allowed_prefixes definitions differ across duplicated functions")
+            continue
+        exact_values, prefix_values = unique_extracted[0]
         if not exact_values:
             issues.append(f"{WORKTREE_STATE_BASH}:{function_name} has empty allowed_exact")
         for value in prefix_values:
@@ -4907,6 +4923,10 @@ def _startup_anomaly_allowlist_contract_issues(source_root: Path) -> list[str]:
         for value in exact_values:
             if not value or "/" in value and value.startswith("/"):
                 issues.append(f"{WORKTREE_STATE_BASH}:{function_name} disallow absolute allowed_exact entry: {value}")
+        if len(extracted_values) > 1:
+            issues.append(
+                f"{WORKTREE_STATE_BASH}:{function_name} has {len(function_bodies)} duplicated definitions; all are identical"
+            )
         discovered.append((function_name, exact_values, prefix_values))
     if not discovered:
         issues.append(f"{WORKTREE_STATE_BASH} command missing allowed path tables")
@@ -5007,8 +5027,14 @@ def _extract_embedded_python_collections(text: str, name: str) -> list[tuple[str
 
 
 def _extract_function_body(text: str, function_name: str) -> str:
+    bodies = _extract_function_bodies(text, function_name)
+    return bodies[0] if bodies else ""
+
+
+def _extract_function_bodies(text: str, function_name: str) -> list[str]:
     lines = text.splitlines()
     python_marker = re.compile(rf"^[ \t]*def\s+{re.escape(function_name)}\s*\(")
+    bodies: list[str] = []
     for idx, line in enumerate(lines):
         if not python_marker.match(line):
             continue
@@ -5021,7 +5047,7 @@ def _extract_function_body(text: str, function_name: str) -> str:
                 body_lines.append(body)
                 continue
             break
-        return "\n".join(body_lines)
+        bodies.append("\n".join(body_lines))
 
     shell_marker = re.compile(
         rf"^[ \t]*(?:function[ \t]+)?{re.escape(function_name)}\s*\(\)\s*\{{",
@@ -5051,9 +5077,8 @@ def _extract_function_body(text: str, function_name: str) -> str:
                 elif ch == "}":
                     depth -= 1
                     if depth == 0:
-                        return source[match.start() : pos + 1]
-        return ""
-    return ""
+                        bodies.append(source[match.start() : pos + 1])
+    return bodies
 
 
 def _extract_return_literals(body: str) -> set[str]:

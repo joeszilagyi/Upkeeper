@@ -2755,7 +2755,10 @@ def connect(
     create_parent: bool = False,
     create_if_missing: bool = False,
     emit_errors: bool = True,
+    read_only: bool = False,
 ) -> sqlite3.Connection:
+    if create_if_missing and read_only:
+        raise_command_error("read-only DB open cannot create a missing database", EXIT_DB_UNAVAILABLE, emit=emit_errors)
     try:
         existing = db_path.lstat()
     except FileNotFoundError:
@@ -2795,7 +2798,8 @@ def connect(
     if not create_if_missing:
         # Fail closed when callers expect an existing DB so a missing file never
         # becomes a newly created empty SQLite database during open-time races.
-        connect_target = f"{db_path.resolve().as_uri()}?mode=rw"
+        uri_mode = "ro" if read_only else "rw"
+        connect_target = f"{db_path.resolve().as_uri()}?mode={uri_mode}"
         connect_kwargs["uri"] = True
     try:
         conn = sqlite3.connect(connect_target, **connect_kwargs)
@@ -2804,6 +2808,9 @@ def connect(
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
+    if read_only:
+        conn.execute("PRAGMA query_only=ON")
+        return conn
     requested = journal_mode.lower()
     if requested not in {"delete", "wal"}:
         requested = "delete"
@@ -2827,6 +2834,7 @@ def connect_checked(
     allow_unsafe_db: bool,
     create_parent: bool = False,
     create_if_missing: bool = False,
+    read_only: bool = False,
 ) -> sqlite3.Connection:
     check_path_safe(root, db_path, journal_mode, allow_unsafe_db)
     return connect(
@@ -2834,7 +2842,13 @@ def connect_checked(
         journal_mode,
         create_parent=create_parent,
         create_if_missing=create_if_missing,
+        read_only=read_only,
     )
+
+
+def table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute("select 1 from sqlite_master where type='table' and name=? limit 1", (table,)).fetchone()
+    return row is not None
 
 
 def table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
@@ -6087,6 +6101,11 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if not bool(recover_primary_sources_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
+        recover_backup_first_probe = probe_recover_backup_first_preserves_duplicate_git_changes()
+        result["checks"]["recover_backup_first_preserves_duplicate_git_changes"] = recover_backup_first_probe
+        if not bool(recover_backup_first_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
         if not bool(recover_import_conflicts_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
@@ -7932,6 +7951,173 @@ def probe_recover_requires_primary_sources() -> dict[str, Any]:
             "report_status": report.get("status"),
             "report_sources": report.get("sources"),
             "backup_count": backup_count,
+            "ok": ok,
+        }
+
+
+def seed_recovery_duplicate_git_change_db(root: Path, db_path: Path) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    chmod_private(db_path.parent, is_dir=True, created_by_invocation=True)
+    now = epoch_now()
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+        with conn:
+            for sql in CREATE_TABLE_SQL:
+                conn.execute(sql)
+            conn.execute(
+                """
+                insert into repositories(repo_id, root_path, created_epoch, last_seen_epoch)
+                values (1, ?, ?, ?)
+                """,
+                (str(root), now, now),
+            )
+            conn.execute(
+                """
+                insert into source_records(source_id, repo_id, source_kind, imported_epoch, parse_status)
+                values (1, 1, 'recovery', ?, 'parsed')
+                """,
+                (now,),
+            )
+            conn.execute(
+                "insert into git_commits(commit_id, repo_id, sha, source_id) values (1, 1, ?, 1)",
+                ("a" * 40,),
+            )
+            conn.execute(
+                """
+                insert into files(file_id, repo_id, canonical_path, first_seen_epoch, last_seen_epoch, current_path)
+                values (1, 1, 'a.py', ?, ?, 'a.py')
+                """,
+                (now, now),
+            )
+            for change_id in (1, 2):
+                conn.execute(
+                    """
+                    insert into git_file_changes(
+                      git_file_change_id, repo_id, commit_id, file_id, status, path, old_path,
+                      additions, deletions, change_epoch, source_id
+                    ) values (?, 1, 1, 1, 'M', 'a.py', '', 1, 0, ?, 1)
+                    """,
+                    (change_id, now),
+                )
+    finally:
+        conn.close()
+    chmod_private(db_path)
+
+
+def probe_recover_backup_first_preserves_duplicate_git_changes() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recover-backup-first-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        seed_recovery_duplicate_git_change_db(root, db_path)
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            backup_first=True,
+            max_conflicts=999999,
+            limit=None,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_recover(args)
+        backup_paths = sorted((db_path.parent / "backups").glob("*.sqlite3"))
+        backup_duplicate_count = None
+        backup_provenance_count = 0
+        backup_recovery_source_count = 0
+        recovered_duplicate_count = None
+        recovery_event_details: dict[str, Any] = {}
+        artifact_ref_count = 0
+        if backup_paths:
+            backup_conn = sqlite3.connect(str(backup_paths[0]))
+            try:
+                backup_duplicate_count = int(
+                    backup_conn.execute(
+                        """
+                        select count(*)
+                        from git_file_changes
+                        where repo_id=1 and commit_id=1 and path='a.py' and coalesce(old_path, '')='' and status='M'
+                        """
+                    ).fetchone()[0]
+                )
+                backup_provenance_count = int(
+                    backup_conn.execute(
+                        """
+                        select count(*)
+                        from artifact_refs
+                        where artifact_kind='backup' and details_json like '%pre_recovery%'
+                        """
+                    ).fetchone()[0]
+                )
+                backup_recovery_source_count = int(
+                    backup_conn.execute(
+                        """
+                        select count(*)
+                        from source_records
+                        where source_kind='recovery' and raw_ref='recover'
+                        """
+                    ).fetchone()[0]
+                )
+            finally:
+                backup_conn.close()
+        recovered_conn = sqlite3.connect(str(db_path))
+        try:
+            recovered_duplicate_count = int(
+                recovered_conn.execute(
+                    """
+                    select count(*)
+                    from git_file_changes
+                    where repo_id=1 and commit_id=1 and path='a.py' and coalesce(old_path, '')='' and status='M'
+                    """
+                ).fetchone()[0]
+            )
+            event_row = recovered_conn.execute(
+                """
+                select details_json
+                from file_events
+                where event_kind='recovery_git_file_changes_deduped'
+                order by event_id desc
+                limit 1
+                """
+            ).fetchone()
+            if event_row and event_row[0]:
+                recovery_event_details = json.loads(event_row[0])
+            artifact_ref_count = int(
+                recovered_conn.execute(
+                    "select count(*) from artifact_refs where artifact_kind='backup'"
+                ).fetchone()[0]
+            )
+        finally:
+            recovered_conn.close()
+        payload_text = stdout.getvalue().strip()
+        payload = load_single_json_document(payload_text) if payload_text else {}
+        ok = all(
+            (
+                exit_code == EXIT_RECOVERY_INCOMPLETE,
+                payload.get("status") == "incomplete",
+                len(backup_paths) == 1,
+                backup_duplicate_count == 2,
+                backup_provenance_count == 1,
+                backup_recovery_source_count == 1,
+                recovered_duplicate_count == 1,
+                recovery_event_details.get("deleted_git_file_change_count") == 1,
+                recovery_event_details.get("deleted_git_file_change_ids") == [2],
+                artifact_ref_count == 1,
+            )
+        )
+        return {
+            "exit_code": exit_code,
+            "status": payload.get("status"),
+            "backup_count": len(backup_paths),
+            "backup_duplicate_count": backup_duplicate_count,
+            "backup_provenance_count": backup_provenance_count,
+            "backup_recovery_source_count": backup_recovery_source_count,
+            "recovered_duplicate_count": recovered_duplicate_count,
+            "deleted_git_file_change_ids": recovery_event_details.get("deleted_git_file_change_ids"),
+            "artifact_ref_count": artifact_ref_count,
             "ok": ok,
         }
 
@@ -11127,6 +11313,47 @@ def create_backup(
     return backup_path
 
 
+def record_pre_recovery_backup_provenance(
+    root: Path,
+    backup_path: Path,
+    *,
+    raw_storage_mode: str | None = None,
+) -> None:
+    backup_conn = sqlite3.connect(str(backup_path))
+    try:
+        backup_conn.row_factory = sqlite3.Row
+        backup_conn.execute("PRAGMA busy_timeout=5000")
+        backup_conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            with backup_conn:
+                repo_id = ensure_repository(backup_conn, root)
+                source_id = ensure_source_record(
+                    backup_conn,
+                    root,
+                    repo_id,
+                    "recovery",
+                    raw_ref="recover",
+                    parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
+                    raw_storage_mode=raw_storage_mode,
+                )
+                create_artifact_ref(
+                    backup_conn,
+                    root,
+                    repo_id,
+                    cycle_pk=None,
+                    source_id=source_id,
+                    artifact_kind="backup",
+                    path=str(backup_path),
+                    details={"backup_event": "pre_recovery", "recorded_in": "backup"},
+                )
+        except sqlite3.OperationalError:
+            # Some recovery inputs are pre-schema or partially damaged. The
+            # safety copy is still useful even when it cannot store provenance.
+            pass
+    finally:
+        backup_conn.close()
+
+
 def command_backup(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
@@ -11323,6 +11550,26 @@ def command_recover(args: argparse.Namespace) -> int:
     raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     preexisting_db = db_path.exists()
     backup_first = True if args.backup_first is None else bool(args.backup_first)
+    backup_path = None
+    if backup_first and preexisting_db:
+        backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
+        backup_source_conn = connect_checked(
+            root,
+            db_path,
+            args.journal_mode,
+            allow_unsafe_db=args.allow_unsafe_db,
+            read_only=True,
+        )
+        try:
+            backup_path = create_backup(
+                backup_source_conn,
+                root,
+                db_path,
+                output=str(backup_path),
+                allow_overwrite=False,
+            )
+        finally:
+            backup_source_conn.close()
     conn = connect_checked(
         root,
         db_path,
@@ -11333,9 +11580,10 @@ def command_recover(args: argparse.Namespace) -> int:
     )
     sources: list[str] = []
     artifact_sources: list[str] = []
-    backup_path = None
-    init_schema(conn, root, raw_storage_mode=raw_storage_mode, run_git_change_dedup=False)
     recovery_dedup_removed_ids: list[int] = []
+    if table_exists(conn, "git_file_changes"):
+        recovery_dedup_removed_ids = git_file_change_ids_pruned_by_dedupe(conn)
+    init_schema(conn, root, raw_storage_mode=raw_storage_mode)
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -11347,52 +11595,33 @@ def command_recover(args: argparse.Namespace) -> int:
             parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
             raw_storage_mode=raw_storage_mode,
         )
-        recovery_dedup_removed_ids = git_file_change_ids_pruned_by_dedupe(conn)
+        if backup_path is not None:
+            record_pre_recovery_backup_provenance(
+                root,
+                backup_path,
+                raw_storage_mode=raw_storage_mode,
+            )
+            create_artifact_ref(
+                conn,
+                root,
+                repo_id,
+                cycle_pk=None,
+                source_id=source_id,
+                artifact_kind="backup",
+                path=str(backup_path),
+                details={"backup_event": "pre_recovery", "recorded_in": "recovered_db"},
+            )
         if recovery_dedup_removed_ids:
-            deduped_git_change_groups = dedupe_git_file_changes(conn)
-            if deduped_git_change_groups:
-                record_file_event(
-                    conn,
-                    repo_id,
-                    "recovery_git_file_changes_deduped",
-                    source_id=source_id,
-                    details={
-                        "deleted_git_file_change_count": len(recovery_dedup_removed_ids),
-                        "deleted_git_file_change_ids": recovery_dedup_removed_ids,
-                    },
-                )
-    if backup_first and preexisting_db:
-        backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
-        backup_path = create_backup(
-            conn,
-            root,
-            db_path,
-            output=str(backup_path),
-            allow_overwrite=False,
-        )
-        backup_conn = sqlite3.connect(str(backup_path))
-        try:
-            backup_conn.row_factory = sqlite3.Row
-            backup_conn.execute("PRAGMA busy_timeout=5000")
-            backup_conn.execute("PRAGMA foreign_keys=ON")
-            try:
-                create_artifact_ref(
-                    backup_conn,
-                    root,
-                    repo_id,
-                    cycle_pk=None,
-                    source_id=source_id,
-                    artifact_kind="backup",
-                    path=str(backup_path),
-                    details={"backup_event": "pre_recovery", "recorded_in": "backup"},
-                )
-                backup_conn.commit()
-            except sqlite3.OperationalError:
-                # Backup copy may be pre-schema in some recovery scenarios; keep
-                # the recovery moving when artifact lineage tables are absent.
-                pass
-        finally:
-            backup_conn.close()
+            record_file_event(
+                conn,
+                repo_id,
+                "recovery_git_file_changes_deduped",
+                source_id=source_id,
+                details={
+                    "deleted_git_file_change_count": len(recovery_dedup_removed_ids),
+                    "deleted_git_file_change_ids": recovery_dedup_removed_ids,
+                },
+            )
     conn.close()
     status = "ok"
     exit_code = EXIT_SUCCESS

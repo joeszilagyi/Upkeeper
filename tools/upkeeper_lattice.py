@@ -6135,6 +6135,10 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["recover_requires_primary_sources"] = recover_primary_sources_probe
         recover_import_conflicts_probe = probe_recover_propagates_import_conflicts()
         result["checks"]["recover_propagates_import_conflicts"] = recover_import_conflicts_probe
+        import_repo_mismatch_probe = probe_import_jsonl_rejects_repo_identity_mismatch()
+        result["checks"]["import_jsonl_rejects_repo_identity_mismatch"] = import_repo_mismatch_probe
+        import_conflicted_fk_probe = probe_import_jsonl_rejects_unmapped_conflicted_parent_fk()
+        result["checks"]["import_jsonl_rejects_unmapped_conflicted_parent_fk"] = import_conflicted_fk_probe
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
@@ -6182,6 +6186,12 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(recover_import_conflicts_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(import_repo_mismatch_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(import_conflicted_fk_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
@@ -8280,6 +8290,226 @@ def probe_recover_propagates_import_conflicts() -> dict[str, Any]:
             "report_import_results": report_import_results,
             "conflict_resolution": conflict_row[0] if conflict_row is not None else None,
             "conflict_details_resolution": conflict_details.get("resolution"),
+            "ok": ok,
+        }
+
+
+def probe_import_jsonl_rejects_repo_identity_mismatch() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-import-repo-mismatch-") as tmpdir:
+        temp_root = Path(tmpdir).resolve()
+        source_root = temp_root / "source"
+        dest_root = temp_root / "dest"
+        for root in (source_root, dest_root):
+            root.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        source_context = repo_identity_context(source_root)
+        source_identity = {
+            "repo_id": "1",
+            "repo_key": repo_identity_stable_key(source_root, source_context[1]),
+            "root_path": protected_repo_path(source_context, str(source_root)),
+        }
+        payload = {
+            "file_id": 1,
+            "repo_id": 1,
+            "canonical_path": "from-source.py",
+            "first_seen_epoch": 1,
+            "last_seen_epoch": 1,
+            "current_path": "from-source.py",
+            "current_state": "active",
+        }
+        export_path = temp_root / "source-export.jsonl"
+        export_path.write_text(
+            json_dumps(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "row_type": "files",
+                    "row_version": SCHEMA_ROW_VERSION,
+                    "logical_key": "files:1",
+                    "repo_identity": source_identity,
+                    "payload": payload,
+                    "payload_sha256": sha256_text(json_dumps(payload)),
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        dest_db = dest_root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        dest_db.parent.mkdir(parents=True, exist_ok=True)
+        chmod_private(dest_db.parent, is_dir=True, created_by_invocation=True)
+        conn = sqlite3.connect(str(dest_db))
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+            init_schema(conn, dest_root, raw_storage_mode="minimal")
+            with conn:
+                ensure_repository(conn, dest_root)
+        finally:
+            conn.close()
+        args = argparse.Namespace(
+            root=str(dest_root),
+            db=str(dest_db),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            path=str(export_path),
+            max_conflicts=999999,
+            anonymized_archive=False,
+            redact_raw=True,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_import_jsonl(args)
+        payload_text = stdout.getvalue().strip()
+        result = load_single_json_document(payload_text) if payload_text else {}
+        imported_files = 0
+        if dest_db.exists():
+            conn = sqlite3.connect(str(dest_db))
+            try:
+                imported_files = int(
+                    conn.execute("select count(*) from files where current_path='from-source.py'").fetchone()[0]
+                )
+            finally:
+                conn.close()
+        ok = all(
+            (
+                exit_code == EXIT_INTEGRITY,
+                result.get("status") == "unavailable",
+                result.get("reason") in {"repo_identity_mismatch", "repo_root_path_mismatch"},
+                imported_files == 0,
+            )
+        )
+        return {
+            "exit_code": exit_code,
+            "status": result.get("status"),
+            "reason": result.get("reason"),
+            "imported_files": imported_files,
+            "ok": ok,
+        }
+
+
+def probe_import_jsonl_rejects_unmapped_conflicted_parent_fk() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-import-fk-map-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        chmod_private(db_path.parent, is_dir=True, created_by_invocation=True)
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+            init_schema(conn, root, raw_storage_mode="minimal")
+            repo_id = ensure_repository(conn, root)
+            with conn:
+                conn.execute(
+                    """
+                    insert into files(file_id, repo_id, canonical_path, first_seen_epoch, last_seen_epoch, current_path, current_state)
+                    values (1, ?, 'local.py', 1, 1, 'local.py', 'active')
+                    """,
+                    (repo_id,),
+                )
+        finally:
+            conn.close()
+        context = repo_identity_context(root)
+        repo_identity = {
+            "repo_id": str(repo_id),
+            "repo_key": repo_identity_stable_key(root, context[1]),
+            "root_path": protected_repo_path(context, str(root)),
+        }
+
+        def _row(table: str, logical_key: str, payload: dict[str, Any]) -> str:
+            return json_dumps(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "row_type": table,
+                    "row_version": SCHEMA_ROW_VERSION,
+                    "logical_key": logical_key,
+                    "repo_identity": repo_identity,
+                    "payload": payload,
+                    "payload_sha256": sha256_text(json_dumps(payload)),
+                }
+            )
+
+        incoming_file = {
+            "file_id": 1,
+            "repo_id": repo_id,
+            "canonical_path": "incoming.py",
+            "first_seen_epoch": 2,
+            "last_seen_epoch": 2,
+            "current_path": "incoming.py",
+            "current_state": "active",
+        }
+        incoming_cycle = {
+            "cycle_pk": 2,
+            "repo_id": repo_id,
+            "cycle_id": "incoming-cycle",
+            "run_hash": "incoming-run",
+            "selected_file_id": 1,
+            "selected_path": "incoming.py",
+        }
+        export_path = root / "incoming.jsonl"
+        export_path.write_text(
+            _row("files", "files:1", incoming_file) + "\n" + _row("cycles", "cycles:2", incoming_cycle) + "\n",
+            encoding="utf-8",
+        )
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            path=str(export_path),
+            max_conflicts=999999,
+            anonymized_archive=False,
+            redact_raw=True,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_import_jsonl(args)
+        result_text = stdout.getvalue().strip()
+        result = load_single_json_document(result_text) if result_text else {}
+        conn = sqlite3.connect(str(db_path))
+        try:
+            grafted_cycles = int(
+                conn.execute("select count(*) from cycles where cycle_id='incoming-cycle' and selected_file_id=1").fetchone()[0]
+            )
+            deferred_conflicts = int(
+                conn.execute(
+                    """
+                    select count(*)
+                    from lattice_import_conflicts
+                    where row_type='cycles' and resolution='integrity_error:deferred_foreign_key'
+                    """
+                ).fetchone()[0]
+            )
+            parent_conflicts = int(
+                conn.execute(
+                    """
+                    select count(*)
+                    from lattice_import_conflicts
+                    where row_type='files' and resolution='kept_existing'
+                    """
+                ).fetchone()[0]
+            )
+        finally:
+            conn.close()
+        ok = all(
+            (
+                exit_code == EXIT_SUCCESS,
+                result.get("status") == "conflicts",
+                int(result.get("conflicts", 0)) >= 2,
+                grafted_cycles == 0,
+                deferred_conflicts == 1,
+                parent_conflicts == 1,
+            )
+        )
+        return {
+            "exit_code": exit_code,
+            "status": result.get("status"),
+            "conflicts": result.get("conflicts"),
+            "grafted_cycles": grafted_cycles,
+            "deferred_conflicts": deferred_conflicts,
+            "parent_conflicts": parent_conflicts,
             "ok": ok,
         }
 
@@ -10709,6 +10939,12 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
     incoming_repo_identity: dict[str, str] = {}
     saw_unidentified_structured_row = False
     saw_malformed_or_unsupported_row = False
+    _FOREIGN_KEY_COLUMNS_BY_TABLE: dict[str, list[tuple[str, str, str]]] = {}
+    _SOURCE_TO_IMPORTED_IDS: dict[str, dict[int, int]] = {}
+    _STAGED_SOURCE_IDS_BY_TABLE: dict[str, set[int]] = {}
+
+    class UnresolvedImportForeignKey(ValueError):
+        pass
 
     def _extract_repo_identity(raw_identity: Any) -> dict[str, str]:
         if not isinstance(raw_identity, dict):
@@ -10805,14 +11041,17 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
         for child_col, parent_table, _ in _table_foreign_key_references(table_name):
             if child_col not in mapped_payload:
                 continue
+            if parent_table == "repositories":
+                continue
             source_parent_id = _as_int_id(mapped_payload.get(child_col))
             if source_parent_id is None:
                 continue
             parent_map = _SOURCE_TO_IMPORTED_IDS.get(parent_table)
-            if parent_map is None:
-                continue
-            if source_parent_id in parent_map:
+            if parent_map is not None and source_parent_id in parent_map:
                 mapped_payload[child_col] = parent_map[source_parent_id]
+                continue
+            if source_parent_id in _STAGED_SOURCE_IDS_BY_TABLE.get(parent_table, set()):
+                raise UnresolvedImportForeignKey(f"{table_name}.{child_col}->{parent_table}:{source_parent_id}")
         return mapped_payload
 
     def _record_id_mapping(table_name: str, source_id: int | None, destination_id: int | None) -> None:
@@ -10868,8 +11107,6 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
         print_json({"status": "unavailable", "reason": "missing_repo_identity", "path": str(input_path)})
         return EXIT_INTEGRITY
 
-    _FOREIGN_KEY_COLUMNS_BY_TABLE: dict[str, list[tuple[str, str, str]]] = {}
-    _SOURCE_TO_IMPORTED_IDS: dict[str, dict[int, int]] = {}
     with conn:
         repo_id = ensure_repository(conn, root)
         context = repo_identity_context(root)
@@ -11122,6 +11359,9 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 )
                 continue
             incoming_semantic_hash = sha256_text(json_dumps(semantic_import_payload(table, filtered)))
+            source_pk = _as_int_id(filtered.get(pk)) if pk else None
+            if source_pk is not None:
+                _STAGED_SOURCE_IDS_BY_TABLE.setdefault(str(table), set()).add(source_pk)
             staged_import_rows.append(
                 {
                     "mode": "insert",
@@ -11132,7 +11372,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     "table": table,
                     "payload_columns": columns,
                     "payload_pk": pk,
-                    "source_pk": _as_int_id(filtered.get(pk)) if pk else None,
+                    "source_pk": source_pk,
                     "filtered_payload": filtered,
                 }
             )
@@ -11211,7 +11451,6 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                         existing = conn.execute(f"select * from {table} where {pk}=?", (mapped_filtered[pk],)).fetchone()
                     if existing:
                         destination_pk = _as_int_id(existing[pk]) if pk else None
-                        _record_id_mapping(table, source_pk, destination_pk)
                         existing_payload = semantic_import_payload(table, {key: existing[key] for key in columns})
                         existing_hash = sha256_text(json_dumps(existing_payload))
                         incoming_compare_payload = align_redacted_import_compare_payload(
@@ -11220,6 +11459,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                         )
                         incoming_compare_hash = sha256_text(json_dumps(incoming_compare_payload))
                         if existing_hash == incoming_compare_hash:
+                            _record_id_mapping(table, source_pk, destination_pk)
                             duplicates += 1
                             continue
                         conflicts += 1
@@ -11250,6 +11490,8 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                             pass_file_id = 0
                         if pass_file_id > 0:
                             refresh_pass_rollup_file_ids.add(pass_file_id)
+                except UnresolvedImportForeignKey:
+                    next_round_rows.append(staged)
                 except sqlite3.IntegrityError as exc:
                     if _is_foreign_key_integrity_error(exc):
                         next_round_rows.append(staged)

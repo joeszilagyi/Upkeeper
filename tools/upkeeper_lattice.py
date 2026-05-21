@@ -3364,6 +3364,8 @@ def ensure_extension_facts_identity_index(conn: sqlite3.Connection) -> int:
         indexes = {row["name"] for row in conn.execute("pragma index_list(extension_facts)").fetchall()}
     except sqlite3.Error:
         return 0
+    expected_index_columns = ("namespace", "key", "subject_type", "subject_pk")
+    index_name = "idx_extension_facts_identity"
     duplicate_groups = 0
     try:
         duplicate_groups = int(
@@ -3381,6 +3383,21 @@ def ensure_extension_facts_identity_index(conn: sqlite3.Connection) -> int:
         )
     except sqlite3.Error:
         return 0
+    if index_name in indexes:
+        try:
+            existing_columns = tuple(
+                row["name"]
+                for row in conn.execute(f"pragma index_info({index_name})").fetchall()
+                if row["name"]
+            )
+        except sqlite3.Error:
+            existing_columns = ()
+        if existing_columns and existing_columns != expected_index_columns:
+            try:
+                conn.execute(f"DROP INDEX IF EXISTS {index_name}")
+                indexes.discard(index_name)
+            except sqlite3.Error:
+                return duplicate_groups
     if duplicate_groups:
         try:
             conn.execute(
@@ -3421,11 +3438,11 @@ def ensure_extension_facts_identity_index(conn: sqlite3.Connection) -> int:
             )
         except sqlite3.Error:
             duplicate_groups = 0
-    if "idx_extension_facts_identity" in indexes:
+    if index_name in indexes:
         return duplicate_groups
     try:
         conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_extension_facts_identity ON extension_facts(namespace, key, subject_type, subject_pk)"
+            f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} ON extension_facts(namespace, key, subject_type, subject_pk)"
         )
     except sqlite3.Error:
         return duplicate_groups

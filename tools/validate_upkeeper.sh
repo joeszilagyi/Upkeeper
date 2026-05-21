@@ -827,6 +827,92 @@ PY
     fail "backlog launcher did not explain PR-check gate failure before next issue"
 }
 
+check_prior_run_anomaly_custody_contract() {
+  local temp_dir obligation_count selected_json prompt_file second_count
+
+  log "checking prior-run anomaly custody contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-anomaly-custody.XXXXXX)"
+
+  cat >"$temp_dir/loop.log" <<'LOG'
+2026-05-21T12:00:00 █ OK      [INFO] Upkeeper: primary status: UPKEEPER_STATUS: WORK_DONE
+2026-05-21T12:00:01 █ --FYI-- [WARN] cycle=prior-cycle run_hash=abc123 previous_run.anomaly_summary scan_minutes=240 listed_total=1 action=force_upkeeper_self_review
+2026-05-21T12:00:02 █ PAGE    [ERROR] cycle=prior-cycle run_hash=abc123 unexpected.wrapper.failure reason=fixture
+LOG
+
+  tools/upkeeper_anomaly_custody.py \
+    --root "$ROOT_DIR" \
+    --loop-log "$temp_dir/loop.log" \
+    --state-root "$temp_dir/custody" \
+    --obligation-root "$temp_dir/obligations" \
+    --recent-lines 100 \
+    --max-findings 10 \
+    --write-obligations >"$temp_dir/audit.out"
+
+  grep -Fq 'anomaly custody: status=actionable' "$temp_dir/audit.out" ||
+    fail "prior-run anomaly custody did not report actionable findings"
+  [[ "$(jq -r '.status' "$temp_dir/custody/latest.json")" == "actionable" ]] ||
+    fail "prior-run anomaly custody latest record was not actionable"
+  [[ "$(jq -r '.actionable_findings' "$temp_dir/custody/latest.json")" -ge 2 ]] ||
+    fail "prior-run anomaly custody did not detect both warning and page-error deviations"
+  obligation_count="$(find "$temp_dir/obligations/open" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$obligation_count" -ge 2 ]] ||
+    fail "prior-run anomaly custody did not open local automation obligations"
+  jq -e 'select(.kind == "prior_run_anomaly") | select(.issue_number == "418") | select(.evidence.normalized_excerpt | contains("unexpected.wrapper.failure"))' \
+    "$temp_dir"/obligations/open/*.json >/dev/null ||
+    fail "prior-run anomaly custody obligation did not preserve bounded evidence"
+
+  tools/upkeeper_anomaly_custody.py \
+    --root "$ROOT_DIR" \
+    --loop-log "$temp_dir/loop.log" \
+    --state-root "$temp_dir/custody" \
+    --obligation-root "$temp_dir/obligations" \
+    --recent-lines 100 \
+    --max-findings 10 \
+    --write-obligations >"$temp_dir/audit-second.out"
+  second_count="$(find "$temp_dir/obligations/open" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$second_count" == "$obligation_count" ]] ||
+    fail "prior-run anomaly custody reopened duplicate obligations for the same fingerprint"
+
+  selected_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
+      bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.status' <<<"$selected_json")" == "ok" ]] ||
+    fail "prior-run anomaly custody obligation was not selectable"
+  prompt_file="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
+      bash -c 'source "$1"; automation_prepare_obligation_prompt_file "$2"' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash" "$selected_json"
+  )"
+  grep -Fq 'Evidence packet:' "$prompt_file" ||
+    fail "prior-run anomaly custody prompt omitted the evidence packet"
+  grep -Fq 'Healthy unattended runs have a small expected sequence' "$prompt_file" ||
+    fail "prior-run anomaly custody prompt omitted the healthy-run contract"
+
+  cat >"$temp_dir/fixture.log" <<'LOG'
+2026-05-21T12:03:28 █ PAGE    [ERROR] cycle=fixture run_hash=hash transcript directory is not private /tmp/upkeeper-transcripts-test.PDBM8W/transcripts-link
+2026-05-21T12:03:29 █ INFO    transcript_artifacts_test: ok
+LOG
+  tools/upkeeper_anomaly_custody.py \
+    --root "$ROOT_DIR" \
+    --loop-log "$temp_dir/fixture.log" \
+    --state-root "$temp_dir/fixture-custody" \
+    --obligation-root "$temp_dir/fixture-obligations" \
+    --recent-lines 100 \
+    --max-findings 10 \
+    --write-obligations >"$temp_dir/fixture-audit.out"
+  [[ "$(jq -r '.actionable_findings' "$temp_dir/fixture-custody/latest.json")" == "0" ]] ||
+    fail "prior-run anomaly custody treated a proved negative-test fixture as actionable"
+  [[ "$(jq -r '.expected_fixture_findings' "$temp_dir/fixture-custody/latest.json")" == "1" ]] ||
+    fail "prior-run anomaly custody did not count the expected negative-test fixture"
+
+  grep -Fq 'run_backlog_anomaly_custody_audit' orchestration/backlog.sh ||
+    fail "backlog launcher does not invoke prior-run anomaly custody before issue selection"
+  grep -Fq 'run_upkeeper_for_obligation' orchestration/backlog.sh ||
+    fail "backlog launcher does not route selected obligations to Upkeeper"
+
+  rm -r "$temp_dir"
+}
+
 check_backlog_quota_hibernation_contract() {
   local temp_dir status output hard_marker_root hard_marker_epoch
 
@@ -5169,6 +5255,7 @@ run_check live_output_filter_pipe check_live_output_filter_pipe
 run_check review_summary_parser check_review_summary_parser
 run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
+run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_contract
 run_check backlog_launcher_contract check_backlog_launcher_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract

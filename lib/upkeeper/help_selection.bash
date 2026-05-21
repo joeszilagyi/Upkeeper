@@ -171,6 +171,17 @@ Important:
     BACKLOG_PR_CHECK_PROGRESS_STEPS=0 to keep the summary without the extra
     Actions job lookup. Set BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE=0 only for
     an intentional manual override.
+  - Before normal GitHub issue selection, the backlog launcher scans recent
+    private loop output for deviations from the healthy unattended-run shape.
+    PAGE/ERROR lines, unresolved startup-anomaly residue, previous-run anomaly
+    summaries, failed PR gates, non-zero exits, and degraded control-plane modes
+    are written to runtime/upkeeper-anomaly-custody and opened as local
+    automation obligations unless nearby deterministic test-success context
+    proves they are expected fixture output. Selected obligations run as the
+    next Upkeeper job before fresh issue work, with a prompt packet containing
+    the bounded evidence excerpt. Set BACKLOG_ANOMALY_CUSTODY=0 for a deliberate
+    one-cycle bypass, or adjust BACKLOG_ANOMALY_CUSTODY_LINES and
+    BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS for local scan bounds.
   - Light per-bug validation still avoids the full batch suite, but it now
     compiles changed Python files before commit. Lattice issue fixes that touch
     tools/upkeeper_lattice.py also run tests/lattice_test.bash before the fix is

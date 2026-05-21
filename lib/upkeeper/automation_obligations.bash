@@ -641,6 +641,7 @@ if target_scope == "machine":
         "reason": str(selected.get("reason", "")),
         "run_record": str(selected.get("run_record", "")),
         "transcript": str(selected.get("transcript", "")),
+        "evidence": selected.get("evidence", {}),
         "required_resolution": selected.get("required_resolution", []),
     }
     print(json.dumps(result, separators=(",", ":")))
@@ -685,6 +686,7 @@ result = {
     "reason": str(selected.get("reason", "")),
     "run_record": str(selected.get("run_record", "")),
     "transcript": str(selected.get("transcript", "")),
+    "evidence": selected.get("evidence", {}),
     "required_resolution": selected.get("required_resolution", []),
 }
 print(json.dumps(result, separators=(",", ":")))
@@ -756,8 +758,24 @@ lines = [
     f"- run_record: {data.get('run_record', '')}",
     f"- transcript: {data.get('transcript', '')}",
     "",
-    "Required resolution:",
 ]
+
+evidence = data.get("evidence")
+if evidence:
+    lines.extend(
+        [
+            "Evidence packet:",
+            json.dumps(evidence, indent=2, sort_keys=True),
+            "",
+            "Prior-run anomaly rule:",
+            "- Healthy unattended runs have a small expected sequence of local progress, validation, status, and summary lines.",
+            "- Any prior-run output outside that healthy shape must be repaired, proved expected by deterministic fixture context, or kept under durable custody before normal backlog issue work continues.",
+            "- Do not dismiss the finding only because it resembles an already seen class; use the evidence to prove whether it is already handled or still leaking through.",
+            "",
+        ]
+    )
+
+lines.append("Required resolution:")
 if required:
     lines.extend(f"- {item}" for item in required)
 else:

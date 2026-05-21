@@ -2922,6 +2922,22 @@ def dedupe_git_file_changes(conn: sqlite3.Connection) -> int:
     return duplicate_groups
 
 
+def git_file_change_ids_pruned_by_dedupe(conn: sqlite3.Connection) -> list[int]:
+    rows = conn.execute(
+        """
+        select git_file_change_id
+          from git_file_changes
+         where git_file_change_id not in (
+           select min(git_file_change_id)
+           from git_file_changes
+           group by repo_id, commit_id, path, coalesce(old_path, ''), coalesce(status, '')
+         )
+         order by git_file_change_id
+        """
+    ).fetchall()
+    return [int(row["git_file_change_id"]) for row in rows]
+
+
 def dedupe_artifact_refs(conn: sqlite3.Connection) -> int:
     row = conn.execute(
         """
@@ -3586,7 +3602,13 @@ def scrub_legacy_git_privacy_data(conn: sqlite3.Connection) -> None:
             )
 
 
-def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_storage_mode: str | None = None) -> None:
+def init_schema(
+    conn: sqlite3.Connection,
+    root: Path | None = None,
+    *,
+    raw_storage_mode: str | None = None,
+    run_git_change_dedup: bool = True,
+) -> None:
     now = epoch_now()
     with conn:
         for sql in CREATE_TABLE_SQL:
@@ -3594,7 +3616,7 @@ def init_schema(conn: sqlite3.Connection, root: Path | None = None, *, raw_stora
         deduped_artifact_ref_groups = ensure_artifact_ref_identity_indexes(conn)
         deduped_cycle_link_groups = ensure_cycle_links_logical_edge_index(conn)
         deduped_change_log_groups = ensure_change_log_identity_indexes(conn)
-        deduped_git_change_groups = dedupe_git_file_changes(conn)
+        deduped_git_change_groups = dedupe_git_file_changes(conn) if run_git_change_dedup else 0
         deduped_extension_fact_groups = ensure_extension_facts_identity_index(conn)
         deduped_file_pass_run_groups = ensure_file_pass_runs_identity_index(conn)
         ensure_file_snapshot_mtime_ns_column(conn)
@@ -11054,7 +11076,17 @@ def command_recover(args: argparse.Namespace) -> int:
     sources: list[str] = []
     artifact_sources: list[str] = []
     backup_path = None
-    init_schema(conn, root, raw_storage_mode=raw_storage_mode)
+    if backup_first and preexisting_db:
+        backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
+        backup_path = create_backup(
+            conn,
+            root,
+            db_path,
+            output=str(backup_path),
+            allow_overwrite=False,
+        )
+    init_schema(conn, root, raw_storage_mode=raw_storage_mode, run_git_change_dedup=False)
+    recovery_dedup_removed_ids: list[int] = []
     with conn:
         repo_id = ensure_repository(conn, root)
         source_id = ensure_source_record(
@@ -11066,31 +11098,42 @@ def command_recover(args: argparse.Namespace) -> int:
             parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
             raw_storage_mode=raw_storage_mode,
         )
-    if backup_first and preexisting_db:
-        backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
-        backup_path = create_backup(
-            conn,
-            root,
-            db_path,
-            output=str(backup_path),
-            allow_overwrite=False,
-        )
+        recovery_dedup_removed_ids = git_file_change_ids_pruned_by_dedupe(conn)
+        if recovery_dedup_removed_ids:
+            deduped_git_change_groups = dedupe_git_file_changes(conn)
+            if deduped_git_change_groups:
+                record_file_event(
+                    conn,
+                    repo_id,
+                    "recovery_git_file_changes_deduped",
+                    source_id=source_id,
+                    details={
+                        "deleted_git_file_change_count": len(recovery_dedup_removed_ids),
+                        "deleted_git_file_change_ids": recovery_dedup_removed_ids,
+                    },
+                )
+    if backup_first and preexisting_db and backup_path is not None:
         backup_conn = sqlite3.connect(str(backup_path))
         try:
             backup_conn.row_factory = sqlite3.Row
             backup_conn.execute("PRAGMA busy_timeout=5000")
             backup_conn.execute("PRAGMA foreign_keys=ON")
-            create_artifact_ref(
-                backup_conn,
-                root,
-                repo_id,
-                cycle_pk=None,
-                source_id=source_id,
-                artifact_kind="backup",
-                path=str(backup_path),
-                details={"backup_event": "pre_recovery", "recorded_in": "backup"},
-            )
-            backup_conn.commit()
+            try:
+                create_artifact_ref(
+                    backup_conn,
+                    root,
+                    repo_id,
+                    cycle_pk=None,
+                    source_id=source_id,
+                    artifact_kind="backup",
+                    path=str(backup_path),
+                    details={"backup_event": "pre_recovery", "recorded_in": "backup"},
+                )
+                backup_conn.commit()
+            except sqlite3.OperationalError:
+                # Backup copy may be pre-schema in some recovery scenarios; keep
+                # the recovery moving when artifact lineage tables are absent.
+                pass
         finally:
             backup_conn.close()
     conn.close()
@@ -12209,7 +12252,8 @@ def build_parser() -> argparse.ArgumentParser:
         const=True,
         default=None,
         type=parse_bool_flag,
-        help="(legacy) pass --backup-first 0/1 or --backup-first[=true|false]",
+        help="(legacy) pass --backup-first 0/1 or --backup-first[=true|false];"
+        " when enabled, recovery first copies the existing database file",
     )
     p.add_argument("--no-backup-first", dest="backup_first", action="store_false")
     p.add_argument("--max-conflicts", type=int, default=999999)

@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-21: backlog printf fixture classification repair:
+	1. Backlog watch output now treats model-emitted `printf` fixture text containing timestamped `[WARN] startup_anomaly.gate` content as informational transcript output instead of a pageable wrapper/control-plane error.
+	2. Formatter validation now covers both the existing echoed `ERROR:` fixture and the new `printf` warning fixture while preserving `PAGE [ERROR]` rendering for real wrapper/control-plane errors.
+	3. The backlog default-environment validator now clears inherited backlog model and quota overrides before asserting documented defaults, and autoshelve validation uses fixture-local state so live backlog owner locks cannot break local validation.
+
 2026-05-21: backlog PR check settling repair:
 	1. Backlog PR-check polling now treats a just-created PR with no reported checks as a pending/settling state for a bounded grace period instead of misclassifying the empty GitHub response as failed.
 	2. The wait output now distinguishes "checks not reported yet" from real failed checks, keeps the local owner lease alive while checks attach, and still fails closed if checks remain absent after `BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS`.

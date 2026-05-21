@@ -76,6 +76,7 @@ set +e
   child_output="$(
     CODEX_FALLBACK_CHAIN_ACTIVE=1 \
     CODEX_FALLBACK_CONTRACT_PATH="$contract_file" \
+    CODEX_LOG_FILE="$TEST_TMP_ROOT/fallback-child.log" \
     CODEX_POSTMORTEM_DIR="$TEST_TMP_ROOT" \
     UPKEEPER_CONFIG_FILE="$bad_config" \
     UPKEEPER_CONFIG_FILE_EXPLICIT=1 \
@@ -150,6 +151,7 @@ test_screen_fallback_private_stage_preserves_contract() {
   output="$(
     UPKEEPER_CONFIG_DISABLE=1 \
     CODEX_FALLBACK_CHAIN_ACTIVE=0 \
+    CODEX_LOG_FILE="$TEST_TMP_ROOT/screen-fallback.log" \
     CODEX_POSTMORTEM_DIR="$postmortem_root" \
     CODEX_FALLBACK_SCREEN_STAGE_ROOT="$stage_root" \
     UPROOT="$PROJECT_ROOT" \

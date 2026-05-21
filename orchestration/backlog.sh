@@ -185,6 +185,19 @@ backlog_line_has_attention_marker() {
   backlog_attention_marker_payload "$rest" >/dev/null
 }
 
+backlog_payload_is_model_shell_fixture() {
+  local payload="$1"
+
+  case "$payload" in
+    *"[ERROR] Upkeeper: "*": echo "*|*"[ERROR] Upkeeper: "*": printf "*|*"[WARN] Upkeeper: "*": echo "*|*"[WARN] Upkeeper: "*": printf "*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 backlog_attention_marker_for_line() {
   local payload="$1"
 
@@ -205,10 +218,14 @@ backlog_attention_marker_for_line() {
       printf 'ACTION\n'
       return 0
       ;;
-    *"[ERROR] Upkeeper: "*"primary: echo "*|*"[ERROR] Upkeeper: "*"secondary: echo "*|*"[ERROR] Upkeeper: "*"validation: echo "*)
-      printf 'INFO\n'
-      return 0
-      ;;
+  esac
+
+  if backlog_payload_is_model_shell_fixture "$payload"; then
+    printf 'INFO\n'
+    return 0
+  fi
+
+  case "$payload" in
     *"backlog: ERROR:"*|*"[ERROR]"*)
       printf 'PAGE\n'
       return 0

@@ -3,6 +3,44 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Backlog Model Fixture Output Classification
+
+Status: completed locally
+
+Goal:
+- fix issue `#428` so model-emitted `printf` fixture text containing
+  timestamped `[WARN] startup_anomaly.gate` content is not rendered as a
+  pageable wrapper/control-plane error
+- preserve `PAGE [ERROR]` rendering for real wrapper/control-plane error lines
+- keep deterministic local formatter validation for the existing echoed
+  `ERROR:` case and the new `printf` warning fixture
+- keep the backlog default-environment validation deterministic when the
+  caller exports backlog overrides
+- keep autoshelve validation isolated from any live user-level backlog owner
+  lock state
+- keep fallback-target tests isolated from inherited postmortem directory
+  overrides
+- keep fallback screen tests isolated from inherited wrapper log-file
+  overrides
+
+Constraints:
+- do not contact GitHub or launch real backend Codex validation
+- keep the formatter distinction local and narrow to transcript command text
+- avoid weakening real wrapper/control-plane error visibility
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `tests/bug_fix_batch_271_266_265_test.bash`
+- `tests/bug_fix_batch_278_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Manifest Path Safety Validation Alignment
 
 Status: completed locally

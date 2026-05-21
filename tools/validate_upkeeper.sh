@@ -584,6 +584,7 @@ PY
     source ./orchestration/backlog.sh
     backlog_format_attention_line "2026-05-16T17:00:37-0700 [ERROR] Upkeeper: primary cmd#15 check failed: exited 1 in 5s" >"$2/worker.out"
     backlog_format_attention_line "2026-05-17T10:26:29-0700 [ERROR] Upkeeper: primary: echo '\''ERROR: tools/upkeeper_lattice.py not found'\''" >"$2/echo-error.out"
+    backlog_format_attention_line "2026-05-21T11:26:43-0700 [ERROR] Upkeeper: primary: printf \"2026-05-21T11:00:01-0700 [WARN] cycle=%s run_hash=abc startup_anomaly.gate status=active force_upkeeper=1 action=block_normal_selection_until_upkeeper_suite_checked\\\\n\" \"\$cycle\"" >"$2/printf-warn-fixture.out"
     backlog_format_attention_line "2026-05-16T18:12:41-0700 [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed" >"$2/page.out"
     backlog_format_attention_line "2026-05-16T18:20:00 backlog: quota preflight: deferring backlog run this cycle" >"$2/wait.out"
     backlog_format_attention_line "2026-05-16T18:20:30 Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)" >"$2/fyi.out"
@@ -609,6 +610,8 @@ PY
     fail "backlog launcher did not classify worker command failures separately from pageable errors"
   grep -Fq "2026-05-17T10:26:29 █ INFO    [ERROR] Upkeeper: primary: echo 'ERROR: tools/upkeeper_lattice.py not found'" "$temp_dir/echo-error.out" ||
     fail "backlog launcher treated echoed model ERROR text as a pageable wrapper error"
+  grep -Fq '2026-05-21T11:26:43 █ INFO    [ERROR] Upkeeper: primary: printf "2026-05-21T11:00:01-0700 [WARN] cycle=%s run_hash=abc startup_anomaly.gate status=active force_upkeeper=1 action=block_normal_selection_until_upkeeper_suite_checked\\n" "$cycle"' "$temp_dir/printf-warn-fixture.out" ||
+    fail "backlog launcher treated model printf warning fixture text as a pageable wrapper error"
   grep -Fq '2026-05-16T18:12:41 █ PAGE    [ERROR] cycle=x run_hash=y active_lock.failed reason=state_write_failed' "$temp_dir/page.out" ||
     fail "backlog launcher did not classify wrapper/control-plane errors as PAGE"
   grep -Fq '2026-05-16T18:20:00 █ WAIT    backlog: quota preflight: deferring backlog run this cycle' "$temp_dir/wait.out" ||
@@ -658,7 +661,11 @@ PY
 
   temp_dir="$VALIDATION_TMP_ROOT/backlog-burn-env"
   mkdir -p "$temp_dir"
-  BACKLOG_SOURCE_ONLY=1 bash -lc '
+  env -u BACKLOG_CODEX_MODEL \
+    -u BACKLOG_CODEX_REASONING_EFFORT \
+    -u BACKLOG_QUOTA_GUARDRAIL_BYPASS \
+    -u BACKLOG_QUOTA_COOLDOWN_BYPASS \
+    BACKLOG_SOURCE_ONLY=1 bash -lc '
     set -euo pipefail
     cd "$1"
     source ./orchestration/backlog.sh
@@ -935,7 +942,7 @@ check_backlog_autoshelve_contract() {
     printf 'dirty local work\n' >>README.md
 
     set +e
-    output="$(BACKLOG_ALLOW_INTERACTIVE_STDIO=1 BACKLOG_AUTOSHELVE_PROBE=1 ./orchestration/backlog.sh 2>&1)"
+    output="$(BACKLOG_ALLOW_INTERACTIVE_STDIO=1 BACKLOG_AUTOSHELVE_PROBE=1 BACKLOG_STATE_ROOT="$temp_dir-state" ./orchestration/backlog.sh 2>&1)"
     rc=$?
     set -e
 
@@ -952,7 +959,7 @@ check_backlog_autoshelve_contract() {
     printf '\n# validation control-plane dirty marker\n' >>orchestration/backlog.sh
 
     set +e
-    output="$(BACKLOG_ALLOW_INTERACTIVE_STDIO=1 BACKLOG_AUTOSHELVE_PROBE=1 ./orchestration/backlog.sh 2>&1)"
+    output="$(BACKLOG_ALLOW_INTERACTIVE_STDIO=1 BACKLOG_AUTOSHELVE_PROBE=1 BACKLOG_STATE_ROOT="$temp_dir-state" ./orchestration/backlog.sh 2>&1)"
     rc=$?
     set -e
 
@@ -985,7 +992,7 @@ check_backlog_autoshelve_contract() {
     trap 'kill "$active_validation_pid" 2>/dev/null || true; wait "$active_validation_pid" 2>/dev/null || true' RETURN
 
     set +e
-    output="$(BACKLOG_ALLOW_INTERACTIVE_STDIO=1 BACKLOG_AUTOSHELVE_PROBE=1 BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_WAIT_SECONDS=1 BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_POLL_SECONDS=1 ./orchestration/backlog.sh 2>&1)"
+    output="$(BACKLOG_ALLOW_INTERACTIVE_STDIO=1 BACKLOG_AUTOSHELVE_PROBE=1 BACKLOG_STATE_ROOT="$temp_dir-state" BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_WAIT_SECONDS=1 BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_POLL_SECONDS=1 ./orchestration/backlog.sh 2>&1)"
     rc=$?
     set -e
     [[ "$rc" -eq 4 ]] || fail "backlog autoshelve did not block on active validation readers rc=$rc output=$output"

@@ -17,6 +17,7 @@ BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-xhigh}"
 BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
 BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-0}"
 BACKLOG_PR_CHECK_INTERVAL_SECONDS="${BACKLOG_PR_CHECK_INTERVAL_SECONDS:-60}"
+BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS="${BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS:-300}"
 BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE="${BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE:-1}"
 BACKLOG_PR_CHECK_PROGRESS="${BACKLOG_PR_CHECK_PROGRESS:-1}"
 BACKLOG_PR_CHECK_PROGRESS_STEPS="${BACKLOG_PR_CHECK_PROGRESS_STEPS:-1}"
@@ -2078,12 +2079,14 @@ backlog_pr_checks_progress_summary() {
 
 wait_for_pr_checks() {
   local pr_number="$1"
-  local interval timeout_seconds start_epoch now_epoch elapsed status output status_rc progress
+  local interval timeout_seconds empty_grace_seconds start_epoch now_epoch elapsed status output status_rc progress
 
   log "waiting for PR #$pr_number checks"
   interval="$(backlog_positive_integer_or_default "$BACKLOG_PR_CHECK_INTERVAL_SECONDS" 60)"
   timeout_seconds="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-0}"
   backlog_nonnegative_integer "$timeout_seconds" || timeout_seconds=0
+  empty_grace_seconds="${BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS:-300}"
+  backlog_nonnegative_integer "$empty_grace_seconds" || empty_grace_seconds=300
   start_epoch="$(backlog_now_epoch)" || start_epoch=0
 
   while true; do
@@ -2115,6 +2118,25 @@ wait_for_pr_checks() {
           log "PR #$pr_number checks pending; holding owner lease; progress: $progress; checking again in ${interval}s"
         else
           log "PR #$pr_number checks pending; holding owner lease and checking again in ${interval}s"
+        fi
+        backlog_sleep_seconds "$interval"
+        ;;
+      3)
+        now_epoch="$(backlog_now_epoch)" || now_epoch="$start_epoch"
+        elapsed=$((now_epoch - start_epoch))
+        [[ "$elapsed" -ge 0 ]] || elapsed=0
+        if [[ "$empty_grace_seconds" -le 0 || "$elapsed" -ge "$empty_grace_seconds" ]]; then
+          backlog_update_active_owner_heartbeat "waiting_on_pr_checks" "pr=$pr_number checks_absent_timeout elapsed=${elapsed}s" "$pr_number" "fail"
+          log "PR #$pr_number checks were not reported after ${elapsed}s; configured empty-check grace is ${empty_grace_seconds}s"
+          printf '%s\n' "$output" >&2
+          return 1
+        fi
+        backlog_update_active_owner_heartbeat "waiting_on_pr_checks" "pr=$pr_number checks_settling elapsed=${elapsed}s next_check=${interval}s" "$pr_number" "pending"
+        progress="$BACKLOG_PR_CHECKS_PROGRESS_SUMMARY"
+        if [[ -n "$progress" ]]; then
+          log "PR #$pr_number checks not reported yet; treating as pending/settling for up to ${empty_grace_seconds}s; progress: $progress; checking again in ${interval}s"
+        else
+          log "PR #$pr_number checks not reported yet; treating as pending/settling for up to ${empty_grace_seconds}s; checking again in ${interval}s"
         fi
         backlog_sleep_seconds "$interval"
         ;;
@@ -2152,6 +2174,11 @@ backlog_pr_checks_once() {
         BACKLOG_PR_CHECKS_PROGRESS_SUMMARY='checks total=1 pass=0 pending=1 fail=0 other=0; active="fake PR check" state=pending bucket=pending duration=unknown source=local-test'
         return 2
         ;;
+      empty|none|no_checks|no-checks|not_reported|not-reported)
+        BACKLOG_PR_CHECKS_LAST_OUTPUT="$(printf 'settling\nno checks reported on the fake branch yet\n')"
+        BACKLOG_PR_CHECKS_PROGRESS_SUMMARY="checks total=0 pass=0 pending=0 fail=0 other=0; status=no_checks_reported_yet source=local-test"
+        return 3
+        ;;
       fail|failed|failure|error)
         BACKLOG_PR_CHECKS_LAST_OUTPUT="fail"
         BACKLOG_PR_CHECKS_PROGRESS_SUMMARY="checks total=1 pass=0 pending=0 fail=1 other=0"
@@ -2182,6 +2209,15 @@ backlog_pr_checks_once() {
       BACKLOG_PR_CHECKS_PROGRESS_SUMMARY="$progress"
     fi
     return 2
+  fi
+  if grep -Eiq 'no checks reported|no check runs|no statuses reported|no checks? found' <<<"$output"; then
+    BACKLOG_PR_CHECKS_LAST_OUTPUT="$(printf 'settling\n%s\n' "$output")"
+    if progress="$(backlog_pr_checks_progress_summary "$pr_number" 2>/dev/null)"; then
+      BACKLOG_PR_CHECKS_PROGRESS_SUMMARY="$progress"
+    else
+      BACKLOG_PR_CHECKS_PROGRESS_SUMMARY="checks total=0 pass=0 pending=0 fail=0 other=0; status=no_checks_reported_yet"
+    fi
+    return 3
   fi
 
   BACKLOG_PR_CHECKS_LAST_OUTPUT="$(printf 'fail\n%s\n' "$output")"

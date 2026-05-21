@@ -162,8 +162,11 @@ Important:
     Actions step when available, and the check URL. Set
     `BACKLOG_PR_CHECK_PROGRESS=0` to return to the terse pending line, or
     `BACKLOG_PR_CHECK_PROGRESS_STEPS=0` to keep the summary without the extra
-    Actions job lookup. Set `BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE=0` only
-    for an intentional manual override.
+    Actions job lookup. A just-created PR with no reported checks yet is treated
+    as pending/settling for `BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS` seconds
+    before it can fail closed as missing checks. Set
+    `BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE=0` only for an intentional manual
+    override.
   - Light per-bug validation still avoids the full batch suite, but it now
     compiles changed Python files before commit. Lattice issue fixes that touch
     `tools/upkeeper_lattice.py` also run `tests/lattice_test.bash` before the

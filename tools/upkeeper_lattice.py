@@ -1869,6 +1869,8 @@ def repo_identity_value_hmac(context: tuple[str, str, str], namespace: str, valu
 
 
 def repo_identity_stable_key(root: Path, git_common_dir: str) -> str:
+    # Remote URLs are mutable checkout metadata. Repository identity must stay
+    # anchored to local Git storage so origin changes do not fragment history.
     return sha256_text(f"{root}|{git_common_dir}")
 
 

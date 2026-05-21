@@ -2866,6 +2866,22 @@ def table_foreign_key_parents(conn: sqlite3.Connection, table: str) -> list[str]
     return parents
 
 
+def table_foreign_key_columns(conn: sqlite3.Connection, table: str) -> list[tuple[str, str, str]]:
+    """
+    Return (child_column, parent_table, parent_column) tuples from
+    SQLite foreign-key declarations.
+    """
+    refs: list[tuple[str, str, str]] = []
+    for row in conn.execute(f"PRAGMA foreign_key_list({table})"):
+        parent_table = row["table"]
+        parent_column = row["to"]
+        child_column = row["from"]
+        if not parent_table or not parent_column or not child_column:
+            continue
+        refs.append((str(child_column), str(parent_table), str(parent_column)))
+    return refs
+
+
 def table_import_dependency_order(conn: sqlite3.Connection, tables: set[str]) -> list[str]:
     """
     Compute a best-effort topological order of tables based on FK parent
@@ -10329,21 +10345,37 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
         line_number: int,
         raw_line: str,
     ) -> tuple[str, dict[str, str]]:
+        expected_repo_key = expected.get("repo_key") or ""
+        expected_repo_root = expected.get("root_path") or ""
+        expected_repo_id = expected.get("repo_id") or ""
         if not observed:
-            if not expected:
+            if not expected_repo_key and not expected_repo_root and not expected_repo_id:
                 return ("", {})
-            return ("missing", {"line_number": str(line_number), "raw_line": raw_line[:TEXT_SAMPLE_SIZE]})
-        if not expected:
+            return (
+                "missing",
+                {
+                    "line_number": str(line_number),
+                    "raw_line": raw_line[:TEXT_SAMPLE_SIZE],
+                },
+            )
+        if not expected_repo_key and not expected_repo_root and not expected_repo_id:
             return ("", {})
+        for key, value in (
+            ("repo_key", expected_repo_key),
+            ("root_path", expected_repo_root),
+            ("repo_id", expected_repo_id),
+        ):
+            if value and not observed.get(key):
+                return ("missing", {"line_number": str(line_number), "raw_line": raw_line[:TEXT_SAMPLE_SIZE], "missing_key": key})
         repo_id_mismatch = (
-            expected.get("repo_id") and observed.get("repo_id") and expected.get("repo_id") != observed.get("repo_id")
+            expected_repo_id and observed.get("repo_id") and expected_repo_id != observed.get("repo_id")
         )
         repo_key_mismatch = (
-            expected.get("repo_key") and observed.get("repo_key") and expected.get("repo_key") != observed.get("repo_key")
+            expected_repo_key and observed.get("repo_key") and expected_repo_key != observed.get("repo_key")
         )
         root_path_mismatch = (
-            expected.get("root_path") and observed.get("root_path")
-            and expected.get("root_path") != observed.get("root_path")
+            expected_repo_root and observed.get("root_path")
+            and expected_repo_root != observed.get("root_path")
         )
         if not (repo_key_mismatch or root_path_mismatch or repo_id_mismatch):
             return ("", {})
@@ -10364,6 +10396,46 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             details["incoming_repo_id"] = observed.get("repo_id", "")
             return ("repo_id_mismatch", details)
         return ("", {})
+
+    def _as_int_id(value: Any) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _table_foreign_key_references(table_name: str) -> list[tuple[str, str, str]]:
+        refs = _FOREIGN_KEY_COLUMNS_BY_TABLE.get(table_name)
+        if refs is None:
+            refs = table_foreign_key_columns(conn, table_name)
+            _FOREIGN_KEY_COLUMNS_BY_TABLE[table_name] = refs
+        return refs
+
+    def _map_foreign_key_ids(table_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        mapped_payload = dict(payload)
+        for child_col, parent_table, _ in _table_foreign_key_references(table_name):
+            if child_col not in mapped_payload:
+                continue
+            source_parent_id = _as_int_id(mapped_payload.get(child_col))
+            if source_parent_id is None:
+                continue
+            parent_map = _SOURCE_TO_IMPORTED_IDS.get(parent_table)
+            if parent_map is None:
+                continue
+            if source_parent_id in parent_map:
+                mapped_payload[child_col] = parent_map[source_parent_id]
+        return mapped_payload
+
+    def _record_id_mapping(table_name: str, source_id: int | None, destination_id: int | None) -> None:
+        if source_id is None or destination_id is None:
+            return
+        if table_name == "repositories":
+            return
+        mapping = _SOURCE_TO_IMPORTED_IDS.setdefault(table_name, {})
+        mapping[source_id] = destination_id
 
     try:
         input_lines = input_path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -10402,6 +10474,12 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     })
                     return EXIT_INTEGRITY
                 incoming_repo_identity[key] = observed_repo_identity[key]
+    if not incoming_repo_identity:
+        print_json({"status": "unavailable", "reason": "missing_repo_identity", "path": str(input_path)})
+        return EXIT_INTEGRITY
+
+    _FOREIGN_KEY_COLUMNS_BY_TABLE: dict[str, list[tuple[str, str, str]]] = {}
+    _SOURCE_TO_IMPORTED_IDS: dict[str, dict[int, int]] = {}
     with conn:
         repo_id = ensure_repository(conn, root)
         context = repo_identity_context(root)
@@ -10651,6 +10729,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     "table": table,
                     "payload_columns": columns,
                     "payload_pk": pk,
+                    "source_pk": _as_int_id(filtered.get(pk)) if pk else None,
                     "filtered_payload": filtered,
                 }
             )
@@ -10721,15 +10800,19 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 columns = list(staged["payload_columns"])
                 pk = staged["payload_pk"]
                 filtered = dict(staged["filtered_payload"])
+                source_pk = _as_int_id(staged.get("source_pk"))
                 try:
+                    mapped_filtered = _map_foreign_key_ids(table, filtered)
                     existing = None
-                    if pk and filtered.get(pk) is not None:
-                        existing = conn.execute(f"select * from {table} where {pk}=?", (filtered[pk],)).fetchone()
+                    if pk and mapped_filtered.get(pk) is not None:
+                        existing = conn.execute(f"select * from {table} where {pk}=?", (mapped_filtered[pk],)).fetchone()
                     if existing:
+                        destination_pk = _as_int_id(existing[pk]) if pk else None
+                        _record_id_mapping(table, source_pk, destination_pk)
                         existing_payload = semantic_import_payload(table, {key: existing[key] for key in columns})
                         existing_hash = sha256_text(json_dumps(existing_payload))
                         incoming_compare_payload = align_redacted_import_compare_payload(
-                            semantic_import_payload(table, filtered),
+                            semantic_import_payload(table, mapped_filtered),
                             existing_payload,
                         )
                         incoming_compare_hash = sha256_text(json_dumps(incoming_compare_payload))
@@ -10745,19 +10828,21 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                             logical_key,
                             existing_hash,
                             incoming_compare_hash,
-                            "kept_existing",
+                            "existing_row_preserved",
                         )
                         continue
-                    colnames = list(filtered.keys())
+                    colnames = list(mapped_filtered.keys())
                     placeholders = ",".join("?" for _ in colnames)
-                    conn.execute(
+                    cur = conn.execute(
                         f"insert into {table}({', '.join(colnames)}) values ({placeholders})",
-                        [filtered[key] for key in colnames],
+                        [mapped_filtered[key] for key in colnames],
                     )
+                    destination_pk = int(cur.lastrowid) if pk else _as_int_id(mapped_filtered.get(pk))
+                    _record_id_mapping(table, source_pk, destination_pk)
                     rows_written += 1
                     if table == "file_pass_runs":
                         try:
-                            pass_file_id = int(filtered.get("file_id", 0))
+                            pass_file_id = int(mapped_filtered.get("file_id", 0))
                         except (TypeError, ValueError):
                             pass_file_id = 0
                         if pass_file_id > 0:

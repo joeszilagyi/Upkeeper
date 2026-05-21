@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-21: backlog PR check settling repair:
+	1. Backlog PR-check polling now treats a just-created PR with no reported checks as a pending/settling state for a bounded grace period instead of misclassifying the empty GitHub response as failed.
+	2. The wait output now distinguishes "checks not reported yet" from real failed checks, keeps the local owner lease alive while checks attach, and still fails closed if checks remain absent after `BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS`.
+	3. Local validation covers both the empty-check settling path and the bounded timeout path so a fresh PR cannot prematurely end a bounded operator loop before CI has a chance to appear.
+
 2026-05-21: Lattice embedded contract validation parser repair:
 	1. Lattice reuse-contract validation now stops shell-function body extraction at the first balanced close for a matched definition, so braces later in the same Bash source file no longer make a single function appear as repeated identical definitions.
 	2. Lattice recovery validation now seeds malformed JSONL probes with explicit repo identity and releases in-process subcommand SQLite handles between recovery imports, preventing the doctor check from masking conflict-propagation assertions behind self-inflicted database locks.

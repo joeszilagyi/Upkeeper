@@ -737,6 +737,62 @@ PY
   grep -Fq "owner heartbeat: state=waiting_on_pr_checks" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check hibernation did not refresh owner heartbeat"
 
+  temp_dir="$VALIDATION_TMP_ROOT/backlog-pr-check-empty-settling"
+  mkdir -p "$temp_dir"
+  if ! BACKLOG_SOURCE_ONLY=1 \
+    BACKLOG_STATE_ROOT="$temp_dir/state" \
+    BACKLOG_TEST_OWNER_MATCH=1 \
+    BACKLOG_TEST_NOW_EPOCH=1000 \
+    BACKLOG_TEST_FAKE_SLEEP=1 \
+    BACKLOG_TEST_SLEEP_LOG="$temp_dir/sleeps.log" \
+    BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE=no_checks,pending,pass \
+    BACKLOG_PR_CHECK_INTERVAL_SECONDS=60 \
+    BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS=300 \
+    bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./orchestration/backlog.sh
+      write_backlog_active_owner
+      wait_for_pr_checks 398
+    ' bash "$ROOT_DIR" >"$temp_dir/pr.out" 2>"$temp_dir/pr.err"; then
+    cat "$temp_dir/pr.err" >&2
+    fail "backlog launcher PR check empty-settling fake-clock check failed"
+  fi
+  [[ "$(cat "$temp_dir/sleeps.log")" == $'60\n60' ]] ||
+    fail "backlog launcher PR check empty-settling did not sleep between settling and pending polls"
+  grep -Fq "checks not reported yet; treating as pending/settling" "$temp_dir/pr.err" ||
+    fail "backlog launcher PR check empty state was not reported as pending/settling"
+  grep -Fq "status=no_checks_reported_yet" "$temp_dir/pr.err" ||
+    fail "backlog launcher PR check empty state did not include no-checks progress detail"
+  ! grep -Fq "checks_failed" "$temp_dir/pr.err" ||
+    fail "backlog launcher PR check empty state was misclassified as failed"
+
+  temp_dir="$VALIDATION_TMP_ROOT/backlog-pr-check-empty-timeout"
+  mkdir -p "$temp_dir"
+  if BACKLOG_SOURCE_ONLY=1 \
+    BACKLOG_STATE_ROOT="$temp_dir/state" \
+    BACKLOG_TEST_OWNER_MATCH=1 \
+    BACKLOG_TEST_NOW_EPOCH=1000 \
+    BACKLOG_TEST_FAKE_SLEEP=1 \
+    BACKLOG_TEST_SLEEP_LOG="$temp_dir/sleeps.log" \
+    BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE=no_checks \
+    BACKLOG_PR_CHECK_INTERVAL_SECONDS=60 \
+    BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS=120 \
+    bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./orchestration/backlog.sh
+      write_backlog_active_owner
+      wait_for_pr_checks 399
+    ' bash "$ROOT_DIR" >"$temp_dir/pr.out" 2>"$temp_dir/pr.err"; then
+    cat "$temp_dir/pr.err" >&2
+    fail "backlog launcher PR check empty state did not fail after bounded grace"
+  fi
+  [[ "$(cat "$temp_dir/sleeps.log")" == $'60\n60' ]] ||
+    fail "backlog launcher PR check empty-timeout did not use bounded grace sleeps"
+  grep -Fq "checks were not reported after 120s" "$temp_dir/pr.err" ||
+    fail "backlog launcher PR check empty-timeout did not explain bounded grace expiry"
+
   temp_dir="$VALIDATION_TMP_ROOT/backlog-pr-check-next-issue-gate"
   mkdir -p "$temp_dir"
   if ! BACKLOG_SOURCE_ONLY=1 \

@@ -2239,6 +2239,7 @@ main() {
   local pr_info pr_number branch issue_info issue_number issue_title target_hint count run_status
   local job_target job_reason job_expected commit_result final_disposition status
   local issue_deferred_after_noop
+  commit_result="uninitialized backlog outcome"
 
   redirect_interactive_stdio "$@"
   claim_backlog_active_owner_or_exit
@@ -2346,6 +2347,7 @@ main() {
     exit "$run_status"
   fi
 
+  commit_result="no tracked changes produced"
   if commit_and_push_changes "$issue_number" "" "$target_hint"; then
     commit_result="tracked changes committed and pushed"
     if [[ -n "$issue_number" ]]; then

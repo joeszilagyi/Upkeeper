@@ -53,34 +53,133 @@ log_rotation_marker_expected() {
   upkeeper_path_hmac "$LOG_FILE"
 }
 
+log_rotation_marker_secure_io() {
+  local marker_path="$1"
+  local operation="$2"
+  local marker_expected="${3:-}"
+
+  python3 - "$marker_path" "$operation" "$marker_expected" <<'PY'
+import errno
+import os
+import stat
+import sys
+
+path_raw = sys.argv[1]
+operation = sys.argv[2]
+marker_expected = sys.argv[3]
+parent = os.path.dirname(path_raw) or "."
+name = os.path.basename(path_raw)
+tmp_name = f"{name}.tmp.{os.getppid()}"
+
+if not name or name in {".", ".."}:
+    raise SystemExit(1)
+
+dir_flags = os.O_RDONLY
+for attr in ("O_DIRECTORY", "O_CLOEXEC", "O_NOFOLLOW"):
+    dir_flags |= getattr(os, attr, 0)
+
+
+def open_marker_parent(raw_parent: str) -> int:
+    if raw_parent in ("", "."):
+        return os.open(".", dir_flags)
+
+    if os.path.isabs(raw_parent):
+        fd = os.open(os.path.sep, dir_flags)
+        parts = raw_parent.lstrip(os.path.sep).split(os.path.sep)
+    else:
+        fd = os.open(".", dir_flags)
+        parts = raw_parent.split(os.path.sep)
+
+    for part in parts:
+        if not part or part == ".":
+            continue
+        try:
+            next_fd = os.open(part, dir_flags, dir_fd=fd)
+        except OSError:
+            os.close(fd)
+            raise
+        os.close(fd)
+        fd = next_fd
+
+    return fd
+
+
+try:
+    parent_fd = open_marker_parent(parent)
+except OSError:
+    raise SystemExit(1)
+
+tmp_created = False
+try:
+    if operation == "read":
+        try:
+            fd = os.open(name, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd)
+        except OSError:
+            raise SystemExit(1)
+
+        try:
+            opened_stat = os.fstat(fd)
+            if not stat.S_ISREG(opened_stat.st_mode):
+                raise SystemExit(1)
+            with os.fdopen(fd, "r", encoding="utf-8", errors="ignore", closefd=False) as handle:
+                marker_current = handle.readline().rstrip("\n")
+        finally:
+            os.close(fd)
+
+        if not marker_current:
+            raise SystemExit(1)
+        print(marker_current, end="")
+    elif operation == "write":
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        for attr in ("O_CLOEXEC", "O_NOFOLLOW"):
+            flags |= getattr(os, attr, 0)
+        try:
+            fd = os.open(tmp_name, flags, 0o600, dir_fd=parent_fd)
+            tmp_created = True
+        except OSError:
+            raise SystemExit(1)
+
+        try:
+            data = f"{marker_expected}\n".encode("utf-8", errors="surrogateescape")
+            while data:
+                written = os.write(fd, data)
+                if written <= 0:
+                    raise OSError(errno.EIO, "marker write returned zero bytes")
+                data = data[written:]
+            os.fchmod(fd, 0o600)
+            os.fsync(fd)
+        except OSError:
+            raise SystemExit(1)
+        finally:
+            os.close(fd)
+
+        os.rename(tmp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        tmp_created = False
+    else:
+        raise SystemExit(1)
+except OSError:
+    raise SystemExit(1)
+finally:
+    if tmp_created:
+        try:
+            os.unlink(tmp_name, dir_fd=parent_fd)
+        except OSError:
+            pass
+    os.close(parent_fd)
+PY
+}
+
 log_rotation_marker_readable() {
   local marker_path="$1"
-  local marker_current
 
-  [[ -f "$marker_path" && ! -L "$marker_path" ]] || return 1
-  IFS= read -r marker_current < "$marker_path" || true
-  [[ -n "$marker_current" ]] || return 1
-
-  printf '%s' "$marker_current"
+  log_rotation_marker_secure_io "$marker_path" "read"
 }
 
 log_rotation_store_marker() {
   local marker_path="$1"
   local marker_expected="$2"
-  local marker_tmp="$marker_path.tmp.$$"
 
-  if ! printf '%s\n' "$marker_expected" > "$marker_tmp" 2>/dev/null; then
-    rm -f -- "$marker_tmp"
-    return 1
-  fi
-  if ! chmod 600 "$marker_tmp" 2>/dev/null; then
-    rm -f -- "$marker_tmp"
-    return 1
-  fi
-  if ! mv -f -- "$marker_tmp" "$marker_path"; then
-    rm -f -- "$marker_tmp"
-    return 1
-  fi
+  log_rotation_marker_secure_io "$marker_path" "write" "$marker_expected"
 }
 
 log_rotation_target_is_safe() {
@@ -132,11 +231,11 @@ log_rotation_target_is_safe() {
     return 1
   fi
 
-  if [[ "$(stat -Lc '%u' -- "$marker_path" 2>/dev/null || printf '')" != "$current_uid" ]]; then
+  if [[ "$(stat -c '%u' -- "$marker_path" 2>/dev/null || printf '')" != "$current_uid" ]]; then
     printf 'log_marker_wrong_owner'
     return 1
   fi
-  if [[ "$(stat -Lc '%a' -- "$marker_path" 2>/dev/null || printf '')" != "600" ]]; then
+  if [[ "$(stat -c '%a' -- "$marker_path" 2>/dev/null || printf '')" != "600" ]]; then
     printf 'log_marker_wrong_mode'
     return 1
   fi

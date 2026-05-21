@@ -3,6 +3,44 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue 125 Rotation Marker Temp Hardening
+
+Status: completed locally
+
+Goal:
+- close the remaining log-rotation marker temp-file path that could follow a
+  precreated symlink during marker refresh
+- keep the existing live `Upkeeper.log` no-follow append guard and rotation
+  snapshot/truncate guard unchanged
+- add deterministic local validation proving a symlinked marker temp path is
+  rejected without modifying the outside target
+
+Constraints:
+- do not contact GitHub or launch real backend Codex validation
+- keep the patch focused on issue `#125` log-path filesystem integrity
+- preserve existing rotation marker semantics for trusted regular marker files
+
+Files likely touched:
+- `lib/upkeeper/log_rotation.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/security.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Replaced shell-redirection rotation marker reads/writes with a no-follow
+  descriptor helper.
+- Made marker refresh fail closed when the predictable temp path already exists,
+  including when it is a symlink.
+- Added focused regression coverage for the symlinked marker temp path and
+  updated security docs plus 2026 change notes.
+
 ## Backlog Model Fixture Output Classification
 
 Status: completed locally

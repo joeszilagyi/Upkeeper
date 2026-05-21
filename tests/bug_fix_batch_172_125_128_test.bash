@@ -5,6 +5,8 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-bug-fix-batch.XXXXXX")"
 trap 'rm -rf "$TEST_TMP_ROOT"' EXIT
 source "$PROJECT_ROOT/lib/upkeeper/session_store_preflight.bash"
+source "$PROJECT_ROOT/lib/upkeeper/runtime_foundation.bash"
+source "$PROJECT_ROOT/lib/upkeeper/log_rotation.bash"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -87,6 +89,37 @@ EOF
   grep -q "symlink_log_file" "$root/preflight.err" || fail "symlink-specific rejection missing from log preflight"
 }
 
+test_log_rotation_marker_store_rejects_symlink_temp() {
+  local root target marker_path marker_tmp status
+  local LOG_FILE LOG_FILE_DIR LOG_FILE_NAME ROOT_DIR CYCLE_ID CYCLE_RUN_HASH
+
+  root="$TEST_TMP_ROOT/issue-125-marker"
+  mkdir -p "$root"
+  target="$root/outside-marker-target"
+  printf 'sentinel\n' >"$target"
+
+  LOG_FILE="$root/Upkeeper.log"
+  LOG_FILE_DIR="$root"
+  LOG_FILE_NAME="Upkeeper.log"
+  ROOT_DIR="$root"
+  CYCLE_ID="cycle-125-marker"
+  CYCLE_RUN_HASH="run-125-marker"
+
+  marker_path="$(log_rotation_marker_path)"
+  marker_tmp="$marker_path.tmp.$BASHPID"
+  ln -s "$target" "$marker_tmp"
+
+  set +e
+  log_rotation_store_marker "$marker_path" "expected-marker"
+  status=$?
+  set -e
+
+  [[ "$status" -ne 0 ]] || fail "log rotation marker store followed or replaced a symlink temp path"
+  [[ "$(cat "$target")" == "sentinel" ]] || fail "log rotation marker temp symlink target was modified"
+  [[ -L "$marker_tmp" ]] || fail "log rotation marker temp symlink was removed"
+  [[ ! -e "$marker_path" ]] || fail "log rotation marker was created after temp symlink rejection"
+}
+
 test_session_store_write_check_rejects_sessions_dir_symlink() {
   local codex_home output
 
@@ -110,6 +143,7 @@ test_session_store_write_check_rejects_sessions_dir_symlink() {
 
 test_lattice_record_pass_result_does_not_create_missing_db
 test_log_preflight_rejects_symlink_log_file
+test_log_rotation_marker_store_rejects_symlink_temp
 test_session_store_write_check_rejects_sessions_dir_symlink
 
 printf 'bug_fix_batch_172_125_128_test: ok\n'

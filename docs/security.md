@@ -258,6 +258,9 @@ archive pruning stay blocked for custom paths unless explicitly enabled with
 prevents a contaminated checkout from redirecting wrapper log appends into an
 unsafe local file or using archive pruning to delete sibling zip files in an
 arbitrary log directory.
+Rotation marker refresh also uses no-follow descriptor opens and exclusive
+temporary-file creation, so a precreated marker temp symlink cannot redirect
+marker writes outside the log directory.
 
 ## Ignored Files
 

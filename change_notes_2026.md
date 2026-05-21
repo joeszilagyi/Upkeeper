@@ -10,6 +10,7 @@ Version numbering note:
 	1. Backlog watch output now treats model-emitted `printf` fixture text containing timestamped `[WARN] startup_anomaly.gate` content as informational transcript output instead of a pageable wrapper/control-plane error.
 	2. Formatter validation now covers both the existing echoed `ERROR:` fixture and the new `printf` warning fixture while preserving `PAGE [ERROR]` rendering for real wrapper/control-plane errors.
 	3. The backlog default-environment validator now clears inherited backlog model and quota overrides before asserting documented defaults, and autoshelve validation uses fixture-local state so live backlog owner locks cannot break local validation.
+	4. Log-rotation marker refresh now uses no-follow descriptor opens and exclusive temp creation, preventing a precreated marker temp symlink from redirecting rotation marker writes outside the log directory.
 
 2026-05-21: backlog PR check settling repair:
 	1. Backlog PR-check polling now treats a just-created PR with no reported checks as a pending/settling state for a bounded grace period instead of misclassifying the empty GitHub response as failed.

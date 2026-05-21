@@ -1013,19 +1013,49 @@ check_prompt_module_contract() {
   done
 }
 
+review_module_specs() {
+  cat <<'EOF'
+p24|prompts/p24-de-llm-ing-viability-review.md|P24 - De-LLM-ing Viability Review|P24: not applicable|no loss of operator-facing function;without material new runtime cost
+p25|prompts/p25-contract-intent-compliance-review.md|P25 - Contract And Intent Compliance Review|P25: not applicable|central-first;operator-visible behavior;smallest sufficient
+p26|prompts/p26-public-documentation-review.md|P26 - Public Documentation And Readability Review|P26: not applicable|current checked-in state as the delivered product
+p27|prompts/p27-educational-debrief-review.md|P27 - Educational Debrief Review|P27: not applicable|P27 Educational Debrief:;What went wrong:
+p28|prompts/p28-unit-test-harvesting-review.md|P28 - Unit Test Harvesting Review|P28: not applicable|without backend model quota
+p29|prompts/p29-reuse-harvesting-review.md|# P29 Reuse Harvesting Review|P29: not applicable|stable contract;generic "utils.bash" dumping ground;generic "utility dumping ground" functions;Relationship to P12, P24, P25, and P28;Wrong Abstraction Check;Shell Reuse Safety Gates;Command Reuse Rule;Registry Preference;Reuse Debt Output;ShellCheck Integration Policy
+p30|prompts/p30-stark-protocol-review.md|# P30 Stark Protocol Review|P30: not applicable|same weakness cannot get us twice;Permanent hardening test;Non-regression evidence;same weakness cannot silently recur
+EOF
+}
+
+review_module_alias_specs() {
+  cat <<'EOF'
+p29|library-reuse,function-reuse,asset-reuse
+p30|stark-protocol,permanent-hardening,non-regression
+EOF
+}
+
+review_module_list_csv() {
+  review_module_specs | awk -F'|' 'BEGIN { ORS = "," } { print $1 }' | sed 's/,$//'
+}
+
 check_prompt_template() {
   local p31_term
+  local module_id prompt_path module_title module_applicability module_terms
+  local term
 
   log "checking prompt templates"
   [[ -s prompts/default-review.md ]] || fail "prompts/default-review.md is missing or empty"
   [[ -s prompts/p23-data-contract-negative-fixture-audit.md ]] || fail "P23 standalone prompt is missing or empty"
-  [[ -s prompts/p24-de-llm-ing-viability-review.md ]] || fail "P24 standalone prompt is missing or empty"
-  [[ -s prompts/p25-contract-intent-compliance-review.md ]] || fail "P25 review module prompt is missing or empty"
-  [[ -s prompts/p26-public-documentation-review.md ]] || fail "P26 review module prompt is missing or empty"
-  [[ -s prompts/p27-educational-debrief-review.md ]] || fail "P27 review module prompt is missing or empty"
-  [[ -s prompts/p28-unit-test-harvesting-review.md ]] || fail "P28 review module prompt is missing or empty"
-  [[ -s prompts/p29-reuse-harvesting-review.md ]] || fail "P29 review module prompt is missing or empty"
-  [[ -s prompts/p30-stark-protocol-review.md ]] || fail "P30 review module prompt is missing or empty"
+  while IFS='|' read -r module_id prompt_path module_title module_applicability module_terms; do
+    [[ -s "$prompt_path" ]] || fail "review module prompt is missing or empty: $prompt_path"
+    grep -Fq "$module_title" "$prompt_path" || fail "${module_id} prompt title missing"
+    grep -Fq "$module_applicability" "$prompt_path" || fail "${module_id} applicability gate missing"
+    if [[ -n "$module_terms" ]]; then
+      IFS=';' read -r -a module_terms <<< "$module_terms"
+      for term in "${module_terms[@]}"; do
+        [[ -n "$term" ]] || continue
+        grep -Fq "$term" "$prompt_path" || fail "${module_id} module contract term missing: $term"
+      done
+    fi
+  done < <(review_module_specs)
   [[ -s prompts/p31-fault-injection-review.md ]] || fail "P31 fault-injection contract prompt is missing or empty"
   [[ -x tools/upkeeper_lattice.py ]] || fail "Lattice tool is missing or not executable"
   [[ -s lib/upkeeper/lattice.bash ]] || fail "Lattice wrapper module is missing or empty"
@@ -1042,43 +1072,6 @@ check_prompt_template() {
   [[ -s Upkeeper.conf ]] || fail "root Upkeeper.conf is missing or empty"
   [[ -s configurations/default.conf ]] || fail "configurations/default.conf is missing or empty"
   [[ -x tools/stress_upkeeper_corpus.sh ]] || fail "stress corpus harness is missing or not executable"
-  grep -Fq "P24 - De-LLM-ing Viability Review" prompts/p24-de-llm-ing-viability-review.md || fail "P24 prompt title missing"
-  grep -Fq "P24: not applicable" prompts/p24-de-llm-ing-viability-review.md || fail "P24 applicability gate missing"
-  grep -Fq "no loss of operator-facing function" prompts/p24-de-llm-ing-viability-review.md || fail "P24 no-loss requirement missing"
-  grep -Fq "without material new runtime cost" prompts/p24-de-llm-ing-viability-review.md || fail "P24 cost ceiling missing"
-  grep -Fq "P25 - Contract And Intent Compliance Review" prompts/p25-contract-intent-compliance-review.md || fail "P25 prompt title missing"
-  grep -Fq "P25: not applicable" prompts/p25-contract-intent-compliance-review.md || fail "P25 applicability gate missing"
-  grep -Fq "central-first" prompts/p25-contract-intent-compliance-review.md || fail "P25 central-first contract missing"
-  grep -Fq "operator-visible behavior" prompts/p25-contract-intent-compliance-review.md || fail "P25 operator-visible contract missing"
-  grep -Fq "smallest sufficient" prompts/p25-contract-intent-compliance-review.md || fail "P25 simplicity contract missing"
-  grep -Fq "P26 - Public Documentation And Readability Review" prompts/p26-public-documentation-review.md || fail "P26 prompt title missing"
-  grep -Fq "P26: not applicable" prompts/p26-public-documentation-review.md || fail "P26 applicability gate missing"
-  grep -Fq "current checked-in state as the delivered product" prompts/p26-public-documentation-review.md || fail "P26 delivered-product rule missing"
-  grep -Fq "P27 - Educational Debrief Review" prompts/p27-educational-debrief-review.md || fail "P27 prompt title missing"
-  grep -Fq "P27: not applicable" prompts/p27-educational-debrief-review.md || fail "P27 applicability gate missing"
-  grep -Fq "P27 Educational Debrief:" prompts/p27-educational-debrief-review.md || fail "P27 saved structure missing"
-  grep -Fq "What went wrong:" prompts/p27-educational-debrief-review.md || fail "P27 debrief structure missing"
-  grep -Fq "P28 - Unit Test Harvesting Review" prompts/p28-unit-test-harvesting-review.md || fail "P28 prompt title missing"
-  grep -Fq "P28: not applicable" prompts/p28-unit-test-harvesting-review.md || fail "P28 applicability gate missing"
-  grep -Fq "without backend model quota" prompts/p28-unit-test-harvesting-review.md || fail "P28 local test contract missing"
-  grep -Fq "# P29 Reuse Harvesting Review" prompts/p29-reuse-harvesting-review.md || fail "P29 prompt title missing"
-  grep -Fq "P29: not applicable" prompts/p29-reuse-harvesting-review.md || fail "P29 applicability gate missing"
-  grep -Fq "stable contract" prompts/p29-reuse-harvesting-review.md || fail "P29 stable-contract rule missing"
-  grep -Fq 'generic "utils.bash" dumping ground' prompts/p29-reuse-harvesting-review.md || fail "P29 utils dumping-ground boundary missing"
-  grep -Fq 'generic "utility dumping ground" functions' prompts/p29-reuse-harvesting-review.md || fail "P29 utility dumping-ground boundary missing"
-  grep -Fq "Relationship to P12, P24, P25, and P28" prompts/p29-reuse-harvesting-review.md || fail "P29 neighboring-module boundary missing"
-  grep -Fq "Wrong Abstraction Check" prompts/p29-reuse-harvesting-review.md || fail "P29 wrong-abstraction check missing"
-  grep -Fq "Shell Reuse Safety Gates" prompts/p29-reuse-harvesting-review.md || fail "P29 shell safety gates missing"
-  grep -Fq "Command Reuse Rule" prompts/p29-reuse-harvesting-review.md || fail "P29 command reuse rule missing"
-  grep -Fq "Registry Preference" prompts/p29-reuse-harvesting-review.md || fail "P29 registry preference missing"
-  grep -Fq "Reuse Debt Output" prompts/p29-reuse-harvesting-review.md || fail "P29 reuse debt output missing"
-  grep -Fq "ShellCheck Integration Policy" prompts/p29-reuse-harvesting-review.md || fail "P29 ShellCheck policy missing"
-  grep -Fq "# P30 Stark Protocol Review" prompts/p30-stark-protocol-review.md || fail "P30 prompt title missing"
-  grep -Fq "P30: not applicable" prompts/p30-stark-protocol-review.md || fail "P30 applicability gate missing"
-  grep -Fq "same weakness cannot get us twice" prompts/p30-stark-protocol-review.md || fail "P30 same-weakness rule missing"
-  grep -Fq "Permanent hardening test" prompts/p30-stark-protocol-review.md || fail "P30 hardening test missing"
-  grep -Fq "Non-regression evidence" prompts/p30-stark-protocol-review.md || fail "P30 non-regression evidence output missing"
-  grep -Fq "same weakness cannot silently recur" prompts/p30-stark-protocol-review.md || fail "P30 repeat-path boundary missing"
   grep -Fq "# P31 Fault-Injection Review" prompts/p31-fault-injection-review.md || fail "P31 prompt title missing"
   grep -Fq "P31: not applicable" prompts/p31-fault-injection-review.md || fail "P31 applicability gate missing"
   for p31_term in \
@@ -1349,17 +1342,15 @@ check_default_prompt_target_isolation_contract() {
 
 check_help_and_diff() {
   local help validation_help
+  local module_id selection_review_modules
 
   log "checking help and whitespace"
   help="$(./Upkeeper --help)"
   validation_help="$(tools/validate_upkeeper.sh --help)"
-  grep -Fq -- "--review-module=p24" <<<"$help" || fail "help missing --review-module=p24"
-  grep -Fq -- "--review-module=p25" <<<"$help" || fail "help missing --review-module=p25"
-  grep -Fq -- "--review-module=p26" <<<"$help" || fail "help missing --review-module=p26"
-  grep -Fq -- "--review-module=p27" <<<"$help" || fail "help missing --review-module=p27"
-  grep -Fq -- "--review-module=p28" <<<"$help" || fail "help missing --review-module=p28"
-  grep -Fq -- "--review-module=p29" <<<"$help" || fail "help missing --review-module=p29"
-  grep -Fq -- "--review-module=p30" <<<"$help" || fail "help missing --review-module=p30"
+  while IFS='|' read -r module_id _; do
+    grep -Fq -- "--review-module=$module_id" <<<"$help" || fail "help missing --review-module=$module_id"
+    grep -Fq -- "--$module_id" <<<"$help" || fail "help missing --$module_id"
+  done < <(review_module_specs)
   grep -Fq -- "--config-file=PATH" <<<"$help" || fail "help missing --config-file"
   grep -Fq -- "--no-config" <<<"$help" || fail "help missing --no-config"
   grep -Fq -- "--target-root=PATH" <<<"$help" || fail "help missing --target-root"
@@ -1371,14 +1362,8 @@ check_help_and_diff() {
   grep -Fq -- "--include-globs=a,b" <<<"$help" || fail "help missing --include-globs"
   grep -Fq -- "--exclude-glob=PATTERN" <<<"$help" || fail "help missing --exclude-glob"
   grep -Fq -- "--exclude-globs=a,b" <<<"$help" || fail "help missing --exclude-globs"
-  grep -Fq -- "--selection-review-modules=p24,p25,p26,p27,p28,p29,p30" <<<"$help" || fail "help missing --selection-review-modules"
-  grep -Fq -- "--p24" <<<"$help" || fail "help missing --p24"
-  grep -Fq -- "--p25" <<<"$help" || fail "help missing --p25"
-  grep -Fq -- "--p26" <<<"$help" || fail "help missing --p26"
-  grep -Fq -- "--p27" <<<"$help" || fail "help missing --p27"
-  grep -Fq -- "--p28" <<<"$help" || fail "help missing --p28"
-  grep -Fq -- "--p29" <<<"$help" || fail "help missing --p29"
-  grep -Fq -- "--p30" <<<"$help" || fail "help missing --p30"
+  selection_review_modules="$(review_module_list_csv)"
+  grep -Fq -- "--selection-review-modules=$selection_review_modules" <<<"$help" || fail "help missing --selection-review-modules"
   grep -Fq -- "--ignore-failure-queue" <<<"$help" || fail "help missing --ignore-failure-queue"
   grep -Fq -- "--backup-queue" <<<"$help" || fail "help missing --backup-queue"
   grep -Fq -- "--max-cover" <<<"$help" || fail "help missing --max-cover"
@@ -2576,7 +2561,8 @@ check_quota_fallback_exit_contract() {
 }
 
 check_review_module_flags() {
-  local temp_dir output rc
+  local temp_dir output rc module_id module_aliases
+  local -a module_flags alias_flags
 
   log "checking review module flags"
   temp_dir="$(mktemp -d /tmp/upkeeper-review-modules.XXXXXX)"
@@ -2596,26 +2582,29 @@ check_review_module_flags() {
     CODEX_FALLBACK_SCREEN_ENABLED=0 \
     CODEX_POSTMORTEM_ENABLED=0 \
     UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --target-file=Upkeeper --review-modules=p24,p25,p26,p27,p28,p29,p30 >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+    ./Upkeeper --target-file=Upkeeper --review-modules="$(review_module_list_csv)" >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
 
   grep -Fq "review_modules_hash=" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules metadata"
-  grep -Fq "review.module_prompt enabled module=p24" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P24"
-  grep -Fq "review.module_prompt enabled module=p25" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P25"
-  grep -Fq "review.module_prompt enabled module=p26" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P26"
-  grep -Fq "review.module_prompt enabled module=p27" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P27"
-  grep -Fq "review.module_prompt enabled module=p28" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P28"
-  grep -Fq "review.module_prompt enabled module=p29" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P29"
-  grep -Fq "review.module_prompt enabled module=p30" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append P30"
+  while IFS='|' read -r module_id _; do
+    grep -Fq "review.module_prompt enabled module=$module_id" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not append $module_id"
+  done < <(review_module_specs)
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not finish cleanly"
 
-  output="$(./Upkeeper --p24 --p25 --p26 --p27 --p28 --p29 --p30 --version)"
+  module_flags=()
+  while IFS='|' read -r module_id _; do
+    module_flags+=("--$module_id")
+  done < <(review_module_specs)
+  output="$(./Upkeeper "${module_flags[@]}" --version)"
   [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "review module shorthand flags broke --version"
 
-  output="$(./Upkeeper --review-module=library-reuse --review-module=function-reuse --review-module=asset-reuse --version)"
-  [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "P29 reuse aliases broke --version"
-
-  output="$(./Upkeeper --review-module=stark-protocol --review-module=permanent-hardening --review-module=non-regression --version)"
-  [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "P30 hardening aliases broke --version"
+  while IFS='|' read -r module_id module_aliases; do
+    IFS=',' read -r -a alias_flags <<< "$module_aliases"
+    for i in "${!alias_flags[@]}"; do
+      alias_flags[$i]="--review-module=${alias_flags[$i]}"
+    done
+    output="$(./Upkeeper "${alias_flags[@]}" --version)"
+    [[ "$output" == "Upkeeper $(sed -n 's/^UPKEEPER_VERSION="\([^"]*\)"/\1/p' Upkeeper)" ]] || fail "$module_id alias shorthand broke --version"
+  done < <(review_module_alias_specs)
 
   set +e
   output="$(

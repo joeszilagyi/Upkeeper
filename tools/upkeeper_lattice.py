@@ -6191,6 +6191,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["backup_command_preserves_source_db_file"] = backup_preserves_source_probe
         backup_rejects_existing_probe = probe_backup_command_rejects_existing_default_destination()
         result["checks"]["backup_command_rejects_existing_default_destination"] = backup_rejects_existing_probe
+        backup_failure_partial_probe = probe_backup_failure_does_not_publish_partial_destination()
+        result["checks"]["backup_failure_does_not_publish_partial_destination"] = backup_failure_partial_probe
         recover_primary_sources_probe = probe_recover_requires_primary_sources()
         result["checks"]["recover_requires_primary_sources"] = recover_primary_sources_probe
         recover_import_conflicts_probe = probe_recover_propagates_import_conflicts()
@@ -6244,6 +6246,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(backup_rejects_existing_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(backup_failure_partial_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(recover_primary_sources_probe.get("ok")):
@@ -8254,6 +8259,47 @@ def probe_backup_command_rejects_existing_default_destination() -> dict[str, Any
         }
 
 
+def probe_backup_failure_does_not_publish_partial_destination() -> dict[str, Any]:
+    class FakeCursor:
+        def fetchone(self) -> tuple[str]:
+            return ("delete",)
+
+    class FailingBackupSource:
+        in_transaction = False
+
+        def execute(self, _sql: str) -> FakeCursor:
+            return FakeCursor()
+
+        def commit(self) -> None:
+            return None
+
+        def backup(self, _target: sqlite3.Connection, *, pages: int, sleep: float) -> None:
+            raise sqlite3.Error(f"injected backup failure pages={pages} sleep={sleep}")
+
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-backup-failure-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        backup_path = db_path.parent / "manual-backup.sqlite3"
+        error = ""
+        try:
+            create_backup(
+                FailingBackupSource(),  # type: ignore[arg-type]
+                root,
+                db_path,
+                output=str(backup_path),
+                allow_overwrite=False,
+            )
+        except sqlite3.Error as exc:
+            error = str(exc)
+        temp_paths = sorted(backup_path.parent.glob(f".{backup_path.name}.tmp-*")) if backup_path.parent.exists() else []
+        return {
+            "error": error,
+            "backup_exists": backup_path.exists(),
+            "temp_paths": [str(path) for path in temp_paths],
+            "ok": bool(error) and not backup_path.exists() and not temp_paths,
+        }
+
+
 def probe_recover_requires_primary_sources() -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recover-primary-") as tmpdir:
         temp_root = Path(tmpdir).resolve()
@@ -8463,8 +8509,8 @@ def probe_recover_backup_first_preserves_duplicate_git_changes() -> dict[str, An
                 payload.get("status") == "incomplete",
                 len(backup_paths) == 1,
                 backup_duplicate_count == 2,
-                backup_provenance_count == 0,
-                backup_recovery_source_count == 0,
+                backup_provenance_count == 1,
+                backup_recovery_source_count == 1,
                 recovered_duplicate_count == 1,
                 recovery_event_details.get("deleted_git_file_change_count") == 1,
                 recovery_event_details.get("deleted_git_file_change_ids") == [2],
@@ -11915,6 +11961,7 @@ def create_backup(
     *,
     allow_overwrite: bool = False,
 ) -> Path:
+    temp_backup_path: Path | None = None
     if output:
         backup_path = validate_lattice_output_path(
             root,
@@ -11944,27 +11991,52 @@ def create_backup(
             fail(f"backup path is not regular: {backup_path}", EXIT_USAGE)
         if not allow_overwrite:
             fail(f"backup path already exists without overwrite: {backup_path}", EXIT_USAGE)
-        chmod_private(backup_path)
-    else:
-        try:
-            fd = os.open(backup_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            fail(f"backup path already exists without overwrite: {backup_path}", EXIT_USAGE)
-        except OSError as exc:
-            fail(f"backup path not creatable: {backup_path} ({exc})", EXIT_DB_UNAVAILABLE)
-        else:
-            os.close(fd)
-    if conn.in_transaction:
-        conn.commit()
-    backup_conn = sqlite3.connect(str(backup_path))
     try:
-        backup_conn.execute("PRAGMA busy_timeout=5000")
-        if backup_conn.in_transaction:
+        for _ in range(20):
+            candidate = backup_path.with_name(f".{backup_path.name}.tmp-{secrets.token_hex(8)}")
+            try:
+                fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                continue
+            except OSError as exc:
+                fail(f"backup path not creatable: {candidate} ({exc})", EXIT_DB_UNAVAILABLE)
+            else:
+                os.close(fd)
+                temp_backup_path = candidate
+                break
+        if temp_backup_path is None:
+            fail(f"backup temp path not creatable near: {backup_path}", EXIT_DB_UNAVAILABLE)
+        if conn.in_transaction:
+            conn.commit()
+        backup_conn = sqlite3.connect(str(temp_backup_path))
+        try:
+            backup_conn.execute("PRAGMA busy_timeout=5000")
+            if backup_conn.in_transaction:
+                backup_conn.commit()
+            conn.backup(backup_conn, pages=128, sleep=0.01)
             backup_conn.commit()
-        conn.backup(backup_conn, pages=128, sleep=0.01)
-        backup_conn.commit()
+        finally:
+            backup_conn.close()
+        chmod_private(temp_backup_path)
+        if allow_overwrite:
+            os.replace(temp_backup_path, backup_path)
+            temp_backup_path = None
+        else:
+            try:
+                os.link(temp_backup_path, backup_path)
+            except FileExistsError:
+                fail(f"backup path already exists without overwrite: {backup_path}", EXIT_USAGE)
+            except OSError as exc:
+                fail(f"backup path not publishable: {backup_path} ({exc})", EXIT_DB_UNAVAILABLE)
+            else:
+                temp_backup_path.unlink()
+                temp_backup_path = None
     finally:
-        backup_conn.close()
+        if temp_backup_path is not None:
+            try:
+                temp_backup_path.unlink()
+            except OSError:
+                pass
     chmod_private(backup_path)
     return backup_path
 
@@ -12168,8 +12240,44 @@ def command_recover(args: argparse.Namespace) -> int:
     preexisting_db = db_path.exists()
     backup_first = True if args.backup_first is None else bool(args.backup_first)
     backup_path = None
+    backup_provenance_recorded = False
     if backup_first and preexisting_db:
         backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
+        provenance_conn = connect_checked(
+            root,
+            db_path,
+            args.journal_mode,
+            allow_unsafe_db=args.allow_unsafe_db,
+        )
+        try:
+            if not all(table_exists(provenance_conn, table) for table in ("repositories", "source_records", "artifact_refs")):
+                init_schema(provenance_conn, root, raw_storage_mode=raw_storage_mode)
+            with provenance_conn:
+                repo_id = ensure_repository(provenance_conn, root)
+                source_id = ensure_source_record(
+                    provenance_conn,
+                    root,
+                    repo_id,
+                    "recovery",
+                    raw_ref="recover",
+                    parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
+                    raw_storage_mode=raw_storage_mode,
+                )
+                # Record the reason for the pre-recovery copy before taking it.
+                # Later recovery imports must not appear in this backup.
+                create_artifact_ref(
+                    provenance_conn,
+                    root,
+                    repo_id,
+                    cycle_pk=None,
+                    source_id=source_id,
+                    artifact_kind="backup",
+                    path=str(backup_path),
+                    details={"backup_event": "pre_recovery", "recorded_in": "backup_and_recovered_db"},
+                )
+                backup_provenance_recorded = True
+        finally:
+            provenance_conn.close()
         backup_source_conn = connect_checked(
             root,
             db_path,
@@ -12212,9 +12320,7 @@ def command_recover(args: argparse.Namespace) -> int:
             parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
             raw_storage_mode=raw_storage_mode,
         )
-        if backup_path is not None:
-            # Keep the backup as a pristine pre-recovery snapshot. Provenance
-            # for the backup belongs in the recovered database, not the copy.
+        if backup_path is not None and not backup_provenance_recorded:
             create_artifact_ref(
                 conn,
                 root,

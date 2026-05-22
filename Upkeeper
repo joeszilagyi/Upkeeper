@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.28
+## Version: v1.2.29
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.28"
+UPKEEPER_VERSION="v1.2.29"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -4940,14 +4940,28 @@ upkeeper_active_lock_marker_path() {
   printf '%s/.upkeeper_active_lock.owner' "$lock_dir"
 }
 
-upkeeper_active_lock_is_within_runtime() {
+upkeeper_active_lock_normalize_path() {
   local lock_dir="$1"
-  local runtime_root="$ROOT_DIR/runtime"
 
   [[ -n "$lock_dir" ]] || return 1
   if [[ "$lock_dir" != /* ]]; then
     lock_dir="$ROOT_DIR/$lock_dir"
   fi
+
+  python3 - "$lock_dir" <<'PY'
+import os
+import sys
+
+print(os.path.normpath(sys.argv[1]))
+PY
+}
+
+upkeeper_active_lock_is_within_runtime() {
+  local lock_dir="$1"
+  local runtime_root="$ROOT_DIR/runtime"
+
+  lock_dir="$(upkeeper_active_lock_normalize_path "$lock_dir")" || return 1
+  runtime_root="$(upkeeper_active_lock_normalize_path "$runtime_root")" || return 1
   case "$lock_dir" in
     "$runtime_root"|"$runtime_root"/*) return 0 ;;
     *) return 1 ;;
@@ -5229,16 +5243,26 @@ scan_wrapper_health_state() {
 acquire_active_lock_or_exit() {
   local lock_age_seconds lock_parent owner_pid owner_start owner_boot owner_cycle owner_run_hash owner_token fallback_inherit_fail state_file state_tmp
   local fallback_parent_pid fallback_parent_start token_fd child_token child_token_hash
+  local normalized_lock_dir
   local incomplete_lock_grace_seconds="30"
   if [[ -z "$CODEX_ACTIVE_LOCK_DIR" || "$CODEX_ACTIVE_LOCK_DIR" == "/" ]]; then
     log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=unsafe_lock_path"
     finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=unsafe_lock_path"
   fi
+  if ! normalized_lock_dir="$(upkeeper_active_lock_normalize_path "$CODEX_ACTIVE_LOCK_DIR")"; then
+    log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=unsafe_lock_path"
+    finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=unsafe_lock_path"
+  fi
+  CODEX_ACTIVE_LOCK_DIR="$normalized_lock_dir"
   if ! upkeeper_active_lock_is_within_runtime "$CODEX_ACTIVE_LOCK_DIR"; then
     log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=unsafe_lock_path"
     finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=unsafe_lock_path"
   fi
   lock_parent="$(dirname -- "$CODEX_ACTIVE_LOCK_DIR")"
+  if upkeeper_path_contains_symlink_component "$lock_parent"; then
+    log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=unsafe_lock_path"
+    finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=unsafe_lock_path"
+  fi
   if ! mkdir -p -- "$lock_parent"; then
     log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=parent_mkdir_failed"
     finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=parent_mkdir_failed"

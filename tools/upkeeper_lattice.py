@@ -8181,14 +8181,16 @@ def probe_backup_command_preserves_source_db_file() -> dict[str, Any]:
         source_after = sha256_file(db_path)
         payload_text = stdout.getvalue().strip()
         payload = load_single_json_document(payload_text) if payload_text else {}
+        backup_mode = stat.S_IMODE(backup_path.stat().st_mode) if backup_path.exists() else None
         return {
             "exit_code": exit_code,
             "backup_path": payload.get("backup_path"),
             "backup_exists": backup_path.exists(),
+            "backup_mode": oct(backup_mode) if backup_mode is not None else None,
             "source_hash_before": source_before,
             "source_hash_after": source_after,
             "source_preserved": source_before == source_after,
-            "ok": exit_code == EXIT_SUCCESS and backup_path.exists() and source_before == source_after,
+            "ok": exit_code == EXIT_SUCCESS and backup_path.exists() and backup_mode == 0o600 and source_before == source_after,
         }
 
 
@@ -11942,6 +11944,16 @@ def create_backup(
             fail(f"backup path is not regular: {backup_path}", EXIT_USAGE)
         if not allow_overwrite:
             fail(f"backup path already exists without overwrite: {backup_path}", EXIT_USAGE)
+        chmod_private(backup_path)
+    else:
+        try:
+            fd = os.open(backup_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            fail(f"backup path already exists without overwrite: {backup_path}", EXIT_USAGE)
+        except OSError as exc:
+            fail(f"backup path not creatable: {backup_path} ({exc})", EXIT_DB_UNAVAILABLE)
+        else:
+            os.close(fd)
     if conn.in_transaction:
         conn.commit()
     backup_conn = sqlite3.connect(str(backup_path))
@@ -11961,15 +11973,17 @@ def command_backup(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
     conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db, read_only=True)
-    ensure_schema_identity_read_only(conn)
-    backup_path = create_backup(
-        conn,
-        root,
-        db_path,
-        output=args.output,
-        allow_overwrite=args.overwrite,
-    )
-    conn.close()
+    try:
+        ensure_schema_identity_read_only(conn)
+        backup_path = create_backup(
+            conn,
+            root,
+            db_path,
+            output=args.output,
+            allow_overwrite=args.overwrite,
+        )
+    finally:
+        conn.close()
     print_json({"status": "ok", "backup_path": str(backup_path)})
     return EXIT_SUCCESS
 

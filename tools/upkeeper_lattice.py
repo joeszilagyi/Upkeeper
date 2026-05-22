@@ -6239,6 +6239,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["recover_propagates_import_conflicts"] = recover_import_conflicts_probe
         import_repo_mismatch_probe = probe_import_jsonl_rejects_repo_identity_mismatch()
         result["checks"]["import_jsonl_rejects_repo_identity_mismatch"] = import_repo_mismatch_probe
+        import_unexpected_fields_probe = probe_import_jsonl_rejects_unexpected_payload_fields()
+        result["checks"]["import_jsonl_rejects_unexpected_payload_fields"] = import_unexpected_fields_probe
         import_conflicted_fk_probe = probe_import_jsonl_rejects_unmapped_conflicted_parent_fk()
         result["checks"]["import_jsonl_rejects_unmapped_conflicted_parent_fk"] = import_conflicted_fk_probe
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
@@ -6312,6 +6314,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(import_repo_mismatch_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(import_unexpected_fields_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(import_conflicted_fk_probe.get("ok")):
@@ -8909,6 +8914,95 @@ def probe_import_jsonl_rejects_repo_identity_mismatch() -> dict[str, Any]:
             "status": result.get("status"),
             "reason": result.get("reason"),
             "imported_files": imported_files,
+            "ok": ok,
+        }
+
+
+def probe_import_jsonl_rejects_unexpected_payload_fields() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-import-extra-field-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        chmod_private(db_path.parent, is_dir=True, created_by_invocation=True)
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+            init_schema(conn, root, raw_storage_mode="minimal")
+            with conn:
+                repo_id = ensure_repository(conn, root)
+        finally:
+            conn.close()
+        context = repo_identity_context(root)
+        repo_identity = {
+            "repo_id": str(repo_id),
+            "repo_key": repo_identity_stable_key(root, context[1]),
+            "root_path": protected_repo_path(context, str(root)),
+        }
+        payload = {"key": "schema_version", "value": str(SCHEMA_VERSION), "unexpected_field": "silently dropped"}
+        export_path = root / "extra-field.jsonl"
+        export_path.write_text(
+            json_dumps(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "row_type": "schema_meta",
+                    "row_version": SCHEMA_ROW_VERSION,
+                    "logical_key": "schema_meta:schema_version",
+                    "repo_identity": repo_identity,
+                    "payload": payload,
+                    "payload_sha256": sha256_text(json_dumps(payload)),
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            path=str(export_path),
+            max_conflicts=0,
+            anonymized_archive=False,
+            redact_raw=True,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_import_jsonl(args)
+        result_text = stdout.getvalue().strip()
+        result = load_single_json_document(result_text) if result_text else {}
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conflict_row = conn.execute(
+                """
+                select resolution, details_json
+                from lattice_import_conflicts
+                where row_type='schema_meta' and logical_key='schema_meta:schema_version'
+                order by conflict_id desc
+                limit 1
+                """
+            ).fetchone()
+        finally:
+            conn.close()
+        conflict_details = json.loads(conflict_row[1]) if conflict_row and conflict_row[1] else {}
+        ok = all(
+            (
+                exit_code == EXIT_IMPORT_CONFLICT,
+                result.get("status") == "conflicts",
+                result.get("conflicts") == 1,
+                conflict_row is not None,
+                conflict_row[0] == "unexpected_payload_fields",
+                conflict_details.get("fields") == ["unexpected_field"],
+            )
+        )
+        return {
+            "exit_code": exit_code,
+            "status": result.get("status"),
+            "conflicts": result.get("conflicts"),
+            "conflict_resolution": conflict_row[0] if conflict_row else None,
+            "conflict_fields": conflict_details.get("fields"),
             "ok": ok,
         }
 
@@ -11893,6 +11987,21 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 )
                 continue
             columns = table_columns(conn, table)
+            unexpected_payload_fields = sorted(str(key) for key in payload if key not in columns)
+            if unexpected_payload_fields:
+                conflicts += 1
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    incoming_raw_hash,
+                    "unexpected_payload_fields",
+                    details={"fields": unexpected_payload_fields},
+                )
+                continue
             pk = table_primary_key(conn, table)
             filtered = {k: v for k, v in payload.items() if k in columns}
             if "repo_id" in filtered:

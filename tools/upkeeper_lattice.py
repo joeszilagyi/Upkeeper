@@ -6195,6 +6195,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["backup_failure_does_not_publish_partial_destination"] = backup_failure_partial_probe
         recover_primary_sources_probe = probe_recover_requires_primary_sources()
         result["checks"]["recover_requires_primary_sources"] = recover_primary_sources_probe
+        recover_empty_preexisting_probe = probe_recover_empty_preexisting_db_is_incomplete_with_backup()
+        result["checks"]["recover_empty_preexisting_db_is_incomplete_with_backup"] = recover_empty_preexisting_probe
         import_log_idempotent_probe = probe_import_upkeeper_log_idempotent_rows_written()
         result["checks"]["import_upkeeper_log_idempotent_rows_written"] = import_log_idempotent_probe
         recover_import_conflicts_probe = probe_recover_propagates_import_conflicts()
@@ -6254,6 +6256,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(recover_primary_sources_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(recover_empty_preexisting_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(import_log_idempotent_probe.get("ok")):
@@ -8365,6 +8370,73 @@ def probe_recover_requires_primary_sources() -> dict[str, Any]:
             "report_status": report.get("status"),
             "report_sources": report.get("sources"),
             "backup_count": backup_count,
+            "ok": ok,
+        }
+
+
+def probe_recover_empty_preexisting_db_is_incomplete_with_backup() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recover-empty-db-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        chmod_private(db_path.parent, is_dir=True, created_by_invocation=True)
+        sqlite3.connect(str(db_path)).close()
+        chmod_private(db_path)
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            backup_first=True,
+            max_conflicts=999999,
+            limit=None,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_recover(args)
+        payload_text = stdout.getvalue().strip()
+        payload = load_single_json_document(payload_text) if payload_text else {}
+        report_path = Path(str(payload.get("recovery_report") or ""))
+        report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+        backup_paths = sorted((db_path.parent / "backups").glob("*.sqlite3"))
+        backup_artifact_count = 0
+        recovery_source_count = 0
+        if db_path.exists():
+            conn = sqlite3.connect(str(db_path))
+            try:
+                backup_artifact_count = int(
+                    conn.execute("select count(*) from artifact_refs where artifact_kind='backup'").fetchone()[0]
+                )
+                recovery_source_count = int(
+                    conn.execute(
+                        "select count(*) from source_records where source_kind='recovery' and raw_ref='recover'"
+                    ).fetchone()[0]
+                )
+            finally:
+                conn.close()
+        ok = all(
+            (
+                exit_code == EXIT_RECOVERY_INCOMPLETE,
+                payload.get("status") == "incomplete",
+                payload.get("sources") == [],
+                report.get("status") == "incomplete",
+                report.get("sources") == [],
+                len(backup_paths) == 1,
+                backup_artifact_count == 1,
+                recovery_source_count == 1,
+            )
+        )
+        return {
+            "exit_code": exit_code,
+            "status": payload.get("status"),
+            "sources": payload.get("sources"),
+            "report_status": report.get("status"),
+            "report_sources": report.get("sources"),
+            "backup_count": len(backup_paths),
+            "backup_artifact_count": backup_artifact_count,
+            "recovery_source_count": recovery_source_count,
             "ok": ok,
         }
 

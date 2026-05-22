@@ -5029,6 +5029,18 @@ upkeeper_active_lock_verify_ownership_marker() {
   return 1
 }
 
+upkeeper_active_lock_quarantine_stale_dir() {
+  local lock_dir="${1:-$CODEX_ACTIVE_LOCK_DIR}"
+  local lock_parent lock_name quarantine_dir
+
+  [[ -n "$lock_dir" && -d "$lock_dir" && ! -L "$lock_dir" ]] || return 1
+  lock_parent="$(dirname -- "$lock_dir")"
+  lock_name="$(basename -- "$lock_dir")"
+  quarantine_dir="$lock_parent/$lock_name.stale.$(date '+%Y%m%dT%H%M%S%z').$$.$RANDOM"
+
+  mv -- "$lock_dir" "$quarantine_dir"
+}
+
 upkeeper_shlex_quote() {
   local value="${1-}"
   local escaped
@@ -5235,6 +5247,10 @@ acquire_active_lock_or_exit() {
   if mkdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
     ACTIVE_LOCK_ACQUIRED="1"
   else
+    if [[ -L "$CODEX_ACTIVE_LOCK_DIR" || ! -d "$CODEX_ACTIVE_LOCK_DIR" ]]; then
+      log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=unsafe_existing_lock_path"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=unsafe_existing_lock_path"
+    fi
     owner_pid="$(active_lock_field pid || true)"
     owner_start="$(active_lock_field wrapper_start || true)"
     owner_boot="$(active_lock_field boot_id || true)"
@@ -5292,21 +5308,26 @@ acquire_active_lock_or_exit() {
       finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown}"
     fi
     lock_age_seconds="$(active_lock_age_seconds "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null || printf 'unknown')"
-  if [[ "$lock_age_seconds" =~ ^[0-9]+$ && "$lock_age_seconds" -lt "$incomplete_lock_grace_seconds" ]]; then
-    log_line "WARN" "active_lock.incomplete path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} lock_age_seconds=$lock_age_seconds grace_seconds=$incomplete_lock_grace_seconds action=exit"
-    finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 reason=incomplete_recent_lock owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} lock_age_seconds=$lock_age_seconds grace_seconds=$incomplete_lock_grace_seconds"
-  fi
-  log_line "WARN" "active_lock.stale path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=reclaim"
-  if ! upkeeper_active_lock_verify_ownership_marker "$CODEX_ACTIVE_LOCK_DIR"; then
-    log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=stale_lock_unowned"
-    finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=stale_lock_unowned"
-  fi
-  rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state" 2>/dev/null || true
-  rm -f -- "$CODEX_ACTIVE_LOCK_DIR"/state.tmp.* 2>/dev/null || true
-  rm -f -- "$(upkeeper_active_lock_marker_path)" 2>/dev/null || true
-  if ! rmdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
-    log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=stale_lock_not_empty"
-    finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=stale_lock_not_empty"
+    if [[ "$lock_age_seconds" =~ ^[0-9]+$ && "$lock_age_seconds" -lt "$incomplete_lock_grace_seconds" ]]; then
+      log_line "WARN" "active_lock.incomplete path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} lock_age_seconds=$lock_age_seconds grace_seconds=$incomplete_lock_grace_seconds action=exit"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 reason=incomplete_recent_lock owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} lock_age_seconds=$lock_age_seconds grace_seconds=$incomplete_lock_grace_seconds"
+    fi
+    log_line "WARN" "active_lock.stale path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=reclaim"
+    if ! upkeeper_active_lock_verify_ownership_marker "$CODEX_ACTIVE_LOCK_DIR"; then
+      if upkeeper_active_lock_quarantine_stale_dir "$CODEX_ACTIVE_LOCK_DIR"; then
+        log_line "WARN" "active_lock.stale_quarantined path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=stale_lock_unowned"
+      else
+        log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=stale_lock_unowned_quarantine_failed"
+        finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=stale_lock_unowned_quarantine_failed"
+      fi
+    else
+      rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state" 2>/dev/null || true
+      rm -f -- "$CODEX_ACTIVE_LOCK_DIR"/state.tmp.* 2>/dev/null || true
+      rm -f -- "$(upkeeper_active_lock_marker_path)" 2>/dev/null || true
+      if ! rmdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
+        log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=stale_lock_not_empty"
+        finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=stale_lock_not_empty"
+      fi
     fi
     if ! mkdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
       log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=reclaim_mkdir_failed"

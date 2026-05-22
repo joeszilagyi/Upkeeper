@@ -3,6 +3,39 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Automation Obligation Root Boundary
+
+Status: completed locally
+
+Goal:
+- keep central Upkeeper from selecting stale automation obligations whose
+  recorded root belongs to a temp fixture or another checkout
+- preserve current-root obligation ordering and legacy empty-root compatibility
+- expose ignored foreign-root counts in local selection metadata
+
+Constraints:
+- do not launch real backend Codex validation
+- keep selection deterministic and pre-model
+- do not delete local evidence merely because it belongs to another root
+
+Files likely touched:
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Filtered obligation selection to current-root records while preserving
+  legacy empty-root compatibility.
+- Added `ignored_foreign_root_count` to selection output.
+- Added deterministic validation for mixed current/foreign and all-foreign
+  obligation sets.
+
 ## Anomaly Custody Coalescing And Obligation Commit Ownership
 
 Status: completed locally

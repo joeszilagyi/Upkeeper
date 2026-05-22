@@ -931,6 +931,81 @@ LOG
   rm -r "$temp_dir"
 }
 
+check_automation_obligation_root_boundary_contract() {
+  local temp_dir selected_json selected_after_current_removed
+
+  log "checking automation obligation root boundary contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-obligation-root.XXXXXX)"
+  mkdir -p "$temp_dir/obligations/open"
+
+  python3 - "$ROOT_DIR" "$temp_dir/obligations/open" <<'PY'
+import json
+import pathlib
+import sys
+
+root = sys.argv[1]
+open_dir = pathlib.Path(sys.argv[2])
+
+records = [
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "foreign-root-obligation",
+        "created_at": "2026-05-22T01:00:00-0700",
+        "kind": "lattice_unavailable",
+        "severity": "high",
+        "summary": "foreign fixture obligation",
+        "root": "/tmp/upkeeper-foreign-fixture/client",
+        "target_scope": "target",
+        "target_file": "Upkeeper",
+        "repair_target_file": "Upkeeper",
+        "reason": "LATTICE_UNAVAILABLE",
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "current-root-obligation",
+        "created_at": "2026-05-22T02:00:00-0700",
+        "kind": "blocked",
+        "severity": "medium",
+        "summary": "current root obligation",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "Upkeeper",
+        "repair_target_file": "Upkeeper",
+        "reason": "BLOCKED",
+    },
+]
+for record in records:
+    (open_dir / f"{record['id']}.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
+  selected_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
+      bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.status' <<<"$selected_json")" == "ok" ]] ||
+    fail "automation obligation root boundary did not leave current-root obligation selectable"
+  [[ "$(jq -r '.id' <<<"$selected_json")" == "current-root-obligation" ]] ||
+    fail "automation obligation selection chose a foreign-root obligation"
+  [[ "$(jq -r '.ignored_foreign_root_count' <<<"$selected_json")" == "1" ]] ||
+    fail "automation obligation selection did not report ignored foreign-root obligations"
+
+  rm -f "$temp_dir/obligations/open/current-root-obligation.json"
+  selected_after_current_removed="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
+      bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.status' <<<"$selected_after_current_removed")" == "clean" ]] ||
+    fail "automation obligation selection did not ignore all-foreign obligation sets"
+  [[ "$(jq -r '.ignored_foreign_root_count' <<<"$selected_after_current_removed")" == "1" ]] ||
+    fail "automation obligation selection lost foreign-root count on clean result"
+
+  rm -r "$temp_dir"
+}
+
 check_backlog_quota_hibernation_contract() {
   local temp_dir status output hard_marker_root hard_marker_epoch
 
@@ -5274,6 +5349,7 @@ run_check review_summary_parser check_review_summary_parser
 run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
 run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_contract
+run_check automation_obligation_root_boundary_contract check_automation_obligation_root_boundary_contract
 run_check backlog_launcher_contract check_backlog_launcher_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract

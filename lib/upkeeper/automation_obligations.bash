@@ -531,6 +531,14 @@ def load(path: pathlib.Path):
     if data.get("status", "open") != "open":
         return None
     data["_path"] = str(path)
+    recorded_root = str(data.get("root", "") or "").strip()
+    if recorded_root:
+        try:
+            normalized_recorded_root = pathlib.Path(recorded_root).expanduser().resolve(strict=False)
+        except OSError:
+            normalized_recorded_root = pathlib.Path(recorded_root).expanduser().absolute()
+        if normalized_recorded_root != root_dir:
+            data["_foreign_root"] = recorded_root
     return data
 
 
@@ -596,9 +604,20 @@ def choose_repair_target(item, original_target, error):
     return (fallback, "original_target_fallback", error)
 
 
-items = [item for item in (load(path) for path in sorted(open_dir.glob("*.json"))) if item]
+all_items = [item for item in (load(path) for path in sorted(open_dir.glob("*.json"))) if item]
+foreign_root_count = sum(1 for item in all_items if item.get("_foreign_root"))
+items = [item for item in all_items if not item.get("_foreign_root")]
 if not items:
-    print(json.dumps({"status": "clean", "open_count": 0}, separators=(",", ":")))
+    print(
+        json.dumps(
+            {
+                "status": "clean",
+                "open_count": 0,
+                "ignored_foreign_root_count": foreign_root_count,
+            },
+            separators=(",", ":"),
+        )
+    )
     raise SystemExit(0)
 
 
@@ -620,6 +639,7 @@ if target_scope == "machine":
     result = {
         "status": "operator_action_required",
         "open_count": len(items),
+        "ignored_foreign_root_count": foreign_root_count,
         "id": str(selected.get("id", "")),
         "path": selected["_path"],
         "kind": str(selected.get("kind", "")),
@@ -665,6 +685,7 @@ else:
 result = {
     "status": "ok",
     "open_count": len(items),
+    "ignored_foreign_root_count": foreign_root_count,
     "id": str(selected.get("id", "")),
     "path": selected["_path"],
     "kind": str(selected.get("kind", "")),

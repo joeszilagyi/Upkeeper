@@ -10,6 +10,7 @@ Version numbering note:
 	1. Prior-run anomaly custody now fingerprints repeated findings by stable anomaly class instead of cycle id, run hash, detail hash, timestamp, or temp path, so recurring residue updates one local obligation with occurrence counts and last-seen evidence instead of flooding `runtime/upkeeper-obligations/open`.
 	2. The custody scanner no longer opens a second prior-run obligation merely because a previous cycle logged `automation.obligation.open`; the original obligation is the owner for that event.
 	3. Backlog partial-work commits now identify local automation obligations by id when obligation remediation blocks, preventing empty subjects such as `Preserve partial backlog work for issue #`.
+	4. Automation obligation selection now ignores open obligation records whose recorded root belongs to another checkout or temp fixture, while reporting the ignored count in selection metadata so stale foreign-root evidence cannot hijack the current repo's next repair cycle.
 
 2026-05-21: v1.2.27 changes:
 	1. Explicit `--target-file` cycles now preflight the pinned target before Lattice initialization, so ineligible explicit targets fail closed as target-selection obligations instead of surfacing later as unrelated Lattice or missing-status failures.

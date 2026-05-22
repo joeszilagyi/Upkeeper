@@ -6189,6 +6189,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["export_redaction"] = export_redaction_probe
         backup_preserves_source_probe = probe_backup_command_preserves_source_db_file()
         result["checks"]["backup_command_preserves_source_db_file"] = backup_preserves_source_probe
+        backup_rejects_existing_probe = probe_backup_command_rejects_existing_default_destination()
+        result["checks"]["backup_command_rejects_existing_default_destination"] = backup_rejects_existing_probe
         recover_primary_sources_probe = probe_recover_requires_primary_sources()
         result["checks"]["recover_requires_primary_sources"] = recover_primary_sources_probe
         recover_import_conflicts_probe = probe_recover_propagates_import_conflicts()
@@ -6239,6 +6241,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(backup_preserves_source_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(backup_rejects_existing_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(recover_primary_sources_probe.get("ok")):
@@ -8184,6 +8189,66 @@ def probe_backup_command_preserves_source_db_file() -> dict[str, Any]:
             "source_hash_after": source_after,
             "source_preserved": source_before == source_after,
             "ok": exit_code == EXIT_SUCCESS and backup_path.exists() and source_before == source_after,
+        }
+
+
+def probe_backup_command_rejects_existing_default_destination() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-backup-collision-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            with conn:
+                for sql in CREATE_TABLE_SQL:
+                    conn.execute(sql)
+                conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                conn.execute(
+                    "insert or replace into schema_meta(key, value) values (?, ?)",
+                    ("schema_version", str(SCHEMA_VERSION)),
+                )
+        finally:
+            conn.close()
+
+        backup_dir = db_path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        token = "collision-token"
+        backup_path = backup_dir / f"lattice-backup-{token}.sqlite3"
+        backup_path.write_text("existing backup sentinel\n", encoding="utf-8")
+        source_before = sha256_file(db_path)
+        backup_before = sha256_file(backup_path)
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            output=None,
+            overwrite=False,
+        )
+        original_artifact_now = globals()["artifact_now"]
+        exit_code = EXIT_SUCCESS
+        error = ""
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        try:
+            globals()["artifact_now"] = lambda: token
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                try:
+                    exit_code = command_backup(args)
+                except LatticeCommandError as exc:
+                    exit_code = int(exc.code)
+                    error = str(exc)
+        finally:
+            globals()["artifact_now"] = original_artifact_now
+        source_after = sha256_file(db_path)
+        backup_after = sha256_file(backup_path)
+        return {
+            "exit_code": exit_code,
+            "backup_path": str(backup_path),
+            "source_preserved": source_before == source_after,
+            "backup_preserved": backup_before == backup_after,
+            "error": error or stderr.getvalue().strip(),
+            "ok": exit_code == EXIT_USAGE and source_before == source_after and backup_before == backup_after,
         }
 
 
@@ -11875,6 +11940,8 @@ def create_backup(
             fail(f"backup path is a symlink: {backup_path}", EXIT_USAGE)
         if not stat.S_ISREG(existing.st_mode):
             fail(f"backup path is not regular: {backup_path}", EXIT_USAGE)
+        if not allow_overwrite:
+            fail(f"backup path already exists without overwrite: {backup_path}", EXIT_USAGE)
     if conn.in_transaction:
         conn.commit()
     backup_conn = sqlite3.connect(str(backup_path))

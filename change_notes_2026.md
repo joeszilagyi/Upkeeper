@@ -6,6 +6,10 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-21: v1.2.27 changes:
+	1. Explicit `--target-file` cycles now preflight the pinned target before Lattice initialization, so ineligible explicit targets fail closed as target-selection obligations instead of surfacing later as unrelated Lattice or missing-status failures.
+	2. Startup anomaly snapshot parsing now records redacted parse diagnostics and exits the changed-path comparison safely when baseline JSON is malformed, preserving local evidence without exposing raw file paths.
+
 2026-05-21: prior-run anomaly custody:
 	1. Backlog now performs a deterministic local prior-run health scan before normal GitHub issue selection, treating deviations from the healthy unattended-run shape as actionable unless deterministic fixture context proves they are expected test output.
 	2. Actionable findings are written under `runtime/upkeeper-anomaly-custody` and opened as local automation obligations, so the next Upkeeper job receives a bounded evidence packet and repairs, classifies, or preserves the anomaly before fresh issue work starts.

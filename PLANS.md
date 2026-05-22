@@ -3,6 +3,56 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Automation Obligation Reconciliation Preflight
+
+Status: completed locally
+
+Goal:
+- add a deterministic, pre-model reconciliation pass over open automation
+  obligations immediately after backlog branch checkout and before PR, merge,
+  quota, or issue-selection gates
+- collapse duplicate current-root obligations into one active owner while
+  preserving every duplicate as resolved evidence that points to that owner
+- keep foreign-root obligations deferred and visible, not selected or deleted
+- make repeated loop cycles constantly condense/upkeep the obligation queue
+  before spending model work
+
+Constraints:
+- do not launch real backend Codex validation
+- use only stable local fields and bounded evidence; no LLM judgment
+- only resolve duplicates when their root, kind, reason, target, issue, and
+  stable fingerprint/group key match
+- never delete obligation evidence as part of reconciliation
+
+Files likely touched:
+- `lib/upkeeper/automation_obligations.bash`
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `tools/stress_upkeeper_corpus.sh --local`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
+- `./Upkeeper --version`
+- `git diff --check`
+
+Completed in this patch:
+- Added deterministic open-obligation reconciliation before PR, merge, quota,
+  or issue-selection gates.
+- Preserved duplicate obligation evidence under `resolved/` while updating the
+  active owner with occurrence and reconciliation metadata.
+- Kept foreign-root obligations visible but deferred to their owning checkout.
+- Added local validation for duplicate coalescing, foreign-root preservation,
+  selection after reconciliation, and private-helper field stripping.
+
 ## Automation Obligation Root Boundary
 
 Status: completed locally

@@ -43,6 +43,7 @@ BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"
 BACKLOG_ANOMALY_CUSTODY="${BACKLOG_ANOMALY_CUSTODY:-1}"
 BACKLOG_ANOMALY_CUSTODY_LINES="${BACKLOG_ANOMALY_CUSTODY_LINES:-1200}"
 BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS="${BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS:-12}"
+BACKLOG_OBLIGATION_RECONCILE="${BACKLOG_OBLIGATION_RECONCILE:-1}"
 BACKLOG_ALERT_COLOR="${BACKLOG_ALERT_COLOR:-auto}"
 BACKLOG_ALERT_BLINK="${BACKLOG_ALERT_BLINK:-1}"
 BACKLOG_VISUAL_BLOCK="${BACKLOG_VISUAL_BLOCK:-█}"
@@ -1609,6 +1610,27 @@ backlog_select_open_obligation_json() {
     bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
 }
 
+backlog_reconcile_open_obligations() {
+  local output status duplicate_count current_before current_after foreign_count groups
+
+  [[ "$BACKLOG_OBLIGATION_RECONCILE" == "1" ]] || return 0
+  output="$(
+    ROOT_DIR="$ROOT_DIR" \
+      UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
+      bash -c 'source "$1"; automation_reconcile_open_obligations_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )" || return $?
+  status="$(jq -r '.status // "unknown"' <<<"$output")"
+  duplicate_count="$(jq -r '.duplicates_resolved // 0' <<<"$output")"
+  current_before="$(jq -r '.current_root_open_before // 0' <<<"$output")"
+  current_after="$(jq -r '.current_root_open_after // 0' <<<"$output")"
+  foreign_count="$(jq -r '.deferred_foreign_root_count // 0' <<<"$output")"
+  groups="$(jq -r '.duplicate_groups // 0' <<<"$output")"
+  if [[ "$status" == "reconciled" || "$foreign_count" != "0" ]]; then
+    log "automation obligation reconciliation: status=$status current_open_before=$current_before current_open_after=$current_after duplicate_groups=$groups duplicates_resolved=$duplicate_count foreign_deferred=$foreign_count"
+  fi
+  return 0
+}
+
 backlog_prepare_obligation_prompt_file() {
   local obligation_json="$1"
 
@@ -2430,6 +2452,16 @@ main() {
   branch="$(awk -F '\t' '{print $2}' <<<"$pr_info")"
   checkout_backlog_branch "$branch"
 
+  if ! run_backlog_anomaly_custody_audit; then
+    status="$?"
+    exit "$status"
+  fi
+  if ! backlog_reconcile_open_obligations; then
+    status="$?"
+    log "automation obligation reconciliation failed with status $status; stopping before normal issue selection"
+    exit "$status"
+  fi
+
   count="$(fix_count "$pr_number")"
   if [[ "$count" -ge "$BACKLOG_BATCH_LIMIT" ]]; then
     log "PR #$pr_number has $count recorded fixes; merging batch"
@@ -2468,11 +2500,6 @@ main() {
   if [[ "$quota_status" -ne 0 ]]; then
     [[ "$quota_status" -eq 3 ]] && exit 0
     exit "$quota_status"
-  fi
-
-  if ! run_backlog_anomaly_custody_audit; then
-    status="$?"
-    exit "$status"
   fi
 
   obligation_json="$(backlog_select_open_obligation_json)"

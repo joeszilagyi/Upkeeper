@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-22: v1.2.29 changes:
+	1. Backlog now runs a deterministic open-obligation reconciliation pass immediately after branch checkout, before PR, merge, quota, or issue-selection gates. Matching current-root records are grouped by root, kind, reason, target, issue, and stable fingerprint so duplicates collapse to one active owner.
+	2. Duplicate obligations are preserved under `runtime/upkeeper-obligations/resolved` with `resolved_duplicate`, `duplicate_of`, and reconciliation-key metadata instead of being deleted or handed to the model one by one.
+	3. Reconciliation remains pre-model and local-only, keeps foreign-root obligations deferred and visible, and can be bypassed for one cycle with `BACKLOG_OBLIGATION_RECONCILE=0`.
+
 2026-05-22: v1.2.28 changes:
 	1. Prior-run anomaly custody now fingerprints repeated findings by stable anomaly class instead of cycle id, run hash, detail hash, timestamp, or temp path, so recurring residue updates one local obligation with occurrence counts and last-seen evidence instead of flooding `runtime/upkeeper-obligations/open`.
 	2. The custody scanner no longer opens a second prior-run obligation merely because a previous cycle logged `automation.obligation.open`; the original obligation is the owner for that event.

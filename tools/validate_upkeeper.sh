@@ -1006,6 +1006,139 @@ PY
   rm -r "$temp_dir"
 }
 
+check_automation_obligation_reconciliation_contract() {
+  local temp_dir reconciliation_json open_count resolved_count owner_file duplicate_file selected_json
+
+  log "checking automation obligation reconciliation contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-obligation-reconcile.XXXXXX)"
+  mkdir -p "$temp_dir/obligations/open"
+
+  python3 - "$ROOT_DIR" "$temp_dir/obligations/open" <<'PY'
+import json
+import pathlib
+import sys
+
+root = sys.argv[1]
+open_dir = pathlib.Path(sys.argv[2])
+
+records = [
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "owner-current",
+        "created_at": "2026-05-22T01:00:00-0700",
+        "kind": "missing_status_marker",
+        "severity": "high",
+        "summary": "owner current duplicate group",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "tools/upkeeper_lattice.py",
+        "repair_target_file": "tools/upkeeper_lattice.py",
+        "issue_number": "146",
+        "reason": "MISSING_STATUS_MARKER",
+        "fingerprint": "missing-status:lattice:146",
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "duplicate-current",
+        "created_at": "2026-05-22T02:00:00-0700",
+        "kind": "missing_status_marker",
+        "severity": "high",
+        "summary": "duplicate current duplicate group",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "tools/upkeeper_lattice.py",
+        "repair_target_file": "tools/upkeeper_lattice.py",
+        "issue_number": "146",
+        "reason": "MISSING_STATUS_MARKER",
+        "fingerprint": "missing-status:lattice:146",
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "distinct-current",
+        "created_at": "2026-05-22T03:00:00-0700",
+        "kind": "blocked",
+        "severity": "medium",
+        "summary": "distinct current obligation",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "Upkeeper",
+        "repair_target_file": "Upkeeper",
+        "reason": "BLOCKED",
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "foreign-current-shaped",
+        "created_at": "2026-05-22T04:00:00-0700",
+        "kind": "missing_status_marker",
+        "severity": "high",
+        "summary": "foreign duplicate-shaped obligation",
+        "root": "/tmp/upkeeper-foreign-fixture/client",
+        "target_scope": "target",
+        "target_file": "tools/upkeeper_lattice.py",
+        "repair_target_file": "tools/upkeeper_lattice.py",
+        "issue_number": "146",
+        "reason": "MISSING_STATUS_MARKER",
+        "fingerprint": "missing-status:lattice:146",
+    },
+]
+for record in records:
+    (open_dir / f"{record['id']}.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
+  reconciliation_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
+      bash -c 'source "$1"; automation_reconcile_open_obligations_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.status' <<<"$reconciliation_json")" == "reconciled" ]] ||
+    fail "automation obligation reconciliation did not report reconciled status"
+  [[ "$(jq -r '.current_root_open_before' <<<"$reconciliation_json")" == "3" ]] ||
+    fail "automation obligation reconciliation counted the wrong current-root input"
+  [[ "$(jq -r '.current_root_open_after' <<<"$reconciliation_json")" == "2" ]] ||
+    fail "automation obligation reconciliation left the wrong current-root output"
+  [[ "$(jq -r '.deferred_foreign_root_count' <<<"$reconciliation_json")" == "1" ]] ||
+    fail "automation obligation reconciliation lost foreign-root evidence count"
+  [[ "$(jq -r '.duplicates_resolved' <<<"$reconciliation_json")" == "1" ]] ||
+    fail "automation obligation reconciliation did not resolve one duplicate"
+
+  open_count="$(find "$temp_dir/obligations/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  resolved_count="$(find "$temp_dir/obligations/resolved" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$open_count" == "3" ]] || fail "automation obligation reconciliation removed wrong open count"
+  [[ "$resolved_count" == "1" ]] || fail "automation obligation reconciliation did not preserve one resolved duplicate"
+  owner_file="$temp_dir/obligations/open/owner-current.json"
+  duplicate_file="$temp_dir/obligations/resolved/duplicate-current.json"
+  [[ "$(jq -r '.occurrence_count' "$owner_file")" == "2" ]] ||
+    fail "automation obligation reconciliation did not update owner occurrence count"
+  jq -e '.duplicate_obligation_ids | index("duplicate-current")' "$owner_file" >/dev/null ||
+    fail "automation obligation reconciliation did not record duplicate id on owner"
+  [[ "$(jq -r '.status' "$duplicate_file")" == "resolved_duplicate" ]] ||
+    fail "automation obligation reconciliation did not mark duplicate resolved"
+  [[ "$(jq -r '.duplicate_of' "$duplicate_file")" == "owner-current" ]] ||
+    fail "automation obligation reconciliation did not point duplicate at owner"
+  ! jq -e 'has("_path") or has("_foreign_root")' "$owner_file" >/dev/null ||
+    fail "automation obligation reconciliation leaked private helper fields onto owner"
+  ! jq -e 'has("_path") or has("_foreign_root")' "$duplicate_file" >/dev/null ||
+    fail "automation obligation reconciliation leaked private helper fields onto duplicate"
+
+  selected_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
+      bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.id' <<<"$selected_json")" == "owner-current" ]] ||
+    fail "automation obligation selection did not select reconciled owner"
+  [[ "$(jq -r '.deferred_foreign_root_count' <<<"$selected_json")" == "1" ]] ||
+    fail "automation obligation selection lost foreign count after reconciliation"
+
+  rm -r "$temp_dir"
+}
+
 check_backlog_quota_hibernation_contract() {
   local temp_dir status output hard_marker_root hard_marker_epoch
 
@@ -5350,6 +5483,7 @@ run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
 run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_contract
 run_check automation_obligation_root_boundary_contract check_automation_obligation_root_boundary_contract
+run_check automation_obligation_reconciliation_contract check_automation_obligation_reconciliation_contract
 run_check backlog_launcher_contract check_backlog_launcher_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract

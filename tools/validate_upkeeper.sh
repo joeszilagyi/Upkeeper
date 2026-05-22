@@ -482,6 +482,15 @@ check_backlog_launcher_contract() {
     set -euo pipefail
     cd "$1"
     source ./orchestration/backlog.sh
+    [[ "$(backlog_partial_commit_message 1 prior-run-abc "")" == "Preserve partial backlog work for obligation prior-run-abc" ]]
+    [[ "$(backlog_partial_commit_message 1 "" "")" == "Preserve partial backlog work for automation obligation" ]]
+    [[ "$(backlog_partial_commit_message 0 "" 123)" == "Preserve partial backlog work for issue #123" ]]
+    [[ "$(backlog_partial_commit_message 0 "" "")" == "Preserve partial backlog work for wrapper-selected Upkeeper pass" ]]
+  ' bash "$ROOT_DIR" || fail "backlog partial commit messages do not preserve obligation ownership"
+  BACKLOG_SOURCE_ONLY=1 bash -lc '
+    set -euo pipefail
+    cd "$1"
+    source ./orchestration/backlog.sh
     run_batch_validation() { return 44; }
     wait_for_pr_checks() { printf "wait_for_pr_checks should not run after batch validation failure\n" >&2; return 99; }
     gh() { printf "gh should not run after batch validation failure\n" >&2; return 98; }
@@ -836,6 +845,7 @@ check_prior_run_anomaly_custody_contract() {
   cat >"$temp_dir/loop.log" <<'LOG'
 2026-05-21T12:00:00 █ OK      [INFO] Upkeeper: primary status: UPKEEPER_STATUS: WORK_DONE
 2026-05-21T12:00:01 █ --FYI-- [WARN] cycle=prior-cycle run_hash=abc123 previous_run.anomaly_summary scan_minutes=240 listed_total=1 action=force_upkeeper_self_review
+2026-05-21T12:00:03 █ --FYI-- [WARN] cycle=next-cycle run_hash=def456 previous_run.anomaly_summary scan_minutes=240 listed_total=7 action=force_upkeeper_self_review
 2026-05-21T12:00:02 █ PAGE    [ERROR] cycle=prior-cycle run_hash=abc123 unexpected.wrapper.failure reason=fixture
 LOG
 
@@ -854,9 +864,13 @@ LOG
     fail "prior-run anomaly custody latest record was not actionable"
   [[ "$(jq -r '.actionable_findings' "$temp_dir/custody/latest.json")" -ge 2 ]] ||
     fail "prior-run anomaly custody did not detect both warning and page-error deviations"
+  [[ "$(jq -r '.coalesced_findings' "$temp_dir/custody/latest.json")" == "1" ]] ||
+    fail "prior-run anomaly custody did not coalesce duplicate dynamic cycle evidence"
   obligation_count="$(find "$temp_dir/obligations/open" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
-  [[ "$obligation_count" -ge 2 ]] ||
-    fail "prior-run anomaly custody did not open local automation obligations"
+  [[ "$obligation_count" == "2" ]] ||
+    fail "prior-run anomaly custody opened duplicate local automation obligations"
+  [[ "$(jq -s '[.[] | select(.evidence.kind == "previous_run_anomaly_summary")] | length' "$temp_dir"/obligations/open/*.json)" == "1" ]] ||
+    fail "prior-run anomaly custody did not collapse repeated previous-run summaries to one owner"
   jq -e 'select(.kind == "prior_run_anomaly") | select(.issue_number == "418") | select(.evidence.normalized_excerpt | contains("unexpected.wrapper.failure"))' \
     "$temp_dir"/obligations/open/*.json >/dev/null ||
     fail "prior-run anomaly custody obligation did not preserve bounded evidence"
@@ -872,6 +886,10 @@ LOG
   second_count="$(find "$temp_dir/obligations/open" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
   [[ "$second_count" == "$obligation_count" ]] ||
     fail "prior-run anomaly custody reopened duplicate obligations for the same fingerprint"
+  [[ "$(jq -r '.created_obligations' "$temp_dir/custody/latest.json")" == "0" ]] ||
+    fail "prior-run anomaly custody recreated existing obligations instead of updating them"
+  [[ "$(jq -r '.updated_obligations' "$temp_dir/custody/latest.json")" == "$obligation_count" ]] ||
+    fail "prior-run anomaly custody did not update existing coalesced obligations"
 
   selected_json="$(
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \

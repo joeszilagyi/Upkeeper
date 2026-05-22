@@ -179,8 +179,11 @@ Important:
     automation obligations unless nearby deterministic test-success context
     proves they are expected fixture output. Selected obligations run as the
     next Upkeeper job before fresh issue work, with a prompt packet containing
-    the bounded evidence excerpt. Set BACKLOG_ANOMALY_CUSTODY=0 for a deliberate
-    one-cycle bypass, or adjust BACKLOG_ANOMALY_CUSTODY_LINES and
+    the bounded evidence excerpt. Repeated instances of the same anomaly class
+    update the existing obligation with occurrence counts and last-seen evidence
+    instead of opening a new obligation for each cycle id or run hash. Set
+    BACKLOG_ANOMALY_CUSTODY=0 for a deliberate one-cycle bypass, or adjust
+    BACKLOG_ANOMALY_CUSTODY_LINES and
     BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS for local scan bounds.
   - Light per-bug validation still avoids the full batch suite, but it now
     compiles changed Python files before commit. Lattice issue fixes that touch

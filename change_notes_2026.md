@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-22: v1.2.28 changes:
+	1. Prior-run anomaly custody now fingerprints repeated findings by stable anomaly class instead of cycle id, run hash, detail hash, timestamp, or temp path, so recurring residue updates one local obligation with occurrence counts and last-seen evidence instead of flooding `runtime/upkeeper-obligations/open`.
+	2. The custody scanner no longer opens a second prior-run obligation merely because a previous cycle logged `automation.obligation.open`; the original obligation is the owner for that event.
+	3. Backlog partial-work commits now identify local automation obligations by id when obligation remediation blocks, preventing empty subjects such as `Preserve partial backlog work for issue #`.
+
 2026-05-21: v1.2.27 changes:
 	1. Explicit `--target-file` cycles now preflight the pinned target before Lattice initialization, so ineligible explicit targets fail closed as target-selection obligations instead of surfacing later as unrelated Lattice or missing-status failures.
 	2. Startup anomaly snapshot parsing now records redacted parse diagnostics and exits the changed-path comparison safely when baseline JSON is malformed, preserving local evidence without exposing raw file paths.

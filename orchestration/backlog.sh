@@ -2058,6 +2058,26 @@ commit_and_push_changes() {
   return 0
 }
 
+backlog_partial_commit_message() {
+  local obligation_selected="${1:-0}"
+  local obligation_id="${2:-}"
+  local issue_number="${3:-}"
+
+  if [[ "$obligation_selected" == "1" ]]; then
+    if [[ -n "$obligation_id" && "$obligation_id" != "unknown" ]]; then
+      printf 'Preserve partial backlog work for obligation %s' "$obligation_id"
+    else
+      printf 'Preserve partial backlog work for automation obligation'
+    fi
+    return 0
+  fi
+  if [[ -n "$issue_number" ]]; then
+    printf 'Preserve partial backlog work for issue #%s' "$issue_number"
+  else
+    printf 'Preserve partial backlog work for wrapper-selected Upkeeper pass'
+  fi
+}
+
 backlog_pr_check_progress_enabled() {
   case "${BACKLOG_PR_CHECK_PROGRESS,,}" in
     never|0|no|false|off)
@@ -2381,7 +2401,7 @@ merge_and_clean() {
 
 main() {
   local pr_info pr_number branch issue_info issue_number issue_title target_hint count run_status
-  local job_target job_reason job_expected commit_result final_disposition status
+  local job_target job_reason job_expected commit_result final_disposition status partial_commit_message
   local obligation_json obligation_status obligation_id obligation_issue_number obligation_issue_title
   local obligation_summary obligation_target obligation_selected
   local issue_deferred_after_noop
@@ -2511,8 +2531,13 @@ main() {
   if [[ "$run_status" -eq 2 ]]; then
     commit_result="blocked with no partial tracked changes"
     if has_worktree_changes; then
-      if commit_and_push_changes "" "Preserve partial backlog work for issue #$issue_number" "$target_hint"; then
-        log "preserved partial work for blocked issue #$issue_number"
+      partial_commit_message="$(backlog_partial_commit_message "$obligation_selected" "$obligation_id" "$issue_number")"
+      if commit_and_push_changes "" "$partial_commit_message" "$target_hint"; then
+        if [[ "$obligation_selected" == "1" ]]; then
+          log "preserved partial work for automation obligation $obligation_id"
+        else
+          log "preserved partial work for blocked issue #$issue_number"
+        fi
         commit_result="blocked; partial work committed and pushed"
       else
         commit_result="blocked; partial work present but no commit was produced"

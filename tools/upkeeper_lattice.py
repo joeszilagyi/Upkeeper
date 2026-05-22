@@ -6195,6 +6195,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["backup_failure_does_not_publish_partial_destination"] = backup_failure_partial_probe
         recover_primary_sources_probe = probe_recover_requires_primary_sources()
         result["checks"]["recover_requires_primary_sources"] = recover_primary_sources_probe
+        import_log_idempotent_probe = probe_import_upkeeper_log_idempotent_rows_written()
+        result["checks"]["import_upkeeper_log_idempotent_rows_written"] = import_log_idempotent_probe
         recover_import_conflicts_probe = probe_recover_propagates_import_conflicts()
         result["checks"]["recover_propagates_import_conflicts"] = recover_import_conflicts_probe
         import_repo_mismatch_probe = probe_import_jsonl_rejects_repo_identity_mismatch()
@@ -6252,6 +6254,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(recover_primary_sources_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(import_log_idempotent_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         recover_backup_first_probe = probe_recover_backup_first_preserves_duplicate_git_changes()
@@ -8362,6 +8367,62 @@ def probe_recover_requires_primary_sources() -> dict[str, Any]:
             "backup_count": backup_count,
             "ok": ok,
         }
+
+
+def probe_import_upkeeper_log_idempotent_rows_written() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-log-import-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        log_path = root / "Upkeeper.log"
+        log_path.write_text(
+            "2026-05-18T18:49:51-0700 [INFO] cycle.start cycle=cycle-log run_hash=run-log dry_run=1 execution_origin=primary\n",
+            encoding="utf-8",
+        )
+        init_args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            command_init(init_args)
+        import_args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            path=str(log_path),
+            raw=False,
+        )
+        first_stdout = io.StringIO()
+        with contextlib.redirect_stdout(first_stdout):
+            first_exit = command_import_upkeeper_log(import_args)
+        second_stdout = io.StringIO()
+        with contextlib.redirect_stdout(second_stdout):
+            second_exit = command_import_upkeeper_log(import_args)
+        first_payload = load_single_json_document(first_stdout.getvalue()) if first_stdout.getvalue().strip() else {}
+        second_payload = load_single_json_document(second_stdout.getvalue()) if second_stdout.getvalue().strip() else {}
+    return {
+        "first_exit": first_exit,
+        "first_rows_seen": first_payload.get("rows_seen"),
+        "first_rows_written": first_payload.get("rows_written"),
+        "second_exit": second_exit,
+        "second_rows_seen": second_payload.get("rows_seen"),
+        "second_rows_written": second_payload.get("rows_written"),
+        "ok": all(
+            (
+                first_exit == EXIT_SUCCESS,
+                second_exit == EXIT_SUCCESS,
+                first_payload.get("rows_seen") == 1,
+                first_payload.get("rows_written") == 1,
+                second_payload.get("rows_seen") == 1,
+                second_payload.get("rows_written") == 0,
+            )
+        ),
+    }
 
 
 def seed_recovery_duplicate_git_change_db(root: Path, db_path: Path) -> None:
@@ -10840,7 +10901,6 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                             f"update cycles set {', '.join(f'{key}=?' for key in updates)} where cycle_pk=?",
                             list(updates.values()) + [cycle_pk],
                         )
-            rows_written += 1
         finish_import(conn, import_id, "ok", rows_seen, rows_written, 0, {"path": str(log_path)})
     print_json({"status": "ok", "rows_seen": rows_seen, "rows_written": rows_written})
     return EXIT_SUCCESS

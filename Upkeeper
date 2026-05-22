@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.29
+## Version: v1.2.30
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.29"
+UPKEEPER_VERSION="v1.2.30"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -5055,6 +5055,28 @@ upkeeper_active_lock_quarantine_stale_dir() {
   mv -- "$lock_dir" "$quarantine_dir"
 }
 
+upkeeper_active_lock_remove_owned_stale_dir() {
+  local lock_dir="${1:-$CODEX_ACTIVE_LOCK_DIR}"
+
+  [[ -n "$lock_dir" && -d "$lock_dir" && ! -L "$lock_dir" ]] || return 1
+
+  rm -f -- "$lock_dir/state" 2>/dev/null || true
+  rm -f -- "$lock_dir"/state.tmp.* 2>/dev/null || true
+  rm -f -- "$(upkeeper_active_lock_marker_path "$lock_dir")" 2>/dev/null || true
+  if rmdir -- "$lock_dir" 2>/dev/null; then
+    return 0
+  fi
+
+  # A verified-owned stale lock can contain crash residue from earlier
+  # versions or interrupted cleanup. Quarantine it under runtime so future
+  # cycles can proceed while preserving the unexpected files as evidence.
+  if upkeeper_active_lock_quarantine_stale_dir "$lock_dir"; then
+    log_line "WARN" "active_lock.stale_quarantined path=$(shell_quote "$lock_dir") reason=owned_lock_not_empty_after_cleanup"
+    return 0
+  fi
+  return 1
+}
+
 upkeeper_shlex_quote() {
   local value="${1-}"
   local escaped
@@ -5342,12 +5364,9 @@ acquire_active_lock_or_exit() {
         finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=stale_lock_unowned_quarantine_failed"
       fi
     else
-      rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state" 2>/dev/null || true
-      rm -f -- "$CODEX_ACTIVE_LOCK_DIR"/state.tmp.* 2>/dev/null || true
-      rm -f -- "$(upkeeper_active_lock_marker_path)" 2>/dev/null || true
-      if ! rmdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
-        log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=stale_lock_not_empty"
-        finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=stale_lock_not_empty"
+      if ! upkeeper_active_lock_remove_owned_stale_dir "$CODEX_ACTIVE_LOCK_DIR"; then
+        log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=owned_stale_lock_cleanup_failed"
+        finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=owned_stale_lock_cleanup_failed"
       fi
     fi
     if ! mkdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
@@ -5803,6 +5822,65 @@ upkeeper_preflight_explicit_target_or_exit() {
   fi
 }
 
+upkeeper_internal_active_lock_self_test_requested() {
+  config_truthy "${UPKEEPER_INTERNAL_ACTIVE_LOCK_SELF_TEST:-0}"
+}
+
+upkeeper_internal_active_lock_self_test() {
+  local test_root lock_parent lock_dir marker_path
+  local -a quarantined_locks=()
+
+  if ! test_root="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-active-lock-self-test.XXXXXX")"; then
+    printf 'active_lock_self_test=fail reason=mktemp_failed\n' >&2
+    return 2
+  fi
+
+  lock_parent="$test_root/runtime"
+  lock_dir="$lock_parent/upkeeper-active.lock"
+  marker_path="$(upkeeper_active_lock_marker_path "$lock_dir")"
+
+  if ! mkdir -p -- "$lock_dir"; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=mkdir_expected_only_lock_failed\n' >&2
+    return 2
+  fi
+  printf 'state\n' >"$lock_dir/state"
+  printf 'tmp\n' >"$lock_dir/state.tmp.selftest"
+  printf 'marker\n' >"$marker_path"
+  if ! upkeeper_active_lock_remove_owned_stale_dir "$lock_dir" || [[ -e "$lock_dir" ]]; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=expected_only_lock_not_removed\n' >&2
+    return 1
+  fi
+
+  if ! mkdir -p -- "$lock_dir"; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=mkdir_residue_lock_failed\n' >&2
+    return 2
+  fi
+  printf 'state\n' >"$lock_dir/state"
+  printf 'marker\n' >"$marker_path"
+  printf 'residue\n' >"$lock_dir/unexpected.residue"
+  if ! upkeeper_active_lock_remove_owned_stale_dir "$lock_dir" || [[ -e "$lock_dir" ]]; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=residue_lock_not_quarantined\n' >&2
+    return 1
+  fi
+
+  shopt -s nullglob
+  quarantined_locks=("$lock_parent"/upkeeper-active.lock.stale.*)
+  shopt -u nullglob
+  if [[ "${#quarantined_locks[@]}" -ne 1 || ! -f "${quarantined_locks[0]}/unexpected.residue" ]]; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=quarantine_evidence_missing\n' >&2
+    return 1
+  fi
+
+  rm -rf -- "$test_root"
+  printf 'active_lock_self_test=pass\n'
+  return 0
+}
+
 # Main cycle.
 #
 # Order matters:
@@ -5822,6 +5900,10 @@ main() {
   ensure_log_parent
   ensure_log_writable_or_exit "startup"
   require_commands
+  if upkeeper_internal_active_lock_self_test_requested; then
+    upkeeper_internal_active_lock_self_test
+    return $?
+  fi
   normalize_guardrail_thresholds
   check_central_wrapper_health_or_exit
   prepare_fallback_chain_token

@@ -342,12 +342,6 @@ import sys
 before_path, after_path, diagnostics_path, hmac_key_text = sys.argv[1:5]
 hmac_key = hmac_key_text.encode("utf-8", "surrogateescape")
 
-try:
-    before = json.load(open(before_path, "r", encoding="utf-8"))
-    after = json.load(open(after_path, "r", encoding="utf-8"))
-except OSError:
-    raise SystemExit(0)
-
 allowed_exact = {
     "Upkeeper",
     "Upkeeper.conf",
@@ -420,6 +414,35 @@ diagnostics = []
 
 def record_diagnostic(kind, payload):
     diagnostics.append({"kind": kind, **payload})
+
+
+def emit_snapshot_parse_error(label):
+    record_diagnostic("snapshot_parse_error", {"snapshot": label})
+    print(f"snapshot_parse_error snapshot={label} values_redacted=1")
+
+
+def load_snapshot(path, label):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except OSError:
+        raise SystemExit(0)
+    except json.JSONDecodeError:
+        emit_snapshot_parse_error(label)
+        return None
+
+
+before = load_snapshot(before_path, "before")
+after = load_snapshot(after_path, "after")
+if before is None or after is None:
+    if diagnostics_path and diagnostics:
+        try:
+            with open(diagnostics_path, "w", encoding="utf-8") as handle:
+                for item in diagnostics:
+                    handle.write(json.dumps(item, sort_keys=True, separators=(",", ":")) + "\n")
+        except OSError:
+            pass
+    raise SystemExit(0)
 
 
 def normalize_snapshot(snapshot):
@@ -538,10 +561,20 @@ hmac_key = hmac_key_text.encode("utf-8", "surrogateescape")
 if not selected_path:
     raise SystemExit(0)
 
-try:
-    before = json.load(open(before_path, 'r', encoding='utf-8'))
-    after = json.load(open(after_path, 'r', encoding='utf-8'))
-except OSError:
+def load_snapshot(path, label):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except OSError:
+        raise SystemExit(0)
+    except json.JSONDecodeError:
+        print(f"snapshot_parse_error snapshot={label} values_redacted=1")
+        return None
+
+
+before = load_snapshot(before_path, "before")
+after = load_snapshot(after_path, "after")
+if before is None or after is None:
     raise SystemExit(0)
 
 if not isinstance(before, dict) or not isinstance(after, dict):

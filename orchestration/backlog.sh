@@ -2477,6 +2477,9 @@ main() {
 
   obligation_json="$(backlog_select_open_obligation_json)"
   obligation_status="$(jq -r '.status // "clean"' <<<"$obligation_json")"
+  if [[ "$obligation_status" == "foreign_root_deferred" ]]; then
+    log "automation obligations from other roots are deferred for their owning checkout: count=$(jq -r '.deferred_foreign_root_count // 0' <<<"$obligation_json")"
+  fi
   if [[ "$obligation_status" == "operator_action_required" ]]; then
     obligation_id="$(jq -r '.id // "unknown"' <<<"$obligation_json")"
     obligation_summary="$(jq -r '.summary // "machine-local automation obligation"' <<<"$obligation_json")"

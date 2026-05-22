@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.26
+## Version: v1.2.27
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.26"
+UPKEEPER_VERSION="v1.2.27"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -5724,6 +5724,43 @@ run_fallback_cycle() {
   upkeeper_original_run_fallback_cycle "$@"
 }
 
+upkeeper_preflight_explicit_target_or_exit() {
+  local selection="" selector_rc=0 err_file="" detail="" selected_path=""
+
+  [[ -n "${CODEX_TARGET_FILE:-}" ]] || return 0
+
+  if ! err_file="$(run_mktemp explicit-target-preflight-error)"; then
+    finish_cycle 7 TARGET_FILE_PREFLIGHT_FAILED ERROR "codex_exec_started=0 reason=tempfile_failed"
+  fi
+
+  set +e
+  selection="$(preselect_review_target 2>"$err_file")"
+  selector_rc=$?
+  set -e
+
+  detail="$(tr '\n' ' ' <"$err_file" | sed 's/[[:space:]]\+/ /g' | cut -c1-400)"
+  rm -f -- "$err_file"
+
+  if [[ "$selector_rc" -eq 8 ]]; then
+    log_line "ERROR" "review.preselect.blocked phase=early_explicit_target reason=target_file_not_eligible target_file=$(shell_quote "$CODEX_TARGET_FILE") detail=$(shell_quote "${detail:-unknown_error}")"
+    finish_cycle 3 TARGET_FILE_NOT_ELIGIBLE ERROR "codex_exec_started=0 target_file=$(shell_quote "$CODEX_TARGET_FILE") detail=$(shell_quote "${detail:-unknown_error}")"
+  fi
+
+  # Unexpected selector failures still flow to the normal preselect path later
+  # in prompt compilation, where startup-gate and fallback behavior already
+  # have their established handling.
+  if [[ "$selector_rc" -ne 0 ]]; then
+    log_line "WARN" "review.preselect.early_explicit_target_deferred rc=$selector_rc detail=$(shell_quote "${detail:-unknown_error}")"
+    return 0
+  fi
+
+  selected_path="$(sed -n 's/^path=//p' <<<"$selection" | tail -1)"
+  if [[ -n "$selected_path" && "$selected_path" != "$CODEX_TARGET_FILE" ]]; then
+    log_line "INFO" "review.preselect.explicit_target_normalized original_hash=$(shell_quote "$(cycle_start_metadata_hash "$CODEX_TARGET_FILE")") normalized_hash=$(shell_quote "$(cycle_start_metadata_hash "$selected_path")") path_redacted=1"
+    CODEX_TARGET_FILE="$selected_path"
+  fi
+}
+
 # Main cycle.
 #
 # Order matters:
@@ -5785,6 +5822,7 @@ main() {
   if ! run_issue_docs_contract_checks; then
     finish_cycle 70 ISSUE_FIX_DOCS_CONTRACT_CHECK_FAILED ERROR "codex_exec_started=0 number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
   fi
+  upkeeper_preflight_explicit_target_or_exit
   lattice_init_and_doctor_or_exit
   lattice_record_cycle_start
   start_run_mark_heartbeat

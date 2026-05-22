@@ -3,6 +3,45 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Anomaly Custody Coalescing And Obligation Commit Ownership
+
+Status: completed locally
+
+Goal:
+- stop prior-run anomaly custody from opening a new obligation every time the
+  same warning/error class appears with a new cycle id, run hash, or timestamp
+- preserve occurrence counts and last-seen evidence on the stable obligation
+  instead of letting local obligations flood normal work
+- make blocked partial-work commits identify local automation obligations by id
+  when there is no real GitHub issue number
+
+Constraints:
+- do not launch real backend Codex validation
+- keep the scanner deterministic, local, and cheap before issue selection
+- preserve visibility for genuinely new anomaly classes
+
+Files likely touched:
+- `tools/upkeeper_anomaly_custody.py`
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+Completed in this patch:
+- Added stable anomaly fingerprints that strip cycle/run/hash/temp-path noise.
+- Made repeated open findings update occurrence counts and last-seen evidence
+  on the existing obligation.
+- Stopped `automation.obligation.open` log lines from creating secondary
+  prior-run obligations.
+- Fixed blocked partial-work commit messages for local automation obligations.
+
 ## Prior-Run Anomaly Custody
 
 Status: completed locally

@@ -33,6 +33,23 @@ TIMESTAMP_PREFIX = re.compile(
 VISUAL_MARKER = re.compile(r"\s+█\s+(PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO)\s+")
 CYCLE_RE = re.compile(r"\bcycle=([^ \t]+)")
 RUN_HASH_RE = re.compile(r"\brun_hash=([^ \t]+)")
+DYNAMIC_FINGERPRINT_PATTERNS = (
+    (re.compile(r"\bcycle=[^ \t]+"), "cycle=<cycle>"),
+    (re.compile(r"\brun_hash=[^ \t]+"), "run_hash=<run_hash>"),
+    (re.compile(r"\bboot_id=[^ \t]+"), "boot_id=<boot_id>"),
+    (re.compile(r"\buptime_seconds=[0-9.]+"), "uptime_seconds=<seconds>"),
+    (re.compile(r"\b(oldest_epoch|newest_epoch|elapsed|elapsed_seconds|wait_seconds|sleep)=[^ \t]+"), r"\1=<number>"),
+    (re.compile(r"\b(detail_bytes|transcript_bytes|transcript_lines|lines|listed_total|prior_cycle_count|state_count)=[0-9]+"), r"\1=<number>"),
+    (re.compile(r"\b(detail_sha256|log_sha256|prompt_sha256|sha256)=[0-9a-fA-F]{16,64}"), r"\1=<sha256>"),
+    (re.compile(r"\btranscript=path-hmac-sha256:[0-9a-fA-F]+"), "transcript=path-hmac-sha256:<hash>"),
+    (re.compile(r"\b(path|path_hmac|path_redacted|diagnostics_path_hmac)=path-hmac-sha256:[0-9a-fA-F]+"), r"\1=path-hmac-sha256:<hash>"),
+    (re.compile(r"\b(path|selected_path|selectedPath|remote_url|remoteURL)=path-sha256:[0-9a-fA-F]+"), r"\1=path-sha256:<hash>"),
+    (re.compile(r"path-hmac-sha256:[0-9a-fA-F]+"), "path-hmac-sha256:<hash>"),
+    (re.compile(r"path-sha256:[0-9a-fA-F]+"), "path-sha256:<hash>"),
+    (re.compile(r"value-hmac-sha256:[0-9a-fA-F]+"), "value-hmac-sha256:<hash>"),
+    (re.compile(r"/tmp/upkeeper-[^ \t]+"), "/tmp/upkeeper-<path>"),
+    (re.compile(r"/home/[^ \t]*/upkeeper-[^ \t]+"), "/home/<user>/upkeeper-<path>"),
+)
 
 
 @dataclass(frozen=True)
@@ -46,6 +63,7 @@ class Classification:
 @dataclass(frozen=True)
 class Finding:
     ident: str
+    fingerprint: str
     kind: str
     severity: str
     target: str
@@ -182,7 +200,7 @@ def classify(lines: list[tuple[int, str]], index: int, raw_line: str) -> Classif
     if "startup_anomaly.gate" in lower and ("status=active" in lower or "gate_violation" in lower):
         return Classification("startup_anomaly_gate_active", "medium", target, "startup anomaly gate was active")
     if "automation.obligation.open" in lower:
-        return Classification("automation_obligation_opened", "medium", target, "automation opened a repair obligation")
+        return None
     if "[warn]" in lower or "█ --fyi--" in raw_line.lower():
         ignored_waits = (
             "quota preflight:" in lower
@@ -194,9 +212,37 @@ def classify(lines: list[tuple[int, str]], index: int, raw_line: str) -> Classif
     return None
 
 
-def finding_id(kind: str, normalized: str, target: str) -> str:
-    digest = hashlib.sha256(f"{kind}\0{target}\0{normalized}".encode("utf-8", "surrogateescape")).hexdigest()
-    return f"prior-run-{digest[:24]}"
+def normalize_fingerprint_text(text: str) -> str:
+    value = text
+    for pattern, replacement in DYNAMIC_FINGERPRINT_PATTERNS:
+        value = pattern.sub(replacement, value)
+    return " ".join(value.split())
+
+
+def stable_fingerprint(kind: str, normalized: str) -> str:
+    lower = normalized.lower()
+    if kind == "previous_run_anomaly_summary":
+        return "previous_run.anomaly_summary"
+    if kind == "startup_anomaly_gate_active":
+        if "gate_violation" in lower:
+            return "startup_anomaly.gate_violation"
+        return "startup_anomaly.gate status=active"
+    if kind == "startup_anomaly_unresolved":
+        reason_match = re.search(r"\breason=([^ \t]+)", normalized)
+        if reason_match:
+            return f"startup_anomaly.gate_unresolved reason={reason_match.group(1)}"
+        return "startup_anomaly.gate_unresolved"
+    if kind == "lattice_unavailable":
+        return "lattice.unavailable"
+    if kind == "failed_pr_check_gate":
+        return "failed_pr_check_gate"
+    return normalize_fingerprint_text(normalized)
+
+
+def finding_id(kind: str, normalized: str, target: str) -> tuple[str, str]:
+    fingerprint = stable_fingerprint(kind, normalized)
+    digest = hashlib.sha256(f"{kind}\0{target}\0{fingerprint}".encode("utf-8", "surrogateescape")).hexdigest()
+    return f"prior-run-{digest[:24]}", fingerprint
 
 
 def make_finding(lines: list[tuple[int, str]], index: int, line_number: int, raw_line: str, item: Classification) -> Finding:
@@ -204,8 +250,10 @@ def make_finding(lines: list[tuple[int, str]], index: int, line_number: int, raw
     cycle_match = CYCLE_RE.search(raw_line)
     run_hash_match = RUN_HASH_RE.search(raw_line)
     status = "expected_fixture" if item.kind == "expected_fixture_output" else "actionable"
+    ident, fingerprint = finding_id(item.kind, normalized, item.target)
     return Finding(
-        ident=finding_id(item.kind, normalized, item.target),
+        ident=ident,
+        fingerprint=fingerprint,
         kind=item.kind,
         severity=item.severity,
         target=item.target,
@@ -219,8 +267,8 @@ def make_finding(lines: list[tuple[int, str]], index: int, line_number: int, raw
     )
 
 
-def existing_obligation_states(root: pathlib.Path) -> dict[str, str]:
-    seen: dict[str, str] = {}
+def existing_obligation_records(root: pathlib.Path) -> dict[str, dict]:
+    seen: dict[str, dict] = {}
     for subdir in ("open", "resolved"):
         base = root / subdir
         if not base.is_dir():
@@ -230,9 +278,11 @@ def existing_obligation_states(root: pathlib.Path) -> dict[str, str]:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
+            if not isinstance(data, dict):
+                continue
             ident = str(data.get("id") or path.stem)
             if ident:
-                seen[ident] = subdir
+                seen[ident] = {"state": subdir, "path": path, "data": data}
     return seen
 
 
@@ -242,6 +292,7 @@ def finding_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.Path
         "record_type": "anomaly_custody_finding",
         "status": finding.status,
         "id": finding.ident,
+        "fingerprint": finding.fingerprint,
         "kind": finding.kind,
         "severity": finding.severity,
         "reason": finding.reason,
@@ -268,6 +319,10 @@ def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.P
         "kind": "prior_run_anomaly",
         "severity": finding.severity,
         "summary": summary,
+        "fingerprint": finding.fingerprint,
+        "first_seen_at": now_local(),
+        "last_seen_at": now_local(),
+        "occurrence_count": 1,
         "root": str(root),
         "source_cycle_id": finding.cycle_id,
         "source_run_hash": finding.run_hash,
@@ -295,6 +350,7 @@ def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.P
             "line_number": finding.line_number,
             "kind": finding.kind,
             "reason": finding.reason,
+            "fingerprint": finding.fingerprint,
             "excerpt": finding.excerpt,
             "normalized_excerpt": finding.normalized,
         },
@@ -306,6 +362,41 @@ def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.P
             "add deterministic validation for the repaired or intentionally expected outcome",
         ],
     }
+
+
+def update_open_obligation(path: pathlib.Path, finding: Finding, loop_log: pathlib.Path) -> None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(data, dict):
+        return
+    try:
+        occurrence_count = int(data.get("occurrence_count") or 1)
+    except (TypeError, ValueError):
+        occurrence_count = 1
+    data.setdefault("first_seen_at", data.get("created_at", now_local()))
+    data["last_seen_at"] = now_local()
+    data["occurrence_count"] = occurrence_count + 1
+    data["last_source_cycle_id"] = finding.cycle_id
+    data["last_source_run_hash"] = finding.run_hash
+    data["last_evidence"] = {
+        "source": "backlog_loop_log",
+        "loop_log": str(loop_log),
+        "line_number": finding.line_number,
+        "kind": finding.kind,
+        "reason": finding.reason,
+        "fingerprint": finding.fingerprint,
+        "excerpt": finding.excerpt,
+        "normalized_excerpt": finding.normalized,
+    }
+    if not data.get("fingerprint"):
+        data["fingerprint"] = finding.fingerprint
+    evidence = data.get("evidence")
+    if isinstance(evidence, dict):
+        evidence.setdefault("fingerprint", finding.fingerprint)
+        evidence["occurrence_count"] = data["occurrence_count"]
+    write_json(path, data)
 
 
 def audit(args: argparse.Namespace) -> int:
@@ -320,8 +411,9 @@ def audit(args: argparse.Namespace) -> int:
     findings: list[Finding] = []
     expected_count = 0
     resolved_count = 0
+    coalesced_count = 0
     seen_ids: set[str] = set()
-    obligation_states = existing_obligation_states(obligation_root)
+    obligation_records = existing_obligation_records(obligation_root)
     for index, (line_number, raw_line) in enumerate(lines):
         classified = classify(lines, index, raw_line)
         if classified is None:
@@ -330,10 +422,12 @@ def audit(args: argparse.Namespace) -> int:
         if finding.status == "expected_fixture":
             expected_count += 1
             continue
-        if obligation_states.get(finding.ident) == "resolved":
+        record = obligation_records.get(finding.ident)
+        if record and record.get("state") == "resolved":
             resolved_count += 1
             continue
         if finding.ident in seen_ids:
+            coalesced_count += 1
             continue
         seen_ids.add(finding.ident)
         findings.append(finding)
@@ -343,12 +437,23 @@ def audit(args: argparse.Namespace) -> int:
     private_dir(state_root)
     finding_dir = state_root / "findings"
     created_obligations = 0
+    updated_obligations = 0
     for finding in findings:
         write_json(finding_dir / f"{finding.ident}.json", finding_payload(finding, root, loop_log))
-        if args.write_obligations and finding.ident not in obligation_states:
+        if not args.write_obligations:
+            continue
+        record = obligation_records.get(finding.ident)
+        if record is None:
             write_json(obligation_root / "open" / f"{finding.ident}.json", obligation_payload(finding, root, loop_log))
-            obligation_states[finding.ident] = "open"
+            obligation_records[finding.ident] = {
+                "state": "open",
+                "path": obligation_root / "open" / f"{finding.ident}.json",
+                "data": {},
+            }
             created_obligations += 1
+        elif record.get("state") == "open":
+            update_open_obligation(pathlib.Path(record["path"]), finding, loop_log)
+            updated_obligations += 1
 
     status = "actionable" if findings else "clean"
     latest = {
@@ -363,7 +468,9 @@ def audit(args: argparse.Namespace) -> int:
         "actionable_findings": len(findings),
         "expected_fixture_findings": expected_count,
         "resolved_fingerprint_findings": resolved_count,
+        "coalesced_findings": coalesced_count,
         "created_obligations": created_obligations,
+        "updated_obligations": updated_obligations,
         "obligation_root": str(obligation_root),
         "findings": [finding_payload(finding, root, loop_log) for finding in findings],
     }
@@ -373,7 +480,8 @@ def audit(args: argparse.Namespace) -> int:
         "anomaly custody: "
         f"status={status} scanned_lines={len(lines)} "
         f"actionable={len(findings)} expected_fixture={expected_count} "
-        f"resolved={resolved_count} new_obligations={created_obligations}"
+        f"resolved={resolved_count} coalesced={coalesced_count} "
+        f"new_obligations={created_obligations} updated_obligations={updated_obligations}"
     )
     for finding in findings[:5]:
         print(

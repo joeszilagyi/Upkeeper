@@ -1524,6 +1524,10 @@ def sha256_text(text: str) -> str:
     return sha256_bytes(text.encode("utf-8", "surrogateescape"))
 
 
+def sha256_file(path: Path) -> str:
+    return sha256_bytes(path.read_bytes())
+
+
 def normalize_contributor_identity_value(raw: str | None) -> str:
     return "" if raw is None else raw
 
@@ -3815,6 +3819,18 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     ensure_worktree_snapshot_path_identity_columns(conn)
     ensure_source_record_identity_columns(conn)
     scrub_legacy_git_privacy_data(conn)
+
+
+def ensure_schema_identity_read_only(conn: sqlite3.Connection) -> None:
+    try:
+        version = conn.execute("select value from schema_meta where key='schema_version'").fetchone()
+    except sqlite3.Error:
+        fail("schema_meta is missing; run init", EXIT_SCHEMA_MISMATCH)
+    if not version or str(version["value"]) != str(SCHEMA_VERSION):
+        fail(f"schema mismatch: expected {SCHEMA_VERSION}", EXIT_SCHEMA_MISMATCH)
+    user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if int(user_version) != SCHEMA_VERSION:
+        fail(f"PRAGMA user_version mismatch: expected {SCHEMA_VERSION}, got {user_version}", EXIT_SCHEMA_MISMATCH)
 
 
 def sanitize_remote_url(raw: str) -> str:
@@ -6171,6 +6187,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["worktree_snapshot_deleted_file_state"] = worktree_snapshot_deleted_state_probe
         export_redaction_probe = probe_export_redaction()
         result["checks"]["export_redaction"] = export_redaction_probe
+        backup_preserves_source_probe = probe_backup_command_preserves_source_db_file()
+        result["checks"]["backup_command_preserves_source_db_file"] = backup_preserves_source_probe
         recover_primary_sources_probe = probe_recover_requires_primary_sources()
         result["checks"]["recover_requires_primary_sources"] = recover_primary_sources_probe
         recover_import_conflicts_probe = probe_recover_propagates_import_conflicts()
@@ -6218,6 +6236,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(export_redaction_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(backup_preserves_source_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(recover_primary_sources_probe.get("ok")):
@@ -8122,6 +8143,50 @@ def probe_export_redaction() -> dict[str, Any]:
     }
 
 
+def probe_backup_command_preserves_source_db_file() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-backup-preserve-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        backup_path = db_path.parent / "manual-backup.sqlite3"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            with conn:
+                for sql in CREATE_TABLE_SQL:
+                    conn.execute(sql)
+                conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                conn.execute(
+                    "insert or replace into schema_meta(key, value) values (?, ?)",
+                    ("schema_version", str(SCHEMA_VERSION)),
+                )
+        finally:
+            conn.close()
+        source_before = sha256_file(db_path)
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            output=str(backup_path),
+            overwrite=False,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_backup(args)
+        source_after = sha256_file(db_path)
+        payload_text = stdout.getvalue().strip()
+        payload = load_single_json_document(payload_text) if payload_text else {}
+        return {
+            "exit_code": exit_code,
+            "backup_path": payload.get("backup_path"),
+            "backup_exists": backup_path.exists(),
+            "source_hash_before": source_before,
+            "source_hash_after": source_after,
+            "source_preserved": source_before == source_after,
+            "ok": exit_code == EXIT_SUCCESS and backup_path.exists() and source_before == source_after,
+        }
+
+
 def probe_recover_requires_primary_sources() -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recover-primary-") as tmpdir:
         temp_root = Path(tmpdir).resolve()
@@ -8331,8 +8396,8 @@ def probe_recover_backup_first_preserves_duplicate_git_changes() -> dict[str, An
                 payload.get("status") == "incomplete",
                 len(backup_paths) == 1,
                 backup_duplicate_count == 2,
-                backup_provenance_count == 1,
-                backup_recovery_source_count == 1,
+                backup_provenance_count == 0,
+                backup_recovery_source_count == 0,
                 recovered_duplicate_count == 1,
                 recovery_event_details.get("deleted_git_file_change_count") == 1,
                 recovery_event_details.get("deleted_git_file_change_ids") == [2],
@@ -11825,52 +11890,11 @@ def create_backup(
     return backup_path
 
 
-def record_pre_recovery_backup_provenance(
-    root: Path,
-    backup_path: Path,
-    *,
-    raw_storage_mode: str | None = None,
-) -> None:
-    backup_conn = sqlite3.connect(str(backup_path))
-    try:
-        backup_conn.row_factory = sqlite3.Row
-        backup_conn.execute("PRAGMA busy_timeout=5000")
-        backup_conn.execute("PRAGMA foreign_keys=ON")
-        try:
-            with backup_conn:
-                repo_id = ensure_repository(backup_conn, root)
-                source_id = ensure_source_record(
-                    backup_conn,
-                    root,
-                    repo_id,
-                    "recovery",
-                    raw_ref="recover",
-                    parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
-                    raw_storage_mode=raw_storage_mode,
-                )
-                create_artifact_ref(
-                    backup_conn,
-                    root,
-                    repo_id,
-                    cycle_pk=None,
-                    source_id=source_id,
-                    artifact_kind="backup",
-                    path=str(backup_path),
-                    details={"backup_event": "pre_recovery", "recorded_in": "backup"},
-                )
-        except sqlite3.OperationalError:
-            # Some recovery inputs are pre-schema or partially damaged. The
-            # safety copy is still useful even when it cannot store provenance.
-            pass
-    finally:
-        backup_conn.close()
-
-
 def command_backup(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
-    conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
-    ensure_schema(conn)
+    conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db, read_only=True)
+    ensure_schema_identity_read_only(conn)
     backup_path = create_backup(
         conn,
         root,
@@ -12108,11 +12132,8 @@ def command_recover(args: argparse.Namespace) -> int:
             raw_storage_mode=raw_storage_mode,
         )
         if backup_path is not None:
-            record_pre_recovery_backup_provenance(
-                root,
-                backup_path,
-                raw_storage_mode=raw_storage_mode,
-            )
+            # Keep the backup as a pristine pre-recovery snapshot. Provenance
+            # for the backup belongs in the recovered database, not the copy.
             create_artifact_ref(
                 conn,
                 root,

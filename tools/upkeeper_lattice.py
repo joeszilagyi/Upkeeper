@@ -1528,6 +1528,40 @@ def sha256_file(path: Path) -> str:
     return sha256_bytes(path.read_bytes())
 
 
+def write_private_text_atomic(path: Path, text: str) -> None:
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            prefix=f".{path.name}.tmp-",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        chmod_private(temp_path)
+        os.replace(temp_path, path)
+        temp_path = None
+        chmod_private(path)
+        try:
+            dir_fd = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+
+
 def normalize_contributor_identity_value(raw: str | None) -> str:
     return "" if raw is None else raw
 
@@ -6197,6 +6231,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["recover_requires_primary_sources"] = recover_primary_sources_probe
         recover_empty_preexisting_probe = probe_recover_empty_preexisting_db_is_incomplete_with_backup()
         result["checks"]["recover_empty_preexisting_db_is_incomplete_with_backup"] = recover_empty_preexisting_probe
+        recovery_report_failure_probe = probe_recovery_report_failure_does_not_publish_partial()
+        result["checks"]["recovery_report_failure_does_not_publish_partial"] = recovery_report_failure_probe
         import_log_idempotent_probe = probe_import_upkeeper_log_idempotent_rows_written()
         result["checks"]["import_upkeeper_log_idempotent_rows_written"] = import_log_idempotent_probe
         recover_import_conflicts_probe = probe_recover_propagates_import_conflicts()
@@ -6259,6 +6295,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(recover_empty_preexisting_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(recovery_report_failure_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(import_log_idempotent_probe.get("ok")):
@@ -8437,6 +8476,36 @@ def probe_recover_empty_preexisting_db_is_incomplete_with_backup() -> dict[str, 
             "backup_count": len(backup_paths),
             "backup_artifact_count": backup_artifact_count,
             "recovery_source_count": recovery_source_count,
+            "ok": ok,
+        }
+
+
+def probe_recovery_report_failure_does_not_publish_partial() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recovery-report-failure-") as tmpdir:
+        report_path = Path(tmpdir).resolve() / "recovery.json"
+        report_path.write_text("existing report\n", encoding="utf-8")
+        before_hash = sha256_file(report_path)
+        original_replace = os.replace
+        error = ""
+
+        def failing_replace(_src: str | os.PathLike[str], _dst: str | os.PathLike[str]) -> None:
+            raise OSError("injected recovery report publish failure")
+
+        try:
+            os.replace = failing_replace  # type: ignore[method-assign]
+            try:
+                write_private_text_atomic(report_path, "partial replacement\n")
+            except OSError as exc:
+                error = str(exc)
+        finally:
+            os.replace = original_replace  # type: ignore[method-assign]
+        after_hash = sha256_file(report_path)
+        temp_paths = sorted(report_path.parent.glob(f".{report_path.name}.tmp-*"))
+        ok = bool(error) and before_hash == after_hash and not temp_paths
+        return {
+            "error": error,
+            "destination_preserved": before_hash == after_hash,
+            "temp_paths": [str(path) for path in temp_paths],
             "ok": ok,
         }
 
@@ -12587,8 +12656,7 @@ def command_recover(args: argparse.Namespace) -> int:
         report["artifact_sources"] = artifact_sources
     if import_results:
         report["import_results"] = import_results
-    report_path.write_text(json_dumps(report) + "\n", encoding="utf-8")
-    chmod_private(report_path)
+    write_private_text_atomic(report_path, json_dumps(report) + "\n")
     response = {"status": status, "sources": sources, "recovery_report": str(report_path)}
     if artifact_sources:
         response["artifact_sources"] = artifact_sources

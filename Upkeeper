@@ -746,6 +746,21 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
   esac
 
+  sample='2026-05-22T13:07:09 [ERROR] Upkeeper: primary: rg -n "active_lock'\''"\\.(stale|failed|stale_quarantined)|cycle\\.exit\" \""'\''$tmp_dir/Upkeeper.log" || true'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_anomaly_search_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_search_command'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_anomaly_search_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
   sample='2026-05-22T12:04:06 [ERROR] Upkeeper: primary: Traceback (most recent call last)'
   output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
   case "$output" in

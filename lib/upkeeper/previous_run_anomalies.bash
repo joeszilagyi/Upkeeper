@@ -89,6 +89,14 @@ def redact_boot_ids(text):
     return boot_id_re.sub(lambda match: f"boot_id={protected_boot_id(match.group(1))}", text)
 
 
+def safe_embedded_log_excerpt(text):
+    # Prior log rows are operator evidence, but agents often quote them in final
+    # output. Neutralize embedded log-level markers so quoted evidence does not
+    # become fresh pageable WARN/ERROR output in backlog logs.
+    sanitized = redact_boot_ids(text).replace("\\", "\\\\").replace("\t", " ")
+    return re.sub(r"\[([A-Z]+)\]", r"{\1}", sanitized)[:300]
+
+
 def parsed_epoch(line):
     stamp = line.split(" ", 1)[0]
     for timestamp_format in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S"):
@@ -233,7 +241,7 @@ for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"]
         acknowledged += 1
         continue
     last_epoch = "unknown" if info["last_epoch"] is None else str(int(info["last_epoch"]))
-    last_line = redact_boot_ids(info["last_line"]).replace("\\", "\\\\").replace("\t", " ")[:300]
+    last_line = safe_embedded_log_excerpt(info["last_line"])
     print(
         f"previous_cycle={cycle} previous_run_hash={info['run_hash']} "
         f"reason={reason} scan_minutes={scan_minutes} last_epoch={last_epoch} "

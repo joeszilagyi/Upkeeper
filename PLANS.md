@@ -3,6 +3,49 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## X99 Obligation Churn Hardening
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- prevent one blocked automation obligation from consuming an entire bounded
+  backlog loop after repeated unsuccessful repair attempts
+- stop prior-run anomaly custody from treating model-emitted shell/test fixture
+  snippets as fresh PAGE/ERROR evidence
+- remove repeated backlog-local artifact warnings for the default backlog log
+  and transcript directories
+- reconcile stale local obligations that are deterministically obsolete after
+  the repaired detector or current operator guide state
+
+Constraints:
+- keep obligation checks deterministic, local, and pre-model
+- do not delete unresolved evidence; move deterministic false positives or
+  obsolete findings to resolved custody with explicit reasons
+- do not launch real backend Codex validation
+- keep machine-health obligations ahead of ordinary GitHub issue work
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/stress_upkeeper_corpus.sh --local`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
+- `./Upkeeper --version`
+- `git diff --check`
+
 ## Automation Obligation Reconciliation Preflight
 
 Status: completed locally

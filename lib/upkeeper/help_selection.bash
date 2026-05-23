@@ -181,12 +181,21 @@ Important:
     next Upkeeper job before fresh issue work, with a prompt packet containing
     the bounded evidence excerpt. Repeated instances of the same anomaly class
     update the existing obligation with occurrence counts and last-seen evidence
-    instead of opening a new obligation for each cycle id or run hash.
+    instead of opening a new obligation for each cycle id or run hash. Quoted
+    backend shell/test fixture snippets that contain embedded [WARN], [ERROR],
+    PAGE, or control-plane log text are treated as transcript content, not as new
+    wrapper failures.
     Immediately after the backlog branch is checked out, before PR, merge,
     quota, or issue-selection gates, backlog also reconciles open current-root
     obligations deterministically: records with matching root, kind, reason,
     target, issue, and stable fingerprint are condensed to one active owner, and
-    duplicates are moved to resolved evidence with duplicate_of metadata. Set
+    duplicates are moved to resolved evidence with duplicate_of metadata.
+    Deterministically obsolete findings, such as a stale operator-guide warning
+    after the guide matches the wrapper version, are moved to resolved evidence
+    with an explicit reason. If the same obligation reports BLOCKED repeatedly,
+    backlog records repair-attempt metadata and cools that obligation down so
+    another eligible obligation can run; if every obligation is cooling down,
+    backlog exits without starting fresh issue work. Set
     BACKLOG_OBLIGATION_RECONCILE=0 for a deliberate one-cycle bypass. Set
     BACKLOG_ANOMALY_CUSTODY=0 for a deliberate one-cycle bypass, or adjust
     BACKLOG_ANOMALY_CUSTODY_LINES and

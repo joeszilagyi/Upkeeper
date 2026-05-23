@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-23: v1.2.31 changes:
+	1. Backlog obligation selection now records repeated blocked repair attempts on the selected obligation and applies a deterministic cooldown after the retry limit, so one unresolved obligation cannot consume an entire bounded loop. If all local obligations are cooling down, backlog exits without selecting new GitHub issue work.
+	2. Prior-run anomaly custody now treats model-emitted shell/test fixture snippets that quote `[WARN]`, `[ERROR]`, `PAGE`, cycle ids, run hashes, or startup-anomaly text as transcript content instead of fresh wrapper failures.
+	3. Open backlog-loop obligations that are deterministically obsolete after the current detector or operator-guide state are moved to resolved evidence with explicit reconciliation reasons.
+	4. The default backlog-owned log and transcript artifact directories are now trusted locally before Upkeeper starts, preventing repeated `log.rotate_blocked` and `transcript.prune_blocked` warnings during normal backlog loops.
+
 2026-05-22: v1.2.30 changes:
 	1. Active-lock recovery now normalizes the runtime-local lock path, rejects symlinked lock parents or unsafe existing lock paths, and quarantines stale unowned lock directories instead of repeatedly failing the next automation cycle on the same residue.
 	2. Verified-owned stale active locks now remove expected state files and quarantine unexpected residue under runtime, preserving evidence while letting the next wrapper cycle acquire a fresh lock.

@@ -17,21 +17,22 @@ previous_run_anomaly_lines_impl() {
     redaction_key="${ROOT_DIR:-$PWD}|upkeeper-redaction-fallback"
   fi
 
-  python3 - \
+  UPKEEPER_PREVIOUS_RUN_REDACTION_KEY="$redaction_key" python3 - \
     "$LOG_FILE" \
     "$CYCLE_ID" \
     "$CODEX_PREVIOUS_RUN_SCAN_MINUTES" \
     "$current_boot_id" \
-    "$current_boot_id_hash" \
-    "$redaction_key" <<'PY'
+    "$current_boot_id_hash" <<'PY'
 import datetime as dt
 import hashlib
 import hmac
+import os
 import re
 import sys
 import time
 
-log_path, current_cycle, minutes_raw, current_boot_raw, current_boot_protected, redaction_key = sys.argv[1:7]
+log_path, current_cycle, minutes_raw, current_boot_raw, current_boot_protected = sys.argv[1:6]
+redaction_key = os.environ.get("UPKEEPER_PREVIOUS_RUN_REDACTION_KEY", "")
 try:
     scan_minutes = max(0, int(minutes_raw))
 except ValueError:

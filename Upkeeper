@@ -5855,6 +5855,26 @@ upkeeper_internal_active_lock_self_test() {
 
   if ! mkdir -p -- "$lock_dir"; then
     rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=mkdir_legacy_lock_failed\n' >&2
+    return 2
+  fi
+  {
+    printf 'root_dir=%s\n' "$(upkeeper_runtime_path_value "$ROOT_DIR")"
+    printf 'self_path=%s\n' "$(upkeeper_runtime_path_value "${SELF_PATH:-}")"
+  } >"$lock_dir/state"
+  if ! upkeeper_active_lock_verify_ownership_marker "$lock_dir" || [[ ! -f "$marker_path" ]]; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=legacy_owner_marker_not_repaired\n' >&2
+    return 1
+  fi
+  if ! upkeeper_active_lock_remove_owned_stale_dir "$lock_dir" || [[ -e "$lock_dir" ]]; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=legacy_lock_not_removed\n' >&2
+    return 1
+  fi
+
+  if ! mkdir -p -- "$lock_dir"; then
+    rm -rf -- "$test_root"
     printf 'active_lock_self_test=fail reason=mkdir_residue_lock_failed\n' >&2
     return 2
   fi
@@ -5873,6 +5893,28 @@ upkeeper_internal_active_lock_self_test() {
   if [[ "${#quarantined_locks[@]}" -ne 1 || ! -f "${quarantined_locks[0]}/unexpected.residue" ]]; then
     rm -rf -- "$test_root"
     printf 'active_lock_self_test=fail reason=quarantine_evidence_missing\n' >&2
+    return 1
+  fi
+
+  rm -rf -- "${quarantined_locks[@]}"
+
+  if ! mkdir -p -- "$lock_dir"; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=mkdir_unowned_lock_failed\n' >&2
+    return 2
+  fi
+  printf 'residue\n' >"$lock_dir/unowned.residue"
+  if ! upkeeper_active_lock_quarantine_stale_dir "$lock_dir" || [[ -e "$lock_dir" ]]; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=unowned_lock_not_quarantined\n' >&2
+    return 1
+  fi
+  shopt -s nullglob
+  quarantined_locks=("$lock_parent"/upkeeper-active.lock.stale.*)
+  shopt -u nullglob
+  if [[ "${#quarantined_locks[@]}" -ne 1 || ! -f "${quarantined_locks[0]}/unowned.residue" ]]; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=unowned_quarantine_evidence_missing\n' >&2
     return 1
   fi
 

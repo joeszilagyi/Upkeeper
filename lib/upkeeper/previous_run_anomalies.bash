@@ -1,4 +1,4 @@
-previous_run_anomaly_lines() {
+previous_run_anomaly_lines_impl() {
   if [[ ! -s "$LOG_FILE" ]]; then
     return 0
   fi
@@ -18,6 +18,10 @@ cutoff = time.time() - (scan_minutes * 60)
 cycle_re = re.compile(r"\bcycle=([^ \t\r\n]+)")
 run_hash_re = re.compile(r"\brun_hash=([^ \t\r\n]+)")
 boot_id_re = re.compile(r"\bboot_id=([^ \t\r\n]+)")
+structured_log_re = re.compile(
+    r"^[^ \t\r\n]+[ \t]+(?:\u2588[ \t]+--FYI--[ \t]+)?"
+    r"\[[A-Z]+\][ \t]+cycle=[^ \t\r\n]+(?:[ \t]|\r?\n|$)"
+)
 cycles = {}
 latest_previous_run_ack_epoch = None
 latest_previous_run_ack_reason = "previous_run_anomaly_gate_reviewed"
@@ -41,6 +45,12 @@ def parsed_epoch(line):
             parsed = parsed.astimezone()
         return parsed.timestamp()
     return None
+
+
+def is_structured_log_event(line):
+    # Backlog PAGE/WORKER lines can quote prior Upkeeper output. Only direct
+    # structured log events are trusted as previous-cycle evidence.
+    return bool(structured_log_re.match(line))
 
 try:
     handle = open(log_path, "r", encoding="utf-8", errors="replace")
@@ -69,6 +79,8 @@ with handle:
                 if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
                     latest_previous_run_ack_epoch = epoch
                     latest_previous_run_ack_reason = "previous_run_anomaly_custody_recorded"
+            continue
+        if not is_structured_log_event(line):
             continue
         cycle_match = cycle_re.search(line)
         if not cycle_match:
@@ -164,6 +176,10 @@ if acknowledged:
 PY
 }
 
+previous_run_anomaly_lines() {
+  previous_run_anomaly_lines_impl
+}
+
 previous_run_anomaly_details_enabled() {
   if declare -F terminal_wants_verbose_output >/dev/null 2>&1 && terminal_wants_verbose_output; then
     return 0
@@ -239,7 +255,8 @@ scan_previous_run_anomalies() {
   local anomaly
   local detail_level summary_line
   PREVIOUS_RUN_ANOMALIES=""
-  mapfile -t anomalies < <(previous_run_anomaly_lines || true)
+  # Keep the scan path bound to this module's structured-line trust boundary.
+  mapfile -t anomalies < <(previous_run_anomaly_lines_impl || true)
   mapfile -t state_anomalies < <(startup_anomaly_state_lines || true)
   anomalies+=("${state_anomalies[@]}")
   local -a active_anomalies=()

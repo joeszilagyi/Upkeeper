@@ -8702,10 +8702,20 @@ def probe_import_upkeeper_log_decorated_lattice_unavailable() -> dict[str, Any]:
                 limit 1
                 """
             ).fetchone()
+            event_row = conn.execute(
+                """
+                select details_json
+                from file_events
+                where event_kind='lattice_unavailable'
+                order by event_id desc
+                limit 1
+                """
+            ).fetchone()
         finally:
             conn.close()
     parsed = json.loads(row["parsed_json"]) if row and row["parsed_json"] else {}
     raw_text = str(row["raw_text"] or "") if row else ""
+    event_details = json.loads(event_row["details_json"]) if event_row and event_row["details_json"] else {}
     return {
         "exit_code": exit_code,
         "rows_seen": payload.get("rows_seen"),
@@ -8718,6 +8728,12 @@ def probe_import_upkeeper_log_decorated_lattice_unavailable() -> dict[str, Any]:
         "detail_summary_exact": parsed.get("detail_summary") == detail_summary.replace("\\ ", " "),
         "raw_text_db_hmac_present": "db_hmac=" in raw_text,
         "raw_text_raw_db_absent": str(unavailable_db_path) not in raw_text,
+        "custody_event_recorded": bool(event_row),
+        "custody_event_safe": bool(
+            event_details.get("event") == "lattice.unavailable"
+            and str(event_details.get("db_hmac") or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX)
+            and "db" not in event_details
+        ),
         "ok": all(
             (
                 exit_code == EXIT_SUCCESS,
@@ -8730,6 +8746,10 @@ def probe_import_upkeeper_log_decorated_lattice_unavailable() -> dict[str, Any]:
                 parsed.get("detail_summary") == detail_summary.replace("\\ ", " "),
                 "db_hmac=" in raw_text,
                 str(unavailable_db_path) not in raw_text,
+                bool(event_row),
+                event_details.get("event") == "lattice.unavailable",
+                str(event_details.get("db_hmac") or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX),
+                "db" not in event_details,
             )
         ),
     }
@@ -11258,6 +11278,19 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
             event = str(parsed.get("event", ""))
             if cycle_id and run_hash:
                 cycle_pk = ensure_cycle(conn, repo_id, cycle_id, run_hash, source_id=source_id)
+                if event == "lattice.unavailable":
+                    # Lattice degraded mode is not a perfect unattended run; keep
+                    # a cycle-local custody event in addition to the raw log source.
+                    record_file_event(
+                        conn,
+                        repo_id,
+                        "lattice_unavailable",
+                        cycle_pk=cycle_pk,
+                        source_id=source_id,
+                        confidence="observed",
+                        details=safe_parsed,
+                        dedupe_by_source=True,
+                    )
                 if event == "cycle.start":
                     start_fields = filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_CYCLE_START_SAFE_KEYS)
                     dry_run = parse_bool_int(start_fields["dry_run"]) if "dry_run" in start_fields else None

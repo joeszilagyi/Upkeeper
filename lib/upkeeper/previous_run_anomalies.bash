@@ -22,6 +22,10 @@ structured_log_re = re.compile(
     r"^[^ \t\r\n]+[ \t]+(?:\u2588[ \t]+--FYI--[ \t]+)?"
     r"\[[A-Z]+\][ \t]+cycle=[^ \t\r\n]+(?:[ \t]|\r?\n|$)"
 )
+direct_custody_re = re.compile(
+    r"^[^ \t\r\n]+[ \t]+(?:\u2588[ \t]+)?"
+    r"(?:(?:--FYI--|[A-Z]+)[ \t]+)?backlog:[ \t]+anomaly custody:[ \t]"
+)
 cycles = {}
 latest_previous_run_ack_epoch = None
 latest_previous_run_ack_reason = "previous_run_anomaly_gate_reviewed"
@@ -52,6 +56,15 @@ def is_structured_log_event(line):
     # structured log events are trusted as previous-cycle evidence.
     return bool(structured_log_re.match(line))
 
+
+def direct_custody_payload(line):
+    # Treat only direct backlog custody records as acknowledgments. Echoed
+    # command output can quote old custody lines and must not clear the gate.
+    if not direct_custody_re.match(line):
+        return None
+    payload = line.split("anomaly custody:", 1)[1]
+    return payload.split(" excerpt=", 1)[0]
+
 try:
     handle = open(log_path, "r", encoding="utf-8", errors="replace")
 except OSError:
@@ -70,11 +83,12 @@ with handle:
             if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
                 latest_previous_run_ack_epoch = epoch
                 latest_previous_run_ack_reason = "previous_run_anomaly_gate_reviewed"
-        if "anomaly custody:" in line:
+        custody_payload = direct_custody_payload(line)
+        if custody_payload is not None:
             if (
                 epoch is not None
-                and "target=lib/upkeeper/previous_run_anomalies.bash" in line
-                and any(kind in line for kind in custody_ack_kinds)
+                and "target=lib/upkeeper/previous_run_anomalies.bash" in custody_payload
+                and any(kind in custody_payload for kind in custody_ack_kinds)
             ):
                 if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
                     latest_previous_run_ack_epoch = epoch

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.31
+## Version: v1.2.32
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.31"
+UPKEEPER_VERSION="v1.2.32"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -712,10 +712,11 @@ upkeeper_live_output_custody_filter() {
         rewritten="${rewritten/ Upkeeper: / Upkeeper: live_output.false_positive_error_echo classification=quoted_search_command }"
         printf '%s\n' "$rewritten"
         ;;
-      *' [ERROR] Upkeeper: '*" cmd#"*" validation failed: exited "*|*' [ERROR] Upkeeper: '*" cmd#"*" check failed: exited "*)
+      *' [ERROR] Upkeeper: '*" cmd#"*" validation failed: exited "*|*' [ERROR] Upkeeper: '*" cmd#"*" check failed: exited "*|*' [ERROR] Upkeeper: '*" cmd#"*" tests failed: exited "*)
         rewritten="${line/ \[ERROR\] / [WARN] }"
         rewritten="${rewritten/ validation failed:/ validation failed; captured_by=$custody:}"
         rewritten="${rewritten/ check failed:/ check failed; captured_by=$custody:}"
+        rewritten="${rewritten/ tests failed:/ tests failed; captured_by=$custody:}"
         printf '%s\n' "$rewritten"
         ;;
       *)
@@ -829,6 +830,21 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
     *)
       printf 'live_output_custody_filter_self_test=fail reason=backlog_page_error_check_failure_not_custodied output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-23T00:04:01 \342\226\210 WORKER [ERROR] Upkeeper: primary cmd#23 tests failed: exited 1 in 0.1s'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_page_error_tests_failure_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *$' \342\226\210 WORKER [WARN] Upkeeper: primary cmd#23 tests failed; captured_by='*': exited 1 in 0.1s'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_page_error_tests_failure_not_custodied output=%s\n' "$output" >&2
       return 1
       ;;
   esac

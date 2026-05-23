@@ -75,14 +75,16 @@ with handle:
         epoch = parsed_epoch(line)
         if epoch is not None and scan_minutes > 0 and epoch < cutoff:
             continue
-        if (
-            epoch is not None
-            and " startup_anomaly.gate_resolved " in line
-            and "reasons=previous_run_anomaly" in line
-        ):
-            if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
-                latest_previous_run_ack_epoch = epoch
-                latest_previous_run_ack_reason = "previous_run_anomaly_gate_reviewed"
+        structured_event = is_structured_log_event(line)
+        if structured_event:
+            if (
+                epoch is not None
+                and " startup_anomaly.gate_resolved " in line
+                and "reasons=previous_run_anomaly" in line
+            ):
+                if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
+                    latest_previous_run_ack_epoch = epoch
+                    latest_previous_run_ack_reason = "previous_run_anomaly_gate_reviewed"
         custody_payload = direct_custody_payload(line)
         if custody_payload is not None:
             if (
@@ -94,7 +96,7 @@ with handle:
                     latest_previous_run_ack_epoch = epoch
                     latest_previous_run_ack_reason = "previous_run_anomaly_custody_recorded"
             continue
-        if not is_structured_log_event(line):
+        if not structured_event:
             continue
         cycle_match = cycle_re.search(line)
         if not cycle_match:

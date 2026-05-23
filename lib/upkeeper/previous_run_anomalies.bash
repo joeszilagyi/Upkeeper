@@ -31,11 +31,11 @@ direct_custody_re = re.compile(
 cycles = {}
 latest_previous_run_ack_epoch = None
 latest_previous_run_ack_reason = "previous_run_anomaly_gate_reviewed"
-custody_ack_kinds = (
-    "kind=page_error",
-    "kind=previous_run_anomaly_summary",
-    "kind=startup_anomaly_unresolved",
-)
+custody_ack_kinds = {
+    "page_error",
+    "previous_run_anomaly_summary",
+    "startup_anomaly_unresolved",
+}
 
 def parsed_epoch(line):
     stamp = line.split(" ", 1)[0]
@@ -68,6 +68,13 @@ def direct_custody_payload(line):
     payload = line.split("anomaly custody:", 1)[1]
     return payload.split(" excerpt=", 1)[0]
 
+
+def custody_field(payload, name):
+    match = re.search(rf"(?:^|[ \t]){re.escape(name)}=([^ \t]+)", payload)
+    if not match:
+        return ""
+    return match.group(1)
+
 try:
     handle = open(log_path, "r", encoding="utf-8", errors="replace")
 except OSError:
@@ -92,8 +99,8 @@ with handle:
         if custody_payload is not None:
             if (
                 epoch is not None
-                and "target=lib/upkeeper/previous_run_anomalies.bash" in custody_payload
-                and any(kind in custody_payload for kind in custody_ack_kinds)
+                and custody_field(custody_payload, "target") == "lib/upkeeper/previous_run_anomalies.bash"
+                and custody_field(custody_payload, "kind") in custody_ack_kinds
             ):
                 if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
                     latest_previous_run_ack_epoch = epoch

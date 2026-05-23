@@ -91,9 +91,14 @@ def redact_boot_ids(text):
 
 def safe_embedded_log_excerpt(text):
     # Prior log rows are operator evidence, but agents often quote them in final
-    # output. Neutralize embedded log-level markers so quoted evidence does not
-    # become fresh pageable WARN/ERROR output in backlog logs.
+    # output. Neutralize embedded attention and log-level markers so quoted
+    # evidence does not become fresh pageable WARN/ERROR output in backlog logs.
     sanitized = redact_boot_ids(text).replace("\\", "\\\\").replace("\t", " ")
+    sanitized = re.sub(
+        r"\s*\u2588[ \t]+(PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO)(?=$|[ \t\r\n\"':;,.)])",
+        lambda match: f" {{{match.group(1)}}}",
+        sanitized,
+    )
     return re.sub(r"\[([A-Z]+)\]", r"{\1}", sanitized)[:300]
 
 

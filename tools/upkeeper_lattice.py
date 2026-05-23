@@ -6239,6 +6239,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["worktree_snapshot_deleted_file_state"] = worktree_snapshot_deleted_state_probe
         export_redaction_probe = probe_export_redaction()
         result["checks"]["export_redaction"] = export_redaction_probe
+        export_failure_cleanup_probe = probe_export_jsonl_failure_cleans_partial_temp()
+        result["checks"]["export_jsonl_failure_cleans_partial_temp"] = export_failure_cleanup_probe
         backup_preserves_source_probe = probe_backup_command_preserves_source_db_file()
         result["checks"]["backup_command_preserves_source_db_file"] = backup_preserves_source_probe
         backup_rejects_existing_probe = probe_backup_command_rejects_existing_default_destination()
@@ -6302,6 +6304,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(export_redaction_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(export_failure_cleanup_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(backup_preserves_source_probe.get("ok")):
@@ -8230,6 +8235,61 @@ def probe_export_redaction() -> dict[str, Any]:
     }
 
 
+def probe_export_jsonl_failure_cleans_partial_temp() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-export-cleanup-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        output_path = db_path.parent / "exports" / "probe.jsonl"
+        init_args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            command_init(init_args)
+
+        original_export_table_rows = globals()["export_table_rows"]
+
+        def failing_export_table_rows(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+            raise sqlite3.Error("injected export failure")
+
+        globals()["export_table_rows"] = failing_export_table_rows
+        try:
+            export_args = argparse.Namespace(
+                root=str(root),
+                db=str(db_path),
+                journal_mode="delete",
+                allow_unsafe_db=False,
+                output=str(output_path),
+                overwrite=False,
+                redact_paths=False,
+                redact_contributors=False,
+                anonymized_archive=False,
+                raw_export_policy="full_redact",
+                raw_storage_mode="minimal",
+            )
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_export_jsonl(export_args)
+            except sqlite3.Error as exc:
+                error = str(exc)
+            else:
+                error = ""
+        finally:
+            globals()["export_table_rows"] = original_export_table_rows
+
+        leftovers = sorted(path.name for path in output_path.parent.iterdir()) if output_path.parent.exists() else []
+        return {
+            "error": error,
+            "output_exists": output_path.exists(),
+            "leftovers": leftovers,
+            "ok": bool(error) and not output_path.exists() and not leftovers,
+        }
+
+
 def probe_backup_command_preserves_source_db_file() -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-backup-preserve-") as tmpdir:
         root = Path(tmpdir).resolve()
@@ -8653,8 +8713,9 @@ def probe_import_upkeeper_log_decorated_lattice_unavailable() -> dict[str, Any]:
         "event": parsed.get("event"),
         "required": parsed.get("required"),
         "action": parsed.get("action"),
+        "detail_summary": parsed.get("detail_summary"),
         "db_hmac_present": str(parsed.get("db_hmac") or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX),
-        "detail_summary_present": bool(parsed.get("detail_summary")),
+        "detail_summary_exact": parsed.get("detail_summary") == detail_summary.replace("\\ ", " "),
         "raw_text_db_hmac_present": "db_hmac=" in raw_text,
         "raw_text_raw_db_absent": str(unavailable_db_path) not in raw_text,
         "ok": all(
@@ -8666,7 +8727,7 @@ def probe_import_upkeeper_log_decorated_lattice_unavailable() -> dict[str, Any]:
                 parsed.get("required") == "0",
                 parsed.get("action") == "continue_without_lattice",
                 str(parsed.get("db_hmac") or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX),
-                bool(parsed.get("detail_summary")),
+                parsed.get("detail_summary") == detail_summary.replace("\\ ", " "),
                 "db_hmac=" in raw_text,
                 str(unavailable_db_path) not in raw_text,
             )
@@ -11634,44 +11695,53 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
     warn_sensitive_export_request(args, output)
     started = epoch_now()
     row_count = 0
-    with conn, tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(output.parent), delete=False) as handle:
-        temp_path = Path(handle.name)
-        for table in REQUIRED_TABLES:
-            if table.startswith("file_") and table.endswith("_rollups"):
-                continue
-            for payload in export_table_rows(conn, table, repo_id=repo_id):
-                payload = sanitize_git_privacy_payload(table, payload, root=root)
-                payload = sanitize_import_identity_payload(table, payload, context)
-                payload = redact_payload(payload, args)
-                pk = table_primary_key(conn, table)
-                logical = f"{table}:{payload.get(pk) if pk else sha256_text(json_dumps(payload))}"
-                payload_hash = sha256_text(json_dumps(payload))
-                row = {
-                    "schema_version": SCHEMA_VERSION,
-                    "row_type": table,
-                    "row_version": SCHEMA_ROW_VERSION,
-                    "logical_key": logical,
-                    "source_identity": {
-                        "db_path_hash": sha256_text(str(db_path)),
-                    },
-                    "repo_identity": {
-                        "repo_id": repo_id,
-                        "repo_key": repo_key,
-                        "root_path": (
-                            REDACTED_PATH_PREFIX + sha256_text(str(root))
-                            if args.redact_paths
-                            else protected_repo_path(context, str(root))
-                        ),
-                    },
-                    "payload": payload,
-                    "payload_sha256": payload_hash,
-                    "exported_epoch": started,
-                }
-                handle.write(json_dumps(row) + "\n")
-                row_count += 1
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temp_path, output)
+    temp_path: Path | None = None
+    try:
+        with conn, tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(output.parent), delete=False) as handle:
+            temp_path = Path(handle.name)
+            for table in REQUIRED_TABLES:
+                if table.startswith("file_") and table.endswith("_rollups"):
+                    continue
+                for payload in export_table_rows(conn, table, repo_id=repo_id):
+                    payload = sanitize_git_privacy_payload(table, payload, root=root)
+                    payload = sanitize_import_identity_payload(table, payload, context)
+                    payload = redact_payload(payload, args)
+                    pk = table_primary_key(conn, table)
+                    logical = f"{table}:{payload.get(pk) if pk else sha256_text(json_dumps(payload))}"
+                    payload_hash = sha256_text(json_dumps(payload))
+                    row = {
+                        "schema_version": SCHEMA_VERSION,
+                        "row_type": table,
+                        "row_version": SCHEMA_ROW_VERSION,
+                        "logical_key": logical,
+                        "source_identity": {
+                            "db_path_hash": sha256_text(str(db_path)),
+                        },
+                        "repo_identity": {
+                            "repo_id": repo_id,
+                            "repo_key": repo_key,
+                            "root_path": (
+                                REDACTED_PATH_PREFIX + sha256_text(str(root))
+                                if args.redact_paths
+                                else protected_repo_path(context, str(root))
+                            ),
+                        },
+                        "payload": payload,
+                        "payload_sha256": payload_hash,
+                        "exported_epoch": started,
+                    }
+                    handle.write(json_dumps(row) + "\n")
+                    row_count += 1
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, output)
+        temp_path = None
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
     chmod_private(output)
     digest = sha256_bytes(output.read_bytes())
     finished = epoch_now()

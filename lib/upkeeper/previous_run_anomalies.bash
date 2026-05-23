@@ -83,7 +83,9 @@ with handle:
         epoch = parsed_epoch(line)
         if epoch is not None and scan_minutes > 0 and epoch < cutoff:
             continue
-        structured_event = is_structured_log_event(line)
+        # A raw structured event must start with a parseable timestamp. This
+        # keeps echoed snippets from spoofing prior-cycle control-plane rows.
+        structured_event = epoch is not None and is_structured_log_event(line)
         if structured_event:
             if (
                 epoch is not None

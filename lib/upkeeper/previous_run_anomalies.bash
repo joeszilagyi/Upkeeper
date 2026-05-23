@@ -19,7 +19,8 @@ cycle_re = re.compile(r"\bcycle=([^ \t\r\n]+)")
 run_hash_re = re.compile(r"\brun_hash=([^ \t\r\n]+)")
 boot_id_re = re.compile(r"\bboot_id=([^ \t\r\n]+)")
 structured_log_re = re.compile(
-    r"^[^ \t\r\n]+[ \t]+(?:\u2588[ \t]+--FYI--[ \t]+)?"
+    r"^[^ \t\r\n]+[ \t]+"
+    r"(?:\u2588[ \t]+(?!(?:PAGE|WORKER)\b)(?:(?:--FYI--|[A-Z]+)[ \t]+))?"
     r"\[[A-Z]+\][ \t]+cycle=[^ \t\r\n]+(?:[ \t]|\r?\n|$)"
 )
 direct_custody_re = re.compile(

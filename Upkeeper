@@ -1431,8 +1431,8 @@ PY
 
 # Keep this backup override in the entrypoint so selected-target-only repair
 # cycles can harden encrypted pre-contact backup integrity without patching the
-# paired module file. The helper hashes the exact payload bytes written so age
-# backups fail closed if the target changes after metadata was derived.
+# paired module file. The helper hashes target content while writing the payload
+# so age backups fail closed if the target changes after metadata was derived.
 upkeeper_precontact_backup_write_payload_and_sha() {
   local metadata_file="$1"
   local target_file="$2"

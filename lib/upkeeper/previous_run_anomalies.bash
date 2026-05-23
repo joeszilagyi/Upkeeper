@@ -301,14 +301,13 @@ previous_run_anomaly_details_enabled() {
 }
 
 previous_run_anomaly_summary_line() {
-  local anomaly_input
-  anomaly_input="$(cat)"
-  UPKEEPER_PREVIOUS_RUN_ANOMALY_INPUT="$anomaly_input" python3 - <<'PY'
+  python3 - 3<&0 <<'PY'
 import collections
 import os
 import re
 
-lines = [line.rstrip("\n") for line in os.environ.get("UPKEEPER_PREVIOUS_RUN_ANOMALY_INPUT", "").splitlines() if line.strip()]
+with os.fdopen(3, "r", encoding="utf-8", errors="replace") as anomaly_input:
+    lines = [line.rstrip("\n") for line in anomaly_input if line.strip()]
 
 
 def field(line, name):

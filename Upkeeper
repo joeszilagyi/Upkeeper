@@ -704,6 +704,14 @@ upkeeper_live_output_custody_filter() {
 
   while IFS= read -r line; do
     case "$line" in
+      *' [ERROR] Upkeeper: '*': rg -n '*' || true'*)
+        # A quoted diagnostic search command from prior evidence is not itself
+        # a current-cycle runtime failure. Keep it visible without paging it as
+        # operator ERROR output.
+        rewritten="${line/ \[ERROR\] / [INFO] }"
+        rewritten="${rewritten/ Upkeeper: / Upkeeper: live_output.false_positive_error_echo classification=quoted_search_command }"
+        printf '%s\n' "$rewritten"
+        ;;
       *' [ERROR] Upkeeper: '*" cmd#"*" validation failed: exited "*)
         rewritten="${line/ \[ERROR\] / [WARN] }"
         rewritten="${rewritten/ validation failed:/ validation failed; captured_by=$custody:}"
@@ -714,6 +722,43 @@ upkeeper_live_output_custody_filter() {
         ;;
     esac
   done
+}
+
+upkeeper_internal_live_output_custody_filter_self_test_requested() {
+  config_truthy "${UPKEEPER_INTERNAL_LIVE_OUTPUT_CUSTODY_FILTER_SELF_TEST:-0}"
+}
+
+upkeeper_internal_live_output_custody_filter_self_test() {
+  local sample output
+
+  sample='2026-05-22T12:04:06 [ERROR] Upkeeper: primary: rg -n "active_lock\\.(stale|failed)|cycle.exit|UPKEEPER_ACTIVE_LOCK" "\"$repro_log" || true'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=diagnostic_search_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_search_command'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=diagnostic_search_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample='2026-05-22T12:04:06 [ERROR] Upkeeper: primary: Traceback (most recent call last)'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=real_error_was_downgraded output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  printf 'live_output_custody_filter_self_test=pass\n'
+  return 0
 }
 
 run_codex_exec_capture() {
@@ -6017,6 +6062,10 @@ main() {
   if upkeeper_internal_current_cycle_log_review_requested; then
     upkeeper_emit_sanitized_current_cycle_log_review
     return 0
+  fi
+  if upkeeper_internal_live_output_custody_filter_self_test_requested; then
+    upkeeper_internal_live_output_custody_filter_self_test
+    return $?
   fi
   ensure_log_parent
   ensure_log_writable_or_exit "startup"

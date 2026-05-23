@@ -87,6 +87,47 @@ Validation:
 - `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
 - `git diff --check`
 
+## Live Output Fixture Reclassification And Obligation Reset
+
+Status: completed locally; pending PR CI
+
+Goal:
+- stop backend-emitted shell/test snippets that quote `[WARN]`, `[ERROR]`,
+  `PAGE`, block markers, or startup-anomaly text from becoming fresh live
+  PAGE errors or prior-run anomaly obligations
+- sync the operator guide and release notes after the wrapper version bump to
+  `v1.2.32`
+- after the source fix is committed, perform an evidence-preserving reset of
+  remaining local open obligations so the next loop starts from a clean
+  post-bridge epoch
+
+Constraints:
+- preserve real runtime failures such as tracebacks and wrapper errors as
+  ERROR/PAGE output
+- keep the reset local and evidence-preserving; do not silently delete JSON
+  obligation records
+- do not launch live backend Codex for validation
+
+Files likely touched:
+- `Upkeeper`
+- `tools/upkeeper_anomaly_custody.py`
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `UPKEEPER_INTERNAL_LIVE_OUTPUT_CUSTODY_FILTER_SELF_TEST=1 UPKEEPER_CONFIG_DISABLE=1 ./Upkeeper`
+- `python3 -m py_compile tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --version`
+- `./Upkeeper --help`
+- `git diff --check`
+
 ## Automation Obligation Reconciliation Preflight
 
 Status: completed locally

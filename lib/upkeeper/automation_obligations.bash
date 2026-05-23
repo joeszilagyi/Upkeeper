@@ -653,23 +653,53 @@ def quoted_backend_fixture_text(text):
         'printf "',
         "echo ",
         "grep ",
+        "grep -fq ",
+        "grep -eq ",
+        "if grep ",
+        "case ",
         "cat >",
         "awk ",
         "sed ",
+        "warn=",
+        "err=",
+        "payload=",
         "$stamp",
+        "$local_stamp",
         "$tmp",
+        "$tmp_dir",
+        "$output",
+        "$log_file",
         ">>",
+        "<<<",
+        "|| {",
+        "&&",
+        "|*",
+        "'*|",
+        "*)",
+        ";;",
         "\\n",
     )
     embedded_tokens = (
         "[warn]",
         "[error]",
-        " startup_anomaly.gate",
-        " previous_run.anomaly",
+        "[info]",
+        "(warn|error)",
+        "warn|error",
+        "warn",
+        "error",
+        " page ",
+        "startup_anomaly",
+        "previous_run.anomaly",
         " cycle=",
         " run_hash=",
+        "cycle.exit",
+        "run.finish",
         " █ ",
     )
+    if "warn=" in payload or "err=" in payload:
+        return True
+    if payload.startswith(("grep ", "printf ", "echo ", "if grep ", "case ")):
+        return True
     if any(token in payload for token in shell_tokens) and any(token in payload for token in embedded_tokens):
         return True
     if payload.lstrip().startswith("'") and any(token in payload for token in embedded_tokens):

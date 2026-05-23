@@ -694,6 +694,40 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
 done
  unset upkeeper_module
 
+upkeeper_live_output_false_positive_error_echo() {
+  local line="$1"
+  local payload
+
+  case "$line" in
+    *' [ERROR] Upkeeper: primary: '*)
+      payload="${line#* [ERROR] Upkeeper: primary: }"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  case "$payload" in
+    *'rg -n '*' || true'*|*'grep -Fq '*|*'grep -Eq '*|*'if grep '*|*'printf '*|*'echo '*|*'case '*|*'warn='*|*'err='*|*'payload='*|*'<<<'*|*'|| {'*|*'&&'*|*';;'*|*'*)'*|*"*'|"*|*"|'*"*)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  case "$payload" in
+    'grep '*|'printf '*|'echo '*|'if grep '*|'case '*)
+      return 0
+      ;;
+    *'[WARN]'*|*'[ERROR]'*|*'[INFO]'*|*$'\342\226\210'*|*'PAGE'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 upkeeper_live_output_custody_filter() {
   local custody="transcript"
   local line rewritten
@@ -703,15 +737,16 @@ upkeeper_live_output_custody_filter() {
   fi
 
   while IFS= read -r line; do
+    if upkeeper_live_output_false_positive_error_echo "$line"; then
+      # A quoted diagnostic/search/test shell fragment from prior evidence is
+      # not itself a current-cycle runtime failure. Keep it visible without
+      # paging it as operator ERROR output.
+      rewritten="${line/ \[ERROR\] / [INFO] }"
+      rewritten="${rewritten/ Upkeeper: / Upkeeper: live_output.false_positive_error_echo classification=quoted_backend_shell_fixture }"
+      printf '%s\n' "$rewritten"
+      continue
+    fi
     case "$line" in
-      *' [ERROR] Upkeeper: '*': rg -n '*' || true'*)
-        # A quoted diagnostic search command from prior evidence is not itself
-        # a current-cycle runtime failure. Keep it visible without paging it as
-        # operator ERROR output.
-        rewritten="${line/ \[ERROR\] / [INFO] }"
-        rewritten="${rewritten/ Upkeeper: / Upkeeper: live_output.false_positive_error_echo classification=quoted_search_command }"
-        printf '%s\n' "$rewritten"
-        ;;
       *' [ERROR] Upkeeper: '*" cmd#"*" validation failed: exited "*|*' [ERROR] Upkeeper: '*" cmd#"*" check failed: exited "*|*' [ERROR] Upkeeper: '*" cmd#"*" tests failed: exited "*)
         rewritten="${line/ \[ERROR\] / [WARN] }"
         rewritten="${rewritten/ validation failed:/ validation failed; captured_by=$custody:}"
@@ -740,7 +775,7 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       printf 'live_output_custody_filter_self_test=fail reason=diagnostic_search_still_error output=%s\n' "$output" >&2
       return 1
       ;;
-    *'classification=quoted_search_command'*)
+    *'classification=quoted_backend_shell_fixture'*)
       ;;
     *)
       printf 'live_output_custody_filter_self_test=fail reason=diagnostic_search_not_classified output=%s\n' "$output" >&2
@@ -755,7 +790,7 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       printf 'live_output_custody_filter_self_test=fail reason=prior_anomaly_search_still_error output=%s\n' "$output" >&2
       return 1
       ;;
-    *'classification=quoted_search_command'*)
+    *'classification=quoted_backend_shell_fixture'*)
       ;;
     *)
       printf 'live_output_custody_filter_self_test=fail reason=prior_anomaly_search_not_classified output=%s\n' "$output" >&2
@@ -770,6 +805,51 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
     *)
       printf 'live_output_custody_filter_self_test=fail reason=real_error_was_downgraded output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-23T07:21:59 \342\226\210 PAGE [ERROR] Upkeeper: primary: *\'"\'[ERROR]\'*|*\'[WARN]\'*|*\'\342\226\210\'*|*\'startup_anomaly.gate_unresolved\'*|*\'previous_run.anomaly_summary\'*|*\'cycle.exit\'*|*\'run.finish\'*)'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=case_glob_fixture_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_shell_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=case_glob_fixture_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-23T07:02:16 \342\226\210 PAGE [ERROR] Upkeeper: primary: grep -Fq \'previous_cycle=prior-normal\' "$tmp_dir/out" && echo \'normal_cycle=passed\' || { echo \'normal_cycle=failed\'; exit 1; }'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=grep_fixture_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_shell_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=grep_fixture_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-23T07:29:58 \342\226\210 PAGE [ERROR] Upkeeper: primary: warn=\'[\'\'WARN\'\']\''
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=warn_assignment_fixture_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_shell_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=warn_assignment_fixture_not_classified output=%s\n' "$output" >&2
       return 1
       ;;
   esac

@@ -6,6 +6,10 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-23: v1.2.32 changes:
+	1. Live output custody now reclassifies backend-emitted shell/test snippets that quote log markers, case globs, grep assertions, or `[WARN]`/`[ERROR]` assignments as quoted fixture/search output instead of fresh PAGE errors.
+	2. The operator guide snapshot is synced to wrapper version v1.2.32.
+
 2026-05-23: v1.2.31 changes:
 	1. Backlog obligation selection now records repeated blocked repair attempts on the selected obligation and applies a deterministic cooldown after the retry limit, so one unresolved obligation cannot consume an entire bounded loop. If all local obligations are cooling down, backlog exits without selecting new GitHub issue work.
 	2. Prior-run anomaly custody now treats model-emitted shell/test fixture snippets that quote `[WARN]`, `[ERROR]`, `PAGE`, cycle ids, run hashes, or startup-anomaly text as transcript content instead of fresh wrapper failures.

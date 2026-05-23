@@ -173,23 +173,53 @@ def model_emitted_fixture_output(normalized: str) -> bool:
         'printf "',
         "echo ",
         "grep ",
+        "grep -fq ",
+        "grep -eq ",
+        "if grep ",
+        "case ",
         "cat >",
         "awk ",
         "sed ",
+        "warn=",
+        "err=",
+        "payload=",
         "$stamp",
+        "$local_stamp",
         "$tmp",
+        "$tmp_dir",
+        "$output",
+        "$log_file",
         ">>",
+        "<<<",
+        "|| {",
+        "&&",
+        "|*",
+        "'*|",
+        "*)",
+        ";;",
         "\\n",
     )
     embedded_log_tokens = (
         "[warn]",
         "[error]",
-        " startup_anomaly.gate",
-        " previous_run.anomaly",
+        "[info]",
+        "(warn|error)",
+        "warn|error",
+        "warn",
+        "error",
+        " page ",
+        "startup_anomaly",
+        "previous_run.anomaly",
         " cycle=",
         " run_hash=",
+        "cycle.exit",
+        "run.finish",
         " █ ",
     )
+    if "warn=" in payload or "err=" in payload:
+        return True
+    if payload.startswith(("grep ", "printf ", "echo ", "if grep ", "case ")):
+        return True
     if any(token in payload for token in shell_fixture_tokens) and any(
         token in payload for token in embedded_log_tokens
     ):
@@ -229,6 +259,8 @@ def classify(lines: list[tuple[int, str]], index: int, raw_line: str) -> Classif
     target = target_for(normalized)
 
     if model_emitted_fixture_output(normalized):
+        return None
+    if "upkeeper: what was wrong:" in lower:
         return None
     if "█ page" in raw_line.lower() or "[error]" in lower:
         return Classification("page_error", "high", target, "pageable error output is not part of a healthy run")

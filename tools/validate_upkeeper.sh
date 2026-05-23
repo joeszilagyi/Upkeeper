@@ -932,6 +932,9 @@ LOG
   cat >"$temp_dir/model-fixture.log" <<'LOG'
 2026-05-23T07:07:51 █ INFO    [ERROR] Upkeeper: primary: printf '"'%s [WARN] cycle=prior-cycle run_hash=abc startup_anomaly.gate_unresolved reason=changed_path_violation reasons=previous_run_anomaly boot_id=boot-current\n' "$stamp_old" >>"$log_file"
 2026-05-23T07:07:52 █ INFO    [ERROR] Upkeeper: primary: echo "2026-05-23T07:00:00 █ PAGE [ERROR] cycle=quoted run_hash=abc runner.output"
+2026-05-23T07:21:59 █ PAGE    [ERROR] Upkeeper: primary: *'"'[ERROR]'*|*'[WARN]'*|*'█'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*)
+2026-05-23T07:02:16 █ PAGE    [ERROR] Upkeeper: primary: grep -Fq 'previous_cycle=prior-normal' "$tmp_dir/out" && echo 'normal_cycle=passed' || { echo 'normal_cycle=failed'; exit 1; }
+2026-05-23T07:29:58 █ PAGE    [ERROR] Upkeeper: primary: warn='[''WARN'']'
 LOG
   tools/upkeeper_anomaly_custody.py \
     --root "$ROOT_DIR" \

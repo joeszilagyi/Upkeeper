@@ -745,10 +745,13 @@ run_codex_exec_capture() {
   )
 
   if terminal_wants_full_output; then
-    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 | tee "$transcript_file"
+    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 |
+      tee "$transcript_file" |
+      upkeeper_live_output_custody_filter
     pipe_status=("${PIPESTATUS[@]}")
     codex_rc="${pipe_status[0]}"
     tee_rc="${pipe_status[1]}"
+    filter_rc="${pipe_status[2]}"
   else
     "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 |
       tee "$transcript_file" |

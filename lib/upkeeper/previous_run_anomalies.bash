@@ -25,7 +25,7 @@ structured_log_re = re.compile(
 )
 direct_custody_re = re.compile(
     r"^[^ \t\r\n]+[ \t]+(?:\u2588[ \t]+)?"
-    r"(?:(?:--FYI--|(?!(?:PAGE|WORKER)\b)[A-Z]+)[ \t]+)?"
+    r"(?:(?:--FYI--|PAGE|(?!(?:PAGE|WORKER)\b)[A-Z]+)[ \t]+)?"
     r"backlog:[ \t]+anomaly custody:[ \t]"
 )
 cycles = {}
@@ -60,8 +60,9 @@ def is_structured_log_event(line):
 
 
 def direct_custody_payload(line):
-    # Treat only direct backlog custody records as acknowledgments. Echoed
-    # command output can quote old custody lines and must not clear the gate.
+    # Treat only direct backlog custody records as acknowledgments. A PAGE line
+    # whose payload starts with "backlog:" is backlog's own paged custody row;
+    # echoed Upkeeper output includes its own prefix before quoted payload.
     if not direct_custody_re.match(line):
         return None
     payload = line.split("anomaly custody:", 1)[1]

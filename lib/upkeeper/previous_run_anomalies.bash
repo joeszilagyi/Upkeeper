@@ -22,6 +22,7 @@ cycles = {}
 latest_previous_run_ack_epoch = None
 latest_previous_run_ack_reason = "previous_run_anomaly_gate_reviewed"
 custody_ack_kinds = (
+    "kind=page_error",
     "kind=previous_run_anomaly_summary",
     "kind=startup_anomaly_unresolved",
 )

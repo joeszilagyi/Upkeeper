@@ -293,6 +293,13 @@ UPKEEPER_LOG_SOURCE_SAFE_KEYS = {
     "exit_code",
     "codex_exec_started",
 }
+UPKEEPER_LOG_LATTICE_UNAVAILABLE_SAFE_KEYS = UPKEEPER_LOG_SOURCE_SAFE_KEYS | {
+    "required",
+    "action",
+    "detail_summary",
+    "format",
+    "db_hmac",
+}
 UPKEEPER_LOG_CYCLE_START_SAFE_KEYS = {"execution_origin", "dirty_paths", "dry_run"}
 UPKEEPER_LOG_REVIEW_PRESELECT_SAFE_KEYS = {"basis"}
 UPKEEPER_LOG_SUMMARY_SAFE_KEYS = {"status_marker", "codex_exit"}
@@ -1633,7 +1640,16 @@ def source_record_storage_uri(root: Path, source_kind: str, value: str) -> str:
     return artifact_path_hmac(root, value)
 
 
-def sanitize_upkeeper_log_parsed(parsed: dict[str, Any]) -> dict[str, Any]:
+def sanitize_lattice_unavailable_log_fields(root: Path | None, fields: dict[str, Any]) -> dict[str, Any]:
+    sanitized = filter_upkeeper_log_fields(fields, UPKEEPER_LOG_LATTICE_UNAVAILABLE_SAFE_KEYS)
+    if root is not None and has_meaningful_value(fields.get("db")):
+        sanitized["db_hmac"] = artifact_path_hmac(root, str(fields["db"]))
+    return sanitized
+
+
+def sanitize_upkeeper_log_parsed(parsed: dict[str, Any], root: Path | None = None) -> dict[str, Any]:
+    if str(parsed.get("event", "")).strip() == "lattice.unavailable":
+        return sanitize_lattice_unavailable_log_fields(root, parsed)
     return filter_upkeeper_log_fields(parsed, UPKEEPER_LOG_SOURCE_SAFE_KEYS)
 
 
@@ -1661,6 +1677,8 @@ def sanitize_nonverbose_upkeeper_log_fields(root: Path | None, fields: dict[str,
         return sanitize_cycle_start_fields(root, fields) if root is not None else filter_upkeeper_log_fields(fields, CYCLE_START_SAFE_KEYS)
     if event.startswith("quota."):
         return sanitize_quota_log_fields(root, fields)
+    if event == "lattice.unavailable":
+        return sanitize_lattice_unavailable_log_fields(root, fields)
     return fields
 
 
@@ -1704,7 +1722,7 @@ def sanitize_source_record_payload(
                     parsed = None
                 if isinstance(parsed, dict):
                     parsed_payload = parsed
-                    updated["parsed_json"] = json_dumps(sanitize_upkeeper_log_parsed(parsed))
+                    updated["parsed_json"] = json_dumps(sanitize_upkeeper_log_parsed(parsed, root=root))
             raw_text = updated.get("raw_text")
             if isinstance(raw_text, str):
                 updated["raw_text"] = sanitize_upkeeper_log_raw_text(root, raw_text, parsed_payload)
@@ -6235,6 +6253,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["recovery_report_failure_does_not_publish_partial"] = recovery_report_failure_probe
         import_log_idempotent_probe = probe_import_upkeeper_log_idempotent_rows_written()
         result["checks"]["import_upkeeper_log_idempotent_rows_written"] = import_log_idempotent_probe
+        import_log_unavailable_probe = probe_import_upkeeper_log_decorated_lattice_unavailable()
+        result["checks"]["import_upkeeper_log_decorated_lattice_unavailable"] = import_log_unavailable_probe
         recover_import_conflicts_probe = probe_recover_propagates_import_conflicts()
         result["checks"]["recover_propagates_import_conflicts"] = recover_import_conflicts_probe
         import_repo_mismatch_probe = probe_import_jsonl_rejects_repo_identity_mismatch()
@@ -6303,6 +6323,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(import_log_idempotent_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(import_log_unavailable_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         recover_backup_first_probe = probe_recover_backup_first_preserves_duplicate_git_changes()
@@ -8566,6 +8589,86 @@ def probe_import_upkeeper_log_idempotent_rows_written() -> dict[str, Any]:
                 first_payload.get("rows_written") == 1,
                 second_payload.get("rows_seen") == 1,
                 second_payload.get("rows_written") == 0,
+            )
+        ),
+    }
+
+
+def probe_import_upkeeper_log_decorated_lattice_unavailable() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-log-unavailable-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        log_path = root / "Upkeeper.log"
+        unavailable_db_path = root / "runtime" / "upkeeper-backlog-lattice" / "lattice.sqlite3"
+        detail_summary = "detail_bytes=223\\ detail_sha256=78d3d8e0e2d359ff830d40f8b7f464046e9882fd47864ddab7f97e5e751726f6\\ format=text"
+        log_path.write_text(
+            "2026-05-21T12:52:24 \\u2588 INFO    [WARN] "
+            f"cycle=cycle-unavailable run_hash=run-unavailable lattice.unavailable required=0 "
+            f"db={unavailable_db_path} detail_summary={detail_summary} action=continue_without_lattice\n",
+            encoding="utf-8",
+        )
+        init_args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="full",
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            command_init(init_args)
+        import_args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="full",
+            path=str(log_path),
+            raw=True,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_import_upkeeper_log(import_args)
+        payload = load_single_json_document(stdout.getvalue()) if stdout.getvalue().strip() else {}
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                """
+                select raw_text, parsed_json
+                from source_records
+                where source_kind='upkeeper_log' and raw_ref='lattice.unavailable'
+                order by source_id desc
+                limit 1
+                """
+            ).fetchone()
+        finally:
+            conn.close()
+    parsed = json.loads(row["parsed_json"]) if row and row["parsed_json"] else {}
+    raw_text = str(row["raw_text"] or "") if row else ""
+    return {
+        "exit_code": exit_code,
+        "rows_seen": payload.get("rows_seen"),
+        "rows_written": payload.get("rows_written"),
+        "event": parsed.get("event"),
+        "required": parsed.get("required"),
+        "action": parsed.get("action"),
+        "db_hmac_present": str(parsed.get("db_hmac") or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX),
+        "detail_summary_present": bool(parsed.get("detail_summary")),
+        "raw_text_db_hmac_present": "db_hmac=" in raw_text,
+        "raw_text_raw_db_absent": str(unavailable_db_path) not in raw_text,
+        "ok": all(
+            (
+                exit_code == EXIT_SUCCESS,
+                payload.get("rows_seen") == 1,
+                payload.get("rows_written") == 1,
+                parsed.get("event") == "lattice.unavailable",
+                parsed.get("required") == "0",
+                parsed.get("action") == "continue_without_lattice",
+                str(parsed.get("db_hmac") or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX),
+                bool(parsed.get("detail_summary")),
+                "db_hmac=" in raw_text,
+                str(unavailable_db_path) not in raw_text,
             )
         ),
     }
@@ -10967,7 +11070,10 @@ def finish_import(
 
 
 def parse_upkeeper_log_line(line: str) -> dict[str, Any] | None:
-    match = re.match(r"^(?P<timestamp>\S+)\s+\[(?P<level>[A-Z]+)\]\s+(?P<body>.*)$", line)
+    match = re.match(
+        r"^(?P<timestamp>\S+)\s+(?:(?P<prefix>.*?)\s+)?\[(?P<level>[A-Z]+)\]\s+(?P<body>.*)$",
+        line,
+    )
     if not match:
         return None
     body = match.group("body")
@@ -11053,7 +11159,7 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
             parsed = parse_upkeeper_log_line(raw_line)
             if not parsed:
                 continue
-            safe_parsed = sanitize_upkeeper_log_parsed(parsed)
+            safe_parsed = sanitize_upkeeper_log_parsed(parsed, root=root)
             stored_raw_line = raw_line if args.raw else None
             if stored_raw_line is not None:
                 stored_raw_line = sanitize_upkeeper_log_raw_text(root, stored_raw_line, parsed)

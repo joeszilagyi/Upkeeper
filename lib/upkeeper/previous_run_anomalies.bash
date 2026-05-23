@@ -28,10 +28,18 @@ custody_ack_kinds = (
 
 def parsed_epoch(line):
     stamp = line.split(" ", 1)[0]
-    try:
-        return dt.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S%z").timestamp()
-    except ValueError:
-        return None
+    for timestamp_format in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            parsed = dt.datetime.strptime(stamp, timestamp_format)
+        except ValueError:
+            continue
+        # Backlog loop logs are operator-facing local time and omit the offset.
+        # Treat those sanitized stamps as local so custody lines can acknowledge
+        # older unresolved-gate evidence from the same log stream.
+        if parsed.tzinfo is None:
+            parsed = parsed.astimezone()
+        return parsed.timestamp()
+    return None
 
 try:
     handle = open(log_path, "r", encoding="utf-8", errors="replace")

@@ -757,6 +757,21 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
   esac
 
+  sample='2026-05-22T15:37:16 [ERROR] Upkeeper: primary cmd#38 validation failed: exited 1 in 116ms:'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=validation_failure_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *' [WARN] Upkeeper: primary cmd#38 validation failed; captured_by='*': exited 1 in 116ms:'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=validation_failure_not_custodied output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
   printf 'live_output_custody_filter_self_test=pass\n'
   return 0
 }

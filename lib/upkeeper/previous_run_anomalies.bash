@@ -48,6 +48,15 @@ embedded_log_level_re = re.compile(
     r"\[(DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|FATAL|CRITICAL|TRACE)\]",
     re.IGNORECASE,
 )
+embedded_control_event_re = re.compile(
+    r"\b("
+    r"startup_anomaly\.gate(?:_[A-Za-z0-9_]+)?|"
+    r"previous_run\.anomaly(?:_[A-Za-z0-9_]+)?|"
+    r"watchdog\.anomaly|"
+    r"cycle\.(?:start|exit)|"
+    r"run\.(?:start|finish)"
+    r")\b"
+)
 structured_log_re = re.compile(
     r"^[^ \t\r\n]+[ \t]+\[[A-Z]+\][ \t]+cycle=[^ \t\r\n]+(?:[ \t]|\r?\n|$)"
 )
@@ -98,8 +107,8 @@ def redact_boot_ids(text):
 
 def safe_embedded_log_excerpt(text):
     # Prior log rows are operator evidence, but agents often quote them in final
-    # output. Neutralize embedded attention and log-level markers so quoted
-    # evidence does not become fresh pageable WARN/ERROR output in backlog logs.
+    # output. Neutralize embedded attention, log-level, and control-plane event
+    # markers so quoted evidence does not become fresh anomaly output.
     sanitized = redact_boot_ids(text).replace("\\", "\\\\").replace("\t", " ")
     sanitized = re.sub(
         r"\s*\u2588[ \t]+(PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO)(?=$|[ \t\r\n\"':;,.)])",
@@ -107,7 +116,9 @@ def safe_embedded_log_excerpt(text):
         sanitized,
     )
     sanitized = sanitized.replace("\u2588", "{MARK}")
-    return embedded_log_level_re.sub(lambda match: f"{{{match.group(1).upper()}}}", sanitized)[:300]
+    sanitized = embedded_log_level_re.sub(lambda match: f"{{{match.group(1).upper()}}}", sanitized)
+    sanitized = embedded_control_event_re.sub(lambda match: "{" + match.group(1).replace(".", "_") + "}", sanitized)
+    return sanitized[:300]
 
 
 def parsed_epoch(line):

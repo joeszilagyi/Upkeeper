@@ -496,6 +496,263 @@ automation_open_obligation_count() {
   find "$open_dir" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' '
 }
 
+automation_reconcile_open_obligations_json() {
+  local open_dir resolved_dir
+
+  open_dir="$(automation_obligation_root)/open"
+  resolved_dir="$(automation_obligation_root)/resolved"
+  python3 - "$open_dir" "$resolved_dir" "$ROOT_DIR" <<'PY'
+import datetime as dt
+import hashlib
+import json
+import os
+import pathlib
+import sys
+
+open_dir = pathlib.Path(sys.argv[1])
+resolved_dir = pathlib.Path(sys.argv[2])
+root_dir = pathlib.Path(sys.argv[3]).resolve()
+
+
+def now_local():
+    return dt.datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def private_dir(path):
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.chmod(0o700)
+    except OSError:
+        pass
+
+
+def write_json(path, data):
+    private_dir(path.parent)
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def public_record(data):
+    return {key: value for key, value in data.items() if not str(key).startswith("_")}
+
+
+def safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def normalized_root(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        return str(pathlib.Path(raw).expanduser().resolve(strict=False))
+    except OSError:
+        return str(pathlib.Path(raw).expanduser().absolute())
+
+
+def normalized_repo_target(value):
+    raw = str(value or "").strip().replace("\\", "/")
+    if not raw or raw in (".", "none", "unknown", "null"):
+        return ""
+    if os.path.isabs(raw):
+        try:
+            relative = os.path.relpath(raw, root_dir)
+        except ValueError:
+            return ""
+        relative = relative.replace("\\", "/")
+        if relative == ".." or relative.startswith("../"):
+            return ""
+        raw = relative
+    normalized = os.path.normpath(raw).replace("\\", "/")
+    if normalized in ("", ".", "..") or normalized.startswith("../"):
+        return ""
+    return normalized
+
+
+def load(path):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("status", "open") != "open":
+        return None
+    data["_path"] = str(path)
+    record_root = normalized_root(data.get("root", ""))
+    if record_root and record_root != str(root_dir):
+        data["_foreign_root"] = record_root
+    return data
+
+
+def stable_value(value):
+    return str(value or "").strip()
+
+
+def evidence_value(item, *keys):
+    evidence = item.get("evidence")
+    if not isinstance(evidence, dict):
+        return ""
+    for key in keys:
+        value = stable_value(evidence.get(key))
+        if value:
+            return value
+    return ""
+
+
+def group_key(item):
+    target = normalized_repo_target(item.get("target_file", ""))
+    repair_target = normalized_repo_target(item.get("repair_target_file", ""))
+    fingerprint = stable_value(item.get("fingerprint")) or evidence_value(
+        item,
+        "fingerprint",
+        "kind",
+        "normalized_excerpt",
+    )
+    key_parts = [
+        stable_value(item.get("kind")),
+        stable_value(item.get("reason")),
+        stable_value(item.get("target_scope", "target") or "target"),
+        target,
+        repair_target,
+        stable_value(item.get("issue_number")),
+        fingerprint,
+    ]
+    return tuple(key_parts)
+
+
+def key_digest(key):
+    payload = "\0".join(key)
+    return hashlib.sha256(payload.encode("utf-8", "surrogateescape")).hexdigest()
+
+
+severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+kind_rank = {
+    "codex_session_store_unwritable": 0,
+    "precontact_backup_prereq_missing": 1,
+    "precontact_backup_unavailable": 2,
+    "lattice_unavailable": 3,
+    "missing_status_marker": 4,
+}
+
+
+def owner_sort_key(item):
+    return (
+        severity_rank.get(stable_value(item.get("severity")).lower(), 2),
+        kind_rank.get(stable_value(item.get("kind")), 50),
+        stable_value(item.get("created_at")),
+        stable_value(item.get("target_file")),
+        stable_value(item.get("id")),
+    )
+
+
+if not open_dir.is_dir():
+    print(
+        json.dumps(
+            {
+                "status": "clean",
+                "open_before": 0,
+                "current_root_open_before": 0,
+                "current_root_open_after": 0,
+                "deferred_foreign_root_count": 0,
+                "duplicate_groups": 0,
+                "duplicates_resolved": 0,
+                "owners_updated": 0,
+            },
+            separators=(",", ":"),
+        )
+    )
+    raise SystemExit(0)
+
+items = [item for item in (load(path) for path in sorted(open_dir.glob("*.json"))) if item]
+foreign_count = sum(1 for item in items if item.get("_foreign_root"))
+current_items = [item for item in items if not item.get("_foreign_root")]
+groups = {}
+for item in current_items:
+    groups.setdefault(group_key(item), []).append(item)
+
+resolved_count = 0
+owner_count = 0
+duplicate_groups = 0
+reconciled_at = now_local()
+private_dir(resolved_dir)
+
+for key, group_items in groups.items():
+    if len(group_items) < 2:
+        continue
+    duplicate_groups += 1
+    digest = key_digest(key)
+    owner = sorted(group_items, key=owner_sort_key)[0]
+    owner_id = stable_value(owner.get("id")) or pathlib.Path(owner["_path"]).stem
+    duplicates = [item for item in group_items if item is not owner]
+    duplicate_ids = []
+    for duplicate in duplicates:
+        duplicate_id = stable_value(duplicate.get("id")) or pathlib.Path(duplicate["_path"]).stem
+        duplicate_ids.append(duplicate_id)
+        duplicate["status"] = "resolved_duplicate"
+        duplicate["resolved_at"] = reconciled_at
+        duplicate["resolved_reason"] = "duplicate_obligation_reconciled"
+        duplicate["duplicate_of"] = owner_id
+        duplicate["reconciliation_key_sha256"] = digest
+        duplicate["reconciled_by"] = "automation_obligation_reconciler"
+        resolved_path = resolved_dir / f"{duplicate_id}.json"
+        write_json(resolved_path, public_record(duplicate))
+        try:
+            pathlib.Path(duplicate["_path"]).unlink()
+        except OSError:
+            pass
+        resolved_count += 1
+
+    owner_path = pathlib.Path(owner["_path"])
+    occurrence_count = safe_int(owner.get("occurrence_count"), 1)
+    prior_duplicates = owner.get("duplicate_obligation_ids")
+    if not isinstance(prior_duplicates, list):
+        prior_duplicates = []
+    owner["occurrence_count"] = occurrence_count + len(duplicates)
+    owner["last_reconciled_at"] = reconciled_at
+    owner["duplicate_count_resolved"] = safe_int(owner.get("duplicate_count_resolved")) + len(duplicates)
+    owner["duplicate_obligation_ids"] = (prior_duplicates + duplicate_ids)[:50]
+    owner["reconciliation_key_sha256"] = digest
+    owner["reconciled_by"] = "automation_obligation_reconciler"
+    write_json(owner_path, public_record(owner))
+    owner_count += 1
+
+current_after = len(current_items) - resolved_count
+status = "reconciled" if resolved_count else "clean"
+print(
+    json.dumps(
+        {
+            "status": status,
+            "open_before": len(items),
+            "current_root_open_before": len(current_items),
+            "current_root_open_after": current_after,
+            "deferred_foreign_root_count": foreign_count,
+            "duplicate_groups": duplicate_groups,
+            "duplicates_resolved": resolved_count,
+            "owners_updated": owner_count,
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
 automation_select_open_obligation_json() {
   local open_dir
 

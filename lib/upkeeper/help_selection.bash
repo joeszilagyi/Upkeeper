@@ -181,7 +181,13 @@ Important:
     next Upkeeper job before fresh issue work, with a prompt packet containing
     the bounded evidence excerpt. Repeated instances of the same anomaly class
     update the existing obligation with occurrence counts and last-seen evidence
-    instead of opening a new obligation for each cycle id or run hash. Set
+    instead of opening a new obligation for each cycle id or run hash.
+    Immediately after the backlog branch is checked out, before PR, merge,
+    quota, or issue-selection gates, backlog also reconciles open current-root
+    obligations deterministically: records with matching root, kind, reason,
+    target, issue, and stable fingerprint are condensed to one active owner, and
+    duplicates are moved to resolved evidence with duplicate_of metadata. Set
+    BACKLOG_OBLIGATION_RECONCILE=0 for a deliberate one-cycle bypass. Set
     BACKLOG_ANOMALY_CUSTODY=0 for a deliberate one-cycle bypass, or adjust
     BACKLOG_ANOMALY_CUSTODY_LINES and
     BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS for local scan bounds.

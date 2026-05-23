@@ -2427,6 +2427,7 @@ main() {
   local obligation_json obligation_status obligation_id obligation_issue_number obligation_issue_title
   local obligation_summary obligation_target obligation_selected
   local issue_deferred_after_noop
+  local quota_status
   commit_result="uninitialized backlog outcome"
   obligation_selected=0
 
@@ -2462,46 +2463,6 @@ main() {
     exit "$status"
   fi
 
-  count="$(fix_count "$pr_number")"
-  if [[ "$count" -ge "$BACKLOG_BATCH_LIMIT" ]]; then
-    log "PR #$pr_number has $count recorded fixes; merging batch"
-    backlog_emit_job_start_summary \
-      "PR #$pr_number batch merge" \
-      "batch limit reached with $count recorded fixes on $branch" \
-      "run local batch validation, wait for PR checks, merge, and clean local main"
-    if merge_and_clean "$pr_number" "$branch"; then
-      backlog_emit_job_finish_summary \
-        "batch validation, PR checks, and merge completed" \
-        "merged PR #$pr_number and returned to clean main"
-    else
-      status="$?"
-      backlog_emit_job_finish_summary \
-        "batch merge path stopped with status $status" \
-        "launcher exiting with status $status"
-      [[ "$status" -eq 2 ]] && exit 0
-      exit "$status"
-    fi
-    exit 0
-  fi
-
-  if backlog_ensure_pr_checks_allow_next_issue "$pr_number" "$count"; then
-    :
-  else
-    status="$?"
-    [[ "$status" -eq 2 ]] && exit 0
-    exit "$status"
-  fi
-
-  if quota_preflight_allows_backlog_run; then
-    quota_status=0
-  else
-    quota_status="$?"
-  fi
-  if [[ "$quota_status" -ne 0 ]]; then
-    [[ "$quota_status" -eq 3 ]] && exit 0
-    exit "$quota_status"
-  fi
-
   obligation_json="$(backlog_select_open_obligation_json)"
   obligation_status="$(jq -r '.status // "clean"' <<<"$obligation_json")"
   if [[ "$obligation_status" == "foreign_root_deferred" ]]; then
@@ -2525,11 +2486,52 @@ main() {
     issue_title="$obligation_issue_title"
     target_hint="$obligation_target"
   else
+    count="$(fix_count "$pr_number")"
+    if [[ "$count" -ge "$BACKLOG_BATCH_LIMIT" ]]; then
+      log "PR #$pr_number has $count recorded fixes; merging batch"
+      backlog_emit_job_start_summary \
+        "PR #$pr_number batch merge" \
+        "batch limit reached with $count recorded fixes on $branch" \
+        "run local batch validation, wait for PR checks, merge, and clean local main"
+      if merge_and_clean "$pr_number" "$branch"; then
+        backlog_emit_job_finish_summary \
+          "batch validation, PR checks, and merge completed" \
+          "merged PR #$pr_number and returned to clean main"
+      else
+        status="$?"
+        backlog_emit_job_finish_summary \
+          "batch merge path stopped with status $status" \
+          "launcher exiting with status $status"
+        [[ "$status" -eq 2 ]] && exit 0
+        exit "$status"
+      fi
+      exit 0
+    fi
+
+    if backlog_ensure_pr_checks_allow_next_issue "$pr_number" "$count"; then
+      :
+    else
+      status="$?"
+      [[ "$status" -eq 2 ]] && exit 0
+      exit "$status"
+    fi
+
     issue_info="$(selected_issue "$pr_number")"
     issue_number="$(awk -F '\t' '{print $1}' <<<"$issue_info")"
     issue_title="$(awk -F '\t' '{print $2}' <<<"$issue_info")"
     target_hint="$(target_hint_for_issue "$issue_number")"
   fi
+
+  if quota_preflight_allows_backlog_run; then
+    quota_status=0
+  else
+    quota_status="$?"
+  fi
+  if [[ "$quota_status" -ne 0 ]]; then
+    [[ "$quota_status" -eq 3 ]] && exit 0
+    exit "$quota_status"
+  fi
+
   issue_deferred_after_noop=0
   if [[ "$obligation_selected" == "1" ]]; then
     job_target="$target_hint"

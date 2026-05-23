@@ -301,12 +301,11 @@ previous_run_anomaly_details_enabled() {
 }
 
 previous_run_anomaly_summary_line() {
-  python3 - 3<&0 <<'PY'
+  python3 -c '
 import collections
-import os
 import re
 
-with os.fdopen(3, "r", encoding="utf-8", errors="replace") as anomaly_input:
+with open(0, "r", encoding="utf-8", errors="replace") as anomaly_input:
     lines = [line.rstrip("\n") for line in anomaly_input if line.strip()]
 
 
@@ -355,7 +354,7 @@ print(
     "details=local_log_state_and_prompt "
     "action=force_upkeeper_self_review"
 )
-PY
+'
 }
 
 scan_previous_run_anomalies() {

@@ -20,6 +20,11 @@ run_hash_re = re.compile(r"\brun_hash=([^ \t\r\n]+)")
 boot_id_re = re.compile(r"\bboot_id=([^ \t\r\n]+)")
 cycles = {}
 latest_previous_run_ack_epoch = None
+latest_previous_run_ack_reason = "previous_run_anomaly_gate_reviewed"
+custody_ack_kinds = (
+    "kind=previous_run_anomaly_summary",
+    "kind=startup_anomaly_unresolved",
+)
 
 def parsed_epoch(line):
     stamp = line.split(" ", 1)[0]
@@ -45,6 +50,17 @@ with handle:
         ):
             if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
                 latest_previous_run_ack_epoch = epoch
+                latest_previous_run_ack_reason = "previous_run_anomaly_gate_reviewed"
+        if "anomaly custody:" in line:
+            if (
+                epoch is not None
+                and "target=lib/upkeeper/previous_run_anomalies.bash" in line
+                and any(kind in line for kind in custody_ack_kinds)
+            ):
+                if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
+                    latest_previous_run_ack_epoch = epoch
+                    latest_previous_run_ack_reason = "previous_run_anomaly_custody_recorded"
+            continue
         cycle_match = cycle_re.search(line)
         if not cycle_match:
             continue
@@ -134,7 +150,7 @@ if acknowledged:
         "__ACK__ "
         f"suppressed={acknowledged} "
         f"ack_epoch={int(latest_previous_run_ack_epoch)} "
-        "reason=previous_run_anomaly_gate_reviewed"
+        f"reason={latest_previous_run_ack_reason}"
     )
 PY
 }

@@ -804,6 +804,21 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
   esac
 
+  sample=$'2026-05-23T00:13:51 \342\226\210 WORKER [ERROR] Upkeeper: primary cmd#41 validation failed: exited 2 in 0ms:'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_zero_ms_validation_failure_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *$' \342\226\210 WORKER [WARN] Upkeeper: primary cmd#41 validation failed; captured_by='*': exited 2 in 0ms:'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_zero_ms_validation_failure_not_custodied output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
   sample=$'2026-05-22T16:34:05 \342\226\210 WORKER [ERROR] Upkeeper: primary cmd#19 check failed: exited 3 in 279ms:'
   output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
   case "$output" in

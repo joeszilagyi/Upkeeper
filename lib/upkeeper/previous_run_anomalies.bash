@@ -68,7 +68,7 @@ def direct_custody_payload(line):
 
 
 def custody_field(payload, name):
-    match = re.search(rf"(?:^|[ \t]){re.escape(name)}=([^ \t]+)", payload)
+    match = re.search(rf"(?:^|[ \t]){re.escape(name)}=([^ \t\r\n]+)", payload)
     if not match:
         return ""
     return match.group(1)

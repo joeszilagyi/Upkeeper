@@ -99,6 +99,7 @@ def safe_embedded_log_excerpt(text):
         lambda match: f" {{{match.group(1)}}}",
         sanitized,
     )
+    sanitized = sanitized.replace("\u2588", "{MARK}")
     return re.sub(r"\[([A-Z]+)\]", r"{\1}", sanitized)[:300]
 
 

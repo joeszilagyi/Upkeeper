@@ -694,6 +694,40 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
 done
  unset upkeeper_module
 
+upkeeper_tool_failure_queue_open_custody_log() {
+  local level="$1"
+  local message="$2"
+
+  [[ "$level" == "WARN" ]] || return 1
+  case "$message" in
+    tool_failure_queue.open\ action=open*\ unresolved_failures=*\ addressed_by_later_success=0*\ kind=*\ exit_line=*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+if declare -f log_line >/dev/null 2>&1; then
+  eval "$(declare -f log_line | sed '1s/^log_line ()/upkeeper_runtime_log_line_original ()/')"
+fi
+
+log_line() {
+  local level="$1"
+  shift
+  local message="$*"
+
+  if upkeeper_tool_failure_queue_open_custody_log "$level" "$message"; then
+    # An open tool-failure marker is the durable custody record for a failed
+    # local check. Keep it visible without making the custody row a new WARN.
+    level="INFO"
+    message="tool_failure_queue.open_custody custody=tool_failure_queue $message"
+  fi
+
+  upkeeper_runtime_log_line_original "$level" "$message"
+}
+
 upkeeper_live_output_false_positive_error_echo() {
   local line="$1"
   local payload
@@ -943,6 +977,12 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       return 1
       ;;
   esac
+
+  sample='tool_failure_queue.open action=open marker_id=3402343c3b3d063304947a3a marker_path_hmac=path-hmac-sha256:3c23b39a0404f99d37e06fb6625cc4a2a1e1e913bf41138074c8dafc85b5c64f target_path_hmac=path-hmac-sha256:941f30f4fdd86c5597739739f684868ee65767a6132b7b35f9961c67ff6d6f04 path_redacted=1 failures=1 unresolved_failures=1 addressed_by_later_success=0 kind=validation exit_line=exited\ 1\ in\ 846ms:'
+  if ! upkeeper_tool_failure_queue_open_custody_log "WARN" "$sample"; then
+    printf 'live_output_custody_filter_self_test=fail reason=tool_failure_queue_open_not_classified output=%s\n' "$sample" >&2
+    return 1
+  fi
 
   printf 'live_output_custody_filter_self_test=pass\n'
   return 0

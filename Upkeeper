@@ -694,6 +694,82 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
 done
  unset upkeeper_module
 
+upkeeper_live_output_custody_filter() {
+  local custody="transcript"
+  local line rewritten
+
+  if tool_failure_queue_enabled; then
+    custody="transcript_and_tool_failure_queue"
+  fi
+
+  while IFS= read -r line; do
+    case "$line" in
+      *' [ERROR] Upkeeper: '*" cmd#"*" validation failed: exited "*)
+        rewritten="${line/ \[ERROR\] / [WARN] }"
+        rewritten="${rewritten/ validation failed:/ validation failed; captured_by=$custody:}"
+        printf '%s\n' "$rewritten"
+        ;;
+      *)
+        printf '%s\n' "$line"
+        ;;
+    esac
+  done
+}
+
+run_codex_exec_capture() {
+  local label="$1"
+  local transcript_file="$2"
+  local stdin_file="$3"
+  local codex_rc
+  local tee_rc=0
+  local filter_rc=0
+  local -a pipe_status
+  local -a genie_env
+  shift 3
+
+  prepare_genie_protocol_env
+  genie_env=(
+    env
+    -u GITHUB_TOKEN
+    -u GH_TOKEN
+    -u GITHUB_PAT
+    -u GH_ENTERPRISE_TOKEN
+    -u GITHUB_ENTERPRISE_TOKEN
+    -u CODEX_GITHUB_PERSONAL_ACCESS_TOKEN
+    -u GITHUB_API_URL
+    -u GITHUB_GRAPHQL_URL
+    PATH="$RUN_GENIE_BIN_DIR:$PATH"
+    UPKEEPER_REAL_GH_BIN="$RUN_GENIE_REAL_GH_BIN"
+    GH_CONFIG_DIR="$RUN_GENIE_GH_CONFIG_DIR"
+    GIT_TERMINAL_PROMPT=0
+  )
+
+  if terminal_wants_full_output; then
+    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 | tee "$transcript_file"
+    pipe_status=("${PIPESTATUS[@]}")
+    codex_rc="${pipe_status[0]}"
+    tee_rc="${pipe_status[1]}"
+  else
+    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 |
+      tee "$transcript_file" |
+      codex_live_output_filter "$label" 2> >(upkeeper_live_output_custody_filter >&2)
+    pipe_status=("${PIPESTATUS[@]}")
+    codex_rc="${pipe_status[0]}"
+    tee_rc="${pipe_status[1]}"
+    filter_rc="${pipe_status[2]}"
+    emit_codex_transcript_summary "$label" "$transcript_file" "$codex_rc"
+  fi
+
+  if [[ "$tee_rc" -ne 0 ]]; then
+    log_line "ERROR" "codex.transcript_capture_failed label=$label transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1 tee_exit=$tee_rc codex_exit=$codex_rc" || true
+    [[ "$codex_rc" -ne 0 ]] || return "$tee_rc"
+  fi
+  if [[ "$filter_rc" -ne 0 ]]; then
+    log_line "WARN" "codex.live_output_filter_failed label=$label transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1 filter_exit=$filter_rc codex_exit=$codex_rc" || true
+  fi
+  return "$codex_rc"
+}
+
 # Keep prune behavior anchored to Upkeeper-managed markers so archive cleanup only
 # applies to log trees that this wrapper instance explicitly owns.
 upkeeper_log_rotation_marker_is_trusted() {

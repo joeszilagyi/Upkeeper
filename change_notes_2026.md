@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-22: v1.2.30 changes:
+	1. Active-lock recovery now normalizes the runtime-local lock path, rejects symlinked lock parents or unsafe existing lock paths, and quarantines stale unowned lock directories instead of repeatedly failing the next automation cycle on the same residue.
+	2. Verified-owned stale active locks now remove expected state files and quarantine unexpected residue under runtime, preserving evidence while letting the next wrapper cycle acquire a fresh lock.
+	3. A deterministic internal active-lock self-test now covers expected stale-lock cleanup and residue quarantine without launching backend Codex work.
+	4. Lattice doctor validation now includes backup, recovery, and import integrity probes for source preservation, backup destination collision safety, partial-output cleanup, preexisting empty recovery databases, recovery report failure cleanup, idempotent imported Upkeeper logs, and unexpected JSONL payload fields.
+
 2026-05-22: v1.2.29 changes:
 	1. Backlog now runs a deterministic open-obligation reconciliation pass immediately after branch checkout, before PR, merge, quota, or issue-selection gates. Matching current-root records are grouped by root, kind, reason, target, issue, and stable fingerprint so duplicates collapse to one active owner.
 	2. Duplicate obligations are preserved under `runtime/upkeeper-obligations/resolved` with `resolved_duplicate`, `duplicate_of`, and reconciliation-key metadata instead of being deleted or handed to the model one by one.

@@ -5321,6 +5321,7 @@ check_backend_usage_limit_contract() {
 
 check_fault_injection_first_scenarios() {
   local temp_dir fixture_dir rc lock_dir stale_epoch
+  local -a quarantined_locks
 
   log "checking first deterministic fault-injection scenarios"
   temp_dir="$(mktemp -d /tmp/upkeeper-fault-injection.XXXXXX)"
@@ -5413,10 +5414,15 @@ PY
   UPKEEPER_VERBOSE_METADATA=1 run_fault_injection_root_dry_run "$fixture_dir" injection --target-file=Upkeeper
   rc=$?
   set -e
-  [[ "$rc" -eq 7 ]] || fail "FI-022 injection exited $rc, expected 7"
-  grep -Fq "active_lock.failed" "$fixture_dir/injection.log" || fail "FI-022 did not log active lock failure"
-  grep -Fq "reason=stale_lock_not_empty" "$fixture_dir/injection.log" || fail "FI-022 did not report stale_lock_not_empty"
-  grep -Fq "cycle.exit exit_code=7 reason=UPKEEPER_ACTIVE_LOCK_FAILED codex_exec_started=0" "$fixture_dir/injection.log" || fail "FI-022 did not fail closed before backend launch"
+  [[ "$rc" -eq 0 ]] || fail "FI-022 injection exited $rc, expected 0"
+  grep -Fq "active_lock.stale_quarantined" "$fixture_dir/injection.log" || fail "FI-022 did not log stale lock quarantine"
+  grep -Fq "reason=owned_lock_not_empty_after_cleanup" "$fixture_dir/injection.log" || fail "FI-022 did not report owned residue quarantine"
+  grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN codex_exec_started=0" "$fixture_dir/injection.log" || fail "FI-022 did not complete dry-run after quarantine"
+  shopt -s nullglob
+  quarantined_locks=("$lock_dir".stale.*)
+  shopt -u nullglob
+  [[ "${#quarantined_locks[@]}" -eq 1 ]] || fail "FI-022 did not create exactly one quarantine directory"
+  [[ -f "${quarantined_locks[0]}/unexpected-child" ]] || fail "FI-022 quarantine did not preserve unexpected child evidence"
   check_upkeeper_log_invariants "$fixture_dir/injection.log" --scan "$fixture_dir/injection.out" --scan "$fixture_dir/injection.err"
 
   rm -rf "$lock_dir"

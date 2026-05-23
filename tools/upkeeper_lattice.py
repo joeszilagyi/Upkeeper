@@ -1524,6 +1524,44 @@ def sha256_text(text: str) -> str:
     return sha256_bytes(text.encode("utf-8", "surrogateescape"))
 
 
+def sha256_file(path: Path) -> str:
+    return sha256_bytes(path.read_bytes())
+
+
+def write_private_text_atomic(path: Path, text: str) -> None:
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            prefix=f".{path.name}.tmp-",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        chmod_private(temp_path)
+        os.replace(temp_path, path)
+        temp_path = None
+        chmod_private(path)
+        try:
+            dir_fd = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+
+
 def normalize_contributor_identity_value(raw: str | None) -> str:
     return "" if raw is None else raw
 
@@ -3815,6 +3853,18 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     ensure_worktree_snapshot_path_identity_columns(conn)
     ensure_source_record_identity_columns(conn)
     scrub_legacy_git_privacy_data(conn)
+
+
+def ensure_schema_identity_read_only(conn: sqlite3.Connection) -> None:
+    try:
+        version = conn.execute("select value from schema_meta where key='schema_version'").fetchone()
+    except sqlite3.Error:
+        fail("schema_meta is missing; run init", EXIT_SCHEMA_MISMATCH)
+    if not version or str(version["value"]) != str(SCHEMA_VERSION):
+        fail(f"schema mismatch: expected {SCHEMA_VERSION}", EXIT_SCHEMA_MISMATCH)
+    user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if int(user_version) != SCHEMA_VERSION:
+        fail(f"PRAGMA user_version mismatch: expected {SCHEMA_VERSION}, got {user_version}", EXIT_SCHEMA_MISMATCH)
 
 
 def sanitize_remote_url(raw: str) -> str:
@@ -6171,12 +6221,26 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["worktree_snapshot_deleted_file_state"] = worktree_snapshot_deleted_state_probe
         export_redaction_probe = probe_export_redaction()
         result["checks"]["export_redaction"] = export_redaction_probe
+        backup_preserves_source_probe = probe_backup_command_preserves_source_db_file()
+        result["checks"]["backup_command_preserves_source_db_file"] = backup_preserves_source_probe
+        backup_rejects_existing_probe = probe_backup_command_rejects_existing_default_destination()
+        result["checks"]["backup_command_rejects_existing_default_destination"] = backup_rejects_existing_probe
+        backup_failure_partial_probe = probe_backup_failure_does_not_publish_partial_destination()
+        result["checks"]["backup_failure_does_not_publish_partial_destination"] = backup_failure_partial_probe
         recover_primary_sources_probe = probe_recover_requires_primary_sources()
         result["checks"]["recover_requires_primary_sources"] = recover_primary_sources_probe
+        recover_empty_preexisting_probe = probe_recover_empty_preexisting_db_is_incomplete_with_backup()
+        result["checks"]["recover_empty_preexisting_db_is_incomplete_with_backup"] = recover_empty_preexisting_probe
+        recovery_report_failure_probe = probe_recovery_report_failure_does_not_publish_partial()
+        result["checks"]["recovery_report_failure_does_not_publish_partial"] = recovery_report_failure_probe
+        import_log_idempotent_probe = probe_import_upkeeper_log_idempotent_rows_written()
+        result["checks"]["import_upkeeper_log_idempotent_rows_written"] = import_log_idempotent_probe
         recover_import_conflicts_probe = probe_recover_propagates_import_conflicts()
         result["checks"]["recover_propagates_import_conflicts"] = recover_import_conflicts_probe
         import_repo_mismatch_probe = probe_import_jsonl_rejects_repo_identity_mismatch()
         result["checks"]["import_jsonl_rejects_repo_identity_mismatch"] = import_repo_mismatch_probe
+        import_unexpected_fields_probe = probe_import_jsonl_rejects_unexpected_payload_fields()
+        result["checks"]["import_jsonl_rejects_unexpected_payload_fields"] = import_unexpected_fields_probe
         import_conflicted_fk_probe = probe_import_jsonl_rejects_unmapped_conflicted_parent_fk()
         result["checks"]["import_jsonl_rejects_unmapped_conflicted_parent_fk"] = import_conflicted_fk_probe
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
@@ -6220,7 +6284,25 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if not bool(export_redaction_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
+        if not bool(backup_preserves_source_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(backup_rejects_existing_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(backup_failure_partial_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
         if not bool(recover_primary_sources_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(recover_empty_preexisting_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(recovery_report_failure_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(import_log_idempotent_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         recover_backup_first_probe = probe_recover_backup_first_preserves_duplicate_git_changes()
@@ -6232,6 +6314,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(import_repo_mismatch_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(import_unexpected_fields_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(import_conflicted_fk_probe.get("ok")):
@@ -8122,6 +8207,153 @@ def probe_export_redaction() -> dict[str, Any]:
     }
 
 
+def probe_backup_command_preserves_source_db_file() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-backup-preserve-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        backup_path = db_path.parent / "manual-backup.sqlite3"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            with conn:
+                for sql in CREATE_TABLE_SQL:
+                    conn.execute(sql)
+                conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                conn.execute(
+                    "insert or replace into schema_meta(key, value) values (?, ?)",
+                    ("schema_version", str(SCHEMA_VERSION)),
+                )
+        finally:
+            conn.close()
+        source_before = sha256_file(db_path)
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            output=str(backup_path),
+            overwrite=False,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_backup(args)
+        source_after = sha256_file(db_path)
+        payload_text = stdout.getvalue().strip()
+        payload = load_single_json_document(payload_text) if payload_text else {}
+        backup_mode = stat.S_IMODE(backup_path.stat().st_mode) if backup_path.exists() else None
+        return {
+            "exit_code": exit_code,
+            "backup_path": payload.get("backup_path"),
+            "backup_exists": backup_path.exists(),
+            "backup_mode": oct(backup_mode) if backup_mode is not None else None,
+            "source_hash_before": source_before,
+            "source_hash_after": source_after,
+            "source_preserved": source_before == source_after,
+            "ok": exit_code == EXIT_SUCCESS and backup_path.exists() and backup_mode == 0o600 and source_before == source_after,
+        }
+
+
+def probe_backup_command_rejects_existing_default_destination() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-backup-collision-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            with conn:
+                for sql in CREATE_TABLE_SQL:
+                    conn.execute(sql)
+                conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                conn.execute(
+                    "insert or replace into schema_meta(key, value) values (?, ?)",
+                    ("schema_version", str(SCHEMA_VERSION)),
+                )
+        finally:
+            conn.close()
+
+        backup_dir = db_path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        token = "collision-token"
+        backup_path = backup_dir / f"lattice-backup-{token}.sqlite3"
+        backup_path.write_text("existing backup sentinel\n", encoding="utf-8")
+        source_before = sha256_file(db_path)
+        backup_before = sha256_file(backup_path)
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            output=None,
+            overwrite=False,
+        )
+        original_artifact_now = globals()["artifact_now"]
+        exit_code = EXIT_SUCCESS
+        error = ""
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        try:
+            globals()["artifact_now"] = lambda: token
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                try:
+                    exit_code = command_backup(args)
+                except LatticeCommandError as exc:
+                    exit_code = int(exc.code)
+                    error = str(exc)
+        finally:
+            globals()["artifact_now"] = original_artifact_now
+        source_after = sha256_file(db_path)
+        backup_after = sha256_file(backup_path)
+        return {
+            "exit_code": exit_code,
+            "backup_path": str(backup_path),
+            "source_preserved": source_before == source_after,
+            "backup_preserved": backup_before == backup_after,
+            "error": error or stderr.getvalue().strip(),
+            "ok": exit_code == EXIT_USAGE and source_before == source_after and backup_before == backup_after,
+        }
+
+
+def probe_backup_failure_does_not_publish_partial_destination() -> dict[str, Any]:
+    class FakeCursor:
+        def fetchone(self) -> tuple[str]:
+            return ("delete",)
+
+    class FailingBackupSource:
+        in_transaction = False
+
+        def execute(self, _sql: str) -> FakeCursor:
+            return FakeCursor()
+
+        def commit(self) -> None:
+            return None
+
+        def backup(self, _target: sqlite3.Connection, *, pages: int, sleep: float) -> None:
+            raise sqlite3.Error(f"injected backup failure pages={pages} sleep={sleep}")
+
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-backup-failure-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        backup_path = db_path.parent / "manual-backup.sqlite3"
+        error = ""
+        try:
+            create_backup(
+                FailingBackupSource(),  # type: ignore[arg-type]
+                root,
+                db_path,
+                output=str(backup_path),
+                allow_overwrite=False,
+            )
+        except sqlite3.Error as exc:
+            error = str(exc)
+        temp_paths = sorted(backup_path.parent.glob(f".{backup_path.name}.tmp-*")) if backup_path.parent.exists() else []
+        return {
+            "error": error,
+            "backup_exists": backup_path.exists(),
+            "temp_paths": [str(path) for path in temp_paths],
+            "ok": bool(error) and not backup_path.exists() and not temp_paths,
+        }
+
+
 def probe_recover_requires_primary_sources() -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recover-primary-") as tmpdir:
         temp_root = Path(tmpdir).resolve()
@@ -8184,6 +8416,159 @@ def probe_recover_requires_primary_sources() -> dict[str, Any]:
             "backup_count": backup_count,
             "ok": ok,
         }
+
+
+def probe_recover_empty_preexisting_db_is_incomplete_with_backup() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recover-empty-db-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        chmod_private(db_path.parent, is_dir=True, created_by_invocation=True)
+        sqlite3.connect(str(db_path)).close()
+        chmod_private(db_path)
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            backup_first=True,
+            max_conflicts=999999,
+            limit=None,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_recover(args)
+        payload_text = stdout.getvalue().strip()
+        payload = load_single_json_document(payload_text) if payload_text else {}
+        report_path = Path(str(payload.get("recovery_report") or ""))
+        report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+        backup_paths = sorted((db_path.parent / "backups").glob("*.sqlite3"))
+        backup_artifact_count = 0
+        recovery_source_count = 0
+        if db_path.exists():
+            conn = sqlite3.connect(str(db_path))
+            try:
+                backup_artifact_count = int(
+                    conn.execute("select count(*) from artifact_refs where artifact_kind='backup'").fetchone()[0]
+                )
+                recovery_source_count = int(
+                    conn.execute(
+                        "select count(*) from source_records where source_kind='recovery' and raw_ref='recover'"
+                    ).fetchone()[0]
+                )
+            finally:
+                conn.close()
+        ok = all(
+            (
+                exit_code == EXIT_RECOVERY_INCOMPLETE,
+                payload.get("status") == "incomplete",
+                payload.get("sources") == [],
+                report.get("status") == "incomplete",
+                report.get("sources") == [],
+                len(backup_paths) == 1,
+                backup_artifact_count == 1,
+                recovery_source_count == 1,
+            )
+        )
+        return {
+            "exit_code": exit_code,
+            "status": payload.get("status"),
+            "sources": payload.get("sources"),
+            "report_status": report.get("status"),
+            "report_sources": report.get("sources"),
+            "backup_count": len(backup_paths),
+            "backup_artifact_count": backup_artifact_count,
+            "recovery_source_count": recovery_source_count,
+            "ok": ok,
+        }
+
+
+def probe_recovery_report_failure_does_not_publish_partial() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-recovery-report-failure-") as tmpdir:
+        report_path = Path(tmpdir).resolve() / "recovery.json"
+        report_path.write_text("existing report\n", encoding="utf-8")
+        before_hash = sha256_file(report_path)
+        original_replace = os.replace
+        error = ""
+
+        def failing_replace(_src: str | os.PathLike[str], _dst: str | os.PathLike[str]) -> None:
+            raise OSError("injected recovery report publish failure")
+
+        try:
+            os.replace = failing_replace  # type: ignore[method-assign]
+            try:
+                write_private_text_atomic(report_path, "partial replacement\n")
+            except OSError as exc:
+                error = str(exc)
+        finally:
+            os.replace = original_replace  # type: ignore[method-assign]
+        after_hash = sha256_file(report_path)
+        temp_paths = sorted(report_path.parent.glob(f".{report_path.name}.tmp-*"))
+        ok = bool(error) and before_hash == after_hash and not temp_paths
+        return {
+            "error": error,
+            "destination_preserved": before_hash == after_hash,
+            "temp_paths": [str(path) for path in temp_paths],
+            "ok": ok,
+        }
+
+
+def probe_import_upkeeper_log_idempotent_rows_written() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-log-import-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        log_path = root / "Upkeeper.log"
+        log_path.write_text(
+            "2026-05-18T18:49:51-0700 [INFO] cycle.start cycle=cycle-log run_hash=run-log dry_run=1 execution_origin=primary\n",
+            encoding="utf-8",
+        )
+        init_args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            command_init(init_args)
+        import_args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            path=str(log_path),
+            raw=False,
+        )
+        first_stdout = io.StringIO()
+        with contextlib.redirect_stdout(first_stdout):
+            first_exit = command_import_upkeeper_log(import_args)
+        second_stdout = io.StringIO()
+        with contextlib.redirect_stdout(second_stdout):
+            second_exit = command_import_upkeeper_log(import_args)
+        first_payload = load_single_json_document(first_stdout.getvalue()) if first_stdout.getvalue().strip() else {}
+        second_payload = load_single_json_document(second_stdout.getvalue()) if second_stdout.getvalue().strip() else {}
+    return {
+        "first_exit": first_exit,
+        "first_rows_seen": first_payload.get("rows_seen"),
+        "first_rows_written": first_payload.get("rows_written"),
+        "second_exit": second_exit,
+        "second_rows_seen": second_payload.get("rows_seen"),
+        "second_rows_written": second_payload.get("rows_written"),
+        "ok": all(
+            (
+                first_exit == EXIT_SUCCESS,
+                second_exit == EXIT_SUCCESS,
+                first_payload.get("rows_seen") == 1,
+                first_payload.get("rows_written") == 1,
+                second_payload.get("rows_seen") == 1,
+                second_payload.get("rows_written") == 0,
+            )
+        ),
+    }
 
 
 def seed_recovery_duplicate_git_change_db(root: Path, db_path: Path) -> None:
@@ -8529,6 +8914,95 @@ def probe_import_jsonl_rejects_repo_identity_mismatch() -> dict[str, Any]:
             "status": result.get("status"),
             "reason": result.get("reason"),
             "imported_files": imported_files,
+            "ok": ok,
+        }
+
+
+def probe_import_jsonl_rejects_unexpected_payload_fields() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-import-extra-field-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        chmod_private(db_path.parent, is_dir=True, created_by_invocation=True)
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+            init_schema(conn, root, raw_storage_mode="minimal")
+            with conn:
+                repo_id = ensure_repository(conn, root)
+        finally:
+            conn.close()
+        context = repo_identity_context(root)
+        repo_identity = {
+            "repo_id": str(repo_id),
+            "repo_key": repo_identity_stable_key(root, context[1]),
+            "root_path": protected_repo_path(context, str(root)),
+        }
+        payload = {"key": "schema_version", "value": str(SCHEMA_VERSION), "unexpected_field": "silently dropped"}
+        export_path = root / "extra-field.jsonl"
+        export_path.write_text(
+            json_dumps(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "row_type": "schema_meta",
+                    "row_version": SCHEMA_ROW_VERSION,
+                    "logical_key": "schema_meta:schema_version",
+                    "repo_identity": repo_identity,
+                    "payload": payload,
+                    "payload_sha256": sha256_text(json_dumps(payload)),
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            path=str(export_path),
+            max_conflicts=0,
+            anonymized_archive=False,
+            redact_raw=True,
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = command_import_jsonl(args)
+        result_text = stdout.getvalue().strip()
+        result = load_single_json_document(result_text) if result_text else {}
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conflict_row = conn.execute(
+                """
+                select resolution, details_json
+                from lattice_import_conflicts
+                where row_type='schema_meta' and logical_key='schema_meta:schema_version'
+                order by conflict_id desc
+                limit 1
+                """
+            ).fetchone()
+        finally:
+            conn.close()
+        conflict_details = json.loads(conflict_row[1]) if conflict_row and conflict_row[1] else {}
+        ok = all(
+            (
+                exit_code == EXIT_IMPORT_CONFLICT,
+                result.get("status") == "conflicts",
+                result.get("conflicts") == 1,
+                conflict_row is not None,
+                conflict_row[0] == "unexpected_payload_fields",
+                conflict_details.get("fields") == ["unexpected_field"],
+            )
+        )
+        return {
+            "exit_code": exit_code,
+            "status": result.get("status"),
+            "conflicts": result.get("conflicts"),
+            "conflict_resolution": conflict_row[0] if conflict_row else None,
+            "conflict_fields": conflict_details.get("fields"),
             "ok": ok,
         }
 
@@ -10662,7 +11136,6 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
                             f"update cycles set {', '.join(f'{key}=?' for key in updates)} where cycle_pk=?",
                             list(updates.values()) + [cycle_pk],
                         )
-            rows_written += 1
         finish_import(conn, import_id, "ok", rows_seen, rows_written, 0, {"path": str(log_path)})
     print_json({"status": "ok", "rows_seen": rows_seen, "rows_written": rows_written})
     return EXIT_SUCCESS
@@ -11514,6 +11987,21 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 )
                 continue
             columns = table_columns(conn, table)
+            unexpected_payload_fields = sorted(str(key) for key in payload if key not in columns)
+            if unexpected_payload_fields:
+                conflicts += 1
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    logical_key,
+                    "",
+                    incoming_raw_hash,
+                    "unexpected_payload_fields",
+                    details={"fields": unexpected_payload_fields},
+                )
+                continue
             pk = table_primary_key(conn, table)
             filtered = {k: v for k, v in payload.items() if k in columns}
             if "repo_id" in filtered:
@@ -11783,6 +12271,7 @@ def create_backup(
     *,
     allow_overwrite: bool = False,
 ) -> Path:
+    temp_backup_path: Path | None = None
     if output:
         backup_path = validate_lattice_output_path(
             root,
@@ -11810,75 +12299,73 @@ def create_backup(
             fail(f"backup path is a symlink: {backup_path}", EXIT_USAGE)
         if not stat.S_ISREG(existing.st_mode):
             fail(f"backup path is not regular: {backup_path}", EXIT_USAGE)
-    if conn.in_transaction:
-        conn.commit()
-    backup_conn = sqlite3.connect(str(backup_path))
+        if not allow_overwrite:
+            fail(f"backup path already exists without overwrite: {backup_path}", EXIT_USAGE)
     try:
-        backup_conn.execute("PRAGMA busy_timeout=5000")
-        if backup_conn.in_transaction:
+        for _ in range(20):
+            candidate = backup_path.with_name(f".{backup_path.name}.tmp-{secrets.token_hex(8)}")
+            try:
+                fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                continue
+            except OSError as exc:
+                fail(f"backup path not creatable: {candidate} ({exc})", EXIT_DB_UNAVAILABLE)
+            else:
+                os.close(fd)
+                temp_backup_path = candidate
+                break
+        if temp_backup_path is None:
+            fail(f"backup temp path not creatable near: {backup_path}", EXIT_DB_UNAVAILABLE)
+        if conn.in_transaction:
+            conn.commit()
+        backup_conn = sqlite3.connect(str(temp_backup_path))
+        try:
+            backup_conn.execute("PRAGMA busy_timeout=5000")
+            if backup_conn.in_transaction:
+                backup_conn.commit()
+            conn.backup(backup_conn, pages=128, sleep=0.01)
             backup_conn.commit()
-        conn.backup(backup_conn, pages=128, sleep=0.01)
-        backup_conn.commit()
+        finally:
+            backup_conn.close()
+        chmod_private(temp_backup_path)
+        if allow_overwrite:
+            os.replace(temp_backup_path, backup_path)
+            temp_backup_path = None
+        else:
+            try:
+                os.link(temp_backup_path, backup_path)
+            except FileExistsError:
+                fail(f"backup path already exists without overwrite: {backup_path}", EXIT_USAGE)
+            except OSError as exc:
+                fail(f"backup path not publishable: {backup_path} ({exc})", EXIT_DB_UNAVAILABLE)
+            else:
+                temp_backup_path.unlink()
+                temp_backup_path = None
     finally:
-        backup_conn.close()
+        if temp_backup_path is not None:
+            try:
+                temp_backup_path.unlink()
+            except OSError:
+                pass
     chmod_private(backup_path)
     return backup_path
-
-
-def record_pre_recovery_backup_provenance(
-    root: Path,
-    backup_path: Path,
-    *,
-    raw_storage_mode: str | None = None,
-) -> None:
-    backup_conn = sqlite3.connect(str(backup_path))
-    try:
-        backup_conn.row_factory = sqlite3.Row
-        backup_conn.execute("PRAGMA busy_timeout=5000")
-        backup_conn.execute("PRAGMA foreign_keys=ON")
-        try:
-            with backup_conn:
-                repo_id = ensure_repository(backup_conn, root)
-                source_id = ensure_source_record(
-                    backup_conn,
-                    root,
-                    repo_id,
-                    "recovery",
-                    raw_ref="recover",
-                    parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
-                    raw_storage_mode=raw_storage_mode,
-                )
-                create_artifact_ref(
-                    backup_conn,
-                    root,
-                    repo_id,
-                    cycle_pk=None,
-                    source_id=source_id,
-                    artifact_kind="backup",
-                    path=str(backup_path),
-                    details={"backup_event": "pre_recovery", "recorded_in": "backup"},
-                )
-        except sqlite3.OperationalError:
-            # Some recovery inputs are pre-schema or partially damaged. The
-            # safety copy is still useful even when it cannot store provenance.
-            pass
-    finally:
-        backup_conn.close()
 
 
 def command_backup(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
-    conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
-    ensure_schema(conn)
-    backup_path = create_backup(
-        conn,
-        root,
-        db_path,
-        output=args.output,
-        allow_overwrite=args.overwrite,
-    )
-    conn.close()
+    conn = connect_checked(root, db_path, args.journal_mode, allow_unsafe_db=args.allow_unsafe_db, read_only=True)
+    try:
+        ensure_schema_identity_read_only(conn)
+        backup_path = create_backup(
+            conn,
+            root,
+            db_path,
+            output=args.output,
+            allow_overwrite=args.overwrite,
+        )
+    finally:
+        conn.close()
     print_json({"status": "ok", "backup_path": str(backup_path)})
     return EXIT_SUCCESS
 
@@ -12063,8 +12550,44 @@ def command_recover(args: argparse.Namespace) -> int:
     preexisting_db = db_path.exists()
     backup_first = True if args.backup_first is None else bool(args.backup_first)
     backup_path = None
+    backup_provenance_recorded = False
     if backup_first and preexisting_db:
         backup_path = db_path.parent / "backups" / f"lattice-backup-{artifact_now()}.sqlite3"
+        provenance_conn = connect_checked(
+            root,
+            db_path,
+            args.journal_mode,
+            allow_unsafe_db=args.allow_unsafe_db,
+        )
+        try:
+            if not all(table_exists(provenance_conn, table) for table in ("repositories", "source_records", "artifact_refs")):
+                init_schema(provenance_conn, root, raw_storage_mode=raw_storage_mode)
+            with provenance_conn:
+                repo_id = ensure_repository(provenance_conn, root)
+                source_id = ensure_source_record(
+                    provenance_conn,
+                    root,
+                    repo_id,
+                    "recovery",
+                    raw_ref="recover",
+                    parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
+                    raw_storage_mode=raw_storage_mode,
+                )
+                # Record the reason for the pre-recovery copy before taking it.
+                # Later recovery imports must not appear in this backup.
+                create_artifact_ref(
+                    provenance_conn,
+                    root,
+                    repo_id,
+                    cycle_pk=None,
+                    source_id=source_id,
+                    artifact_kind="backup",
+                    path=str(backup_path),
+                    details={"backup_event": "pre_recovery", "recorded_in": "backup_and_recovered_db"},
+                )
+                backup_provenance_recorded = True
+        finally:
+            provenance_conn.close()
         backup_source_conn = connect_checked(
             root,
             db_path,
@@ -12107,12 +12630,7 @@ def command_recover(args: argparse.Namespace) -> int:
             parsed={"root_hmac": artifact_path_hmac(root, str(root)), "mode": "counts_and_classes"},
             raw_storage_mode=raw_storage_mode,
         )
-        if backup_path is not None:
-            record_pre_recovery_backup_provenance(
-                root,
-                backup_path,
-                raw_storage_mode=raw_storage_mode,
-            )
+        if backup_path is not None and not backup_provenance_recorded:
             create_artifact_ref(
                 conn,
                 root,
@@ -12247,8 +12765,7 @@ def command_recover(args: argparse.Namespace) -> int:
         report["artifact_sources"] = artifact_sources
     if import_results:
         report["import_results"] = import_results
-    report_path.write_text(json_dumps(report) + "\n", encoding="utf-8")
-    chmod_private(report_path)
+    write_private_text_atomic(report_path, json_dumps(report) + "\n")
     response = {"status": status, "sources": sources, "recovery_report": str(report_path)}
     if artifact_sources:
         response["artifact_sources"] = artifact_sources

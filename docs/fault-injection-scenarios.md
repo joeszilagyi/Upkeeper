@@ -114,7 +114,7 @@ recovery oracle before they can be promoted out of `deferred`.
 | FI-019 | `lib/upkeeper/cycle_cleanup_signals.bash` | Cleanup | SIGINT arrives while fallback child has completed invalid exit artifact | `signal_completed_fallback_invalid_exit` | `8` | `signal.completed_fallback_result` | yes | yes | `tools/validate_upkeeper.sh --full` | full | `surface:cleanup,status:deferred,oracle:exit,oracle:log,oracle:artifact` | medium | low | low | high | deferred |
 | FI-020 | `lib/upkeeper/prompt_compile.bash` | Review module wiring | valid `p29` module selected but its prompt file is missing | `REVIEW_MODULE_PROMPT_MISSING` | `70` | `review.module_prompt_missing` | yes | yes | `tools/validate_upkeeper.sh --full` | full | `surface:review-module,status:covered-by-full-validation,oracle:exit,oracle:log,oracle:recovery` | high | medium | high | low | medium |
 | FI-021 | `lib/upkeeper/codex_io.bash` | Fake backend | fake `codex` exits zero with empty transcript and no final marker | `MISSING_STATUS_MARKER` | `3` | `run.finish` | yes | yes | `tools/validate_upkeeper.sh --full` | full | `surface:fake-backend,status:covered-by-full-validation,oracle:exit,oracle:log,oracle:recovery` | high | medium | medium | medium | medium |
-| FI-022 | `lib/upkeeper/active_lock.bash` | Active lock | stale active lock contains an unexpected child file | `UPKEEPER_ACTIVE_LOCK_FAILED` | `7` | `active_lock.failed` | yes | yes | `tools/validate_upkeeper.sh --full` | full | `surface:active-lock,status:covered-by-full-validation,oracle:exit,oracle:log,oracle:state,oracle:recovery` | high | medium | high | medium | medium |
+| FI-022 | `lib/upkeeper/active_lock.bash` | Active lock | stale owned active lock contains an unexpected child file | `DRY_RUN` | `0` | `active_lock.stale_quarantined` | yes | yes | `tools/validate_upkeeper.sh --full` | full | `surface:active-lock,status:covered-by-full-validation,oracle:exit,oracle:log,oracle:state,oracle:recovery` | high | medium | high | medium | medium |
 | FI-023 | `tools/check_upkeeper_log_invariants.py` | Wrapper health | wrapper log contains `cycle.start` without matching `cycle.exit` | `log_invariant_failed` | `1` | `cycle.start` | no | no | `tools/validate_upkeeper.sh --full` | full | `surface:wrapper-health,status:covered-by-full-validation,oracle:log` | high | medium | high | low | medium |
 
 ## Implemented Local Scenarios
@@ -133,10 +133,11 @@ one stays local and no-quota.
   `MISSING_STATUS_MARKER`. Recovery run returns the fake backend to valid final
   output. Oracle classes: `exit`, `log`, and `recovery`.
 - `FI-022`: Control run proves a clean dry-run can acquire and release the
-  active lock. Injection run creates a stale lock directory with an unexpected
-  child file and expects `UPKEEPER_ACTIVE_LOCK_FAILED` before backend launch.
-  Recovery run removes the injected lock and proves the dry-run succeeds again.
-  Oracle classes: `exit`, `log`, `state`, and `recovery`.
+  active lock. Injection run creates a verified-owned stale lock directory with
+  an unexpected child file and expects `active_lock.stale_quarantined`, preserved
+  residue evidence, and a successful dry-run after quarantine. Recovery run
+  proves the dry-run succeeds again with no injected lock. Oracle classes:
+  `exit`, `log`, `state`, and `recovery`.
 - `FI-023`: Injection run feeds the reusable log-invariant checker a log with
   `cycle.start` but no `cycle.exit`, and expects the checker to fail closed.
   Oracle classes: `log`.

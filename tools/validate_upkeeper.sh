@@ -445,6 +445,8 @@ check_backlog_launcher_contract() {
   grep -Fq 'quota preflight: burn bypass continuing despite stale quota evidence' orchestration/backlog.sh || fail "backlog launcher does not explain stale quota bypass"
   grep -Fq 'BACKLOG_OBLIGATION_RETRY_LIMIT="${BACKLOG_OBLIGATION_RETRY_LIMIT:-3}"' orchestration/backlog.sh || fail "backlog launcher does not define obligation retry limit"
   grep -Fq 'cooldown_deferred' orchestration/backlog.sh || fail "backlog launcher does not stop fresh issue work while every obligation is cooling down"
+  grep -Fq 'BACKLOG_OBLIGATION_ISSUE_REPORTS="${BACKLOG_OBLIGATION_ISSUE_REPORTS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default obligation issue reports on"
+  grep -Fq 'backlog_sync_obligation_issue_reports' orchestration/backlog.sh || fail "backlog launcher does not sync obligation issue reports before selection"
   grep -Fq 'backlog_ensure_transcript_artifact_marker' orchestration/backlog.sh || fail "backlog launcher does not trust its owned transcript artifact directory"
   grep -Fq 'CODEX_LOG_FILE_ALLOW_UNSAFE="${BACKLOG_CODEX_LOG_FILE_ALLOW_UNSAFE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not trust its owned custom log directory"
   grep -Fq 'BACKLOG_SOURCE_ONLY' orchestration/backlog.sh || fail "backlog launcher cannot be source-tested without running main"
@@ -1301,6 +1303,61 @@ JSON
     fail "automation obligation attempt cooldown did not trigger at retry limit"
   [[ "$(jq -r '.next_retry_epoch' <<<"$attempt_json")" == "3601" ]] ||
     fail "automation obligation attempt cooldown wrote wrong next retry epoch"
+
+  rm -r "$temp_dir"
+}
+
+check_automation_obligation_issue_report_contract() {
+  local temp_dir sync_json fake_bin record_file report_file gh_args
+
+  log "checking automation obligation issue-report bridge contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-obligation-issue-report.XXXXXX)"
+  mkdir -p "$temp_dir/obligations/open" "$temp_dir/bin"
+  record_file="$temp_dir/obligations/open/report-me.json"
+  cat >"$record_file" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"report-me","created_at":"2026-05-23T02:00:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"PAGE error was observed during unattended loop","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","source_cycle_id":"cycle-a","source_run_hash":"hash-a","occurrence_count":4,"evidence":{"source":"backlog_loop_log","excerpt":"$ROOT_DIR/Upkeeper PAGE [ERROR] example","normalized_excerpt":"Upkeeper PAGE [ERROR] example"},"required_resolution":["patch the wrapper","add deterministic validation"]}
+JSON
+  cat >"$temp_dir/obligations/open/foreign.json" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"foreign","created_at":"2026-05-23T02:01:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"foreign root","root":"$temp_dir/foreign-root","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY"}
+JSON
+
+  sync_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="$temp_dir/reports" \
+      bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "1" ]] ||
+    fail "automation obligation issue-report bridge did not scope to current root"
+  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "1" ]] ||
+    fail "automation obligation issue-report bridge did not draft the current obligation"
+  report_file="$(jq -r '.issue_report_path' "$record_file")"
+  [[ -f "$report_file" ]] || fail "automation obligation issue-report bridge did not write report file"
+  grep -Fq "## Impact" "$report_file" || fail "automation obligation report missing impact section"
+  grep -Fq "## Evidence" "$report_file" || fail "automation obligation report missing evidence section"
+  grep -Fq "<repo-root>/Upkeeper" "$report_file" || fail "automation obligation report did not redact repo root"
+  if grep -Fq "$ROOT_DIR" "$report_file"; then
+    fail "automation obligation report leaked absolute repo root"
+  fi
+  [[ "$(jq -r '.issue_report_state' "$record_file")" == "drafted" ]] ||
+    fail "automation obligation record did not record drafted issue-report state"
+
+  cat >"$temp_dir/bin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >"$UPKEEPER_FAKE_GH_ARGS"
+printf 'https://github.com/example/upkeeper/issues/987\n'
+SH
+  chmod 700 "$temp_dir/bin/gh"
+  gh_args="$temp_dir/gh-args.txt"
+  sync_json="$(
+    PATH="$temp_dir/bin:$PATH" UPKEEPER_FAKE_GH_ARGS="$gh_args" \
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="$temp_dir/reports" \
+    UPKEEPER_OBLIGATION_GITHUB_ISSUE_WRITE=1 UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS=bug \
+      bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "1" ]] ||
+    fail "automation obligation issue-report bridge did not create opted-in GitHub issue"
+  [[ "$(jq -r '.github_issue_number' "$record_file")" == "987" ]] ||
+    fail "automation obligation record did not store created GitHub issue number"
+  grep -Fq "issue create" "$gh_args" || fail "automation obligation GitHub issue command was not invoked"
 
   rm -r "$temp_dir"
 }
@@ -5657,6 +5714,7 @@ run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_con
 run_check automation_obligation_root_boundary_contract check_automation_obligation_root_boundary_contract
 run_check automation_obligation_reconciliation_contract check_automation_obligation_reconciliation_contract
 run_check automation_obligation_churn_contract check_automation_obligation_churn_contract
+run_check automation_obligation_issue_report_contract check_automation_obligation_issue_report_contract
 run_check backlog_launcher_contract check_backlog_launcher_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract

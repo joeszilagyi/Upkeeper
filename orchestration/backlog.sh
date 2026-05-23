@@ -46,6 +46,9 @@ BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS="${BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS:-12
 BACKLOG_OBLIGATION_RECONCILE="${BACKLOG_OBLIGATION_RECONCILE:-1}"
 BACKLOG_OBLIGATION_RETRY_LIMIT="${BACKLOG_OBLIGATION_RETRY_LIMIT:-3}"
 BACKLOG_OBLIGATION_RETRY_COOLDOWN_SECONDS="${BACKLOG_OBLIGATION_RETRY_COOLDOWN_SECONDS:-21600}"
+BACKLOG_OBLIGATION_ISSUE_REPORTS="${BACKLOG_OBLIGATION_ISSUE_REPORTS:-1}"
+BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE="${BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE:-0}"
+BACKLOG_OBLIGATION_GITHUB_ISSUE_LABELS="${BACKLOG_OBLIGATION_GITHUB_ISSUE_LABELS:-bug}"
 BACKLOG_ALERT_COLOR="${BACKLOG_ALERT_COLOR:-auto}"
 BACKLOG_ALERT_BLINK="${BACKLOG_ALERT_BLINK:-1}"
 BACKLOG_VISUAL_BLOCK="${BACKLOG_VISUAL_BLOCK:-█}"
@@ -1551,15 +1554,17 @@ prepare_backlog_runtime_env() {
     "$state_root/transcripts" \
     "$state_root/postmortems" \
     "$state_root/bug-report-drafts" \
+    "$state_root/obligation-issue-reports" \
     "$state_root/precontact-vault" \
     "$ROOT_DIR/runtime/upkeeper-backlog-lattice"
-  chmod 700 "$state_root" "$state_root/logs" "$state_root/tmp" "$state_root/transcripts" "$state_root/postmortems" "$state_root/bug-report-drafts" "$state_root/precontact-vault" "$ROOT_DIR/runtime/upkeeper-backlog-lattice" 2>/dev/null || true
+  chmod 700 "$state_root" "$state_root/logs" "$state_root/tmp" "$state_root/transcripts" "$state_root/postmortems" "$state_root/bug-report-drafts" "$state_root/obligation-issue-reports" "$state_root/precontact-vault" "$ROOT_DIR/runtime/upkeeper-backlog-lattice" 2>/dev/null || true
 
   export TMPDIR="${BACKLOG_TMPDIR:-$state_root/tmp}"
   export CODEX_LOG_FILE="${BACKLOG_CODEX_LOG_FILE:-$state_root/logs/Upkeeper.log}"
   export CODEX_TRANSCRIPT_DIR="${BACKLOG_CODEX_TRANSCRIPT_DIR:-$state_root/transcripts}"
   export CODEX_POSTMORTEM_DIR="${BACKLOG_CODEX_POSTMORTEM_DIR:-$state_root/postmortems}"
   export UPKEEPER_BUG_REPORT_DRAFT_DIR="${BACKLOG_BUG_REPORT_DRAFT_DIR:-$state_root/bug-report-drafts}"
+  export UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="${BACKLOG_OBLIGATION_ISSUE_REPORT_DIR:-$state_root/obligation-issue-reports}"
   export UPKEEPER_LATTICE_DB="${BACKLOG_LATTICE_DB:-$ROOT_DIR/runtime/upkeeper-backlog-lattice/lattice.sqlite3}"
   export UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
   export UPKEEPER_PRECONTACT_BACKUP_ROOT="${BACKLOG_PRECONTACT_BACKUP_ROOT:-$state_root/precontact-vault}"
@@ -1658,6 +1663,35 @@ backlog_reconcile_open_obligations() {
   groups="$(jq -r '.duplicate_groups // 0' <<<"$output")"
   if [[ "$status" == "reconciled" || "$foreign_count" != "0" ]]; then
     log "automation obligation reconciliation: status=$status current_open_before=$current_before current_open_after=$current_after duplicate_groups=$groups duplicates_resolved=$duplicate_count foreign_deferred=$foreign_count"
+  fi
+  return 0
+}
+
+backlog_sync_obligation_issue_reports() {
+  local output status current_open drafted updated github_created github_failed report_dir
+
+  [[ "$BACKLOG_OBLIGATION_ISSUE_REPORTS" == "1" ]] || return 0
+  prepare_backlog_runtime_env
+  output="$(
+    ROOT_DIR="$ROOT_DIR" \
+      UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
+      UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="$UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR" \
+      UPKEEPER_OBLIGATION_GITHUB_ISSUE_WRITE="$BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE" \
+      UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS="$BACKLOG_OBLIGATION_GITHUB_ISSUE_LABELS" \
+      bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )" || return $?
+  status="$(jq -r '.status // "unknown"' <<<"$output")"
+  current_open="$(jq -r '.current_root_open // 0' <<<"$output")"
+  drafted="$(jq -r '.drafted // 0' <<<"$output")"
+  updated="$(jq -r '.updated_records // 0' <<<"$output")"
+  github_created="$(jq -r '.github_created // 0' <<<"$output")"
+  github_failed="$(jq -r '.github_failed // 0' <<<"$output")"
+  report_dir="$(jq -r '.report_dir // ""' <<<"$output")"
+  if [[ "$current_open" != "0" || "$github_failed" != "0" ]]; then
+    log "automation obligation issue reports: status=$status current_open=$current_open drafted=$drafted records_updated=$updated github_created=$github_created github_failed=$github_failed report_dir=$report_dir"
+  fi
+  if [[ "$BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE" == "1" && "$github_failed" != "0" ]]; then
+    log "automation obligation GitHub issue creation had failures; local issue reports remain authoritative"
   fi
   return 0
 }
@@ -2507,6 +2541,11 @@ main() {
   if ! backlog_reconcile_open_obligations; then
     status="$?"
     log "automation obligation reconciliation failed with status $status; stopping before normal issue selection"
+    exit "$status"
+  fi
+  if ! backlog_sync_obligation_issue_reports; then
+    status="$?"
+    log "automation obligation issue report sync failed with status $status; stopping before normal issue selection"
     exit "$status"
   fi
 

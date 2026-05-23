@@ -1389,6 +1389,293 @@ print(
 PY
 }
 
+automation_sync_obligation_issue_reports_json() {
+  local report_dir="${UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR:-$(automation_obligation_root)/issue-reports}"
+  local github_write="${UPKEEPER_OBLIGATION_GITHUB_ISSUE_WRITE:-0}"
+  local github_labels="${UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS:-}"
+
+  python3 - \
+    "$(automation_obligation_root)/open" \
+    "$report_dir" \
+    "$ROOT_DIR" \
+    "$github_write" \
+    "$github_labels" <<'PY'
+import datetime as dt
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+open_dir = pathlib.Path(sys.argv[1])
+report_dir = pathlib.Path(sys.argv[2])
+root_dir = pathlib.Path(sys.argv[3]).resolve()
+github_write = sys.argv[4].strip().lower() in {"1", "true", "yes", "on"}
+github_labels = [label.strip() for label in sys.argv[5].split(",") if label.strip()]
+
+
+def now_local():
+    return dt.datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def private_dir(path):
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.chmod(0o700)
+    except OSError:
+        pass
+
+
+def write_text_private(path, text):
+    private_dir(path.parent)
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp, path)
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def write_json_private(path, data):
+    write_text_private(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def stable_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return str(value)
+
+
+def first_nonempty(*values):
+    for value in values:
+        text = stable_text(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def same_root(data):
+    raw = first_nonempty(data.get("root"))
+    if not raw:
+        return True
+    try:
+        return pathlib.Path(raw).resolve() == root_dir
+    except OSError:
+        return False
+
+
+def redact(text):
+    value = stable_text(text)
+    root_text = str(root_dir)
+    if root_text:
+        value = value.replace(root_text, "<repo-root>")
+    home = os.environ.get("HOME", "")
+    if home:
+        value = value.replace(home, "<home>")
+    return value
+
+
+def report_filename(obligation_id):
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", obligation_id).strip(".-")
+    return f"{safe or 'obligation'}.md"
+
+
+def title_for(data):
+    kind = first_nonempty(data.get("kind"), data.get("reason"), "automation obligation")
+    target = first_nonempty(data.get("repair_target_file"), data.get("target_file"), "machine-local state")
+    return f"High priority bug: automation obligation {kind} needs repair for {target}"[:180]
+
+
+def bullet(label, value):
+    text = redact(value).strip()
+    return f"- {label}: {text or 'unknown'}"
+
+
+def evidence_block(data):
+    evidence = data.get("last_evidence")
+    if not isinstance(evidence, dict):
+        evidence = data.get("evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
+    excerpt = first_nonempty(evidence.get("excerpt"), evidence.get("normalized_excerpt"), data.get("fingerprint"))
+    normalized = first_nonempty(evidence.get("normalized_excerpt"), evidence.get("fingerprint"))
+    lines = []
+    if excerpt:
+        lines.extend(["Excerpt:", "```", redact(excerpt), "```"])
+    if normalized and normalized != excerpt:
+        lines.extend(["Normalized fingerprint:", "```", redact(normalized), "```"])
+    if not lines:
+        lines.append("No inline evidence excerpt was recorded; inspect the obligation JSON and linked runtime artifacts.")
+    return "\n".join(lines)
+
+
+def required_resolution(data):
+    values = data.get("required_resolution")
+    if isinstance(values, list):
+        return [redact(value).strip() for value in values if redact(value).strip()]
+    text = redact(values).strip()
+    return [text] if text else []
+
+
+def body_for(data, title, source_path):
+    resolution = required_resolution(data)
+    lines = [
+        title,
+        "Labels: bug",
+        "",
+        "## Impact",
+        "An unattended Upkeeper cycle produced or preserved a system-level automation obligation before normal issue work. This report is generated locally from wrapper evidence so the failure cannot depend on chat context or a later model run to become actionable.",
+        "",
+        "## Obligation",
+        bullet("id", first_nonempty(data.get("id"), source_path.stem)),
+        bullet("kind", data.get("kind")),
+        bullet("severity", data.get("severity")),
+        bullet("summary", data.get("summary")),
+        bullet("reason", data.get("reason")),
+        bullet("target", data.get("target_file")),
+        bullet("repair target", data.get("repair_target_file")),
+        bullet("target scope", data.get("target_scope")),
+        bullet("source cycle", first_nonempty(data.get("last_source_cycle_id"), data.get("source_cycle_id"))),
+        bullet("source run hash", first_nonempty(data.get("last_source_run_hash"), data.get("source_run_hash"))),
+        bullet("first seen", first_nonempty(data.get("first_seen_at"), data.get("created_at"))),
+        bullet("last seen", first_nonempty(data.get("last_seen_at"), data.get("created_at"))),
+        bullet("occurrence count", data.get("occurrence_count")),
+        bullet("repair attempts", data.get("repair_attempt_count")),
+        bullet("blocked attempts", data.get("blocked_attempt_count")),
+        "",
+        "## Evidence",
+        evidence_block(data),
+        "",
+        "## Expected Behavior",
+        "A later unattended launcher cycle must either repair the underlying wrapper/system defect, classify the evidence as an expected fixture with deterministic context, or keep this obligation visibly open without allowing it to disappear.",
+        "",
+        "## Actual Behavior",
+        "The obligation is still open in local automation custody and needs a tracked fix, explicit resolved classification, or operator-visible blocker.",
+        "",
+        "## Required Resolution",
+    ]
+    if resolution:
+        lines.extend(f"- {item}" for item in resolution)
+    else:
+        lines.append("- Inspect the local obligation evidence before normal backlog issue work.")
+        lines.append("- Add deterministic validation for the repaired or intentionally expected outcome.")
+    lines.extend(
+        [
+            "",
+            "## Local Evidence",
+            bullet("obligation record", str(source_path)),
+            bullet("run record", data.get("run_record")),
+            bullet("transcript", data.get("transcript")),
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def create_github_issue(title, body_path):
+    cmd = ["gh", "issue", "create", "--title", title, "--body-file", str(body_path)]
+    for label in github_labels:
+        cmd.extend(["--label", label])
+    try:
+        completed = subprocess.run(cmd, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        return "", "", str(exc)
+    output = (completed.stdout or "").strip()
+    error = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        return "", output, error or f"gh exited {completed.returncode}"
+    match = re.search(r"/issues/([0-9]+)\b", output)
+    return (match.group(1) if match else "", output, "")
+
+
+records = []
+if open_dir.is_dir():
+    for path in sorted(open_dir.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if data.get("status", "open") != "open" or not same_root(data):
+            continue
+        records.append((path, data))
+
+private_dir(report_dir)
+drafted = 0
+github_created = 0
+github_existing = 0
+github_failed = 0
+updated_records = 0
+now = now_local()
+
+for source_path, data in records:
+    obligation_id = first_nonempty(data.get("id"), source_path.stem)
+    title = title_for(data)
+    report_path = report_dir / report_filename(obligation_id)
+    write_text_private(report_path, body_for(data, title, source_path))
+    drafted += 1
+
+    data["issue_report_required"] = True
+    data["issue_report_state"] = "drafted"
+    data["issue_report_title"] = title
+    data["issue_report_path"] = str(report_path)
+    data["issue_report_updated_at"] = now
+    data["issue_report_generator"] = "automation_sync_obligation_issue_reports_json"
+
+    if github_write:
+        existing_number = first_nonempty(data.get("github_issue_number"))
+        if existing_number:
+            github_existing += 1
+            data["issue_report_state"] = "github_existing"
+        else:
+            issue_number, issue_url, error = create_github_issue(title, report_path)
+            if issue_number:
+                github_created += 1
+                data["issue_report_state"] = "github_created"
+                data["github_issue_number"] = issue_number
+                data["github_issue_url"] = issue_url
+                data["github_issue_created_at"] = now
+            else:
+                github_failed += 1
+                data["issue_report_state"] = "github_failed"
+                data["github_issue_create_error"] = redact(error)[:300]
+
+    write_json_private(source_path, data)
+    updated_records += 1
+
+print(
+    json.dumps(
+        {
+            "status": "synced",
+            "current_root_open": len(records),
+            "drafted": drafted,
+            "updated_records": updated_records,
+            "github_write": github_write,
+            "github_created": github_created,
+            "github_existing": github_existing,
+            "github_failed": github_failed,
+            "report_dir": str(report_dir),
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
 automation_cycle_exit_resolves_obligation() {
   local exit_code="$1"
   local reason="$2"

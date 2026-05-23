@@ -46,6 +46,47 @@ Validation:
 - `./Upkeeper --version`
 - `git diff --check`
 
+## Obligation Issue Report Bridge
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- make every current-root automation obligation produce a deterministic
+  issue-ready report before normal backlog issue selection
+- explain why the x99 failures stayed in local obligation custody instead of
+  becoming detailed issue reports
+- keep GitHub issue creation wrapper-owned and opt-in while making local issue
+  reports mandatory by default
+- deduplicate reports by obligation id/fingerprint and update the existing
+  obligation record with report path and optional GitHub issue metadata
+
+Constraints:
+- do not require backend Codex or bug-report-only mode for system-level
+  obligation reports
+- preserve local evidence and redact absolute root/home paths in generated
+  report text
+- keep GitHub writes off unless the wrapper operator explicitly enables them
+- add deterministic validation that does not touch the network
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --full`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
 ## Automation Obligation Reconciliation Preflight
 
 Status: completed locally

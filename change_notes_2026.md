@@ -11,6 +11,7 @@ Version numbering note:
 	2. Prior-run anomaly custody now treats model-emitted shell/test fixture snippets that quote `[WARN]`, `[ERROR]`, `PAGE`, cycle ids, run hashes, or startup-anomaly text as transcript content instead of fresh wrapper failures.
 	3. Open backlog-loop obligations that are deterministically obsolete after the current detector or operator-guide state are moved to resolved evidence with explicit reconciliation reasons.
 	4. The default backlog-owned log and transcript artifact directories are now trusted locally before Upkeeper starts, preventing repeated `log.rotate_blocked` and `transcript.prune_blocked` warnings during normal backlog loops.
+	5. Backlog now generates deterministic issue-ready reports for every open current-root automation obligation before selecting fresh work. GitHub issue creation for those reports stays wrapper-owned and opt-in with `BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=1`.
 
 2026-05-22: v1.2.30 changes:
 	1. Active-lock recovery now normalizes the runtime-local lock path, rejects symlinked lock parents or unsafe existing lock paths, and quarantines stale unowned lock directories instead of repeatedly failing the next automation cycle on the same residue.

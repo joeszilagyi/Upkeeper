@@ -1,15 +1,37 @@
 previous_run_anomaly_lines_impl() {
+  local current_boot_id current_boot_id_hash redaction_key
+
   if [[ ! -s "$LOG_FILE" ]]; then
     return 0
   fi
 
-  python3 - "$LOG_FILE" "$CYCLE_ID" "$CODEX_PREVIOUS_RUN_SCAN_MINUTES" "$(system_boot_id)" <<'PY'
+  current_boot_id="$(system_boot_id)"
+  if declare -F upkeeper_value_hmac >/dev/null 2>&1; then
+    current_boot_id_hash="$(upkeeper_value_hmac boot_id "$current_boot_id")"
+  else
+    current_boot_id_hash="$current_boot_id"
+  fi
+  if declare -F upkeeper_redaction_key_material >/dev/null 2>&1; then
+    redaction_key="$(upkeeper_redaction_key_material)"
+  else
+    redaction_key="${ROOT_DIR:-$PWD}|upkeeper-redaction-fallback"
+  fi
+
+  python3 - \
+    "$LOG_FILE" \
+    "$CYCLE_ID" \
+    "$CODEX_PREVIOUS_RUN_SCAN_MINUTES" \
+    "$current_boot_id" \
+    "$current_boot_id_hash" \
+    "$redaction_key" <<'PY'
 import datetime as dt
+import hashlib
+import hmac
 import re
 import sys
 import time
 
-log_path, current_cycle, minutes_raw, current_boot_id = sys.argv[1:5]
+log_path, current_cycle, minutes_raw, current_boot_raw, current_boot_protected, redaction_key = sys.argv[1:7]
 try:
     scan_minutes = max(0, int(minutes_raw))
 except ValueError:
@@ -35,6 +57,36 @@ custody_ack_kinds = {
     "previous_run_anomaly_summary",
     "startup_anomaly_unresolved",
 }
+
+def protected_boot_id(value):
+    text = str(value or "unknown")
+    if text in {"", "unknown", "none", "missing", "unavailable"}:
+        return text or "unknown"
+    if text.startswith("value-hmac-sha256:"):
+        return text
+    material = f"boot_id\0{text}".encode("utf-8", "surrogateescape")
+    digest = hmac.new(
+        redaction_key.encode("utf-8", "surrogateescape"),
+        material,
+        hashlib.sha256,
+    ).hexdigest()
+    return f"value-hmac-sha256:{digest}"
+
+
+def boot_id_matches_current(value):
+    text = str(value or "unknown")
+    return text in {
+        "",
+        "unknown",
+        current_boot_raw,
+        current_boot_protected,
+        protected_boot_id(current_boot_raw),
+    }
+
+
+def redact_boot_ids(text):
+    return boot_id_re.sub(lambda match: f"boot_id={protected_boot_id(match.group(1))}", text)
+
 
 def parsed_epoch(line):
     stamp = line.split(" ", 1)[0]
@@ -159,14 +211,10 @@ acknowledged = 0
 for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"] or 0, reverse=True):
     reason = ""
     if info["start"] and not info["exit"]:
-        if (
-            info.get("last_boot_id", "unknown") not in {"", "unknown"}
-            and current_boot_id not in {"", "unknown"}
-            and info["last_boot_id"] != current_boot_id
-        ):
-            reason = "probable_reboot_or_power_loss"
-        else:
+        if boot_id_matches_current(info.get("last_boot_id", "unknown")):
             reason = "missing_cycle_exit"
+        else:
+            reason = "probable_reboot_or_power_loss"
     elif info["run_start"] and not info["run_finish"] and not info["exit"]:
         reason = "missing_run_finish"
     elif info["watchdog_anomaly"]:
@@ -183,11 +231,12 @@ for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"]
         acknowledged += 1
         continue
     last_epoch = "unknown" if info["last_epoch"] is None else str(int(info["last_epoch"]))
-    last_line = info["last_line"].replace("\\", "\\\\").replace("\t", " ")[:300]
+    last_line = redact_boot_ids(info["last_line"]).replace("\\", "\\\\").replace("\t", " ")[:300]
     print(
         f"previous_cycle={cycle} previous_run_hash={info['run_hash']} "
         f"reason={reason} scan_minutes={scan_minutes} last_epoch={last_epoch} "
-        f"previous_boot_id={info.get('last_boot_id', 'unknown')} current_boot_id={current_boot_id} "
+        f"previous_boot_id={protected_boot_id(info.get('last_boot_id', 'unknown'))} "
+        f"current_boot_id={protected_boot_id(current_boot_raw)} "
         f"last_line={last_line!r}"
     )
     printed += 1

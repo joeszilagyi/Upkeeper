@@ -1443,6 +1443,26 @@ def no_change_summary(value):
     )
 
 
+def path_shaped(value):
+    if not value:
+        return False
+    if any(char in value for char in "\0\r\n\t"):
+        return False
+    if re.search(r"[;!?]", value):
+        return False
+    if " " in value:
+        return False
+    if value.startswith(("-", "#", "*", ">")):
+        return False
+    if value in {".", "..", "/", "./", "../"}:
+        return False
+    if value.startswith("../") or "/../" in value or value.endswith("/.."):
+        return False
+    if value.startswith(("http://", "https://")):
+        return False
+    return bool(re.search(r"[A-Za-z0-9_.-]", value))
+
+
 def selected_file_from_source(source):
     if not source:
         return ""
@@ -1460,6 +1480,8 @@ def selected_file_from_source(source):
     if re.fullmatch(r"\d+(?:\.\d+)?", value):
         return ""
     if re.match(r"^(epoch|age|mtime|hash)\b", value.lower()):
+        return ""
+    if not path_shaped(value):
         return ""
     return value
 
@@ -1654,6 +1676,53 @@ print(
     )
 )
 PY
+}
+
+# Focused parser regression check for prior-run custody warnings where prose
+# after "STOPPED_ON_BLOCKER for ..." was mistaken for the reviewed file path.
+upkeeper_internal_review_summary_self_test_requested() {
+  config_truthy "${UPKEEPER_INTERNAL_REVIEW_SUMMARY_SELF_TEST:-0}"
+}
+
+upkeeper_internal_review_summary_self_test() {
+  local temp_file summary selected_file outcome
+
+  temp_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-review-summary-self-test.XXXXXX")" || {
+    printf 'review_summary_self_test=fail reason=mktemp_failed\n' >&2
+    return 2
+  }
+  cat >"$temp_file" <<'EOF'
+STOPPED_ON_BLOCKER for outside-target documentation drift; selected file content was REVIEWED_CLEAN.
+UPKEEPER_STATUS: BLOCKED
+EOF
+  summary="$(review_report_summary_json "$temp_file")"
+  rm -f -- "$temp_file"
+  outcome="$(json_field "$summary" '.outcome' 2>/dev/null || printf '')"
+  selected_file="$(json_field "$summary" '.selected_file' 2>/dev/null || printf '')"
+  if [[ "$outcome" != "STOPPED_ON_BLOCKER" || -n "$selected_file" ]]; then
+    printf 'review_summary_self_test=fail reason=prose_selected_file_not_rejected outcome=%s selected_file=%s\n' "$outcome" "$selected_file" >&2
+    return 1
+  fi
+
+  temp_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-review-summary-self-test.XXXXXX")" || {
+    printf 'review_summary_self_test=fail reason=mktemp_failed\n' >&2
+    return 2
+  }
+  cat >"$temp_file" <<'EOF'
+Final status: REVIEWED_CLEAN for `Upkeeper`
+UPKEEPER_STATUS: WORK_DONE
+EOF
+  summary="$(review_report_summary_json "$temp_file")"
+  rm -f -- "$temp_file"
+  outcome="$(json_field "$summary" '.outcome' 2>/dev/null || printf '')"
+  selected_file="$(json_field "$summary" '.selected_file' 2>/dev/null || printf '')"
+  if [[ "$outcome" != "REVIEWED_CLEAN" || "$selected_file" != "Upkeeper" ]]; then
+    printf 'review_summary_self_test=fail reason=valid_selected_file_not_preserved outcome=%s selected_file=%s\n' "$outcome" "$selected_file" >&2
+    return 1
+  fi
+
+  printf 'review_summary_self_test=pass\n'
+  return 0
 }
 
 # Keep this backup override in the entrypoint so selected-target-only repair
@@ -6134,6 +6203,10 @@ main() {
   fi
   if upkeeper_internal_live_output_custody_filter_self_test_requested; then
     upkeeper_internal_live_output_custody_filter_self_test
+    return $?
+  fi
+  if upkeeper_internal_review_summary_self_test_requested; then
+    upkeeper_internal_review_summary_self_test
     return $?
   fi
   ensure_log_parent

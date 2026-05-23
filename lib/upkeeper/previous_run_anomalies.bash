@@ -19,9 +19,7 @@ cycle_re = re.compile(r"\bcycle=([^ \t\r\n]+)")
 run_hash_re = re.compile(r"\brun_hash=([^ \t\r\n]+)")
 boot_id_re = re.compile(r"\bboot_id=([^ \t\r\n]+)")
 structured_log_re = re.compile(
-    r"^[^ \t\r\n]+[ \t]+"
-    r"(?:\u2588[ \t]+(?!(?:PAGE|WORKER)\b)(?:(?:--FYI--|[A-Z]+)[ \t]+))?"
-    r"\[[A-Z]+\][ \t]+cycle=[^ \t\r\n]+(?:[ \t]|\r?\n|$)"
+    r"^[^ \t\r\n]+[ \t]+\[[A-Z]+\][ \t]+cycle=[^ \t\r\n]+(?:[ \t]|\r?\n|$)"
 )
 direct_custody_re = re.compile(
     r"^[^ \t\r\n]+[ \t]+(?:\u2588[ \t]+)?"
@@ -54,8 +52,8 @@ def parsed_epoch(line):
 
 
 def is_structured_log_event(line):
-    # Backlog PAGE/WORKER lines can quote prior Upkeeper output. Only direct
-    # structured log events are trusted as previous-cycle evidence.
+    # Launcher attention rows can quote prior Upkeeper output after their own
+    # marker column. Only raw Upkeeper structured events are trusted here.
     return bool(structured_log_re.match(line))
 
 

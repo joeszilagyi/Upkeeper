@@ -25,7 +25,8 @@ structured_log_re = re.compile(
 )
 direct_custody_re = re.compile(
     r"^[^ \t\r\n]+[ \t]+(?:\u2588[ \t]+)?"
-    r"(?:(?:--FYI--|[A-Z]+)[ \t]+)?backlog:[ \t]+anomaly custody:[ \t]"
+    r"(?:(?:--FYI--|(?!(?:PAGE|WORKER)\b)[A-Z]+)[ \t]+)?"
+    r"backlog:[ \t]+anomaly custody:[ \t]"
 )
 cycles = {}
 latest_previous_run_ack_epoch = None

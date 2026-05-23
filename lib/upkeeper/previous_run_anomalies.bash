@@ -1,3 +1,6 @@
+# Detect unresolved prior-cycle evidence and surface it without turning quoted
+# historical log markers into fresh WARN/ERROR events in launcher output.
+
 previous_run_anomaly_lines_impl() {
   local current_boot_id current_boot_id_hash redaction_key
 
@@ -41,6 +44,10 @@ cutoff = time.time() - (scan_minutes * 60)
 cycle_re = re.compile(r"\bcycle=([^ \t\r\n]+)")
 run_hash_re = re.compile(r"\brun_hash=([^ \t\r\n]+)")
 boot_id_re = re.compile(r"\bboot_id=([^ \t\r\n]+)")
+embedded_log_level_re = re.compile(
+    r"\[(DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|FATAL|CRITICAL|TRACE)\]",
+    re.IGNORECASE,
+)
 structured_log_re = re.compile(
     r"^[^ \t\r\n]+[ \t]+\[[A-Z]+\][ \t]+cycle=[^ \t\r\n]+(?:[ \t]|\r?\n|$)"
 )
@@ -100,7 +107,7 @@ def safe_embedded_log_excerpt(text):
         sanitized,
     )
     sanitized = sanitized.replace("\u2588", "{MARK}")
-    return re.sub(r"\[([A-Z]+)\]", r"{\1}", sanitized)[:300]
+    return embedded_log_level_re.sub(lambda match: f"{{{match.group(1).upper()}}}", sanitized)[:300]
 
 
 def parsed_epoch(line):

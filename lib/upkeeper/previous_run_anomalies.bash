@@ -1,15 +1,41 @@
-previous_run_anomaly_lines() {
+# Detect unresolved prior-cycle evidence and surface it without turning quoted
+# historical log markers into fresh WARN/ERROR events in launcher output.
+
+previous_run_anomaly_lines_impl() {
+  local current_boot_id current_boot_id_hash redaction_key
+
   if [[ ! -s "$LOG_FILE" ]]; then
     return 0
   fi
 
-  python3 - "$LOG_FILE" "$CYCLE_ID" "$CODEX_PREVIOUS_RUN_SCAN_MINUTES" "$(system_boot_id)" <<'PY'
+  current_boot_id="$(system_boot_id)"
+  if declare -F upkeeper_value_hmac >/dev/null 2>&1; then
+    current_boot_id_hash="$(upkeeper_value_hmac boot_id "$current_boot_id")"
+  else
+    current_boot_id_hash="$current_boot_id"
+  fi
+  if declare -F upkeeper_redaction_key_material >/dev/null 2>&1; then
+    redaction_key="$(upkeeper_redaction_key_material)"
+  else
+    redaction_key="${ROOT_DIR:-$PWD}|upkeeper-redaction-fallback"
+  fi
+
+  UPKEEPER_PREVIOUS_RUN_REDACTION_KEY="$redaction_key" python3 - \
+    "$LOG_FILE" \
+    "$CYCLE_ID" \
+    "$CODEX_PREVIOUS_RUN_SCAN_MINUTES" \
+    "$current_boot_id" \
+    "$current_boot_id_hash" <<'PY'
 import datetime as dt
+import hashlib
+import hmac
+import os
 import re
 import sys
 import time
 
-log_path, current_cycle, minutes_raw, current_boot_id = sys.argv[1:5]
+log_path, current_cycle, minutes_raw, current_boot_raw, current_boot_protected = sys.argv[1:6]
+redaction_key = os.environ.get("UPKEEPER_PREVIOUS_RUN_REDACTION_KEY", "")
 try:
     scan_minutes = max(0, int(minutes_raw))
 except ValueError:
@@ -18,15 +44,121 @@ cutoff = time.time() - (scan_minutes * 60)
 cycle_re = re.compile(r"\bcycle=([^ \t\r\n]+)")
 run_hash_re = re.compile(r"\brun_hash=([^ \t\r\n]+)")
 boot_id_re = re.compile(r"\bboot_id=([^ \t\r\n]+)")
+embedded_log_level_re = re.compile(
+    r"\[(DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|FATAL|CRITICAL|TRACE)\]",
+    re.IGNORECASE,
+)
+embedded_control_event_re = re.compile(
+    r"\b("
+    r"startup_anomaly\.gate(?:_[A-Za-z0-9_]+)?|"
+    r"previous_run\.anomaly(?:_[A-Za-z0-9_]+)?|"
+    r"watchdog\.anomaly|"
+    r"cycle\.(?:start|exit)|"
+    r"run\.(?:start|finish)"
+    r")\b"
+)
+structured_log_re = re.compile(
+    r"^[^ \t\r\n]+[ \t]+\[[A-Z]+\][ \t]+cycle=[^ \t\r\n]+(?:[ \t]|\r?\n|$)"
+)
+direct_custody_re = re.compile(
+    r"^[^ \t\r\n]+[ \t]+(?:\u2588[ \t]+)?"
+    r"(?:(?:--FYI--|[A-Z]+)[ \t]+)?"
+    r"(?:\[[A-Z]+\][ \t]+)?"
+    r"backlog:[ \t]+anomaly custody:[ \t]"
+)
 cycles = {}
 latest_previous_run_ack_epoch = None
+latest_previous_run_ack_reason = "previous_run_anomaly_gate_reviewed"
+custody_ack_kinds = {
+    "page_error",
+    "previous_run_anomaly_summary",
+    "startup_anomaly_unresolved",
+}
+
+def protected_boot_id(value):
+    text = str(value or "unknown")
+    if text in {"", "unknown", "none", "missing", "unavailable"}:
+        return text or "unknown"
+    if text.startswith("value-hmac-sha256:"):
+        return text
+    material = f"boot_id\0{text}".encode("utf-8", "surrogateescape")
+    digest = hmac.new(
+        redaction_key.encode("utf-8", "surrogateescape"),
+        material,
+        hashlib.sha256,
+    ).hexdigest()
+    return f"value-hmac-sha256:{digest}"
+
+
+def boot_id_matches_current(value):
+    text = str(value or "unknown")
+    return text in {
+        "",
+        "unknown",
+        current_boot_raw,
+        current_boot_protected,
+        protected_boot_id(current_boot_raw),
+    }
+
+
+def redact_boot_ids(text):
+    return boot_id_re.sub(lambda match: f"boot_id={protected_boot_id(match.group(1))}", text)
+
+
+def safe_embedded_log_excerpt(text):
+    # Prior log rows are operator evidence, but agents often quote them in final
+    # output. Neutralize embedded attention, log-level, and control-plane event
+    # markers so quoted evidence does not become fresh anomaly output.
+    sanitized = redact_boot_ids(text).replace("\\", "\\\\").replace("\t", " ")
+    sanitized = re.sub(
+        r"\s*\u2588[ \t]+(PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO)(?=$|[ \t\r\n\"':;,.)])",
+        lambda match: f" {{{match.group(1)}}}",
+        sanitized,
+    )
+    sanitized = sanitized.replace("\u2588", "{MARK}")
+    sanitized = embedded_log_level_re.sub(lambda match: f"{{{match.group(1).upper()}}}", sanitized)
+    sanitized = embedded_control_event_re.sub(lambda match: "{" + match.group(1).replace(".", "_") + "}", sanitized)
+    return sanitized[:300]
+
 
 def parsed_epoch(line):
     stamp = line.split(" ", 1)[0]
-    try:
-        return dt.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S%z").timestamp()
-    except ValueError:
+    for timestamp_format in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            parsed = dt.datetime.strptime(stamp, timestamp_format)
+        except ValueError:
+            continue
+        # Backlog loop logs are operator-facing local time and omit the offset.
+        # Treat those sanitized stamps as local so custody lines can acknowledge
+        # older unresolved-gate evidence from the same log stream.
+        if parsed.tzinfo is None:
+            parsed = parsed.astimezone()
+        return parsed.timestamp()
+    return None
+
+
+def is_structured_log_event(line):
+    # Launcher attention rows can quote prior Upkeeper output after their own
+    # marker column. Only raw Upkeeper structured events are trusted here.
+    return bool(structured_log_re.match(line))
+
+
+def direct_custody_payload(line):
+    # Treat only direct backlog custody records as acknowledgments. A PAGE line
+    # whose payload starts with "backlog:" is backlog's own paged custody row.
+    # Worker rows use the same direct shape; echoed Upkeeper output includes
+    # its own prefix before quoted payload and therefore fails this boundary.
+    if not direct_custody_re.match(line):
         return None
+    payload = line.split("anomaly custody:", 1)[1]
+    return payload.split(" excerpt=", 1)[0]
+
+
+def custody_field(payload, name):
+    match = re.search(rf"(?:^|[ \t]){re.escape(name)}=([^ \t\r\n]+)", payload)
+    if not match:
+        return ""
+    return match.group(1)
 
 try:
     handle = open(log_path, "r", encoding="utf-8", errors="replace")
@@ -38,13 +170,31 @@ with handle:
         epoch = parsed_epoch(line)
         if epoch is not None and scan_minutes > 0 and epoch < cutoff:
             continue
-        if (
-            epoch is not None
-            and " startup_anomaly.gate_resolved " in line
-            and "reasons=previous_run_anomaly" in line
-        ):
-            if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
-                latest_previous_run_ack_epoch = epoch
+        # A raw structured event must start with a parseable timestamp. This
+        # keeps echoed snippets from spoofing prior-cycle control-plane rows.
+        structured_event = epoch is not None and is_structured_log_event(line)
+        if structured_event:
+            if (
+                epoch is not None
+                and " startup_anomaly.gate_resolved " in line
+                and "reasons=previous_run_anomaly" in line
+            ):
+                if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
+                    latest_previous_run_ack_epoch = epoch
+                    latest_previous_run_ack_reason = "previous_run_anomaly_gate_reviewed"
+        custody_payload = direct_custody_payload(line)
+        if custody_payload is not None:
+            if (
+                epoch is not None
+                and custody_field(custody_payload, "target") == "lib/upkeeper/previous_run_anomalies.bash"
+                and custody_field(custody_payload, "kind") in custody_ack_kinds
+            ):
+                if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
+                    latest_previous_run_ack_epoch = epoch
+                    latest_previous_run_ack_reason = "previous_run_anomaly_custody_recorded"
+            continue
+        if not structured_event:
+            continue
         cycle_match = cycle_re.search(line)
         if not cycle_match:
             continue
@@ -95,14 +245,10 @@ acknowledged = 0
 for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"] or 0, reverse=True):
     reason = ""
     if info["start"] and not info["exit"]:
-        if (
-            info.get("last_boot_id", "unknown") not in {"", "unknown"}
-            and current_boot_id not in {"", "unknown"}
-            and info["last_boot_id"] != current_boot_id
-        ):
-            reason = "probable_reboot_or_power_loss"
-        else:
+        if boot_id_matches_current(info.get("last_boot_id", "unknown")):
             reason = "missing_cycle_exit"
+        else:
+            reason = "probable_reboot_or_power_loss"
     elif info["run_start"] and not info["run_finish"] and not info["exit"]:
         reason = "missing_run_finish"
     elif info["watchdog_anomaly"]:
@@ -119,11 +265,12 @@ for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"]
         acknowledged += 1
         continue
     last_epoch = "unknown" if info["last_epoch"] is None else str(int(info["last_epoch"]))
-    last_line = info["last_line"].replace("\\", "\\\\").replace("\t", " ")[:300]
+    last_line = safe_embedded_log_excerpt(info["last_line"])
     print(
         f"previous_cycle={cycle} previous_run_hash={info['run_hash']} "
         f"reason={reason} scan_minutes={scan_minutes} last_epoch={last_epoch} "
-        f"previous_boot_id={info.get('last_boot_id', 'unknown')} current_boot_id={current_boot_id} "
+        f"previous_boot_id={protected_boot_id(info.get('last_boot_id', 'unknown'))} "
+        f"current_boot_id={protected_boot_id(current_boot_raw)} "
         f"last_line={last_line!r}"
     )
     printed += 1
@@ -134,9 +281,13 @@ if acknowledged:
         "__ACK__ "
         f"suppressed={acknowledged} "
         f"ack_epoch={int(latest_previous_run_ack_epoch)} "
-        "reason=previous_run_anomaly_gate_reviewed"
+        f"reason={latest_previous_run_ack_reason}"
     )
 PY
+}
+
+previous_run_anomaly_lines() {
+  previous_run_anomaly_lines_impl
 }
 
 previous_run_anomaly_details_enabled() {
@@ -150,14 +301,12 @@ previous_run_anomaly_details_enabled() {
 }
 
 previous_run_anomaly_summary_line() {
-  local anomaly_input
-  anomaly_input="$(cat)"
-  UPKEEPER_PREVIOUS_RUN_ANOMALY_INPUT="$anomaly_input" python3 - <<'PY'
+  python3 -c '
 import collections
-import os
 import re
 
-lines = [line.rstrip("\n") for line in os.environ.get("UPKEEPER_PREVIOUS_RUN_ANOMALY_INPUT", "").splitlines() if line.strip()]
+with open(0, "r", encoding="utf-8", errors="replace") as anomaly_input:
+    lines = [line.rstrip("\n") for line in anomaly_input if line.strip()]
 
 
 def field(line, name):
@@ -205,7 +354,7 @@ print(
     "details=local_log_state_and_prompt "
     "action=force_upkeeper_self_review"
 )
-PY
+'
 }
 
 scan_previous_run_anomalies() {
@@ -214,7 +363,8 @@ scan_previous_run_anomalies() {
   local anomaly
   local detail_level summary_line
   PREVIOUS_RUN_ANOMALIES=""
-  mapfile -t anomalies < <(previous_run_anomaly_lines || true)
+  # Keep the scan path bound to this module's structured-line trust boundary.
+  mapfile -t anomalies < <(previous_run_anomaly_lines_impl || true)
   mapfile -t state_anomalies < <(startup_anomaly_state_lines || true)
   anomalies+=("${state_anomalies[@]}")
   local -a active_anomalies=()

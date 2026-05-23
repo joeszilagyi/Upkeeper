@@ -184,7 +184,15 @@ def is_prompt_or_contract(line: str) -> bool:
         return True
     return False
 
+def is_expected_negative_fixture(line: str) -> bool:
+    return (
+        'transcript directory is not private' in line
+        and re.search(r'/upkeeper-transcripts-test\.[^/\s]+/transcripts-link\b', line)
+    )
+
 def is_signal(line: str) -> bool:
+    if is_expected_negative_fixture(line):
+        return False
     if line.startswith(('UPKEEPER_STATUS:', 'UPKEEPER_LOG_REVIEW:')):
         return True
     if is_prompt_or_contract(line):
@@ -510,7 +518,16 @@ def is_prompt_or_contract(line: str) -> bool:
     return False
 
 
+def is_expected_negative_fixture(line: str) -> bool:
+    return (
+        "transcript directory is not private" in line
+        and re.search(r"/upkeeper-transcripts-test\.[^/\s]+/transcripts-link\b", line)
+    )
+
+
 def is_error_line(line: str) -> bool:
+    if is_expected_negative_fixture(line):
+        return False
     if not line or is_prompt_or_contract(line):
         return False
     patterns = (

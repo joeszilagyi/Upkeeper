@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.30
+## Version: v1.2.32
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.30"
+UPKEEPER_VERSION="v1.2.32"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -693,6 +693,317 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
   source_upkeeper_module "$upkeeper_module"
 done
  unset upkeeper_module
+
+upkeeper_live_output_false_positive_error_echo() {
+  local line="$1"
+  local payload
+
+  case "$line" in
+    *' [ERROR] Upkeeper: primary: '*)
+      payload="${line#* [ERROR] Upkeeper: primary: }"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  case "$payload" in
+    *'rg -n '*' || true'*|*'grep -Fq '*|*'grep -Eq '*|*'if grep '*|*'printf '*|*'echo '*|*'case '*|*'warn='*|*'err='*|*'payload='*|*'<<<'*|*'|| {'*|*'&&'*|*';;'*|*'*)'*|*"*'|"*|*"|'*"*)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  case "$payload" in
+    'grep '*|'printf '*|'echo '*|'if grep '*|'case '*)
+      return 0
+      ;;
+    *'[WARN]'*|*'[ERROR]'*|*'[INFO]'*|*$'\342\226\210'*|*'PAGE'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+upkeeper_live_output_custody_filter() {
+  local custody="transcript"
+  local line rewritten
+
+  if tool_failure_queue_enabled; then
+    custody="transcript_and_tool_failure_queue"
+  fi
+
+  while IFS= read -r line; do
+    if upkeeper_live_output_false_positive_error_echo "$line"; then
+      # A quoted diagnostic/search/test shell fragment from prior evidence is
+      # not itself a current-cycle runtime failure. Keep it visible without
+      # paging it as operator ERROR output.
+      rewritten="${line/ \[ERROR\] / [INFO] }"
+      rewritten="${rewritten/ Upkeeper: / Upkeeper: live_output.false_positive_error_echo classification=quoted_backend_shell_fixture }"
+      printf '%s\n' "$rewritten"
+      continue
+    fi
+    case "$line" in
+      *' [ERROR] Upkeeper: '*" cmd#"*" validation failed: exited "*|*' [ERROR] Upkeeper: '*" cmd#"*" check failed: exited "*|*' [ERROR] Upkeeper: '*" cmd#"*" tests failed: exited "*)
+        rewritten="${line/ \[ERROR\] / [WARN] }"
+        rewritten="${rewritten/ validation failed:/ validation failed; captured_by=$custody:}"
+        rewritten="${rewritten/ check failed:/ check failed; captured_by=$custody:}"
+        rewritten="${rewritten/ tests failed:/ tests failed; captured_by=$custody:}"
+        printf '%s\n' "$rewritten"
+        ;;
+      *)
+        printf '%s\n' "$line"
+        ;;
+    esac
+  done
+}
+
+upkeeper_internal_live_output_custody_filter_self_test_requested() {
+  config_truthy "${UPKEEPER_INTERNAL_LIVE_OUTPUT_CUSTODY_FILTER_SELF_TEST:-0}"
+}
+
+upkeeper_internal_live_output_custody_filter_self_test() {
+  local sample output
+
+  sample='2026-05-22T12:04:06 [ERROR] Upkeeper: primary: rg -n "active_lock\\.(stale|failed)|cycle.exit|UPKEEPER_ACTIVE_LOCK" "\"$repro_log" || true'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=diagnostic_search_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_shell_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=diagnostic_search_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample='2026-05-22T13:07:09 [ERROR] Upkeeper: primary: rg -n "active_lock'\''"\\.(stale|failed|stale_quarantined)|cycle\\.exit\" \""'\''$tmp_dir/Upkeeper.log" || true'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_anomaly_search_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_shell_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_anomaly_search_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample='2026-05-22T12:04:06 [ERROR] Upkeeper: primary: Traceback (most recent call last)'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=real_error_was_downgraded output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-23T07:21:59 \342\226\210 PAGE [ERROR] Upkeeper: primary: *\'"\'[ERROR]\'*|*\'[WARN]\'*|*\'\342\226\210\'*|*\'startup_anomaly.gate_unresolved\'*|*\'previous_run.anomaly_summary\'*|*\'cycle.exit\'*|*\'run.finish\'*)'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=case_glob_fixture_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_shell_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=case_glob_fixture_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-23T07:02:16 \342\226\210 PAGE [ERROR] Upkeeper: primary: grep -Fq \'previous_cycle=prior-normal\' "$tmp_dir/out" && echo \'normal_cycle=passed\' || { echo \'normal_cycle=failed\'; exit 1; }'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=grep_fixture_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_shell_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=grep_fixture_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-23T07:29:58 \342\226\210 PAGE [ERROR] Upkeeper: primary: warn=\'[\'\'WARN\'\']\''
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=warn_assignment_fixture_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_shell_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=warn_assignment_fixture_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample='2026-05-22T15:37:16 [ERROR] Upkeeper: primary cmd#38 validation failed: exited 1 in 116ms:'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=validation_failure_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *' [WARN] Upkeeper: primary cmd#38 validation failed; captured_by='*': exited 1 in 116ms:'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=validation_failure_not_custodied output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-22T16:10:17 \342\226\210 WORKER [ERROR] Upkeeper: primary cmd#33 validation failed: exited 1 in 113ms:'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_validation_failure_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *$' \342\226\210 WORKER [WARN] Upkeeper: primary cmd#33 validation failed; captured_by='*': exited 1 in 113ms:'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_validation_failure_not_custodied output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-23T00:13:51 \342\226\210 WORKER [ERROR] Upkeeper: primary cmd#41 validation failed: exited 2 in 0ms:'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_zero_ms_validation_failure_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *$' \342\226\210 WORKER [WARN] Upkeeper: primary cmd#41 validation failed; captured_by='*': exited 2 in 0ms:'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_zero_ms_validation_failure_not_custodied output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-22T16:34:05 \342\226\210 WORKER [ERROR] Upkeeper: primary cmd#19 check failed: exited 3 in 279ms:'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_check_failure_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *$' \342\226\210 WORKER [WARN] Upkeeper: primary cmd#19 check failed; captured_by='*': exited 3 in 279ms:'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_check_failure_not_custodied output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-22T16:35:25 \342\226\210 WORKER [ERROR] Upkeeper: primary cmd#32 check failed: exited 1 in 615ms:'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_page_error_check_failure_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *$' \342\226\210 WORKER [WARN] Upkeeper: primary cmd#32 check failed; captured_by='*': exited 1 in 615ms:'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_page_error_check_failure_not_custodied output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-23T00:04:01 \342\226\210 WORKER [ERROR] Upkeeper: primary cmd#23 tests failed: exited 1 in 0.1s'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_page_error_tests_failure_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *$' \342\226\210 WORKER [WARN] Upkeeper: primary cmd#23 tests failed; captured_by='*': exited 1 in 0.1s'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_page_error_tests_failure_not_custodied output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  printf 'live_output_custody_filter_self_test=pass\n'
+  return 0
+}
+
+run_codex_exec_capture() {
+  local label="$1"
+  local transcript_file="$2"
+  local stdin_file="$3"
+  local codex_rc
+  local tee_rc=0
+  local filter_rc=0
+  local -a pipe_status
+  local -a genie_env
+  shift 3
+
+  prepare_genie_protocol_env
+  genie_env=(
+    env
+    -u GITHUB_TOKEN
+    -u GH_TOKEN
+    -u GITHUB_PAT
+    -u GH_ENTERPRISE_TOKEN
+    -u GITHUB_ENTERPRISE_TOKEN
+    -u CODEX_GITHUB_PERSONAL_ACCESS_TOKEN
+    -u GITHUB_API_URL
+    -u GITHUB_GRAPHQL_URL
+    PATH="$RUN_GENIE_BIN_DIR:$PATH"
+    UPKEEPER_REAL_GH_BIN="$RUN_GENIE_REAL_GH_BIN"
+    GH_CONFIG_DIR="$RUN_GENIE_GH_CONFIG_DIR"
+    GIT_TERMINAL_PROMPT=0
+  )
+
+  if terminal_wants_full_output; then
+    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 |
+      tee "$transcript_file" |
+      upkeeper_live_output_custody_filter
+    pipe_status=("${PIPESTATUS[@]}")
+    codex_rc="${pipe_status[0]}"
+    tee_rc="${pipe_status[1]}"
+    filter_rc="${pipe_status[2]}"
+  else
+    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 |
+      tee "$transcript_file" |
+      codex_live_output_filter "$label" 2> >(upkeeper_live_output_custody_filter >&2)
+    pipe_status=("${PIPESTATUS[@]}")
+    codex_rc="${pipe_status[0]}"
+    tee_rc="${pipe_status[1]}"
+    filter_rc="${pipe_status[2]}"
+    emit_codex_transcript_summary "$label" "$transcript_file" "$codex_rc"
+  fi
+
+  if [[ "$tee_rc" -ne 0 ]]; then
+    log_line "ERROR" "codex.transcript_capture_failed label=$label transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1 tee_exit=$tee_rc codex_exit=$codex_rc" || true
+    [[ "$codex_rc" -ne 0 ]] || return "$tee_rc"
+  fi
+  if [[ "$filter_rc" -ne 0 ]]; then
+    log_line "WARN" "codex.live_output_filter_failed label=$label transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1 filter_exit=$filter_rc codex_exit=$codex_rc" || true
+  fi
+  return "$codex_rc"
+}
 
 # Keep prune behavior anchored to Upkeeper-managed markers so archive cleanup only
 # applies to log trees that this wrapper instance explicitly owns.
@@ -1307,8 +1618,8 @@ PY
 
 # Keep this backup override in the entrypoint so selected-target-only repair
 # cycles can harden encrypted pre-contact backup integrity without patching the
-# paired module file. The helper hashes the exact payload bytes written so age
-# backups fail closed if the target changes after metadata was derived.
+# paired module file. The helper hashes target content while writing the payload
+# so age backups fail closed if the target changes after metadata was derived.
 upkeeper_precontact_backup_write_payload_and_sha() {
   local metadata_file="$1"
   local target_file="$2"
@@ -5855,6 +6166,26 @@ upkeeper_internal_active_lock_self_test() {
 
   if ! mkdir -p -- "$lock_dir"; then
     rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=mkdir_legacy_lock_failed\n' >&2
+    return 2
+  fi
+  {
+    printf 'root_dir=%s\n' "$(upkeeper_runtime_path_value "$ROOT_DIR")"
+    printf 'self_path=%s\n' "$(upkeeper_runtime_path_value "${SELF_PATH:-}")"
+  } >"$lock_dir/state"
+  if ! upkeeper_active_lock_verify_ownership_marker "$lock_dir" || [[ ! -f "$marker_path" ]]; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=legacy_owner_marker_not_repaired\n' >&2
+    return 1
+  fi
+  if ! upkeeper_active_lock_remove_owned_stale_dir "$lock_dir" || [[ -e "$lock_dir" ]]; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=legacy_lock_not_removed\n' >&2
+    return 1
+  fi
+
+  if ! mkdir -p -- "$lock_dir"; then
+    rm -rf -- "$test_root"
     printf 'active_lock_self_test=fail reason=mkdir_residue_lock_failed\n' >&2
     return 2
   fi
@@ -5873,6 +6204,28 @@ upkeeper_internal_active_lock_self_test() {
   if [[ "${#quarantined_locks[@]}" -ne 1 || ! -f "${quarantined_locks[0]}/unexpected.residue" ]]; then
     rm -rf -- "$test_root"
     printf 'active_lock_self_test=fail reason=quarantine_evidence_missing\n' >&2
+    return 1
+  fi
+
+  rm -rf -- "${quarantined_locks[@]}"
+
+  if ! mkdir -p -- "$lock_dir"; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=mkdir_unowned_lock_failed\n' >&2
+    return 2
+  fi
+  printf 'residue\n' >"$lock_dir/unowned.residue"
+  if ! upkeeper_active_lock_quarantine_stale_dir "$lock_dir" || [[ -e "$lock_dir" ]]; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=unowned_lock_not_quarantined\n' >&2
+    return 1
+  fi
+  shopt -s nullglob
+  quarantined_locks=("$lock_parent"/upkeeper-active.lock.stale.*)
+  shopt -u nullglob
+  if [[ "${#quarantined_locks[@]}" -ne 1 || ! -f "${quarantined_locks[0]}/unowned.residue" ]]; then
+    rm -rf -- "$test_root"
+    printf 'active_lock_self_test=fail reason=unowned_quarantine_evidence_missing\n' >&2
     return 1
   fi
 
@@ -5896,6 +6249,10 @@ main() {
   if upkeeper_internal_current_cycle_log_review_requested; then
     upkeeper_emit_sanitized_current_cycle_log_review
     return 0
+  fi
+  if upkeeper_internal_live_output_custody_filter_self_test_requested; then
+    upkeeper_internal_live_output_custody_filter_self_test
+    return $?
   fi
   ensure_log_parent
   ensure_log_writable_or_exit "startup"

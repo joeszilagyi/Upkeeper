@@ -507,6 +507,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import sys
 
 open_dir = pathlib.Path(sys.argv[1])
@@ -616,6 +617,127 @@ def evidence_value(item, *keys):
     return ""
 
 
+def evidence_text(item):
+    chunks = []
+    for field in ("evidence", "last_evidence"):
+        evidence = item.get(field)
+        if not isinstance(evidence, dict):
+            continue
+        for key in ("normalized_excerpt", "excerpt", "fingerprint"):
+            value = stable_value(evidence.get(key))
+            if value:
+                chunks.append(value)
+    value = stable_value(item.get("fingerprint"))
+    if value:
+        chunks.append(value)
+    return "\n".join(chunks)
+
+
+def sourced_from_backlog_loop(item):
+    for field in ("evidence", "last_evidence"):
+        evidence = item.get(field)
+        if isinstance(evidence, dict) and stable_value(evidence.get("source")) == "backlog_loop_log":
+            return True
+    return False
+
+
+def quoted_backend_fixture_text(text):
+    lower = text.lower()
+    marker = "upkeeper: primary:"
+    if marker not in lower:
+        return False
+    payload = lower.split(marker, 1)[1]
+    shell_tokens = (
+        "printf ",
+        "printf '",
+        'printf "',
+        "echo ",
+        "grep ",
+        "grep -fq ",
+        "grep -eq ",
+        "if grep ",
+        "case ",
+        "cat >",
+        "awk ",
+        "sed ",
+        "warn=",
+        "err=",
+        "payload=",
+        "$stamp",
+        "$local_stamp",
+        "$tmp",
+        "$tmp_dir",
+        "$output",
+        "$log_file",
+        ">>",
+        "<<<",
+        "|| {",
+        "&&",
+        "|*",
+        "'*|",
+        "*)",
+        ";;",
+        "\\n",
+    )
+    embedded_tokens = (
+        "[warn]",
+        "[error]",
+        "[info]",
+        "(warn|error)",
+        "warn|error",
+        "warn",
+        "error",
+        " page ",
+        "startup_anomaly",
+        "previous_run.anomaly",
+        " cycle=",
+        " run_hash=",
+        "cycle.exit",
+        "run.finish",
+        " █ ",
+    )
+    if "warn=" in payload or "err=" in payload:
+        return True
+    if payload.startswith(("grep ", "printf ", "echo ", "if grep ", "case ")):
+        return True
+    if any(token in payload for token in shell_tokens) and any(token in payload for token in embedded_tokens):
+        return True
+    if payload.lstrip().startswith("'") and any(token in payload for token in embedded_tokens):
+        return True
+    return False
+
+
+def file_text(path):
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def operator_guide_current():
+    wrapper = file_text(root_dir / "Upkeeper")
+    guide = file_text(root_dir / "docs" / "scripts" / "upkeeper.md")
+    wrapper_match = re.search(r'^UPKEEPER_VERSION="([^"]+)"', wrapper, re.M)
+    guide_match = re.search(r"^Version:\s*(\S+)", guide, re.M)
+    return bool(wrapper_match and guide_match and wrapper_match.group(1) == guide_match.group(1))
+
+
+def obsolete_resolution_reason(item):
+    if stable_value(item.get("kind")) != "prior_run_anomaly" or not sourced_from_backlog_loop(item):
+        return ""
+    text = evidence_text(item)
+    lower = text.lower()
+    if quoted_backend_fixture_text(text):
+        return "quoted_backend_fixture_reclassified"
+    if "operator_guide.stale" in lower and operator_guide_current():
+        return "operator_guide_stale_obsolete_after_current_snapshot"
+    if "log.rotate_blocked reason=custom_log_path_without_explicit_override" in lower:
+        return "backlog_default_log_path_trusted_after_marker_contract"
+    if "transcript.prune_blocked reason=missing_ownership_marker" in lower:
+        return "backlog_default_transcript_dir_trusted_after_marker_contract"
+    return ""
+
+
 def group_key(item):
     target = normalized_repo_target(item.get("target_file", ""))
     repair_target = normalized_repo_target(item.get("repair_target_file", ""))
@@ -682,16 +804,39 @@ if not open_dir.is_dir():
 
 items = [item for item in (load(path) for path in sorted(open_dir.glob("*.json"))) if item]
 foreign_count = sum(1 for item in items if item.get("_foreign_root"))
-current_items = [item for item in items if not item.get("_foreign_root")]
+raw_current_items = [item for item in items if not item.get("_foreign_root")]
 groups = {}
-for item in current_items:
-    groups.setdefault(group_key(item), []).append(item)
 
 resolved_count = 0
+obsolete_resolved_count = 0
+duplicate_resolved_count = 0
 owner_count = 0
 duplicate_groups = 0
 reconciled_at = now_local()
 private_dir(resolved_dir)
+current_items = []
+
+for item in raw_current_items:
+    obsolete_reason = obsolete_resolution_reason(item)
+    if obsolete_reason:
+        item_id = stable_value(item.get("id")) or pathlib.Path(item["_path"]).stem
+        item["status"] = "resolved_obsolete"
+        item["resolved_at"] = reconciled_at
+        item["resolved_reason"] = obsolete_reason
+        item["reconciled_by"] = "automation_obligation_reconciler"
+        resolved_path = resolved_dir / f"{item_id}.json"
+        write_json(resolved_path, public_record(item))
+        try:
+            pathlib.Path(item["_path"]).unlink()
+        except OSError:
+            pass
+        obsolete_resolved_count += 1
+        resolved_count += 1
+        continue
+    current_items.append(item)
+
+for item in current_items:
+    groups.setdefault(group_key(item), []).append(item)
 
 for key, group_items in groups.items():
     if len(group_items) < 2:
@@ -717,6 +862,7 @@ for key, group_items in groups.items():
             pathlib.Path(duplicate["_path"]).unlink()
         except OSError:
             pass
+        duplicate_resolved_count += 1
         resolved_count += 1
 
     owner_path = pathlib.Path(owner["_path"])
@@ -733,18 +879,20 @@ for key, group_items in groups.items():
     write_json(owner_path, public_record(owner))
     owner_count += 1
 
-current_after = len(current_items) - resolved_count
+current_after = len(raw_current_items) - resolved_count
 status = "reconciled" if resolved_count else "clean"
 print(
     json.dumps(
         {
             "status": status,
             "open_before": len(items),
-            "current_root_open_before": len(current_items),
+            "current_root_open_before": len(raw_current_items),
             "current_root_open_after": current_after,
             "deferred_foreign_root_count": foreign_count,
             "duplicate_groups": duplicate_groups,
-            "duplicates_resolved": resolved_count,
+            "duplicates_resolved": duplicate_resolved_count,
+            "obsolete_resolved": obsolete_resolved_count,
+            "total_resolved": resolved_count,
             "owners_updated": owner_count,
         },
         separators=(",", ":"),
@@ -763,9 +911,14 @@ import os
 import pathlib
 import stat
 import sys
+import time
 
 open_dir = pathlib.Path(sys.argv[1])
 root_dir = pathlib.Path(sys.argv[2]).resolve()
+try:
+    now_epoch = int(os.environ.get("UPKEEPER_AUTOMATION_NOW_EPOCH", "") or time.time())
+except ValueError:
+    now_epoch = int(time.time())
 if not open_dir.is_dir():
     print(json.dumps({"status": "clean", "open_count": 0}, separators=(",", ":")))
     raise SystemExit(0)
@@ -843,6 +996,29 @@ def target_error(path):
     return ""
 
 
+def safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def retry_epoch(item):
+    return safe_int(item.get("next_retry_epoch"), 0)
+
+
+def cooldown_summary(items):
+    retry_epochs = [retry_epoch(item) for item in items if retry_epoch(item) > now_epoch]
+    next_retry_epoch = min(retry_epochs) if retry_epochs else 0
+    return {
+        "status": "cooldown_deferred",
+        "open_count": len(items),
+        "deferred_foreign_root_count": foreign_root_count,
+        "cooldown_deferred_count": len(items),
+        "next_retry_epoch": next_retry_epoch,
+    }
+
+
 def choose_repair_target(item, original_target, error):
     launcher = normalized_repo_target(item.get("launcher", ""))
     if launcher and not target_error(launcher):
@@ -877,6 +1053,12 @@ if not items:
     )
     raise SystemExit(0)
 
+cooldown_items = [item for item in items if retry_epoch(item) > now_epoch]
+eligible_items = [item for item in items if retry_epoch(item) <= now_epoch]
+if not eligible_items:
+    print(json.dumps(cooldown_summary(items), separators=(",", ":")))
+    raise SystemExit(0)
+
 
 def key(item):
     severity = severity_rank.get(str(item.get("severity", "medium")).lower(), 2)
@@ -887,7 +1069,7 @@ def key(item):
     return (severity, kind, created, target, ident)
 
 
-selected = sorted(items, key=key)[0]
+selected = sorted(eligible_items, key=key)[0]
 target_scope = str(selected.get("target_scope", "target") or "target")
 target = str(selected.get("target_file") or "")
 repair_target_hint = normalized_repo_target(selected.get("repair_target_file", ""))
@@ -897,6 +1079,7 @@ if target_scope == "machine":
         "status": "operator_action_required",
         "open_count": len(items),
         "deferred_foreign_root_count": foreign_root_count,
+        "cooldown_deferred_count": len(cooldown_items),
         "id": str(selected.get("id", "")),
         "path": selected["_path"],
         "kind": str(selected.get("kind", "")),
@@ -943,6 +1126,7 @@ result = {
     "status": "ok",
     "open_count": len(items),
     "deferred_foreign_root_count": foreign_root_count,
+    "cooldown_deferred_count": len(cooldown_items),
     "id": str(selected.get("id", "")),
     "path": selected["_path"],
     "kind": str(selected.get("kind", "")),
@@ -966,6 +1150,9 @@ result = {
     "transcript": str(selected.get("transcript", "")),
     "evidence": selected.get("evidence", {}),
     "required_resolution": selected.get("required_resolution", []),
+    "repair_attempt_count": str(selected.get("repair_attempt_count", "")),
+    "blocked_attempt_count": str(selected.get("blocked_attempt_count", "")),
+    "next_retry_epoch": str(selected.get("next_retry_epoch", "")),
 }
 print(json.dumps(result, separators=(",", ":")))
 PY
@@ -1094,6 +1281,429 @@ except BaseException:
     raise
 PY
   printf '%s' "$prompt_path"
+}
+
+automation_record_obligation_attempt_json() {
+  local obligation_json="$1"
+  local attempt_status="$2"
+  local exit_status="${3:-}"
+  local result_summary="${4:-}"
+  local attempt_limit="${UPKEEPER_OBLIGATION_RETRY_LIMIT:-3}"
+  local cooldown_seconds="${UPKEEPER_OBLIGATION_RETRY_COOLDOWN_SECONDS:-21600}"
+
+  python3 - \
+    "$obligation_json" \
+    "$attempt_status" \
+    "$exit_status" \
+    "$result_summary" \
+    "$attempt_limit" \
+    "$cooldown_seconds" <<'PY'
+import datetime as dt
+import json
+import os
+import pathlib
+import sys
+import time
+
+(
+    obligation_json,
+    attempt_status,
+    exit_status,
+    result_summary,
+    attempt_limit_raw,
+    cooldown_seconds_raw,
+) = sys.argv[1:7]
+
+
+def safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def now_epoch():
+    return safe_int(os.environ.get("UPKEEPER_AUTOMATION_NOW_EPOCH"), int(time.time()))
+
+
+def now_local(epoch):
+    return dt.datetime.fromtimestamp(epoch).astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+try:
+    selected = json.loads(obligation_json)
+except json.JSONDecodeError:
+    print(json.dumps({"status": "invalid_json"}, separators=(",", ":")))
+    raise SystemExit(0)
+
+path_text = str(selected.get("path") or "").strip()
+if not path_text:
+    print(json.dumps({"status": "missing_path"}, separators=(",", ":")))
+    raise SystemExit(0)
+path = pathlib.Path(path_text)
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    print(json.dumps({"status": "missing_record", "path": path_text}, separators=(",", ":")))
+    raise SystemExit(0)
+
+if data.get("status", "open") != "open":
+    print(json.dumps({"status": "not_open", "id": data.get("id", "")}, separators=(",", ":")))
+    raise SystemExit(0)
+
+epoch = now_epoch()
+attempt_count = safe_int(data.get("repair_attempt_count"), 0) + 1
+blocked_count = safe_int(data.get("blocked_attempt_count"), 0)
+if attempt_status == "blocked":
+    blocked_count += 1
+
+data["repair_attempt_count"] = attempt_count
+data["blocked_attempt_count"] = blocked_count
+data["last_repair_attempt_at"] = now_local(epoch)
+data["last_repair_status"] = attempt_status
+data["last_repair_exit_status"] = str(exit_status)
+data["last_repair_result"] = str(result_summary)[:300]
+
+limit = max(1, safe_int(attempt_limit_raw, 3))
+cooldown_seconds = max(0, safe_int(cooldown_seconds_raw, 21600))
+cooldown_applied = False
+next_retry_epoch = safe_int(data.get("next_retry_epoch"), 0)
+if attempt_status == "blocked" and blocked_count >= limit and cooldown_seconds > 0:
+    next_retry_epoch = epoch + cooldown_seconds
+    data["next_retry_epoch"] = next_retry_epoch
+    data["next_retry_at"] = now_local(next_retry_epoch)
+    data["selection_state"] = "cooldown"
+    data["cooldown_reason"] = "repeated_blocked_repair_attempts"
+    data["cooldown_attempt_limit"] = limit
+    cooldown_applied = True
+
+write_json(path, data)
+print(
+    json.dumps(
+        {
+            "status": "updated",
+            "id": str(data.get("id", "")),
+            "repair_attempt_count": attempt_count,
+            "blocked_attempt_count": blocked_count,
+            "cooldown_applied": cooldown_applied,
+            "next_retry_epoch": next_retry_epoch,
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
+automation_sync_obligation_issue_reports_json() {
+  local report_dir="${UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR:-$(automation_obligation_root)/issue-reports}"
+  local github_write="${UPKEEPER_OBLIGATION_GITHUB_ISSUE_WRITE:-0}"
+  local github_labels="${UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS:-}"
+
+  python3 - \
+    "$(automation_obligation_root)/open" \
+    "$report_dir" \
+    "$ROOT_DIR" \
+    "$github_write" \
+    "$github_labels" <<'PY'
+import datetime as dt
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+open_dir = pathlib.Path(sys.argv[1])
+report_dir = pathlib.Path(sys.argv[2])
+root_dir = pathlib.Path(sys.argv[3]).resolve()
+github_write = sys.argv[4].strip().lower() in {"1", "true", "yes", "on"}
+github_labels = [label.strip() for label in sys.argv[5].split(",") if label.strip()]
+
+
+def now_local():
+    return dt.datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def private_dir(path):
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.chmod(0o700)
+    except OSError:
+        pass
+
+
+def write_text_private(path, text):
+    private_dir(path.parent)
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp, path)
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def write_json_private(path, data):
+    write_text_private(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def stable_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return str(value)
+
+
+def first_nonempty(*values):
+    for value in values:
+        text = stable_text(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def same_root(data):
+    raw = first_nonempty(data.get("root"))
+    if not raw:
+        return True
+    try:
+        return pathlib.Path(raw).resolve() == root_dir
+    except OSError:
+        return False
+
+
+def redact(text):
+    value = stable_text(text)
+    root_text = str(root_dir)
+    if root_text:
+        value = value.replace(root_text, "<repo-root>")
+    home = os.environ.get("HOME", "")
+    if home:
+        value = value.replace(home, "<home>")
+    return value
+
+
+def report_filename(obligation_id):
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", obligation_id).strip(".-")
+    return f"{safe or 'obligation'}.md"
+
+
+def title_for(data):
+    kind = first_nonempty(data.get("kind"), data.get("reason"), "automation obligation")
+    target = first_nonempty(data.get("repair_target_file"), data.get("target_file"), "machine-local state")
+    return f"High priority bug: automation obligation {kind} needs repair for {target}"[:180]
+
+
+def bullet(label, value):
+    text = redact(value).strip()
+    return f"- {label}: {text or 'unknown'}"
+
+
+def evidence_block(data):
+    evidence = data.get("last_evidence")
+    if not isinstance(evidence, dict):
+        evidence = data.get("evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
+    excerpt = first_nonempty(evidence.get("excerpt"), evidence.get("normalized_excerpt"), data.get("fingerprint"))
+    normalized = first_nonempty(evidence.get("normalized_excerpt"), evidence.get("fingerprint"))
+    lines = []
+    if excerpt:
+        lines.extend(["Excerpt:", "```", redact(excerpt), "```"])
+    if normalized and normalized != excerpt:
+        lines.extend(["Normalized fingerprint:", "```", redact(normalized), "```"])
+    if not lines:
+        lines.append("No inline evidence excerpt was recorded; inspect the obligation JSON and linked runtime artifacts.")
+    return "\n".join(lines)
+
+
+def required_resolution(data):
+    values = data.get("required_resolution")
+    if isinstance(values, list):
+        return [redact(value).strip() for value in values if redact(value).strip()]
+    text = redact(values).strip()
+    return [text] if text else []
+
+
+def body_for(data, title, source_path):
+    resolution = required_resolution(data)
+    lines = [
+        title,
+        "Labels: bug",
+        "",
+        "## Impact",
+        "An unattended Upkeeper cycle produced or preserved a system-level automation obligation before normal issue work. This report is generated locally from wrapper evidence so the failure cannot depend on chat context or a later model run to become actionable.",
+        "",
+        "## Obligation",
+        bullet("id", first_nonempty(data.get("id"), source_path.stem)),
+        bullet("kind", data.get("kind")),
+        bullet("severity", data.get("severity")),
+        bullet("summary", data.get("summary")),
+        bullet("reason", data.get("reason")),
+        bullet("target", data.get("target_file")),
+        bullet("repair target", data.get("repair_target_file")),
+        bullet("target scope", data.get("target_scope")),
+        bullet("source cycle", first_nonempty(data.get("last_source_cycle_id"), data.get("source_cycle_id"))),
+        bullet("source run hash", first_nonempty(data.get("last_source_run_hash"), data.get("source_run_hash"))),
+        bullet("first seen", first_nonempty(data.get("first_seen_at"), data.get("created_at"))),
+        bullet("last seen", first_nonempty(data.get("last_seen_at"), data.get("created_at"))),
+        bullet("occurrence count", data.get("occurrence_count")),
+        bullet("repair attempts", data.get("repair_attempt_count")),
+        bullet("blocked attempts", data.get("blocked_attempt_count")),
+        "",
+        "## Evidence",
+        evidence_block(data),
+        "",
+        "## Expected Behavior",
+        "A later unattended launcher cycle must either repair the underlying wrapper/system defect, classify the evidence as an expected fixture with deterministic context, or keep this obligation visibly open without allowing it to disappear.",
+        "",
+        "## Actual Behavior",
+        "The obligation is still open in local automation custody and needs a tracked fix, explicit resolved classification, or operator-visible blocker.",
+        "",
+        "## Required Resolution",
+    ]
+    if resolution:
+        lines.extend(f"- {item}" for item in resolution)
+    else:
+        lines.append("- Inspect the local obligation evidence before normal backlog issue work.")
+        lines.append("- Add deterministic validation for the repaired or intentionally expected outcome.")
+    lines.extend(
+        [
+            "",
+            "## Local Evidence",
+            bullet("obligation record", str(source_path)),
+            bullet("run record", data.get("run_record")),
+            bullet("transcript", data.get("transcript")),
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def create_github_issue(title, body_path):
+    cmd = ["gh", "issue", "create", "--title", title, "--body-file", str(body_path)]
+    for label in github_labels:
+        cmd.extend(["--label", label])
+    try:
+        completed = subprocess.run(cmd, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        return "", "", str(exc)
+    output = (completed.stdout or "").strip()
+    error = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        return "", output, error or f"gh exited {completed.returncode}"
+    match = re.search(r"/issues/([0-9]+)\b", output)
+    return (match.group(1) if match else "", output, "")
+
+
+records = []
+if open_dir.is_dir():
+    for path in sorted(open_dir.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if data.get("status", "open") != "open" or not same_root(data):
+            continue
+        records.append((path, data))
+
+private_dir(report_dir)
+drafted = 0
+github_created = 0
+github_existing = 0
+github_failed = 0
+updated_records = 0
+now = now_local()
+
+for source_path, data in records:
+    obligation_id = first_nonempty(data.get("id"), source_path.stem)
+    title = title_for(data)
+    report_path = report_dir / report_filename(obligation_id)
+    write_text_private(report_path, body_for(data, title, source_path))
+    drafted += 1
+
+    data["issue_report_required"] = True
+    data["issue_report_state"] = "drafted"
+    data["issue_report_title"] = title
+    data["issue_report_path"] = str(report_path)
+    data["issue_report_updated_at"] = now
+    data["issue_report_generator"] = "automation_sync_obligation_issue_reports_json"
+
+    if github_write:
+        existing_number = first_nonempty(data.get("github_issue_number"))
+        if existing_number:
+            github_existing += 1
+            data["issue_report_state"] = "github_existing"
+        else:
+            issue_number, issue_url, error = create_github_issue(title, report_path)
+            if issue_number:
+                github_created += 1
+                data["issue_report_state"] = "github_created"
+                data["github_issue_number"] = issue_number
+                data["github_issue_url"] = issue_url
+                data["github_issue_created_at"] = now
+            else:
+                github_failed += 1
+                data["issue_report_state"] = "github_failed"
+                data["github_issue_create_error"] = redact(error)[:300]
+
+    write_json_private(source_path, data)
+    updated_records += 1
+
+print(
+    json.dumps(
+        {
+            "status": "synced",
+            "current_root_open": len(records),
+            "drafted": drafted,
+            "updated_records": updated_records,
+            "github_write": github_write,
+            "github_created": github_created,
+            "github_existing": github_existing,
+            "github_failed": github_failed,
+            "report_dir": str(report_dir),
+        },
+        separators=(",", ":"),
+    )
+)
+PY
 }
 
 automation_cycle_exit_resolves_obligation() {

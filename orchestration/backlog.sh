@@ -44,6 +44,11 @@ BACKLOG_ANOMALY_CUSTODY="${BACKLOG_ANOMALY_CUSTODY:-1}"
 BACKLOG_ANOMALY_CUSTODY_LINES="${BACKLOG_ANOMALY_CUSTODY_LINES:-1200}"
 BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS="${BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS:-12}"
 BACKLOG_OBLIGATION_RECONCILE="${BACKLOG_OBLIGATION_RECONCILE:-1}"
+BACKLOG_OBLIGATION_RETRY_LIMIT="${BACKLOG_OBLIGATION_RETRY_LIMIT:-3}"
+BACKLOG_OBLIGATION_RETRY_COOLDOWN_SECONDS="${BACKLOG_OBLIGATION_RETRY_COOLDOWN_SECONDS:-21600}"
+BACKLOG_OBLIGATION_ISSUE_REPORTS="${BACKLOG_OBLIGATION_ISSUE_REPORTS:-1}"
+BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE="${BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE:-0}"
+BACKLOG_OBLIGATION_GITHUB_ISSUE_LABELS="${BACKLOG_OBLIGATION_GITHUB_ISSUE_LABELS:-bug}"
 BACKLOG_ALERT_COLOR="${BACKLOG_ALERT_COLOR:-auto}"
 BACKLOG_ALERT_BLINK="${BACKLOG_ALERT_BLINK:-1}"
 BACKLOG_VISUAL_BLOCK="${BACKLOG_VISUAL_BLOCK:-█}"
@@ -1549,21 +1554,51 @@ prepare_backlog_runtime_env() {
     "$state_root/transcripts" \
     "$state_root/postmortems" \
     "$state_root/bug-report-drafts" \
+    "$state_root/obligation-issue-reports" \
     "$state_root/precontact-vault" \
     "$ROOT_DIR/runtime/upkeeper-backlog-lattice"
-  chmod 700 "$state_root" "$state_root/logs" "$state_root/tmp" "$state_root/transcripts" "$state_root/postmortems" "$state_root/bug-report-drafts" "$state_root/precontact-vault" "$ROOT_DIR/runtime/upkeeper-backlog-lattice" 2>/dev/null || true
+  chmod 700 "$state_root" "$state_root/logs" "$state_root/tmp" "$state_root/transcripts" "$state_root/postmortems" "$state_root/bug-report-drafts" "$state_root/obligation-issue-reports" "$state_root/precontact-vault" "$ROOT_DIR/runtime/upkeeper-backlog-lattice" 2>/dev/null || true
 
   export TMPDIR="${BACKLOG_TMPDIR:-$state_root/tmp}"
   export CODEX_LOG_FILE="${BACKLOG_CODEX_LOG_FILE:-$state_root/logs/Upkeeper.log}"
   export CODEX_TRANSCRIPT_DIR="${BACKLOG_CODEX_TRANSCRIPT_DIR:-$state_root/transcripts}"
   export CODEX_POSTMORTEM_DIR="${BACKLOG_CODEX_POSTMORTEM_DIR:-$state_root/postmortems}"
   export UPKEEPER_BUG_REPORT_DRAFT_DIR="${BACKLOG_BUG_REPORT_DRAFT_DIR:-$state_root/bug-report-drafts}"
+  export UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="${BACKLOG_OBLIGATION_ISSUE_REPORT_DIR:-$state_root/obligation-issue-reports}"
   export UPKEEPER_LATTICE_DB="${BACKLOG_LATTICE_DB:-$ROOT_DIR/runtime/upkeeper-backlog-lattice/lattice.sqlite3}"
   export UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
   export UPKEEPER_PRECONTACT_BACKUP_ROOT="${BACKLOG_PRECONTACT_BACKUP_ROOT:-$state_root/precontact-vault}"
   export CODEX_HOME_DIR="${CODEX_HOME_DIR:-${CODEX_HOME:-$HOME/.codex}}"
   export CODEX_SESSION_SCAN_LIMIT="${CODEX_SESSION_SCAN_LIMIT:-200}"
   export LOG_FILE="${LOG_FILE:-$CODEX_LOG_FILE}"
+
+  if [[ -z "${BACKLOG_CODEX_LOG_FILE+x}" ]]; then
+    export CODEX_LOG_FILE_ALLOW_UNSAFE="${BACKLOG_CODEX_LOG_FILE_ALLOW_UNSAFE:-1}"
+  else
+    export CODEX_LOG_FILE_ALLOW_UNSAFE="${BACKLOG_CODEX_LOG_FILE_ALLOW_UNSAFE:-${CODEX_LOG_FILE_ALLOW_UNSAFE:-0}}"
+  fi
+  backlog_ensure_transcript_artifact_marker
+}
+
+backlog_ensure_transcript_artifact_marker() {
+  local transcript_dir marker_path marker_value
+
+  transcript_dir="${CODEX_TRANSCRIPT_DIR:-}"
+  [[ -n "$transcript_dir" ]] || return 0
+  [[ "$transcript_dir" != "$ROOT_DIR/runtime/upkeeper-transcripts" ]] || return 0
+  [[ ! -L "$transcript_dir" ]] || return 0
+  mkdir -p -- "$transcript_dir" || return 0
+  chmod 700 "$transcript_dir" 2>/dev/null || true
+
+  marker_value="$(
+    ROOT_DIR="$ROOT_DIR" \
+      bash -c 'set -euo pipefail; source "$1/lib/upkeeper/runtime_foundation.bash"; source "$1/lib/upkeeper/transcript_artifacts.bash"; transcript_artifacts_marker_expected "$2"' \
+      bash "$ROOT_DIR" "$transcript_dir" 2>/dev/null
+  )" || return 0
+  [[ -n "$marker_value" ]] || return 0
+  marker_path="$transcript_dir/.upkeeper-transcript-artifacts.marker"
+  printf '%s\n' "$marker_value" >"$marker_path" 2>/dev/null || return 0
+  chmod 600 "$marker_path" 2>/dev/null || true
 }
 
 run_backlog_anomaly_custody_audit() {
@@ -1607,6 +1642,7 @@ run_backlog_anomaly_custody_audit() {
 backlog_select_open_obligation_json() {
   ROOT_DIR="$ROOT_DIR" \
     UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
+    UPKEEPER_AUTOMATION_NOW_EPOCH="${BACKLOG_TEST_NOW_EPOCH:-}" \
     bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
 }
 
@@ -1631,12 +1667,56 @@ backlog_reconcile_open_obligations() {
   return 0
 }
 
+backlog_sync_obligation_issue_reports() {
+  local output status current_open drafted updated github_created github_failed report_dir
+
+  [[ "$BACKLOG_OBLIGATION_ISSUE_REPORTS" == "1" ]] || return 0
+  prepare_backlog_runtime_env
+  output="$(
+    ROOT_DIR="$ROOT_DIR" \
+      UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
+      UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="$UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR" \
+      UPKEEPER_OBLIGATION_GITHUB_ISSUE_WRITE="$BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE" \
+      UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS="$BACKLOG_OBLIGATION_GITHUB_ISSUE_LABELS" \
+      bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )" || return $?
+  status="$(jq -r '.status // "unknown"' <<<"$output")"
+  current_open="$(jq -r '.current_root_open // 0' <<<"$output")"
+  drafted="$(jq -r '.drafted // 0' <<<"$output")"
+  updated="$(jq -r '.updated_records // 0' <<<"$output")"
+  github_created="$(jq -r '.github_created // 0' <<<"$output")"
+  github_failed="$(jq -r '.github_failed // 0' <<<"$output")"
+  report_dir="$(jq -r '.report_dir // ""' <<<"$output")"
+  if [[ "$current_open" != "0" || "$github_failed" != "0" ]]; then
+    log "automation obligation issue reports: status=$status current_open=$current_open drafted=$drafted records_updated=$updated github_created=$github_created github_failed=$github_failed report_dir=$report_dir"
+  fi
+  if [[ "$BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE" == "1" && "$github_failed" != "0" ]]; then
+    log "automation obligation GitHub issue creation had failures; local issue reports remain authoritative"
+  fi
+  return 0
+}
+
 backlog_prepare_obligation_prompt_file() {
   local obligation_json="$1"
 
   ROOT_DIR="$ROOT_DIR" \
     UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
     bash -c 'source "$1"; automation_prepare_obligation_prompt_file "$2"' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash" "$obligation_json"
+}
+
+backlog_record_obligation_attempt() {
+  local obligation_json="$1"
+  local attempt_status="$2"
+  local exit_status="${3:-}"
+  local result_summary="${4:-}"
+
+  ROOT_DIR="$ROOT_DIR" \
+    UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
+    UPKEEPER_OBLIGATION_RETRY_LIMIT="$BACKLOG_OBLIGATION_RETRY_LIMIT" \
+    UPKEEPER_OBLIGATION_RETRY_COOLDOWN_SECONDS="$BACKLOG_OBLIGATION_RETRY_COOLDOWN_SECONDS" \
+    UPKEEPER_AUTOMATION_NOW_EPOCH="${BACKLOG_TEST_NOW_EPOCH:-}" \
+    bash -c 'source "$1"; automation_record_obligation_attempt_json "$2" "$3" "$4" "$5"' \
+      bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash" "$obligation_json" "$attempt_status" "$exit_status" "$result_summary"
 }
 
 quota_preflight_allows_backlog_run() {
@@ -2426,7 +2506,9 @@ main() {
   local job_target job_reason job_expected commit_result final_disposition status partial_commit_message
   local obligation_json obligation_status obligation_id obligation_issue_number obligation_issue_title
   local obligation_summary obligation_target obligation_selected
+  local attempt_json
   local issue_deferred_after_noop
+  local quota_status
   commit_result="uninitialized backlog outcome"
   obligation_selected=0
 
@@ -2461,45 +2543,10 @@ main() {
     log "automation obligation reconciliation failed with status $status; stopping before normal issue selection"
     exit "$status"
   fi
-
-  count="$(fix_count "$pr_number")"
-  if [[ "$count" -ge "$BACKLOG_BATCH_LIMIT" ]]; then
-    log "PR #$pr_number has $count recorded fixes; merging batch"
-    backlog_emit_job_start_summary \
-      "PR #$pr_number batch merge" \
-      "batch limit reached with $count recorded fixes on $branch" \
-      "run local batch validation, wait for PR checks, merge, and clean local main"
-    if merge_and_clean "$pr_number" "$branch"; then
-      backlog_emit_job_finish_summary \
-        "batch validation, PR checks, and merge completed" \
-        "merged PR #$pr_number and returned to clean main"
-    else
-      status="$?"
-      backlog_emit_job_finish_summary \
-        "batch merge path stopped with status $status" \
-        "launcher exiting with status $status"
-      [[ "$status" -eq 2 ]] && exit 0
-      exit "$status"
-    fi
-    exit 0
-  fi
-
-  if backlog_ensure_pr_checks_allow_next_issue "$pr_number" "$count"; then
-    :
-  else
+  if ! backlog_sync_obligation_issue_reports; then
     status="$?"
-    [[ "$status" -eq 2 ]] && exit 0
+    log "automation obligation issue report sync failed with status $status; stopping before normal issue selection"
     exit "$status"
-  fi
-
-  if quota_preflight_allows_backlog_run; then
-    quota_status=0
-  else
-    quota_status="$?"
-  fi
-  if [[ "$quota_status" -ne 0 ]]; then
-    [[ "$quota_status" -eq 3 ]] && exit 0
-    exit "$quota_status"
   fi
 
   obligation_json="$(backlog_select_open_obligation_json)"
@@ -2511,6 +2558,10 @@ main() {
     obligation_id="$(jq -r '.id // "unknown"' <<<"$obligation_json")"
     obligation_summary="$(jq -r '.summary // "machine-local automation obligation"' <<<"$obligation_json")"
     log "automation obligation $obligation_id requires operator action before normal issue work: $obligation_summary"
+    exit 0
+  fi
+  if [[ "$obligation_status" == "cooldown_deferred" ]]; then
+    log "automation obligations are cooling down after repeated blocked repair attempts: count=$(jq -r '.cooldown_deferred_count // 0' <<<"$obligation_json") next_retry_epoch=$(jq -r '.next_retry_epoch // 0' <<<"$obligation_json")"
     exit 0
   fi
 
@@ -2525,11 +2576,52 @@ main() {
     issue_title="$obligation_issue_title"
     target_hint="$obligation_target"
   else
+    count="$(fix_count "$pr_number")"
+    if [[ "$count" -ge "$BACKLOG_BATCH_LIMIT" ]]; then
+      log "PR #$pr_number has $count recorded fixes; merging batch"
+      backlog_emit_job_start_summary \
+        "PR #$pr_number batch merge" \
+        "batch limit reached with $count recorded fixes on $branch" \
+        "run local batch validation, wait for PR checks, merge, and clean local main"
+      if merge_and_clean "$pr_number" "$branch"; then
+        backlog_emit_job_finish_summary \
+          "batch validation, PR checks, and merge completed" \
+          "merged PR #$pr_number and returned to clean main"
+      else
+        status="$?"
+        backlog_emit_job_finish_summary \
+          "batch merge path stopped with status $status" \
+          "launcher exiting with status $status"
+        [[ "$status" -eq 2 ]] && exit 0
+        exit "$status"
+      fi
+      exit 0
+    fi
+
+    if backlog_ensure_pr_checks_allow_next_issue "$pr_number" "$count"; then
+      :
+    else
+      status="$?"
+      [[ "$status" -eq 2 ]] && exit 0
+      exit "$status"
+    fi
+
     issue_info="$(selected_issue "$pr_number")"
     issue_number="$(awk -F '\t' '{print $1}' <<<"$issue_info")"
     issue_title="$(awk -F '\t' '{print $2}' <<<"$issue_info")"
     target_hint="$(target_hint_for_issue "$issue_number")"
   fi
+
+  if quota_preflight_allows_backlog_run; then
+    quota_status=0
+  else
+    quota_status="$?"
+  fi
+  if [[ "$quota_status" -ne 0 ]]; then
+    [[ "$quota_status" -eq 3 ]] && exit 0
+    exit "$quota_status"
+  fi
+
   issue_deferred_after_noop=0
   if [[ "$obligation_selected" == "1" ]]; then
     job_target="$target_hint"
@@ -2574,6 +2666,10 @@ main() {
       fi
     fi
     if [[ "$obligation_selected" == "1" ]]; then
+      attempt_json="$(backlog_record_obligation_attempt "$obligation_json" "blocked" "$run_status" "$commit_result" || true)"
+      if [[ -n "${attempt_json:-}" && "$(jq -r '.cooldown_applied // false' <<<"$attempt_json" 2>/dev/null || printf false)" == "true" ]]; then
+        log "automation obligation $obligation_id reached repeated-blocked retry limit; next retry epoch=$(jq -r '.next_retry_epoch // 0' <<<"$attempt_json")"
+      fi
       log "automation obligation $obligation_id blocked and remains open"
       backlog_emit_job_finish_summary "$commit_result" "automation obligation $obligation_id remains open"
     else
@@ -2586,6 +2682,9 @@ main() {
     backlog_emit_job_finish_summary "Upkeeper deferred on quota or backend usage limit" "quota cooldown marker recorded; outer loop may sleep before the next preflight"
     exit 0
   elif [[ "$run_status" -ne 0 ]]; then
+    if [[ "$obligation_selected" == "1" ]]; then
+      backlog_record_obligation_attempt "$obligation_json" "failed" "$run_status" "Upkeeper exited with status $run_status" >/dev/null || true
+    fi
     backlog_emit_job_finish_summary "Upkeeper exited with status $run_status" "launcher exiting with status $run_status"
     exit "$run_status"
   fi

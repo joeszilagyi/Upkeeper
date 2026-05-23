@@ -30,7 +30,9 @@ DEFAULT_UMBRELLA_TITLE = (
 TIMESTAMP_PREFIX = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{4})?\s+"
 )
-VISUAL_MARKER = re.compile(r"\s+█\s+(PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO)\s+")
+VISUAL_MARKER = re.compile(
+    r"(?:^|\s+)█\s+(PAGE|--FYI--|WORKER|ACTION|WAIT|HEALTH|OK|RUN|INFO)\s+"
+)
 CYCLE_RE = re.compile(r"\bcycle=([^ \t]+)")
 RUN_HASH_RE = re.compile(r"\brun_hash=([^ \t]+)")
 DYNAMIC_FINGERPRINT_PATTERNS = (
@@ -40,6 +42,8 @@ DYNAMIC_FINGERPRINT_PATTERNS = (
     (re.compile(r"\buptime_seconds=[0-9.]+"), "uptime_seconds=<seconds>"),
     (re.compile(r"\b(oldest_epoch|newest_epoch|elapsed|elapsed_seconds|wait_seconds|sleep)=[^ \t]+"), r"\1=<number>"),
     (re.compile(r"\b(detail_bytes|transcript_bytes|transcript_lines|lines|listed_total|prior_cycle_count|state_count)=[0-9]+"), r"\1=<number>"),
+    (re.compile(r"\bcmd#[0-9]+\b"), "cmd#<n>"),
+    (re.compile(r"\bexited\\? [0-9]+\\? in\\? [0-9.]+m?s\b"), "exited <code> in <duration>"),
     (re.compile(r"\b(detail_sha256|log_sha256|prompt_sha256|sha256)=[0-9a-fA-F]{16,64}"), r"\1=<sha256>"),
     (re.compile(r"\btranscript=path-hmac-sha256:[0-9a-fA-F]+"), "transcript=path-hmac-sha256:<hash>"),
     (re.compile(r"\b(path|path_hmac|path_redacted|diagnostics_path_hmac)=path-hmac-sha256:[0-9a-fA-F]+"), r"\1=path-hmac-sha256:<hash>"),
@@ -154,6 +158,77 @@ def expected_fixture(lines: list[tuple[int, str]], index: int, line: str) -> boo
     return False
 
 
+def model_emitted_fixture_output(normalized: str) -> bool:
+    lower = normalized.lower()
+    marker = "upkeeper: primary:"
+    if marker not in lower:
+        return False
+    payload = lower.split(marker, 1)[1].strip()
+    if not payload:
+        return False
+
+    shell_fixture_tokens = (
+        "printf ",
+        "printf '",
+        'printf "',
+        "echo ",
+        "grep ",
+        "grep -fq ",
+        "grep -eq ",
+        "if grep ",
+        "case ",
+        "cat >",
+        "awk ",
+        "sed ",
+        "warn=",
+        "err=",
+        "payload=",
+        "$stamp",
+        "$local_stamp",
+        "$tmp",
+        "$tmp_dir",
+        "$output",
+        "$log_file",
+        ">>",
+        "<<<",
+        "|| {",
+        "&&",
+        "|*",
+        "'*|",
+        "*)",
+        ";;",
+        "\\n",
+    )
+    embedded_log_tokens = (
+        "[warn]",
+        "[error]",
+        "[info]",
+        "(warn|error)",
+        "warn|error",
+        "warn",
+        "error",
+        " page ",
+        "startup_anomaly",
+        "previous_run.anomaly",
+        " cycle=",
+        " run_hash=",
+        "cycle.exit",
+        "run.finish",
+        " █ ",
+    )
+    if "warn=" in payload or "err=" in payload:
+        return True
+    if payload.startswith(("grep ", "printf ", "echo ", "if grep ", "case ")):
+        return True
+    if any(token in payload for token in shell_fixture_tokens) and any(
+        token in payload for token in embedded_log_tokens
+    ):
+        return True
+    if payload.startswith("'") and any(token in payload for token in embedded_log_tokens):
+        return True
+    return False
+
+
 def target_for(normalized: str) -> str:
     lower = normalized.lower()
     if "lattice" in lower:
@@ -183,6 +258,10 @@ def classify(lines: list[tuple[int, str]], index: int, raw_line: str) -> Classif
     lower = normalized.lower()
     target = target_for(normalized)
 
+    if model_emitted_fixture_output(normalized):
+        return None
+    if "upkeeper: what was wrong:" in lower:
+        return None
     if "█ page" in raw_line.lower() or "[error]" in lower:
         return Classification("page_error", "high", target, "pageable error output is not part of a healthy run")
     if "checks_failed" in lower or "checks failed" in lower or "stopping before selecting another issue" in lower:
@@ -206,6 +285,8 @@ def classify(lines: list[tuple[int, str]], index: int, raw_line: str) -> Classif
             "quota preflight:" in lower
             or "quota hibernating" in lower
             or "quota hibernation complete" in lower
+            or "quota.cooldown bypassed" in lower
+            or "quota.guardrails bypassed=1" in lower
         )
         if not ignored_waits:
             return Classification("warning_line", "medium", target, "warning/advisory output needs custody")

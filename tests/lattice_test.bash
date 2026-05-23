@@ -88,6 +88,14 @@ make_repo() {
     git commit -q -m "delete fixture"
     printf '#!/usr/bin/env bash\nprintf "recreated\\n"\n' >delete-me.sh
     git add delete-me.sh
+    delete_me_blob="$(git rev-parse :delete-me.sh)"
+    if ! git cat-file -e "$delete_me_blob^{blob}" 2>/dev/null; then
+      git hash-object -w -- delete-me.sh >/dev/null
+      git cat-file -e "$delete_me_blob^{blob}" 2>/dev/null || {
+        printf 'missing recreated delete-me.sh blob after explicit object write\n' >&2
+        exit 1
+      }
+    fi
     git commit -q -m "recreate fixture"
     cp "space name.sh" copied-space.sh
     git add copied-space.sh

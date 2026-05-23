@@ -443,6 +443,12 @@ check_backlog_launcher_contract() {
   grep -Fq 'BACKLOG_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota guardrail bypass on"
   grep -Fq 'BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota cooldown bypass on"
   grep -Fq 'quota preflight: burn bypass continuing despite stale quota evidence' orchestration/backlog.sh || fail "backlog launcher does not explain stale quota bypass"
+  grep -Fq 'BACKLOG_OBLIGATION_RETRY_LIMIT="${BACKLOG_OBLIGATION_RETRY_LIMIT:-3}"' orchestration/backlog.sh || fail "backlog launcher does not define obligation retry limit"
+  grep -Fq 'cooldown_deferred' orchestration/backlog.sh || fail "backlog launcher does not stop fresh issue work while every obligation is cooling down"
+  grep -Fq 'BACKLOG_OBLIGATION_ISSUE_REPORTS="${BACKLOG_OBLIGATION_ISSUE_REPORTS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default obligation issue reports on"
+  grep -Fq 'backlog_sync_obligation_issue_reports' orchestration/backlog.sh || fail "backlog launcher does not sync obligation issue reports before selection"
+  grep -Fq 'backlog_ensure_transcript_artifact_marker' orchestration/backlog.sh || fail "backlog launcher does not trust its owned transcript artifact directory"
+  grep -Fq 'CODEX_LOG_FILE_ALLOW_UNSAFE="${BACKLOG_CODEX_LOG_FILE_ALLOW_UNSAFE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not trust its owned custom log directory"
   grep -Fq 'BACKLOG_SOURCE_ONLY' orchestration/backlog.sh || fail "backlog launcher cannot be source-tested without running main"
   BACKLOG_SOURCE_ONLY=1 bash -lc '
     set -euo pipefail
@@ -923,6 +929,24 @@ LOG
   [[ "$(jq -r '.expected_fixture_findings' "$temp_dir/fixture-custody/latest.json")" == "1" ]] ||
     fail "prior-run anomaly custody did not count the expected negative-test fixture"
 
+  cat >"$temp_dir/model-fixture.log" <<'LOG'
+2026-05-23T07:07:51 █ INFO    [ERROR] Upkeeper: primary: printf '"'%s [WARN] cycle=prior-cycle run_hash=abc startup_anomaly.gate_unresolved reason=changed_path_violation reasons=previous_run_anomaly boot_id=boot-current\n' "$stamp_old" >>"$log_file"
+2026-05-23T07:07:52 █ INFO    [ERROR] Upkeeper: primary: echo "2026-05-23T07:00:00 █ PAGE [ERROR] cycle=quoted run_hash=abc runner.output"
+2026-05-23T07:21:59 █ PAGE    [ERROR] Upkeeper: primary: *'"'[ERROR]'*|*'[WARN]'*|*'█'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*)
+2026-05-23T07:02:16 █ PAGE    [ERROR] Upkeeper: primary: grep -Fq 'previous_cycle=prior-normal' "$tmp_dir/out" && echo 'normal_cycle=passed' || { echo 'normal_cycle=failed'; exit 1; }
+2026-05-23T07:29:58 █ PAGE    [ERROR] Upkeeper: primary: warn='[''WARN'']'
+LOG
+  tools/upkeeper_anomaly_custody.py \
+    --root "$ROOT_DIR" \
+    --loop-log "$temp_dir/model-fixture.log" \
+    --state-root "$temp_dir/model-fixture-custody" \
+    --obligation-root "$temp_dir/model-fixture-obligations" \
+    --recent-lines 100 \
+    --max-findings 10 \
+    --write-obligations >"$temp_dir/model-fixture-audit.out"
+  [[ "$(jq -r '.actionable_findings' "$temp_dir/model-fixture-custody/latest.json")" == "0" ]] ||
+    fail "prior-run anomaly custody treated quoted backend fixture text as actionable"
+
   grep -Fq 'run_backlog_anomaly_custody_audit' orchestration/backlog.sh ||
     fail "backlog launcher does not invoke prior-run anomaly custody before issue selection"
   grep -Fq 'run_upkeeper_for_obligation' orchestration/backlog.sh ||
@@ -1135,6 +1159,208 @@ PY
     fail "automation obligation selection did not select reconciled owner"
   [[ "$(jq -r '.deferred_foreign_root_count' <<<"$selected_json")" == "1" ]] ||
     fail "automation obligation selection lost foreign count after reconciliation"
+
+  rm -r "$temp_dir"
+}
+
+check_automation_obligation_churn_contract() {
+  local temp_dir reconciliation_json selected_json attempt_json
+
+  log "checking automation obligation anti-churn contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-obligation-churn.XXXXXX)"
+  mkdir -p "$temp_dir/obligations/open"
+
+  python3 - "$ROOT_DIR" "$temp_dir/obligations/open" <<'PY'
+import json
+import pathlib
+import sys
+
+root = sys.argv[1]
+open_dir = pathlib.Path(sys.argv[2])
+
+records = [
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "quoted-fixture",
+        "created_at": "2026-05-23T01:00:00-0700",
+        "kind": "prior_run_anomaly",
+        "severity": "high",
+        "summary": "quoted backend fixture",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "lib/upkeeper/previous_run_anomalies.bash",
+        "repair_target_file": "lib/upkeeper/previous_run_anomalies.bash",
+        "reason": "PRIOR_RUN_ANOMALY",
+        "evidence": {
+            "source": "backlog_loop_log",
+            "kind": "page_error",
+            "normalized_excerpt": "INFO [ERROR] Upkeeper: primary: printf '%s [WARN] cycle=prior run_hash=abc startup_anomaly.gate_unresolved\\n' \"$stamp\" >>\"$log_file\"",
+        },
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "operator-guide-stale",
+        "created_at": "2026-05-23T01:01:00-0700",
+        "kind": "prior_run_anomaly",
+        "severity": "medium",
+        "summary": "stale guide",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "Upkeeper",
+        "repair_target_file": "Upkeeper",
+        "reason": "PRIOR_RUN_ANOMALY",
+        "evidence": {
+            "source": "backlog_loop_log",
+            "kind": "warning_line",
+            "normalized_excerpt": "INFO [WARN] operator_guide.stale path=docs/scripts/upkeeper.md guide_version=v0 current_version=v1 action=manual_refresh_preserve_local_notes",
+        },
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "cooling-down",
+        "created_at": "2026-05-23T01:02:00-0700",
+        "kind": "prior_run_anomaly",
+        "severity": "high",
+        "summary": "cooling down",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "Upkeeper",
+        "repair_target_file": "Upkeeper",
+        "reason": "PRIOR_RUN_ANOMALY",
+        "next_retry_epoch": 2000,
+        "blocked_attempt_count": 3,
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "eligible",
+        "created_at": "2026-05-23T01:03:00-0700",
+        "kind": "prior_run_anomaly",
+        "severity": "high",
+        "summary": "eligible",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "tools/upkeeper_lattice.py",
+        "repair_target_file": "tools/upkeeper_lattice.py",
+        "reason": "PRIOR_RUN_ANOMALY",
+    },
+]
+for record in records:
+    (open_dir / f"{record['id']}.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
+  reconciliation_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
+      bash -c 'source "$1"; automation_reconcile_open_obligations_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.obsolete_resolved' <<<"$reconciliation_json")" == "2" ]] ||
+    fail "automation obligation reconciliation did not resolve deterministic obsolete findings"
+  [[ "$(find "$temp_dir/obligations/resolved" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')" == "2" ]] ||
+    fail "automation obligation reconciliation did not preserve obsolete findings as resolved evidence"
+
+  selected_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_AUTOMATION_NOW_EPOCH=1000 \
+      bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.id' <<<"$selected_json")" == "eligible" ]] ||
+    fail "automation obligation selector did not skip a cooling obligation when another is eligible"
+  [[ "$(jq -r '.cooldown_deferred_count' <<<"$selected_json")" == "1" ]] ||
+    fail "automation obligation selector did not report cooling obligations"
+
+  rm -f "$temp_dir/obligations/open/eligible.json"
+  selected_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_AUTOMATION_NOW_EPOCH=1000 \
+      bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.status' <<<"$selected_json")" == "cooldown_deferred" ]] ||
+    fail "automation obligation selector did not stop issue work when every obligation is cooling down"
+
+  rm -f "$temp_dir/obligations/open/cooling-down.json"
+  cat >"$temp_dir/obligations/open/attempt.json" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"attempt","created_at":"2026-05-23T01:04:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"attempt","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY"}
+JSON
+  selected_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_AUTOMATION_NOW_EPOCH=3000 \
+      bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.id' <<<"$selected_json")" == "attempt" ]] ||
+    fail "automation obligation selector did not choose the non-cooling attempt fixture"
+  attempt_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_OBLIGATION_RETRY_LIMIT=2 UPKEEPER_OBLIGATION_RETRY_COOLDOWN_SECONDS=600 UPKEEPER_AUTOMATION_NOW_EPOCH=3000 \
+      bash -c 'source "$1"; automation_record_obligation_attempt_json "$2" blocked 2 "blocked once"' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash" "$selected_json"
+  )"
+  [[ "$(jq -r '.cooldown_applied' <<<"$attempt_json")" == "false" ]] ||
+    fail "automation obligation attempt cooldown triggered before retry limit"
+  attempt_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_OBLIGATION_RETRY_LIMIT=2 UPKEEPER_OBLIGATION_RETRY_COOLDOWN_SECONDS=600 UPKEEPER_AUTOMATION_NOW_EPOCH=3001 \
+      bash -c 'source "$1"; automation_record_obligation_attempt_json "$2" blocked 2 "blocked twice"' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash" "$selected_json"
+  )"
+  [[ "$(jq -r '.cooldown_applied' <<<"$attempt_json")" == "true" ]] ||
+    fail "automation obligation attempt cooldown did not trigger at retry limit"
+  [[ "$(jq -r '.next_retry_epoch' <<<"$attempt_json")" == "3601" ]] ||
+    fail "automation obligation attempt cooldown wrote wrong next retry epoch"
+
+  rm -r "$temp_dir"
+}
+
+check_automation_obligation_issue_report_contract() {
+  local temp_dir sync_json fake_bin record_file report_file gh_args
+
+  log "checking automation obligation issue-report bridge contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-obligation-issue-report.XXXXXX)"
+  mkdir -p "$temp_dir/obligations/open" "$temp_dir/bin"
+  record_file="$temp_dir/obligations/open/report-me.json"
+  cat >"$record_file" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"report-me","created_at":"2026-05-23T02:00:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"PAGE error was observed during unattended loop","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","source_cycle_id":"cycle-a","source_run_hash":"hash-a","occurrence_count":4,"evidence":{"source":"backlog_loop_log","excerpt":"$ROOT_DIR/Upkeeper PAGE [ERROR] example","normalized_excerpt":"Upkeeper PAGE [ERROR] example"},"required_resolution":["patch the wrapper","add deterministic validation"]}
+JSON
+  cat >"$temp_dir/obligations/open/foreign.json" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"foreign","created_at":"2026-05-23T02:01:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"foreign root","root":"$temp_dir/foreign-root","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY"}
+JSON
+
+  sync_json="$(
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="$temp_dir/reports" \
+      bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "1" ]] ||
+    fail "automation obligation issue-report bridge did not scope to current root"
+  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "1" ]] ||
+    fail "automation obligation issue-report bridge did not draft the current obligation"
+  report_file="$(jq -r '.issue_report_path' "$record_file")"
+  [[ -f "$report_file" ]] || fail "automation obligation issue-report bridge did not write report file"
+  grep -Fq "## Impact" "$report_file" || fail "automation obligation report missing impact section"
+  grep -Fq "## Evidence" "$report_file" || fail "automation obligation report missing evidence section"
+  grep -Fq "<repo-root>/Upkeeper" "$report_file" || fail "automation obligation report did not redact repo root"
+  if grep -Fq "$ROOT_DIR" "$report_file"; then
+    fail "automation obligation report leaked absolute repo root"
+  fi
+  [[ "$(jq -r '.issue_report_state' "$record_file")" == "drafted" ]] ||
+    fail "automation obligation record did not record drafted issue-report state"
+
+  cat >"$temp_dir/bin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >"$UPKEEPER_FAKE_GH_ARGS"
+printf 'https://github.com/example/upkeeper/issues/987\n'
+SH
+  chmod 700 "$temp_dir/bin/gh"
+  gh_args="$temp_dir/gh-args.txt"
+  sync_json="$(
+    PATH="$temp_dir/bin:$PATH" UPKEEPER_FAKE_GH_ARGS="$gh_args" \
+    ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="$temp_dir/reports" \
+    UPKEEPER_OBLIGATION_GITHUB_ISSUE_WRITE=1 UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS=bug \
+      bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+  )"
+  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "1" ]] ||
+    fail "automation obligation issue-report bridge did not create opted-in GitHub issue"
+  [[ "$(jq -r '.github_issue_number' "$record_file")" == "987" ]] ||
+    fail "automation obligation record did not store created GitHub issue number"
+  grep -Fq "issue create" "$gh_args" || fail "automation obligation GitHub issue command was not invoked"
 
   rm -r "$temp_dir"
 }
@@ -5490,6 +5716,8 @@ run_check process_control_guards check_process_control_guards
 run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_contract
 run_check automation_obligation_root_boundary_contract check_automation_obligation_root_boundary_contract
 run_check automation_obligation_reconciliation_contract check_automation_obligation_reconciliation_contract
+run_check automation_obligation_churn_contract check_automation_obligation_churn_contract
+run_check automation_obligation_issue_report_contract check_automation_obligation_issue_report_contract
 run_check backlog_launcher_contract check_backlog_launcher_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract

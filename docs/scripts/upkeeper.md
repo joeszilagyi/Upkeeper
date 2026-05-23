@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.30
+Version: v1.2.32
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -178,12 +178,29 @@ Important:
     prompt packet containing the bounded evidence excerpt. Repeated instances
     of the same anomaly class update the existing obligation with occurrence
     counts and last-seen evidence instead of opening a new obligation for each
-    cycle id or run hash. Immediately after the backlog branch is checked out,
-    before PR, merge, quota, or issue-selection gates, backlog also reconciles
-    open current-root obligations deterministically: records
+    cycle id or run hash. Quoted backend shell/test fixture snippets that contain
+    embedded `[WARN]`, `[ERROR]`, `PAGE`, or control-plane log text are treated as
+    transcript content, not as new wrapper failures. Immediately after the
+    backlog branch is checked out, before PR, merge, quota, or issue-selection
+    gates, backlog also reconciles open current-root obligations deterministically: records
     with matching root, kind, reason, target, issue, and stable fingerprint are
     condensed to one active owner, and duplicates are moved to resolved evidence
-    with `duplicate_of` metadata. Set `BACKLOG_OBLIGATION_RECONCILE=0` for a
+    with `duplicate_of` metadata. Deterministically obsolete findings, such as a
+    stale operator-guide warning after the guide matches the wrapper version, are
+    moved to resolved evidence with an explicit reason. If the same obligation
+    reports `BLOCKED` repeatedly, backlog records repair-attempt metadata and
+    cools that obligation down so another eligible obligation can run; if every
+    obligation is cooling down, backlog exits without starting fresh issue work.
+    After anomaly custody and reconciliation, backlog also writes one
+    deterministic issue-ready report for every open current-root obligation
+    before selecting work, so system-level failures have durable issue text even
+    when backend Codex never enters bug-report-only mode. These local reports
+    default to
+    `${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/obligation-issue-reports`.
+    Wrapper-side GitHub issue creation is available only when explicitly enabled
+    with `BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=1`; otherwise the local report
+    is the authoritative filing artifact.
+    Set `BACKLOG_OBLIGATION_RECONCILE=0` for a
     deliberate one-cycle bypass. Set
     `BACKLOG_ANOMALY_CUSTODY=0` for a deliberate one-cycle bypass, or adjust
     `BACKLOG_ANOMALY_CUSTODY_LINES` and `BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS`
@@ -599,6 +616,9 @@ Environment overrides:
   UPKEEPER_AUTOMATION_LEDGER_ENABLED Default: 1
   UPKEEPER_AUTOMATION_LEDGER_DIR Default: runtime/upkeeper-automation-ledger
   UPKEEPER_OBLIGATION_DIR       Default: runtime/upkeeper-obligations
+  UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR Default: obligation issue report state root
+  UPKEEPER_OBLIGATION_GITHUB_ISSUE_WRITE Default: 0
+  UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS Default: empty
   UPKEEPER_AUTOMATION_LAUNCHER  Default: current entrypoint name
   UPKEEPER_AUTOMATION_VARIANT   Default: standard
   UPKEEPER_AUTOMATION_POLICY    Default: one-cycle

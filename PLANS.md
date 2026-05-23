@@ -3,6 +3,131 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## X99 Obligation Churn Hardening
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- prevent one blocked automation obligation from consuming an entire bounded
+  backlog loop after repeated unsuccessful repair attempts
+- stop prior-run anomaly custody from treating model-emitted shell/test fixture
+  snippets as fresh PAGE/ERROR evidence
+- remove repeated backlog-local artifact warnings for the default backlog log
+  and transcript directories
+- reconcile stale local obligations that are deterministically obsolete after
+  the repaired detector or current operator guide state
+
+Constraints:
+- keep obligation checks deterministic, local, and pre-model
+- do not delete unresolved evidence; move deterministic false positives or
+  obsolete findings to resolved custody with explicit reasons
+- do not launch real backend Codex validation
+- keep machine-health obligations ahead of ordinary GitHub issue work
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/stress_upkeeper_corpus.sh --local`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
+- `./Upkeeper --version`
+- `git diff --check`
+
+## Obligation Issue Report Bridge
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- make every current-root automation obligation produce a deterministic
+  issue-ready report before normal backlog issue selection
+- explain why the x99 failures stayed in local obligation custody instead of
+  becoming detailed issue reports
+- keep GitHub issue creation wrapper-owned and opt-in while making local issue
+  reports mandatory by default
+- deduplicate reports by obligation id/fingerprint and update the existing
+  obligation record with report path and optional GitHub issue metadata
+
+Constraints:
+- do not require backend Codex or bug-report-only mode for system-level
+  obligation reports
+- preserve local evidence and redact absolute root/home paths in generated
+  report text
+- keep GitHub writes off unless the wrapper operator explicitly enables them
+- add deterministic validation that does not touch the network
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --full`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
+## Live Output Fixture Reclassification And Obligation Reset
+
+Status: completed locally; pending PR CI
+
+Goal:
+- stop backend-emitted shell/test snippets that quote `[WARN]`, `[ERROR]`,
+  `PAGE`, block markers, or startup-anomaly text from becoming fresh live
+  PAGE errors or prior-run anomaly obligations
+- sync the operator guide and release notes after the wrapper version bump to
+  `v1.2.32`
+- after the source fix is committed, perform an evidence-preserving reset of
+  remaining local open obligations so the next loop starts from a clean
+  post-bridge epoch
+
+Constraints:
+- preserve real runtime failures such as tracebacks and wrapper errors as
+  ERROR/PAGE output
+- keep the reset local and evidence-preserving; do not silently delete JSON
+  obligation records
+- do not launch live backend Codex for validation
+
+Files likely touched:
+- `Upkeeper`
+- `tools/upkeeper_anomaly_custody.py`
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `UPKEEPER_INTERNAL_LIVE_OUTPUT_CUSTODY_FILTER_SELF_TEST=1 UPKEEPER_CONFIG_DISABLE=1 ./Upkeeper`
+- `python3 -m py_compile tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --version`
+- `./Upkeeper --help`
+- `git diff --check`
+
 ## Automation Obligation Reconciliation Preflight
 
 Status: completed locally

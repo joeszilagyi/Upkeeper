@@ -818,6 +818,21 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
   esac
 
+  sample=$'2026-05-22T16:35:25 \342\226\210 WORKER [ERROR] Upkeeper: primary cmd#32 check failed: exited 1 in 615ms:'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_page_error_check_failure_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *$' \342\226\210 WORKER [WARN] Upkeeper: primary cmd#32 check failed; captured_by='*': exited 1 in 615ms:'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=backlog_page_error_check_failure_not_custodied output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
   printf 'live_output_custody_filter_self_test=pass\n'
   return 0
 }

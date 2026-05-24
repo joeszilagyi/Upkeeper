@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: backlog batch-validation failure obligations:
+	1. Backlog batch validation now records a structured local automation obligation when a merge-path validation phase fails, including the phase, command, exit code, bounded output tail, stable fingerprint, likely owner path, and required proof command.
+	2. Repeated identical batch-validation failures update the same obligation occurrence count instead of opening noisy duplicates.
+	3. The next backlog invocation sees that obligation before merge retry or fresh issue selection, so local validation breakage becomes mandatory machine-health work instead of manual chat memory.
+
 2026-05-24: backlog merge steward:
 	1. Added `tools/backlog_merge_steward.py`, a local no-backend guard for already-green backlog PR cleanup.
 	2. The steward refuses draft, non-main, failing-check, pending-check, unmergeable, and dirty-secondary-main-worktree states before merge.

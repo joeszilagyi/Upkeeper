@@ -81,6 +81,12 @@ Future changes should preserve this operator-visible surface as far as possible:
   stale control-plane failures block fresh GitHub issue work or bug-hunting
   runs until they are repaired, resolved, or preserved as explicit obligations
   for the next run.
+- Backlog batch-merge validation failures are machine-health obligations, not
+  one-off terminal events. A failing local validation phase writes or updates a
+  current-root obligation with the failed phase, command, exit code, bounded
+  output tail, stable fingerprint, likely owner path, and required proof command
+  before the launcher exits. The next backlog invocation must select that
+  obligation before retrying the merge or selecting fresh issue work.
 - The tracked authority model remains part of the public contract. Changes to
   target authority, source-write authority, shell execution, quota spend,
   backup restore, evidence pruning, GitHub issue effects, Lattice writes, or

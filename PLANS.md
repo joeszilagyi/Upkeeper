@@ -46,6 +46,39 @@ Validation:
 - `./Upkeeper --doctor`
 - `git diff --check`
 
+## Lattice Run-Value Rows
+
+Status: completed and merged
+
+Goal:
+- close issue #80 by adding first-class normalized Lattice rows for run value
+- preserve what changed, validation evidence, risk/finding notes, pass outcomes,
+  cycle status, and evidence source without transcript scraping
+- keep existing cycle, pass, import, export, and query behavior backward
+  compatible
+
+Constraints:
+- local SQLite only; no backend Codex, GitHub, or network surface
+- malformed or missing value markers must be rejected or skipped as evidence,
+  not fatal to otherwise valid cycle recording
+- avoid storing raw selected paths in the new value text field; use file joins
+  or hashed evidence for path-oriented values
+
+Files likely touched:
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `docs/lattice.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_lattice.py`
+- `bash -n tests/lattice_test.bash`
+- `bash tests/lattice_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Platform Support Boundary
 
 Status: completed and merged

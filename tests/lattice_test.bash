@@ -1541,6 +1541,56 @@ test_lattice_unavailable_summary_redacts_raw_detail() {
   [[ "$summary" != *"selected_path"* ]] || fail "lattice unavailable summary leaked raw detail key"
 }
 
+test_out_of_scope_transcript_artifacts_are_safe() {
+  local repo state_root state_transcript temp_transcript
+
+  repo="$TEST_TMP_ROOT/transcript-artifact-repo"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  make_repo "$repo"
+  lattice init >"$TEST_TMP_ROOT/transcript-artifact-init.json"
+
+  state_root="$TEST_TMP_ROOT/state-home"
+  state_transcript="$state_root/upkeeper/backlog/transcripts/state-transcript.log"
+  mkdir -p "$(dirname "$state_transcript")"
+  printf 'state transcript\n' >"$state_transcript"
+  temp_transcript="$(mktemp "${TMPDIR:-/tmp}/upkeeper-transcript-artifact.XXXXXX")"
+  printf 'temp transcript\n' >"$temp_transcript"
+
+  lattice record-cycle-start \
+    --cycle-id cycle-state-transcript \
+    --run-hash hash-state-transcript \
+    --dry-run 1 >"$TEST_TMP_ROOT/transcript-artifact-start-state.json"
+  XDG_STATE_HOME="$state_root" lattice record-cycle-finish \
+    --cycle-id cycle-state-transcript \
+    --run-hash hash-state-transcript \
+    --wrapper-exit 0 \
+    --finish-reason WORK_DONE \
+    --finish-level INFO \
+    --codex-exec-started 1 \
+    --dry-run 1 \
+    --selected-path README.md \
+    --transcript-path "$state_transcript" >"$TEST_TMP_ROOT/transcript-artifact-finish-state.json"
+
+  lattice record-cycle-start \
+    --cycle-id cycle-temp-transcript \
+    --run-hash hash-temp-transcript \
+    --dry-run 1 >"$TEST_TMP_ROOT/transcript-artifact-start-temp.json"
+  lattice record-cycle-finish \
+    --cycle-id cycle-temp-transcript \
+    --run-hash hash-temp-transcript \
+    --wrapper-exit 0 \
+    --finish-reason WORK_DONE \
+    --finish-level INFO \
+    --codex-exec-started 1 \
+    --dry-run 1 \
+    --selected-path README.md \
+    --transcript-path "$temp_transcript" >"$TEST_TMP_ROOT/transcript-artifact-finish-temp.json"
+
+  assert_sql_value "2" "select count(*) from artifact_refs where artifact_kind='transcript'"
+  assert_sql_value "2" "select count(*) from artifact_refs where artifact_kind='transcript' and retained=0 and path like 'path-hmac-sha256:%'"
+}
+
 test_unsafe_lattice_db_path_is_rejected_by_default() {
   local repo outside_db rc
 
@@ -2515,6 +2565,7 @@ test_missing_selection_path_stays_missing
 test_missing_selected_candidate_target_stays_missing
 test_wrapper_required_policy
 test_lattice_unavailable_summary_redacts_raw_detail
+test_out_of_scope_transcript_artifacts_are_safe
 test_unsafe_lattice_db_path_is_rejected_by_default
 test_default_runtime_symlink_db_path_is_rejected
 test_ordinary_command_does_not_create_missing_db

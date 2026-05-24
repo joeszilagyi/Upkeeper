@@ -166,6 +166,10 @@ def model_emitted_fixture_output(normalized: str) -> bool:
     payload = lower.split(marker, 1)[1].strip()
     if not payload:
         return False
+    if payload in {
+        "except exception as exc:",
+    }:
+        return True
 
     shell_fixture_tokens = (
         "printf ",

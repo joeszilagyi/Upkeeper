@@ -935,6 +935,7 @@ LOG
 2026-05-23T07:21:59 █ PAGE    [ERROR] Upkeeper: primary: *'"'[ERROR]'*|*'[WARN]'*|*'█'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*)
 2026-05-23T07:02:16 █ PAGE    [ERROR] Upkeeper: primary: grep -Fq 'previous_cycle=prior-normal' "$tmp_dir/out" && echo 'normal_cycle=passed' || { echo 'normal_cycle=failed'; exit 1; }
 2026-05-23T07:29:58 █ PAGE    [ERROR] Upkeeper: primary: warn='[''WARN'']'
+2026-05-23T17:30:22 █ PAGE    [ERROR] Upkeeper: primary: except Exception as exc:
 LOG
   tools/upkeeper_anomaly_custody.py \
     --root "$ROOT_DIR" \
@@ -4848,6 +4849,19 @@ EOF
   rm -r "$temp_dir"
 }
 
+check_entrypoint_internal_self_tests() {
+  log "checking entrypoint internal self-tests"
+  UPKEEPER_CONFIG_DISABLE=1 UPKEEPER_INTERNAL_LIVE_OUTPUT_CUSTODY_FILTER_SELF_TEST=1 ./Upkeeper |
+    grep -Fxq "live_output_custody_filter_self_test=pass" ||
+    fail "live output custody self-test failed"
+  UPKEEPER_CONFIG_DISABLE=1 UPKEEPER_INTERNAL_REVIEW_SUMMARY_SELF_TEST=1 ./Upkeeper |
+    grep -Fxq "review_summary_self_test=pass" ||
+    fail "review summary self-test failed"
+  UPKEEPER_CONFIG_DISABLE=1 UPKEEPER_INTERNAL_PRECONTACT_BACKUP_HMAC_SELF_TEST=1 ./Upkeeper |
+    grep -Fxq "precontact_backup_hmac_self_test=pass" ||
+    fail "pre-contact backup HMAC self-test failed"
+}
+
 check_review_summary_parser() {
   local temp_dir summary selected_file outcome coverage_json coverage_status coverage_present coverage_missing
 
@@ -5709,6 +5723,7 @@ run_check previous_run_anomaly_summary_contract check_previous_run_anomaly_summa
 run_check postmortem_context_marker_classification check_postmortem_context_marker_classification
 run_check postmortem_sequence_marker_contract check_postmortem_sequence_marker_contract
 run_check postmortem_privacy_contract check_postmortem_privacy_contract
+run_check entrypoint_internal_self_tests check_entrypoint_internal_self_tests
 run_check live_output_filter_pipe check_live_output_filter_pipe
 run_check review_summary_parser check_review_summary_parser
 run_check status_session_jsonl_contract check_status_session_jsonl_contract

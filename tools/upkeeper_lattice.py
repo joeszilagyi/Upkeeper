@@ -178,7 +178,7 @@ SOURCE_RECORD_PATH_HMAC_KINDS = {
     "upkeeper_log",
 }
 TRANSIENT_ARTIFACT_KINDS = {"transcript", "compiled_prompt", "last_message"}
-OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS = {"compiled_prompt", "last_message"}
+OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS = {"transcript", "compiled_prompt", "last_message"}
 WORKTREE_RUNTIME_MESSAGE_ARTIFACT_PATH_PREFIXES = (
     "runtime/upkeeper-transcripts/",
     "runtime/last-message",
@@ -228,6 +228,26 @@ def is_upkeeper_temp_artifact_path(path: Path) -> bool:
     return bool(relative.parts) and relative.parts[0].startswith("upkeeper-")
 
 
+def upkeeper_state_root() -> Path:
+    raw = os.environ.get("XDG_STATE_HOME")
+    if raw:
+        return (Path(raw).expanduser() / "upkeeper").resolve(strict=False)
+    return (Path.home() / ".local" / "state" / "upkeeper").resolve(strict=False)
+
+
+def is_upkeeper_state_artifact_path(path: Path) -> bool:
+    candidate = path.resolve(strict=False)
+    return path_under(candidate, upkeeper_state_root())
+
+
+def out_of_scope_transient_artifact_root(path: Path) -> Path | None:
+    if is_upkeeper_temp_artifact_path(path):
+        return Path(tempfile.gettempdir()).resolve()
+    if is_upkeeper_state_artifact_path(path):
+        return upkeeper_state_root()
+    return None
+
+
 def canonical_artifact_path(root: Path, path: str, artifact_kind: str) -> Path:
     candidate = Path(path).expanduser()
     path_abs = candidate.absolute() if candidate.is_absolute() else (Path.cwd() / candidate).absolute()
@@ -238,11 +258,14 @@ def canonical_artifact_path(root: Path, path: str, artifact_kind: str) -> Path:
     if has_forbidden_symlink(path_abs, scope_root):
         fail(f"artifact path contains forbidden symlink for {artifact_kind}: {normalized}", EXIT_USAGE)
     if not path_under(normalized, scope_root):
-        if artifact_kind in OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS and is_upkeeper_temp_artifact_path(normalized):
-            temp_root = Path(tempfile.gettempdir()).resolve()
-            if has_forbidden_symlink(normalized, temp_root):
+        if artifact_kind in OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS:
+            transient_root = out_of_scope_transient_artifact_root(normalized)
+            if transient_root is not None:
+                if has_forbidden_symlink(normalized, transient_root):
+                    fail(f"artifact path contains forbidden symlink for {artifact_kind}: {normalized}", EXIT_USAGE)
+                return normalized
+            if is_upkeeper_temp_artifact_path(normalized):
                 fail(f"artifact path contains forbidden symlink for {artifact_kind}: {normalized}", EXIT_USAGE)
-            return normalized
         fail(
             f"unsafe artifact path for {artifact_kind}: {normalized} is outside {scope_root}",
             EXIT_USAGE,
@@ -9592,7 +9615,12 @@ def create_artifact_ref(
             return
     stored_digest = digest_hmac or ""
     observed_epoch = epoch_now()
-    retained = 0 if artifact_kind in OUT_OF_SCOPE_TRANSIENT_ARTIFACT_KINDS else 1 if exists else 0
+    outside_runtime_transient = (
+        artifact_kind in TRANSIENT_ARTIFACT_KINDS
+        and not path_under(p, (root / "runtime").resolve())
+    )
+    nonretained_transient = artifact_kind in {"compiled_prompt", "last_message"} or outside_runtime_transient
+    retained = 0 if nonretained_transient else 1 if exists else 0
     if dedupe_identity:
         existing = conn.execute(
             """

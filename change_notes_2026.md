@@ -6,6 +6,14 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-23: v1.2.33 changes:
+	1. Pre-contact backup HMAC derivation now caches parent-process key material before subshell helpers run, so backup metadata and payload verification remain stable even when the persistent redaction key file is unavailable.
+	2. Transcript/live-output custody now reports validation and check command failures as informational custody notices while preserving test/build failures as terminal errors, preventing already-captured local check failures from becoming fresh prior-run warning obligations.
+	3. Review-summary parsing now rejects prose after `STOPPED_ON_BLOCKER for ...` as a selected path unless it has a path-shaped value, preventing blocker explanations from redirecting obligation repair to non-files.
+	4. Quota bucket decisions now treat malformed or out-of-range percentage values as `defer`, preserving fail-closed quota behavior without relying on `awk` coercion.
+	5. Prior-run anomaly custody and obligation reconciliation now treat quoted backend source fixture lines, including `except Exception as exc:`, as transcript content instead of fresh PAGE errors.
+	6. Lattice cycle-finish recording now accepts transcript artifacts under Upkeeper-owned state/temp transcript directories, storing hashed artifact identity without failing optional Lattice recording merely because backlog keeps transcripts outside repo runtime.
+
 2026-05-23: v1.2.32 changes:
 	1. Live output custody now reclassifies backend-emitted shell/test snippets that quote log markers, case globs, grep assertions, or `[WARN]`/`[ERROR]` assignments as quoted fixture/search output instead of fresh PAGE errors.
 	2. The operator guide snapshot is synced to wrapper version v1.2.32.

@@ -190,8 +190,20 @@ def is_expected_negative_fixture(line: str) -> bool:
         and re.search(r'/upkeeper-transcripts-test\.[^/\s]+/transcripts-link\b', line)
     )
 
+def is_custodied_command_failure_notice(line: str) -> bool:
+    return bool(
+        re.search(
+            r'\[(?:INFO|WARN)\]\s+Upkeeper:\s+\S+\s+cmd#\d+\s+'
+            r'(?:validation|check|tests) failed;\s+captured_by='
+            r'(?:transcript|transcript_and_tool_failure_queue):',
+            line,
+        )
+    )
+
 def is_signal(line: str) -> bool:
     if is_expected_negative_fixture(line):
+        return False
+    if is_custodied_command_failure_notice(line):
         return False
     if line.startswith(('UPKEEPER_STATUS:', 'UPKEEPER_LOG_REVIEW:')):
         return True
@@ -525,8 +537,21 @@ def is_expected_negative_fixture(line: str) -> bool:
     )
 
 
+def is_custodied_command_failure_notice(line: str) -> bool:
+    return bool(
+        re.search(
+            r"\[(?:INFO|WARN)\]\s+Upkeeper:\s+\S+\s+cmd#\d+\s+"
+            r"(?:validation|check|tests) failed;\s+captured_by="
+            r"(?:transcript|transcript_and_tool_failure_queue):",
+            line,
+        )
+    )
+
+
 def is_error_line(line: str) -> bool:
     if is_expected_negative_fixture(line):
+        return False
+    if is_custodied_command_failure_notice(line):
         return False
     if not line or is_prompt_or_contract(line):
         return False
@@ -589,7 +614,17 @@ def should_report_success(kind: str) -> bool:
 
 
 def should_report_failure_as_error(kind: str) -> bool:
-    return kind in {"tests", "validation", "check", "build"}
+    return kind in {"tests", "build"}
+
+
+def should_report_failure_with_custody(kind: str) -> bool:
+    return kind in {"validation", "check"}
+
+
+def command_failure_custody() -> str:
+    if os.environ.get("CODEX_TOOL_FAILURE_QUEUE_ENABLED", "1") == "1":
+        return "transcript_and_tool_failure_queue"
+    return "transcript"
 
 
 def emit(level: str, message: str) -> None:
@@ -720,7 +755,12 @@ try:
             in_codex_message = False
             if not current_command_exit_reported:
                 current_command_exit_reported = True
-                if should_report_failure_as_error(last_kind):
+                if should_report_failure_with_custody(last_kind):
+                    emit(
+                        "INFO",
+                        f"{label} cmd#{last_command_id} {last_kind} failed; captured_by={command_failure_custody()}: {short(stripped)}",
+                    )
+                elif should_report_failure_as_error(last_kind):
                     emit("ERROR", f"{label} cmd#{last_command_id} {last_kind} failed: {short(stripped)}")
                 elif not silent and current_command_interesting:
                     emit("INFO", f"{label} cmd#{last_command_id} {last_kind} exited nonzero: {short(stripped)}")

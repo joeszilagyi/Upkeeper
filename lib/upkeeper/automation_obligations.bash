@@ -647,6 +647,10 @@ def quoted_backend_fixture_text(text):
     if marker not in lower:
         return False
     payload = lower.split(marker, 1)[1]
+    if payload.strip() in {
+        "except exception as exc:",
+    }:
+        return True
     shell_tokens = (
         "printf ",
         "printf '",

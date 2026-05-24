@@ -98,12 +98,23 @@ quota_reset_same_window() {
   (( delta <= tolerance_seconds ))
 }
 
+quota_percent_value_is_valid() {
+  local value="$1"
+
+  [[ "$value" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] || return 1
+  awk -v value="$value" 'BEGIN { exit !((value + 0) >= 0 && (value + 0) <= 100) }'
+}
+
 quota_bucket_decision() {
   local bucket_current="${1:-false}"
   local projected_left="${2:-}"
   local threshold="${3:-}"
 
   if [[ "$bucket_current" != "true" || -z "$projected_left" || -z "$threshold" ]]; then
+    printf 'defer'
+    return 0
+  fi
+  if ! quota_percent_value_is_valid "$projected_left" || ! quota_percent_value_is_valid "$threshold"; then
     printf 'defer'
     return 0
   fi

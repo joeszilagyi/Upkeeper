@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.32
+## Version: v1.2.33
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.32"
+UPKEEPER_VERSION="v1.2.33"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -694,6 +694,77 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
 done
  unset upkeeper_module
 
+# Pre-contact backup computes related HMACs from command substitutions. Keep a
+# parent-process key so those subshells do not generate inconsistent fallbacks
+# when the persistent redaction key cannot be written.
+UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="${UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE:-}"
+
+upkeeper_precontact_backup_hmac_key_material() {
+  if [[ -n "$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE" ]]; then
+    printf '%s' "$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE"
+    return 0
+  fi
+
+  if declare -F upkeeper_redaction_key_material >/dev/null 2>&1; then
+    UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="$(upkeeper_redaction_key_material)"
+  else
+    UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="${UPKEEPER_REDACTION_KEY:-precontact-backup-test-key}"
+  fi
+  printf '%s' "$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE"
+}
+
+precontact_backup_hmac_text() {
+  local namespace="$1"
+  local value="$2"
+  local key
+
+  upkeeper_precontact_backup_hmac_key_material >/dev/null
+  key="$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE"
+  python3 - "$key" "precontact_backup.$namespace" "$value" <<'PY' 2>/dev/null || printf 'unknown'
+import hashlib
+import hmac
+import sys
+
+key, namespace, value = sys.argv[1:4]
+material = f"{namespace}\0{value}".encode("utf-8", "surrogateescape")
+print(hmac.new(key.encode("utf-8", "surrogateescape"), material, hashlib.sha256).hexdigest())
+PY
+}
+
+upkeeper_tool_failure_queue_open_custody_log() {
+  local level="$1"
+  local message="$2"
+
+  [[ "$level" == "WARN" ]] || return 1
+  case "$message" in
+    tool_failure_queue.open\ action=open*\ unresolved_failures=*\ addressed_by_later_success=0*\ kind=*\ exit_line=*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+if declare -f log_line >/dev/null 2>&1; then
+  eval "$(declare -f log_line | sed '1s/^log_line ()/upkeeper_runtime_log_line_original ()/')"
+fi
+
+log_line() {
+  local level="$1"
+  shift
+  local message="$*"
+
+  if upkeeper_tool_failure_queue_open_custody_log "$level" "$message"; then
+    # An open tool-failure marker is the durable custody record for a failed
+    # local check. Keep it visible without making the custody row a new WARN.
+    level="INFO"
+    message="tool_failure_queue.open_custody custody=tool_failure_queue $message"
+  fi
+
+  upkeeper_runtime_log_line_original "$level" "$message"
+}
+
 upkeeper_live_output_false_positive_error_echo() {
   local line="$1"
   local payload
@@ -704,6 +775,12 @@ upkeeper_live_output_false_positive_error_echo() {
       ;;
     *)
       return 1
+      ;;
+  esac
+
+  case "$line:$payload" in
+    *' PAGE [ERROR] Upkeeper: primary: except Exception as exc:')
+      return 0
       ;;
   esac
 
@@ -738,11 +815,11 @@ upkeeper_live_output_custody_filter() {
 
   while IFS= read -r line; do
     if upkeeper_live_output_false_positive_error_echo "$line"; then
-      # A quoted diagnostic/search/test shell fragment from prior evidence is
+      # A quoted diagnostic/search/test source fragment from prior evidence is
       # not itself a current-cycle runtime failure. Keep it visible without
       # paging it as operator ERROR output.
       rewritten="${line/ \[ERROR\] / [INFO] }"
-      rewritten="${rewritten/ Upkeeper: / Upkeeper: live_output.false_positive_error_echo classification=quoted_backend_shell_fixture }"
+      rewritten="${rewritten/ Upkeeper: / Upkeeper: live_output.false_positive_error_echo classification=quoted_backend_source_fixture }"
       printf '%s\n' "$rewritten"
       continue
     fi
@@ -775,7 +852,7 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       printf 'live_output_custody_filter_self_test=fail reason=diagnostic_search_still_error output=%s\n' "$output" >&2
       return 1
       ;;
-    *'classification=quoted_backend_shell_fixture'*)
+    *'classification=quoted_backend_source_fixture'*)
       ;;
     *)
       printf 'live_output_custody_filter_self_test=fail reason=diagnostic_search_not_classified output=%s\n' "$output" >&2
@@ -790,7 +867,7 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       printf 'live_output_custody_filter_self_test=fail reason=prior_anomaly_search_still_error output=%s\n' "$output" >&2
       return 1
       ;;
-    *'classification=quoted_backend_shell_fixture'*)
+    *'classification=quoted_backend_source_fixture'*)
       ;;
     *)
       printf 'live_output_custody_filter_self_test=fail reason=prior_anomaly_search_not_classified output=%s\n' "$output" >&2
@@ -816,7 +893,7 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       printf 'live_output_custody_filter_self_test=fail reason=case_glob_fixture_still_error output=%s\n' "$output" >&2
       return 1
       ;;
-    *'classification=quoted_backend_shell_fixture'*)
+    *'classification=quoted_backend_source_fixture'*)
       ;;
     *)
       printf 'live_output_custody_filter_self_test=fail reason=case_glob_fixture_not_classified output=%s\n' "$output" >&2
@@ -831,7 +908,7 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       printf 'live_output_custody_filter_self_test=fail reason=grep_fixture_still_error output=%s\n' "$output" >&2
       return 1
       ;;
-    *'classification=quoted_backend_shell_fixture'*)
+    *'classification=quoted_backend_source_fixture'*)
       ;;
     *)
       printf 'live_output_custody_filter_self_test=fail reason=grep_fixture_not_classified output=%s\n' "$output" >&2
@@ -846,10 +923,25 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       printf 'live_output_custody_filter_self_test=fail reason=warn_assignment_fixture_still_error output=%s\n' "$output" >&2
       return 1
       ;;
-    *'classification=quoted_backend_shell_fixture'*)
+    *'classification=quoted_backend_source_fixture'*)
       ;;
     *)
       printf 'live_output_custody_filter_self_test=fail reason=warn_assignment_fixture_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-23T17:30:22 \342\226\210 PAGE [ERROR] Upkeeper: primary: except Exception as exc:'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=python_exception_handler_fixture_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_source_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=python_exception_handler_fixture_not_classified output=%s\n' "$output" >&2
       return 1
       ;;
   esac
@@ -943,6 +1035,18 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       return 1
       ;;
   esac
+
+  sample='tool_failure_queue.open action=open marker_id=3402343c3b3d063304947a3a marker_path_hmac=path-hmac-sha256:3c23b39a0404f99d37e06fb6625cc4a2a1e1e913bf41138074c8dafc85b5c64f target_path_hmac=path-hmac-sha256:941f30f4fdd86c5597739739f684868ee65767a6132b7b35f9961c67ff6d6f04 path_redacted=1 failures=1 unresolved_failures=1 addressed_by_later_success=0 kind=validation exit_line=exited\ 1\ in\ 846ms:'
+  if ! upkeeper_tool_failure_queue_open_custody_log "WARN" "$sample"; then
+    printf 'live_output_custody_filter_self_test=fail reason=tool_failure_queue_open_not_classified output=%s\n' "$sample" >&2
+    return 1
+  fi
+
+  sample='tool_failure_queue.open action=open marker_id=d8b7917833128ecf6332aaaa marker_path_hmac=path-hmac-sha256:7458ac081a38f6444d2d266b10747d7b92f97aef7d5bb521a265a2c29467d66b target_path_hmac=path-hmac-sha256:6c8bd6795bfb8b8622f6fe8f81fdf8ffbc684d4c09a2ec6a91116bae7f862efc path_redacted=1 failures=1 unresolved_failures=3 addressed_by_later_success=0 kind=validation exit_line=exited\ 1\ in\ 105ms:'
+  if ! upkeeper_tool_failure_queue_open_custody_log "WARN" "$sample"; then
+    printf 'live_output_custody_filter_self_test=fail reason=tool_failure_queue_open_prior_warning_not_classified output=%s\n' "$sample" >&2
+    return 1
+  fi
 
   printf 'live_output_custody_filter_self_test=pass\n'
   return 0
@@ -1403,6 +1507,26 @@ def no_change_summary(value):
     )
 
 
+def path_shaped(value):
+    if not value:
+        return False
+    if any(char in value for char in "\0\r\n\t"):
+        return False
+    if re.search(r"[;!?]", value):
+        return False
+    if " " in value:
+        return False
+    if value.startswith(("-", "#", "*", ">")):
+        return False
+    if value in {".", "..", "/", "./", "../"}:
+        return False
+    if value.startswith("../") or "/../" in value or value.endswith("/.."):
+        return False
+    if value.startswith(("http://", "https://")):
+        return False
+    return bool(re.search(r"[A-Za-z0-9_.-]", value))
+
+
 def selected_file_from_source(source):
     if not source:
         return ""
@@ -1420,6 +1544,8 @@ def selected_file_from_source(source):
     if re.fullmatch(r"\d+(?:\.\d+)?", value):
         return ""
     if re.match(r"^(epoch|age|mtime|hash)\b", value.lower()):
+        return ""
+    if not path_shaped(value):
         return ""
     return value
 
@@ -1614,6 +1740,122 @@ print(
     )
 )
 PY
+}
+
+# Focused parser regression check for prior-run custody warnings where prose
+# after "STOPPED_ON_BLOCKER for ..." was mistaken for the reviewed file path.
+upkeeper_internal_review_summary_self_test_requested() {
+  config_truthy "${UPKEEPER_INTERNAL_REVIEW_SUMMARY_SELF_TEST:-0}"
+}
+
+upkeeper_internal_precontact_backup_hmac_self_test_requested() {
+  config_truthy "${UPKEEPER_INTERNAL_PRECONTACT_BACKUP_HMAC_SELF_TEST:-0}"
+}
+
+upkeeper_internal_precontact_backup_hmac_self_test() {
+  local test_root metadata_file target_file payload_file
+  local old_cache old_key_file old_key old_lattice_key content_sha expected payload_sha actual
+
+  if ! test_root="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-precontact-hmac-self-test.XXXXXX")"; then
+    printf 'precontact_backup_hmac_self_test=fail reason=mktemp_failed\n' >&2
+    return 2
+  fi
+
+  metadata_file="$test_root/metadata.json"
+  target_file="$test_root/target.txt"
+  payload_file="$test_root/payload.bin"
+  old_cache="${UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE:-}"
+  old_key_file="${UPKEEPER_REDACTION_KEY_FILE:-}"
+  old_key="${UPKEEPER_REDACTION_KEY:-}"
+  old_lattice_key="${UPKEEPER_LATTICE_REDACTION_KEY:-}"
+
+  UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE=""
+  UPKEEPER_REDACTION_KEY_FILE="/proc/upkeeper-redaction.key"
+  unset UPKEEPER_REDACTION_KEY
+  unset UPKEEPER_LATTICE_REDACTION_KEY
+  upkeeper_precontact_backup_hmac_key_material >/dev/null
+
+  printf 'target content\n' >"$target_file"
+  content_sha="$(precontact_backup_sha256_file "$target_file")" || {
+    rm -rf -- "$test_root"
+    printf 'precontact_backup_hmac_self_test=fail reason=target_hash_failed\n' >&2
+    return 2
+  }
+  expected="$(precontact_backup_content_hmac "$content_sha")"
+  printf '{"content_hmac": "%s"}\n' "$expected" >"$metadata_file"
+  payload_sha="$(upkeeper_precontact_backup_write_payload_and_sha "$metadata_file" "$target_file" "$payload_file")" || {
+    rm -rf -- "$test_root"
+    printf 'precontact_backup_hmac_self_test=fail reason=payload_write_failed\n' >&2
+    return 2
+  }
+  actual="$(precontact_backup_content_hmac "$payload_sha")"
+
+  UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="$old_cache"
+  if [[ -n "$old_key_file" ]]; then
+    UPKEEPER_REDACTION_KEY_FILE="$old_key_file"
+  else
+    unset UPKEEPER_REDACTION_KEY_FILE
+  fi
+  if [[ -n "$old_key" ]]; then
+    UPKEEPER_REDACTION_KEY="$old_key"
+  else
+    unset UPKEEPER_REDACTION_KEY
+  fi
+  if [[ -n "$old_lattice_key" ]]; then
+    UPKEEPER_LATTICE_REDACTION_KEY="$old_lattice_key"
+  else
+    unset UPKEEPER_LATTICE_REDACTION_KEY
+  fi
+
+  rm -rf -- "$test_root"
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'precontact_backup_hmac_self_test=fail reason=hmac_unstable\n' >&2
+    return 1
+  fi
+
+  printf 'precontact_backup_hmac_self_test=pass\n'
+  return 0
+}
+
+upkeeper_internal_review_summary_self_test() {
+  local temp_file summary selected_file outcome
+
+  temp_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-review-summary-self-test.XXXXXX")" || {
+    printf 'review_summary_self_test=fail reason=mktemp_failed\n' >&2
+    return 2
+  }
+  cat >"$temp_file" <<'EOF'
+STOPPED_ON_BLOCKER for outside-target documentation drift; selected file content was REVIEWED_CLEAN.
+UPKEEPER_STATUS: BLOCKED
+EOF
+  summary="$(review_report_summary_json "$temp_file")"
+  rm -f -- "$temp_file"
+  outcome="$(json_field "$summary" '.outcome' 2>/dev/null || printf '')"
+  selected_file="$(json_field "$summary" '.selected_file' 2>/dev/null || printf '')"
+  if [[ "$outcome" != "STOPPED_ON_BLOCKER" || -n "$selected_file" ]]; then
+    printf 'review_summary_self_test=fail reason=prose_selected_file_not_rejected outcome=%s selected_file=%s\n' "$outcome" "$selected_file" >&2
+    return 1
+  fi
+
+  temp_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-review-summary-self-test.XXXXXX")" || {
+    printf 'review_summary_self_test=fail reason=mktemp_failed\n' >&2
+    return 2
+  }
+  cat >"$temp_file" <<'EOF'
+Final status: REVIEWED_CLEAN for `Upkeeper`
+UPKEEPER_STATUS: WORK_DONE
+EOF
+  summary="$(review_report_summary_json "$temp_file")"
+  rm -f -- "$temp_file"
+  outcome="$(json_field "$summary" '.outcome' 2>/dev/null || printf '')"
+  selected_file="$(json_field "$summary" '.selected_file' 2>/dev/null || printf '')"
+  if [[ "$outcome" != "REVIEWED_CLEAN" || "$selected_file" != "Upkeeper" ]]; then
+    printf 'review_summary_self_test=fail reason=valid_selected_file_not_preserved outcome=%s selected_file=%s\n' "$outcome" "$selected_file" >&2
+    return 1
+  fi
+
+  printf 'review_summary_self_test=pass\n'
+  return 0
 }
 
 # Keep this backup override in the entrypoint so selected-target-only repair
@@ -5721,164 +5963,6 @@ acquire_active_lock_or_exit() {
   log_line "INFO" "active_lock.acquired path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR")"
 }
 
-previous_run_anomaly_lines() {
-  if [[ ! -s "$LOG_FILE" ]]; then
-    return 0
-  fi
-
-  python3 - "$LOG_FILE" "$CYCLE_ID" "$CODEX_PREVIOUS_RUN_SCAN_MINUTES" "$(system_boot_id_raw)" "$(system_boot_id)" "$(upkeeper_redaction_key_material)" <<'PY'
-import datetime as dt
-import hashlib
-import hmac
-import re
-import sys
-import time
-
-log_path, current_cycle, minutes_raw, current_boot_raw, current_boot_protected, redaction_key = sys.argv[1:7]
-try:
-    scan_minutes = max(0, int(minutes_raw))
-except ValueError:
-    scan_minutes = 240
-cutoff = time.time() - (scan_minutes * 60)
-cycle_re = re.compile(r"\bcycle=([^ ]+)")
-run_hash_re = re.compile(r"\brun_hash=([^ ]+)")
-boot_id_re = re.compile(r"\bboot_id=([^ ]+)")
-cycles = {}
-latest_previous_run_ack_epoch = None
-
-
-def redact_boot_id(value):
-    if value in {"", "unknown", "none", "missing", "unavailable"}:
-        return value or "unknown"
-    material = f"boot_id\0{value}".encode("utf-8", "surrogateescape")
-    digest = hmac.new(
-        redaction_key.encode("utf-8", "surrogateescape"),
-        material,
-        hashlib.sha256,
-    ).hexdigest()
-    return f"value-hmac-sha256:{digest}"
-
-
-def parsed_epoch(line):
-    stamp = line.split(" ", 1)[0]
-    try:
-        return dt.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S%z").timestamp()
-    except ValueError:
-        return None
-
-
-try:
-    handle = open(log_path, "r", encoding="utf-8", errors="replace")
-except OSError:
-    raise SystemExit(0)
-
-with handle:
-    for line in handle:
-        epoch = parsed_epoch(line)
-        if epoch is not None and scan_minutes > 0 and epoch < cutoff:
-            continue
-        if (
-            epoch is not None
-            and " startup_anomaly.gate_resolved " in line
-            and "reasons=previous_run_anomaly" in line
-        ):
-            if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:
-                latest_previous_run_ack_epoch = epoch
-        cycle_match = cycle_re.search(line)
-        if not cycle_match:
-            continue
-        cycle = cycle_match.group(1)
-        if cycle == current_cycle:
-            continue
-        info = cycles.setdefault(
-            cycle,
-            {
-                "run_hash": "unknown",
-                "start": False,
-                "exit": False,
-                "run_start": False,
-                "run_finish": False,
-                "gate_unresolved": False,
-                "gate_resolved": False,
-                "watchdog_anomaly": False,
-                "last_boot_id": "unknown",
-                "last_epoch": epoch,
-                "last_line": line.strip(),
-            },
-        )
-        hash_match = run_hash_re.search(line)
-        if hash_match:
-            info["run_hash"] = hash_match.group(1)
-        boot_id_match = boot_id_re.search(line)
-        if boot_id_match:
-            info["last_boot_id"] = boot_id_match.group(1)
-        if " cycle.start " in line:
-            info["start"] = True
-        if " cycle.exit " in line:
-            info["exit"] = True
-        if " run.start " in line:
-            info["run_start"] = True
-        if " run.finish " in line:
-            info["run_finish"] = True
-        if " startup_anomaly.gate_unresolved " in line:
-            info["gate_unresolved"] = True
-        if " startup_anomaly.gate_resolved " in line:
-            info["gate_resolved"] = True
-        if " watchdog.anomaly " in line:
-            info["watchdog_anomaly"] = True
-        info["last_epoch"] = epoch
-        info["last_line"] = line.strip()
-
-printed = 0
-acknowledged = 0
-for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"] or 0, reverse=True):
-    reason = ""
-    if info["start"] and not info["exit"]:
-        last_boot_id = info.get("last_boot_id", "unknown")
-        boot_matches = last_boot_id in {
-            "",
-            "unknown",
-            current_boot_raw,
-            current_boot_protected,
-            redact_boot_id(current_boot_raw),
-        }
-        reason = "missing_cycle_exit" if boot_matches else "probable_reboot_or_power_loss"
-    elif info["run_start"] and not info["run_finish"] and not info["exit"]:
-        reason = "missing_run_finish"
-    elif info["watchdog_anomaly"]:
-        reason = "watchdog_anomaly"
-    elif info["gate_unresolved"] and not info["gate_resolved"]:
-        reason = "startup_anomaly_gate_unresolved"
-    if not reason:
-        continue
-    if (
-        latest_previous_run_ack_epoch is not None
-        and info["last_epoch"] is not None
-        and info["last_epoch"] <= latest_previous_run_ack_epoch
-    ):
-        acknowledged += 1
-        continue
-    last_epoch = "unknown" if info["last_epoch"] is None else str(int(info["last_epoch"]))
-    last_line = info["last_line"].replace("\\", "\\\\").replace("\t", " ")[:300]
-    print(
-        f"previous_cycle={cycle} previous_run_hash={info['run_hash']} "
-        f"reason={reason} scan_minutes={scan_minutes} last_epoch={last_epoch} "
-        f"previous_boot_id={redact_boot_id(info.get('last_boot_id', 'unknown'))} "
-        f"last_line={last_line!r}"
-    )
-    printed += 1
-    if printed >= 10:
-        break
-if acknowledged:
-    print(
-        "__ACK__ "
-        f"suppressed={acknowledged} "
-        f"ack_epoch={int(latest_previous_run_ack_epoch)} "
-        "reason=previous_run_anomaly_gate_reviewed"
-    )
-PY
-}
-
 cycle_start_metadata_hash() {
   local value="${1:-}"
 
@@ -6254,6 +6338,14 @@ main() {
     upkeeper_internal_live_output_custody_filter_self_test
     return $?
   fi
+  if upkeeper_internal_review_summary_self_test_requested; then
+    upkeeper_internal_review_summary_self_test
+    return $?
+  fi
+  if upkeeper_internal_precontact_backup_hmac_self_test_requested; then
+    upkeeper_internal_precontact_backup_hmac_self_test
+    return $?
+  fi
   ensure_log_parent
   ensure_log_writable_or_exit "startup"
   require_commands
@@ -6298,6 +6390,7 @@ main() {
 
   log_line "INFO" "$(cycle_start_log_message "$direct_parent_pid" "$direct_parent_comm" "$direct_parent_start_fingerprint" "$loop_parent_pid" "$loop_parent_comm" "$loop_parent_start_fingerprint" "$loop_parent_override" "$wrapper_start_fingerprint")"
   automation_record_cycle_start || log_line "WARN" "automation.run_record.start_failed path=$(shell_quote "${RUN_AUTOMATION_RECORD_FILE:-unknown}")"
+  upkeeper_precontact_backup_hmac_key_material >/dev/null
   precontact_backup_machine_preflight_or_exit
   resolve_issue_fix_next_or_exit
   if ! run_issue_docs_contract_checks; then

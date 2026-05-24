@@ -383,6 +383,36 @@ check_issue_fix_private_packet_contract() {
   bash tests/bug_fix_batch_271_266_265_test.bash
 }
 
+check_authority_control_docs_contract() {
+  local control_id
+
+  log "checking authority control docs contract"
+  [[ -s docs/authority.md ]] || fail "docs/authority.md is missing"
+  [[ -s docs/capability-profiles.md ]] || fail "docs/capability-profiles.md is missing"
+  [[ -s docs/control-ledger.md ]] || fail "docs/control-ledger.md is missing"
+
+  grep -Fq "Authority Questions" docs/authority.md ||
+    fail "authority model is missing the authority questions table"
+  grep -Fq "Wrapper local control plane" docs/capability-profiles.md ||
+    fail "capability profiles do not name the wrapper local control plane"
+  grep -Fq "Backend Codex issue apply stage" docs/capability-profiles.md ||
+    fail "capability profiles do not cover issue apply backend authority"
+  grep -Fq "Control id" docs/control-ledger.md ||
+    fail "control ledger is missing its control id table"
+
+  for control_id in AUTH-001 AUTH-002 AUTH-003 AUTH-004 AUTH-005 AUTH-006 AUTH-007 AUTH-008 AUTH-009 AUTH-010 AUTH-011 AUTH-012; do
+    grep -Fq "| $control_id |" docs/control-ledger.md ||
+      fail "control ledger missing $control_id"
+  done
+
+  grep -Fq "docs/authority.md" README.md ||
+    fail "README does not point to the authority model"
+  grep -Fq "docs/capability-profiles.md" docs/security.md ||
+    fail "security docs do not point to capability profiles"
+  grep -Fq "docs/control-ledger.md" docs/compatibility.md ||
+    fail "compatibility docs do not preserve the control-ledger contract"
+}
+
 check_syntax() {
   local module
 
@@ -5861,6 +5891,7 @@ run_check log_line_source_length_contract check_log_line_source_length_contract
 run_check prompt_public_lint_contract check_prompt_public_lint_contract
 run_check fault_injection_registry_contract check_fault_injection_registry_contract
 run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contract
+run_check authority_control_docs_contract check_authority_control_docs_contract
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation

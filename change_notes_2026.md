@@ -11,6 +11,10 @@ Version numbering note:
 	2. The new `query run-values` surface can filter by path, cycle, value kind, value class, and evidence source, exposing pass outcomes, validation commands/results, residual risk, finding notes, cycle status, review outcome, finish reason, and exit codes.
 	3. JSONL export/import now carries run-value rows as ordinary repo-scoped SQLite evidence while malformed or missing value markers remain rejected/skipped evidence instead of fatal cycle failures.
 
+2026-05-24: authority model and control ledger:
+	1. Added tracked authority, capability-profile, and control-ledger docs that define who may select targets, write source, run shell, spend quota, restore backups, prune evidence, affect GitHub issues, modify Lattice, and read runtime evidence.
+	2. Added validation that the authority docs and the initial `AUTH-###` control ids remain present, tying public safety claims to enforcement points, tests, and evidence artifacts.
+
 2026-05-24: log-line maintainability:
 	1. Long structured `log_line` call sites now use a shared `log_line_parts` helper and startup-anomaly gate logging helper so repeated field groups remain reviewable without changing emitted log fields.
 	2. Local validation now fails if `log_line` or `log_line_parts` call sites exceed 240 source characters, preventing the risky long-line pattern from returning.

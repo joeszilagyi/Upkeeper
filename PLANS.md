@@ -3,9 +3,43 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Operator Status Commands
+## Authority Model And Control Ledger
 
 Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #216 by adding tracked authority, capability, and control-ledger
+  docs for the Upkeeper control plane
+- make wrapper/model/operator authority explicit for target selection, source
+  writes, shell execution, quota spend, backup restore, evidence pruning,
+  GitHub issue effects, Lattice writes, and local evidence reads
+- add deterministic validation that the docs and key control ids remain present
+
+Constraints:
+- document existing behavior first; do not invent unimplemented runtime gates
+- keep this local and no-quota: docs plus static validation only
+- keep Lattice described as evidence, not sole custody authority
+
+Files likely touched:
+- `docs/authority.md`
+- `docs/capability-profiles.md`
+- `docs/control-ledger.md`
+- `docs/security.md`
+- `docs/compatibility.md`
+- `README.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Operator Status Commands
+
+Status: completed and merged
 
 Goal:
 - close issue #90 with a scoped first version of pre-model operator status

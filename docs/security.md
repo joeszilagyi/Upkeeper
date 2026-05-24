@@ -26,6 +26,14 @@ Upkeeper crosses these local trust boundaries:
 Treat all of those as local operator-controlled state. Do not use Upkeeper to
 bridge trust between mutually suspicious users, machines, or repositories.
 
+The paired authority docs make the control surface explicit:
+
+- `docs/authority.md` defines who owns sensitive decisions at each lifecycle
+  point.
+- `docs/capability-profiles.md` lists allowed capabilities by actor and mode.
+- `docs/control-ledger.md` maps control claims to enforcement points, tests,
+  and evidence artifacts.
+
 ## What Upkeeper Can Read
 
 Normal startup and dry-run paths can read:

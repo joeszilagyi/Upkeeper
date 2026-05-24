@@ -3,6 +3,36 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Breadcrumb Custody Audit
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #124 with a deterministic local breadcrumb audit command
+- turn weak suspicious log/transcript clues into stable open/resolved/suppressed
+  local JSON records
+- add quick validation coverage and operator docs for the custody contract
+
+Constraints:
+- keep breadcrumb records ignored local runtime evidence
+- avoid backend Codex and GitHub I/O
+- reuse existing anomaly-custody classifications where practical, but keep this
+  audit command focused and deterministic
+
+Files likely touched:
+- `tools/audit_upkeeper_breadcrumbs.py`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
+- `git diff --check`
+
 ## Embedded Behavior Table Contracts
 
 Status: completed locally; pending PR/CI

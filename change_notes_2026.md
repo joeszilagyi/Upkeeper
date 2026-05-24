@@ -11,6 +11,11 @@ Version numbering note:
 	2. The audit command can write ignored local custody records under `runtime/upkeeper-breadcrumbs/open`, `resolved`, and `suppressed`, preserving weak clues until they are explicitly resolved or suppressed.
 	3. Quick validation now covers breadcrumb record creation, duplicate updates, expected-fixture suppression, and resolve-missing behavior.
 
+2026-05-24: breadcrumb severity gate:
+	1. Open critical/high breadcrumb custody records now redirect normal Upkeeper target rotation to the configured Upkeeper gate target before backend work starts.
+	2. Explicit target pins and issue-fix pins remain visible as pinned work instead of being silently replaced, while low/medium breadcrumbs remain custody-only by default.
+	3. Suppressed breadcrumb records now carry a named suppression rationale plus an optional expiry field so suppression is machine-readable.
+
 2026-05-24: embedded behavior table contracts:
 	1. Quick validation now checks the embedded behavior table drift contract for startup anomaly changed-path allowlists, source-safe exclusions, command-kind classifiers, review-module ids, and Lattice pass-code mappings.
 	2. Compatibility and operator docs now identify those tables as operator-visible control-plane behavior that must change with validation coverage instead of drifting silently.

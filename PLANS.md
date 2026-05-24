@@ -3,9 +3,42 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Audit-Only Mode
+## Breadcrumb Severity Gate
 
 Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #137 by making unresolved high/critical breadcrumb custody affect
+  normal Upkeeper rotation
+- keep the enforcement deterministic and pre-model
+- build on the local breadcrumb custody records from issue #124
+
+Constraints:
+- preserve explicit `--target-file` and issue-fix pins
+- keep low/medium breadcrumbs warning/custody-only by default
+- do not rescan large logs on the clean startup path; read current open custody
+  records instead
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/breadcrumb_gate.bash`
+- `tools/audit_upkeeper_breadcrumbs.py`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Audit-Only Mode
+
+Status: completed and merged
 
 Goal:
 - close issue #132 by making audit-only/no-fix a first-class invocation surface

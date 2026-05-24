@@ -397,6 +397,10 @@ UPKEEPER_SELECTION_REVIEW_MODULES="${UPKEEPER_SELECTION_REVIEW_MODULES:-}"
 UPKEEPER_SELECTION_RANDOM_SEED="${UPKEEPER_SELECTION_RANDOM_SEED:-}"
 UPKEEPER_MAX_COVER="${UPKEEPER_MAX_COVER:-0}"
 UPKEEPER_BUG_REPORT_ONLY="${UPKEEPER_BUG_REPORT_ONLY:-0}"
+UPKEEPER_BREADCRUMB_GATE_ENABLED="${UPKEEPER_BREADCRUMB_GATE_ENABLED:-1}"
+UPKEEPER_BREADCRUMB_STATE_DIR="${UPKEEPER_BREADCRUMB_STATE_DIR:-$ROOT_DIR/runtime/upkeeper-breadcrumbs}"
+UPKEEPER_BREADCRUMB_GATE_SEVERITIES="${UPKEEPER_BREADCRUMB_GATE_SEVERITIES:-critical,high}"
+UPKEEPER_BREADCRUMB_GATE_TARGET="${UPKEEPER_BREADCRUMB_GATE_TARGET:-Upkeeper}"
 UPKEEPER_AUDIT_ONLY="${UPKEEPER_AUDIT_ONLY:-0}"
 UPKEEPER_FIX_NEXT_ISSUE="${UPKEEPER_FIX_NEXT_ISSUE:-0}"
 UPKEEPER_FIX_ISSUE="${UPKEEPER_FIX_ISSUE:-}"
@@ -655,6 +659,7 @@ UPKEEPER_MODULES=(
   "cycle_cleanup_signals.bash"
   "runtime_format_json.bash"
   "automation_obligations.bash"
+  "breadcrumb_gate.bash"
   "lattice.bash"
   "transcript_output.bash"
   "tool_failure_queue.bash"
@@ -6460,6 +6465,7 @@ main() {
   if ! run_issue_docs_contract_checks; then
     finish_cycle 70 ISSUE_FIX_DOCS_CONTRACT_CHECK_FAILED ERROR "codex_exec_started=0 number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
   fi
+  enforce_breadcrumb_gate_or_exit
   upkeeper_preflight_explicit_target_or_exit
   lattice_init_and_doctor_or_exit
   lattice_record_cycle_start

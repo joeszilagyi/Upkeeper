@@ -790,7 +790,7 @@ upkeeper_live_output_false_positive_error_echo() {
   esac
 
   case "$line:$payload" in
-    *' PAGE [ERROR] Upkeeper: primary: except Exception as exc:')
+    *' PAGE [ERROR] Upkeeper: primary: except Exception:'*)
       return 0
       ;;
   esac
@@ -942,7 +942,7 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
   esac
 
-  sample=$'2026-05-23T17:30:22 \342\226\210 PAGE [ERROR] Upkeeper: primary: except Exception as exc:'
+  sample=$'2026-05-23T17:30:22 \342\226\210 PAGE [ERROR] Upkeeper: primary: except Exception:'
   output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
   case "$output" in
     *' [ERROR] '*)

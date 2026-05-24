@@ -984,7 +984,7 @@ upkeeper_internal_live_output_custody_filter_self_test() {
     return 1
   fi
 
-  sample='tool_failure_queue.open action=open marker_id=d8b7917833128ecf6332aaaa marker_path_hmac=path-hmac-sha256:7458ac081a38f6444d2d266b10747d7b92f97aef7d5bb521a265a2c29467d66b target_path_hmac=path-hmac-sha256:6c8bd6795bfb8b8622f6fe8f81fdf8ffbc684d4c09a2ec6a91116bae7f862efc path_redacted=1 failures=1 unresolved_failures=2 addressed_by_later_success=0 kind=validation exit_line=exited\ 1\ in\ 0ms:'
+  sample='tool_failure_queue.open action=open marker_id=d8b7917833128ecf6332aaaa marker_path_hmac=path-hmac-sha256:7458ac081a38f6444d2d266b10747d7b92f97aef7d5bb521a265a2c29467d66b target_path_hmac=path-hmac-sha256:6c8bd6795bfb8b8622f6fe8f81fdf8ffbc684d4c09a2ec6a91116bae7f862efc path_redacted=1 failures=1 unresolved_failures=3 addressed_by_later_success=0 kind=validation exit_line=exited\ 1\ in\ 105ms:'
   if ! upkeeper_tool_failure_queue_open_custody_log "WARN" "$sample"; then
     printf 'live_output_custody_filter_self_test=fail reason=tool_failure_queue_open_prior_warning_not_classified output=%s\n' "$sample" >&2
     return 1

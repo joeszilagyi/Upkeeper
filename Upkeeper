@@ -6278,6 +6278,116 @@ upkeeper_preflight_explicit_target_or_exit() {
   fi
 }
 
+upkeeper_bind_issue_fix_obligation_context() {
+  local issue_number issue_target open_dir raw_match matched_id matched_path
+
+  issue_number="${CODEX_ISSUE_FIX_NUMBER:-}"
+  [[ -n "$issue_number" ]] || return 0
+  issue_target="${CODEX_ISSUE_FIX_TARGET_FILE:-${CODEX_TARGET_FILE:-}}"
+
+  upkeeper_issue_fix_next_enabled || return 0
+  [[ -n "${UPKEEPER_AUTOMATION_OBLIGATION_ID:-}" ]] && return 0
+  if ! open_dir="$(automation_obligation_root)/open"; then
+    return 0
+  fi
+  [[ -d "$open_dir" ]] || return 0
+
+  raw_match="$(python3 - "$open_dir" "$issue_number" "$issue_target" <<'PY'
+import glob
+import json
+import os
+import sys
+
+open_dir, issue_number, issue_target = sys.argv[1:4]
+issue_number = str(issue_number or "").strip()
+issue_target = str(issue_target or "").strip()
+
+
+def to_str(value):
+  if value is None:
+    return ""
+  return str(value)
+
+
+def issue_match(data):
+  if not issue_number:
+    return False
+  return issue_number in (
+    to_str(data.get("issue_number")).strip(),
+    to_str(data.get("github_issue_number")).strip(),
+    to_str(data.get("linked_issue_number")).strip(),
+    to_str(data.get("owner_issue_number")).strip(),
+  )
+
+
+def target_match(data):
+  if not issue_target:
+    return False
+  target = to_str(data.get("target_file")).strip()
+  repair_target = to_str(data.get("repair_target_file")).strip()
+  return target == issue_target or repair_target == issue_target
+
+open_matches = []
+target_matches = []
+for path in sorted(glob.glob(os.path.join(open_dir, "*.json"))):
+  try:
+    with open(path, "r", encoding="utf-8") as handle:
+      data = json.load(handle)
+  except (OSError, json.JSONDecodeError):
+    continue
+  if str(data.get("status", "")).strip() != "open":
+    continue
+  if issue_match(data):
+    open_matches.append((path, data))
+  elif target_match(data):
+    target_matches.append((path, data))
+
+selected = None
+if len(open_matches) == 1:
+  selected = open_matches[0]
+elif len(open_matches) > 1 and issue_target:
+  targeted = [
+    item for item in open_matches
+    if (
+      to_str(item[1].get("target_file")).strip() == issue_target
+      or to_str(item[1].get("repair_target_file")).strip() == issue_target
+    )
+  ]
+  if len(targeted) == 1:
+    selected = targeted[0]
+  elif len(targeted) > 1:
+    print("ambiguous")
+    raise SystemExit(0)
+if selected is None and len(target_matches) == 1:
+  selected = target_matches[0]
+
+if selected is not None:
+  path, _ = selected
+  filename = os.path.basename(path)
+  print(__import__("json").dumps({"id": filename, "path": path}))
+PY
+)"
+  if [[ -z "$raw_match" ]]; then
+    return 0
+  fi
+  if [[ "$raw_match" == "ambiguous" ]]; then
+    log_line "WARN" "issue_fix.obligation_bind ambiguous issue=$(shell_quote "$issue_number") target_file=$(shell_quote "$issue_target")"
+    return 0
+  fi
+
+  matched_id="$(jq -r '.id // ""' <<<"$raw_match")"
+  matched_path="$(jq -r '.path // ""' <<<"$raw_match")"
+  if [[ -z "$matched_id" || -z "$matched_path" ]]; then
+    return 0
+  fi
+  matched_id="${matched_id%.json}"
+  UPKEEPER_AUTOMATION_OBLIGATION_ID="$matched_id"
+  UPKEEPER_AUTOMATION_OBLIGATION_PATH="$matched_path"
+  [[ -n "${UPKEEPER_AUTOMATION_WORKFLOW:-}" ]] || UPKEEPER_AUTOMATION_WORKFLOW="obligation-repair"
+  [[ -n "${UPKEEPER_AUTOMATION_STAGE:-}" ]] || UPKEEPER_AUTOMATION_STAGE="issue_fix"
+  log_line "INFO" "issue_fix.obligation_bind matched_id=$(shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_ID") issue=$(shell_quote "$issue_number") target_file=$(shell_quote "$issue_target") source_path=$(shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_PATH")"
+}
+
 upkeeper_internal_active_lock_self_test_requested() {
   config_truthy "${UPKEEPER_INTERNAL_ACTIVE_LOCK_SELF_TEST:-0}"
 }
@@ -6462,6 +6572,7 @@ main() {
   upkeeper_precontact_backup_hmac_key_material >/dev/null
   precontact_backup_machine_preflight_or_exit
   resolve_issue_fix_next_or_exit
+  upkeeper_bind_issue_fix_obligation_context
   if ! run_issue_docs_contract_checks; then
     finish_cycle 70 ISSUE_FIX_DOCS_CONTRACT_CHECK_FAILED ERROR "codex_exec_started=0 number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
   fi

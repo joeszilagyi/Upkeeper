@@ -3,6 +3,36 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Embedded Behavior Table Contracts
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #106 by adding deterministic drift checks for high-risk embedded
+  tables and classifiers
+- cover startup anomaly changed-path allowlists, source-safe exclusions,
+  command-kind classifiers, review-module ids, and Lattice pass-code mappings
+- document the operator-visible ownership boundary for these tables
+
+Constraints:
+- keep checks no-quota and local to validation
+- do not extract runtime helpers until fixtures prove the drift surface
+- preserve current operator behavior and source-safe selection semantics
+
+Files likely touched:
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Validation Dry-Run Helper
 
 Status: completed locally; pending PR/CI

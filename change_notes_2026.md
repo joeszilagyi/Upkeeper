@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: preservation policy and artifact privacy:
+	1. Added `docs/preservation-policy.md` with evidence temperature values for hot, warm, cold, frozen, and trashable evidence.
+	2. Defined artifact privacy classes for public-safe, private-operator, and secret-adjacent material across logs, transcripts, backups, Lattice rows, exports, recovery records, obligations, postmortems, manifests, and public issue or PR text.
+	3. Added validation coverage so preservation, redaction, export, recovery, and promotion policy terms cannot silently drift out of the public docs.
+
 2026-05-24: threat model and override doctrine:
 	1. Added an explicit `docs/security.md` threat model covering malicious or confused model output, wrapper bugs, config mistakes, operator mistakes, filesystem weirdness, same-user access, secret leakage, public-doc leakage, and quota/fallback weirdness.
 	2. Documented degraded-mode behavior for missing `age`, unavailable encrypted backup, unavailable Landlock/bubblewrap, unavailable Lattice, missing validators, dirty baselines, and unsafe targets.

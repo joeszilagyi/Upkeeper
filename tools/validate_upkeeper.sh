@@ -597,6 +597,58 @@ check_threat_model_doctrine_contract() {
     fail "change notes missing threat model and override doctrine entry"
 }
 
+check_preservation_policy_contract() {
+  local term
+  local -a required_terms
+
+  log "checking preservation policy and artifact privacy contract"
+  [[ -s docs/preservation-policy.md ]] ||
+    fail "preservation policy is missing or empty"
+
+  required_terms=(
+    "## Evidence Temperature"
+    "hot"
+    "warm"
+    "cold"
+    "frozen"
+    "trashable"
+    "## Artifact Privacy Classes"
+    "public-safe"
+    "private-operator"
+    "secret-adjacent"
+    "## Artifact Handling Matrix"
+    "Upkeeper.log"
+    "Backend transcripts"
+    "Selected-target backups"
+    "Lattice SQLite database rows"
+    "Lattice JSONL exports"
+    "Lattice recovery records"
+    "Automation obligations"
+    "Postmortem reports"
+    "## Redaction, Compression, Export, And Recovery"
+    "Repo loss and machine loss have different recovery expectations"
+    "## Promotion Rules"
+    "## Policy Drift"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq "$term" docs/preservation-policy.md ||
+      fail "preservation policy missing required term: $term"
+  done
+
+  grep -Fq "docs/preservation-policy.md" README.md ||
+    fail "README missing preservation policy pointer"
+  grep -Fq "docs/preservation-policy.md" docs/security.md ||
+    fail "security docs missing preservation policy pointer"
+  grep -Fq "docs/preservation-policy.md" docs/lattice.md ||
+    fail "Lattice docs missing preservation policy pointer"
+  grep -Fq "docs/preservation-policy.md" docs/compatibility.md ||
+    fail "compatibility docs missing preservation policy contract"
+  grep -Fq "Evidence preservation drift" docs/risk-register.md ||
+    fail "risk register missing preservation drift risk"
+  grep -Fq "preservation policy and artifact privacy" change_notes_2026.md ||
+    fail "change notes missing preservation policy entry"
+}
+
 check_syntax() {
   local module
 
@@ -6917,6 +6969,7 @@ run_check authority_control_docs_contract check_authority_control_docs_contract
 run_check policy_decisions_contract check_policy_decisions_contract
 run_check schema_compatibility_contract check_schema_compatibility_contract
 run_check threat_model_doctrine_contract check_threat_model_doctrine_contract
+run_check preservation_policy_contract check_preservation_policy_contract
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation

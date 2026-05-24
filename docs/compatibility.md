@@ -197,6 +197,12 @@ Future changes should preserve this operator-visible surface as far as possible:
   fallback, encrypted backup, Lattice, validator, dirty-baseline, or unsafe
   target behavior should update that doctrine and validation coverage in the
   same patch.
+- The preservation policy in `docs/preservation-policy.md` is part of the
+  stable evidence contract. Changes to evidence temperature, artifact privacy
+  classes, log/transcript retention, backup recovery, Lattice exports, recovery
+  artifacts, obligation evidence, redaction defaults, compression, pruning, or
+  public evidence promotion should update that policy and validation coverage
+  in the same patch.
 - Policy decision schema-v1 field names and types are stable. Future policy
   decision records may add optional fields, but removing, renaming, or changing
   the meaning of existing fields requires a new schema version and validation

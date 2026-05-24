@@ -37,6 +37,8 @@ The paired authority docs make the control surface explicit:
   decisions that should survive prompt wording changes.
 - `docs/negative-space-testing.md` lists deterministic "must not happen"
   validation contracts for safety boundaries.
+- `docs/preservation-policy.md` defines evidence temperature, artifact privacy
+  classes, and promotion rules for local and public evidence.
 
 ## Threat Model
 
@@ -364,6 +366,12 @@ Because project commands may accidentally print secrets, logs and transcripts
 must be treated as potentially sensitive. Keep `Upkeeper.log` and `runtime/`
 ignored unless a repo has a deliberate, reviewed policy for publishing specific
 sanitized artifacts.
+
+The preservation policy in `docs/preservation-policy.md` is the contract for
+evidence temperature and artifact privacy classes. Raw runtime evidence defaults
+to `private-operator`; public docs, release notes, issue comments, and PR text
+must use `public-safe` summaries unless a sensitive artifact has been
+deliberately sanitized.
 
 Quota/session evidence is now privacy-minimized by default. Normal quota log
 lines store hashed session-source and quota-identity fields instead of raw

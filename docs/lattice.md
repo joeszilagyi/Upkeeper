@@ -100,6 +100,11 @@ When possible, Upkeeper creates:
 - export files with mode `600`
 - recovery records with mode `600`
 
+`docs/preservation-policy.md` classifies live Lattice databases and recovery
+records as warm `private-operator` evidence by default, and Lattice JSONL
+exports as cold `private-operator` evidence unless separately sanitized for
+public use. Export redaction defaults are part of that preservation contract.
+
 ## Tool
 
 The standalone CLI is:

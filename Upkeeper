@@ -790,7 +790,7 @@ upkeeper_live_output_false_positive_error_echo() {
   esac
 
   case "$line:$payload" in
-    *' PAGE [ERROR] Upkeeper: primary: except Exception:'*)
+    *' PAGE [ERROR] Upkeeper: primary: except Exception:'*|*' [ERROR] Upkeeper: primary: except Exception:'*)
       return 0
       ;;
   esac
@@ -942,7 +942,7 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
   esac
 
-  sample=$'2026-05-23T17:30:22 \342\226\210 PAGE [ERROR] Upkeeper: primary: except Exception:'
+  sample=$'2026-05-23T17:30:22 \342\226\210 PAGE [ERROR] Upkeeper: primary: except Exception: continue'
   output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
   case "$output" in
     *' [ERROR] '*)
@@ -953,6 +953,21 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
     *)
       printf 'live_output_custody_filter_self_test=fail reason=python_exception_handler_fixture_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-24T11:15:23 [ERROR] Upkeeper: primary: except Exception: continue'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=python_exception_handler_non_page_fixture_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_source_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=python_exception_handler_non_page_fixture_not_classified output=%s\n' "$output" >&2
       return 1
       ;;
   esac

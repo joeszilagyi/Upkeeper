@@ -199,6 +199,12 @@ Important:
     before it can fail closed as missing checks. Set
     `BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE=0` only for an intentional manual
     override.
+  - After syncing the active backlog PR branch, and again before batch merge,
+    the launcher checks whether the local branch contains commits not yet on
+    `origin/<branch>`. A clean local-ahead branch is pushed before PR checks or
+    merge decisions so GitHub validation covers the current head. Dirty,
+    missing-remote, or diverged branch states stop the launcher with a clear
+    branch-state reason instead of relying on checks from an older remote head.
   - Before normal GitHub issue selection, the backlog launcher scans recent
     private loop output for deviations from the healthy unattended-run shape.
     `PAGE`/`ERROR` lines, unresolved startup-anomaly residue, previous-run

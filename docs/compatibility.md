@@ -87,6 +87,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   output tail, stable fingerprint, likely owner path, and required proof command
   before the launcher exits. The next backlog invocation must select that
   obligation before retrying the merge or selecting fresh issue work.
+- Backlog PR check and merge decisions are made against the current backlog
+  branch head. If the local backlog branch is clean and ahead of
+  `origin/<branch>`, the launcher pushes it before PR checks or merge. Dirty,
+  missing-remote, or diverged local-ahead states fail closed with an explicit
+  branch-state reason.
 - The tracked authority model remains part of the public contract. Changes to
   target authority, source-write authority, shell execution, quota spend,
   backup restore, evidence pruning, GitHub issue effects, Lattice writes, or

@@ -29,6 +29,10 @@ Version numbering note:
 	1. Documented that the repository intentionally does not commit a project `.codex/config.toml`; Upkeeper's wrapper-owned config surface remains the source of truth for unattended Codex launch policy.
 	2. Clarified that local Codex CLI profiles are operator-local state and that any future checked-in Codex profile must document how it composes with `Upkeeper.conf` and validation.
 
+2026-05-23: platform support boundary:
+	1. Documented Linux with GNU userland as the supported unattended-run baseline, WSL2 as supported through normal Linux semantics, native Windows as unsupported, and macOS as deferred until GNU/BSD utility drift is handled.
+	2. `tools/validate_upkeeper.sh --deps` now prints platform support status, and normal validation modes fail early with a clear unsupported-platform message outside the documented baseline.
+
 2026-05-23: v1.2.32 changes:
 	1. Live output custody now reclassifies backend-emitted shell/test snippets that quote log markers, case globs, grep assertions, or `[WARN]`/`[ERROR]` assignments as quoted fixture/search output instead of fresh PAGE errors.
 	2. The operator guide snapshot is synced to wrapper version v1.2.32.

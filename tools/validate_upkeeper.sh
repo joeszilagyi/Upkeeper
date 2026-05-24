@@ -12,6 +12,7 @@ VALIDATION_FULL_TIMEOUT_SECONDS="${VALIDATION_FULL_TIMEOUT_SECONDS:-420}"
 VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS="${VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS:-600}"
 
 WRAPPER_REQUIRED_COMMANDS=(
+  bash
   awk
   cat
   chmod
@@ -236,9 +237,51 @@ require_command() {
   command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name; see docs/dependencies.md"
 }
 
+platform_support_status_line() {
+  local kernel wsl_note
+
+  kernel="$(uname -s 2>/dev/null || printf unknown)"
+  wsl_note=""
+  if [[ "$kernel" == "Linux" && -r /proc/version ]] && grep -qi microsoft /proc/version 2>/dev/null; then
+    wsl_note="; WSL detected"
+  fi
+
+  case "$kernel" in
+    Linux)
+      printf 'ok\tplatform\t%s\tLinux with GNU userland is the supported CI/operator baseline%s\n' "$kernel" "$wsl_note"
+      return 0
+      ;;
+    Darwin)
+      printf 'missing\tplatform\t%s\tmacOS is documented as deferred until BSD/GNU utility drift is resolved\n' "$kernel"
+      return 1
+      ;;
+    *)
+      printf 'missing\tplatform\t%s\tunsupported platform; see docs/dependencies.md\n' "$kernel"
+      return 1
+      ;;
+  esac
+}
+
+require_supported_platform() {
+  local kernel
+
+  kernel="$(uname -s 2>/dev/null || printf unknown)"
+  case "$kernel" in
+    Linux)
+      return 0
+      ;;
+    Darwin)
+      fail "unsupported platform: macOS/Darwin is documented as deferred; see docs/dependencies.md"
+      ;;
+    *)
+      fail "unsupported platform: $kernel; see docs/dependencies.md"
+      ;;
+  esac
+}
+
 require_commands() {
   local command_name
-  for command_name in bash chmod cp date diff find git grep jq ln mkdir mktemp python3 rm sed sort touch tr wc; do
+  for command_name in bash chmod cp date diff find git grep jq ln mkdir mktemp python3 rm sed sort touch tr uname wc; do
     require_command "$command_name"
   done
 }
@@ -259,11 +302,14 @@ dependency_status_line() {
 
 check_dependencies() {
   local command_name
+  local unsupported_platform=0
   local missing_required=0
   local missing_launcher_required=0
 
   log "checking wrapper dependencies"
   printf 'status\tclass\tcommand\tnote\n'
+
+  platform_support_status_line || unsupported_platform=1
 
   for command_name in "${WRAPPER_REQUIRED_COMMANDS[@]}"; do
     dependency_status_line "required" "$command_name" "required by Upkeeper startup/runtime" || missing_required=1
@@ -298,6 +344,7 @@ check_dependencies() {
     esac
   done
 
+  [[ "$unsupported_platform" -eq 0 ]] || fail "unsupported platform for unattended Upkeeper runs; see docs/dependencies.md"
   [[ "$missing_required" -eq 0 ]] || fail "one or more required wrapper dependencies are missing; see docs/dependencies.md"
   [[ "$missing_launcher_required" -eq 0 ]] || fail "one or more full-burn launcher dependencies are missing; see docs/dependencies.md"
 }
@@ -2272,6 +2319,22 @@ check_validation_environment_isolation() {
 check_dependency_guidance_contract() {
   log "checking dependency guidance contract"
 
+  grep -Fq "Supported Platforms And Portability" docs/dependencies.md ||
+    fail "dependency docs missing supported platform boundary"
+  grep -Fq "Linux with a GNU userland" docs/dependencies.md ||
+    fail "dependency docs missing Linux/GNU support baseline"
+  grep -Fq "WSL2 is supported as a Linux environment" docs/dependencies.md ||
+    fail "dependency docs missing WSL2 support boundary"
+  grep -Fq "macOS is deferred" docs/dependencies.md ||
+    fail "dependency docs missing macOS deferred boundary"
+  grep -Fq "macos-latest" docs/dependencies.md ||
+    fail "dependency docs missing deferred macOS CI condition"
+  grep -Fq "Start with Ubuntu. Add macos-latest" .github/workflows/ci.yml ||
+    fail "CI workflow missing macOS deferral note"
+  grep -Fq "platform_support_status_line" tools/validate_upkeeper.sh ||
+    fail "validator missing platform support status helper"
+  grep -Fq "require_supported_platform" tools/validate_upkeeper.sh ||
+    fail "validator missing unsupported-platform fail-fast guard"
   grep -Fq '`jq` remains a required runtime and validation dependency' docs/dependencies.md ||
     fail "dependency docs missing explicit jq decision"
   grep -Fq 'sudo apt-get install -y jq' docs/dependencies.md ||
@@ -5756,6 +5819,10 @@ check_stress_corpus_harness() {
   log "checking local stress corpus harness"
   tools/stress_upkeeper_corpus.sh --local
 }
+
+if [[ "$MODE" != "deps" ]]; then
+  require_supported_platform
+fi
 
 require_commands
 if [[ "$MODE" == "deps" ]]; then

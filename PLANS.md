@@ -3,6 +3,35 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Platform Support Boundary
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #93 by making supported operator platforms explicit
+- document why macOS CI remains deferred
+- make validation report the platform boundary and fail clearly on unsupported
+  kernels
+
+Constraints:
+- do not claim macOS/native Windows support before the wrapper and validation
+  harness are proven there
+- keep the current Linux/GNU CI path unchanged
+- preserve no-real-backend validation behavior
+
+Files touched:
+- `docs/dependencies.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n tools/validate_upkeeper.sh`
+- `tools/validate_upkeeper.sh --deps`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `git diff --check`
+
 ## Tracked-Only Target Selection
 
 Status: completed and merged

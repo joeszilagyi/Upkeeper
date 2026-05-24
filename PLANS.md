@@ -65,7 +65,40 @@ Files likely touched:
 Validation:
 - `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
 - `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
 - `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Audit-Only Mode
+
+Status: completed and merged
+
+Goal:
+- close issue #132 by making audit-only/no-fix a first-class invocation surface
+- reuse the existing bug-report-only source-mutation guard and draft artifact
+  path instead of creating a second read-only workflow
+- document aliases and prove the mode records audit intent without allowing
+  tracked source mutation
+
+Constraints:
+- preserve existing `--bug-report-only`, `--file-bug-only`, and
+  `--report-bug-only` behavior
+- do not launch real backend Codex during validation
+- keep audit-only reports under ignored runtime evidence
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/help_selection.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
 - `git diff --check`
 
 ## Breadcrumb Custody Audit
@@ -96,6 +129,34 @@ Validation:
 - `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
 - `tools/check_public_docs.sh --quick`
 - `./Upkeeper --help`
+- `git diff --check`
+
+## Embedded Behavior Table Contracts
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #106 by adding deterministic drift checks for high-risk embedded
+  tables and classifiers
+- cover startup anomaly changed-path allowlists, source-safe exclusions,
+  command-kind classifiers, review-module ids, and Lattice pass-code mappings
+- document the operator-visible ownership boundary for these tables
+
+Constraints:
+- keep checks no-quota and local to validation
+- do not extract runtime helpers until fixtures prove the drift surface
+- preserve current operator behavior and source-safe selection semantics
+
+Files likely touched:
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
 - `git diff --check`
 
 ## Quota And Session Fixtures

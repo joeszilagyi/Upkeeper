@@ -12,7 +12,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
+Usage: Upkeeper [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--audit-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: v1.2.33
@@ -634,6 +634,11 @@ Prompt behavior:
     review touch requirement for that invocation. By default it writes a local
     issue draft under runtime/upkeeper-bug-report-drafts and blocks direct
     GitHub issue creation unless `UPKEEPER_ALLOW_GH_ISSUE_WRITE=1`.
+  - --audit-only is the canonical no-fix/read-only audit alias; --review-only,
+    --no-fix, and --read-only are accepted aliases. It uses the same source
+    mutation guard and final-message draft contract as bug-report-only, records
+    `audit_only=1` in cycle metadata, and writes the local report under
+    `runtime/upkeeper-audits` by default.
   - --fix-next-issue, also accepted as --fix-oldest-bug, asks Upkeeper to pick
     the oldest open non-skipped GitHub issue by priority label order
     security > data-integrity > bug, infer a starting file from the issue body
@@ -685,8 +690,10 @@ Environment overrides:
   UPKEEPER_BREADCRUMB_STATE_DIR Default: runtime/upkeeper-breadcrumbs
   UPKEEPER_BREADCRUMB_GATE_SEVERITIES Default: critical,high
   UPKEEPER_BREADCRUMB_GATE_TARGET Default: Upkeeper
+  UPKEEPER_AUDIT_ONLY          Default: 0
   UPKEEPER_ALLOW_GH_ISSUE_WRITE Default: 0
   UPKEEPER_BUG_REPORT_DRAFT_DIR Default: runtime/upkeeper-bug-report-drafts
+  UPKEEPER_AUDIT_REPORT_DIR    Default: runtime/upkeeper-audits
   UPKEEPER_FIX_NEXT_ISSUE      Default: 0
   UPKEEPER_FIX_ISSUE           Default: empty
   UPKEEPER_ISSUE_WORKFLOW_STAGE Default: empty
@@ -976,6 +983,9 @@ prompts, backup log lines, or Lattice preselect evidence.
   static/fixture checks, and `--full` for the broad deterministic integration
   gate before release or after touching module order, prompt packaging,
   symlink behavior, or failure-path guardrails.
+  Quick validation also owns the embedded behavior table drift contract for
+  startup anomaly allowlists, source-safe exclusions, command-kind
+  classifiers, review-module ids, and Lattice pass-code mappings.
   Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
   heavier config, manifest, Lattice, and review-module dry-run fixtures stay in
   full mode. Add `--profile` to validation runs to print per-check elapsed

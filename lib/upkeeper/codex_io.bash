@@ -51,12 +51,17 @@ issue_fix_explicit_target_ineligible_reason() {
 
 prepare_bug_report_draft_artifact() {
   local draft_root="${UPKEEPER_BUG_REPORT_DRAFT_DIR:-${ROOT_DIR:-$PWD}/runtime/upkeeper-bug-report-drafts}"
+  local mode="bug_report_only"
 
   upkeeper_bug_report_only_enabled || return 0
+  if upkeeper_audit_only_enabled; then
+    draft_root="${UPKEEPER_AUDIT_REPORT_DIR:-${ROOT_DIR:-$PWD}/runtime/upkeeper-audits}"
+    mode="audit_only"
+  fi
   mkdir -p -- "$draft_root" || return 1
   chmod 700 "$draft_root" 2>/dev/null || true
   RUN_BUG_REPORT_DRAFT_FILE="$draft_root/${CYCLE_ID}-${CYCLE_RUN_HASH}.md"
-  log_line "INFO" "bug_report_only.draft.destination path=$(shell_quote "$RUN_BUG_REPORT_DRAFT_FILE") issue_write_allowed=$(truthy_as_int "${UPKEEPER_ALLOW_GH_ISSUE_WRITE:-0}")"
+  log_line "INFO" "bug_report_only.draft.destination mode=$mode path=$(shell_quote "$RUN_BUG_REPORT_DRAFT_FILE") issue_write_allowed=$(truthy_as_int "${UPKEEPER_ALLOW_GH_ISSUE_WRITE:-0}")"
 }
 
 prepare_genie_protocol_env() {
@@ -497,8 +502,12 @@ truthy_as_int() {
   fi
 }
 
+upkeeper_audit_only_enabled() {
+  config_truthy "${CODEX_AUDIT_ONLY:-0}"
+}
+
 upkeeper_bug_report_only_enabled() {
-  config_truthy "${CODEX_BUG_REPORT_ONLY:-0}"
+  config_truthy "${CODEX_BUG_REPORT_ONLY:-0}" || upkeeper_audit_only_enabled
 }
 
 upkeeper_issue_fix_next_enabled() {
@@ -545,6 +554,8 @@ upkeeper_source_mutation_guard_enabled() {
 upkeeper_source_mutation_guard_mode() {
   if upkeeper_issue_workflow_read_only_enabled; then
     printf 'issue_%s' "$CODEX_ISSUE_WORKFLOW_STAGE"
+  elif upkeeper_audit_only_enabled; then
+    printf 'audit_only'
   elif upkeeper_bug_report_only_enabled; then
     printf 'bug_report_only'
   else
@@ -1556,6 +1567,14 @@ parse_args() {
         ;;
       --bug-report-only|--file-bug-only|--report-bug-only)
         CODEX_BUG_REPORT_ONLY="1"
+        CODEX_AUDIT_ONLY="0"
+        CODEX_ISSUE_FIX_NEXT="0"
+        CODEX_ISSUE_FIX_REQUESTED_NUMBER=""
+        shift
+        ;;
+      --audit-only|--review-only|--no-fix|--read-only)
+        CODEX_AUDIT_ONLY="1"
+        CODEX_BUG_REPORT_ONLY="1"
         CODEX_ISSUE_FIX_NEXT="0"
         CODEX_ISSUE_FIX_REQUESTED_NUMBER=""
         shift
@@ -1564,6 +1583,7 @@ parse_args() {
         CODEX_ISSUE_FIX_NEXT="1"
         CODEX_ISSUE_FIX_REQUESTED_NUMBER=""
         CODEX_BUG_REPORT_ONLY="0"
+        CODEX_AUDIT_ONLY="0"
         shift
         ;;
       --issue-workflow-stage=*)
@@ -1578,6 +1598,7 @@ parse_args() {
         [[ "$CODEX_ISSUE_FIX_REQUESTED_NUMBER" =~ ^[0-9]+$ ]] || die "--fix-issue requires a numeric issue number"
         CODEX_ISSUE_FIX_NEXT="1"
         CODEX_BUG_REPORT_ONLY="0"
+        CODEX_AUDIT_ONLY="0"
         shift
         ;;
       --fix-issue)

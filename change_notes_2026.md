@@ -21,10 +21,19 @@ Version numbering note:
 	2. Explicit target pins and issue-fix pins remain visible as pinned work instead of being silently replaced, while low/medium breadcrumbs remain custody-only by default.
 	3. Suppressed breadcrumb records now carry a named suppression rationale plus an optional expiry field so suppression is machine-readable.
 
+2026-05-24: embedded behavior table contracts:
+	1. Quick validation now checks the embedded behavior table drift contract for startup anomaly changed-path allowlists, source-safe exclusions, command-kind classifiers, review-module ids, and Lattice pass-code mappings.
+	2. Compatibility and operator docs now identify those tables as operator-visible control-plane behavior that must change with validation coverage instead of drifting silently.
+
 2026-05-24: closed obligation issue links:
 	1. Obligation issue-report sync now verifies existing GitHub issue links are still open before accepting them as custody for an open automation obligation.
 	2. Closed linked issues are preserved as stale evidence, cleared from the active custody fields, and replaced with a fresh issue for the still-open obligation when GitHub filing is enabled.
 	3. If an existing linked issue cannot be verified, backlog records `github_verify_failed` and fails closed before normal issue selection instead of claiming clean custody.
+
+2026-05-24: audit-only no-fix mode:
+	1. Added `--audit-only` as the canonical read-only/no-fix audit mode, with `--review-only`, `--no-fix`, and `--read-only` as aliases.
+	2. Audit-only mode reuses the bug-report-only final-message report contract, records `audit_only=1` in cycle metadata, and stores local reports under ignored runtime audit evidence by default.
+	3. The source mutation guard now reports audit-only source changes as `AUDIT_ONLY_MUTATION_VIOLATION`, and local validation checks the CLI, help, config, prompt, and runtime report routing contract.
 
 2026-05-24: validation dry-run helper:
 	1. `tools/validate_upkeeper.sh` now centralizes repeated fake Upkeeper dry-run environment setup in a validator-local helper.

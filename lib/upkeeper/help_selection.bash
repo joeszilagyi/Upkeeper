@@ -22,7 +22,7 @@ help_selection_path_hmac() {
 
 show_help() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
+Usage: $SCRIPT_NAME [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: $UPKEEPER_VERSION
@@ -318,7 +318,7 @@ Important:
     UPKEEPER_PRECONTACT_BACKUP_ROOT, and
     UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT. They may also set selection
     defaults such as UPKEEPER_SELECTION_SOURCE, UPKEEPER_SELECTION_ORDER,
-    UPKEEPER_FILE_MANIFEST_MODE, UPKEEPER_TARGET_ROOT,
+    UPKEEPER_SELECT_UNTRACKED, UPKEEPER_FILE_MANIFEST_MODE, UPKEEPER_TARGET_ROOT,
     UPKEEPER_TARGET_MAX_DEPTH, UPKEEPER_INCLUDE_GLOBS,
     UPKEEPER_EXCLUDE_GLOBS, and UPKEEPER_SELECTION_REVIEW_MODULES. CLI flags
     remain the final one-cycle overrides.
@@ -388,6 +388,10 @@ Prompt behavior:
     metadata, startup refreshes it before selection. Set
     --selection-source=enumerate for a one-cycle direct scan without using the
     manifest, or --refresh-manifest to rebuild the manifest immediately.
+    Normal selection includes tracked and non-ignored untracked files for
+    compatibility. Use UPKEEPER_SELECT_UNTRACKED=0, --select-untracked=0, or
+    --tracked-only when unattended rotation should ignore scratch files that
+    have not been added to Git.
   - Upkeeper Lattice is enabled by default as a local SQLite evidence ledger at:
       $UPKEEPER_LATTICE_DB
     It records cycle starts/finishes, preselection evidence, candidate rows,
@@ -509,6 +513,10 @@ Prompt behavior:
     tree; --target-depth=N limits descendant depth below that root.
   - --selection-order=oldest, newest, or random chooses the target ordering for
     this invoked cycle. --random-target is shorthand for random ordering.
+  - --select-untracked=0, --no-select-untracked, or --tracked-only excludes
+    non-ignored untracked files from normal timestamp target selection for this
+    cycle. The default is --select-untracked=1 for compatibility. Explicit
+    --target-file pins can still target safe non-ignored untracked text files.
   - --selection-source=manifest uses the local manifest; --selection-source=enumerate
     bypasses it for this cycle. --refresh-manifest rebuilds and uses the
     manifest immediately.
@@ -566,6 +574,7 @@ Environment overrides:
   UPKEEPER_IGNORE_FAILURE_QUEUE Default: 0
   UPKEEPER_SELECTION_SOURCE     Default: manifest
   UPKEEPER_SELECTION_ORDER      Default: oldest
+  UPKEEPER_SELECT_UNTRACKED     Default: 1
   UPKEEPER_FILE_MANIFEST_MODE   Default: auto
   UPKEEPER_FILE_MANIFEST_PATH   Default: runtime/upkeeper-file-manifest.json
   UPKEEPER_IGNORE_FILE          Default: .upkeeperignore
@@ -770,7 +779,7 @@ enforce_startup_anomaly_gate_target_or_exit() {
 }
 
 preselect_review_target() {
-  python3 - "$ROOT_DIR" "$SELF_PATH" "$CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS" "$STARTUP_ANOMALY_GATE" "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" "$CODEX_TARGET_FILE" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$CODEX_TOOL_FAILURE_QUEUE_ENABLED" "$CODEX_TOOL_FAILURE_QUEUE_BYPASS" "$CODEX_SELECTION_SOURCE" "$CODEX_FILE_MANIFEST_PATH" "$CODEX_SELECTION_ORDER" "$CODEX_TARGET_ROOT" "$CODEX_TARGET_MAX_DEPTH" "$CODEX_SELECTION_INCLUDE_GLOBS" "$CODEX_SELECTION_EXCLUDE_GLOBS" "$CODEX_SELECTION_REVIEW_MODULES" "$CODEX_SELECTION_RANDOM_SEED" "$CODEX_MAX_COVER_MODE" "$UPKEEPER_LATTICE_ENABLED" "$UPKEEPER_LATTICE_SELECTION_MODE" "$(lattice_tool_path)" "$UPKEEPER_LATTICE_DB" "$UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE" "$CODEX_UPKEEPER_IGNORE_FILE" <<'PY'
+  python3 - "$ROOT_DIR" "$SELF_PATH" "$CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS" "$STARTUP_ANOMALY_GATE" "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" "$CODEX_TARGET_FILE" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$CODEX_TOOL_FAILURE_QUEUE_ENABLED" "$CODEX_TOOL_FAILURE_QUEUE_BYPASS" "$CODEX_SELECTION_SOURCE" "$CODEX_FILE_MANIFEST_PATH" "$CODEX_SELECTION_ORDER" "${CODEX_SELECT_UNTRACKED:-1}" "$CODEX_TARGET_ROOT" "$CODEX_TARGET_MAX_DEPTH" "$CODEX_SELECTION_INCLUDE_GLOBS" "$CODEX_SELECTION_EXCLUDE_GLOBS" "$CODEX_SELECTION_REVIEW_MODULES" "$CODEX_SELECTION_RANDOM_SEED" "$CODEX_MAX_COVER_MODE" "$UPKEEPER_LATTICE_ENABLED" "$UPKEEPER_LATTICE_SELECTION_MODE" "$(lattice_tool_path)" "$UPKEEPER_LATTICE_DB" "$UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE" "$CODEX_UPKEEPER_IGNORE_FILE" <<'PY'
 import datetime
 import errno
 import fnmatch
@@ -798,6 +807,7 @@ from pathlib import Path
     selection_source,
     manifest_path,
     selection_order,
+    select_untracked_raw,
     target_root,
     target_max_depth,
     include_globs,
@@ -811,9 +821,10 @@ from pathlib import Path
     lattice_db_path,
     lattice_journal_mode,
     upkeeper_ignore_file,
-) = sys.argv[1:26]
+) = sys.argv[1:27]
 os.chdir(root)
 root_path = Path(root).resolve()
+select_untracked = select_untracked_raw.lower() in {"1", "true", "yes", "on"}
 ignore_file = Path(upkeeper_ignore_file).expanduser()
 if not ignore_file.is_absolute():
     ignore_file = (root_path / ignore_file).resolve()
@@ -1028,6 +1039,14 @@ def git_output(args: list[str]) -> str:
         return subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL).strip()
     except subprocess.CalledProcessError:
         return ""
+
+
+def git_tracked_paths() -> set[str]:
+    try:
+        raw = subprocess.check_output(["git", "ls-files", "-z"], stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        return set()
+    return set(raw.decode("utf-8", "surrogateescape").split("\0")) - {""}
 
 
 def root_relative(path: str) -> str:
@@ -1253,7 +1272,10 @@ def manifest_paths(path: str) -> tuple[list[tuple[float, str]], str]:
 
 def enumerate_paths() -> tuple[list[tuple[float, str]], str]:
     try:
-        raw_paths = subprocess.check_output(["git", "ls-files", "-co", "--exclude-standard", "-z"])
+        ls_files_args = ["git", "ls-files", "-c", "-z"]
+        if select_untracked:
+            ls_files_args = ["git", "ls-files", "-c", "-o", "--exclude-standard", "-z"]
+        raw_paths = subprocess.check_output(ls_files_args)
         raw = raw_paths.decode("utf-8", "surrogateescape").split("\0")
         source = "enumerate"
     except (OSError, subprocess.CalledProcessError):
@@ -1454,9 +1476,12 @@ if os.path.isfile("Upkeeper.sh"):
 include_patterns = split_csv(include_globs)
 exclude_patterns = split_csv(exclude_globs)
 module_filter = set(split_csv(selection_review_modules))
+tracked_paths = git_tracked_paths() if not select_untracked else None
 
 for manifest_mtime, path in paths:
     if not path:
+        continue
+    if tracked_paths is not None and path not in tracked_paths:
         continue
     if path in excluded_exact or path.startswith(excluded_prefixes) or is_test_path(path):
         continue
@@ -1622,6 +1647,8 @@ else:
         active_filters.append(f"exclude={exclude_globs}")
     if module_filter:
         active_filters.append(f"selection_review_modules={selection_review_modules}")
+    if not select_untracked:
+        active_filters.append("tracked_only=true")
     if active_filters:
         selection_basis = f"{selection_basis}; filters: " + "; ".join(active_filters)
 
@@ -1645,6 +1672,7 @@ print(f"selection_mode={selection_mode}")
 print(f"selection_source={selection_source_used}")
 print(f"manifest_status={manifest_status}")
 print(f"selection_order={selection_order}")
+print(f"select_untracked={int(select_untracked)}")
 print(f"target_root={target_root or 'none'}")
 print(f"target_max_depth={target_max_depth or 'none'}")
 print(f"include_globs={include_globs or 'none'}")
@@ -1669,7 +1697,7 @@ append_preselected_review_target() {
   local compiled_file="$1"
   local selection selector_rc err_file detail selected_path selected_epoch selected_age eligible_count selected_git_status selected_content_state selected_worktree_hash selected_basis
   local selected_head_blob selected_content_changed
-  local selection_mode selection_source manifest_status selection_order target_root target_max_depth include_globs exclude_globs selection_review_modules
+  local selection_mode selection_source manifest_status selection_order select_untracked target_root target_max_depth include_globs exclude_globs selection_review_modules
   local failure_queue_selected failure_marker_id failure_marker_path failure_marker_first_seen_epoch failure_marker_failure_count failure_marker_first_failure_kind failure_marker_first_failure_exit_line
   local selection_file
 
@@ -1719,6 +1747,7 @@ append_preselected_review_target() {
   selection_source="$(sed -n 's/^selection_source=//p' <<<"$selection")"
   manifest_status="$(sed -n 's/^manifest_status=//p' <<<"$selection")"
   selection_order="$(sed -n 's/^selection_order=//p' <<<"$selection")"
+  select_untracked="$(sed -n 's/^select_untracked=//p' <<<"$selection")"
   target_root="$(sed -n 's/^target_root=//p' <<<"$selection")"
   target_max_depth="$(sed -n 's/^target_max_depth=//p' <<<"$selection")"
   include_globs="$(sed -n 's/^include_globs=//p' <<<"$selection")"
@@ -1808,13 +1837,13 @@ append_preselected_review_target() {
       printf -- '- Queue marker: id=%s first_seen_epoch=%s failure_count=%s first_failure_kind=%s first_failure_exit=%s\n' "$failure_marker_id" "${failure_marker_first_seen_epoch:-unknown}" "${failure_marker_failure_count:-unknown}" "${failure_marker_first_failure_kind:-unknown}" "${failure_marker_first_failure_exit_line:-unknown}"
       printf -- '- If the failure is resolved or no longer reproducible, finish with WORK_DONE so the local marker can be moved out of the active queue.\n'
     fi
-    if [[ "${target_root:-none}" != "none" || "${include_globs:-none}" != "none" || "${exclude_globs:-none}" != "none" || "${selection_review_modules:-none}" != "none" ]]; then
-      printf -- '- This cycle used a deterministic selection subset: source=%s order=%s target_root=%s target_depth=%s include=%s exclude=%s review_module_filter=%s.\n' "${selection_source:-unknown}" "${selection_order:-unknown}" "${target_root:-none}" "${target_max_depth:-none}" "${include_globs:-none}" "${exclude_globs:-none}" "${selection_review_modules:-none}"
+    if [[ "${target_root:-none}" != "none" || "${include_globs:-none}" != "none" || "${exclude_globs:-none}" != "none" || "${selection_review_modules:-none}" != "none" || "${select_untracked:-1}" != "1" ]]; then
+      printf -- '- This cycle used a deterministic selection subset: source=%s order=%s select_untracked=%s target_root=%s target_depth=%s include=%s exclude=%s review_module_filter=%s.\n' "${selection_source:-unknown}" "${selection_order:-unknown}" "${select_untracked:-unknown}" "${target_root:-none}" "${target_max_depth:-none}" "${include_globs:-none}" "${exclude_globs:-none}" "${selection_review_modules:-none}"
     fi
   } >>"$compiled_file"
 
-  log_line "INFO" "review.preselect path_hmac=$(help_selection_path_hmac "$selected_path") path_redacted=1 epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} content_changed=${selected_content_changed:-unknown} worktree_hmac=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} selection_mode=${selection_mode:-unknown} selection_source=${selection_source:-unknown} manifest_status=$(shell_quote "${manifest_status:-unknown}") selection_order=${selection_order:-unknown} target_root=$(shell_quote "${target_root:-none}") target_depth=$(shell_quote "${target_max_depth:-none}") include_globs=$(shell_quote "${include_globs:-none}") exclude_globs=$(shell_quote "${exclude_globs:-none}") selection_review_modules=$(shell_quote "${selection_review_modules:-none}") failure_queue_selected=${failure_queue_selected:-0} failure_marker_id=$(shell_quote "${failure_marker_id:-none}") basis=$(shell_quote "${selected_basis:-unknown}")"
-  terminal_emit_progress "selected file ${selected_path:-unknown} (age=${selected_age:-unknown}; mode=${selection_mode:-unknown}; source=${selection_source:-unknown}; order=${selection_order:-unknown}; reason=${selected_basis:-unknown}; eligible=${eligible_count:-unknown})"
+  log_line "INFO" "review.preselect path_hmac=$(help_selection_path_hmac "$selected_path") path_redacted=1 epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} content_changed=${selected_content_changed:-unknown} worktree_hmac=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} selection_mode=${selection_mode:-unknown} selection_source=${selection_source:-unknown} manifest_status=$(shell_quote "${manifest_status:-unknown}") selection_order=${selection_order:-unknown} select_untracked=${select_untracked:-unknown} target_root=$(shell_quote "${target_root:-none}") target_depth=$(shell_quote "${target_max_depth:-none}") include_globs=$(shell_quote "${include_globs:-none}") exclude_globs=$(shell_quote "${exclude_globs:-none}") selection_review_modules=$(shell_quote "${selection_review_modules:-none}") failure_queue_selected=${failure_queue_selected:-0} failure_marker_id=$(shell_quote "${failure_marker_id:-none}") basis=$(shell_quote "${selected_basis:-unknown}")"
+  terminal_emit_progress "selected file ${selected_path:-unknown} (age=${selected_age:-unknown}; mode=${selection_mode:-unknown}; source=${selection_source:-unknown}; order=${selection_order:-unknown}; select_untracked=${select_untracked:-unknown}; reason=${selected_basis:-unknown}; eligible=${eligible_count:-unknown})"
 }
 
 operator_guide_snapshot_version() {

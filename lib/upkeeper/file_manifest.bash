@@ -93,7 +93,7 @@ ensure_file_manifest_for_selection() {
   fi
 
   set +e
-  output="$(python3 - "$ROOT_DIR" "$manifest_path" "$CODEX_FILE_MANIFEST_MODE" "$CODEX_FILE_MANIFEST_MAX_AGE_SECONDS" "$CODEX_UPKEEPER_IGNORE_FILE" <<'PY'
+  output="$(python3 - "$ROOT_DIR" "$manifest_path" "$CODEX_FILE_MANIFEST_MODE" "$CODEX_FILE_MANIFEST_MAX_AGE_SECONDS" "$CODEX_UPKEEPER_IGNORE_FILE" "${CODEX_SELECT_UNTRACKED:-1}" <<'PY'
 import fnmatch
 import hashlib
 import json
@@ -115,6 +115,7 @@ if not manifest_path.is_absolute():
     manifest_path = Path.cwd() / manifest_path
 mode = sys.argv[3]
 ignore_file = Path(sys.argv[5]).expanduser()
+select_untracked_raw = sys.argv[6] if len(sys.argv) > 6 else "1"
 if not ignore_file.is_absolute():
     ignore_file = root / ignore_file
 
@@ -136,6 +137,7 @@ except ValueError:
     max_age_seconds = 300
 
 root_hash = hashlib.sha256(str(root).encode("utf-8", "surrogateescape")).hexdigest()
+select_untracked = select_untracked_raw.lower() in {"1", "true", "yes", "on"}
 
 
 def emit(**fields: object) -> None:
@@ -261,7 +263,10 @@ def compute_files_fingerprint(source: str, files: list[dict[str, object]]) -> st
 
 
 def git_paths() -> list[str]:
-    raw = git(["ls-files", "-co", "--exclude-standard", "-z"])
+    args = ["ls-files", "-c", "-z"]
+    if select_untracked:
+        args = ["ls-files", "-c", "-o", "--exclude-standard", "-z"]
+    raw = git(args)
     return sorted(path for path in raw.decode("utf-8", "surrogateescape").split("\0") if path)
 
 
@@ -325,7 +330,8 @@ def build_payload() -> tuple[dict[str, object], str]:
     ]
     entries.sort(key=lambda item: (int(item["mtime_ns"]), str(item["rel_path"])))
 
-    fingerprint = compute_files_fingerprint(source, entries)
+    fingerprint_source = f"{source}:select_untracked={int(select_untracked)}"
+    fingerprint = compute_files_fingerprint(fingerprint_source, entries)
 
     git_head = "none"
     git_status_hash = "none"
@@ -345,6 +351,7 @@ def build_payload() -> tuple[dict[str, object], str]:
         "generated_epoch": int(time.time()),
         "root_hash": root_hash,
         "source": source,
+        "select_untracked": select_untracked,
         "fingerprint": fingerprint,
         "git_head": git_head,
         "git_status_hash": git_status_hash,
@@ -367,6 +374,7 @@ def existing_payload() -> dict[str, object] | None:
         payload.get("schema_version") != 2
         or payload.get("root_hash") != root_hash
         or "root" in payload
+        or bool(payload.get("select_untracked", True)) != select_untracked
     ):
         return None
     if not isinstance(payload.get("files"), list):
@@ -383,7 +391,7 @@ def existing_payload() -> dict[str, object] | None:
             # Verify that existing payload entries still hash back to their own
             # fingerprint. This protects against model- or attacker-written
             # manifest tampering while preserving legacy file layout.
-            payload_source = str(payload.get("source", "git"))
+            payload_source = f"{str(payload.get('source', 'git'))}:select_untracked={int(select_untracked)}"
             payload_entries = [
                 {
                     "rel_path": rel_path,
@@ -456,6 +464,7 @@ emit(
     action=action,
     reason=reason,
     source=payload.get("source", source),
+    select_untracked=int(bool(payload.get("select_untracked", select_untracked))),
     count=len(payload.get("files", [])),
     path=str(manifest_path),
     fingerprint=str(payload.get("fingerprint", "unknown"))[:16],
@@ -471,12 +480,13 @@ PY
     return 0
   fi
 
-  local action reason source count fingerprint
+  local action reason source select_untracked count fingerprint
   action="$(sed -n 's/^action=//p' <<<"$output" | tail -1)"
   reason="$(sed -n 's/^reason=//p' <<<"$output" | tail -1)"
   source="$(sed -n 's/^source=//p' <<<"$output" | tail -1)"
+  select_untracked="$(sed -n 's/^select_untracked=//p' <<<"$output" | tail -1)"
   count="$(sed -n 's/^count=//p' <<<"$output" | tail -1)"
   fingerprint="$(sed -n 's/^fingerprint=//p' <<<"$output" | tail -1)"
 
-  log_line "INFO" "file_manifest.ready action=${action:-unknown} reason=${reason:-unknown} source=${source:-unknown} count=${count:-unknown} path=$(shell_quote "$manifest_path") fingerprint=${fingerprint:-unknown}"
+  log_line "INFO" "file_manifest.ready action=${action:-unknown} reason=${reason:-unknown} source=${source:-unknown} select_untracked=${select_untracked:-unknown} count=${count:-unknown} path=$(shell_quote "$manifest_path") fingerprint=${fingerprint:-unknown}"
 }

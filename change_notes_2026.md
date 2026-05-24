@@ -20,6 +20,11 @@ Version numbering note:
 	2. Backlog and Upkeeper progress logs now include explicit `plane=...`, `waiting_for=...`, and elapsed wait fields for backend Codex, GitHub checks, git operations, quota hibernation, and local validation.
 	3. Upkeeper backend launch, terminal progress, and `run.finish` records now label the LLM/backend wait plane and record backend elapsed seconds, making later speed and cost analysis possible from ordinary local logs.
 
+2026-05-23: tracked-only target selection:
+	1. Added `UPKEEPER_SELECT_UNTRACKED` plus `--select-untracked=0`, `--no-select-untracked`, and `--tracked-only` so normal timestamp rotation can exclude non-ignored untracked files.
+	2. The default remains backward-compatible: tracked and non-ignored untracked files are still eligible unless the operator opts into tracked-only normal selection.
+	3. Explicit `--target-file` pins remain strongest for safe readable text targets, including non-ignored untracked files, and validation now covers default, tracked-only, and explicit-target behavior.
+
 2026-05-23: v1.2.32 changes:
 	1. Live output custody now reclassifies backend-emitted shell/test snippets that quote log markers, case globs, grep assertions, or `[WARN]`/`[ERROR]` assignments as quoted fixture/search output instead of fresh PAGE errors.
 	2. The operator guide snapshot is synced to wrapper version v1.2.32.

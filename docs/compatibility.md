@@ -38,7 +38,8 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--p27`, `--p28`, `--p29`, `--p30`, `--model-override=...`, `--target-file=...`, and
   `--target-root=...`, `--target-depth=...`,
   `--selection-source=manifest|enumerate`,
-  `--selection-order=oldest|newest|random`, `--refresh-manifest`,
+  `--selection-order=oldest|newest|random`, `--select-untracked=0|1`,
+  `--no-select-untracked`, `--tracked-only`, `--refresh-manifest`,
   `--manifest-file=...`, `--include-glob=...`, `--include-globs=...`,
   `--exclude-glob=...`, `--exclude-globs=...`,
   `--selection-review-modules=...`, `--ignore-failure-queue`,
@@ -172,7 +173,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   recorded as rejected evidence, not clean pass results.
 - Default target selection remains current-compatible. Live source-safe
   eligibility stays authoritative; Lattice does not replace current eligibility
-  with stale database rows.
+  with stale database rows. Normal rotation includes non-ignored untracked files
+  by default, but `UPKEEPER_SELECT_UNTRACKED=0`, `--select-untracked=0`, or
+  `--tracked-only` keeps normal rotation to tracked files only. Explicit
+  `--target-file` remains the strongest one-cycle pin for safe readable text
+  targets, including non-ignored untracked files.
 - `--max-cover` may ask Lattice to rank a broader current tracked text-file
   pool, but final selection still revalidates the live source-safe boundary in
   the same cycle.

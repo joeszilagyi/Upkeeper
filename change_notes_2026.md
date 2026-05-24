@@ -25,6 +25,10 @@ Version numbering note:
 	2. The default remains backward-compatible: tracked and non-ignored untracked files are still eligible unless the operator opts into tracked-only normal selection.
 	3. Explicit `--target-file` pins remain strongest for safe readable text targets, including non-ignored untracked files, and validation now covers default, tracked-only, and explicit-target behavior.
 
+2026-05-23: Codex profile policy documentation:
+	1. Documented that the repository intentionally does not commit a project `.codex/config.toml`; Upkeeper's wrapper-owned config surface remains the source of truth for unattended Codex launch policy.
+	2. Clarified that local Codex CLI profiles are operator-local state and that any future checked-in Codex profile must document how it composes with `Upkeeper.conf` and validation.
+
 2026-05-23: v1.2.32 changes:
 	1. Live output custody now reclassifies backend-emitted shell/test snippets that quote log markers, case globs, grep assertions, or `[WARN]`/`[ERROR]` assignments as quoted fixture/search output instead of fresh PAGE errors.
 	2. The operator guide snapshot is synced to wrapper version v1.2.32.

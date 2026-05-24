@@ -52,6 +52,23 @@ tools/validate_upkeeper.sh --smoke
 The CI workflow does not run real Codex backend work and does not upload runtime
 artifacts by default.
 
+## Codex CLI Profiles
+
+This repository does not commit a project `.codex/config.toml`. The decision is
+intentional: Upkeeper is itself the Codex launch wrapper, and the checked-in
+profile surface is `Upkeeper.conf` plus shell-compatible files under
+`configurations/`. Keeping sandbox, approval, model, target-selection, and
+dry-run behavior in the wrapper profile surface avoids a second Codex profile
+source that can drift from validation and public operator docs.
+
+The local Codex CLI still supports user-level profiles such as `--profile` and
+layered profile files such as `--profile-v2`, but those are operator-local
+state. Do not rely on a committed `.codex/config.toml` to enforce unattended
+Upkeeper safety. If committed Codex profile files are added later, the same
+patch must document how they compose with `Upkeeper.conf` and add validation
+that proves they do not weaken the wrapper's no-real-backend-validation,
+sandbox, approval, or GitHub-brokerage contracts.
+
 ## GitHub Settings
 
 Recommended repository settings:

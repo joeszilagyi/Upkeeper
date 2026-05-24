@@ -202,6 +202,38 @@ incompatible with the Genie Protocol rule that backend Codex stays inside a
 small brokered execution space. If a task needs access outside the repo, prefer
 a short manual run with reviewed inputs instead of a long unattended loop.
 
+## Project Codex Profiles
+
+This repository intentionally does not commit a project `.codex/config.toml`.
+Upkeeper is the wrapper that owns backend launch policy, so sandbox and approval
+settings must stay in the wrapper-controlled command line and shell-compatible
+Upkeeper profiles rather than a second Codex profile file that can drift.
+
+The supported operator-visible profile surface is:
+
+- `Upkeeper.conf` for central defaults
+- `configurations/default.conf` as the tracked reusable profile template
+- explicitly selected `--config-file=PATH` profiles from trusted locations
+- one-cycle CLI overrides such as `--model-override`, `--target-file`, and
+  review-module flags
+
+For non-interactive backend runs, Upkeeper launches `codex exec` with the
+configured model and reasoning effort, pins the working directory, writes the
+last backend message to a wrapper-owned file, and supplies the effective Codex
+sandbox through `CODEX_MODE`. Current Codex CLI help exposes `--profile`,
+`--profile-v2`, `--sandbox read-only|workspace-write|danger-full-access`, and
+`--ask-for-approval`, but Upkeeper does not rely on a checked-in Codex profile
+for those controls. Use Upkeeper configuration instead, because it is validated
+by the local wrapper tests, documented in public operator docs, and kept aligned
+with the no-real-backend-validation rule.
+
+If the project later adds checked-in Codex profile files, they must be treated
+as operator-visible behavior: document the exact intended profile names,
+explain how they interact with Upkeeper's command-line enforcement, keep
+`danger-full-access` and approval bypasses out of unattended profiles, and add
+local validation that proves the checked-in profile does not weaken the wrapper
+contract.
+
 ## CODEX_HOME Session Parsing
 
 Upkeeper reads recent `$CODEX_HOME/sessions/**/*.jsonl` files to find quota

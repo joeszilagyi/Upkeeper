@@ -11,6 +11,10 @@ Version numbering note:
 	2. Closed linked issues are preserved as stale evidence, cleared from the active custody fields, and replaced with a fresh issue for the still-open obligation when GitHub filing is enabled.
 	3. If an existing linked issue cannot be verified, backlog records `github_verify_failed` and fails closed before normal issue selection instead of claiming clean custody.
 
+2026-05-24: validation dry-run helper:
+	1. `tools/validate_upkeeper.sh` now centralizes repeated fake Upkeeper dry-run environment setup in a validator-local helper.
+	2. The helper preserves stdout/stderr separation, exit status, isolated CODEX_HOME, log/transcript roots, active locks, and no-backend defaults while still allowing explicit per-fixture overrides.
+
 2026-05-24: anomaly custody issue ownership:
 	1. Prior-run anomaly obligations now keep umbrella issue #418 as policy ownership only; each PAGE/error anomaly must have its own specific issue-ready record or GitHub issue before normal backlog work continues.
 	2. Backlog now defaults obligation GitHub issue filing on and fails closed if filing fails, while retaining local reports only as evidence copies.

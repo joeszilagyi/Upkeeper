@@ -11,6 +11,11 @@ Version numbering note:
 	2. The steward refuses draft, non-main, failing-check, pending-check, unmergeable, and dirty-secondary-main-worktree states before merge.
 	3. Real execution uses the guarded `CODEX_ALLOW_PR_MERGE=<pr>` merge path with GitHub branch deletion, then fetches/prunes and verifies local main is clean.
 
+2026-05-24: negative-space validation contract:
+	1. Added `docs/negative-space-testing.md` as the tracked catalog for deterministic "must not happen" validation contracts.
+	2. The catalog links target selection, pre-contact backup redaction, replacement authority, source-mutation guards, malformed marker rejection, no-backend validation, config safety, and backend sandbox allowlisting to local proofs.
+	3. `tools/validate_upkeeper.sh --quick` now checks that the catalog and its public documentation links stay present.
+
 2026-05-24: breadcrumb custody audit:
 	1. Added `tools/audit_upkeeper_breadcrumbs.py`, a deterministic local scanner that fingerprints suspicious log, transcript, automation-obligation, and tool-failure breadcrumbs.
 	2. The audit command can write ignored local custody records under `runtime/upkeeper-breadcrumbs/open`, `resolved`, and `suppressed`, preserving weak clues until they are explicitly resolved or suppressed.

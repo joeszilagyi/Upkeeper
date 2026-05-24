@@ -944,6 +944,8 @@ test loop does not spend cycles on known low-value or generated material.
   public-by-default documentation, comment, release-note, and help-text policy
 - [docs/security.md](docs/security.md): local trust boundaries, safety model,
   secret handling, and what not to commit
+- [docs/negative-space-testing.md](docs/negative-space-testing.md):
+  deterministic "must not happen" validation contracts for safety boundaries
 - [docs/stress-corpus.md](docs/stress-corpus.md): local sample-repo
   stress-corpus contract and current coverage
 - [.github/workflows/ci.yml](.github/workflows/ci.yml): GitHub Actions

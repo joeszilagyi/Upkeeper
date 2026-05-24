@@ -239,6 +239,11 @@ Important:
     for local scan bounds. The default finding cap is `0`, meaning all new
     findings inside the recent-line scan window are placed under custody instead
     of letting already-known obligations starve later PAGE alerts.
+    For broader local evidence sweeps outside the backlog loop,
+    `tools/audit_upkeeper_breadcrumbs.py` scans selected logs, transcripts, and
+    open marker roots into `runtime/upkeeper-breadcrumbs/{open,resolved,suppressed}`.
+    Those breadcrumb records are local evidence and can be resolved or suppressed
+    only by explicit state, not by disappearing from terminal output.
   - Light per-bug validation still avoids the full batch suite, but it now
     compiles changed Python files before commit. Lattice issue fixes that touch
     `tools/upkeeper_lattice.py` also run `tests/lattice_test.bash` before the

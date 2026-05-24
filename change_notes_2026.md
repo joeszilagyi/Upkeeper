@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: breadcrumb custody audit:
+	1. Added `tools/audit_upkeeper_breadcrumbs.py`, a deterministic local scanner that fingerprints suspicious log, transcript, automation-obligation, and tool-failure breadcrumbs.
+	2. The audit command can write ignored local custody records under `runtime/upkeeper-breadcrumbs/open`, `resolved`, and `suppressed`, preserving weak clues until they are explicitly resolved or suppressed.
+	3. Quick validation now covers breadcrumb record creation, duplicate updates, expected-fixture suppression, and resolve-missing behavior.
+
 2026-05-24: closed obligation issue links:
 	1. Obligation issue-report sync now verifies existing GitHub issue links are still open before accepting them as custody for an open automation obligation.
 	2. Closed linked issues are preserved as stale evidence, cleared from the active custody fields, and replaced with a fresh issue for the still-open obligation when GitHub filing is enabled.

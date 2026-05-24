@@ -1147,6 +1147,83 @@ LOG
   rm -r "$temp_dir"
 }
 
+check_breadcrumb_audit_contract() {
+  local temp_dir open_count suppressed_count resolved_count page_record
+
+  log "checking breadcrumb audit contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-breadcrumb-audit.XXXXXX)"
+  mkdir -p "$temp_dir/transcripts" "$temp_dir/obligations/open" "$temp_dir/failures/open"
+  cat >"$temp_dir/Upkeeper.log" <<'LOG'
+2026-05-24T05:00:00 █ INFO    normal healthy line
+2026-05-24T05:00:01 █ PAGE    [ERROR] Upkeeper: live failure that needs custody
+2026-05-24T05:00:02 █ --FYI-- [WARN] cycle=abc run_hash=def startup_anomaly.gate_unresolved reason=changed_path_violation
+2026-05-24T05:00:03 [ERROR] cycle=fixture transcript directory is not private /tmp/upkeeper-transcripts-test.ABC/transcripts-link
+transcript_artifacts_test: ok
+LOG
+  cat >"$temp_dir/transcripts/session.log" <<'LOG'
+2026-05-24T05:00:04 [WARN] cycle=abc run_hash=ghi transcript.prune_blocked reason=missing_ownership_marker path_redacted=1
+LOG
+  cat >"$temp_dir/obligations/open/prior.json" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"prior","kind":"prior_run_anomaly","severity":"high","summary":"prior anomaly fixture","reason":"PRIOR_RUN_ANOMALY","root":"$ROOT_DIR","target_file":"Upkeeper"}
+JSON
+
+  tools/audit_upkeeper_breadcrumbs.py \
+    --root "$ROOT_DIR" \
+    --state-root "$temp_dir/breadcrumbs" \
+    --log "$temp_dir/Upkeeper.log" \
+    --transcript-dir "$temp_dir/transcripts" \
+    --obligation-root "$temp_dir/obligations" \
+    --failure-queue-root "$temp_dir/failures" \
+    --write \
+    --json >"$temp_dir/audit.json"
+
+  [[ "$(jq -r '.status' "$temp_dir/audit.json")" == "open_breadcrumbs" ]] ||
+    fail "breadcrumb audit did not report open breadcrumbs"
+  [[ "$(jq -r '.open_count' "$temp_dir/audit.json")" == "4" ]] ||
+    fail "breadcrumb audit did not collect expected open breadcrumbs"
+  [[ "$(jq -r '.suppressed_count' "$temp_dir/audit.json")" == "1" ]] ||
+    fail "breadcrumb audit did not suppress expected negative fixture"
+  open_count="$(find "$temp_dir/breadcrumbs/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$open_count" == "4" ]] || fail "breadcrumb audit wrote $open_count open records, expected 4"
+  suppressed_count="$(find "$temp_dir/breadcrumbs/suppressed" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$suppressed_count" == "1" ]] || fail "breadcrumb audit wrote $suppressed_count suppressed records, expected 1"
+  page_record="$(find "$temp_dir/breadcrumbs/open" -maxdepth 1 -type f -name 'page_error-*.json' | head -1)"
+  [[ -n "$page_record" ]] || fail "breadcrumb audit did not write page_error record"
+
+  tools/audit_upkeeper_breadcrumbs.py \
+    --root "$ROOT_DIR" \
+    --state-root "$temp_dir/breadcrumbs" \
+    --log "$temp_dir/Upkeeper.log" \
+    --transcript-dir "$temp_dir/transcripts" \
+    --obligation-root "$temp_dir/obligations" \
+    --failure-queue-root "$temp_dir/failures" \
+    --write \
+    --json >"$temp_dir/audit-second.json"
+  [[ "$(jq -r '.occurrence_count' "$page_record")" == "2" ]] ||
+    fail "breadcrumb audit did not update existing breadcrumb occurrence count"
+
+  mkdir -p "$temp_dir/empty-transcripts" "$temp_dir/empty-obligations/open" "$temp_dir/empty-failures/open"
+  printf '2026-05-24T05:01:00 █ INFO clean\n' >"$temp_dir/clean.log"
+  tools/audit_upkeeper_breadcrumbs.py \
+    --root "$ROOT_DIR" \
+    --state-root "$temp_dir/breadcrumbs" \
+    --log "$temp_dir/clean.log" \
+    --transcript-dir "$temp_dir/empty-transcripts" \
+    --obligation-root "$temp_dir/empty-obligations" \
+    --failure-queue-root "$temp_dir/empty-failures" \
+    --write \
+    --resolve-missing \
+    --json >"$temp_dir/audit-resolved.json"
+  [[ "$(jq -r '.resolved_missing' "$temp_dir/audit-resolved.json")" == "4" ]] ||
+    fail "breadcrumb audit did not resolve missing open breadcrumbs"
+  resolved_count="$(find "$temp_dir/breadcrumbs/resolved" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$resolved_count" == "4" ]] || fail "breadcrumb audit resolved record count was $resolved_count, expected 4"
+  open_count="$(find "$temp_dir/breadcrumbs/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$open_count" == "0" ]] || fail "breadcrumb audit left open records after resolve-missing"
+
+  rm -r "$temp_dir"
+}
+
 check_automation_obligation_root_boundary_contract() {
   local temp_dir selected_json selected_after_current_removed
 
@@ -6098,6 +6175,7 @@ run_check review_summary_parser check_review_summary_parser
 run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
 run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_contract
+run_check breadcrumb_audit_contract check_breadcrumb_audit_contract
 run_check automation_obligation_root_boundary_contract check_automation_obligation_root_boundary_contract
 run_check automation_obligation_reconciliation_contract check_automation_obligation_reconciliation_contract
 run_check automation_obligation_churn_contract check_automation_obligation_churn_contract

@@ -17,7 +17,10 @@ reset_bug_report_env() {
   RUN_GENIE_REAL_GH_BIN=""
   RUN_TMP_DIR="$TEST_TMP_ROOT/run-tmp"
   CODEX_BUG_REPORT_ONLY=1
+  CODEX_AUDIT_ONLY=0
   UPKEEPER_BUG_REPORT_ONLY=1
+  UPKEEPER_AUDIT_ONLY=0
+  UPKEEPER_AUDIT_REPORT_DIR=""
   CYCLE_ID="bug-report-only-test"
   CYCLE_RUN_HASH="hash"
   export ROOT_DIR="$PROJECT_ROOT"
@@ -124,6 +127,23 @@ EOF
     || fail "bug-report gh gate did not forward to the real gh binary"
 }
 
+test_audit_only_reuses_no_fix_guard_and_runtime_report_root() {
+  reset_bug_report_env
+  CODEX_BUG_REPORT_ONLY=0
+  CODEX_AUDIT_ONLY=1
+  UPKEEPER_AUDIT_REPORT_DIR="$TEST_TMP_ROOT/audits"
+
+  upkeeper_audit_only_enabled || fail "audit-only predicate did not enable"
+  upkeeper_bug_report_only_enabled || fail "audit-only did not reuse bug-report-only report contract"
+  [[ "$(upkeeper_source_mutation_guard_mode)" == "audit_only" ]] ||
+    fail "audit-only did not select the audit source mutation guard mode"
+
+  prepare_bug_report_draft_artifact || fail "audit-only draft artifact preparation failed"
+  [[ "$RUN_BUG_REPORT_DRAFT_FILE" == "$TEST_TMP_ROOT/audits/"* ]] ||
+    fail "audit-only did not use the audit report root"
+  [[ -d "$TEST_TMP_ROOT/audits" ]] || fail "audit-only report root was not created"
+}
+
 export PROJECT_ROOT
 export ROOT_DIR="$PROJECT_ROOT"
 export UPROOT="$PROJECT_ROOT"
@@ -134,5 +154,6 @@ source "$PROJECT_ROOT/Upkeeper"
 test_bug_report_draft_extracts_issue_ready_block
 test_bug_report_finalize_requires_draft_for_reported_outcome
 test_bug_report_gh_gate_blocks_issue_create_by_default_and_allows_explicit_opt_in
+test_audit_only_reuses_no_fix_guard_and_runtime_report_root
 
 printf 'bug_report_only_test: ok\n'

@@ -397,6 +397,7 @@ UPKEEPER_SELECTION_REVIEW_MODULES="${UPKEEPER_SELECTION_REVIEW_MODULES:-}"
 UPKEEPER_SELECTION_RANDOM_SEED="${UPKEEPER_SELECTION_RANDOM_SEED:-}"
 UPKEEPER_MAX_COVER="${UPKEEPER_MAX_COVER:-0}"
 UPKEEPER_BUG_REPORT_ONLY="${UPKEEPER_BUG_REPORT_ONLY:-0}"
+UPKEEPER_AUDIT_ONLY="${UPKEEPER_AUDIT_ONLY:-0}"
 UPKEEPER_FIX_NEXT_ISSUE="${UPKEEPER_FIX_NEXT_ISSUE:-0}"
 UPKEEPER_FIX_ISSUE="${UPKEEPER_FIX_ISSUE:-}"
 UPKEEPER_ISSUE_WORKFLOW_STAGE="${UPKEEPER_ISSUE_WORKFLOW_STAGE:-}"
@@ -480,6 +481,7 @@ CODEX_SELECTION_REVIEW_MODULES="${CODEX_SELECTION_REVIEW_MODULES:-$UPKEEPER_SELE
 CODEX_SELECTION_RANDOM_SEED="${CODEX_SELECTION_RANDOM_SEED:-$UPKEEPER_SELECTION_RANDOM_SEED}"
 CODEX_MAX_COVER_MODE="${CODEX_MAX_COVER_MODE:-$UPKEEPER_MAX_COVER}"
 CODEX_BUG_REPORT_ONLY="${CODEX_BUG_REPORT_ONLY:-$UPKEEPER_BUG_REPORT_ONLY}"
+CODEX_AUDIT_ONLY="${CODEX_AUDIT_ONLY:-$UPKEEPER_AUDIT_ONLY}"
 CODEX_ISSUE_FIX_NEXT="${CODEX_ISSUE_FIX_NEXT:-$UPKEEPER_FIX_NEXT_ISSUE}"
 CODEX_ISSUE_FIX_REQUESTED_NUMBER="${CODEX_ISSUE_FIX_REQUESTED_NUMBER:-$UPKEEPER_FIX_ISSUE}"
 CODEX_ISSUE_WORKFLOW_STAGE="${CODEX_ISSUE_WORKFLOW_STAGE:-$UPKEEPER_ISSUE_WORKFLOW_STAGE}"
@@ -6060,6 +6062,7 @@ cycle_start_log_message() {
   fields+=("model=$(shell_quote "$CODEX_MODEL")")
   fields+=("effort=$(shell_quote "$CODEX_REASONING_EFFORT")")
   fields+=("bug_report_only=$(truthy_as_int "${CODEX_BUG_REPORT_ONLY:-0}")")
+  fields+=("audit_only=$(truthy_as_int "${CODEX_AUDIT_ONLY:-0}")")
   fields+=("issue_fix_next=$(truthy_as_int "${CODEX_ISSUE_FIX_NEXT:-0}")")
   fields+=("issue_workflow_stage=$(shell_quote "${CODEX_ISSUE_WORKFLOW_STAGE:-none}")")
   fields+=("manifest_mode=$(shell_quote "$CODEX_FILE_MANIFEST_MODE")")
@@ -7035,6 +7038,8 @@ main() {
         local source_mutation_guard_reason="SOURCE_MUTATION_GUARD_VIOLATION"
         if [[ "$source_mutation_guard_mode" == "bug_report_only" ]]; then
           source_mutation_guard_reason="BUG_REPORT_ONLY_MUTATION_VIOLATION"
+        elif [[ "$source_mutation_guard_mode" == "audit_only" ]]; then
+          source_mutation_guard_reason="AUDIT_ONLY_MUTATION_VIOLATION"
         fi
         log_line "ERROR" "source_mutation_guard.violation mode=$source_mutation_guard_mode before=$source_mutation_guard_before after=$source_mutation_guard_after codex_exit=$codex_exit status_marker=${status_marker:-missing}"
         finish_cycle 3 "$source_mutation_guard_reason" ERROR "mode=$source_mutation_guard_mode codex_exit=$codex_exit status_marker=${status_marker:-missing}"

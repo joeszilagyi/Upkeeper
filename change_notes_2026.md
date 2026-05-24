@@ -11,6 +11,11 @@ Version numbering note:
 	2. Closed linked issues are preserved as stale evidence, cleared from the active custody fields, and replaced with a fresh issue for the still-open obligation when GitHub filing is enabled.
 	3. If an existing linked issue cannot be verified, backlog records `github_verify_failed` and fails closed before normal issue selection instead of claiming clean custody.
 
+2026-05-24: audit-only no-fix mode:
+	1. Added `--audit-only` as the canonical read-only/no-fix audit mode, with `--review-only`, `--no-fix`, and `--read-only` as aliases.
+	2. Audit-only mode reuses the bug-report-only final-message report contract, records `audit_only=1` in cycle metadata, and stores local reports under ignored runtime audit evidence by default.
+	3. The source mutation guard now reports audit-only source changes as `AUDIT_ONLY_MUTATION_VIOLATION`, and local validation checks the CLI, help, config, prompt, and runtime report routing contract.
+
 2026-05-24: validation dry-run helper:
 	1. `tools/validate_upkeeper.sh` now centralizes repeated fake Upkeeper dry-run environment setup in a validator-local helper.
 	2. The helper preserves stdout/stderr separation, exit status, isolated CODEX_HOME, log/transcript roots, active locks, and no-backend defaults while still allowing explicit per-fixture overrides.

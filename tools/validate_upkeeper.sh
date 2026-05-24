@@ -1742,8 +1742,12 @@ check_backlog_batch_validation_obligation_contract() {
     fail "backlog batch validation does not route quick-validator failures through the obligation wrapper"
   grep -Fq 'backlog_open_batch_validation_obligation' orchestration/backlog.sh ||
     fail "backlog launcher cannot open obligations for local batch-validation failures"
+  grep -Fq 'backlog_batch_validation_repeated_failure' orchestration/backlog.sh ||
+    fail "backlog launcher cannot short-circuit repeated batch-validation failures"
   grep -Fq 'local_validation_failure' tests/backlog_batch_validation_obligation_test.bash ||
     fail "batch-validation obligation test does not assert local validation failure kind"
+  grep -Fq 'second identical validation failure reran command' tests/backlog_batch_validation_obligation_test.bash ||
+    fail "batch-validation obligation test does not prove retry guard avoids rerunning the failed command"
   bash tests/backlog_batch_validation_obligation_test.bash
 }
 

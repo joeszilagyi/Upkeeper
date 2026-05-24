@@ -5,7 +5,7 @@ Upkeeper changes. Keep entries brief and update their status before merge.
 
 ## Tracked-Only Target Selection
 
-Status: completed locally; pending PR/CI
+Status: completed and merged
 
 Goal:
 - close issue #75 by adding a backward-compatible knob for normal target

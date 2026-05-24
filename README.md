@@ -370,6 +370,12 @@ keep profiles self-contained and select one per invocation:
 ./Upkeeper --no-config
 ```
 
+The repository intentionally does not commit a project `.codex/config.toml`.
+Upkeeper's wrapper-owned profile surface is the source of truth for unattended
+Codex launch policy; see [docs/security.md](docs/security.md) and
+[docs/dependencies.md](docs/dependencies.md) for the rationale and future
+compatibility rule.
+
 Config files can set normal `CODEX_*` knobs and `UPKEEPER_*` defaults for
 flag-like behavior:
 

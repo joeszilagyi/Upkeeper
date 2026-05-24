@@ -5,6 +5,8 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_TMP_ROOT"' EXIT
 
+unset UPKEEPER_OBLIGATION_DIR
+
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1

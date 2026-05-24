@@ -233,6 +233,83 @@ validation_active_lock_dir() {
   printf '%s/%s.lock\n' "$lock_root" "$safe_name"
 }
 
+run_upkeeper_validation_cycle() {
+  local checkout_root="$1"
+  local active_lock_name="$2"
+  local log_file="$3"
+  local stdout_file="$4"
+  local stderr_file="$5"
+  shift 5
+  local fixture_root upkeeper_cmd active_lock_dir
+
+  fixture_root="${UPKEEPER_VALIDATION_FIXTURE_ROOT:-$(dirname -- "$log_file")}"
+  upkeeper_cmd="${UPKEEPER_VALIDATION_UPKEEPER_CMD:-./Upkeeper}"
+  active_lock_dir="${UPKEEPER_VALIDATION_ACTIVE_LOCK_DIR:-$(validation_active_lock_dir "$checkout_root" "$active_lock_name")}"
+
+  (
+    cd "$checkout_root"
+    CODEX_HOME="${UPKEEPER_VALIDATION_CODEX_HOME:-$fixture_root/codex-home}" \
+      CODEX_LOG_FILE="$log_file" \
+      CODEX_TRANSCRIPT_DIR="${UPKEEPER_VALIDATION_TRANSCRIPT_DIR:-$fixture_root/transcripts}" \
+      CODEX_ACTIVE_LOCK_DIR="$active_lock_dir" \
+      CODEX_POSTMORTEM_DIR="${UPKEEPER_VALIDATION_POSTMORTEM_DIR:-$fixture_root/postmortems}" \
+      CODEX_WRAPPER_HEALTH_STATE_DIR="${UPKEEPER_VALIDATION_WRAPPER_HEALTH_STATE_DIR:-$fixture_root/health}" \
+      CODEX_WRAPPER_HEALTH_ARCHIVE_DIR="${UPKEEPER_VALIDATION_WRAPPER_HEALTH_ARCHIVE_DIR:-${CODEX_WRAPPER_HEALTH_ARCHIVE_DIR:-}}" \
+      CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="${UPKEEPER_VALIDATION_STARTUP_ANOMALY_GATE_STATE_DIR:-$fixture_root/startup-gates}" \
+      CODEX_TOOL_FAILURE_QUEUE_DIR="${UPKEEPER_VALIDATION_TOOL_FAILURE_QUEUE_DIR:-$fixture_root/failures}" \
+      CODEX_OPERATOR_GUIDE_BOOTSTRAP="${UPKEEPER_VALIDATION_OPERATOR_GUIDE_BOOTSTRAP:-0}" \
+      CODEX_TERMINAL_VERBOSITY="${UPKEEPER_VALIDATION_TERMINAL_VERBOSITY:-quiet}" \
+      CODEX_MODEL="${UPKEEPER_VALIDATION_MODEL:-gpt-5.5}" \
+      CODEX_REASONING_EFFORT="${UPKEEPER_VALIDATION_REASONING_EFFORT:-xhigh}" \
+      CODEX_FALLBACK_ENABLED="${UPKEEPER_VALIDATION_FALLBACK_ENABLED:-0}" \
+      CODEX_FALLBACK_MODEL="${UPKEEPER_VALIDATION_FALLBACK_MODEL:-${CODEX_FALLBACK_MODEL:-}}" \
+      CODEX_FALLBACK_SCREEN_ENABLED="${UPKEEPER_VALIDATION_FALLBACK_SCREEN_ENABLED:-0}" \
+      CODEX_POSTMORTEM_ENABLED="${UPKEEPER_VALIDATION_POSTMORTEM_ENABLED:-0}" \
+      CODEX_FILE_MANIFEST_PATH="${UPKEEPER_VALIDATION_FILE_MANIFEST_PATH:-${CODEX_FILE_MANIFEST_PATH:-}}" \
+      CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS="${UPKEEPER_VALIDATION_SELF_REVIEW_AFTER_DAYS:-${CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS:-}}" \
+      CODEX_LOG_ROTATE_KEEP_HOURS="${UPKEEPER_VALIDATION_LOG_ROTATE_KEEP_HOURS:-${CODEX_LOG_ROTATE_KEEP_HOURS:-}}" \
+      CODEX_LOG_ROTATE_AFTER_HOURS="${UPKEEPER_VALIDATION_LOG_ROTATE_AFTER_HOURS:-${CODEX_LOG_ROTATE_AFTER_HOURS:-}}" \
+      CODEX_LOG_FILE_ALLOW_UNSAFE="${UPKEEPER_VALIDATION_LOG_FILE_ALLOW_UNSAFE:-0}" \
+      CODEX_MODE="${UPKEEPER_VALIDATION_CODEX_MODE:-${CODEX_MODE:-}}" \
+      UPKEEPER_PRECONTACT_BACKUP_ENABLED="${UPKEEPER_VALIDATION_PRECONTACT_BACKUP_ENABLED:-${UPKEEPER_PRECONTACT_BACKUP_ENABLED:-}}" \
+      UPKEEPER_SELECTION_RANDOM_SEED="${UPKEEPER_VALIDATION_SELECTION_RANDOM_SEED:-${UPKEEPER_SELECTION_RANDOM_SEED:-}}" \
+      UPKEEPER_LATTICE_DB="${UPKEEPER_VALIDATION_LATTICE_DB:-${UPKEEPER_LATTICE_DB:-}}" \
+      UPKEEPER_VERBOSE_METADATA="${UPKEEPER_VALIDATION_VERBOSE_METADATA:-${UPKEEPER_VERBOSE_METADATA:-}}" \
+      UPKEEPER_DRY_RUN="${UPKEEPER_VALIDATION_DRY_RUN:-1}" \
+      env \
+      -u UPKEEPER_VALIDATION_ACTIVE_LOCK_DIR \
+      -u UPKEEPER_VALIDATION_CODEX_HOME \
+      -u UPKEEPER_VALIDATION_CODEX_MODE \
+      -u UPKEEPER_VALIDATION_DRY_RUN \
+      -u UPKEEPER_VALIDATION_FALLBACK_ENABLED \
+      -u UPKEEPER_VALIDATION_FALLBACK_MODEL \
+      -u UPKEEPER_VALIDATION_FALLBACK_SCREEN_ENABLED \
+      -u UPKEEPER_VALIDATION_FILE_MANIFEST_PATH \
+      -u UPKEEPER_VALIDATION_FIXTURE_ROOT \
+      -u UPKEEPER_VALIDATION_LATTICE_DB \
+      -u UPKEEPER_VALIDATION_LOG_FILE_ALLOW_UNSAFE \
+      -u UPKEEPER_VALIDATION_LOG_ROTATE_AFTER_HOURS \
+      -u UPKEEPER_VALIDATION_LOG_ROTATE_KEEP_HOURS \
+      -u UPKEEPER_VALIDATION_MODEL \
+      -u UPKEEPER_VALIDATION_OPERATOR_GUIDE_BOOTSTRAP \
+      -u UPKEEPER_VALIDATION_POSTMORTEM_DIR \
+      -u UPKEEPER_VALIDATION_POSTMORTEM_ENABLED \
+      -u UPKEEPER_VALIDATION_PRECONTACT_BACKUP_ENABLED \
+      -u UPKEEPER_VALIDATION_REASONING_EFFORT \
+      -u UPKEEPER_VALIDATION_SELECTION_RANDOM_SEED \
+      -u UPKEEPER_VALIDATION_SELF_REVIEW_AFTER_DAYS \
+      -u UPKEEPER_VALIDATION_STARTUP_ANOMALY_GATE_STATE_DIR \
+      -u UPKEEPER_VALIDATION_TERMINAL_VERBOSITY \
+      -u UPKEEPER_VALIDATION_TOOL_FAILURE_QUEUE_DIR \
+      -u UPKEEPER_VALIDATION_TRANSCRIPT_DIR \
+      -u UPKEEPER_VALIDATION_UPKEEPER_CMD \
+      -u UPKEEPER_VALIDATION_VERBOSE_METADATA \
+      -u UPKEEPER_VALIDATION_WRAPPER_HEALTH_ARCHIVE_DIR \
+      -u UPKEEPER_VALIDATION_WRAPPER_HEALTH_STATE_DIR \
+      "$upkeeper_cmd" "$@"
+  ) >"$stdout_file" 2>"$stderr_file"
+}
+
 require_command() {
   local command_name="$1"
   command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name; see docs/dependencies.md"
@@ -2117,29 +2194,12 @@ check_force_added_gitignored_target_selection() {
   run_gitignored_target_dry_run() {
     local log_file="$1"
     shift
-    (
-      cd "$client"
-      CODEX_HOME="$temp_dir/codex-home" \
-        CODEX_LOG_FILE="$log_file" \
-        CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-        CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$client" "gitignored-target")" \
-        CODEX_POSTMORTEM_DIR="$temp_dir/postmortems" \
-        CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-        CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-        CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-        CODEX_TERMINAL_VERBOSITY=quiet \
-        CODEX_MODEL=gpt-5.5 \
-        CODEX_REASONING_EFFORT=xhigh \
-        CODEX_FALLBACK_ENABLED=0 \
-        CODEX_FALLBACK_SCREEN_ENABLED=0 \
-        CODEX_POSTMORTEM_ENABLED=0 \
-        CODEX_FILE_MANIFEST_PATH="$manifest_path" \
-        CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
-        CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
-        UPKEEPER_LATTICE_DB="$temp_dir/lattice.sqlite3" \
-        UPKEEPER_DRY_RUN=1 \
-        ./Upkeeper "$@"
-    ) >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+    UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+      UPKEEPER_VALIDATION_FILE_MANIFEST_PATH="$manifest_path" \
+      UPKEEPER_VALIDATION_SELF_REVIEW_AFTER_DAYS=99999 \
+      UPKEEPER_VALIDATION_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
+      UPKEEPER_VALIDATION_LATTICE_DB="$temp_dir/lattice.sqlite3" \
+      run_upkeeper_validation_cycle "$client" "gitignored-target" "$log_file" "$temp_dir/out.txt" "$temp_dir/err.txt" "$@"
   }
 
   set +e
@@ -2214,29 +2274,12 @@ check_symlink_target_selection_guard() {
   run_symlink_target_dry_run() {
     local log_file="$1"
     shift
-    (
-      cd "$client"
-      CODEX_HOME="$temp_dir/codex-home" \
-        CODEX_LOG_FILE="$log_file" \
-        CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-        CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$client" "symlink-target")" \
-        CODEX_POSTMORTEM_DIR="$temp_dir/postmortems" \
-        CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-        CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-        CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-        CODEX_TERMINAL_VERBOSITY=quiet \
-        CODEX_MODEL=gpt-5.5 \
-        CODEX_REASONING_EFFORT=xhigh \
-        CODEX_FALLBACK_ENABLED=0 \
-        CODEX_FALLBACK_SCREEN_ENABLED=0 \
-        CODEX_POSTMORTEM_ENABLED=0 \
-        CODEX_FILE_MANIFEST_PATH="$manifest_path" \
-        CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
-        CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
-        UPKEEPER_LATTICE_DB="$temp_dir/lattice.sqlite3" \
-        UPKEEPER_DRY_RUN=1 \
-        ./Upkeeper "$@"
-    ) >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+    UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+      UPKEEPER_VALIDATION_FILE_MANIFEST_PATH="$manifest_path" \
+      UPKEEPER_VALIDATION_SELF_REVIEW_AFTER_DAYS=99999 \
+      UPKEEPER_VALIDATION_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
+      UPKEEPER_VALIDATION_LATTICE_DB="$temp_dir/lattice.sqlite3" \
+      run_upkeeper_validation_cycle "$client" "symlink-target" "$log_file" "$temp_dir/out.txt" "$temp_dir/err.txt" "$@"
   }
 
   set +e
@@ -2493,22 +2536,9 @@ check_cycle_start_log_contract() {
   printf -v code_home_q '%q' "$temp_dir/codex home"
 
   set +e
-  CODEX_HOME="$temp_dir/codex home" \
-    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "cycle-start-default")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    UPKEEPER_DRY_RUN=1 \
-    CODEX_MODE='--sandbox workspace-write' \
-    ./Upkeeper >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex home" \
+    UPKEEPER_VALIDATION_CODEX_MODE='--sandbox workspace-write' \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "cycle-start-default" "$temp_dir/Upkeeper.log" "$temp_dir/out.txt" "$temp_dir/err.txt"
   rc=$?
   set -e
 
@@ -2525,23 +2555,10 @@ check_cycle_start_log_contract() {
 
   : >"$temp_dir/Upkeeper.log"
   set +e
-  CODEX_HOME="$temp_dir/codex home" \
-    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "cycle-start-verbose")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    UPKEEPER_DRY_RUN=1 \
-    UPKEEPER_VERBOSE_METADATA=1 \
-    CODEX_MODE='--sandbox workspace-write' \
-    ./Upkeeper >"$temp_dir/out-verbose.txt" 2>"$temp_dir/err-verbose.txt"
+  UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex home" \
+    UPKEEPER_VALIDATION_CODEX_MODE='--sandbox workspace-write' \
+    UPKEEPER_VALIDATION_VERBOSE_METADATA=1 \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "cycle-start-verbose" "$temp_dir/Upkeeper.log" "$temp_dir/out-verbose.txt" "$temp_dir/err-verbose.txt"
   rc=$?
   set -e
 
@@ -2567,7 +2584,8 @@ check_log_path_symlink_guard() {
   set +e
   (
     cd "$temp_dir"
-    UPKEEPER_DRY_RUN=1 \
+    env -u CODEX_LOG_FILE \
+      UPKEEPER_DRY_RUN=1 \
       CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
       CODEX_TERMINAL_VERBOSITY=quiet \
       ./Upkeeper.sh >out.txt 2>err.txt
@@ -2600,23 +2618,10 @@ check_custom_log_path_rotation_boundary() {
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
 
   set +e
-  CODEX_HOME="$temp_dir/codex-home" \
-    CODEX_LOG_FILE="$log_file" \
-    CODEX_LOG_ROTATE_KEEP_HOURS=1 \
-    CODEX_LOG_ROTATE_AFTER_HOURS=1 \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "custom-log-boundary")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --target-file=Upkeeper >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+    UPKEEPER_VALIDATION_LOG_ROTATE_KEEP_HOURS=1 \
+    UPKEEPER_VALIDATION_LOG_ROTATE_AFTER_HOURS=1 \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "custom-log-boundary" "$log_file" "$temp_dir/out.txt" "$temp_dir/err.txt" --target-file=Upkeeper
   rc=$?
   set -e
 
@@ -3025,22 +3030,10 @@ check_wrapper_health_log_quoting() {
   archive_dir="$temp_dir/retired health"
   write_validation_quota_snapshot "$temp_dir/codex home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
 
-  CODEX_HOME="$temp_dir/codex home" \
-    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "wrapper-health-initial")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$health_dir" \
-    CODEX_WRAPPER_HEALTH_ARCHIVE_DIR="$archive_dir" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --target-file=Upkeeper >"$temp_dir/first.out" 2>"$temp_dir/first.err"
+  UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex home" \
+    UPKEEPER_VALIDATION_WRAPPER_HEALTH_STATE_DIR="$health_dir" \
+    UPKEEPER_VALIDATION_WRAPPER_HEALTH_ARCHIVE_DIR="$archive_dir" \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "wrapper-health-initial" "$temp_dir/Upkeeper.log" "$temp_dir/first.out" "$temp_dir/first.err" --target-file=Upkeeper
 
   state_file="$(find "$health_dir" -maxdepth 1 -type f -name '*.state' | sort | sed -n '1p')"
   [[ -n "$state_file" ]] || fail "wrapper health dry-run did not create a state file"
@@ -3069,22 +3062,10 @@ PY
 
   : >"$temp_dir/Upkeeper.log"
   set +e
-  CODEX_HOME="$temp_dir/codex home" \
-    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "wrapper-health-archive")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$health_dir" \
-    CODEX_WRAPPER_HEALTH_ARCHIVE_DIR="$archive_dir" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --target-file=Upkeeper >"$temp_dir/second.out" 2>"$temp_dir/second.err"
+  UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex home" \
+    UPKEEPER_VALIDATION_WRAPPER_HEALTH_STATE_DIR="$health_dir" \
+    UPKEEPER_VALIDATION_WRAPPER_HEALTH_ARCHIVE_DIR="$archive_dir" \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "wrapper-health-archive" "$temp_dir/Upkeeper.log" "$temp_dir/second.out" "$temp_dir/second.err" --target-file=Upkeeper
   rc=$?
   set -e
 
@@ -3142,21 +3123,9 @@ check_active_lock_incomplete_guard() {
   mkdir "$active_lock_dir"
 
   set +e
-  CODEX_HOME="$temp_dir/codex-home" \
-    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$active_lock_dir" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --target-file=Upkeeper >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+    UPKEEPER_VALIDATION_ACTIVE_LOCK_DIR="$active_lock_dir" \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "active-lock-incomplete" "$temp_dir/Upkeeper.log" "$temp_dir/out.txt" "$temp_dir/err.txt" --target-file=Upkeeper
   rc=$?
   set -e
 
@@ -3176,18 +3145,12 @@ check_quota_fallback_exit_contract() {
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.3-codex-spark" "-3600" "86400"
 
   set +e
-  CODEX_HOME="$temp_dir/codex-home" \
-    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "quota-fallback")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.3-codex-spark \
-    CODEX_REASONING_EFFORT=xhigh \
-    UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --target-file=Upkeeper --prompt-file prompts/p24-de-llm-ing-viability-review.md >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+    UPKEEPER_VALIDATION_MODEL=gpt-5.3-codex-spark \
+    UPKEEPER_VALIDATION_FALLBACK_ENABLED=1 \
+    UPKEEPER_VALIDATION_FALLBACK_SCREEN_ENABLED=1 \
+    UPKEEPER_VALIDATION_POSTMORTEM_ENABLED=1 \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "quota-fallback" "$temp_dir/Upkeeper.log" "$temp_dir/out.txt" "$temp_dir/err.txt" --target-file=Upkeeper --prompt-file prompts/p24-de-llm-ing-viability-review.md
   rc=$?
   set -e
 
@@ -3205,21 +3168,8 @@ check_review_module_flags() {
   temp_dir="$(mktemp -d /tmp/upkeeper-review-modules.XXXXXX)"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
 
-  CODEX_HOME="$temp_dir/codex-home" \
-    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "review-modules")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --target-file=Upkeeper --review-modules="$(review_module_list_csv)" >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+  UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "review-modules" "$temp_dir/Upkeeper.log" "$temp_dir/out.txt" "$temp_dir/err.txt" --target-file=Upkeeper --review-modules="$(review_module_list_csv)"
 
   grep -Fq "review_modules_hash=" "$temp_dir/Upkeeper.log" || fail "review module dry-run did not record selected modules metadata"
   while IFS='|' read -r module_id _; do
@@ -3257,13 +3207,20 @@ check_review_module_flags() {
 }
 
 check_config_file_support() {
-  local temp_dir profile output rc secure_parent
+  local temp_dir profile output rc secure_parent fallback_parent
 
   log "checking config file support"
   secure_parent="${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper-validation"
-  mkdir -p "$secure_parent"
-  chmod 700 "$secure_parent" 2>/dev/null || true
-  temp_dir="$(mktemp -d "$secure_parent/config-file.XXXXXX")"
+  if mkdir -p "$secure_parent" 2>/dev/null && temp_dir="$(mktemp -d "$secure_parent/config-file.XXXXXX" 2>/dev/null)"; then
+    :
+  else
+    fallback_parent="${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/tmp/upkeeper-validation"
+    mkdir -p "$fallback_parent" 2>/dev/null ||
+      fail "unable to create trusted config-file validation temp parent"
+    chmod 700 "$fallback_parent" 2>/dev/null || true
+    temp_dir="$(mktemp -d "$fallback_parent/config-file.XXXXXX")" ||
+      fail "unable to create config-file validation temp directory"
+  fi
   chmod 700 "$temp_dir" 2>/dev/null || true
   profile="$temp_dir/profile.conf"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
@@ -3282,15 +3239,8 @@ UPKEEPER_IGNORE_FAILURE_QUEUE="1"
 EOF
   chmod 600 "$profile" 2>/dev/null || true
 
-  CODEX_HOME="$temp_dir/codex-home" \
-    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "config-file")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --config-file="$profile" >"$temp_dir/config.out" 2>"$temp_dir/config.err"
+  UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "config-file" "$temp_dir/Upkeeper.log" "$temp_dir/config.out" "$temp_dir/config.err" --config-file="$profile"
 
   grep -Fq "config_loaded=1" "$temp_dir/Upkeeper.log" || fail "config dry-run did not record loaded config"
   grep -Fq "config_file_hash=" "$temp_dir/Upkeeper.log" || fail "config dry-run did not record config metadata"
@@ -3301,15 +3251,8 @@ EOF
   grep -Fq "review.module_prompt enabled module=p28" "$temp_dir/Upkeeper.log" || fail "config dry-run did not append P28"
 
   : >"$temp_dir/Upkeeper.log"
-  CODEX_HOME="$temp_dir/codex-home" \
-    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "config-cli-override")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --config-file="$profile" --target-file=lib/upkeeper/codex_io.bash --p26 >"$temp_dir/override.out" 2>"$temp_dir/override.err"
+  UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "config-cli-override" "$temp_dir/Upkeeper.log" "$temp_dir/override.out" "$temp_dir/override.err" --config-file="$profile" --target-file=lib/upkeeper/codex_io.bash --p26
 
   grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/Upkeeper.log" || fail "CLI target did not override config target"
   grep -Fq "selection_mode=explicit_target" "$temp_dir/Upkeeper.log" || fail "CLI target did not use explicit target selection"
@@ -3320,21 +3263,8 @@ EOF
 
   : >"$temp_dir/Upkeeper.log"
   UPKEEPER_CONFIG_FILE="$profile" \
-    CODEX_HOME="$temp_dir/codex-home" \
-    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "config-env")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --no-config --target-file=Upkeeper >"$temp_dir/no-config.out" 2>"$temp_dir/no-config.err"
+    UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "config-env" "$temp_dir/Upkeeper.log" "$temp_dir/no-config.out" "$temp_dir/no-config.err" --no-config --target-file=Upkeeper
 
   grep -Fq "config_loaded=0" "$temp_dir/Upkeeper.log" || fail "--no-config did not disable config loading"
 
@@ -3362,27 +3292,14 @@ check_file_manifest_selection() {
   run_manifest_dry_run() {
     local log_file="$1"
     shift
-    CODEX_HOME="$temp_dir/codex-home" \
-      CODEX_LOG_FILE="$log_file" \
-      CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-      CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "file-manifest")" \
-      CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-      CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-      CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-      CODEX_TERMINAL_VERBOSITY=quiet \
-      CODEX_MODEL=gpt-5.5 \
-      CODEX_REASONING_EFFORT=xhigh \
-      CODEX_FALLBACK_ENABLED=0 \
-      CODEX_FALLBACK_SCREEN_ENABLED=0 \
-      CODEX_POSTMORTEM_ENABLED=0 \
-      CODEX_FILE_MANIFEST_PATH="$manifest_path" \
-      CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
-      CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
-      UPKEEPER_PRECONTACT_BACKUP_ENABLED=0 \
-      UPKEEPER_SELECTION_RANDOM_SEED=validation-file-manifest-selection \
-      UPKEEPER_LATTICE_DB="$lattice_db_path" \
-      UPKEEPER_DRY_RUN=1 \
-      ./Upkeeper "$@" >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+    UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+      UPKEEPER_VALIDATION_FILE_MANIFEST_PATH="$manifest_path" \
+      UPKEEPER_VALIDATION_SELF_REVIEW_AFTER_DAYS=99999 \
+      UPKEEPER_VALIDATION_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
+      UPKEEPER_VALIDATION_PRECONTACT_BACKUP_ENABLED=0 \
+      UPKEEPER_VALIDATION_SELECTION_RANDOM_SEED=validation-file-manifest-selection \
+      UPKEEPER_VALIDATION_LATTICE_DB="$lattice_db_path" \
+      run_upkeeper_validation_cycle "$ROOT_DIR" "file-manifest" "$log_file" "$temp_dir/out.txt" "$temp_dir/err.txt" "$@"
   }
 
   run_manifest_dry_run "$temp_dir/manifest.log" \
@@ -3880,45 +3797,22 @@ PY
   chmod 600 "$temp_dir/selection-failures/open/$marker_id.json"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
 
-  CODEX_HOME="$temp_dir/codex-home" \
-    CODEX_LOG_FILE="$temp_dir/selection.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "failure-queue")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/selection-failures" \
-    UPKEEPER_TOOL_FAILURE_QUEUE_SIGNING_KEY="$tool_failure_queue_signing_key" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
-    UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper >"$temp_dir/selection.out" 2>"$temp_dir/selection.err"
+  UPKEEPER_TOOL_FAILURE_QUEUE_SIGNING_KEY="$tool_failure_queue_signing_key" \
+    UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+    UPKEEPER_VALIDATION_TOOL_FAILURE_QUEUE_DIR="$temp_dir/selection-failures" \
+    UPKEEPER_VALIDATION_SELF_REVIEW_AFTER_DAYS=99999 \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "failure-queue" "$temp_dir/selection.log" "$temp_dir/selection.out" "$temp_dir/selection.err"
 
   grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/selection.log" || fail "failure queue did not force marked target"
   grep -Fq "failure_queue_selected=1" "$temp_dir/selection.log" || fail "failure queue selection was not logged"
 
-  CODEX_HOME="$temp_dir/codex-home" \
-    CODEX_LOG_FILE="$temp_dir/bypass.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts-bypass" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "failure-queue-bypass")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health-bypass" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates-bypass" \
-    CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/selection-failures" \
-    UPKEEPER_TOOL_FAILURE_QUEUE_SIGNING_KEY="$tool_failure_queue_signing_key" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --ignore-failure-queue >"$temp_dir/bypass.out" 2>"$temp_dir/bypass.err"
+  UPKEEPER_TOOL_FAILURE_QUEUE_SIGNING_KEY="$tool_failure_queue_signing_key" \
+    UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+    UPKEEPER_VALIDATION_TRANSCRIPT_DIR="$temp_dir/transcripts-bypass" \
+    UPKEEPER_VALIDATION_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health-bypass" \
+    UPKEEPER_VALIDATION_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates-bypass" \
+    UPKEEPER_VALIDATION_TOOL_FAILURE_QUEUE_DIR="$temp_dir/selection-failures" \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "failure-queue-bypass" "$temp_dir/bypass.log" "$temp_dir/bypass.out" "$temp_dir/bypass.err" --ignore-failure-queue
 
   grep -Fq "failure_queue_selected=0" "$temp_dir/bypass.log" || fail "failure queue bypass flag was not honored"
 
@@ -5236,37 +5130,11 @@ check_central_dry_runs() {
   temp_dir="$(mktemp -d /tmp/upkeeper-central-dry-run.XXXXXX)"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
 
-  CODEX_HOME="$temp_dir/codex-home" \
-    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "central-dry-run-target")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper >/dev/null
+  UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "central-dry-run-target" "$temp_dir/Upkeeper.log" /dev/null "$temp_dir/central-target.err"
 
-  CODEX_HOME="$temp_dir/codex-home" \
-    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "central-dry-run-default")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    UPKEEPER_DRY_RUN=1 \
-    ./Upkeeper --prompt-pass=all >/dev/null
+  UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "central-dry-run-default" "$temp_dir/Upkeeper.log" /dev/null "$temp_dir/central-default.err" --prompt-pass=all
 
   rm -r "$temp_dir"
 }
@@ -5286,16 +5154,9 @@ check_symlinked_client() {
   (
     cd "$temp_dir"
     ./Upkeeper.sh --version >/dev/null
-    CODEX_HOME="$temp_dir/codex-home" \
-      CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-      CODEX_TERMINAL_VERBOSITY=quiet \
-      CODEX_MODEL=gpt-5.5 \
-      CODEX_REASONING_EFFORT=xhigh \
-      CODEX_FALLBACK_ENABLED=0 \
-      CODEX_FALLBACK_SCREEN_ENABLED=0 \
-      CODEX_POSTMORTEM_ENABLED=0 \
-      UPKEEPER_DRY_RUN=1 \
-      ./Upkeeper.sh >/dev/null
+    UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+      UPKEEPER_VALIDATION_UPKEEPER_CMD=./Upkeeper.sh \
+      run_upkeeper_validation_cycle "$temp_dir" "symlink-client" "$temp_dir/Upkeeper.log" /dev/null "$temp_dir/symlink.err"
     grep -Fq "implementation_hash=value-hmac-sha256:" Upkeeper.log
     grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" Upkeeper.log
   )
@@ -5340,16 +5201,8 @@ check_missing_prompt_failure() {
   (
     cd "$temp_dir"
     set +e
-    CODEX_HOME="$temp_dir/codex-home" \
-      CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-      CODEX_TERMINAL_VERBOSITY=quiet \
-      CODEX_MODEL=gpt-5.5 \
-      CODEX_REASONING_EFFORT=xhigh \
-      CODEX_FALLBACK_ENABLED=0 \
-      CODEX_FALLBACK_SCREEN_ENABLED=0 \
-      CODEX_POSTMORTEM_ENABLED=0 \
-      UPKEEPER_DRY_RUN=1 \
-      ./Upkeeper >out.txt 2>err.txt
+    UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+      run_upkeeper_validation_cycle "$temp_dir" "missing-prompt" "$temp_dir/Upkeeper.log" "$temp_dir/out.txt" "$temp_dir/err.txt"
     rc=$?
     set -e
 
@@ -5383,22 +5236,13 @@ SH
 
   set +e
   PATH="$temp_dir/bin:$PATH" \
-    CODEX_HOME="$temp_dir/codex-home" \
-    CODEX_LOG_FILE="$temp_dir/Upkeeper.log" \
-    CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "fake-backend")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=1 \
-    CODEX_FALLBACK_MODEL=gpt-5.3-codex-spark \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    "$ROOT_DIR/Upkeeper" --target-file=launcher_examples/spark_5.3_burn_out_xhigh.sh \
-      >"$temp_dir/out.txt" 2>"$temp_dir/err.txt"
+    UPKEEPER_VALIDATION_DRY_RUN=0 \
+    UPKEEPER_VALIDATION_CODEX_HOME="$temp_dir/codex-home" \
+    UPKEEPER_VALIDATION_FALLBACK_ENABLED=1 \
+    UPKEEPER_VALIDATION_FALLBACK_MODEL=gpt-5.3-codex-spark \
+    UPKEEPER_VALIDATION_FALLBACK_SCREEN_ENABLED=0 \
+    UPKEEPER_VALIDATION_UPKEEPER_CMD="$ROOT_DIR/Upkeeper" \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "fake-backend" "$temp_dir/Upkeeper.log" "$temp_dir/out.txt" "$temp_dir/err.txt" --target-file=launcher_examples/spark_5.3_burn_out_xhigh.sh
   rc=$?
   set -e
 
@@ -5511,25 +5355,9 @@ run_fault_injection_dry_run() {
   local phase="$2"
   shift 2
 
-  (
-    cd "$fixture_dir"
-    CODEX_HOME="$fixture_dir/codex-home" \
-      CODEX_LOG_FILE="$fixture_dir/$phase.log" \
-      CODEX_TRANSCRIPT_DIR="$fixture_dir/transcripts" \
-      CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$fixture_dir" "$phase")" \
-      CODEX_WRAPPER_HEALTH_STATE_DIR="$fixture_dir/health" \
-      CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$fixture_dir/startup-gates" \
-      CODEX_TOOL_FAILURE_QUEUE_DIR="$fixture_dir/failures" \
-      CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-      CODEX_TERMINAL_VERBOSITY=quiet \
-      CODEX_MODEL=gpt-5.5 \
-      CODEX_REASONING_EFFORT=xhigh \
-      CODEX_FALLBACK_ENABLED=0 \
-      CODEX_FALLBACK_SCREEN_ENABLED=0 \
-      CODEX_POSTMORTEM_ENABLED=0 \
-      UPKEEPER_DRY_RUN=1 \
-      ./Upkeeper "$@" >"$fixture_dir/$phase.out" 2>"$fixture_dir/$phase.err"
-  )
+  UPKEEPER_VALIDATION_CODEX_HOME="$fixture_dir/codex-home" \
+    UPKEEPER_VALIDATION_TOOL_FAILURE_QUEUE_DIR="$fixture_dir/failures" \
+    run_upkeeper_validation_cycle "$fixture_dir" "$phase" "$fixture_dir/$phase.log" "$fixture_dir/$phase.out" "$fixture_dir/$phase.err" "$@"
 }
 
 run_fault_injection_fake_backend() {
@@ -5540,21 +5368,11 @@ run_fault_injection_fake_backend() {
 
   PATH="$fixture_dir/bin:$PATH" \
     UPKEEPER_FAKE_CODEX_MODE="$fake_mode" \
-    CODEX_HOME="$fixture_dir/codex-home" \
-    CODEX_LOG_FILE="$fixture_dir/$phase.log" \
-    CODEX_TRANSCRIPT_DIR="$fixture_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "fault-injection-$phase")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$fixture_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$fixture_dir/startup-gates" \
-    CODEX_TOOL_FAILURE_QUEUE_DIR="$fixture_dir/failures" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    "$ROOT_DIR/Upkeeper" "$@" >"$fixture_dir/$phase.out" 2>"$fixture_dir/$phase.err"
+    UPKEEPER_VALIDATION_DRY_RUN=0 \
+    UPKEEPER_VALIDATION_CODEX_HOME="$fixture_dir/codex-home" \
+    UPKEEPER_VALIDATION_TOOL_FAILURE_QUEUE_DIR="$fixture_dir/failures" \
+    UPKEEPER_VALIDATION_UPKEEPER_CMD="$ROOT_DIR/Upkeeper" \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "fault-injection-$phase" "$fixture_dir/$phase.log" "$fixture_dir/$phase.out" "$fixture_dir/$phase.err" "$@"
 }
 
 run_fault_injection_root_dry_run() {
@@ -5562,22 +5380,10 @@ run_fault_injection_root_dry_run() {
   local phase="$2"
   shift 2
 
-  CODEX_HOME="$fixture_dir/codex-home" \
-    CODEX_LOG_FILE="$fixture_dir/$phase.log" \
-    CODEX_TRANSCRIPT_DIR="$fixture_dir/transcripts" \
-    CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "fault-injection-root-$phase")" \
-    CODEX_WRAPPER_HEALTH_STATE_DIR="$fixture_dir/health" \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$fixture_dir/startup-gates" \
-    CODEX_TOOL_FAILURE_QUEUE_DIR="$fixture_dir/failures" \
-    CODEX_OPERATOR_GUIDE_BOOTSTRAP=0 \
-    CODEX_TERMINAL_VERBOSITY=quiet \
-    CODEX_MODEL=gpt-5.5 \
-    CODEX_REASONING_EFFORT=xhigh \
-    CODEX_FALLBACK_ENABLED=0 \
-    CODEX_FALLBACK_SCREEN_ENABLED=0 \
-    CODEX_POSTMORTEM_ENABLED=0 \
-    UPKEEPER_DRY_RUN=1 \
-      "$ROOT_DIR/Upkeeper" "$@" >"$fixture_dir/$phase.out" 2>"$fixture_dir/$phase.err"
+  UPKEEPER_VALIDATION_CODEX_HOME="$fixture_dir/codex-home" \
+    UPKEEPER_VALIDATION_TOOL_FAILURE_QUEUE_DIR="$fixture_dir/failures" \
+    UPKEEPER_VALIDATION_UPKEEPER_CMD="$ROOT_DIR/Upkeeper" \
+    run_upkeeper_validation_cycle "$ROOT_DIR" "fault-injection-root-$phase" "$fixture_dir/$phase.log" "$fixture_dir/$phase.out" "$fixture_dir/$phase.err" "$@"
 }
 
 check_backend_usage_limit_contract() {

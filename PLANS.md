@@ -3,6 +3,35 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue 101 Validation Fake Environment Reuse
+
+Status: completed locally
+
+Goal:
+- centralize repeated fake Upkeeper run environment setup in
+  `tools/validate_upkeeper.sh`
+- preserve stdout/stderr redirection, exit-code capture, active-lock isolation,
+  fake `CODEX_HOME`, log, transcript, health, startup anomaly, fallback, guide
+  bootstrap, quiet terminal, and dry-run defaults
+- keep the helper local to the validation harness unless another caller needs it
+
+Constraints:
+- no GitHub or real backend Codex I/O
+- keep validation fixtures confined to caller-provided temp directories
+- preserve current quick/full validation behavior and output contracts
+
+Files likely touched:
+- `tools/validate_upkeeper.sh`
+- `tests/chimneysweep_test.bash`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/chimneysweep_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `git diff --check`
+
 ## Issue 104 Quota And Session Fixture Reuse
 
 Status: completed locally

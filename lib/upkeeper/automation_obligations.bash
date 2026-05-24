@@ -641,12 +641,8 @@ def sourced_from_backlog_loop(item):
     return False
 
 
-def quoted_backend_fixture_text(text):
-    lower = text.lower()
-    marker = "upkeeper: primary:"
-    if marker not in lower:
-        return False
-    payload = lower.split(marker, 1)[1]
+def quoted_backend_fixture_payload(payload):
+    payload = payload.strip()
     if payload.strip() in {
         "except exception as exc:",
     }:
@@ -708,6 +704,19 @@ def quoted_backend_fixture_text(text):
         return True
     if payload.lstrip().startswith("'") and any(token in payload for token in embedded_tokens):
         return True
+    return False
+
+
+def quoted_backend_fixture_text(text):
+    lower = text.lower()
+    marker = "upkeeper: primary:"
+    if marker not in lower:
+        return False
+    for line in lower.splitlines():
+        if marker not in line:
+            continue
+        if quoted_backend_fixture_payload(line.split(marker, 1)[1]):
+            return True
     return False
 
 

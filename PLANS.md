@@ -3,6 +3,40 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Backlog Stop Triage
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #384 with a local no-backend triage command for stopped backlog
+  loops
+- emit both machine-readable restart status and a plain operator summary
+- cover known stopped-loop classes with deterministic fixtures
+
+Constraints:
+- no backend Codex calls
+- GitHub PR/check metadata is optional; local evidence must be enough for
+  common restart decisions
+- unknown or contradictory local evidence must fail closed and leave visible
+  obligation evidence instead of declaring a restart safe
+
+Files likely touched:
+- `tools/backlog_triage.py`
+- `tests/backlog_triage_test.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/backlog_triage_test.bash`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Embedded Behavior Table Contracts
 
 Status: completed locally; pending PR/CI

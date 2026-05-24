@@ -58,6 +58,8 @@ BACKLOG_JOB_SUMMARY_SENTINEL_PREFIX="__UPKEEPER_BACKLOG_JOB_SUMMARY__:"
 BACKLOG_JOB_SUMMARY_BLANK_SENTINEL="${BACKLOG_JOB_SUMMARY_SENTINEL_PREFIX}blank"
 BACKLOG_JOB_SUMMARY_BAR_SENTINEL="${BACKLOG_JOB_SUMMARY_SENTINEL_PREFIX}bar"
 BACKLOG_JOB_SUMMARY_LINE_SENTINEL="${BACKLOG_JOB_SUMMARY_SENTINEL_PREFIX}line:"
+BACKLOG_EXPECTED_NEGATIVE_FIXTURE_SENTINEL_PREFIX="__UPKEEPER_BACKLOG_EXPECTED_NEGATIVE_FIXTURE__:"
+BACKLOG_EXPECTED_NEGATIVE_FIXTURE_CONTEXT=""
 BACKLOG_OWNER_HEARTBEAT_INTERVAL_SECONDS="${BACKLOG_OWNER_HEARTBEAT_INTERVAL_SECONDS:-120}"
 BACKLOG_OWNER_HEARTBEAT_STALE_SECONDS="${BACKLOG_OWNER_HEARTBEAT_STALE_SECONDS:-300}"
 BACKLOG_OWNER_CLAIM_LOCK_STALE_SECONDS="${BACKLOG_OWNER_CLAIM_LOCK_STALE_SECONDS:-30}"
@@ -160,6 +162,36 @@ backlog_emit_attention_line() {
   fi
 }
 
+backlog_expected_negative_fixture_label() {
+  local label="${1:-fixture}"
+
+  label="$(printf '%s' "$label" | tr -c 'A-Za-z0-9_.:-' '_')"
+  label="${label##_}"
+  label="${label%%_}"
+  [[ -n "$label" ]] || label="fixture"
+  printf '%s\n' "$label"
+}
+
+backlog_expected_fixture_should_reclassify() {
+  local marker="${1:-}"
+  local payload="${2:-}"
+
+  [[ -n "${BACKLOG_EXPECTED_NEGATIVE_FIXTURE_CONTEXT:-}" ]] || return 1
+  [[ "$marker" == "PAGE" || "$payload" == *"[ERROR]"* ]]
+}
+
+backlog_emit_expected_fixture_line() {
+  local ts="$1"
+  local marker="$2"
+  local payload="${3:-}"
+
+  if backlog_expected_fixture_should_reclassify "$marker" "$payload"; then
+    backlog_emit_attention_line "$ts" "--FYI--" "expected_negative_fixture=$BACKLOG_EXPECTED_NEGATIVE_FIXTURE_CONTEXT $payload"
+  else
+    backlog_emit_attention_line "$ts" "$marker" "$payload"
+  fi
+}
+
 backlog_normalize_attention_line_timestamp() {
   local line="$1"
   local original_ts ts rest marker payload
@@ -176,7 +208,7 @@ backlog_normalize_attention_line_timestamp() {
     rest="${line#* }"
     if backlog_attention_marker_payload "$rest" >/dev/null; then
       IFS=$'\t' read -r marker payload < <(backlog_attention_marker_payload "$rest")
-      backlog_emit_attention_line "$ts" "$marker" "$payload"
+      backlog_emit_expected_fixture_line "$ts" "$marker" "$payload"
     else
       printf '%s %s\n' "$ts" "$rest"
     fi
@@ -282,7 +314,7 @@ backlog_format_attention_line() {
 
   marker="$(backlog_attention_marker_for_line "$rest")"
   payload="$rest"
-  backlog_emit_attention_line "$ts" "$marker" "$payload"
+  backlog_emit_expected_fixture_line "$ts" "$marker" "$payload"
 }
 
 backlog_alert_color_enabled() {
@@ -415,6 +447,7 @@ backlog_color_attention_stream() {
 
 backlog_timestamp_stream() {
   local line
+  local fixture_label
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     case "$line" in
@@ -428,6 +461,18 @@ backlog_timestamp_stream() {
         ;;
       "$BACKLOG_JOB_SUMMARY_LINE_SENTINEL"*)
         printf '%s\n' "${line#"$BACKLOG_JOB_SUMMARY_LINE_SENTINEL"}"
+        continue
+        ;;
+      "$BACKLOG_EXPECTED_NEGATIVE_FIXTURE_SENTINEL_PREFIX"begin:*)
+        fixture_label="${line#"$BACKLOG_EXPECTED_NEGATIVE_FIXTURE_SENTINEL_PREFIX"begin:}"
+        BACKLOG_EXPECTED_NEGATIVE_FIXTURE_CONTEXT="$(backlog_expected_negative_fixture_label "$fixture_label")"
+        backlog_emit_attention_line "$(backlog_timestamp)" "--FYI--" "expected_negative_fixture=$BACKLOG_EXPECTED_NEGATIVE_FIXTURE_CONTEXT status=begin"
+        continue
+        ;;
+      "$BACKLOG_EXPECTED_NEGATIVE_FIXTURE_SENTINEL_PREFIX"end:*)
+        fixture_label="$(backlog_expected_negative_fixture_label "${line#"$BACKLOG_EXPECTED_NEGATIVE_FIXTURE_SENTINEL_PREFIX"end:}")"
+        backlog_emit_attention_line "$(backlog_timestamp)" "--FYI--" "expected_negative_fixture=$fixture_label status=end"
+        BACKLOG_EXPECTED_NEGATIVE_FIXTURE_CONTEXT=""
         continue
         ;;
     esac

@@ -37,6 +37,36 @@ Validation:
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
 
+## Issue 414 Expected Negative Fixture Output Context
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- let passing negative-path fixtures mark expected `[ERROR]` evidence before it
+  reaches the backlog watch formatter
+- preserve the fixture evidence in the live stream without presenting it as an
+  unqualified `PAGE` control-plane failure
+- keep real wrapper/control-plane `PAGE [ERROR]` lines visibly pageable
+
+Constraints:
+- no GitHub I/O from this run
+- keep stored logs plain and machine-parseable
+- keep the change local to the backlog formatter and focused fixture coverage
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `tests/transcript_artifacts_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/transcript_artifacts_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## PR440 Stabilization And Return To Issue Work
 
 Status: completed locally; pending PR/CI

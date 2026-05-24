@@ -6,6 +6,10 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-23: expected negative fixture output context:
+	1. Backlog watch output now recognizes explicit expected-negative-fixture sentinels from passing validation probes and reclassifies marked `PAGE [ERROR]` evidence as `--FYI-- expected_negative_fixture=...` instead of an unqualified live control-plane failure.
+	2. Transcript artifact negative-path tests now bracket the intentional unsafe transcript-directory errors with fixture context, while formatter validation still proves real wrapper/control-plane errors stay `PAGE`.
+
 2026-05-23: Lattice degraded-mode ownership:
 	1. Optional `lattice.unavailable` warnings now include bounded `reason_class`, `owner_issue`, and degraded-mode `doctrine` fields so recurring Lattice loss has a stable owner and classification instead of appearing as unowned warning noise.
 	2. `tools/upkeeper_lattice.py classify-unavailable` provides a deterministic local classifier for unavailable detail payloads, and Lattice log/recovery import preserves the safe ownership fields while continuing to hash sensitive paths and raw details.

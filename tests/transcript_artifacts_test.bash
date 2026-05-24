@@ -11,6 +11,14 @@ fail() {
   exit 1
 }
 
+expected_negative_fixture_begin() {
+  printf '__UPKEEPER_BACKLOG_EXPECTED_NEGATIVE_FIXTURE__:begin:%s\n' "$1" >&2
+}
+
+expected_negative_fixture_end() {
+  printf '__UPKEEPER_BACKLOG_EXPECTED_NEGATIVE_FIXTURE__:end:%s\n' "$1" >&2
+}
+
 run_prune_once() {
   local transcript_dir="$1"
   local rc=0
@@ -101,7 +109,9 @@ test_new_transcript_file_rejects_symlink_directory() {
   mkdir -p "$transcript_dir"
   ln -s "$transcript_dir" "$transcript_link"
 
+  expected_negative_fixture_begin "transcript_artifacts.symlink_directory"
   run_new_transcript_file "$transcript_link"
+  expected_negative_fixture_end "transcript_artifacts.symlink_directory"
   rc="$NEW_TRANSCRIPT_FILE_RC"
 
   [[ "$rc" != "0" ]] || fail "new transcript file accepted a symlink directory"
@@ -113,7 +123,9 @@ test_new_transcript_file_rejects_non_directory() {
 
   printf 'not-a-directory' >"$transcript_dir"
 
+  expected_negative_fixture_begin "transcript_artifacts.non_directory"
   run_new_transcript_file "$transcript_dir"
+  expected_negative_fixture_end "transcript_artifacts.non_directory"
   rc="$NEW_TRANSCRIPT_FILE_RC"
 
   [[ "$rc" != "0" ]] || fail "new transcript file accepted a non-directory transcript path"

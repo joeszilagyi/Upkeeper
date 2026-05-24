@@ -605,6 +605,11 @@ PY
     backlog_format_attention_line "2026-05-16T18:20:30 Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)" >"$2/fyi.out"
     backlog_format_attention_line "2026-05-16T18:21:00 PAGE   [ERROR] already marked" >"$2/existing.out"
     backlog_format_attention_line "2026-05-16T18:21:01 █ RUN     backlog: running Upkeeper for issue #999 with gpt target=x" >"$2/existing-block.out"
+    printf "%s\n" \
+      "${BACKLOG_EXPECTED_NEGATIVE_FIXTURE_SENTINEL_PREFIX}begin:transcript_artifacts" \
+      "2026-05-21T12:03:28 █ PAGE    [ERROR] cycle=fixture run_hash=hash transcript directory is not private /tmp/upkeeper-transcripts-test.PDBM8W/transcripts-link" \
+      "${BACKLOG_EXPECTED_NEGATIVE_FIXTURE_SENTINEL_PREFIX}end:transcript_artifacts" \
+      | backlog_timestamp_stream >"$2/expected-negative-fixture.out"
     BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:02 Already up to date.")" >"$2/ok-color.out"
     BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:03 [ERROR] wrapper exploded")" >"$2/page-color.out"
     BACKLOG_ALERT_COLOR=always BACKLOG_ALERT_BLINK=0 backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:06 [ERROR] wrapper exploded")" >"$2/page-no-blink-color.out"
@@ -637,6 +642,13 @@ PY
     fail "backlog launcher did not normalize existing attention markers into visual-block format"
   grep -Fxq '2026-05-16T18:21:01 █ RUN     backlog: running Upkeeper for issue #999 with gpt target=x' "$temp_dir/existing-block.out" ||
     fail "backlog launcher duplicated an existing visual block marker"
+  grep -Fq '█ --FYI-- expected_negative_fixture=transcript_artifacts status=begin' "$temp_dir/expected-negative-fixture.out" ||
+    fail "backlog launcher did not expose expected negative fixture start context"
+  grep -Fq '█ --FYI-- expected_negative_fixture=transcript_artifacts [ERROR] cycle=fixture run_hash=hash transcript directory is not private /tmp/upkeeper-transcripts-test.PDBM8W/transcripts-link' "$temp_dir/expected-negative-fixture.out" ||
+    fail "backlog launcher did not reclassify expected negative fixture PAGE evidence"
+  if grep -Fq '█ PAGE    [ERROR] cycle=fixture run_hash=hash transcript directory is not private' "$temp_dir/expected-negative-fixture.out"; then
+    fail "backlog launcher left expected negative fixture evidence as unqualified PAGE output"
+  fi
   grep -Fq $'\033[1;32m█\033[0m OK' "$temp_dir/ok-color.out" ||
     fail "backlog launcher did not color OK visual block green"
   grep -Fq $'\033[97;41m2026-05-16T18:21:03\033[0m \033[5;1;31m█\033[0m \033[5;1;31mPAGE   \033[0m \033[97m[\033[5;1;31mERROR\033[0m\033[97m] wrapper exploded\033[0m' "$temp_dir/page-color.out" ||

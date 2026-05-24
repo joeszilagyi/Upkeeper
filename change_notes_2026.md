@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: backlog merge steward:
+	1. Added `tools/backlog_merge_steward.py`, a local no-backend guard for already-green backlog PR cleanup.
+	2. The steward refuses draft, non-main, failing-check, pending-check, unmergeable, and dirty-secondary-main-worktree states before merge.
+	3. Real execution uses the guarded `CODEX_ALLOW_PR_MERGE=<pr>` merge path with GitHub branch deletion, then fetches/prunes and verifies local main is clean.
+
 2026-05-24: backlog stopped-loop triage:
 	1. Added `tools/backlog_triage.py`, a no-backend local command that classifies whether a stopped backlog loop is safe to restart.
 	2. The command emits `safe_to_restart=yes|no|wait`, a reason, a next action, branch/PR/check metadata, and a short operator summary.

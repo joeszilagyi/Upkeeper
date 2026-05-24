@@ -236,6 +236,10 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Validation entrypoints remain available:
   `tools/validate_upkeeper.sh --deps`, `--smoke`, `--quick`, `--full`, and the
   additive `--profile` timing flag.
+- Merge-steward cleanup for already-green backlog PRs remains local and
+  no-backend. `tools/backlog_merge_steward.py` emits `merge_ready=yes|no`, a
+  reason, and a next action, refuses unsafe PR/check/worktree states, and uses
+  the guarded `CODEX_ALLOW_PR_MERGE=<pr>` path for real merges.
 - Stopped backlog loop triage remains local and no-backend. The focused
   command `tools/backlog_triage.py` emits `safe_to_restart=yes|no|wait` plus a
   reason and next action, using local evidence and optional GitHub PR/check

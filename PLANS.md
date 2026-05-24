@@ -3,9 +3,33 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Backlog Stop Triage
+## Backlog Merge Steward
 
 Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #385 with a deterministic local merge steward for already-green
+  backlog PRs
+- refuse unsafe PR, check, branch, and worktree states before merging
+- drive or report the clean-sheet state needed before the next backlog loop
+
+Constraints:
+- no backend Codex calls
+- never rewrite or delete dirty user work
+- use the guarded `CODEX_ALLOW_PR_MERGE=<pr>` merge path for real merges
+- keep tests fixture-driven with fake `gh`/Git state
+
+Files likely touched:
+- `tools/backlog_merge_steward.py`
+- `tests/backlog_merge_steward_test.bash`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/backlog_merge_steward_test.bash`
+
+## Backlog Stop Triage
+
+Status: completed and merged
 
 Goal:
 - close issue #384 with a local no-backend triage command for stopped backlog

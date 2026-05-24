@@ -986,6 +986,10 @@ prompts, backup log lines, or Lattice preselect evidence.
   Quick validation also owns the embedded behavior table drift contract for
   startup anomaly allowlists, source-safe exclusions, command-kind
   classifiers, review-module ids, and Lattice pass-code mappings.
+  Green backlog PR cleanup can be preflighted or executed through
+  `tools/backlog_merge_steward.py`. It refuses draft, non-main, failing-check,
+  unmergeable, or dirty-secondary-worktree states and uses
+  `CODEX_ALLOW_PR_MERGE=<pr>` for real merges.
   Stopped-loop restart triage is available without backend work with
   `tools/backlog_triage.py`. It reads local loop evidence, branch state,
   obligations, locks, and optional PR metadata, then emits

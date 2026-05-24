@@ -1736,6 +1736,19 @@ SH
   rm -r "$temp_dir"
 }
 
+check_backlog_merge_steward_contract() {
+  log "checking backlog merge-steward contract"
+
+  [[ -x tools/backlog_merge_steward.py ]] || fail "backlog merge steward is missing or not executable"
+  [[ -s tests/backlog_merge_steward_test.bash ]] || fail "backlog merge steward tests are missing or empty"
+  grep -Fq "CODEX_ALLOW_PR_MERGE" tools/backlog_merge_steward.py || fail "merge steward does not use guarded merge authorization"
+  grep -Fq -- "--delete-branch" tools/backlog_merge_steward.py || fail "merge steward does not request branch deletion through gh"
+  grep -Fq "dirty_main_worktree" tools/backlog_merge_steward.py || fail "merge steward does not block dirty secondary main worktrees"
+  grep -Fq "tools/backlog_merge_steward.py" docs/scripts/upkeeper.md || fail "operator guide missing merge steward command"
+  grep -Fq "merge_ready=yes|no" docs/compatibility.md || fail "compatibility docs missing merge steward output contract"
+  bash tests/backlog_merge_steward_test.bash
+}
+
 check_backlog_triage_contract() {
   log "checking backlog stopped-loop triage contract"
 
@@ -6681,6 +6694,7 @@ run_check automation_obligation_reconciliation_contract check_automation_obligat
 run_check automation_obligation_churn_contract check_automation_obligation_churn_contract
 run_check automation_obligation_issue_report_contract check_automation_obligation_issue_report_contract
 run_check backlog_launcher_contract check_backlog_launcher_contract
+run_check backlog_merge_steward_contract check_backlog_merge_steward_contract
 run_check backlog_triage_contract check_backlog_triage_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract

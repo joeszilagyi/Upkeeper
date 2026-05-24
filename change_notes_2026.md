@@ -11,6 +11,11 @@ Version numbering note:
 	2. `tools/upkeeper_lattice.py classify-unavailable` provides a deterministic local classifier for unavailable detail payloads, and Lattice log/recovery import preserves the safe ownership fields while continuing to hash sensitive paths and raw details.
 	3. Lattice docs now spell out the optional degraded-mode evidence replacement and the boundary where unavailable Lattice becomes blocking.
 
+2026-05-23: anomaly custody known-residue distinction:
+	1. Prior-run anomaly custody now reports repeated findings that already have open local obligations as `known_residue` with explicit owner issue and obligation identifiers instead of presenting them as fresh undifferentiated actionable bursts.
+	2. The custody latest record now separates `new_actionable_findings` from `known_open_findings`, while still updating occurrence counts and last-seen evidence on the stable owner obligation.
+	3. Local validation covers successful `WORK_DONE` cycles that carry repeated `previous_run.anomaly_summary`, `startup_anomaly.gate`, and `startup_anomaly.gate_unresolved` residue, proving the second scan updates known owners without creating new obligation files.
+
 2026-05-23: v1.2.33 changes:
 	1. Pre-contact backup HMAC derivation now caches parent-process key material before subshell helpers run, so backup metadata and payload verification remain stable even when the persistent redaction key file is unavailable.
 	2. Transcript/live-output custody now reports validation and check command failures as informational custody notices while preserving test/build failures as terminal errors, preventing already-captured local check failures from becoming fresh prior-run warning obligations.

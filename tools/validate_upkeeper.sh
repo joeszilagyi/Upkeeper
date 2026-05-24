@@ -852,6 +852,10 @@ check_prior_run_anomaly_custody_contract() {
 2026-05-21T12:00:00 █ OK      [INFO] Upkeeper: primary status: UPKEEPER_STATUS: WORK_DONE
 2026-05-21T12:00:01 █ --FYI-- [WARN] cycle=prior-cycle run_hash=abc123 previous_run.anomaly_summary scan_minutes=240 listed_total=1 action=force_upkeeper_self_review
 2026-05-21T12:00:03 █ --FYI-- [WARN] cycle=next-cycle run_hash=def456 previous_run.anomaly_summary scan_minutes=240 listed_total=7 action=force_upkeeper_self_review
+2026-05-21T12:00:04 █ --FYI-- [WARN] cycle=prior-cycle run_hash=abc123 startup_anomaly.gate status=active reasons=previous_run_anomaly force_upkeeper=1 action=block_normal_selection_until_upkeeper_suite_checked
+2026-05-21T12:00:05 █ --FYI-- [WARN] cycle=next-cycle run_hash=def456 startup_anomaly.gate status=active reasons=previous_run_anomaly force_upkeeper=1 action=block_normal_selection_until_upkeeper_suite_checked
+2026-05-21T12:00:06 █ --FYI-- [WARN] cycle=prior-cycle run_hash=abc123 startup_anomaly.gate_unresolved reason=changed_path_violation reasons=previous_run_anomaly,gate_changed_path_violation status_marker=WORK_DONE codex_exit=0 action=force_upkeeper_next_run
+2026-05-21T12:00:07 █ --FYI-- [WARN] cycle=next-cycle run_hash=def456 startup_anomaly.gate_unresolved reason=changed_path_violation reasons=previous_run_anomaly,gate_changed_path_violation status_marker=WORK_DONE codex_exit=0 action=force_upkeeper_next_run
 2026-05-21T12:00:02 █ PAGE    [ERROR] cycle=prior-cycle run_hash=abc123 unexpected.wrapper.failure reason=fixture
 LOG
 
@@ -870,13 +874,17 @@ LOG
     fail "prior-run anomaly custody latest record was not actionable"
   [[ "$(jq -r '.actionable_findings' "$temp_dir/custody/latest.json")" -ge 2 ]] ||
     fail "prior-run anomaly custody did not detect both warning and page-error deviations"
-  [[ "$(jq -r '.coalesced_findings' "$temp_dir/custody/latest.json")" == "1" ]] ||
+  [[ "$(jq -r '.coalesced_findings' "$temp_dir/custody/latest.json")" == "3" ]] ||
     fail "prior-run anomaly custody did not coalesce duplicate dynamic cycle evidence"
   obligation_count="$(find "$temp_dir/obligations/open" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
-  [[ "$obligation_count" == "2" ]] ||
+  [[ "$obligation_count" == "4" ]] ||
     fail "prior-run anomaly custody opened duplicate local automation obligations"
   [[ "$(jq -s '[.[] | select(.evidence.kind == "previous_run_anomaly_summary")] | length' "$temp_dir"/obligations/open/*.json)" == "1" ]] ||
     fail "prior-run anomaly custody did not collapse repeated previous-run summaries to one owner"
+  [[ "$(jq -s '[.[] | select(.evidence.kind == "startup_anomaly_gate_active")] | length' "$temp_dir"/obligations/open/*.json)" == "1" ]] ||
+    fail "prior-run anomaly custody did not collapse repeated startup gate active residue to one owner"
+  [[ "$(jq -s '[.[] | select(.evidence.kind == "startup_anomaly_unresolved")] | length' "$temp_dir"/obligations/open/*.json)" == "1" ]] ||
+    fail "prior-run anomaly custody did not collapse repeated startup gate unresolved residue to one owner"
   jq -e 'select(.kind == "prior_run_anomaly") | select(.issue_number == "418") | select(.evidence.normalized_excerpt | contains("unexpected.wrapper.failure"))' \
     "$temp_dir"/obligations/open/*.json >/dev/null ||
     fail "prior-run anomaly custody obligation did not preserve bounded evidence"
@@ -892,6 +900,12 @@ LOG
   second_count="$(find "$temp_dir/obligations/open" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
   [[ "$second_count" == "$obligation_count" ]] ||
     fail "prior-run anomaly custody reopened duplicate obligations for the same fingerprint"
+  [[ "$(jq -r '.status' "$temp_dir/custody/latest.json")" == "known_residue" ]] ||
+    fail "prior-run anomaly custody did not distinguish existing startup residue from new findings"
+  [[ "$(jq -r '.new_actionable_findings' "$temp_dir/custody/latest.json")" == "0" ]] ||
+    fail "prior-run anomaly custody treated known open residue as new"
+  [[ "$(jq -r '.known_open_findings' "$temp_dir/custody/latest.json")" == "$obligation_count" ]] ||
+    fail "prior-run anomaly custody did not count known open residue"
   [[ "$(jq -r '.created_obligations' "$temp_dir/custody/latest.json")" == "0" ]] ||
     fail "prior-run anomaly custody recreated existing obligations instead of updating them"
   [[ "$(jq -r '.updated_obligations' "$temp_dir/custody/latest.json")" == "$obligation_count" ]] ||

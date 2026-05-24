@@ -19,6 +19,7 @@ import pathlib
 import re
 import sys
 from dataclasses import dataclass
+from dataclasses import replace
 
 
 DEFAULT_UMBRELLA_ISSUE = "418"
@@ -378,6 +379,9 @@ def finding_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.Path
         "status": finding.status,
         "id": finding.ident,
         "fingerprint": finding.fingerprint,
+        "owner_issue_number": DEFAULT_UMBRELLA_ISSUE,
+        "owner_issue_title": DEFAULT_UMBRELLA_TITLE,
+        "owner_obligation_id": finding.ident,
         "kind": finding.kind,
         "severity": finding.severity,
         "reason": finding.reason,
@@ -497,6 +501,8 @@ def audit(args: argparse.Namespace) -> int:
     expected_count = 0
     resolved_count = 0
     coalesced_count = 0
+    known_open_count = 0
+    new_actionable_count = 0
     seen_ids: set[str] = set()
     obligation_records = existing_obligation_records(obligation_root)
     for index, (line_number, raw_line) in enumerate(lines):
@@ -515,6 +521,11 @@ def audit(args: argparse.Namespace) -> int:
             coalesced_count += 1
             continue
         seen_ids.add(finding.ident)
+        if record and record.get("state") == "open":
+            known_open_count += 1
+            finding = replace(finding, status="known_open")
+        else:
+            new_actionable_count += 1
         findings.append(finding)
         if len(findings) >= max_findings:
             break
@@ -540,7 +551,12 @@ def audit(args: argparse.Namespace) -> int:
             update_open_obligation(pathlib.Path(record["path"]), finding, loop_log)
             updated_obligations += 1
 
-    status = "actionable" if findings else "clean"
+    if new_actionable_count:
+        status = "actionable"
+    elif known_open_count:
+        status = "known_residue"
+    else:
+        status = "clean"
     latest = {
         "schema": 1,
         "record_type": "anomaly_custody_audit",
@@ -551,6 +567,8 @@ def audit(args: argparse.Namespace) -> int:
         "scanned_lines": len(lines),
         "recent_lines": recent_lines,
         "actionable_findings": len(findings),
+        "new_actionable_findings": new_actionable_count,
+        "known_open_findings": known_open_count,
         "expected_fixture_findings": expected_count,
         "resolved_fingerprint_findings": resolved_count,
         "coalesced_findings": coalesced_count,
@@ -566,13 +584,16 @@ def audit(args: argparse.Namespace) -> int:
         f"status={status} scanned_lines={len(lines)} "
         f"actionable={len(findings)} expected_fixture={expected_count} "
         f"resolved={resolved_count} coalesced={coalesced_count} "
+        f"new_actionable={new_actionable_count} known_open={known_open_count} "
         f"new_obligations={created_obligations} updated_obligations={updated_obligations}"
     )
     for finding in findings[:5]:
         print(
             "anomaly custody: "
             f"id={finding.ident} severity={finding.severity} kind={finding.kind} "
-            f"target={finding.target} reason={finding.reason} excerpt={json.dumps(finding.excerpt)}"
+            f"target={finding.target} status={finding.status} "
+            f"owner_issue={DEFAULT_UMBRELLA_ISSUE} owner_obligation={finding.ident} "
+            f"reason={finding.reason} excerpt={json.dumps(finding.excerpt)}"
         )
     if len(findings) > 5:
         print(f"anomaly custody: finding output truncated remaining={len(findings) - 5}")

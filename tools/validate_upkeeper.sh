@@ -1928,6 +1928,240 @@ check_review_module_registry_contract() {
     fail "p30 uppercase underscore alias did not normalize"
 }
 
+check_embedded_behavior_table_contracts() {
+  log "checking embedded behavior table contracts"
+  python3 - "$ROOT_DIR" <<'PY' || fail "embedded behavior table contract check failed"
+import ast
+import importlib.util
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+issues: list[str] = []
+
+
+def read(rel: str) -> str:
+    return (root / rel).read_text(encoding="utf-8")
+
+
+def add_issue(message: str) -> None:
+    issues.append(message)
+
+
+def literal_assignments(text: str, name: str) -> list[object]:
+    pattern = re.compile(rf"^[ \t]*{re.escape(name)}\s*=\s*(\{{.*?\}}|\(.*?\))", re.M | re.S)
+    values: list[object] = []
+    for match in pattern.finditer(text):
+        try:
+            values.append(ast.literal_eval(match.group(1)))
+        except (SyntaxError, ValueError) as exc:
+            add_issue(f"{name} assignment is not a literal: {exc}")
+    return values
+
+
+def function_blocks(text: str, name: str) -> list[str]:
+    lines = text.splitlines()
+    blocks: list[str] = []
+    for index, line in enumerate(lines):
+        if not line.startswith(f"def {name}("):
+            continue
+        block = [line]
+        for next_line in lines[index + 1 :]:
+            if next_line and not next_line.startswith((" ", "\t")):
+                break
+            block.append(next_line)
+        blocks.append("\n".join(block))
+    return blocks
+
+
+def compile_command_kind_functions() -> list[tuple[str, object]]:
+    functions: list[tuple[str, object]] = []
+    for rel in (
+        "Upkeeper",
+        "lib/upkeeper/tool_failure_queue.bash",
+        "lib/upkeeper/transcript_output.bash",
+    ):
+        for ordinal, block in enumerate(function_blocks(read(rel), "command_kind"), start=1):
+            namespace: dict[str, object] = {}
+            try:
+                exec("import re\n" + block, namespace)
+            except Exception as exc:  # noqa: BLE001 - validator reports source drift.
+                add_issue(f"{rel} command_kind #{ordinal} did not compile: {exc}")
+                continue
+            fn = namespace.get("command_kind")
+            if not callable(fn):
+                add_issue(f"{rel} command_kind #{ordinal} did not define callable function")
+                continue
+            functions.append((f"{rel}#{ordinal}", fn))
+    return functions
+
+
+def review_module_rows() -> list[list[str]]:
+    command = (
+        f"cd {shlex.quote(str(root))}; "
+        "source lib/upkeeper/review_modules.bash; review_module_registry_rows"
+    )
+    output = subprocess.check_output(["bash", "-lc", command], text=True)
+    rows = [line.split("|") for line in output.splitlines() if line.strip()]
+    return rows
+
+
+def load_lattice_module():
+    spec = importlib.util.spec_from_file_location(
+        "upkeeper_lattice_contract",
+        root / "tools/upkeeper_lattice.py",
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load tools/upkeeper_lattice.py spec")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+worktree_state = read("lib/upkeeper/worktree_state.bash")
+allowed_exact_blocks = literal_assignments(worktree_state, "allowed_exact")
+allowed_prefix_blocks = literal_assignments(worktree_state, "allowed_prefixes")
+if len(allowed_exact_blocks) < 2:
+    add_issue("startup anomaly allowed_exact blocks missing")
+elif allowed_exact_blocks[0] != allowed_exact_blocks[1]:
+    add_issue("startup anomaly allowed_exact blocks drifted from each other")
+if len(allowed_prefix_blocks) < 2:
+    add_issue("startup anomaly allowed_prefixes blocks missing")
+elif tuple(allowed_prefix_blocks[0]) != tuple(allowed_prefix_blocks[1]):
+    add_issue("startup anomaly allowed_prefixes blocks drifted from each other")
+
+if allowed_exact_blocks and allowed_prefix_blocks:
+    allowed_exact = set(allowed_exact_blocks[0])
+    allowed_prefixes = tuple(allowed_prefix_blocks[0])
+
+    def startup_allowed(path: str) -> bool:
+        return (
+            path in allowed_exact
+            or re.fullmatch(r"change_notes_[0-9]{4}\.md", path) is not None
+            or any(path.startswith(prefix) for prefix in allowed_prefixes)
+        )
+
+    startup_fixtures = {
+        "Upkeeper": True,
+        "Upkeeper.conf": True,
+        "change_notes_2026.md": True,
+        "change_notes_2027.md": True,
+        "docs/scripts/upkeeper.md": True,
+        "lib/upkeeper/worktree_state.bash": True,
+        "prompts/default-review.md": True,
+        "templates/example.md": True,
+        "launcher_examples/run.sh": True,
+        "tests/wrapper_contract_test.bash": False,
+        "docs/security.md": False,
+        "runtime/upkeeper-file-manifest.json": False,
+        ".git/config": False,
+        "secrets.env": False,
+    }
+    for path, expected in startup_fixtures.items():
+        actual = startup_allowed(path)
+        if actual != expected:
+            add_issue(f"startup anomaly allowlist fixture {path!r} returned {actual}, expected {expected}")
+
+help_selection = read("lib/upkeeper/help_selection.bash")
+help_prefix_blocks = literal_assignments(help_selection, "excluded_prefixes")
+if not help_prefix_blocks:
+    add_issue("source-safe excluded_prefixes table missing from help_selection")
+else:
+    prefixes = tuple(help_prefix_blocks[0])
+    for expected in (".git/", "runtime/"):
+        if expected not in prefixes:
+            add_issue(f"source-safe excluded_prefixes missing {expected}")
+
+file_manifest = read("lib/upkeeper/file_manifest.bash")
+manifest_excluded_dirs = literal_assignments(file_manifest, "excluded_dirs")
+if not manifest_excluded_dirs:
+    add_issue("file manifest excluded_dirs table missing")
+else:
+    excluded_dirs = set(manifest_excluded_dirs[0])
+    for expected in (".git", "runtime"):
+        if expected not in excluded_dirs:
+            add_issue(f"file manifest excluded_dirs missing {expected}")
+
+default_prompt = read("prompts/default-review.md")
+for expected in ("  - .git/", "  - runtime/"):
+    if expected not in default_prompt:
+        add_issue(f"default prompt missing explicit source-safe exclusion {expected.strip()}")
+
+command_examples = {
+    "bash -n Upkeeper": "check",
+    "git diff --check": "check",
+    "tools/validate_upkeeper.sh --quick": "validation",
+    "python -m pytest tests": "tests",
+    "npm test": "tests",
+    "npm run build": "build",
+    "git status --short": "search",
+    "git commit -m msg": "git",
+    "command -v jq": "command",
+    "rg -n TODO Upkeeper": "search",
+}
+command_kind_functions = compile_command_kind_functions()
+if len(command_kind_functions) < 4:
+    add_issue(f"expected at least four command_kind classifier copies, found {len(command_kind_functions)}")
+for source, fn in command_kind_functions:
+    for command, expected in command_examples.items():
+        try:
+            actual = fn(command)
+        except Exception as exc:  # noqa: BLE001 - validator reports source drift.
+            add_issue(f"{source} command_kind raised for {command!r}: {exc}")
+            continue
+        if actual != expected:
+            add_issue(f"{source} command_kind({command!r})={actual!r}, expected {expected!r}")
+
+rows = review_module_rows()
+review_module_ids = [row[0] for row in rows if row]
+expected_review_module_ids = [f"p{i}" for i in range(24, 31)]
+if review_module_ids != expected_review_module_ids:
+    add_issue(f"review module ids drifted: {review_module_ids!r}")
+
+try:
+    lattice_module = load_lattice_module()
+except Exception as exc:  # noqa: BLE001 - validator reports import drift.
+    add_issue(f"could not import Lattice registry: {exc}")
+else:
+    registry_issues = lattice_module.validate_pass_registry_contract()
+    if registry_issues:
+        add_issue("Lattice pass registry contract failed: " + "; ".join(registry_issues))
+    lattice_module_ids = [
+        str(item.get("pass_code", "")).lower()
+        for item in lattice_module.PASS_REGISTRY
+        if item.get("module_prompt") is True
+    ]
+    if lattice_module_ids != review_module_ids:
+        add_issue(
+            "review module ids drifted from Lattice module passes: "
+            f"review={review_module_ids!r} lattice={lattice_module_ids!r}"
+        )
+
+lattice_wrapper = read("lib/upkeeper/lattice.bash")
+lattice_case_mappings = dict(
+    re.findall(r"\b(p[0-9]+)\)\s+passes\+=\((P[0-9]+)\)", lattice_wrapper)
+)
+for module_id in review_module_ids:
+    expected = module_id.upper()
+    actual = lattice_case_mappings.get(module_id)
+    if actual != expected:
+        add_issue(f"lattice planned pass mapping for {module_id} is {actual!r}, expected {expected!r}")
+
+for rel in ("docs/scripts/upkeeper.md", "docs/compatibility.md", "change_notes_2026.md"):
+    text = read(rel)
+    if "embedded behavior table" not in text and "embedded control-plane table" not in text:
+        add_issue(f"{rel} missing embedded behavior table ownership wording")
+
+if issues:
+    for issue in issues:
+        print(issue, file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
 review_module_specs() {
   local module_id prompt_path title aliases help_summary applicability terms
 
@@ -6212,6 +6446,7 @@ run_check version_consistency check_version_consistency
 run_check module_map check_module_map
 run_check prompt_template check_prompt_template
 run_check review_module_registry_contract check_review_module_registry_contract
+run_check embedded_behavior_table_contracts check_embedded_behavior_table_contracts
 run_check log_line_source_length_contract check_log_line_source_length_contract
 run_check prompt_public_lint_contract check_prompt_public_lint_contract
 run_check fault_injection_registry_contract check_fault_injection_registry_contract

@@ -350,25 +350,78 @@ its scripts, hooks, config files, generated files, and test commands. Disable or
 avoid project-local automation that can run unexpected code before using long
 loops.
 
-## Fallback And Postmortem Behavior
+## Fallback And Postmortem Guardrails
 
-Fallback and postmortem paths are designed for controlled recovery and incident
-evidence, not for bypassing safety decisions.
-
-When enabled, Upkeeper may launch a stronger fallback model or auxiliary
-postmortem/hardening Codex calls after a primary failure, quota block, or
-blocked run. Those auxiliary calls inherit the same trust assumptions: local
-repo, local config, local Codex installation, configured sandbox mode, and local
+Fallback and postmortem paths are controlled recovery paths, not a way to bypass
+safety decisions. They inherit the same trust assumptions as the primary run:
+trusted local repo, trusted shell-sourced config, trusted local Codex
+installation, configured sandbox mode, private runtime evidence, and ignored
 logs/transcripts.
 
-Disable fallback and postmortem paths for the narrowest test runs:
+Fallback is allowed only when all of these are true:
+
+- `CODEX_FALLBACK_ENABLED=1`
+- the current process is the primary run, not already inside a fallback chain
+- the fallback model, reasoning effort, or mode is different from the primary
+  model configuration
+- the configured trigger is enabled, such as primary quota, primary failure,
+  blocked result, or dirty no-backend-task recovery
+- local preflight checks pass for the active lock, session store, bubblewrap
+  temp registry, fallback contract, and private evidence paths
+- quota guardrails permit the next auxiliary backend call
+
+Fallback is forbidden or skipped when any of these are true:
+
+- `CODEX_FALLBACK_ENABLED=0`
+- the run is already in a fallback chain
+- fallback would use the same model, effort, and mode as the failed primary run
+- the local environment is unsafe, including unsafe session, temp, lock, log, or
+  evidence paths
+- a default-prompt pre-run quota fallback would only rediscover the same dirty
+  worktree block
+- quota or cooldown evidence says the auxiliary model bucket should not be used
+
+A fallback child may mutate files only within the same mode and task boundary as
+the parent cycle. If the parent is in a write-capable mode and the selected task
+permits repair, fallback may repair tracked files. If the parent is
+bug-report-only, source-read-only, review-only, or otherwise constrained, the
+fallback child inherits that boundary. Postmortem report paths write private
+local evidence by default; hardening work is opt-in with
+`CODEX_POSTMORTEM_HARDENING_OPT_IN=1`.
+
+Fallback is not a dirty-worktree bypass. Dirty worktree state is counted before
+backend work. A default-prompt pre-run quota fallback is skipped when it would
+encounter the same dirty-worktree stop. Explicit prompt or target context can be
+carried into fallback so the child has the same operator-provided task boundary.
+
+Screen fallback is single-shot by default. Set
+`CODEX_FALLBACK_SCREEN_CONTINUOUS=1`, raise
+`CODEX_FALLBACK_SCREEN_MAX_CHILDREN`, and optionally set
+`CODEX_FALLBACK_SCREEN_MAX_SECONDS` to opt into bounded multi-child fallback.
+Direct fallback launches at most one child.
+
+Disable all recovery model work with:
 
 ```sh
-CODEX_FALLBACK_ENABLED=0 CODEX_POSTMORTEM_ENABLED=0 UPKEEPER_DRY_RUN=1 ./Upkeeper
+CODEX_FALLBACK_ENABLED=0 CODEX_FALLBACK_SCREEN_ENABLED=0 CODEX_POSTMORTEM_ENABLED=0 ./Upkeeper
 ```
 
-For live backend runs, leave fallback enabled only when the repository and
-machine are trusted for the extra model calls and evidence capture.
+Fallback spend is bounded by the exact-model quota preflights, cooldown markers,
+single-shot defaults, child-count/time limits, and recursive fallback disablement
+inside fallback children. Postmortem and hardening phases run their own
+exact-model quota checks and write shell-only reports when they are skipped by
+quota or local-environment guardrails.
+
+Fallback evidence is separated from primary evidence under private per-cycle
+postmortem directories such as `runtime/journals/upkeeper-postmortems/<cycle>/`.
+The fallback contract, screen status files, fallback transcript, incident
+context, bug record, and postmortem report are operational evidence and should
+remain local unless deliberately sanitized.
+
+Fallback success means the child run and any enabled postmortem sequence finish
+with the expected machine markers and acceptable exit status. Missing markers,
+unsafe local evidence, invalid child state, failed postmortem phases, or non-zero
+child exits remain recovery failures and propagate to the parent cycle.
 
 ## Secret Handling
 

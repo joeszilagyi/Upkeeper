@@ -6,6 +6,10 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: fallback and postmortem guardrail contract:
+	1. Documented when fallback is allowed, when it is forbidden, how it handles dirty worktrees, whether it may mutate files, child-count/time limits, complete disablement switches, quota/spend bounds, evidence separation, and recovery success criteria.
+	2. Aligned operator guide, help text, default config comments, compatibility notes, and local validation so fallback/postmortem safety rules are a tracked contract instead of scattered implementation details.
+
 2026-05-24: Lattice run-value rows:
 	1. Lattice now records normalized `run_values` rows from deterministic pass-result markers, pass attributes, and cycle-finish status so value-oriented questions can be answered without transcript scraping.
 	2. The new `query run-values` surface can filter by path, cycle, value kind, value class, and evidence source, exposing pass outcomes, validation commands/results, residual risk, finding notes, cycle status, review outcome, finish reason, and exit codes.

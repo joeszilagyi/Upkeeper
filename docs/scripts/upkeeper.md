@@ -70,12 +70,28 @@ Loop stop semantics:
   - when the primary model stalls, fails, or exhausts its bucket, the wrapper can
     launch one stronger fallback worker inside a detached screen session and keep
     polling it every 60s before giving up
+  - fallback/postmortem guardrail contract: fallback runs only from a primary
+    cycle, only when enabled, only when the fallback model/effort/mode differs
+    from the primary, only for enabled triggers, and only after local
+    lock/session/temp/evidence preflights and exact-model quota checks pass
+  - fallback is skipped when disabled, already inside a fallback chain, pointed
+    at the same model configuration, blocked by unsafe local paths, blocked by
+    quota/cooldown evidence, or predicted to rediscover the same default-prompt
+    dirty-worktree stop
+  - fallback inherits the parent task and mode boundary: write-capable repair
+    runs may mutate tracked files, while bug-report-only, source-read-only, and
+    review-only runs remain constrained; post-mortem hardening is opt-in with
+    CODEX_POSTMORTEM_HARDENING_OPT_IN=1
   - detached screen fallback is single-shot by default; set
     CODEX_FALLBACK_SCREEN_CONTINUOUS=1 and raise CODEX_FALLBACK_SCREEN_MAX_CHILDREN
-    to opt into bounded multi-child fallback
-  - by default, a fallback event also triggers a scripted post-mortem report pass
-    plus one final hardening pass, then the wrapper propagates the fallback
-    child outcome unless the post-mortem/report/hardening path itself fails
+    to opt into bounded multi-child fallback; CODEX_FALLBACK_SCREEN_MAX_SECONDS
+    can add a wall-clock bound
+  - by default, a fallback event also triggers a scripted post-mortem report
+    pass, keeps hardening report-only unless CODEX_POSTMORTEM_HARDENING_OPT_IN=1,
+    and propagates the fallback child outcome unless the post-mortem/report or
+    opted-in hardening path itself fails
+  - disable all recovery model work with
+    CODEX_FALLBACK_ENABLED=0 CODEX_FALLBACK_SCREEN_ENABLED=0 CODEX_POSTMORTEM_ENABLED=0
   - post-mortem report completion logs `postmortem.report.finish` with the
     report child exit, parsed marker, report path, and file existence state
   - auxiliary post-mortem and hardening Codex calls use their own exact-model
@@ -696,6 +712,7 @@ Environment overrides:
   CODEX_FALLBACK_SCREEN_MAX_SECONDS  Default: 0
   CODEX_FALLBACK_SCREEN_STAGE_ROOT   Default: ${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/tmp/fallback-screen
   CODEX_POSTMORTEM_ENABLED       Default: 1
+  CODEX_POSTMORTEM_HARDENING_OPT_IN Default: 0
   CODEX_POSTMORTEM_MODEL         Default: CODEX_FALLBACK_MODEL
   CODEX_POSTMORTEM_REASONING_EFFORT Default: CODEX_FALLBACK_REASONING_EFFORT
   CODEX_POSTMORTEM_MODE          Default: CODEX_FALLBACK_MODE

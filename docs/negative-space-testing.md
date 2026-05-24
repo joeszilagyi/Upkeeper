@@ -21,6 +21,42 @@ should leave at least one local proof for the corresponding "must not happen"
 case. If a bug is fixed only by prose, the prose must explain why a deterministic
 fixture is impossible or deferred.
 
+## Serious Finding Repro Contract
+
+A serious finding is any issue or PR that materially affects one of these
+classes:
+
+- security boundary
+- filesystem writes/deletes
+- Lattice import/export/recovery
+- target selection
+- quota/fallback behavior
+- status marker parsing
+- failure queue
+- runtime cleanup
+- cross-platform assumptions
+
+Each serious finding must carry one of these before it is treated as closed:
+
+- a local deterministic repro fixture that runs without backend Codex quota
+- a cloud audit repro when the proof only makes sense in a clean or hosted
+  environment
+- an explicit documented non-repro rationale when reproduction would be unsafe,
+  destructive, dependent on private data, or too expensive for the risk
+
+The preferred local proof is the smallest test, validator fixture, parser
+fixture, or stress-corpus case that would fail if the bug returned. New serious
+finding issues should name the repro status in the issue body. PRs that fix
+serious findings should name the fixture, cloud audit proof, or non-repro
+rationale in the pull request body.
+
+For serious issues opened before this template existed, the backfill rule is:
+the issue or closing PR must gain the same repro status before closure. It can
+name an existing local fixture, add a new fixture, point to a cloud audit proof,
+or record a non-repro rationale. Release review treats missing repro status on
+pre-existing serious issues as unfinished validation work, not as harmless
+metadata debt.
+
 ## Baseline Invariants
 
 | ID | Invariant | Current local proof |

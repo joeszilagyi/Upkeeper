@@ -1,0 +1,60 @@
+name: Serious finding
+description: Report a security, data-integrity, destructive-write, target-selection, recovery, or control-plane finding.
+title: "High priority bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when a finding affects security boundaries, source or filesystem writes/deletes, Lattice integrity, target selection, quota/fallback behavior, status marker parsing, failure queues, runtime cleanup, recovery, or cross-platform assumptions.
+  - type: dropdown
+    id: finding_class
+    attributes:
+      label: Serious finding class
+      options:
+        - security boundary
+        - filesystem writes/deletes
+        - Lattice import/export/recovery
+        - target selection
+        - quota/fallback behavior
+        - status marker parsing
+        - failure queue
+        - runtime cleanup
+        - cross-platform assumptions
+        - other serious control-plane finding
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Problem
+      description: Describe the failure, impact, and affected Upkeeper surface.
+    validations:
+      required: true
+  - type: dropdown
+    id: repro_status
+    attributes:
+      label: Repro fixture status
+      description: Serious findings need deterministic proof or an explicit rationale.
+      options:
+        - local deterministic repro fixture included or planned
+        - cloud audit repro included or planned
+        - explicit non-repro rationale included
+    validations:
+      required: true
+  - type: textarea
+    id: repro_detail
+    attributes:
+      label: Repro or rationale detail
+      description: Name the local fixture, cloud audit proof, validation command, or explain why safe reproduction is not possible.
+      placeholder: "Example: tests/example_test.bash covers the malformed marker case, or non-repro rationale: reproducing would intentionally delete operator data."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Name the expected fix and the proof that should stay after the issue is closed.
+    validations:
+      required: true

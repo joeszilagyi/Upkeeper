@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: backlog batch-validation retry guard:
+	1. Batch merge validation now records a private retry marker after the first failed local validation phase on a branch/head/command.
+	2. A second identical retry fails closed from that marker, updates the existing repair obligation, and prints the retry fingerprint instead of rerunning the full validation command again.
+	3. Retry markers are discarded when the branch/head or command context changes, so repaired or advanced branches can validate normally.
+
 2026-05-24: backlog local-ahead branch guard:
 	1. Backlog now detects clean local commits on the active backlog PR branch after branch sync and before batch merge.
 	2. Safe local-ahead backlog branches are pushed before PR checks or merge decisions, so checks apply to the current local head.

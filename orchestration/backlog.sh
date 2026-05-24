@@ -74,6 +74,9 @@ BACKLOG_WATCH_CHILD_PID=""
 BACKLOG_WATCH_FORMATTER_PID=""
 BACKLOG_WATCH_FIFO=""
 BACKLOG_WATCH_FIFO_DIR=""
+BACKLOG_BATCH_VALIDATION_OBLIGATION_ID=""
+BACKLOG_BATCH_VALIDATION_OBLIGATION_PATH=""
+BACKLOG_BATCH_VALIDATION_REPEAT_EXIT_CODE=""
 
 backlog_timestamp() {
   date '+%Y-%m-%dT%H:%M:%S'
@@ -2325,6 +2328,9 @@ backlog_open_batch_validation_obligation() {
   local -a command_args=("$@")
   local obligation_root open_dir command_text now payload id path seen_count
 
+  BACKLOG_BATCH_VALIDATION_OBLIGATION_ID=""
+  BACKLOG_BATCH_VALIDATION_OBLIGATION_PATH=""
+
   obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
   open_dir="$obligation_root/open"
   mkdir -p -- "$open_dir" || return 1
@@ -2462,7 +2468,192 @@ except BaseException:
         pass
     raise
 PY
+  BACKLOG_BATCH_VALIDATION_OBLIGATION_ID="$id"
+  BACKLOG_BATCH_VALIDATION_OBLIGATION_PATH="$path"
   log "automation obligation opened for batch validation failure id=$id phase=$phase target=$owner_hint path=$path"
+}
+
+backlog_batch_validation_retry_key() {
+  local phase="${1:-}"
+
+  printf '%s\n' "$phase" | tr '/: ' '___' | tr -cd '[:alnum:]_.-'
+}
+
+backlog_batch_validation_retry_path() {
+  local phase="${1:-}"
+  local state_root retry_dir
+
+  state_root="$(backlog_state_root)"
+  retry_dir="$state_root/batch-validation-retry"
+  printf '%s/%s.%s.json\n' "$retry_dir" "$(backlog_branch_key)" "$(backlog_batch_validation_retry_key "$phase")"
+}
+
+backlog_batch_validation_retry_fingerprint() {
+  local phase="${1:-}"
+  local command_text="${2:-}"
+  local branch="${3:-}"
+  local head="${4:-}"
+
+  python3 - "$phase" "$command_text" "$branch" "$head" <<'PY'
+import hashlib
+import sys
+
+phase, command_text, branch, head = sys.argv[1:5]
+print(hashlib.sha256(f"backlog-batch-validation-retry\0{branch}\0{head}\0{phase}\0{command_text}".encode("utf-8")).hexdigest()[:24])
+PY
+}
+
+backlog_touch_batch_validation_obligation_retry() {
+  local obligation_path="${1:-}"
+  local now tmp
+
+  [[ -n "$obligation_path" && -f "$obligation_path" ]] || return 0
+  now="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/upkeeper-batch-validation-obligation.XXXXXX")" || return 0
+  if jq \
+    --arg updated_at "$now" \
+    '.updated_at = $updated_at
+     | .seen_count = ((.seen_count // .occurrence_count // 1) + 1)
+     | .occurrence_count = .seen_count
+     | .retry_guard_repeated = true' "$obligation_path" >"$tmp"; then
+    mv "$tmp" "$obligation_path"
+    chmod 600 "$obligation_path" 2>/dev/null || true
+  else
+    rm -f -- "$tmp"
+  fi
+}
+
+backlog_record_batch_validation_retry_marker() {
+  local phase="$1"
+  local exit_code="$2"
+  local command_text="$3"
+  local owner_hint="$4"
+  local marker_path marker_dir now branch_name head fingerprint head_short
+
+  marker_path="$(backlog_batch_validation_retry_path "$phase")"
+  marker_dir="$(dirname -- "$marker_path")"
+  mkdir -p -- "$marker_dir" || return 0
+  chmod 700 "$marker_dir" 2>/dev/null || true
+  now="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
+  head="$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' unknown)"
+  fingerprint="$(backlog_batch_validation_retry_fingerprint "$phase" "$command_text" "$branch_name" "$head")"
+  python3 - \
+    "$marker_path" \
+    "$now" \
+    "$branch_name" \
+    "$head" \
+    "$phase" \
+    "$command_text" \
+    "$exit_code" \
+    "$owner_hint" \
+    "$fingerprint" \
+    "$BACKLOG_BATCH_VALIDATION_OBLIGATION_ID" \
+    "$BACKLOG_BATCH_VALIDATION_OBLIGATION_PATH" <<'PY'
+import json
+import os
+import sys
+
+(
+    path,
+    now,
+    branch,
+    head,
+    phase,
+    command_text,
+    exit_code,
+    owner_hint,
+    fingerprint,
+    obligation_id,
+    obligation_path,
+) = sys.argv[1:12]
+record = {
+    "schema": 1,
+    "record_type": "backlog_batch_validation_retry_marker",
+    "created_at": now,
+    "updated_at": now,
+    "branch": branch,
+    "head": head,
+    "phase": phase,
+    "command_text": command_text,
+    "exit_code": str(exit_code),
+    "owner_hint": owner_hint,
+    "fingerprint": f"backlog-batch-validation-retry:{fingerprint}",
+    "obligation_id": obligation_id,
+    "obligation_path": obligation_path,
+}
+parent = os.path.dirname(path)
+os.makedirs(parent, mode=0o700, exist_ok=True)
+tmp = f"{path}.tmp.{os.getpid()}"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(record, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+PY
+  head_short="${head:0:12}"
+  log "batch validation retry guard recorded fingerprint=backlog-batch-validation-retry:$fingerprint phase=$phase branch=$branch_name head=$head_short action=route_next_retry_to_obligation"
+}
+
+backlog_batch_validation_repeated_failure() {
+  local phase="$1"
+  local command_text="$2"
+  local marker_path branch_name head marker_branch marker_head marker_command exit_code fingerprint obligation_path head_short
+
+  BACKLOG_BATCH_VALIDATION_REPEAT_EXIT_CODE=""
+  marker_path="$(backlog_batch_validation_retry_path "$phase")"
+  [[ -f "$marker_path" ]] || return 1
+  branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
+  head="$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' unknown)"
+  marker_branch="$(jq -r '.branch // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  marker_head="$(jq -r '.head // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  marker_command="$(jq -r '.command_text // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  if [[ "$marker_branch" != "$branch_name" || "$marker_head" != "$head" || "$marker_command" != "$command_text" ]]; then
+    rm -f -- "$marker_path"
+    return 1
+  fi
+  exit_code="$(jq -r '.exit_code // "1"' "$marker_path" 2>/dev/null || printf '1')"
+  if [[ ! "$exit_code" =~ ^[0-9]+$ || "$exit_code" -lt 1 || "$exit_code" -gt 255 ]]; then
+    exit_code=1
+  fi
+  fingerprint="$(jq -r '.fingerprint // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  if [[ -z "$fingerprint" ]]; then
+    fingerprint="backlog-batch-validation-retry:$(backlog_batch_validation_retry_fingerprint "$phase" "$command_text" "$branch_name" "$head")"
+  fi
+  obligation_path="$(jq -r '.obligation_path // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  backlog_touch_batch_validation_obligation_retry "$obligation_path"
+  head_short="${head:0:12}"
+  log "batch validation retry guard repeated_failure fingerprint=$fingerprint phase=$phase branch=$branch_name head=$head_short exit_code=$exit_code action=skip_validation_route_to_obligation"
+  BACKLOG_BATCH_VALIDATION_REPEAT_EXIT_CODE="$exit_code"
+  return 0
+}
+
+backlog_clear_batch_validation_retry_marker() {
+  local phase="$1"
+  local command_text="$2"
+  local marker_path branch_name head marker_branch marker_head marker_command
+
+  marker_path="$(backlog_batch_validation_retry_path "$phase")"
+  [[ -f "$marker_path" ]] || return 0
+  branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
+  head="$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' unknown)"
+  marker_branch="$(jq -r '.branch // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  marker_head="$(jq -r '.head // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  marker_command="$(jq -r '.command_text // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  if [[ "$marker_branch" != "$branch_name" || "$marker_head" != "$head" || "$marker_command" != "$command_text" ]]; then
+    rm -f -- "$marker_path"
+  fi
 }
 
 run_batch_validation_phase() {
@@ -2471,6 +2662,12 @@ run_batch_validation_phase() {
   shift 2
   local output_file rc owner_hint command_text
 
+  command_text="$(printf '%q ' "$@")"
+  command_text="${command_text% }"
+  if backlog_batch_validation_repeated_failure "$phase" "$command_text"; then
+    log "batch validation: $label skipped because identical prior failure is already under obligation custody"
+    return "$BACKLOG_BATCH_VALIDATION_REPEAT_EXIT_CODE"
+  fi
   output_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-backlog-validation.XXXXXX")"
   log "batch validation: $label"
   set +e
@@ -2478,12 +2675,15 @@ run_batch_validation_phase() {
   rc="${PIPESTATUS[0]}"
   set -e
   if [[ "$rc" -ne 0 ]]; then
-    command_text="$(printf '%q ' "$@")"
     owner_hint="$(backlog_batch_validation_owner_hint "$phase" "$command_text" "$output_file")"
     backlog_open_batch_validation_obligation "$phase" "$rc" "$output_file" "$owner_hint" "$@" || true
+    if [[ -n "$BACKLOG_BATCH_VALIDATION_OBLIGATION_PATH" ]]; then
+      backlog_record_batch_validation_retry_marker "$phase" "$rc" "$command_text" "$owner_hint" || true
+    fi
     rm -f -- "$output_file"
     return "$rc"
   fi
+  backlog_clear_batch_validation_retry_marker "$phase" "$command_text"
   rm -f -- "$output_file"
   return 0
 }

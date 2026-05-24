@@ -3,6 +3,35 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Batch Validation Retry Guard
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #413 by preventing repeated identical batch-validation failures
+  from rerunning the whole merge validation suite on the same branch/head
+- keep the first failure evidence in a structured automation obligation
+- make the next identical retry fail closed from local custody state with a
+  clear retry fingerprint and repair-obligation message
+
+Constraints:
+- no backend Codex calls
+- keep retry detection deterministic and private under the backlog state root
+- remove stale retry markers when branch/head or command context changes
+- preserve the existing fail-closed validation exit status
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tests/backlog_batch_validation_obligation_test.bash`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_batch_validation_obligation_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Backlog Local-Ahead Branch Guard
 
 Status: completed locally; pending PR/CI

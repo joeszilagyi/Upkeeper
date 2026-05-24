@@ -340,6 +340,16 @@ Important:
     Those launchers reconcile open obligations before normal bug-finding or
     issue-queue selection, handing the oldest/highest-priority obligation back
     to Upkeeper as a locked repair target.
+  - Long-running launcher and wrapper progress lines use explicit wait-plane
+    fields:
+      plane=...
+      waiting_for=...
+      wait_elapsed_seconds=...
+    Common planes are `llm` for backend Codex review/repair, `github` for PR
+    check polling and merge operations, `git` for local branch/push/sync work,
+    `quota` for hibernating until reset, and `local_validation` for scripted
+    validation. These fields are for operators first, but they are also stable
+    enough to support later speed and cost analysis by execution plane.
   - The perfect run is a correct fast no-op: when automation health, unresolved
     obligations, and the actionable queue are all clean, Upkeeper or a launcher
     should print a plain reason and exit without launching backend Codex or

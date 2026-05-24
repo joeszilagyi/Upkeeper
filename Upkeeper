@@ -6602,9 +6602,9 @@ main() {
   if upkeeper_issue_workflow_read_only_enabled; then
     log_line "INFO" "genie_protocol.backend_mode stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") source=issue_workflow_read_only mode=$(shell_quote "$backend_mode_summary") comment_transport=last_message_block"
   fi
-  log_line "INFO" "run.start $(log_kv execution_origin "$CODEX_EXECUTION_ORIGIN") $(log_kv prompt_file "${PROMPT_FILE:-inline/default}") $(log_kv compiled_prompt "$compiled_prompt_file") transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1"
+  log_line "INFO" "run.start plane=llm waiting_for=codex_backend_review $(log_kv execution_origin "$CODEX_EXECUTION_ORIGIN") $(log_kv prompt_file "${PROMPT_FILE:-inline/default}") $(log_kv compiled_prompt "$compiled_prompt_file") transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1"
   RUN_CODEX_STARTED_EPOCH="$(date '+%s')"
-  terminal_emit_progress "starting Codex review for ${RUN_SELECTED_REVIEW_PATH:-unknown} (model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT pass=${CODEX_PROMPT_PASS:-default}; transcript=$RUN_TRANSCRIPT_FILE)"
+  terminal_emit_progress "starting Codex review for ${RUN_SELECTED_REVIEW_PATH:-unknown} (plane=llm waiting_for=codex_backend_review model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT pass=${CODEX_PROMPT_PASS:-default} expected=model_patch_or_status; transcript=$RUN_TRANSCRIPT_FILE)"
   start_terminal_progress_heartbeat "primary" "$RUN_TRANSCRIPT_FILE" "$RUN_CODEX_STARTED_EPOCH" "${RUN_SELECTED_REVIEW_PATH:-unknown}"
 
   set +e
@@ -6619,20 +6619,22 @@ main() {
   set -e
   stop_terminal_progress_heartbeat "codex_exit_$codex_exit"
 
-  local run_transcript_bytes run_transcript_lines codex_empty_transcript
+  local run_transcript_bytes run_transcript_lines codex_empty_transcript codex_elapsed_seconds
   run_transcript_bytes="$(file_size_bytes "$RUN_TRANSCRIPT_FILE")"
   run_transcript_lines="$(file_line_count "$RUN_TRANSCRIPT_FILE")"
+  codex_elapsed_seconds="$(($(date '+%s') - RUN_CODEX_STARTED_EPOCH))"
+  [[ "$codex_elapsed_seconds" -ge 0 ]] || codex_elapsed_seconds=0
   codex_empty_transcript=0
   if [[ "$codex_exit" -ne 0 && "$run_transcript_bytes" == "0" ]]; then
     codex_empty_transcript=1
   fi
 
   if [[ "$codex_exit" -eq 0 ]]; then
-    log_line "INFO" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1 transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
+    log_line "INFO" "run.finish plane=llm waiting_for=codex_backend_review wait_result=completed execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit codex_elapsed_seconds=$codex_elapsed_seconds transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1 transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
   else
-    log_line "ERROR" "run.finish execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1 transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
+    log_line "ERROR" "run.finish plane=llm waiting_for=codex_backend_review wait_result=failed execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit codex_elapsed_seconds=$codex_elapsed_seconds transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1 transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
   fi
-  terminal_emit_progress "Codex review finished for ${RUN_SELECTED_REVIEW_PATH:-unknown} (exit=$codex_exit; transcript=$RUN_TRANSCRIPT_FILE)"
+  terminal_emit_progress "Codex review finished for ${RUN_SELECTED_REVIEW_PATH:-unknown} (plane=llm waiting_for=codex_backend_review exit=$codex_exit elapsed=${codex_elapsed_seconds}s; transcript=$RUN_TRANSCRIPT_FILE)"
   local after_quota_json=""
   local after_error=""
   local after_ts="" after_source="" after_selection="" after_model_hint="" after_snapshot_is_current=""

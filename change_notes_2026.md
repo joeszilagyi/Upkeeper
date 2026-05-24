@@ -15,6 +15,11 @@ Version numbering note:
 	6. Lattice cycle-finish recording now accepts transcript artifacts under Upkeeper-owned state/temp transcript directories, storing hashed artifact identity without failing optional Lattice recording merely because backlog keeps transcripts outside repo runtime.
 	7. Obligation reconciliation now checks quoted backend fixture evidence line-by-line, so existing aggregate prior-run records with repeated source fixture excerpts can resolve deterministically instead of staying in cooldown churn.
 
+2026-05-23: wait-plane logging:
+	1. Backlog owner heartbeats now preserve the active operation instead of replacing long waits with generic `owner_process_alive` lines.
+	2. Backlog and Upkeeper progress logs now include explicit `plane=...`, `waiting_for=...`, and elapsed wait fields for backend Codex, GitHub checks, git operations, quota hibernation, and local validation.
+	3. Upkeeper backend launch, terminal progress, and `run.finish` records now label the LLM/backend wait plane and record backend elapsed seconds, making later speed and cost analysis possible from ordinary local logs.
+
 2026-05-23: v1.2.32 changes:
 	1. Live output custody now reclassifies backend-emitted shell/test snippets that quote log markers, case globs, grep assertions, or `[WARN]`/`[ERROR]` assignments as quoted fixture/search output instead of fresh PAGE errors.
 	2. The operator guide snapshot is synced to wrapper version v1.2.32.

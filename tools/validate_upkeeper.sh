@@ -421,6 +421,14 @@ check_backlog_launcher_contract() {
   grep -Fq 'backlog_owner_health_status' orchestration/backlog.sh || fail "backlog launcher cannot classify active owner health"
   grep -Fq 'duplicate invocation not needed; primary owner is healthy; exiting 0' orchestration/backlog.sh || fail "backlog launcher does not plainly exit duplicate invocations"
   grep -Fq 'owner heartbeat: state=' orchestration/backlog.sh || fail "backlog launcher does not emit truthful owner heartbeats"
+  grep -Fq 'backlog_wait_detail' orchestration/backlog.sh || fail "backlog launcher does not label wait planes"
+  grep -Fq 'wait_elapsed_seconds' orchestration/backlog.sh || fail "backlog launcher does not emit elapsed wait metadata"
+  grep -Fq 'backlog_refresh_active_owner_heartbeat' orchestration/backlog.sh || fail "backlog launcher heartbeat still risks replacing specific wait state"
+  grep -Fq 'backlog_wait_detail llm codex_issue_repair' orchestration/backlog.sh || fail "backlog launcher does not label issue-repair backend waits"
+  grep -Fq 'backlog_wait_detail_since github pr_checks' orchestration/backlog.sh || fail "backlog launcher does not label GitHub PR-check waits"
+  grep -Fq 'plane=git waiting_for=push' orchestration/backlog.sh || fail "backlog launcher does not label git push waits"
+  grep -Fq 'terminal_progress.start plane=llm waiting_for=codex_backend_review' lib/upkeeper/progress_logging.bash || fail "terminal progress does not label backend wait plane"
+  grep -Fq 'run.finish plane=llm waiting_for=codex_backend_review' Upkeeper || fail "Upkeeper run.finish does not label backend wait plane"
   grep -Fq 'waiting_on_pr_checks' orchestration/backlog.sh || fail "backlog launcher does not keep PR-check waits under the owner lease"
   grep -Fq 'gh pr checks "$pr_number" --watch=false' orchestration/backlog.sh || fail "backlog launcher PR check watcher is not local polling"
   grep -Fq 'BACKLOG_PR_CHECK_PROGRESS="${BACKLOG_PR_CHECK_PROGRESS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default PR-check progress on"
@@ -758,6 +766,10 @@ PY
     fail "backlog launcher PR check hibernation did not emit local progress details"
   grep -Fq "owner heartbeat: state=waiting_on_pr_checks" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check hibernation did not refresh owner heartbeat"
+  grep -Fq "detail=plane=github waiting_for=pr_checks" "$temp_dir/pr.err" ||
+    fail "backlog launcher PR check hibernation did not label the GitHub wait plane"
+  grep -Fq "wait_elapsed_seconds=120" "$temp_dir/pr.err" ||
+    fail "backlog launcher PR check hibernation did not report elapsed wait time"
 
   temp_dir="$VALIDATION_TMP_ROOT/backlog-pr-check-empty-settling"
   mkdir -p "$temp_dir"
@@ -5627,7 +5639,7 @@ check_fault_injection_first_scenarios() {
   rc=$?
   set -e
   [[ "$rc" -eq 3 ]] || fail "FI-021 injection exited $rc, expected 3"
-  grep -Fq "run.finish execution_origin=primary codex_exit=0" "$fixture_dir/injection.log" || fail "FI-021 did not record a zero-exit backend finish"
+  grep -Fq "run.finish plane=llm waiting_for=codex_backend_review wait_result=completed execution_origin=primary codex_exit=0" "$fixture_dir/injection.log" || fail "FI-021 did not record a zero-exit backend finish"
   grep -Fq "transcript_bytes=0 transcript_lines=0" "$fixture_dir/injection.log" || fail "FI-021 did not record empty transcript evidence"
   grep -Fq "cycle.exit exit_code=3 reason=MISSING_STATUS_MARKER" "$fixture_dir/injection.log" || fail "FI-021 did not reject empty successful backend output"
   check_upkeeper_log_invariants "$fixture_dir/injection.log" --scan "$fixture_dir/injection.out" --scan "$fixture_dir/injection.err"

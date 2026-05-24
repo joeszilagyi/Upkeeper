@@ -1226,6 +1226,28 @@ JSON
   rm -r "$temp_dir"
 }
 
+check_lattice_custody_policy_contract() {
+  log "checking Lattice custody authority policy"
+
+  for policy_path in docs/lattice.md docs/scripts/upkeeper.md docs/compatibility.md; do
+    grep -Fq "supporting evidence, not sole custody authority" "$policy_path" ||
+      fail "Lattice custody policy missing supporting-evidence wording in $policy_path"
+    grep -Fq "log/transcript/runtime evidence" "$policy_path" ||
+      fail "Lattice custody policy missing fallback evidence wording in $policy_path"
+  done
+
+  grep -Fq "issues #112, #113, #115, #116, #117, and #118" docs/lattice.md ||
+    fail "Lattice docs do not name the integrity blocker issue set"
+  for evidence_flag in --log --transcript-dir --obligation-root --failure-queue-root; do
+    grep -Fq -- "$evidence_flag" tools/audit_upkeeper_breadcrumbs.py ||
+      fail "breadcrumb audit tool missing fallback evidence option $evidence_flag"
+  done
+  if rg -n '\b(upkeeper_lattice\.py|UPKEEPER_LATTICE|lattice_record_|runtime/upkeeper-lattice)\b' \
+    tools/audit_upkeeper_breadcrumbs.py lib/upkeeper/breadcrumb_gate.bash >/dev/null; then
+    fail "breadcrumb/audit custody code now depends directly on Lattice"
+  fi
+}
+
 check_automation_obligation_root_boundary_contract() {
   local temp_dir selected_json selected_after_current_removed
 
@@ -6606,6 +6628,7 @@ run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
 run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_contract
 run_check breadcrumb_audit_contract check_breadcrumb_audit_contract
+run_check lattice_custody_policy_contract check_lattice_custody_policy_contract
 run_check automation_obligation_root_boundary_contract check_automation_obligation_root_boundary_contract
 run_check automation_obligation_reconciliation_contract check_automation_obligation_reconciliation_contract
 run_check automation_obligation_churn_contract check_automation_obligation_churn_contract

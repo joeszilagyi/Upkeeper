@@ -32,6 +32,39 @@ Validation:
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
 
+## Lattice Custody Authority Policy
+
+Status: completed and merged
+
+Goal:
+- close issue #138 by documenting and validating that Lattice is supporting
+  evidence, not sole custody authority, for audit and breadcrumb decisions while
+  listed Lattice integrity blockers remain open
+- prove current breadcrumb/audit custody code keeps fallback log, transcript,
+  obligation, and failure-queue evidence available without requiring Lattice
+- preserve Lattice as useful long-memory evidence without letting it become the
+  only source for control-plane custody
+
+Constraints:
+- no backend Codex validation
+- keep current Lattice runtime behavior unchanged
+- make the policy public and machine-checked
+
+Files likely touched:
+- `docs/lattice.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Breadcrumb Severity Gate
 
 Status: completed and merged

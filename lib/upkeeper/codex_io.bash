@@ -408,39 +408,7 @@ enable_max_cover_mode() {
   CODEX_MAX_COVER_MODE="1"
   UPKEEPER_LATTICE_SELECTION_MODE="max-cover"
   set_prompt_pass_or_die "all"
-  add_review_modules_spec "p24,p25,p26,p27,p28,p29,p30"
-}
-
-normalize_review_module() {
-  local module="$1"
-
-  module="$(printf '%s' "$module" | tr '[:upper:]_' '[:lower:]-')"
-  case "$module" in
-    p24|de-llm|de-llm-ing|dellm|de-llming)
-      printf 'p24'
-      ;;
-    p25|contract|contract-intent|intent|design-intent|architecture|architecture-fitness)
-      printf 'p25'
-      ;;
-    p26|docs|documentation|public-docs|public-documentation|doc-rigor|readability)
-      printf 'p26'
-      ;;
-    p27|education|educational|educational-mode|teaching|teach|debrief|learning)
-      printf 'p27'
-      ;;
-    p28|unit-test|unit-tests|unit-testing|test-harvest|test-harvesting|fixture-harvest|fixture-harvesting)
-      printf 'p28'
-      ;;
-    p29|reuse|reuse-harvest|reuse-harvesting|reusable|library-reuse|function-reuse|asset-reuse|consolidation|extract-helper|helper-extraction)
-      printf 'p29'
-      ;;
-    p30|stark|stark-protocol|permanent-hardening|hardening|non-regression|regression-proof|no-repeat|final-hardening)
-      printf 'p30'
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  add_review_modules_spec "$(review_module_ids_csv)"
 }
 
 add_review_module() {
@@ -449,7 +417,7 @@ add_review_module() {
 
   [[ -n "$raw_module" ]] || die "--review-module requires a non-empty value"
   if ! module="$(normalize_review_module "$raw_module")"; then
-    die "unknown review module: $raw_module (supported: p24, p25, p26, p27, p28, p29, p30)"
+    die "unknown review module: $raw_module (supported: $(review_module_supported_message))"
   fi
 
   for existing in "${CODEX_REVIEW_MODULES[@]}"; do
@@ -486,7 +454,7 @@ normalize_review_modules_spec_csv() {
     item="${item%"${item##*[![:space:]]}"}"
     [[ -n "$item" ]] || die "review module filter contains an empty value"
     if ! module="$(normalize_review_module "$item")"; then
-      die "unknown review module filter: $item (supported: p24, p25, p26, p27, p28, p29, p30)"
+      die "unknown review module filter: $item (supported: $(review_module_supported_message))"
     fi
     for existing in "${modules[@]}"; do
       [[ "$existing" == "$module" ]] && continue 2
@@ -1420,7 +1388,7 @@ parse_args() {
         shift
         ;;
       --review-module)
-        die "use --review-module=p24, --review-module=p25, --review-module=p26, --review-module=p27, --review-module=p28, --review-module=p29, or --review-module=p30 (spaced form is intentionally unsupported)"
+        die "use $(review_module_repeated_option_examples "--review-module=") (spaced form is intentionally unsupported)"
         ;;
       --review-modules=*)
         reset_config_review_modules_for_cli_override
@@ -1428,7 +1396,7 @@ parse_args() {
         shift
         ;;
       --review-modules)
-        die "use --review-modules=p24,p25,p26,p27,p28,p29,p30 (spaced form is intentionally unsupported)"
+        die "use --review-modules=$(review_module_ids_csv) (spaced form is intentionally unsupported)"
         ;;
       --p24)
         reset_config_review_modules_for_cli_override
@@ -1580,7 +1548,7 @@ parse_args() {
         shift
         ;;
       --selection-review-modules)
-        die "use --selection-review-modules=p24,p25,p26,p27,p28,p29,p30 (spaced form is intentionally unsupported)"
+        die "use --selection-review-modules=$(review_module_ids_csv) (spaced form is intentionally unsupported)"
         ;;
       --max-cover)
         enable_max_cover_mode

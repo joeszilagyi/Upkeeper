@@ -21,8 +21,14 @@ help_selection_path_hmac() {
 }
 
 show_help() {
+  local review_module_pipe review_module_csv review_module_shorthand_usage review_module_shorthand_sentence
+  review_module_pipe="$(review_module_ids_pipe)"
+  review_module_csv="$(review_module_ids_csv)"
+  review_module_shorthand_usage="$(review_module_shorthand_usage)"
+  review_module_shorthand_sentence="$(review_module_shorthand_sentence)"
+
   cat <<EOF
-Usage: $SCRIPT_NAME [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
+Usage: $SCRIPT_NAME [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=$review_module_pipe] [--review-modules=$review_module_csv] $review_module_shorthand_usage [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=$review_module_csv] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: $UPKEEPER_VERSION
@@ -510,26 +516,13 @@ Prompt behavior:
     Paths containing control characters are rejected before logging or prompt
     compilation.
   - --prompt TEXT appends extra task guidance inline.
-  - --review-module=p24 appends the central P24 de-LLM-ing viability review
-    module for this invoked cycle.
-  - --review-module=p25 appends the central P25 contract and intent compliance
-    review module for this invoked cycle.
-  - --review-module=p26 appends the central P26 public documentation review
-    module for this invoked cycle.
-  - --review-module=p27 appends the central P27 educational debrief review
-    module for this invoked cycle.
-  - --review-module=p28 appends the central P28 unit test harvesting review
-    module for this invoked cycle.
-  - --review-module=p29 appends the central P29 reuse harvesting review module
-    for this invoked cycle.
-  - --review-module=p30 appends the central P30 Stark Protocol permanent
-    hardening review module for this invoked cycle.
+$(review_module_flag_help_lines)
   - Fault-injection review is reserved for future P31 work or a later named
     module with an explicit non-breaking alias plan; P29 remains reuse
     harvesting and P30 remains Stark Protocol hardening.
-  - --review-modules=p24,p25,p26,p27,p28,p29,p30 appends multiple modules in a single flag;
+  - --review-modules=$review_module_csv appends multiple modules in a single flag;
     repeated --review-module flags are also accepted and duplicate modules are ignored.
-  - --p24, --p25, --p26, --p27, --p28, --p29, and --p30 are shorthand aliases for the corresponding review modules.
+  - $review_module_shorthand_sentence are shorthand aliases for the corresponding review modules.
     Review module flags are one-cycle guidance only and do not persist to later
     loop iterations. They are not enabled by --prompt-pass=all unless requested.
   - --model-override=5.5_xhigh runs this invoked cycle once as gpt-5.5
@@ -560,7 +553,7 @@ Prompt behavior:
     --allow-unsafe-manifest-path is explicitly set for a trusted one-cycle run.
   - --include-glob=PATTERN and --exclude-glob=PATTERN add local path filters;
     --include-globs=a,b and --exclude-globs=a,b replace the configured lists.
-  - --selection-review-modules=p24,p25,p26,p27,p28,p29,p30 filters candidates using
+  - --selection-review-modules=$review_module_csv filters candidates using
     deterministic local approximations for files likely relevant to those
     optional review modules. It is a selection filter, not a review-module
     prompt request; pair it with --review-module when you want both.

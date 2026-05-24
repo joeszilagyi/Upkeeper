@@ -21,6 +21,10 @@ Version numbering note:
 	1. Documented when fallback is allowed, when it is forbidden, how it handles dirty worktrees, whether it may mutate files, child-count/time limits, complete disablement switches, quota/spend bounds, evidence separation, and recovery success criteria.
 	2. Aligned operator guide, help text, default config comments, compatibility notes, and local validation so fallback/postmortem safety rules are a tracked contract instead of scattered implementation details.
 
+2026-05-24: review-module registry:
+	1. Added a narrow review-module registry for P24-P30 ids, aliases, prompt paths, titles, and help summaries.
+	2. Switched review-module CLI normalization, max-cover module selection, prompt path lookup, help generation, and validation metadata to consume the registry while preserving existing flags, aliases, logs, and prompt loading behavior.
+
 2026-05-24: Lattice run-value rows:
 	1. Lattice now records normalized `run_values` rows from deterministic pass-result markers, pass attributes, and cycle-finish status so value-oriented questions can be answered without transcript scraping.
 	2. The new `query run-values` surface can filter by path, cycle, value kind, value class, and evidence source, exposing pass outcomes, validation commands/results, residual risk, finding notes, cycle status, review outcome, finish reason, and exit codes.

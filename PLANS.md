@@ -3,6 +3,44 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Review Module Registry
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #99 by moving P24-P30 review-module ids, aliases, prompt paths,
+  titles, and help summaries into one narrow registry
+- keep CLI normalization, prompt loading, help output, validation, config
+  defaults, and symlinked-client behavior unchanged
+- make future P31+ module additions require fewer scattered case-block edits
+
+Constraints:
+- preserve existing public flags, aliases, prompt paths, log lines, and dry-run
+  behavior
+- keep the registry shell-only and deterministic before backend Codex starts
+- do not add a generic utility module or broaden review-module semantics
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/review_modules.bash`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `lib/upkeeper/help_selection.bash`
+- `lib/upkeeper/README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `git diff --check`
+
 ## Closed Obligation Issue Links
 
 Status: completed locally; pending PR/CI

@@ -131,6 +131,9 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Status-marker contracts remain stable:
   `UPKEEPER_STATUS`, `UPKEEPER_LOG_REVIEW`, `CODEX_POSTMORTEM_STATUS`, and their
   documented status values.
+- Review-module flags, shorthand aliases, CSV normalization, prompt paths, and
+  help text remain stable while their P24-P30 metadata is registry-backed in the
+  central wrapper.
 - Published loop exit meanings remain stable, especially successful work,
   intentional no-backend-task stop, fallback/postmortem failures, active locks,
   empty transcripts, local environment failures, and parent-stop guardrails.

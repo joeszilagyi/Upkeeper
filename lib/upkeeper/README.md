@@ -53,8 +53,10 @@ unless there is no clearer owner and the new file has one named responsibility.
   `transcript_artifacts.bash`
 - Environment and config validation helpers: `config_validation.bash`
 - Quota, model, and session guardrail helpers: `quota_guardrails.bash`
-- Review-module CLI aliases and Codex invocation boundaries: `codex_io.bash`
-- Review-module prompt path assembly and prompt loading: `prompt_compile.bash`
+- Review-module ids, aliases, prompt paths, titles, and help summaries:
+  `review_modules.bash`
+- Review-module CLI boundaries and Codex invocation setup: `codex_io.bash`
+- Review-module prompt loading: `prompt_compile.bash`
 - Process argument formatting and process-state helpers: `process_args.bash`
   and `process_control.bash`
 - Selection manifests, worktree state, and startup anomaly path rules:
@@ -66,16 +68,15 @@ unless there is no clearer owner and the new file has one named responsibility.
 - Prompt-module index and reusable review-language ownership:
   `prompts/README.md` and `prompts/*.md`
 
-If review-module ids, aliases, prompt paths, titles, and help summaries keep
-growing, prefer a narrow `review_modules.bash` registry over another scattered
-case-block update. Do not add that registry until the callers and validation can
-prove it preserves the existing CLI, logs, prompt loading, and symlinked-client
-behavior.
+Review-module metadata now belongs in the narrow `review_modules.bash`
+registry. Keep callers and validation consuming that registry so the existing
+CLI, logs, prompt loading, and symlinked-client behavior stay aligned.
 
 ## Module Groups
 
 Runtime evidence:
 
+- `review_modules.bash`
 - `help_selection.bash`
 - `runtime_foundation.bash`
 - `transcript_artifacts.bash`

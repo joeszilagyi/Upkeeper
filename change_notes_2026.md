@@ -16,6 +16,10 @@ Version numbering note:
 	2. Explicit target pins and issue-fix pins remain visible as pinned work instead of being silently replaced, while low/medium breadcrumbs remain custody-only by default.
 	3. Suppressed breadcrumb records now carry a named suppression rationale plus an optional expiry field so suppression is machine-readable.
 
+2026-05-24: embedded behavior table contracts:
+	1. Quick validation now checks the embedded behavior table drift contract for startup anomaly changed-path allowlists, source-safe exclusions, command-kind classifiers, review-module ids, and Lattice pass-code mappings.
+	2. Compatibility and operator docs now identify those tables as operator-visible control-plane behavior that must change with validation coverage instead of drifting silently.
+
 2026-05-24: closed obligation issue links:
 	1. Obligation issue-report sync now verifies existing GitHub issue links are still open before accepting them as custody for an open automation obligation.
 	2. Closed linked issues are preserved as stale evidence, cleared from the active custody fields, and replaced with a fresh issue for the still-open obligation when GitHub filing is enabled.

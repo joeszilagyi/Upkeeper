@@ -2381,10 +2381,12 @@ check_prompt_template() {
   grep -Fq "UPKEEPER_IGNORE_FILE" Upkeeper.conf || fail "root config missing .upkeeperignore default"
   grep -Fq "UPKEEPER_IGNORE_FILE" configurations/default.conf || fail "default profile missing .upkeeperignore default"
   grep -Fq "UPKEEPER_BUG_REPORT_ONLY" Upkeeper.conf || fail "root config missing bug-report-only default"
+  grep -Fq "UPKEEPER_AUDIT_ONLY" Upkeeper.conf || fail "root config missing audit-only default"
   grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" Upkeeper.conf || fail "root config missing issue-fix default"
   grep -Fq "UPKEEPER_FIX_ISSUE" Upkeeper.conf || fail "root config missing explicit issue-fix default"
   grep -Fq "UPKEEPER_PRECONTACT_BACKUP_ENABLED" Upkeeper.conf || fail "root config missing pre-contact backup defaults"
   grep -Fq "UPKEEPER_BUG_REPORT_ONLY" configurations/default.conf || fail "default profile missing bug-report-only default"
+  grep -Fq "UPKEEPER_AUDIT_ONLY" configurations/default.conf || fail "default profile missing audit-only default"
   grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" configurations/default.conf || fail "default profile missing issue-fix default"
   grep -Fq "UPKEEPER_FIX_ISSUE" configurations/default.conf || fail "default profile missing explicit issue-fix default"
   grep -Fq "UPKEEPER_PRECONTACT_BACKUP_ENABLED" configurations/default.conf || fail "default profile missing pre-contact backup defaults"
@@ -2627,6 +2629,10 @@ check_help_and_diff() {
   grep -Fq -- "--backup-queue" <<<"$help" || fail "help missing --backup-queue"
   grep -Fq -- "--max-cover" <<<"$help" || fail "help missing --max-cover"
   grep -Fq -- "--bug-report-only" <<<"$help" || fail "help missing --bug-report-only"
+  grep -Fq -- "--audit-only" <<<"$help" || fail "help missing --audit-only"
+  grep -Fq -- "--review-only" <<<"$help" || fail "help missing --review-only alias"
+  grep -Fq -- "--no-fix" <<<"$help" || fail "help missing --no-fix alias"
+  grep -Fq -- "--read-only" <<<"$help" || fail "help missing --read-only alias"
   grep -Fq -- "--fix-next-issue" <<<"$help" || fail "help missing --fix-next-issue"
   grep -Fq -- "--fix-issue=NUMBER" <<<"$help" || fail "help missing --fix-issue"
   grep -Fq -- "--issue-workflow-stage=comment|review|apply" <<<"$help" || fail "help missing issue workflow stage"
@@ -2635,6 +2641,8 @@ check_help_and_diff() {
   grep -Fq -- "--profile" <<<"$validation_help" || fail "validator help missing --profile"
   grep -Fq -- "UPKEEPER_MAX_COVER" <<<"$help" || fail "help missing UPKEEPER_MAX_COVER"
   grep -Fq -- "UPKEEPER_BUG_REPORT_ONLY" <<<"$help" || fail "help missing UPKEEPER_BUG_REPORT_ONLY"
+  grep -Fq -- "UPKEEPER_AUDIT_ONLY" <<<"$help" || fail "help missing UPKEEPER_AUDIT_ONLY"
+  grep -Fq -- "UPKEEPER_AUDIT_REPORT_DIR" <<<"$help" || fail "help missing UPKEEPER_AUDIT_REPORT_DIR"
   grep -Fq -- "UPKEEPER_FIX_NEXT_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_NEXT_ISSUE"
   grep -Fq -- "UPKEEPER_FIX_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_ISSUE"
   grep -Fq -- "UPKEEPER_ISSUE_WORKFLOW_STAGE" <<<"$help" || fail "help missing UPKEEPER_ISSUE_WORKFLOW_STAGE"
@@ -4416,6 +4424,13 @@ PY
     --bug-report-only
   grep -Fq "bug_report_only=1" "$temp_dir/bug-report-only.log" || fail "bug-report-only was not recorded in cycle.start"
   grep -Fq "bug_report_only.prompt appended" "$temp_dir/bug-report-only.log" || fail "bug-report-only prompt addendum was not appended"
+  run_manifest_dry_run "$temp_dir/audit-only.log" \
+    --target-file=Upkeeper \
+    --audit-only
+  grep -Fq "bug_report_only=1" "$temp_dir/audit-only.log" || fail "audit-only did not enable the no-fix report contract"
+  grep -Fq "audit_only=1" "$temp_dir/audit-only.log" || fail "audit-only was not recorded in cycle.start"
+  grep -Fq "bug_report_only.draft.destination mode=audit_only" "$temp_dir/audit-only.log" || fail "audit-only did not use the audit report destination"
+  grep -Fq "bug_report_only.prompt appended" "$temp_dir/audit-only.log" || fail "audit-only prompt addendum was not appended"
   bash tests/bug_report_only_test.bash
 
   mkdir -p "$temp_dir/bin"

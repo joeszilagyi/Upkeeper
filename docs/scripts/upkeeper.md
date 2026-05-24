@@ -1014,6 +1014,11 @@ prompts, backup log lines, or Lattice preselect evidence.
 - Security and local trust boundaries are documented in `docs/security.md`.
   Read that page before using unreviewed config files, broad sandbox modes,
   shared machines, or repositories that may contain secrets.
+- Negative-space validation contracts are documented in
+  `docs/negative-space-testing.md`. Those entries name the deterministic local
+  proofs for behavior that must not happen, such as runtime artifact selection,
+  vault-root leaks, backend target replacement, read-only source mutation, and
+  real backend quota use during validation.
 - Local sample-repo stress testing is documented in `docs/stress-corpus.md`;
   those checks default to no real backend Codex work and keep model-backed
   sample runs behind explicit future opt-in commands.

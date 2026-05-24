@@ -47,6 +47,8 @@ unless there is no clearer owner and the new file has one named responsibility.
 - Local SQLite evidence-ledger lifecycle hooks: `lattice.bash`
 - Shared automation run and obligation records:
   `automation_obligations.bash`
+- High-severity breadcrumb startup gating:
+  `breadcrumb_gate.bash`
 - Fallback marker, quote, and artifact field helpers:
   `fallback_artifacts.bash`
 - Transcript path, hash, size, and line-count helpers:
@@ -88,6 +90,7 @@ Runtime evidence:
 - `cycle_cleanup_signals.bash`
 - `runtime_format_json.bash`
 - `automation_obligations.bash`
+- `breadcrumb_gate.bash`
 - `lattice.bash`
 - `transcript_output.bash`
 - `tool_failure_queue.bash`

@@ -285,12 +285,17 @@ prompt packaging, or symlink behavior:
 
 ```sh
 tools/validate_upkeeper.sh --deps
+tools/validate_upkeeper.sh --source-contracts
 tools/validate_upkeeper.sh --smoke
 tools/validate_upkeeper.sh --quick
 tools/validate_upkeeper.sh --quick --profile
 tools/validate_upkeeper.sh --full
 ```
 
+Source-contract validation is the narrowest source-only gate used by the
+backlog launcher before per-bug commits. It catches cheap structural source
+contract failures, such as oversized `log_line` call sites, without running the
+broader quick suite.
 Smoke validation is the fast local edit-loop path: syntax, version/module-map
 contracts, prompt packaging, help/docs/diff checks, parser helpers, and launcher
 argument contracts. Quick validation adds bounded static/fixture checks and

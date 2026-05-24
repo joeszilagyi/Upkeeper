@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: per-bug source contract gate:
+	1. `tools/validate_upkeeper.sh --source-contracts` now runs the cheapest source-only validation contracts used by backlog per-bug commit gates.
+	2. Backlog per-bug validation now runs that source-contract gate when Upkeeper source, tools, or tests changed, catching oversized structured log call sites before commit and push.
+	3. A PR-local blocker caused by an oversized `issue_fix.obligation_bind` log line was split with `log_line_parts` so runtime output stays structured while the source contract passes.
+
 2026-05-24: backlog batch-validation failure obligations:
 	1. Backlog batch validation now records a structured local automation obligation when a merge-path validation phase fails, including the phase, command, exit code, bounded output tail, stable fingerprint, likely owner path, and required proof command.
 	2. Repeated identical batch-validation failures update the same obligation occurrence count instead of opening noisy duplicates.

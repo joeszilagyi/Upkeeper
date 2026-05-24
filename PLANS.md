@@ -3,6 +3,37 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Per-Bug Source Contract Gate
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- repair the current PR #473 blocker where a too-long `log_line` call passed
+  per-bug validation but failed later batch validation/CI
+- make the backlog per-bug commit path run a cheap source-contract gate for
+  Upkeeper source changes before staging and pushing
+- preserve the low-cost loop path by avoiding full quick validation on every
+  per-bug commit
+
+Constraints:
+- no backend Codex validation
+- keep the source-contract check deterministic and local
+- do not slow unchanged docs or non-source commits with broad validation
+
+Files likely touched:
+- `Upkeeper`
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- operator docs and release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --source-contracts`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Batch Validation Failure Obligations
 
 Status: completed locally; pending PR/CI

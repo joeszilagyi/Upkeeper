@@ -6400,7 +6400,12 @@ PY
   UPKEEPER_AUTOMATION_OBLIGATION_PATH="$matched_path"
   [[ -n "${UPKEEPER_AUTOMATION_WORKFLOW:-}" ]] || UPKEEPER_AUTOMATION_WORKFLOW="obligation-repair"
   [[ -n "${UPKEEPER_AUTOMATION_STAGE:-}" ]] || UPKEEPER_AUTOMATION_STAGE="issue_fix"
-  log_line "INFO" "issue_fix.obligation_bind matched_id=$(shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_ID") issue=$(shell_quote "$issue_number") target_file=$(shell_quote "$issue_target") source_path=$(shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_PATH")"
+  log_line_parts "INFO" \
+    "issue_fix.obligation_bind" \
+    " matched_id=$(shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_ID")" \
+    " issue=$(shell_quote "$issue_number")" \
+    " target_file=$(shell_quote "$issue_target")" \
+    " source_path=$(shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_PATH")"
 }
 
 upkeeper_internal_active_lock_self_test_requested() {

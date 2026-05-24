@@ -62,11 +62,14 @@ WRAPPER_OPTIONAL_COMMANDS=(
 
 usage() {
   cat <<'USAGE'
-Usage: tools/validate_upkeeper.sh [--smoke|--quick|--full|--deps] [--profile]
+Usage: tools/validate_upkeeper.sh [--source-contracts|--smoke|--quick|--full|--deps] [--profile]
 
 Validate the central Upkeeper checkout.
 
 Modes:
+  --source-contracts
+            Run the cheapest source-only contracts needed by per-bug commit
+            gates, currently including log-line source length.
   --deps    Report runtime/tool dependency status.
   --smoke   Run the fast local edit-loop checks: syntax, version, module map,
             prompt templates, help/docs/diff, parser helpers, and launcher
@@ -168,6 +171,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --smoke)
       MODE="smoke"
+      ;;
+    --source-contracts)
+      MODE="source-contracts"
       ;;
     --quick)
       MODE="quick"
@@ -610,6 +616,8 @@ check_backlog_launcher_contract() {
   grep -Fq 'backlog_ensure_pr_checks_allow_next_issue' orchestration/backlog.sh || fail "backlog launcher does not gate issue selection on current PR checks"
   grep -Fq 'per-bug validation: python compile' orchestration/backlog.sh || fail "backlog launcher per-bug validation does not compile changed Python files"
   grep -Fq 'per-bug validation: lattice focused coverage (tests/lattice_test.bash)' orchestration/backlog.sh || fail "backlog launcher per-bug validation does not run focused Lattice coverage"
+  grep -Fq 'per-bug validation: source contracts' orchestration/backlog.sh || fail "backlog launcher per-bug validation does not run source contracts"
+  grep -Fq 'tools/validate_upkeeper.sh --source-contracts' orchestration/backlog.sh || fail "backlog launcher per-bug source contracts do not use the validator"
   grep -Fq 'BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default dirty-worktree autoshelve on"
   grep -Fq 'autoshelving local changes to' orchestration/backlog.sh || fail "backlog launcher does not explain dirty-worktree autoshelve"
   grep -Fq 'autoshelve_next_branch_name' orchestration/backlog.sh || fail "backlog launcher no longer avoids autoshelve branch-name collisions"
@@ -2701,6 +2709,7 @@ check_help_and_diff() {
   grep -Fq -- "--issue-workflow-stage=comment|review|apply" <<<"$help" || fail "help missing issue workflow stage"
   grep -Fq -- "5.3-codex-spark_xhigh" <<<"$help" || fail "help missing Spark model override"
   grep -Fq -- "--smoke" <<<"$validation_help" || fail "validator help missing --smoke"
+  grep -Fq -- "--source-contracts" <<<"$validation_help" || fail "validator help missing --source-contracts"
   grep -Fq -- "--profile" <<<"$validation_help" || fail "validator help missing --profile"
   grep -Fq -- "UPKEEPER_MAX_COVER" <<<"$help" || fail "help missing UPKEEPER_MAX_COVER"
   grep -Fq -- "UPKEEPER_BUG_REPORT_ONLY" <<<"$help" || fail "help missing UPKEEPER_BUG_REPORT_ONLY"
@@ -6657,6 +6666,12 @@ require_commands
 if [[ "$MODE" == "deps" ]]; then
   check_dependencies
   log "dependency validation passed"
+  exit 0
+fi
+
+if [[ "$MODE" == "source-contracts" ]]; then
+  run_check log_line_source_length_contract check_log_line_source_length_contract
+  log "$MODE validation passed"
   exit 0
 fi
 

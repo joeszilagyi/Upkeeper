@@ -3,6 +3,34 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Quota And Session Fixtures
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #104 by naming reusable validation quota/session JSONL fixtures
+- cover current, stale, wrong-model, malformed, empty, nonfinite, and
+  missing-field cases without reading real operator CODEX_HOME data
+- reuse named fixtures in existing validation where practical
+
+Constraints:
+- keep fixtures generated under validator temp roots only
+- preserve existing quota/session parser behavior and diagnostics
+- do not launch real backend Codex
+
+Files likely touched:
+- `lib/upkeeper/quota_state.bash`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Shell Assignment Helper Fixtures
 
 Status: completed locally; pending PR/CI

@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: negative-space validation contract:
+	1. Added `docs/negative-space-testing.md` as the tracked catalog for deterministic "must not happen" validation contracts.
+	2. The catalog links target selection, pre-contact backup redaction, replacement authority, source-mutation guards, malformed marker rejection, no-backend validation, config safety, and backend sandbox allowlisting to local proofs.
+	3. `tools/validate_upkeeper.sh --quick` now checks that the catalog and its public documentation links stay present.
+
 2026-05-24: closed obligation issue links:
 	1. Obligation issue-report sync now verifies existing GitHub issue links are still open before accepting them as custody for an open automation obligation.
 	2. Closed linked issues are preserved as stale evidence, cleared from the active custody fields, and replaced with a fresh issue for the still-open obligation when GitHub filing is enabled.

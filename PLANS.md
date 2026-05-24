@@ -3,6 +3,40 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Negative-Space Validation Contract
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #230 by making negative-space testing a first-class validation
+  contract
+- document the major "must not happen" invariants Upkeeper depends on
+- add a deterministic quick-validator check that those invariants stay tied to
+  no-backend local tests, fixtures, or enforcement points
+
+Constraints:
+- do not add live backend Codex validation
+- keep the clean no-op and quick validation paths cheap
+- do not claim fuzzing or broad mutation testing; this is a catalog and proof
+  index for concrete local negative fixtures
+
+Files likely touched:
+- `docs/negative-space-testing.md`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/security.md`
+- `docs/compatibility.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Quota And Session Fixtures
 
 Status: completed locally; pending PR/CI

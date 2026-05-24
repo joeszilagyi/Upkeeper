@@ -106,7 +106,12 @@ Future changes should preserve this operator-visible surface as far as possible:
   target authority, source-write authority, shell execution, quota spend,
   backup restore, evidence pruning, GitHub issue effects, Lattice writes, or
   runtime evidence reads should update `docs/authority.md`,
-  `docs/capability-profiles.md`, and `docs/control-ledger.md`.
+  `docs/capability-profiles.md`, `docs/control-ledger.md`, and
+  `docs/policy-decisions.md`.
+- Policy decision schema-v1 field names and types are stable. Future policy
+  decision records may add optional fields, but removing, renaming, or changing
+  the meaning of existing fields requires a new schema version and validation
+  coverage.
 - Backend Codex issue workflows use the Genie Protocol boundary. The wrapper
   owns GitHub reads and writes, passes only wrapper-fetched issue evidence plus
   local artifact paths into the model, strips GitHub token variables from the

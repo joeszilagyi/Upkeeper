@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: structured policy decisions:
+	1. Added `docs/policy-decisions.md` as the schema-v1 contract for local control-plane decisions that must not live only in prompt prose.
+	2. Added `lib/upkeeper/policy_decisions.bash` with no-side-effect helpers for emitting and validating policy-decision JSON using the existing `jq` dependency.
+	3. Added unit and quick-validation coverage so policy decision fields, capability-profile ids, denied action ids, and authority docs cannot drift silently.
+
 2026-05-24: local PR check watcher:
 	1. Added `orchestration/watch-pr.sh`, a no-backend helper for explicit or current-branch-inferred PR check watching.
 	2. The watcher prints timestamped pass/pending/fail summaries plus check names, conclusions, and URLs, with distinct exit codes for pass, fail, and pending `--once` results.

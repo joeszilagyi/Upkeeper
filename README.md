@@ -18,9 +18,10 @@ tool from tracked source, not from private chat history. P26 exists to enforce
 that standard.
 
 The tracked authority surface is split across `docs/authority.md`,
-`docs/capability-profiles.md`, and `docs/control-ledger.md`. Those files define
-who may select targets, write source, run shell, spend quota, touch evidence,
-affect GitHub, and modify Lattice.
+`docs/capability-profiles.md`, `docs/control-ledger.md`, and
+`docs/policy-decisions.md`. Those files define who may select targets, write
+source, run shell, spend quota, touch evidence, affect GitHub, modify Lattice,
+and record local policy decisions as structured data.
 
 > "Starfleet code requires a second backup?"
 >
@@ -48,6 +49,12 @@ LLM receives the wrapper-built task packet, selected target context, and the
 configured sandbox. In issue workflows, the LLM does not talk to GitHub with its
 own credentials or tools; Upkeeper fetches issue evidence before launch and
 posts comments or other GitHub side effects after validation.
+
+Local policy decisions that should survive prompt wording changes have a
+tracked schema in `docs/policy-decisions.md` and helper functions in
+`lib/upkeeper/policy_decisions.bash`. The initial schema records whether a
+cycle may contact backend Codex, write source, retarget, restore backup, use
+network tools, file issues, and which action ids were denied.
 
 In Upkeeper terms, the airlock is the middleware boundary between the local
 control plane and the backend LLM: only selected context, allowed commands,

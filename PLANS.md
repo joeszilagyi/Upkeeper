@@ -4602,6 +4602,47 @@ Validation:
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
 
+## Structured Policy Decisions
+
+Status: in progress
+
+Goal:
+- close issue #222 by introducing a small tracked policy-decision schema that
+  records local control-plane decisions as data instead of only prompt prose
+- add a shell helper that can emit and validate schema-v1 decisions without a
+  new dependency beyond existing `jq`
+- document which fields are stable and how future runtime gates should use the
+  schema before backend contact
+
+Constraints:
+- keep this as the first narrow schema and validation contract, not a broad
+  policy engine or OPA-style dependency
+- do not launch real backend Codex during validation
+- preserve the current authority, capability-profile, and control-ledger docs
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/policy_decisions.bash`
+- `lib/upkeeper/README.md`
+- `docs/policy-decisions.md`
+- `docs/capability-profiles.md`
+- `docs/control-ledger.md`
+- `docs/security.md`
+- `docs/compatibility.md`
+- `README.md`
+- `tests/policy_decisions_test.bash`
+- `tools/validate_upkeeper.sh`
+- `tools/check_public_docs.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/watch-pr.sh`
+- `bash tests/policy_decisions_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
 ## Backlog Quality Gates
 
 Status: in progress

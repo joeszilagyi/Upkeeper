@@ -961,6 +961,9 @@ prompts, backup log lines, or Lattice preselect evidence.
   static/fixture checks, and `--full` for the broad deterministic integration
   gate before release or after touching module order, prompt packaging,
   symlink behavior, or failure-path guardrails.
+  Quick validation also owns the embedded behavior table drift contract for
+  startup anomaly allowlists, source-safe exclusions, command-kind
+  classifiers, review-module ids, and Lattice pass-code mappings.
   Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
   heavier config, manifest, Lattice, and review-module dry-run fixtures stay in
   full mode. Add `--profile` to validation runs to print per-check elapsed

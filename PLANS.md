@@ -3,6 +3,39 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Threat Model And Degraded-Mode Doctrine
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #221 by documenting Upkeeper's explicit threat model,
+  degraded-mode behavior, and override rules
+- make the doctrine part of the tracked security and compatibility contract
+- add deterministic validation so the contract cannot silently drift
+
+Constraints:
+- no backend Codex calls
+- document existing doctrine without weakening runtime safety gates
+- keep override authority local and operator-visible; Codex cannot override
+  safety blocks
+
+Files likely touched:
+- `docs/security.md`
+- `docs/compatibility.md`
+- `README.md`
+- `docs/risk-register.md`
+- `tools/check_public_docs.sh`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/watch-pr.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
 ## Stale Quota Evidence Custody
 
 Status: completed and merged

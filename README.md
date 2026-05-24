@@ -23,6 +23,13 @@ The tracked authority surface is split across `docs/authority.md`,
 source, run shell, spend quota, touch evidence, affect GitHub, modify Lattice,
 and record local policy decisions as structured data.
 
+The security contract in `docs/security.md` defines the explicit threat model,
+degraded-mode doctrine, and override doctrine for malicious or confused model
+output, wrapper bugs, config mistakes, filesystem weirdness, same-user access,
+secret leakage, public-doc exposure, quota/fallback behavior, backups,
+validators, Lattice, dirty baselines, and unsafe targets.
+In short, `docs/security.md` is the threat model, degraded-mode doctrine, and override doctrine for wrapper safety decisions.
+
 The compatibility surface is tracked in `docs/compatibility.md`. Public
 schemas, prompt markers, docs/help examples, and Lattice JSONL output are
 classified as `stable`, `experimental`, `deprecated`, or `removed`; unclassified

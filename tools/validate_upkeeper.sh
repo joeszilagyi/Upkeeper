@@ -509,6 +509,48 @@ check_policy_decisions_contract() {
   bash tests/policy_decisions_test.bash
 }
 
+check_schema_compatibility_contract() {
+  local term
+  local -a required_terms
+
+  log "checking schema compatibility contract"
+  required_terms=(
+    "## Compatibility Classes"
+    '`stable`'
+    '`experimental`'
+    '`deprecated`'
+    '`removed`'
+    "## Schema And Contract Version Rules"
+    "## Migration And Deprecation Rules"
+    "## Public Examples And Validation"
+    "## Lattice Import/Export Compatibility"
+    "schema_version"
+    "row_type"
+    "row_version"
+    "logical_key"
+    "payload_sha256"
+    "record conflicts instead of silently"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq "$term" docs/compatibility.md ||
+      fail "compatibility docs missing schema contract term: $term"
+  done
+
+  grep -Fq "Lattice export/import compatibility is governed by" docs/lattice.md ||
+    fail "Lattice docs do not point to compatibility contract"
+  grep -Fq "recorded as conflicts rather than overwritten silently" docs/lattice.md ||
+    fail "Lattice docs missing JSONL conflict compatibility rule"
+  grep -Fq "unclassified" README.md &&
+    grep -Fq "tracked public behavior defaults to stable" README.md ||
+    fail "README missing default stable compatibility rule"
+  grep -Fq "stable by default" docs/public-documentation-policy.md ||
+    fail "public documentation policy missing default stable compatibility rule"
+  grep -Fq "Prompt compatibility" prompts/README.md ||
+    fail "prompt index missing prompt compatibility section"
+  grep -Fq "UPKEEPER_PASS_RESULT" prompts/README.md ||
+    fail "prompt compatibility section missing pass-result marker contract"
+}
+
 check_syntax() {
   local module
 
@@ -6827,6 +6869,7 @@ run_check fault_injection_registry_contract check_fault_injection_registry_contr
 run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contract
 run_check authority_control_docs_contract check_authority_control_docs_contract
 run_check policy_decisions_contract check_policy_decisions_contract
+run_check schema_compatibility_contract check_schema_compatibility_contract
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation

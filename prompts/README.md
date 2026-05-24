@@ -47,6 +47,14 @@ Numbering compatibility:
   module with an explicit non-breaking alias plan. The tracked P31 prompt
   defines the contract before wiring.
 
+Prompt compatibility:
+
+- Review-module ids, aliases, prompt file paths, parseable status markers, and
+  `UPKEEPER_PASS_RESULT` fields are stable contracts once documented.
+- Prompt prose may improve, but a prompt marker or review-module meaning should
+  not be removed, renamed, or repurposed without the migration and deprecation
+  rules in `docs/compatibility.md`.
+
 Guidelines:
 
 - Keep one prompt per file.

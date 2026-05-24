@@ -17,6 +17,88 @@ Examples include refusing a risky outdated TLS/SSL behavior, retiring a wrapper
 path that can target the wrong repository, or rejecting an input format that can
 hide malformed operator data as absence.
 
+## Compatibility Classes
+
+Every operator-visible schema, prompt marker, output field, doc/help contract,
+and Lattice import/export field belongs to one of these classes:
+
+| Class | Meaning | Change rule |
+| --- | --- | --- |
+| `stable` | Existing operators, scripts, tests, docs, or downstream tools may rely on it. | Preserve it, or add an alias/shim/migration path before changing it. |
+| `experimental` | Public enough to inspect, but not promised as long-term automation surface. | May change with a dated change note and clear docs; do not silently promote to `stable`. |
+| `deprecated` | Still accepted, but no longer preferred. | Keep a warning, alias, or migration path until a documented removal date or replacement condition. |
+| `removed` | No longer accepted or emitted. | Document the removal reason, migration path, and safety/compatibility rationale. |
+
+Unclassified public behavior is treated as `stable` by default once it appears
+in tracked docs, help text, prompts, JSON output, Lattice export rows, or
+release notes. New experimental behavior must say it is experimental at the
+point of documentation or output.
+
+## Schema And Contract Version Rules
+
+Schema and contract versions are compatibility boundaries, not decoration:
+
+- JSON schemas that expose a `schema_version` or named schema id must keep
+  existing field names, field types, and meanings within the same version.
+- Adding optional fields is compatible when existing readers can ignore them.
+- Removing fields, renaming fields, changing field types, or changing enum
+  meanings requires a new schema version or a documented compatibility shim.
+- Prompt markers such as `UPKEEPER_STATUS`, `UPKEEPER_LOG_REVIEW`,
+  `UPKEEPER_PASS_RESULT`, `CODEX_POSTMORTEM_STATUS`, and review-module ids are
+  stable contracts. New prompt wording can change, but parseable marker names,
+  status values, and review-module meanings must remain compatible.
+- Documentation and `./Upkeeper --help` are a paired contract. Operator-facing
+  behavior changes should update help, `docs/scripts/upkeeper.md`, README or
+  compatibility notes, and change notes in the same committed state.
+- Lattice SQLite schema changes must advance or explicitly preserve the
+  tracked schema/user-version contract, and JSONL exports must remain readable
+  by same-version importers.
+
+## Migration And Deprecation Rules
+
+When a stable surface changes:
+
+- Prefer an alias, shim, or normalizer over immediate rejection.
+- Emit an operator-visible warning for deprecated inputs when practical.
+- State the replacement field, flag, marker, or command in tracked docs.
+- Keep deterministic validation for both old and new spellings during the
+  migration window.
+- If compatibility is unsafe or impossible, document the exact break under
+  the breaking-change requirements below.
+
+## Public Examples And Validation
+
+Public examples are part of the compatibility surface when they show commands,
+JSON fields, prompt markers, Lattice rows, config keys, or output snippets.
+Examples must stay executable or structurally truthful enough for local
+validation to check. The minimum local proof is one of:
+
+- `tools/check_public_docs.sh --quick` for public documentation links, help,
+  and required wording.
+- `tools/validate_upkeeper.sh --smoke` for fast schema/help/prompt drift.
+- `tools/validate_upkeeper.sh --quick` for fixture-backed parser, marker,
+  issue-workflow, Lattice, and authority contracts.
+- Focused `tests/*.bash` or Python fixtures when a public example has a
+  concrete input/output shape.
+
+## Lattice Import/Export Compatibility
+
+Lattice has two compatibility layers:
+
+- The SQLite database schema is local runtime state. Upkeeper may migrate it,
+  but the tracked schema version and `PRAGMA user_version` must describe the
+  current expected shape.
+- JSONL export/import is the portable exchange surface. Export rows must keep
+  `schema_version`, `row_type`, `row_version`, `logical_key`, source identity,
+  repo identity, payload, `payload_sha256`, and exported epoch meanings stable
+  within the same row version. Import must remain idempotent for duplicate
+  logical-key/payload-hash pairs and must record conflicts instead of silently
+  overwriting different payloads.
+
+Redaction defaults are part of compatibility. Default JSONL exports redact raw
+payload fields, path-bearing fields, contributor identity, and commit subjects
+unless the operator asks for disclosure with the documented include flags.
+
 ## Binding Feature Surface
 
 Future changes should preserve this operator-visible surface as far as possible:

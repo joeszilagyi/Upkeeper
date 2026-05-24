@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: compatibility promise for schemas and contracts:
+	1. Defined `stable`, `experimental`, `deprecated`, and `removed` compatibility classes for public schemas, prompt markers, docs/help examples, and Lattice JSONL rows.
+	2. Documented schema-version, migration, deprecation-warning, public-example validation, and Lattice import/export compatibility rules in the binding compatibility contract.
+	3. Added validation coverage so the compatibility classification and Lattice export/import promises cannot silently drift out of public docs.
+
 2026-05-24: structured policy decisions:
 	1. Added `docs/policy-decisions.md` as the schema-v1 contract for local control-plane decisions that must not live only in prompt prose.
 	2. Added `lib/upkeeper/policy_decisions.bash` with no-side-effect helpers for emitting and validating policy-decision JSON using the existing `jq` dependency.

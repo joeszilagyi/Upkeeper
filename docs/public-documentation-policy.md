@@ -78,6 +78,12 @@ Tracked docs should form a readable path:
 When behavior changes, update the smallest set of paired docs needed to keep
 that path true.
 
+Public docs should mark new operator-visible schemas, prompt markers, output
+fields, Lattice row fields, and help examples as `stable`, `experimental`,
+`deprecated`, or `removed` when the compatibility class is not obvious. If no
+class is stated, `docs/compatibility.md` treats tracked public behavior as
+stable by default.
+
 ## Release And Patch Rule
 
 Every release or patch should be understandable as public history.

@@ -513,6 +513,28 @@ KNOWN_TOOL_FAILURE_KINDS = {
     "search",
     "git",
 }
+COMMAND_KIND_SHARED_EXAMPLES = (
+    ("bash -n Upkeeper lib/upkeeper/*.bash", "check"),
+    ("tools/validate_upkeeper.sh --quick", "validation"),
+    ("python3 -m pytest tests", "tests"),
+    ("npm run build", "build"),
+    ("command -v git", "command"),
+    ("rg -n command_kind tools/upkeeper_lattice.py", "search"),
+    ("git status --short", "search"),
+    ("git checkout -b issue-106", "git"),
+    ("printf ok", "command"),
+)
+STARTUP_ANOMALY_ALLOWLIST_SHARED_EXAMPLES = (
+    ("Upkeeper", True),
+    ("change_notes_2027.md", True),
+    ("docs/compatibility.md", True),
+    ("lib/upkeeper/worktree_state.bash", True),
+    ("prompts/default-review.md", True),
+    ("tools/validate_upkeeper.sh", True),
+    ("tools/upkeeper_lattice.py", False),
+    ("runtime/upkeeper.log", False),
+    ("docs/private.md", False),
+)
 
 
 PASS_REGISTRY: list[dict[str, Any]] = [
@@ -5058,6 +5080,39 @@ def _command_kind_definitions_from_file(path: Path) -> list[tuple[str, ...]]:
     return definitions
 
 
+def _command_kind_example_contract_issues(path: Path) -> list[str]:
+    issues: list[str] = []
+    if not path.exists():
+        return [f"{path} missing command_kind example source"]
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return [f"{path} unreadable for command_kind examples: {exc}"]
+
+    bodies = _extract_function_bodies(text, "command_kind")
+    if not bodies:
+        return [f"{path} missing command_kind examples target"]
+    for index, body in enumerate(bodies, start=1):
+        namespace: dict[str, Any] = {"re": re}
+        try:
+            exec("def command_kind(line: str) -> str:\n" + body, namespace)
+            command_kind = namespace["command_kind"]
+        except Exception as exc:
+            issues.append(f"{path} command_kind[{index}] cannot load for shared examples: {exc}")
+            continue
+        for command, expected in COMMAND_KIND_SHARED_EXAMPLES:
+            try:
+                actual = command_kind(command)
+            except Exception as exc:
+                issues.append(f"{path} command_kind[{index}] raises for {command!r}: {exc}")
+                continue
+            if actual != expected:
+                issues.append(
+                    f"{path} command_kind[{index}] classifies {command!r} as {actual!r}, expected {expected!r}"
+                )
+    return issues
+
+
 def _tool_failure_kind_contract_issues(root: Path) -> list[str]:
     issues: list[str] = []
     if not root.is_dir():
@@ -5080,6 +5135,7 @@ def _tool_failure_kind_contract_issues(root: Path) -> list[str]:
         missing = sorted(KNOWN_TOOL_FAILURE_KINDS - set(kind_values))
         if missing:
             issues.append(f"{path} command_kind missing values {missing}")
+        issues.extend(_command_kind_example_contract_issues(path))
     if len(path_values) > 1 and all(values is not None for _, values in path_values):
         base_path, base_values = path_values[0]
         for path, values in path_values[1:]:
@@ -5096,6 +5152,27 @@ def _extract_allowed_lists_from_worktree_state(body: str) -> tuple[tuple[str, ..
     if not exact_values or not prefix_values:
         return None
     return tuple(sorted(set(exact_values))), tuple(sorted(set(prefix_values)))
+
+
+def _startup_anomaly_allowlist_example_issues(
+    function_name: str,
+    exact_values: tuple[str, ...],
+    prefix_values: tuple[str, ...],
+) -> list[str]:
+    issues: list[str] = []
+    exact = set(exact_values)
+    prefixes = tuple(prefix_values)
+    for path, expected in STARTUP_ANOMALY_ALLOWLIST_SHARED_EXAMPLES:
+        actual = (
+            path in exact
+            or re.fullmatch(r"change_notes_[0-9]{4}\.md", path) is not None
+            or any(path.startswith(prefix) for prefix in prefixes)
+        )
+        if actual != expected:
+            issues.append(
+                f"{WORKTREE_STATE_BASH}:{function_name} classifies startup path {path!r} as allowed={int(actual)}, expected {int(expected)}"
+            )
+    return issues
 
 
 def _startup_anomaly_allowlist_contract_issues(source_root: Path) -> list[str]:
@@ -5133,6 +5210,7 @@ def _startup_anomaly_allowlist_contract_issues(source_root: Path) -> list[str]:
         for value in exact_values:
             if not value or "/" in value and value.startswith("/"):
                 issues.append(f"{WORKTREE_STATE_BASH}:{function_name} disallow absolute allowed_exact entry: {value}")
+        issues.extend(_startup_anomaly_allowlist_example_issues(function_name, exact_values, prefix_values))
         if len(extracted_values) > 1:
             issues.append(
                 f"{WORKTREE_STATE_BASH}:{function_name} has {len(function_bodies)} duplicated definitions; all are identical"
@@ -5160,6 +5238,16 @@ def validate_reuse_contract_definitions() -> list[str]:
     issues.extend(_tool_failure_kind_contract_issues(source_root))
     issues.extend(_startup_anomaly_allowlist_contract_issues(source_root))
     return issues
+
+
+def probe_reuse_contract_definitions() -> dict[str, Any]:
+    issues = validate_reuse_contract_definitions()
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "command_kind_examples": len(COMMAND_KIND_SHARED_EXAMPLES),
+        "startup_anomaly_allowlist_examples": len(STARTUP_ANOMALY_ALLOWLIST_SHARED_EXAMPLES),
+    }
 
 
 def probe_pass_registry_replay_identity() -> dict[str, Any]:
@@ -6312,6 +6400,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["raw_storage_effective"] = effective_lattice_raw_storage(configured_raw_storage)
         result["checks"]["raw_storage_valid"] = configured_raw_storage in RAW_STORAGE_COMPAT_MODES
         result["checks"]["raw_storage_enforcement"] = probe_raw_storage_enforcement(conn, root, ensure_repository(conn, root))
+        reuse_contract_probe = probe_reuse_contract_definitions()
+        result["checks"]["reuse_contract_definitions"] = reuse_contract_probe
         pass_registry_replay_probe = probe_pass_registry_replay_identity()
         result["checks"]["pass_registry_replay_identity"] = pass_registry_replay_probe
         review_summary_probe = probe_review_summary_parsing()
@@ -6364,6 +6454,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["import_jsonl_rejects_unexpected_payload_fields"] = import_unexpected_fields_probe
         import_conflicted_fk_probe = probe_import_jsonl_rejects_unmapped_conflicted_parent_fk()
         result["checks"]["import_jsonl_rejects_unmapped_conflicted_parent_fk"] = import_conflicted_fk_probe
+        if not bool(reuse_contract_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
         if not all(bool(item.get("ok")) for item in review_summary_probe.values()):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY

@@ -18,9 +18,27 @@ tool from tracked source, not from private chat history. P26 exists to enforce
 that standard.
 
 The tracked authority surface is split across `docs/authority.md`,
-`docs/capability-profiles.md`, and `docs/control-ledger.md`. Those files define
-who may select targets, write source, run shell, spend quota, touch evidence,
-affect GitHub, and modify Lattice.
+`docs/capability-profiles.md`, `docs/control-ledger.md`, and
+`docs/policy-decisions.md`. Those files define who may select targets, write
+source, run shell, spend quota, touch evidence, affect GitHub, modify Lattice,
+and record local policy decisions as structured data.
+
+The security contract in `docs/security.md` defines the explicit threat model,
+degraded-mode doctrine, and override doctrine for malicious or confused model
+output, wrapper bugs, config mistakes, filesystem weirdness, same-user access,
+secret leakage, public-doc exposure, quota/fallback behavior, backups,
+validators, Lattice, dirty baselines, and unsafe targets.
+In short, `docs/security.md` is the threat model, degraded-mode doctrine, and override doctrine for wrapper safety decisions.
+
+The evidence preservation contract is tracked in
+`docs/preservation-policy.md`. It defines evidence temperature, artifact privacy
+classes, and promotion rules for logs, transcripts, backups, Lattice rows,
+exports, recovery records, obligations, postmortems, and public evidence.
+
+The compatibility surface is tracked in `docs/compatibility.md`. Public
+schemas, prompt markers, docs/help examples, and Lattice JSONL output are
+classified as `stable`, `experimental`, `deprecated`, or `removed`; unclassified
+tracked public behavior defaults to stable.
 
 > "Starfleet code requires a second backup?"
 >
@@ -48,6 +66,12 @@ LLM receives the wrapper-built task packet, selected target context, and the
 configured sandbox. In issue workflows, the LLM does not talk to GitHub with its
 own credentials or tools; Upkeeper fetches issue evidence before launch and
 posts comments or other GitHub side effects after validation.
+
+Local policy decisions that should survive prompt wording changes have a
+tracked schema in `docs/policy-decisions.md` and helper functions in
+`lib/upkeeper/policy_decisions.bash`. The initial schema records whether a
+cycle may contact backend Codex, write source, retarget, restore backup, use
+network tools, file issues, and which action ids were denied.
 
 In Upkeeper terms, the airlock is the middleware boundary between the local
 control plane and the backend LLM: only selected context, allowed commands,
@@ -103,7 +127,7 @@ On each cycle it:
   registry loaders, config readers, data readers, and input-boundary CLIs
 - can append opt-in P24/P25/P26/P27/P28/P29/P30 review modules for de-LLM-ing
   viability, contract/intent compliance, public documentation clarity,
-  educational debriefs, unit-test harvesting, reuse harvesting, and permanent
+  after-action reviews, unit-test harvesting, reuse harvesting, and permanent
   hardening
 - provides `FlameOn`, a thin one-command launcher for the highest local
   max-cover smoke/burn cycle that defaults to filing/reporting bugs instead of
@@ -209,10 +233,11 @@ Lattice is required, encrypted pre-contact backup is required, and Codex is
 pinned to `--sandbox workspace-write` before launch. Quota thresholds are set to
 spend-to-zero (`CODEX_5H_STOP_PERCENT=0` and `CODEX_WEEK_STOP_PERCENT=0`), and
 wrapper quota guardrail stops plus persisted quota cooldown markers are bypassed
-for the launcher run. In bug-report-only mode, Codex must not edit or touch
-tracked source; it investigates, runs deterministic checks, and files issues or
-fully reports confirmed bugs. `-backup_queue` and `--backup-queue` switch that
-one cycle to
+for the launcher run. Expired-reset stale quota evidence is still recorded as
+non-perfect local health before burn bypass continues. In bug-report-only mode,
+Codex must not edit or touch tracked source; it investigates, runs
+deterministic checks, and files issues or fully reports confirmed bugs.
+`-backup_queue` and `--backup-queue` switch that one cycle to
 `runtime/unaddressed-tool-failures-backup`.
 
 For a scripted issue-fix cycle, use `ChimneySweep`:
@@ -706,6 +731,12 @@ bounded output tail, stable fingerprint, likely owner path, and required proof
 command. The next backlog invocation selects that obligation before retrying the
 merge or starting fresh GitHub issue work.
 
+Backlog PR check and merge gates also protect against stale remote evidence. If
+the active backlog branch is clean and locally ahead of `origin/<branch>`, the
+launcher pushes those commits before waiting on PR checks or merging. Dirty,
+missing-remote, or diverged local-ahead branch states stop with a clear reason
+instead of treating older remote checks as current.
+
 For an explicit one-cycle Upkeeper self-review with all built-in P1-P23 passes,
 use equals-form operator flags:
 
@@ -748,10 +779,10 @@ operator guides, module docs, or public policy. It treats every patch and
 release as public material and checks whether a future reader can understand the
 important intent from the repository itself.
 
-P27 applies when a run should leave a concise learning note after the fix. It
-captures what went wrong, why it probably happened, why it mattered, how to
-avoid the pattern, how it was fixed, what was already good, and what can still
-improve.
+P27 applies when a run should leave a concise after-action review after
+meaningful work. It captures the outcome, what went right, what went wrong,
+what was wasteful, what can improve next time, and whether the system learned
+anything reusable.
 
 P28 applies when a bug, reusable exploratory command, parser edge case,
 validation path, or deterministic LLM-discovered fact can become a cheap local
@@ -1000,7 +1031,7 @@ test loop does not spend cycles on known low-value or generated material.
 - [prompts/p26-public-documentation-review.md](prompts/p26-public-documentation-review.md):
   P26 review module for public documentation and code-comment clarity
 - [prompts/p27-educational-debrief-review.md](prompts/p27-educational-debrief-review.md):
-  P27 review module for concise saved educational debriefs
+  P27 review module for concise saved after-action reviews
 - [prompts/p28-unit-test-harvesting-review.md](prompts/p28-unit-test-harvesting-review.md):
   P28 review module for turning useful discoveries into local tests or fixtures
 - [prompts/p29-reuse-harvesting-review.md](prompts/p29-reuse-harvesting-review.md):

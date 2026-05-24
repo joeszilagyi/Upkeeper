@@ -11,6 +11,56 @@ Version numbering note:
 	2. Backlog per-bug validation now runs that source-contract gate when Upkeeper source, tools, or tests changed, catching oversized structured log call sites before commit and push.
 	3. A PR-local blocker caused by an oversized `issue_fix.obligation_bind` log line was split with `log_line_parts` so runtime output stays structured while the source contract passes.
 
+2026-05-24: preservation policy and artifact privacy:
+	1. Added `docs/preservation-policy.md` with evidence temperature values for hot, warm, cold, frozen, and trashable evidence.
+	2. Defined artifact privacy classes for public-safe, private-operator, and secret-adjacent material across logs, transcripts, backups, Lattice rows, exports, recovery records, obligations, postmortems, manifests, and public issue or PR text.
+	3. Added validation coverage so preservation, redaction, export, recovery, and promotion policy terms cannot silently drift out of the public docs.
+
+2026-05-24: threat model and override doctrine:
+	1. Added an explicit `docs/security.md` threat model covering malicious or confused model output, wrapper bugs, config mistakes, operator mistakes, filesystem weirdness, same-user access, secret leakage, public-doc leakage, and quota/fallback weirdness.
+	2. Documented degraded-mode behavior for missing `age`, unavailable encrypted backup, unavailable Landlock/bubblewrap, unavailable Lattice, missing validators, dirty baselines, and unsafe targets.
+	3. Documented override rules that keep safety overrides operator-visible, evidence-backed, and unavailable to backend Codex, with validation coverage for the doctrine.
+
+2026-05-24: compatibility promise for schemas and contracts:
+	1. Defined `stable`, `experimental`, `deprecated`, and `removed` compatibility classes for public schemas, prompt markers, docs/help examples, and Lattice JSONL rows.
+	2. Documented schema-version, migration, deprecation-warning, public-example validation, and Lattice import/export compatibility rules in the binding compatibility contract.
+	3. Added validation coverage so the compatibility classification and Lattice export/import promises cannot silently drift out of public docs.
+
+2026-05-24: structured policy decisions:
+	1. Added `docs/policy-decisions.md` as the schema-v1 contract for local control-plane decisions that must not live only in prompt prose.
+	2. Added `lib/upkeeper/policy_decisions.bash` with no-side-effect helpers for emitting and validating policy-decision JSON using the existing `jq` dependency.
+	3. Added unit and quick-validation coverage so policy decision fields, capability-profile ids, denied action ids, and authority docs cannot drift silently.
+
+2026-05-24: local PR check watcher:
+	1. Added `orchestration/watch-pr.sh`, a no-backend helper for explicit or current-branch-inferred PR check watching.
+	2. The watcher prints timestamped pass/pending/fail summaries plus check names, conclusions, and URLs, with distinct exit codes for pass, fail, and pending `--once` results.
+	3. Backlog now prints the watcher command after creating or pushing active backlog PR branches so manual restart and merge boundaries have a deterministic local status command.
+
+2026-05-24: serious finding repro fixture policy:
+	1. Serious security, data-integrity, destructive-write, target-selection, recovery, and automation-control findings now have a tracked repro-status contract.
+	2. Added GitHub issue and pull request template hooks that ask for a local deterministic repro fixture, cloud audit repro, or explicit non-repro rationale.
+	3. Quick validation now checks that the serious-finding repro policy and templates remain present.
+
+2026-05-24: after-action review contract:
+	1. P27 now defines a concise after-action review shape that includes outcome, what went right, what went wrong, waste, next improvement, and reusable learning.
+	2. The pull request template now asks for the same after-action review fields so successful and mostly-successful work can preserve optimization signal.
+	3. Quick validation now checks that the P27 prompt, public docs, and PR template retain the after-action review contract.
+
+2026-05-24: backlog stale quota evidence custody:
+	1. Backlog quota preflight now records expired-reset stale quota evidence as a `stale_quota_evidence` automation obligation before burn bypass continues.
+	2. Repeated stale quota evidence updates one fingerprinted obligation instead of printing recurring warning-only output.
+	3. The stale quota obligation is retired automatically once current non-stale quota evidence is observed, keeping recovered quota state from blocking future work.
+
+2026-05-24: backlog batch-validation retry guard:
+	1. Batch merge validation now records a private retry marker after the first failed local validation phase on a branch/head/command.
+	2. A second identical retry fails closed from that marker, updates the existing repair obligation, and prints the retry fingerprint instead of rerunning the full validation command again.
+	3. Retry markers are discarded when the branch/head or command context changes, so repaired or advanced branches can validate normally.
+
+2026-05-24: backlog local-ahead branch guard:
+	1. Backlog now detects clean local commits on the active backlog PR branch after branch sync and before batch merge.
+	2. Safe local-ahead backlog branches are pushed before PR checks or merge decisions, so checks apply to the current local head.
+	3. Dirty, missing-remote, or diverged local backlog branches fail closed with a clear live-output reason instead of merging from stale remote check evidence.
+
 2026-05-24: backlog batch-validation failure obligations:
 	1. Backlog batch validation now records a structured local automation obligation when a merge-path validation phase fails, including the phase, command, exit code, bounded output tail, stable fingerprint, likely owner path, and required proof command.
 	2. Repeated identical batch-validation failures update the same obligation occurrence count instead of opening noisy duplicates.

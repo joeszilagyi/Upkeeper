@@ -50,6 +50,10 @@ git diff --check
 - Release prep must also include compatibility/operator-doc updates when any
   operator-visible behavior, prompt contracts, docs, config profiles, or issue
   triage behavior changes.
+- Serious security, data-integrity, destructive-write, target-selection,
+  recovery, or automation-control fixes merged since the last release have a
+  local deterministic repro fixture, cloud audit repro, or explicit non-repro
+  rationale named in their issue or PR.
 
 Docs-only releases may use the cheaper docs path when no runtime, tool, config,
 prompt, test, or launcher behavior changed:

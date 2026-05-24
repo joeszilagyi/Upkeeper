@@ -280,6 +280,10 @@ Important:
     burn mode. Override with BACKLOG_CODEX_MODEL, BACKLOG_CODEX_REASONING_EFFORT,
     BACKLOG_WEEK_STOP_PERCENT, BACKLOG_QUOTA_GUARDRAIL_BYPASS=0, or
     BACKLOG_QUOTA_COOLDOWN_BYPASS=0 when a guarded or non-Spark run is wanted.
+    If that burn bypass sees quota evidence whose reset window has already
+    passed, the launcher records a structured stale_quota_evidence automation
+    obligation before continuing and retires that obligation once a current
+    non-stale quota snapshot is observed.
   - The backlog launcher hibernates by default when its quota preflight sees a
     stop-level quota state or an active primary quota block marker. It prints
     the blocked bucket, reset time, wake time, branch, and recent activity when

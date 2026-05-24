@@ -74,6 +74,10 @@ BACKLOG_WATCH_CHILD_PID=""
 BACKLOG_WATCH_FORMATTER_PID=""
 BACKLOG_WATCH_FIFO=""
 BACKLOG_WATCH_FIFO_DIR=""
+BACKLOG_BATCH_VALIDATION_OBLIGATION_ID=""
+BACKLOG_BATCH_VALIDATION_OBLIGATION_PATH=""
+BACKLOG_BATCH_VALIDATION_REPEAT_EXIT_CODE=""
+BACKLOG_STALE_QUOTA_OBLIGATION_ID=""
 
 backlog_timestamp() {
   date '+%Y-%m-%dT%H:%M:%S'
@@ -894,6 +898,227 @@ backlog_hibernate_until_epoch() {
 
   log "quota preflight: quota hibernation complete; next backlog cycle may retry without backend work"
   return 3
+}
+
+backlog_open_stale_quota_obligation() {
+  local quota_json="$1"
+  local primary_decision="$2"
+  local secondary_decision="$3"
+  local obligation_root open_dir now branch_name payload id path seen_count
+
+  BACKLOG_STALE_QUOTA_OBLIGATION_ID=""
+  obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
+  open_dir="$obligation_root/open"
+  mkdir -p -- "$open_dir" || return 1
+  chmod 700 "$obligation_root" "$open_dir" 2>/dev/null || true
+
+  now="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
+  payload="$(
+    python3 - \
+      "$ROOT_DIR" \
+      "$CODEX_MODEL" \
+      "$primary_decision" \
+      "$secondary_decision" \
+      "$now" \
+      "$branch_name" \
+      "$quota_json" <<'PY'
+import hashlib
+import json
+import sys
+
+root, model, primary_decision, secondary_decision, now, branch, quota_json = sys.argv[1:8]
+quota = json.loads(quota_json)
+snapshot = quota.get("snapshot") or {}
+projection = quota.get("projection") or {}
+source_path = str(snapshot.get("source_path") or "")
+source_hash = hashlib.sha256(source_path.encode("utf-8")).hexdigest()[:24] if source_path else ""
+fingerprint_basis = {
+    "model": model,
+    "primary_decision": primary_decision,
+    "secondary_decision": secondary_decision,
+    "primary_reset_expired": bool(snapshot.get("primary_reset_expired")),
+    "secondary_reset_expired": bool(snapshot.get("secondary_reset_expired")),
+}
+fingerprint = hashlib.sha256(json.dumps(fingerprint_basis, sort_keys=True).encode("utf-8")).hexdigest()[:24]
+obligation_id = f"stale-quota-{fingerprint}"
+record = {
+    "schema": 1,
+    "record_type": "automation_obligation",
+    "status": "open",
+    "id": obligation_id,
+    "kind": "stale_quota_evidence",
+    "severity": "high",
+    "summary": "Backlog quota preflight saw stale quota evidence after reset",
+    "root": root,
+    "source": "backlog_quota_preflight",
+    "source_branch": branch,
+    "target_scope": "target",
+    "target_file": "orchestration/backlog.sh",
+    "repair_target_file": "orchestration/backlog.sh",
+    "reason": "STALE_QUOTA_EVIDENCE_AFTER_RESET",
+    "fingerprint": f"stale-quota-evidence:{fingerprint}",
+    "target_model": model,
+    "required_resolution": [
+        "inspect the quota preflight stale-evidence path",
+        "retire or refresh stale session/marker evidence when safe",
+        "keep unresolved stale quota evidence as non-perfect machine health",
+        "rerun tests/backlog_stale_quota_obligation_test.bash",
+        "rerun tools/validate_upkeeper.sh --quick",
+    ],
+    "evidence": {
+        "target_model": model,
+        "primary_decision": primary_decision,
+        "secondary_decision": secondary_decision,
+        "primary_reset_expired": snapshot.get("primary_reset_expired"),
+        "secondary_reset_expired": snapshot.get("secondary_reset_expired"),
+        "primary_bucket_current": snapshot.get("primary_bucket_current"),
+        "secondary_bucket_current": snapshot.get("secondary_bucket_current"),
+        "snapshot_stale_after_reset": snapshot.get("snapshot_stale_after_reset"),
+        "snapshot_selection": quota.get("snapshot_selection"),
+        "matching_snapshot_count": quota.get("matching_snapshot_count"),
+        "primary_reset_age_seconds": snapshot.get("primary_reset_age_seconds"),
+        "secondary_reset_age_seconds": snapshot.get("secondary_reset_age_seconds"),
+        "projection_basis": projection.get("basis"),
+        "source_path_redacted": bool(source_path),
+        "source_path_sha256": source_hash,
+    },
+}
+print(json.dumps(record, separators=(",", ":")))
+PY
+  )" || return 1
+
+  id="$(jq -r '.id' <<<"$payload")"
+  path="$open_dir/$id.json"
+  if [[ -f "$path" ]]; then
+    seen_count="$(jq -r '.seen_count // .occurrence_count // 1' "$path" 2>/dev/null || printf '1')"
+    payload="$(
+      jq \
+        --argjson next_count "$((seen_count + 1))" \
+        --arg updated_at "$now" \
+        --argjson replacement "$payload" \
+        '. as $old
+         | $replacement
+         | .created_at = ($old.created_at // $updated_at)
+         | .updated_at = $updated_at
+         | .seen_count = $next_count
+         | .occurrence_count = $next_count
+         | .first_source_branch = ($old.first_source_branch // $old.source_branch // $replacement.source_branch)
+         | .prior_evidence = ($old.evidence // {})' "$path"
+    )" || return 1
+  else
+    payload="$(jq --arg created_at "$now" '.created_at = $created_at | .updated_at = $created_at | .seen_count = 1 | .occurrence_count = 1' <<<"$payload")" || return 1
+  fi
+  python3 - "$path" "$payload" <<'PY'
+import json
+import os
+import sys
+
+path, payload = sys.argv[1:3]
+data = json.loads(payload)
+parent = os.path.dirname(path)
+os.makedirs(parent, mode=0o700, exist_ok=True)
+try:
+    os.chmod(parent, 0o700)
+except OSError:
+    pass
+tmp = f"{path}.tmp.{os.getpid()}"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+PY
+  BACKLOG_STALE_QUOTA_OBLIGATION_ID="$id"
+  log "quota preflight: stale quota evidence after reset recorded as non-perfect health obligation_id=$id action=keep_unresolved_health_blocker"
+}
+
+backlog_resolve_stale_quota_obligations() {
+  local model="$1"
+  local obligation_root open_dir resolved_dir output count
+
+  obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
+  open_dir="$obligation_root/open"
+  [[ -d "$open_dir" ]] || return 0
+  resolved_dir="$obligation_root/resolved"
+  mkdir -p -- "$resolved_dir" || return 0
+  chmod 700 "$obligation_root" "$open_dir" "$resolved_dir" 2>/dev/null || true
+  output="$(
+    python3 - "$open_dir" "$resolved_dir" "$model" <<'PY'
+import json
+import os
+import pathlib
+import sys
+from datetime import datetime
+
+open_dir = pathlib.Path(sys.argv[1])
+resolved_dir = pathlib.Path(sys.argv[2])
+model = sys.argv[3]
+
+
+def now_local():
+    return datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+count = 0
+resolved_ids = []
+for path in sorted(open_dir.glob("*.json")):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        continue
+    if data.get("kind") != "stale_quota_evidence" or data.get("target_model") != model:
+        continue
+    data["status"] = "resolved"
+    data["resolved_at"] = now_local()
+    data["resolution"] = "quota preflight observed current non-stale quota evidence"
+    destination = resolved_dir / path.name
+    write_json(destination, data)
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    count += 1
+    resolved_ids.append(str(data.get("id") or path.stem))
+print(json.dumps({"count": count, "ids": resolved_ids}, separators=(",", ":")))
+PY
+  )" || return 0
+  count="$(jq -r '.count // 0' <<<"$output" 2>/dev/null || printf '0')"
+  if [[ "$count" -gt 0 ]]; then
+    log "quota preflight: stale quota evidence retired count=$count target_model=$model action=resolved_non_perfect_health"
+  fi
 }
 
 require_clean_worktree() {
@@ -1861,6 +2086,15 @@ quota_preflight_allows_backlog_run() {
   primary_decision="$(quota_bucket_decision "$primary_bucket_current" "$primary_projected_left" "$(quota_5h_stop_percent_for_model "$CODEX_MODEL")")"
   secondary_decision="$(quota_bucket_decision "$secondary_bucket_current" "$secondary_projected_left" "$(quota_week_stop_percent_for_model "$CODEX_MODEL")")"
 
+  if [[ "$snapshot_stale_after_reset" == "true" && ( "$primary_decision" == "defer" || "$secondary_decision" == "defer" ) ]]; then
+    if ! backlog_open_stale_quota_obligation "$quota_json" "$primary_decision" "$secondary_decision"; then
+      log "quota preflight: stale quota evidence after reset could not be recorded as non-perfect health; failing closed"
+      return 4
+    fi
+  else
+    backlog_resolve_stale_quota_obligations "$CODEX_MODEL"
+  fi
+
   if [[ "$primary_decision" == "stop" || "$secondary_decision" == "stop" ]]; then
     if [[ "$BACKLOG_QUOTA_GUARDRAIL_BYPASS" == "1" ]]; then
       log "quota preflight: burn bypass continuing despite stop decision (primary=$primary_decision secondary=$secondary_decision)"
@@ -1888,7 +2122,7 @@ quota_preflight_allows_backlog_run() {
   if [[ "$primary_decision" == "defer" || "$secondary_decision" == "defer" ]]; then
     if [[ "$BACKLOG_QUOTA_GUARDRAIL_BYPASS" == "1" ]]; then
       if [[ "$snapshot_stale_after_reset" == "true" ]]; then
-        log "quota preflight: burn bypass continuing despite stale quota evidence after reset (primary=$primary_decision secondary=$secondary_decision primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired)"
+        log "quota preflight: burn bypass continuing despite stale quota evidence after reset; recorded_non_perfect_health=1 obligation_id=${BACKLOG_STALE_QUOTA_OBLIGATION_ID:-unknown} primary=$primary_decision secondary=$secondary_decision primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired"
       else
         log "quota preflight: burn bypass continuing despite stale quota evidence (primary=$primary_decision secondary=$secondary_decision)"
       fi
@@ -1896,10 +2130,14 @@ quota_preflight_allows_backlog_run() {
     fi
 
     if [[ "$snapshot_stale_after_reset" == "true" && "$primary_decision" == "defer" && "$secondary_decision" == "defer" ]]; then
-      log "quota preflight: stale quota evidence after reset; retrying guarded run this cycle to refresh quota state (primary=$primary_decision secondary=$secondary_decision primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired)"
+      log "quota preflight: stale quota evidence after reset recorded as non-perfect health obligation_id=${BACKLOG_STALE_QUOTA_OBLIGATION_ID:-unknown}; retrying guarded run this cycle to refresh quota state (primary=$primary_decision secondary=$secondary_decision primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired)"
       return 0
     fi
-    log "quota preflight: deferring backlog run this cycle (primary=$primary_decision secondary=$secondary_decision)"
+    if [[ "$snapshot_stale_after_reset" == "true" ]]; then
+      log "quota preflight: deferring backlog run this cycle after recording stale quota evidence as non-perfect health obligation_id=${BACKLOG_STALE_QUOTA_OBLIGATION_ID:-unknown} (primary=$primary_decision secondary=$secondary_decision)"
+    else
+      log "quota preflight: deferring backlog run this cycle (primary=$primary_decision secondary=$secondary_decision)"
+    fi
     return 3
   fi
   return 0
@@ -1909,6 +2147,13 @@ current_backlog_pr() {
   gh pr list --state open --json number,title,headRefName \
     --jq '.[] | select(.headRefName | startswith("'"$BACKLOG_BRANCH_PREFIX"'")) | [.number, .headRefName] | @tsv' \
     | sed -n '1p'
+}
+
+backlog_log_pr_watch_hint() {
+  local pr_number="${1:-}"
+
+  [[ -n "$pr_number" ]] || return 0
+  log "PR #$pr_number checks may be pending; watch with: ./orchestration/watch-pr.sh $pr_number"
 }
 
 checkout_backlog_branch() {
@@ -1924,8 +2169,68 @@ checkout_backlog_branch() {
   fi
 }
 
+backlog_ensure_local_branch_pushed() {
+  local pr_number="$1"
+  local branch="$2"
+  local context="${3:-pr_checks}"
+  local current_branch counts remote_ahead local_ahead status_output
+
+  [[ -n "$branch" ]] || return 0
+  case "$branch" in
+    "$BACKLOG_BRANCH_PREFIX"*) ;;
+    *) return 0 ;;
+  esac
+
+  current_branch="$(git rev-parse --abbrev-ref HEAD)"
+  if [[ "$current_branch" != "$branch" ]]; then
+    log "local branch push guard blocked branch=$branch current_branch=$current_branch context=$context reason=wrong_branch action=stop_before_pr_checks"
+    return 1
+  fi
+
+  if ! git fetch origin "$branch" >/dev/null; then
+    log "local branch push guard blocked branch=$branch context=$context reason=fetch_failed action=stop_before_pr_checks"
+    return 1
+  fi
+  if ! git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+    log "local branch push guard blocked branch=$branch context=$context reason=missing_remote_ref action=stop_before_pr_checks"
+    return 1
+  fi
+
+  counts="$(git rev-list --left-right --count "origin/$branch...HEAD")" || {
+    log "local branch push guard blocked branch=$branch context=$context reason=compare_failed action=stop_before_pr_checks"
+    return 1
+  }
+  read -r remote_ahead local_ahead <<<"$counts"
+  remote_ahead="${remote_ahead:-0}"
+  local_ahead="${local_ahead:-0}"
+
+  if [[ "$local_ahead" == "0" && "$remote_ahead" == "0" ]]; then
+    return 0
+  fi
+
+  if [[ "$remote_ahead" != "0" ]]; then
+    log "local branch push guard blocked branch=$branch pr=$pr_number local_ahead=$local_ahead remote_ahead=$remote_ahead context=$context reason=diverged_or_behind action=manual_reconcile"
+    return 1
+  fi
+
+  status_output="$(git status --short)"
+  if [[ -n "$status_output" ]]; then
+    log "local branch push guard blocked branch=$branch pr=$pr_number local_ahead=$local_ahead context=$context reason=dirty_worktree action=stop_before_pr_checks"
+    return 1
+  fi
+
+  log "local branch push guard branch=$branch pr=$pr_number local_ahead=$local_ahead context=$context action=push_before_pr_checks"
+  if ! git push origin "HEAD:$branch" >/dev/null; then
+    log "local branch push guard blocked branch=$branch pr=$pr_number local_ahead=$local_ahead context=$context reason=push_failed action=stop_before_pr_checks"
+    return 1
+  fi
+  log "local branch push guard branch=$branch pr=$pr_number local_ahead=$local_ahead context=$context action=pushed_wait_for_fresh_checks"
+  backlog_log_pr_watch_hint "$pr_number"
+  return 0
+}
+
 open_backlog_pr() {
-  local branch
+  local branch pr_number
 
   log "new backlog PR setup: plane=git waiting_for=sync_main"
   git checkout main >/dev/null
@@ -1948,7 +2253,9 @@ Target: up to ${BACKLOG_BATCH_LIMIT} bug or data-protection fixes, newest non-fe
 
 Validation: script-local quick validation plus required PR checks before merge." >/dev/null
 
-  printf '%s\t%s\n' "$(gh pr view --json number --jq '.number')" "$branch"
+  pr_number="$(gh pr view --json number --jq '.number')"
+  backlog_log_pr_watch_hint "$pr_number"
+  printf '%s\t%s\n' "$pr_number" "$branch"
 }
 
 pr_body() {
@@ -2286,6 +2593,9 @@ backlog_open_batch_validation_obligation() {
   local -a command_args=("$@")
   local obligation_root open_dir command_text now payload id path seen_count
 
+  BACKLOG_BATCH_VALIDATION_OBLIGATION_ID=""
+  BACKLOG_BATCH_VALIDATION_OBLIGATION_PATH=""
+
   obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
   open_dir="$obligation_root/open"
   mkdir -p -- "$open_dir" || return 1
@@ -2423,7 +2733,192 @@ except BaseException:
         pass
     raise
 PY
+  BACKLOG_BATCH_VALIDATION_OBLIGATION_ID="$id"
+  BACKLOG_BATCH_VALIDATION_OBLIGATION_PATH="$path"
   log "automation obligation opened for batch validation failure id=$id phase=$phase target=$owner_hint path=$path"
+}
+
+backlog_batch_validation_retry_key() {
+  local phase="${1:-}"
+
+  printf '%s\n' "$phase" | tr '/: ' '___' | tr -cd '[:alnum:]_.-'
+}
+
+backlog_batch_validation_retry_path() {
+  local phase="${1:-}"
+  local state_root retry_dir
+
+  state_root="$(backlog_state_root)"
+  retry_dir="$state_root/batch-validation-retry"
+  printf '%s/%s.%s.json\n' "$retry_dir" "$(backlog_branch_key)" "$(backlog_batch_validation_retry_key "$phase")"
+}
+
+backlog_batch_validation_retry_fingerprint() {
+  local phase="${1:-}"
+  local command_text="${2:-}"
+  local branch="${3:-}"
+  local head="${4:-}"
+
+  python3 - "$phase" "$command_text" "$branch" "$head" <<'PY'
+import hashlib
+import sys
+
+phase, command_text, branch, head = sys.argv[1:5]
+print(hashlib.sha256(f"backlog-batch-validation-retry\0{branch}\0{head}\0{phase}\0{command_text}".encode("utf-8")).hexdigest()[:24])
+PY
+}
+
+backlog_touch_batch_validation_obligation_retry() {
+  local obligation_path="${1:-}"
+  local now tmp
+
+  [[ -n "$obligation_path" && -f "$obligation_path" ]] || return 0
+  now="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/upkeeper-batch-validation-obligation.XXXXXX")" || return 0
+  if jq \
+    --arg updated_at "$now" \
+    '.updated_at = $updated_at
+     | .seen_count = ((.seen_count // .occurrence_count // 1) + 1)
+     | .occurrence_count = .seen_count
+     | .retry_guard_repeated = true' "$obligation_path" >"$tmp"; then
+    mv "$tmp" "$obligation_path"
+    chmod 600 "$obligation_path" 2>/dev/null || true
+  else
+    rm -f -- "$tmp"
+  fi
+}
+
+backlog_record_batch_validation_retry_marker() {
+  local phase="$1"
+  local exit_code="$2"
+  local command_text="$3"
+  local owner_hint="$4"
+  local marker_path marker_dir now branch_name head fingerprint head_short
+
+  marker_path="$(backlog_batch_validation_retry_path "$phase")"
+  marker_dir="$(dirname -- "$marker_path")"
+  mkdir -p -- "$marker_dir" || return 0
+  chmod 700 "$marker_dir" 2>/dev/null || true
+  now="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
+  head="$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' unknown)"
+  fingerprint="$(backlog_batch_validation_retry_fingerprint "$phase" "$command_text" "$branch_name" "$head")"
+  python3 - \
+    "$marker_path" \
+    "$now" \
+    "$branch_name" \
+    "$head" \
+    "$phase" \
+    "$command_text" \
+    "$exit_code" \
+    "$owner_hint" \
+    "$fingerprint" \
+    "$BACKLOG_BATCH_VALIDATION_OBLIGATION_ID" \
+    "$BACKLOG_BATCH_VALIDATION_OBLIGATION_PATH" <<'PY'
+import json
+import os
+import sys
+
+(
+    path,
+    now,
+    branch,
+    head,
+    phase,
+    command_text,
+    exit_code,
+    owner_hint,
+    fingerprint,
+    obligation_id,
+    obligation_path,
+) = sys.argv[1:12]
+record = {
+    "schema": 1,
+    "record_type": "backlog_batch_validation_retry_marker",
+    "created_at": now,
+    "updated_at": now,
+    "branch": branch,
+    "head": head,
+    "phase": phase,
+    "command_text": command_text,
+    "exit_code": str(exit_code),
+    "owner_hint": owner_hint,
+    "fingerprint": f"backlog-batch-validation-retry:{fingerprint}",
+    "obligation_id": obligation_id,
+    "obligation_path": obligation_path,
+}
+parent = os.path.dirname(path)
+os.makedirs(parent, mode=0o700, exist_ok=True)
+tmp = f"{path}.tmp.{os.getpid()}"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(record, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+PY
+  head_short="${head:0:12}"
+  log "batch validation retry guard recorded fingerprint=backlog-batch-validation-retry:$fingerprint phase=$phase branch=$branch_name head=$head_short action=route_next_retry_to_obligation"
+}
+
+backlog_batch_validation_repeated_failure() {
+  local phase="$1"
+  local command_text="$2"
+  local marker_path branch_name head marker_branch marker_head marker_command exit_code fingerprint obligation_path head_short
+
+  BACKLOG_BATCH_VALIDATION_REPEAT_EXIT_CODE=""
+  marker_path="$(backlog_batch_validation_retry_path "$phase")"
+  [[ -f "$marker_path" ]] || return 1
+  branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
+  head="$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' unknown)"
+  marker_branch="$(jq -r '.branch // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  marker_head="$(jq -r '.head // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  marker_command="$(jq -r '.command_text // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  if [[ "$marker_branch" != "$branch_name" || "$marker_head" != "$head" || "$marker_command" != "$command_text" ]]; then
+    rm -f -- "$marker_path"
+    return 1
+  fi
+  exit_code="$(jq -r '.exit_code // "1"' "$marker_path" 2>/dev/null || printf '1')"
+  if [[ ! "$exit_code" =~ ^[0-9]+$ || "$exit_code" -lt 1 || "$exit_code" -gt 255 ]]; then
+    exit_code=1
+  fi
+  fingerprint="$(jq -r '.fingerprint // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  if [[ -z "$fingerprint" ]]; then
+    fingerprint="backlog-batch-validation-retry:$(backlog_batch_validation_retry_fingerprint "$phase" "$command_text" "$branch_name" "$head")"
+  fi
+  obligation_path="$(jq -r '.obligation_path // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  backlog_touch_batch_validation_obligation_retry "$obligation_path"
+  head_short="${head:0:12}"
+  log "batch validation retry guard repeated_failure fingerprint=$fingerprint phase=$phase branch=$branch_name head=$head_short exit_code=$exit_code action=skip_validation_route_to_obligation"
+  BACKLOG_BATCH_VALIDATION_REPEAT_EXIT_CODE="$exit_code"
+  return 0
+}
+
+backlog_clear_batch_validation_retry_marker() {
+  local phase="$1"
+  local command_text="$2"
+  local marker_path branch_name head marker_branch marker_head marker_command
+
+  marker_path="$(backlog_batch_validation_retry_path "$phase")"
+  [[ -f "$marker_path" ]] || return 0
+  branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
+  head="$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' unknown)"
+  marker_branch="$(jq -r '.branch // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  marker_head="$(jq -r '.head // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  marker_command="$(jq -r '.command_text // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  if [[ "$marker_branch" != "$branch_name" || "$marker_head" != "$head" || "$marker_command" != "$command_text" ]]; then
+    rm -f -- "$marker_path"
+  fi
 }
 
 run_batch_validation_phase() {
@@ -2432,6 +2927,12 @@ run_batch_validation_phase() {
   shift 2
   local output_file rc owner_hint command_text
 
+  command_text="$(printf '%q ' "$@")"
+  command_text="${command_text% }"
+  if backlog_batch_validation_repeated_failure "$phase" "$command_text"; then
+    log "batch validation: $label skipped because identical prior failure is already under obligation custody"
+    return "$BACKLOG_BATCH_VALIDATION_REPEAT_EXIT_CODE"
+  fi
   output_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-backlog-validation.XXXXXX")"
   log "batch validation: $label"
   set +e
@@ -2439,12 +2940,15 @@ run_batch_validation_phase() {
   rc="${PIPESTATUS[0]}"
   set -e
   if [[ "$rc" -ne 0 ]]; then
-    command_text="$(printf '%q ' "$@")"
     owner_hint="$(backlog_batch_validation_owner_hint "$phase" "$command_text" "$output_file")"
     backlog_open_batch_validation_obligation "$phase" "$rc" "$output_file" "$owner_hint" "$@" || true
+    if [[ -n "$BACKLOG_BATCH_VALIDATION_OBLIGATION_PATH" ]]; then
+      backlog_record_batch_validation_retry_marker "$phase" "$rc" "$command_text" "$owner_hint" || true
+    fi
     rm -f -- "$output_file"
     return "$rc"
   fi
+  backlog_clear_batch_validation_retry_marker "$phase" "$command_text"
   rm -f -- "$output_file"
   return 0
 }
@@ -2529,6 +3033,7 @@ commit_and_push_changes() {
   git commit -m "$message" || return $?
   log "pushing branch updates plane=git waiting_for=push"
   git push || return $?
+  backlog_log_pr_watch_hint "${pr_number:-}"
   return 0
 }
 
@@ -2868,6 +3373,7 @@ merge_and_clean() {
   local branch="$2"
 
   run_batch_validation || return $?
+  backlog_ensure_local_branch_pushed "$pr_number" "$branch" "pre_batch_merge" || return $?
   wait_for_pr_checks "$pr_number" || {
     local status="$?"
     [[ "$status" -eq 2 ]] && return 2
@@ -2919,6 +3425,7 @@ main() {
   pr_number="$(awk -F '\t' '{print $1}' <<<"$pr_info")"
   branch="$(awk -F '\t' '{print $2}' <<<"$pr_info")"
   checkout_backlog_branch "$branch"
+  backlog_ensure_local_branch_pushed "$pr_number" "$branch" "post_branch_sync" || exit $?
 
   if ! run_backlog_anomaly_custody_audit; then
     status="$?"

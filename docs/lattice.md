@@ -100,6 +100,11 @@ When possible, Upkeeper creates:
 - export files with mode `600`
 - recovery records with mode `600`
 
+`docs/preservation-policy.md` classifies live Lattice databases and recovery
+records as warm `private-operator` evidence by default, and Lattice JSONL
+exports as cold `private-operator` evidence unless separately sanitized for
+public use. Export redaction defaults are part of that preservation contract.
+
 ## Tool
 
 The standalone CLI is:
@@ -383,6 +388,14 @@ operator explicitly asks for disclosure with `--include-raw` and/or
 the JSONL may contain sensitive local evidence. Default exports also preserve
 the Git-import privacy contract by omitting raw contributor fields and raw
 commit subjects unless those values were explicitly included at import time.
+
+Lattice export/import compatibility is governed by
+`docs/compatibility.md`. Within a row version, `schema_version`, `row_type`,
+`row_version`, `logical_key`, source identity, repo identity, payload,
+`payload_sha256`, and exported epoch keep stable meanings. New optional payload
+fields may be added, but import must remain idempotent for the same logical key
+and payload hash, and different payloads for the same logical key must be
+recorded as conflicts rather than overwritten silently.
 
 If an operator needs a JSONL file for structural replay into another lattice
 database, use `export-jsonl --include-paths`. The default redacted export is

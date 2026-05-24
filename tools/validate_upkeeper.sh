@@ -469,6 +469,7 @@ check_authority_control_docs_contract() {
   [[ -s docs/authority.md ]] || fail "docs/authority.md is missing"
   [[ -s docs/capability-profiles.md ]] || fail "docs/capability-profiles.md is missing"
   [[ -s docs/control-ledger.md ]] || fail "docs/control-ledger.md is missing"
+  [[ -s docs/policy-decisions.md ]] || fail "docs/policy-decisions.md is missing"
 
   grep -Fq "Authority Questions" docs/authority.md ||
     fail "authority model is missing the authority questions table"
@@ -479,7 +480,7 @@ check_authority_control_docs_contract() {
   grep -Fq "Control id" docs/control-ledger.md ||
     fail "control ledger is missing its control id table"
 
-  for control_id in AUTH-001 AUTH-002 AUTH-003 AUTH-004 AUTH-005 AUTH-006 AUTH-007 AUTH-008 AUTH-009 AUTH-010 AUTH-011 AUTH-012; do
+  for control_id in AUTH-001 AUTH-002 AUTH-003 AUTH-004 AUTH-005 AUTH-006 AUTH-007 AUTH-008 AUTH-009 AUTH-010 AUTH-011 AUTH-012 AUTH-013; do
     grep -Fq "| $control_id |" docs/control-ledger.md ||
       fail "control ledger missing $control_id"
   done
@@ -490,6 +491,168 @@ check_authority_control_docs_contract() {
     fail "security docs do not point to capability profiles"
   grep -Fq "docs/control-ledger.md" docs/compatibility.md ||
     fail "compatibility docs do not preserve the control-ledger contract"
+  grep -Fq "docs/policy-decisions.md" README.md ||
+    fail "README does not point to the policy decision schema"
+  grep -Fq "docs/policy-decisions.md" docs/authority.md ||
+    fail "authority docs do not point to policy decisions"
+  grep -Fq "docs/policy-decisions.md" docs/security.md ||
+    fail "security docs do not point to policy decisions"
+  grep -Fq "docs/policy-decisions.md" docs/compatibility.md ||
+    fail "compatibility docs do not preserve the policy decision schema contract"
+}
+
+check_policy_decisions_contract() {
+  log "checking structured policy decision contract"
+  [[ -s lib/upkeeper/policy_decisions.bash ]] || fail "policy decision module is missing or empty"
+  grep -Fq '"policy_decisions.bash"' Upkeeper || fail "module map does not load policy_decisions.bash"
+  grep -Fq '`policy_decisions.bash`' lib/upkeeper/README.md || fail "module README missing policy_decisions.bash ownership"
+  grep -Fq 'schema_version' docs/policy-decisions.md || fail "policy decision docs missing schema_version"
+  grep -Fq 'may_contact_backend' docs/policy-decisions.md || fail "policy decision docs missing backend-contact field"
+  grep -Fq 'may_write_source' docs/policy-decisions.md || fail "policy decision docs missing source-write field"
+  grep -Fq 'may_retarget' docs/policy-decisions.md || fail "policy decision docs missing retarget field"
+  grep -Fq 'denied_actions' docs/policy-decisions.md || fail "policy decision docs missing denied_actions field"
+  grep -Fq 'wrapper-local-control-plane' docs/capability-profiles.md || fail "capability profiles missing policy profile ids"
+  bash tests/policy_decisions_test.bash
+}
+
+check_schema_compatibility_contract() {
+  local term
+  local -a required_terms
+
+  log "checking schema compatibility contract"
+  required_terms=(
+    "## Compatibility Classes"
+    '`stable`'
+    '`experimental`'
+    '`deprecated`'
+    '`removed`'
+    "## Schema And Contract Version Rules"
+    "## Migration And Deprecation Rules"
+    "## Public Examples And Validation"
+    "## Lattice Import/Export Compatibility"
+    "schema_version"
+    "row_type"
+    "row_version"
+    "logical_key"
+    "payload_sha256"
+    "record conflicts instead of silently"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq "$term" docs/compatibility.md ||
+      fail "compatibility docs missing schema contract term: $term"
+  done
+
+  grep -Fq "Lattice export/import compatibility is governed by" docs/lattice.md ||
+    fail "Lattice docs do not point to compatibility contract"
+  grep -Fq "recorded as conflicts rather than overwritten silently" docs/lattice.md ||
+    fail "Lattice docs missing JSONL conflict compatibility rule"
+  grep -Fq "unclassified" README.md &&
+    grep -Fq "tracked public behavior defaults to stable" README.md ||
+    fail "README missing default stable compatibility rule"
+  grep -Fq "stable by default" docs/public-documentation-policy.md ||
+    fail "public documentation policy missing default stable compatibility rule"
+  grep -Fq "Prompt compatibility" prompts/README.md ||
+    fail "prompt index missing prompt compatibility section"
+  grep -Fq "UPKEEPER_PASS_RESULT" prompts/README.md ||
+    fail "prompt compatibility section missing pass-result marker contract"
+}
+
+check_threat_model_doctrine_contract() {
+  local term
+  local -a required_terms
+
+  log "checking threat model and degraded-mode doctrine contract"
+  required_terms=(
+    "## Threat Model"
+    "malicious model output"
+    "confused model output"
+    "buggy wrapper"
+    "bad config"
+    "operator mistake"
+    "filesystem weirdness"
+    "same-user process access"
+    "repo-local secret leakage"
+    "public docs leakage"
+    "quota/fallback weirdness"
+    "## Degraded-Mode Doctrine"
+    "age is missing"
+    "encrypted backup is required but unavailable"
+    "Landlock/bwrap is unavailable"
+    "Lattice is unavailable"
+    "validators are unavailable"
+    "dirty baseline exists"
+    "target is unsafe"
+    "## Override Doctrine"
+    "Operator override allowed"
+    "Codex cannot override"
+    "Evidence required"
+    "One-cycle"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq "$term" docs/security.md ||
+      fail "security docs missing threat/degraded doctrine term: $term"
+  done
+
+  grep -Fq "threat model, degraded-mode doctrine, and override doctrine" README.md ||
+    fail "README missing threat model and override doctrine pointer"
+  grep -Fq "threat model, degraded-mode doctrine, and override doctrine" docs/compatibility.md ||
+    fail "compatibility docs missing threat model and override doctrine contract"
+  grep -Fq "Threat/degraded-mode doctrine drift" docs/risk-register.md ||
+    fail "risk register missing threat/degraded doctrine drift risk"
+  grep -Fq "threat model and override doctrine" change_notes_2026.md ||
+    fail "change notes missing threat model and override doctrine entry"
+}
+
+check_preservation_policy_contract() {
+  local term
+  local -a required_terms
+
+  log "checking preservation policy and artifact privacy contract"
+  [[ -s docs/preservation-policy.md ]] ||
+    fail "preservation policy is missing or empty"
+
+  required_terms=(
+    "## Evidence Temperature"
+    "hot"
+    "warm"
+    "cold"
+    "frozen"
+    "trashable"
+    "## Artifact Privacy Classes"
+    "public-safe"
+    "private-operator"
+    "secret-adjacent"
+    "## Artifact Handling Matrix"
+    "Upkeeper.log"
+    "Backend transcripts"
+    "Selected-target backups"
+    "Lattice SQLite database rows"
+    "Lattice JSONL exports"
+    "Lattice recovery records"
+    "Automation obligations"
+    "Postmortem reports"
+    "## Redaction, Compression, Export, And Recovery"
+    "Repo loss and machine loss have different recovery expectations"
+    "## Promotion Rules"
+    "## Policy Drift"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq "$term" docs/preservation-policy.md ||
+      fail "preservation policy missing required term: $term"
+  done
+
+  grep -Fq "docs/preservation-policy.md" README.md ||
+    fail "README missing preservation policy pointer"
+  grep -Fq "docs/preservation-policy.md" docs/security.md ||
+    fail "security docs missing preservation policy pointer"
+  grep -Fq "docs/preservation-policy.md" docs/lattice.md ||
+    fail "Lattice docs missing preservation policy pointer"
+  grep -Fq "docs/preservation-policy.md" docs/compatibility.md ||
+    fail "compatibility docs missing preservation policy contract"
+  grep -Fq "Evidence preservation drift" docs/risk-register.md ||
+    fail "risk register missing preservation drift risk"
+  grep -Fq "preservation policy and artifact privacy" change_notes_2026.md ||
+    fail "change notes missing preservation policy entry"
 }
 
 check_syntax() {
@@ -631,6 +794,8 @@ check_backlog_launcher_contract() {
   grep -Fq 'BACKLOG_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota guardrail bypass on"
   grep -Fq 'BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota cooldown bypass on"
   grep -Fq 'quota preflight: burn bypass continuing despite stale quota evidence' orchestration/backlog.sh || fail "backlog launcher does not explain stale quota bypass"
+  grep -Fq 'backlog_open_stale_quota_obligation' orchestration/backlog.sh || fail "backlog launcher does not record stale quota evidence obligations"
+  grep -Fq 'recorded_non_perfect_health=1' tests/backlog_stale_quota_obligation_test.bash || fail "stale quota obligation test does not assert non-perfect health output"
   grep -Fq 'BACKLOG_OBLIGATION_RETRY_LIMIT="${BACKLOG_OBLIGATION_RETRY_LIMIT:-3}"' orchestration/backlog.sh || fail "backlog launcher does not define obligation retry limit"
   grep -Fq 'cooldown_deferred' orchestration/backlog.sh || fail "backlog launcher does not stop fresh issue work while every obligation is cooling down"
   grep -Fq 'BACKLOG_OBLIGATION_ISSUE_REPORTS="${BACKLOG_OBLIGATION_ISSUE_REPORTS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default obligation issue reports on"
@@ -1750,9 +1915,27 @@ check_backlog_batch_validation_obligation_contract() {
     fail "backlog batch validation does not route quick-validator failures through the obligation wrapper"
   grep -Fq 'backlog_open_batch_validation_obligation' orchestration/backlog.sh ||
     fail "backlog launcher cannot open obligations for local batch-validation failures"
+  grep -Fq 'backlog_batch_validation_repeated_failure' orchestration/backlog.sh ||
+    fail "backlog launcher cannot short-circuit repeated batch-validation failures"
   grep -Fq 'local_validation_failure' tests/backlog_batch_validation_obligation_test.bash ||
     fail "batch-validation obligation test does not assert local validation failure kind"
+  grep -Fq 'second identical validation failure reran command' tests/backlog_batch_validation_obligation_test.bash ||
+    fail "batch-validation obligation test does not prove retry guard avoids rerunning the failed command"
   bash tests/backlog_batch_validation_obligation_test.bash
+}
+
+check_backlog_local_ahead_guard_contract() {
+  log "checking backlog local-ahead branch push guard contract"
+
+  grep -Fq 'backlog_ensure_local_branch_pushed' orchestration/backlog.sh ||
+    fail "backlog launcher does not define a local-ahead branch push guard"
+  grep -Fq 'pre_batch_merge' orchestration/backlog.sh ||
+    fail "backlog launcher does not guard local-ahead branches before batch merge"
+  grep -Fq 'post_branch_sync' orchestration/backlog.sh ||
+    fail "backlog launcher does not guard local-ahead branches after branch sync"
+  [[ -s tests/backlog_local_ahead_guard_test.bash ]] ||
+    fail "backlog local-ahead guard tests are missing or empty"
+  bash tests/backlog_local_ahead_guard_test.bash
 }
 
 check_backlog_merge_steward_contract() {
@@ -1766,6 +1949,28 @@ check_backlog_merge_steward_contract() {
   grep -Fq "tools/backlog_merge_steward.py" docs/scripts/upkeeper.md || fail "operator guide missing merge steward command"
   grep -Fq "merge_ready=yes|no" docs/compatibility.md || fail "compatibility docs missing merge steward output contract"
   bash tests/backlog_merge_steward_test.bash
+}
+
+check_backlog_pr_watch_contract() {
+  log "checking backlog PR-watch helper contract"
+
+  [[ -x orchestration/watch-pr.sh ]] || fail "backlog PR watcher is missing or not executable"
+  [[ -s tests/watch_pr_test.bash ]] || fail "backlog PR watcher tests are missing or empty"
+  grep -Fq 'gh pr checks "$pr_number" --watch=false --json' orchestration/watch-pr.sh ||
+    fail "backlog PR watcher does not use local gh PR check inspection"
+  grep -Fq 'gh pr view --json number --jq' orchestration/watch-pr.sh ||
+    fail "backlog PR watcher cannot infer the current branch PR"
+  grep -Fq -- '--once' orchestration/watch-pr.sh ||
+    fail "backlog PR watcher does not expose one-shot mode"
+  grep -Fq -- '--interval' orchestration/watch-pr.sh ||
+    fail "backlog PR watcher does not expose polling interval control"
+  grep -Fq 'backlog_log_pr_watch_hint' orchestration/backlog.sh ||
+    fail "backlog launcher does not print the PR watcher helper after PR updates"
+  grep -Fq './orchestration/watch-pr.sh' docs/scripts/upkeeper.md ||
+    fail "operator guide missing PR watcher command"
+  grep -Fq 'status=pass|pending|fail' docs/compatibility.md ||
+    fail "compatibility docs missing PR watcher output contract"
+  bash tests/watch_pr_test.bash
 }
 
 check_backlog_triage_contract() {
@@ -1872,6 +2077,8 @@ EOF
   fi
   grep -Fq "quota blocked bucket=backend_usage_limit" "$temp_dir/hard-marker.err" ||
     fail "hard backend usage-limit marker did not drive quota hibernation"
+
+  bash tests/backlog_stale_quota_obligation_test.bash
 
   rm -r "$temp_dir"
 }
@@ -2327,7 +2534,7 @@ review_module_specs() {
         ;;
       p27)
         applicability="P27: not applicable"
-        terms="P27 Educational Debrief:;What went wrong:"
+        terms="P27 After-Action Review:;Outcome:;What went right:;What went wrong:;What was wasteful:;Reusable learning:"
         ;;
       p28)
         applicability="P28: not applicable"
@@ -2466,7 +2673,7 @@ check_prompt_template() {
   grep -Fq ".upkeeperignore" docs/lattice.md || fail "Lattice docs missing .upkeeperignore candidate boundary"
   grep -Fq "Reusable Asset Ownership" lib/upkeeper/README.md || fail "module README missing reusable asset ownership map"
   grep -Fq "code-comment clarity" README.md || fail "README missing P26 summary"
-  grep -Fq "educational debrief" README.md || fail "README missing P27 summary"
+  grep -Fq "after-action reviews" README.md || fail "README missing P27 summary"
   grep -Fq "unit-test harvesting" README.md || fail "README missing P28 summary"
   grep -Fq "reuse harvesting" README.md || fail "README missing P29 summary"
   grep -Fq "Stark Protocol" README.md || fail "README missing P30 summary"
@@ -3214,6 +3421,94 @@ check_negative_space_testing_contract() {
     fail "negative-space proof missing unsafe config preflight"
   grep -Fq "Genie Protocol requires sandboxed backend Codex execution" tests/wrapper_contract_test.bash ||
     fail "negative-space proof missing unsafe backend mode fixture"
+}
+
+check_serious_finding_repro_contract() {
+  local doc_path="docs/negative-space-testing.md"
+  local issue_template=".github/ISSUE_TEMPLATE/serious-finding.yml"
+  local pr_template=".github/pull_request_template.md"
+  local phrase
+
+  log "checking serious finding repro contract"
+
+  [[ -s "$issue_template" ]] || fail "serious finding issue template is missing or empty"
+  [[ -s "$pr_template" ]] || fail "pull request template is missing or empty"
+
+  for phrase in \
+    "Serious Finding Repro Contract" \
+    "security boundary" \
+    "filesystem writes/deletes" \
+    "Lattice import/export/recovery" \
+    "target selection" \
+    "quota/fallback behavior" \
+    "status marker parsing" \
+    "failure queue" \
+    "runtime cleanup" \
+    "cross-platform assumptions" \
+    "local deterministic repro fixture" \
+    "cloud audit repro" \
+    "explicit documented non-repro rationale" \
+    "For serious issues opened before this template existed, the backfill rule is" \
+    "Release review treats missing repro status" \
+    "pre-existing serious issues as unfinished validation work"; do
+    grep -Fq "$phrase" "$doc_path" || fail "serious finding repro policy missing phrase: $phrase"
+  done
+
+  grep -Fq "Repro fixture status" "$issue_template" ||
+    fail "serious finding issue template does not ask for repro fixture status"
+  grep -Fq "local deterministic repro fixture included or planned" "$issue_template" ||
+    fail "serious finding issue template missing local fixture status option"
+  grep -Fq "cloud audit repro included or planned" "$issue_template" ||
+    fail "serious finding issue template missing cloud audit status option"
+  grep -Fq "explicit non-repro rationale included" "$issue_template" ||
+    fail "serious finding issue template missing non-repro rationale option"
+  grep -Fq "Serious Finding Repro Status" "$pr_template" ||
+    fail "pull request template does not ask for serious finding repro status"
+  grep -Fq "Local deterministic repro fixture" "$pr_template" ||
+    fail "pull request template missing local fixture checkbox"
+  grep -Fq "Cloud audit repro" "$pr_template" ||
+    fail "pull request template missing cloud audit checkbox"
+  grep -Fq "Explicit non-repro rationale" "$pr_template" ||
+    fail "pull request template missing non-repro rationale checkbox"
+  grep -Fq "Serious security, data-integrity" docs/release-checklist.md ||
+    fail "release checklist missing serious finding repro release gate"
+}
+
+check_after_action_review_contract() {
+  local prompt_path="prompts/p27-educational-debrief-review.md"
+  local pr_template=".github/pull_request_template.md"
+  local phrase
+
+  log "checking after-action review contract"
+
+  [[ -s "$prompt_path" ]] || fail "P27 after-action review prompt is missing or empty"
+  [[ -s "$pr_template" ]] || fail "pull request template is missing or empty"
+
+  for phrase in \
+    "# P27 After-Action Review" \
+    "Self-optimization is part of this module" \
+    "outcome summary" \
+    "what went right" \
+    "what went wrong" \
+    "what was wasteful" \
+    "whether the system learned anything reusable" \
+    "P27 After-Action Review:" \
+    "Outcome:" \
+    "What went right:" \
+    "What went wrong:" \
+    "What was wasteful:" \
+    "What can improve next time:" \
+    "Reusable learning:"; do
+    grep -Fq "$phrase" "$prompt_path" "$pr_template" docs/public-documentation-policy.md README.md ||
+      fail "after-action review contract missing phrase: $phrase"
+  done
+
+  grep -Fq "after-action review pass" docs/public-documentation-policy.md ||
+    fail "public documentation policy missing after-action review wording"
+  grep -Fq "P27 review module for concise saved after-action reviews" README.md ||
+    fail "README missing after-action review prompt summary"
+  grep -Fq "central P27 after-action review" docs/scripts/upkeeper.md ||
+    fail "operator guide missing P27 after-action wording"
 }
 
 check_client_link_tools_contract() {
@@ -6686,6 +6981,10 @@ run_check prompt_public_lint_contract check_prompt_public_lint_contract
 run_check fault_injection_registry_contract check_fault_injection_registry_contract
 run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contract
 run_check authority_control_docs_contract check_authority_control_docs_contract
+run_check policy_decisions_contract check_policy_decisions_contract
+run_check schema_compatibility_contract check_schema_compatibility_contract
+run_check threat_model_doctrine_contract check_threat_model_doctrine_contract
+run_check preservation_policy_contract check_preservation_policy_contract
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
@@ -6694,6 +6993,8 @@ run_check dependency_guidance_contract check_dependency_guidance_contract
 run_check release_readiness_docs_contract check_release_readiness_docs_contract
 run_check governance_docs_contract check_governance_docs_contract
 run_check negative_space_testing_contract check_negative_space_testing_contract
+run_check serious_finding_repro_contract check_serious_finding_repro_contract
+run_check after_action_review_contract check_after_action_review_contract
 run_check client_link_tools_contract check_client_link_tools_contract
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
 run_check test_invocation_mode_contract check_test_invocation_mode_contract
@@ -6721,7 +7022,9 @@ run_check automation_obligation_churn_contract check_automation_obligation_churn
 run_check automation_obligation_issue_report_contract check_automation_obligation_issue_report_contract
 run_check backlog_launcher_contract check_backlog_launcher_contract
 run_check backlog_batch_validation_obligation_contract check_backlog_batch_validation_obligation_contract
+run_check backlog_local_ahead_guard_contract check_backlog_local_ahead_guard_contract
 run_check backlog_merge_steward_contract check_backlog_merge_steward_contract
+run_check backlog_pr_watch_contract check_backlog_pr_watch_contract
 run_check backlog_triage_contract check_backlog_triage_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract

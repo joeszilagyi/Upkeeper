@@ -18,21 +18,30 @@ source "$ROOT_DIR/orchestration/backlog.sh"
 
 write_failing_validator() {
   local script_path="$1"
+  local counter_path="$2"
 
   cat >"$script_path" <<'SH'
 #!/usr/bin/env bash
+counter_path="${1:?counter path required}"
+count=0
+if [[ -f "$counter_path" ]]; then
+  count="$(<"$counter_path")"
+fi
+printf '%s\n' "$((count + 1))" >"$counter_path"
 printf '%s\n' 'validate_upkeeper: ERROR: backlog launcher job start summary did not emit two green bars'
 exit 64
 SH
+  printf '0\n' >"$counter_path"
 }
 
 test_batch_validation_failure_opens_and_updates_obligation() {
-  local validator output rc record_count record_file selected_json
+  local validator seen_file output rc record_count record_file selected_json
 
   validator="$TEST_TMP_ROOT/fail-validator.sh"
-  write_failing_validator "$validator"
+  seen_file="$TEST_TMP_ROOT/fail-validator.seen"
+  write_failing_validator "$validator" "$seen_file"
 
-  if output="$(run_batch_validation_phase "batch_validation.quick_validator" "quick validator" bash "$validator" 2>&1)"; then
+  if output="$(run_batch_validation_phase "batch_validation.quick_validator" "quick validator" bash "$validator" "$seen_file" 2>&1)"; then
     rc=0
   else
     rc=$?
@@ -40,6 +49,10 @@ test_batch_validation_failure_opens_and_updates_obligation() {
   [[ "$rc" -eq 64 ]] || fail "failing validation phase exited $rc, expected 64"
   grep -Fq "automation obligation opened for batch validation failure" <<<"$output" ||
     fail "batch validation failure did not report obligation creation"
+  grep -Fq "batch validation retry guard recorded" <<<"$output" ||
+    fail "batch validation failure did not record retry guard marker"
+  [[ "$(<"$seen_file")" == "1" ]] ||
+    fail "failing validator ran $(<"$seen_file") times after first failure, expected 1"
 
   record_count="$(find "$BACKLOG_OBLIGATION_DIR/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
   [[ "$record_count" == "1" ]] || fail "batch validation failure wrote $record_count obligations, expected 1"
@@ -57,16 +70,24 @@ test_batch_validation_failure_opens_and_updates_obligation() {
   jq -e '.evidence.tail[] | select(contains("validate_upkeeper: ERROR"))' "$record_file" >/dev/null ||
     fail "obligation did not capture bounded validation output evidence"
 
-  if run_batch_validation_phase "batch_validation.quick_validator" "quick validator" bash "$validator" >/dev/null 2>&1; then
+  if output="$(run_batch_validation_phase "batch_validation.quick_validator" "quick validator" bash "$validator" "$seen_file" 2>&1)"; then
     rc=0
   else
     rc=$?
   fi
   [[ "$rc" -eq 64 ]] || fail "second failing validation phase exited $rc, expected 64"
+  grep -Fq "batch validation retry guard repeated_failure" <<<"$output" ||
+    fail "second identical validation failure did not report retry guard fingerprint"
+  grep -Fq "skipped because identical prior failure is already under obligation custody" <<<"$output" ||
+    fail "second identical validation failure did not report validation skip"
+  [[ "$(<"$seen_file")" == "1" ]] ||
+    fail "second identical validation failure reran command; seen count is $(<"$seen_file")"
   record_count="$(find "$BACKLOG_OBLIGATION_DIR/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
   [[ "$record_count" == "1" ]] || fail "duplicate validation failure wrote $record_count obligations, expected 1"
   [[ "$(jq -r '.seen_count' "$record_file")" == "2" ]] ||
-    fail "duplicate validation failure did not update seen_count"
+    fail "duplicate validation failure retry guard did not update seen_count"
+  [[ "$(jq -r '.retry_guard_repeated' "$record_file")" == "true" ]] ||
+    fail "duplicate validation failure did not mark retry guard custody"
 
   selected_json="$(backlog_select_open_obligation_json)"
   [[ "$(jq -r '.status' <<<"$selected_json")" == "ok" ]] ||

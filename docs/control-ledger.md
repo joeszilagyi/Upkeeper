@@ -24,6 +24,7 @@ Status values:
 | AUTH-010 | Lattice is additive evidence and not sole custody authority. | `lib/upkeeper/lattice.bash`, `tools/upkeeper_lattice.py`, `docs/known-issues.md` | `tests/lattice_test.bash`, `tools/validate_upkeeper.sh --quick` | SQLite rows, recovery JSONL, degraded-mode warning records | active |
 | AUTH-011 | Machine health and obligations outrank new workload. | backlog obligation reconciliation and startup anomaly custody | `tools/validate_upkeeper.sh --quick`, obligation and anomaly custody checks | obligation JSON, issue-ready reports, backlog log custody summaries | active |
 | AUTH-012 | Shell-sourced config is trusted local input only. | config path trust checks and public docs | `tools/validate_upkeeper.sh --quick`, config-file support checks | config load logs, config source hash, explicit config failures | active |
+| AUTH-013 | Local policy decisions have a schema separate from prompt prose. | `lib/upkeeper/policy_decisions.bash`, `docs/policy-decisions.md` | `tests/policy_decisions_test.bash`, `tools/validate_upkeeper.sh --quick` | schema-v1 decision JSON, denied action ids, reasons, evidence markers | active |
 
 ## Maintenance Rule
 

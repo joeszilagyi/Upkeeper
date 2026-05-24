@@ -34,6 +34,256 @@ Validation:
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
 
+## Preservation Policy And Artifact Privacy
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #220 by defining preservation policy, evidence temperature, and
+  artifact privacy classes for Upkeeper evidence
+- make the policy part of the tracked security, Lattice, and compatibility
+  contract
+- add deterministic validation so the policy cannot silently drift
+
+Constraints:
+- no backend Codex calls
+- document existing evidence handling without weakening privacy defaults
+- keep private local evidence out of committed artifacts by default
+
+Files likely touched:
+- `docs/preservation-policy.md`
+- `docs/security.md`
+- `docs/lattice.md`
+- `docs/compatibility.md`
+- `README.md`
+- `docs/risk-register.md`
+- `tools/check_public_docs.sh`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/watch-pr.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
+## Threat Model And Degraded-Mode Doctrine
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #221 by documenting Upkeeper's explicit threat model,
+  degraded-mode behavior, and override rules
+- make the doctrine part of the tracked security and compatibility contract
+- add deterministic validation so the contract cannot silently drift
+
+Constraints:
+- no backend Codex calls
+- document existing doctrine without weakening runtime safety gates
+- keep override authority local and operator-visible; Codex cannot override
+  safety blocks
+
+Files likely touched:
+- `docs/security.md`
+- `docs/compatibility.md`
+- `README.md`
+- `docs/risk-register.md`
+- `tools/check_public_docs.sh`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/watch-pr.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
+## Stale Quota Evidence Custody
+
+Status: completed and merged
+
+Goal:
+- close issue #419 by making expired-reset stale quota evidence visible
+  machine health instead of an ignorable burn-bypass warning
+- record a structured, deduplicated automation obligation when stale quota
+  evidence cannot be reconciled before continuing
+- retire that obligation automatically once current non-stale quota evidence is
+  observed
+
+Constraints:
+- no backend Codex calls
+- keep quota evidence private and redact raw session paths from obligations
+- preserve burn-mode ability to continue only after non-perfect health is
+  recorded
+- keep repeated stale evidence to one fingerprinted obligation
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tests/backlog_stale_quota_obligation_test.bash`
+- `tools/validate_upkeeper.sh`
+- operator-facing docs/help/release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_stale_quota_obligation_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Batch Validation Retry Guard
+
+Status: completed and merged
+
+Goal:
+- close issue #413 by preventing repeated identical batch-validation failures
+  from rerunning the whole merge validation suite on the same branch/head
+- keep the first failure evidence in a structured automation obligation
+- make the next identical retry fail closed from local custody state with a
+  clear retry fingerprint and repair-obligation message
+
+Constraints:
+- no backend Codex calls
+- keep retry detection deterministic and private under the backlog state root
+- remove stale retry markers when branch/head or command context changes
+- preserve the existing fail-closed validation exit status
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tests/backlog_batch_validation_obligation_test.bash`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_batch_validation_obligation_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Local PR Check Watcher
+
+Status: completed and merged
+
+Goal:
+- close issue #402 with a deterministic local PR-check watcher for backlog and
+  manual restart boundaries
+- support explicit PR numbers and current-branch PR inference without backend
+  Codex or repository mutation
+- make backlog print the watcher command after creating or pushing PR updates
+
+Constraints:
+- no backend Codex calls
+- validation must fake `gh` instead of requiring live GitHub network
+- keep output stable enough for humans and later assistive tooling
+
+Files likely touched:
+- `orchestration/watch-pr.sh`
+- `orchestration/backlog.sh`
+- `tests/watch_pr_test.bash`
+- `tools/validate_upkeeper.sh`
+- operator-facing docs/release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/watch_pr_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Serious Finding Repro Fixtures
+
+Status: completed and merged
+
+Goal:
+- close issue #139 by making serious security/data-integrity/control-plane
+  findings require deterministic repro proof or an explicit non-repro rationale
+- add GitHub issue and PR checklist hooks so new serious findings do not remain
+  prose-only
+- add quick-validator coverage for the policy and templates
+
+Constraints:
+- no backend Codex calls
+- keep the contract lightweight enough for docs-only and governance changes
+- allow explicit non-repro rationale when reproducing a finding would be unsafe
+  or too destructive
+
+Files likely touched:
+- `docs/negative-space-testing.md`
+- `docs/release-checklist.md`
+- `.github/ISSUE_TEMPLATE/*`
+- `.github/pull_request_template.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## After-Action Review Contract
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #335 by making after-action review a first-class Upkeeper
+  contract instead of a failure-only debrief habit
+- update P27, operator docs, and the PR template to capture outcome, what went
+  right, what went wrong, waste, next improvement, and reusable learning
+- add quick-validator coverage so the required shape cannot silently drift
+
+Constraints:
+- no backend Codex calls
+- keep after-action review concise; do not require tracked docs for every run
+- preserve `P27: not applicable` for routine edits with no reusable lesson
+
+Files likely touched:
+- `prompts/p27-educational-debrief-review.md`
+- `.github/pull_request_template.md`
+- `docs/public-documentation-policy.md`
+- `docs/scripts/upkeeper.md`
+- `README.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Backlog Local-Ahead Branch Guard
+
+Status: completed and merged
+
+Goal:
+- close issue #416 by ensuring clean local commits on an active backlog PR
+  branch are pushed before PR check or merge decisions
+- fail closed with a clear branch-state summary when the branch is dirty,
+  missing its remote ref, or diverged from origin
+- prevent batch merge from reasoning from green checks on an older remote head
+
+Constraints:
+- no backend Codex calls
+- preserve dirty local work instead of pushing ambiguous state
+- keep detection local and deterministic with Git refs and ahead/behind counts
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tests/backlog_local_ahead_guard_test.bash`
+- `tools/validate_upkeeper.sh`
+- operator-facing docs/release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_local_ahead_guard_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Batch Validation Failure Obligations
 
 Status: completed locally; pending PR/CI
@@ -4449,6 +4699,81 @@ Validation:
 - `tools/validate_upkeeper.sh --quick`
 - `tools/validate_upkeeper.sh --full`
 - `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Structured Policy Decisions
+
+Status: in progress
+
+Goal:
+- close issue #222 by introducing a small tracked policy-decision schema that
+  records local control-plane decisions as data instead of only prompt prose
+- add a shell helper that can emit and validate schema-v1 decisions without a
+  new dependency beyond existing `jq`
+- document which fields are stable and how future runtime gates should use the
+  schema before backend contact
+
+Constraints:
+- keep this as the first narrow schema and validation contract, not a broad
+  policy engine or OPA-style dependency
+- do not launch real backend Codex during validation
+- preserve the current authority, capability-profile, and control-ledger docs
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/policy_decisions.bash`
+- `lib/upkeeper/README.md`
+- `docs/policy-decisions.md`
+- `docs/capability-profiles.md`
+- `docs/control-ledger.md`
+- `docs/security.md`
+- `docs/compatibility.md`
+- `README.md`
+- `tests/policy_decisions_test.bash`
+- `tools/validate_upkeeper.sh`
+- `tools/check_public_docs.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/watch-pr.sh`
+- `bash tests/policy_decisions_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
+## Compatibility Promise For Schemas And Contracts
+
+Status: in progress
+
+Goal:
+- close issue #228 by defining explicit compatibility classes for Upkeeper
+  schemas, prompt contracts, docs/help, and Lattice import/export outputs
+- document schema-version, migration, deprecation-warning, public-example, and
+  Lattice import/export expectations in the binding compatibility surface
+- add deterministic validation so the compatibility promise cannot drift out of
+  public docs silently
+
+Constraints:
+- documentation and validation only; do not change runtime schema behavior in
+  this patch
+- keep backward-compatible behavior as the default
+- avoid broad validation or backend Codex calls
+
+Files likely touched:
+- `docs/compatibility.md`
+- `docs/lattice.md`
+- `docs/public-documentation-policy.md`
+- `prompts/README.md`
+- `README.md`
+- `tools/check_public_docs.sh`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
 - `git diff --check`
 
 ## Backlog Quality Gates

@@ -13,6 +13,8 @@ operator trust. GitHub issues remain the detailed work tracker.
 | Quota snapshot misinterpretation | Local session evidence could be stale or misread, causing bad stop/defer choices | Quota guardrails are advisory and log snapshot identity/age; validation covers parser contracts | Open |
 | Lattice integrity blockers | Evidence ledger could misattribute or corrupt state if treated as authority too soon | Known issues and roadmap warn not to treat Lattice as sole custody authority yet | Open |
 | Parallel worker collisions | Multiple automation workers could contend for a checkout or PR | Active-lock and backlog ownership checks serialize one checkout; parallel work needs isolated worktrees | Open |
+| Threat/degraded-mode doctrine drift | Operators could misunderstand whether a safety block is covered, degraded, overridable, or out of scope | `docs/security.md` now tracks threat coverage, degraded-mode behavior, and override rules; quick validation checks the required doctrine terms | Mitigated |
+| Evidence preservation drift | Logs, transcripts, backups, Lattice rows, exports, and recovery artifacts could be kept, pruned, or published with inconsistent privacy assumptions | `docs/preservation-policy.md` defines evidence temperature, artifact privacy classes, and promotion rules; quick validation checks the required policy terms | Mitigated |
 
 ## Maintenance
 

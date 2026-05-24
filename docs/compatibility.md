@@ -17,6 +17,88 @@ Examples include refusing a risky outdated TLS/SSL behavior, retiring a wrapper
 path that can target the wrong repository, or rejecting an input format that can
 hide malformed operator data as absence.
 
+## Compatibility Classes
+
+Every operator-visible schema, prompt marker, output field, doc/help contract,
+and Lattice import/export field belongs to one of these classes:
+
+| Class | Meaning | Change rule |
+| --- | --- | --- |
+| `stable` | Existing operators, scripts, tests, docs, or downstream tools may rely on it. | Preserve it, or add an alias/shim/migration path before changing it. |
+| `experimental` | Public enough to inspect, but not promised as long-term automation surface. | May change with a dated change note and clear docs; do not silently promote to `stable`. |
+| `deprecated` | Still accepted, but no longer preferred. | Keep a warning, alias, or migration path until a documented removal date or replacement condition. |
+| `removed` | No longer accepted or emitted. | Document the removal reason, migration path, and safety/compatibility rationale. |
+
+Unclassified public behavior is treated as `stable` by default once it appears
+in tracked docs, help text, prompts, JSON output, Lattice export rows, or
+release notes. New experimental behavior must say it is experimental at the
+point of documentation or output.
+
+## Schema And Contract Version Rules
+
+Schema and contract versions are compatibility boundaries, not decoration:
+
+- JSON schemas that expose a `schema_version` or named schema id must keep
+  existing field names, field types, and meanings within the same version.
+- Adding optional fields is compatible when existing readers can ignore them.
+- Removing fields, renaming fields, changing field types, or changing enum
+  meanings requires a new schema version or a documented compatibility shim.
+- Prompt markers such as `UPKEEPER_STATUS`, `UPKEEPER_LOG_REVIEW`,
+  `UPKEEPER_PASS_RESULT`, `CODEX_POSTMORTEM_STATUS`, and review-module ids are
+  stable contracts. New prompt wording can change, but parseable marker names,
+  status values, and review-module meanings must remain compatible.
+- Documentation and `./Upkeeper --help` are a paired contract. Operator-facing
+  behavior changes should update help, `docs/scripts/upkeeper.md`, README or
+  compatibility notes, and change notes in the same committed state.
+- Lattice SQLite schema changes must advance or explicitly preserve the
+  tracked schema/user-version contract, and JSONL exports must remain readable
+  by same-version importers.
+
+## Migration And Deprecation Rules
+
+When a stable surface changes:
+
+- Prefer an alias, shim, or normalizer over immediate rejection.
+- Emit an operator-visible warning for deprecated inputs when practical.
+- State the replacement field, flag, marker, or command in tracked docs.
+- Keep deterministic validation for both old and new spellings during the
+  migration window.
+- If compatibility is unsafe or impossible, document the exact break under
+  the breaking-change requirements below.
+
+## Public Examples And Validation
+
+Public examples are part of the compatibility surface when they show commands,
+JSON fields, prompt markers, Lattice rows, config keys, or output snippets.
+Examples must stay executable or structurally truthful enough for local
+validation to check. The minimum local proof is one of:
+
+- `tools/check_public_docs.sh --quick` for public documentation links, help,
+  and required wording.
+- `tools/validate_upkeeper.sh --smoke` for fast schema/help/prompt drift.
+- `tools/validate_upkeeper.sh --quick` for fixture-backed parser, marker,
+  issue-workflow, Lattice, and authority contracts.
+- Focused `tests/*.bash` or Python fixtures when a public example has a
+  concrete input/output shape.
+
+## Lattice Import/Export Compatibility
+
+Lattice has two compatibility layers:
+
+- The SQLite database schema is local runtime state. Upkeeper may migrate it,
+  but the tracked schema version and `PRAGMA user_version` must describe the
+  current expected shape.
+- JSONL export/import is the portable exchange surface. Export rows must keep
+  `schema_version`, `row_type`, `row_version`, `logical_key`, source identity,
+  repo identity, payload, `payload_sha256`, and exported epoch meanings stable
+  within the same row version. Import must remain idempotent for duplicate
+  logical-key/payload-hash pairs and must record conflicts instead of silently
+  overwriting different payloads.
+
+Redaction defaults are part of compatibility. Default JSONL exports redact raw
+payload fields, path-bearing fields, contributor identity, and commit subjects
+unless the operator asks for disclosure with the documented include flags.
+
 ## Binding Feature Surface
 
 Future changes should preserve this operator-visible surface as far as possible:
@@ -57,7 +139,10 @@ Future changes should preserve this operator-visible surface as far as possible:
   default: Lattice is required, encrypted pre-contact backup is required, and
   the Codex sandbox mode is pinned before launch. Quota stop floors are set to
   zero, wrapper quota guardrail stops are bypassed, and persisted quota cooldown
-  markers are bypassed for those launcher runs.
+  markers are bypassed for those launcher runs. Backlog quota burn bypass still
+  records expired-reset stale quota evidence as a local `stale_quota_evidence`
+  automation obligation before continuing, and resolves that obligation when
+  current non-stale quota evidence appears.
 - `ChimneySweep` owns pre-model issue ranking for repair automation: clean
   actionable queues exit 25, security issues outrank data-integrity issues,
   data-integrity issues outrank the general queue, and the selected issue is
@@ -87,11 +172,41 @@ Future changes should preserve this operator-visible surface as far as possible:
   output tail, stable fingerprint, likely owner path, and required proof command
   before the launcher exits. The next backlog invocation must select that
   obligation before retrying the merge or selecting fresh issue work.
+- Backlog PR check and merge decisions are made against the current backlog
+  branch head. If the local backlog branch is clean and ahead of
+  `origin/<branch>`, the launcher pushes it before PR checks or merge. Dirty,
+  missing-remote, or diverged local-ahead states fail closed with an explicit
+  branch-state reason.
+- `./orchestration/watch-pr.sh [PR_NUMBER]` is the stable local PR-check watch
+  command for backlog/manual boundaries. With no PR number it infers the
+  current branch PR. It emits timestamped `status=pass|pending|fail` summaries
+  with check names, conclusions, and URLs when available; exits `0` on pass,
+  `1` on failed or unreadable checks, and `2` for pending checks when `--once`
+  is used. The command only inspects GitHub PR checks and does not launch
+  backend Codex or mutate the repository.
 - The tracked authority model remains part of the public contract. Changes to
   target authority, source-write authority, shell execution, quota spend,
   backup restore, evidence pruning, GitHub issue effects, Lattice writes, or
   runtime evidence reads should update `docs/authority.md`,
-  `docs/capability-profiles.md`, and `docs/control-ledger.md`.
+  `docs/capability-profiles.md`, `docs/control-ledger.md`, and
+  `docs/policy-decisions.md`.
+- The threat model, degraded-mode doctrine, and override doctrine in
+  `docs/security.md` are part of the stable security contract. Changes to
+  model-output trust, wrapper self-repair, config trust, filesystem safety,
+  same-user access, secret handling, public documentation exposure, quota,
+  fallback, encrypted backup, Lattice, validator, dirty-baseline, or unsafe
+  target behavior should update that doctrine and validation coverage in the
+  same patch.
+- The preservation policy in `docs/preservation-policy.md` is part of the
+  stable evidence contract. Changes to evidence temperature, artifact privacy
+  classes, log/transcript retention, backup recovery, Lattice exports, recovery
+  artifacts, obligation evidence, redaction defaults, compression, pruning, or
+  public evidence promotion should update that policy and validation coverage
+  in the same patch.
+- Policy decision schema-v1 field names and types are stable. Future policy
+  decision records may add optional fields, but removing, renaming, or changing
+  the meaning of existing fields requires a new schema version and validation
+  coverage.
 - Backend Codex issue workflows use the Genie Protocol boundary. The wrapper
   owns GitHub reads and writes, passes only wrapper-fetched issue evidence plus
   local artifact paths into the model, strips GitHub token variables from the

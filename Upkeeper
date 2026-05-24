@@ -694,6 +694,43 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
 done
  unset upkeeper_module
 
+# Pre-contact backup computes related HMACs from command substitutions. Keep a
+# parent-process key so those subshells do not generate inconsistent fallbacks
+# when the persistent redaction key cannot be written.
+UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="${UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE:-}"
+
+upkeeper_precontact_backup_hmac_key_material() {
+  if [[ -n "$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE" ]]; then
+    printf '%s' "$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE"
+    return 0
+  fi
+
+  if declare -F upkeeper_redaction_key_material >/dev/null 2>&1; then
+    UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="$(upkeeper_redaction_key_material)"
+  else
+    UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="${UPKEEPER_REDACTION_KEY:-precontact-backup-test-key}"
+  fi
+  printf '%s' "$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE"
+}
+
+precontact_backup_hmac_text() {
+  local namespace="$1"
+  local value="$2"
+  local key
+
+  upkeeper_precontact_backup_hmac_key_material >/dev/null
+  key="$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE"
+  python3 - "$key" "precontact_backup.$namespace" "$value" <<'PY' 2>/dev/null || printf 'unknown'
+import hashlib
+import hmac
+import sys
+
+key, namespace, value = sys.argv[1:4]
+material = f"{namespace}\0{value}".encode("utf-8", "surrogateescape")
+print(hmac.new(key.encode("utf-8", "surrogateescape"), material, hashlib.sha256).hexdigest())
+PY
+}
+
 upkeeper_tool_failure_queue_open_custody_log() {
   local level="$1"
   local message="$2"
@@ -1688,6 +1725,75 @@ PY
 # after "STOPPED_ON_BLOCKER for ..." was mistaken for the reviewed file path.
 upkeeper_internal_review_summary_self_test_requested() {
   config_truthy "${UPKEEPER_INTERNAL_REVIEW_SUMMARY_SELF_TEST:-0}"
+}
+
+upkeeper_internal_precontact_backup_hmac_self_test_requested() {
+  config_truthy "${UPKEEPER_INTERNAL_PRECONTACT_BACKUP_HMAC_SELF_TEST:-0}"
+}
+
+upkeeper_internal_precontact_backup_hmac_self_test() {
+  local test_root metadata_file target_file payload_file
+  local old_cache old_key_file old_key old_lattice_key content_sha expected payload_sha actual
+
+  if ! test_root="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-precontact-hmac-self-test.XXXXXX")"; then
+    printf 'precontact_backup_hmac_self_test=fail reason=mktemp_failed\n' >&2
+    return 2
+  fi
+
+  metadata_file="$test_root/metadata.json"
+  target_file="$test_root/target.txt"
+  payload_file="$test_root/payload.bin"
+  old_cache="${UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE:-}"
+  old_key_file="${UPKEEPER_REDACTION_KEY_FILE:-}"
+  old_key="${UPKEEPER_REDACTION_KEY:-}"
+  old_lattice_key="${UPKEEPER_LATTICE_REDACTION_KEY:-}"
+
+  UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE=""
+  UPKEEPER_REDACTION_KEY_FILE="/proc/upkeeper-redaction.key"
+  unset UPKEEPER_REDACTION_KEY
+  unset UPKEEPER_LATTICE_REDACTION_KEY
+  upkeeper_precontact_backup_hmac_key_material >/dev/null
+
+  printf 'target content\n' >"$target_file"
+  content_sha="$(precontact_backup_sha256_file "$target_file")" || {
+    rm -rf -- "$test_root"
+    printf 'precontact_backup_hmac_self_test=fail reason=target_hash_failed\n' >&2
+    return 2
+  }
+  expected="$(precontact_backup_content_hmac "$content_sha")"
+  printf '{"content_hmac": "%s"}\n' "$expected" >"$metadata_file"
+  payload_sha="$(upkeeper_precontact_backup_write_payload_and_sha "$metadata_file" "$target_file" "$payload_file")" || {
+    rm -rf -- "$test_root"
+    printf 'precontact_backup_hmac_self_test=fail reason=payload_write_failed\n' >&2
+    return 2
+  }
+  actual="$(precontact_backup_content_hmac "$payload_sha")"
+
+  UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="$old_cache"
+  if [[ -n "$old_key_file" ]]; then
+    UPKEEPER_REDACTION_KEY_FILE="$old_key_file"
+  else
+    unset UPKEEPER_REDACTION_KEY_FILE
+  fi
+  if [[ -n "$old_key" ]]; then
+    UPKEEPER_REDACTION_KEY="$old_key"
+  else
+    unset UPKEEPER_REDACTION_KEY
+  fi
+  if [[ -n "$old_lattice_key" ]]; then
+    UPKEEPER_LATTICE_REDACTION_KEY="$old_lattice_key"
+  else
+    unset UPKEEPER_LATTICE_REDACTION_KEY
+  fi
+
+  rm -rf -- "$test_root"
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'precontact_backup_hmac_self_test=fail reason=hmac_unstable\n' >&2
+    return 1
+  fi
+
+  printf 'precontact_backup_hmac_self_test=pass\n'
+  return 0
 }
 
 upkeeper_internal_review_summary_self_test() {
@@ -6215,6 +6321,10 @@ main() {
     upkeeper_internal_review_summary_self_test
     return $?
   fi
+  if upkeeper_internal_precontact_backup_hmac_self_test_requested; then
+    upkeeper_internal_precontact_backup_hmac_self_test
+    return $?
+  fi
   ensure_log_parent
   ensure_log_writable_or_exit "startup"
   require_commands
@@ -6259,6 +6369,7 @@ main() {
 
   log_line "INFO" "$(cycle_start_log_message "$direct_parent_pid" "$direct_parent_comm" "$direct_parent_start_fingerprint" "$loop_parent_pid" "$loop_parent_comm" "$loop_parent_start_fingerprint" "$loop_parent_override" "$wrapper_start_fingerprint")"
   automation_record_cycle_start || log_line "WARN" "automation.run_record.start_failed path=$(shell_quote "${RUN_AUTOMATION_RECORD_FILE:-unknown}")"
+  upkeeper_precontact_backup_hmac_key_material >/dev/null
   precontact_backup_machine_preflight_or_exit
   resolve_issue_fix_next_or_exit
   if ! run_issue_docs_contract_checks; then

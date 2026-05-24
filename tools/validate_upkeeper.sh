@@ -5,6 +5,8 @@ SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 TOOLS_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 ROOT_DIR="$(cd -- "$TOOLS_DIR/.." && pwd)"
 
+source "$TOOLS_DIR/quota_session_fixtures.sh"
+
 MODE="quick"
 VALIDATION_PROFILE="0"
 VALIDATION_INTEGRATION_TIMEOUT_SECONDS="${VALIDATION_INTEGRATION_TIMEOUT_SECONDS:-300}"
@@ -2478,53 +2480,8 @@ write_validation_quota_snapshot() {
   local primary_reset_offset="${3:-3600}"
   local secondary_reset_offset="${4:-86400}"
 
-  python3 - "$session_file" "$model" "$primary_reset_offset" "$secondary_reset_offset" <<'PY'
-import json
-import sys
-import time
-from datetime import datetime, timezone
-from pathlib import Path
-
-path = Path(sys.argv[1])
-model = sys.argv[2]
-primary_reset_offset = int(sys.argv[3])
-secondary_reset_offset = int(sys.argv[4])
-path.parent.mkdir(parents=True, exist_ok=True)
-if "sessions" in path.parts:
-    session_root = Path(*path.parts[: path.parts.index("sessions") + 1])
-    session_root.chmod(0o700)
-now = int(time.time())
-event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
-rows = [
-    {"type": "turn_context", "payload": {"model": model}},
-    {
-        "timestamp": event_timestamp,
-        "type": "event_msg",
-        "payload": {
-            "type": "token_count",
-            "rate_limits": {
-                "limit_id": f"validation-{model}",
-                "limit_name": f"{model} validation",
-                "plan_type": "validation",
-                "rate_limit_reached_type": None,
-                "primary": {
-                    "used_percent": 10.0,
-                    "window_minutes": 300,
-                    "resets_at": now + primary_reset_offset,
-                },
-                "secondary": {
-                    "used_percent": 10.0,
-                    "window_minutes": 10080,
-                    "resets_at": now + secondary_reset_offset,
-                },
-            },
-        },
-    },
-]
-with path.open("w", encoding="utf-8") as handle:
-    for row in rows:
-        print(json.dumps(row, separators=(",", ":")), file=handle)
-PY
+  upkeeper_fixture_write_valid_current_session_snapshot \
+    "$session_file" "$model" validation validation "$primary_reset_offset" "$secondary_reset_offset"
 }
 
 check_cycle_start_log_contract() {
@@ -5149,6 +5106,67 @@ check_status_session_jsonl_contract() {
   rm -r "$temp_dir"
 }
 
+check_quota_session_fixture_contract() {
+  local temp_dir session_file state diagnostics task_complete state_json
+
+  log "checking reusable quota/session fixture contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-quota-session-fixtures.XXXXXX)"
+
+  quota_fixture_state_json() {
+    local codex_home="$1"
+    local model="${2:-gpt-5.5}"
+
+    CODEX_HOME_DIR="$codex_home" CODEX_SESSION_SCAN_LIMIT=20 LOG_FILE="$temp_dir/quota.log" CODEX_MODEL="$model" \
+      bash -lc 'cd "$1"; source lib/upkeeper/quota_state.bash; quota_state_json "$2"' bash "$ROOT_DIR" "$model"
+  }
+
+  session_file="$temp_dir/valid/sessions/2026/05/07/current.jsonl"
+  upkeeper_fixture_write_valid_current_session_snapshot "$session_file" "gpt-5.5"
+  state_json="$(quota_fixture_state_json "$temp_dir/valid")"
+  jq -e '.snapshot_selection == "exact_model" and .matching_snapshot_count == 1 and (.error // "") == ""' \
+    <<<"$state_json" >/dev/null || fail "valid current quota fixture did not parse as exact current snapshot: $state_json"
+
+  session_file="$temp_dir/stale/sessions/2026/05/07/stale.jsonl"
+  upkeeper_fixture_write_stale_quota_snapshot "$session_file" "gpt-5.5"
+  state_json="$(quota_fixture_state_json "$temp_dir/stale")"
+  jq -e '.snapshot.snapshot_stale_after_reset == true and .snapshot_is_current == false' \
+    <<<"$state_json" >/dev/null || fail "stale quota fixture did not parse as stale snapshot: $state_json"
+
+  session_file="$temp_dir/wrong-model/sessions/2026/05/07/wrong.jsonl"
+  upkeeper_fixture_write_wrong_model_bucket "$session_file" "gpt-5.5"
+  state_json="$(quota_fixture_state_json "$temp_dir/wrong-model")"
+  jq -e '.snapshot_selection == "overall_fallback" and .snapshot.model_hint == "gpt-5.5-other"' \
+    <<<"$state_json" >/dev/null || fail "wrong-model quota fixture did not fall back explicitly: $state_json"
+
+  session_file="$temp_dir/malformed/sessions/2026/05/07/malformed-near-valid.jsonl"
+  upkeeper_fixture_write_malformed_jsonl_near_valid_records "$session_file" "gpt-5.5"
+  state_json="$(quota_fixture_state_json "$temp_dir/malformed")"
+  jq -e '.snapshot_selection == "exact_model" and .matching_snapshot_count == 1' \
+    <<<"$state_json" >/dev/null || fail "malformed-near-valid fixture did not keep the valid snapshot: $state_json"
+
+  session_file="$temp_dir/nonfinite/sessions/2026/05/07/nonfinite.jsonl"
+  upkeeper_fixture_write_nonfinite_reset_window "$session_file" "gpt-5.5"
+  state_json="$(quota_fixture_state_json "$temp_dir/nonfinite")"
+  [[ "$(jq -r '.error // ""' <<<"$state_json")" == "no_rate_limit_snapshot_found" ]] ||
+    fail "nonfinite reset fixture should be rejected without crashing: $state_json"
+
+  session_file="$temp_dir/missing-fields/sessions/2026/05/07/missing.jsonl"
+  upkeeper_fixture_write_missing_required_fields "$session_file" "gpt-5.5"
+  state_json="$(quota_fixture_state_json "$temp_dir/missing-fields")"
+  [[ "$(jq -r '.error // ""' <<<"$state_json")" == "no_rate_limit_snapshot_found" ]] ||
+    fail "missing-field quota fixture should be rejected without crashing: $state_json"
+
+  session_file="$temp_dir/empty-session/sessions/2026/05/07/empty-session.jsonl"
+  upkeeper_fixture_write_empty_transcript_session_evidence "$session_file" "gpt-5.5"
+  state="$(bash -lc 'cd "$1"; source lib/upkeeper/status_session.bash; parse_session_end_state "$2"' bash "$ROOT_DIR" "$session_file")"
+  [[ "$state" == "no_agent_message" ]] || fail "empty session fixture end state was $state"
+  diagnostics="$(bash -lc 'cd "$1"; source lib/upkeeper/status_session.bash; session_diagnostics_json "$2"' bash "$ROOT_DIR" "$session_file")"
+  task_complete="$(jq -r '.task_complete_last_agent_message' <<<"$diagnostics")"
+  [[ "$task_complete" == "null" ]] || fail "empty session fixture diagnostics were not explicit: $diagnostics"
+
+  rm -r "$temp_dir"
+}
+
 check_process_control_guards() {
   local temp_dir
 
@@ -5360,45 +5378,8 @@ exit 101
 SH
   chmod +x "$temp_dir/bin/codex"
 
-  python3 - "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" <<'PY'
-import json
-import sys
-import time
-from datetime import datetime, timezone
-
-path = sys.argv[1]
-now = int(time.time())
-event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
-rows = [
-    {"type": "turn_context", "payload": {"model": "gpt-5.5"}},
-    {
-        "timestamp": event_timestamp,
-        "type": "event_msg",
-        "payload": {
-            "type": "token_count",
-            "rate_limits": {
-                "limit_id": "validation-gpt-5.5",
-                "limit_name": "gpt-5.5 validation",
-                "plan_type": "validation",
-                "rate_limit_reached_type": None,
-                "primary": {
-                    "used_percent": 10.0,
-                    "window_minutes": 300,
-                    "resets_at": now + 3600,
-                },
-                "secondary": {
-                    "used_percent": 10.0,
-                    "window_minutes": 10080,
-                    "resets_at": now + 86400,
-                },
-            },
-        },
-    },
-]
-with open(path, "w", encoding="utf-8") as handle:
-    for row in rows:
-        print(json.dumps(row, separators=(",", ":")), file=handle)
-PY
+  upkeeper_fixture_write_valid_current_session_snapshot \
+    "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
 
   set +e
   PATH="$temp_dir/bin:$PATH" \
@@ -5797,6 +5778,7 @@ run_check entrypoint_internal_self_tests check_entrypoint_internal_self_tests
 run_check live_output_filter_pipe check_live_output_filter_pipe
 run_check review_summary_parser check_review_summary_parser
 run_check status_session_jsonl_contract check_status_session_jsonl_contract
+run_check quota_session_fixture_contract check_quota_session_fixture_contract
 run_check process_control_guards check_process_control_guards
 run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_contract
 run_check automation_obligation_root_boundary_contract check_automation_obligation_root_boundary_contract

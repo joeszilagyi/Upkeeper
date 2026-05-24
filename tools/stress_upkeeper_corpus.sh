@@ -5,6 +5,8 @@ SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 TOOLS_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 ROOT_DIR="$(cd -- "$TOOLS_DIR/.." && pwd)"
 
+source "$TOOLS_DIR/quota_session_fixtures.sh"
+
 MODE="local"
 KEEP_WORKDIR=0
 WORK_ROOT=""
@@ -107,48 +109,7 @@ write_quota_snapshot() {
   local session_file="$1"
   local model="${2:-gpt-5.5}"
 
-  python3 - "$session_file" "$model" <<'PY'
-import json
-import sys
-import time
-from datetime import datetime, timezone
-from pathlib import Path
-
-path = Path(sys.argv[1])
-model = sys.argv[2]
-path.parent.mkdir(parents=True, exist_ok=True)
-now = int(time.time())
-event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
-rows = [
-    {"type": "turn_context", "payload": {"model": model}},
-    {
-        "timestamp": event_timestamp,
-        "type": "event_msg",
-        "payload": {
-            "type": "token_count",
-            "rate_limits": {
-                "limit_id": f"stress-{model}",
-                "limit_name": f"{model} stress fixture",
-                "plan_type": "stress-local",
-                "rate_limit_reached_type": None,
-                "primary": {
-                    "used_percent": 10.0,
-                    "window_minutes": 300,
-                    "resets_at": now + 3600,
-                },
-                "secondary": {
-                    "used_percent": 10.0,
-                    "window_minutes": 10080,
-                    "resets_at": now + 86400,
-                },
-            },
-        },
-    },
-]
-with path.open("w", encoding="utf-8") as handle:
-    for row in rows:
-        print(json.dumps(row, separators=(",", ":")), file=handle)
-PY
+  upkeeper_fixture_write_valid_current_session_snapshot "$session_file" "$model" stress stress-local
 }
 
 sample_path() {
@@ -233,6 +194,7 @@ run_upkeeper_dry() {
       CODEX_TOOL_FAILURE_QUEUE_ENABLED=0 \
       CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
       CODEX_MARK_INTERVAL_SECONDS=3600 \
+      UPKEEPER_PRECONTACT_BACKUP_ROOT="$evidence_dir/precontact-vault" \
       UPKEEPER_DRY_RUN=1 \
       ./Upkeeper.sh "$@" >"$evidence_dir/stdout.txt" 2>"$evidence_dir/stderr.txt"
   )
@@ -609,6 +571,7 @@ SH
       CODEX_FALLBACK_ENABLED=0 \
       CODEX_FALLBACK_SCREEN_ENABLED=0 \
       CODEX_POSTMORTEM_ENABLED=0 \
+      UPKEEPER_PRECONTACT_BACKUP_ROOT="$evidence_dir/precontact-vault" \
       UPKEEPER_DRY_RUN=1 \
       ./Upkeeper.sh >"$evidence_dir/stdout.txt" 2>"$evidence_dir/stderr.txt"
   )

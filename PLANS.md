@@ -3,6 +3,39 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue 104 Quota And Session Fixture Reuse
+
+Status: completed locally
+
+Goal:
+- centralize stable fake Codex quota/session JSONL shapes behind named local
+  fixture-writer functions
+- reuse those writers in validation, stress corpus, and focused tests where
+  practical
+- explicitly cover malformed, stale, wrong-model, nonfinite, missing-field, and
+  empty-session evidence without reading real operator `CODEX_HOME` data
+
+Constraints:
+- no GitHub or real backend Codex I/O
+- keep fixture writes pointed only at caller-provided temp paths
+- preserve existing quota/session parser behavior unless a fixture exposes a
+  deterministic local bug
+
+Files likely touched:
+- `tools/quota_session_fixtures.sh`
+- `tools/validate_upkeeper.sh`
+- `tools/stress_upkeeper_corpus.sh`
+- `tests/lattice_test.bash`
+- `lib/upkeeper/quota_state.bash`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/lattice_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/stress_upkeeper_corpus.sh --local`
+- `git diff --check`
+
 ## Issue 444 Obligation Issue Promotion Hardening
 
 Status: completed locally

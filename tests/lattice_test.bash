@@ -6,6 +6,8 @@ LATTICE_TOOL="$ROOT_DIR/tools/upkeeper_lattice.py"
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-lattice-test.XXXXXX")"
 trap 'rm -r "$TEST_TMP_ROOT" 2>/dev/null || true' EXIT
 
+source "$ROOT_DIR/tools/quota_session_fixtures.sh"
+
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
@@ -14,43 +16,7 @@ fail() {
 write_quota_snapshot() {
   local path="$1"
   local model="${2:-gpt-5.5}"
-  python3 - "$path" "$model" <<'PY'
-import json
-import sys
-import time
-from datetime import datetime, timezone
-from pathlib import Path
-
-path = Path(sys.argv[1])
-model = sys.argv[2]
-path.parent.mkdir(parents=True, exist_ok=True)
-if "sessions" in path.parts:
-    session_root = Path(*path.parts[: path.parts.index("sessions") + 1])
-    session_root.chmod(0o700)
-now = int(time.time())
-ts = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
-rows = [
-    {"type": "turn_context", "payload": {"model": model}},
-    {
-        "timestamp": ts,
-        "type": "event_msg",
-        "payload": {
-            "type": "token_count",
-            "rate_limits": {
-                "limit_id": f"validation-{model}",
-                "limit_name": f"{model} validation",
-                "plan_type": "validation",
-                "rate_limit_reached_type": None,
-                "primary": {"used_percent": 10.0, "window_minutes": 300, "resets_at": now + 3600},
-                "secondary": {"used_percent": 10.0, "window_minutes": 10080, "resets_at": now + 86400},
-            },
-        },
-    },
-]
-with path.open("w", encoding="utf-8") as handle:
-    for row in rows:
-        print(json.dumps(row, separators=(",", ":")), file=handle)
-PY
+  upkeeper_fixture_write_valid_current_session_snapshot "$path" "$model"
 }
 
 make_repo() {

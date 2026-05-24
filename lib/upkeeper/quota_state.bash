@@ -79,6 +79,7 @@ quota_state_json() {
   local target_model="${1:-$CODEX_MODEL}"
   python3 - "$CODEX_HOME_DIR" "$CODEX_SESSION_SCAN_LIMIT" "$LOG_FILE" "$target_model" <<'PY'
 import json
+import math
 import re
 import sys
 import time
@@ -101,25 +102,63 @@ TAIL_SCAN_BYTES = 512 * 1024
 HEAD_SCAN_BYTES = 128 * 1024
 
 
+def object_or_none(value):
+    return value if isinstance(value, dict) else None
+
+
+def finite_float(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def finite_int(value):
+    parsed = finite_float(value)
+    if parsed is None:
+        return None
+    try:
+        return int(parsed)
+    except (OverflowError, ValueError):
+        return None
+
+
 def snapshot_from_token_count(item, path: Path, source_mtime: float, model_hint):
-    payload = item.get("payload") or {}
-    rate_limits = payload.get("rate_limits") or {}
-    primary = rate_limits.get("primary") or {}
-    secondary = rate_limits.get("secondary") or {}
+    payload = object_or_none(item.get("payload"))
+    if payload is None:
+        return None
+    rate_limits = object_or_none(payload.get("rate_limits"))
+    if rate_limits is None:
+        return None
+    primary = object_or_none(rate_limits.get("primary"))
+    secondary = object_or_none(rate_limits.get("secondary"))
     if not primary or not secondary:
         return None
+
+    primary_used = finite_float(primary.get("used_percent"))
+    primary_window = finite_int(primary.get("window_minutes"))
+    primary_reset = finite_int(primary.get("resets_at"))
+    secondary_used = finite_float(secondary.get("used_percent"))
+    secondary_window = finite_int(secondary.get("window_minutes"))
+    secondary_reset = finite_int(secondary.get("resets_at"))
+    if None in (primary_used, primary_window, primary_reset, secondary_used, secondary_window, secondary_reset):
+        return None
+
     return {
         "event_timestamp": item.get("timestamp"),
         "limit_id": rate_limits.get("limit_id"),
         "limit_name": rate_limits.get("limit_name"),
         "plan_type": rate_limits.get("plan_type"),
         "rate_limit_reached_type": rate_limits.get("rate_limit_reached_type"),
-        "primary_used_percent": float(primary.get("used_percent") or 0.0),
-        "primary_window_minutes": int(primary.get("window_minutes") or 0),
-        "primary_resets_at": int(primary.get("resets_at") or 0),
-        "secondary_used_percent": float(secondary.get("used_percent") or 0.0),
-        "secondary_window_minutes": int(secondary.get("window_minutes") or 0),
-        "secondary_resets_at": int(secondary.get("resets_at") or 0),
+        "primary_used_percent": primary_used,
+        "primary_window_minutes": primary_window,
+        "primary_resets_at": primary_reset,
+        "secondary_used_percent": secondary_used,
+        "secondary_window_minutes": secondary_window,
+        "secondary_resets_at": secondary_reset,
         "source_path": str(path),
         "source_mtime": source_mtime,
         "model_hint": model_hint,

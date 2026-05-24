@@ -25,6 +25,11 @@ Version numbering note:
 	1. `tools/validate_upkeeper.sh` now centralizes repeated fake Upkeeper dry-run environment setup in a validator-local helper.
 	2. The helper preserves stdout/stderr separation, exit status, isolated CODEX_HOME, log/transcript roots, active locks, and no-backend defaults while still allowing explicit per-fixture overrides.
 
+2026-05-24: quota and session fixtures:
+	1. Validation now has named fixture writers for current, stale, wrong-model, malformed, empty, nonfinite, and missing-field quota/session JSONL cases.
+	2. The fixture contract is checked locally so parser safety cases stay reusable without reading real operator CODEX_HOME data.
+	3. Quota snapshot parsing now treats non-integer reset-window fields as unusable snapshot evidence instead of crashing the local quota preflight.
+
 2026-05-24: anomaly custody issue ownership:
 	1. Prior-run anomaly obligations now keep umbrella issue #418 as policy ownership only; each PAGE/error anomaly must have its own specific issue-ready record or GitHub issue before normal backlog work continues.
 	2. Backlog now defaults obligation GitHub issue filing on and fails closed if filing fails, while retaining local reports only as evidence copies.

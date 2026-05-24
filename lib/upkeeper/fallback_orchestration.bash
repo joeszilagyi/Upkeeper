@@ -148,7 +148,14 @@ EOF
     set -e
   fi
 
-  log_line "INFO" "fallback.finish trigger=$trigger child_exit=$child_exit final_exit=$final_exit child_model=$CODEX_FALLBACK_MODEL child_effort=$CODEX_FALLBACK_REASONING_EFFORT parent_cycle_id=$CYCLE_ID execution_origin=$([[ "$CODEX_FALLBACK_SCREEN_ENABLED" == "1" ]] && printf screen || printf direct_fallback) postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=${POSTMORTEM_REPORT_PATH:-none} screen_session=${FALLBACK_SCREEN_SESSION_NAME:-none}"
+  log_line_parts "INFO" \
+    "fallback.finish trigger=$trigger child_exit=$child_exit final_exit=$final_exit" \
+    " child_model=$CODEX_FALLBACK_MODEL child_effort=$CODEX_FALLBACK_REASONING_EFFORT" \
+    " parent_cycle_id=$CYCLE_ID" \
+    " execution_origin=$([[ "$CODEX_FALLBACK_SCREEN_ENABLED" == "1" ]] && printf screen || printf direct_fallback)" \
+    " postmortem_status=$POSTMORTEM_SEQUENCE_STATUS" \
+    " report_path=${POSTMORTEM_REPORT_PATH:-none}" \
+    " screen_session=${FALLBACK_SCREEN_SESSION_NAME:-none}"
   refresh_postmortem_incident_log "${POSTMORTEM_INCIDENT_LOG_PATH:-}"
   return "$final_exit"
 }

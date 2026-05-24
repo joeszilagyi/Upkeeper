@@ -22,6 +22,16 @@ log_line() {
   :
 }
 
+log_line_parts() {
+  local level="$1"
+  shift
+  local message="" part
+  for part in "$@"; do
+    message+="$part"
+  done
+  log_line "$level" "$message"
+}
+
 finish_cycle() {
   local exit_code="$1"
   local reason="$2"

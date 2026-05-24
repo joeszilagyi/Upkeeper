@@ -7,6 +7,25 @@
 
 STARTUP_ANOMALY_GATE_STATE_OWNER="upkeeper_startup_anomaly_gate"
 STARTUP_ANOMALY_GATE_STATE_SCHEMA_VERSION="1"
+
+startup_anomaly_log_gate_unresolved() {
+  local reason="$1"
+  local status_marker_value="${2:-missing}"
+  local codex_exit_value="${3:-unknown}"
+  local message
+
+  message="startup_anomaly.gate_unresolved reason=$reason"
+  message+=" reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}")"
+  message+=" status_marker=${status_marker_value:-missing}"
+  message+=" codex_exit=$codex_exit_value"
+  message+=" action=force_upkeeper_next_run"
+  if declare -F log_line_parts >/dev/null 2>&1; then
+    log_line_parts "WARN" "$message"
+  else
+    log_line "WARN" "$message"
+  fi
+}
+
 startup_anomaly_redaction_key_material() {
   if declare -F upkeeper_redaction_key_material >/dev/null 2>&1; then
     upkeeper_redaction_key_material

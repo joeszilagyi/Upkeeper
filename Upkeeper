@@ -1371,12 +1371,12 @@ record_startup_anomaly_gate_review() {
   [[ "$STARTUP_ANOMALY_GATE" == "1" ]] || return 0
 
   if [[ "$STARTUP_ANOMALY_GATE_CHANGED_PATH_VIOLATION" == "1" ]]; then
-    log_line "WARN" "startup_anomaly.gate_unresolved reason=changed_path_violation reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    startup_anomaly_log_gate_unresolved "changed_path_violation" "$status_marker_value" "$codex_exit_value"
     if ! write_startup_anomaly_gate_state "unresolved" "changed_path_violation"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
   elif [[ "$codex_exit_value" != "0" ]]; then
-    log_line "WARN" "startup_anomaly.gate_unresolved reason=nonzero_codex_exit reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    startup_anomaly_log_gate_unresolved "nonzero_codex_exit" "$status_marker_value" "$codex_exit_value"
     if ! write_startup_anomaly_gate_state "unresolved" "nonzero_codex_exit"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
@@ -1388,12 +1388,15 @@ record_startup_anomaly_gate_review() {
     mark_startup_anomaly_gate_states_resolved
     log_line "INFO" "startup_anomaly.gate_resolved status=checked reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value"
   elif startup_anomaly_gate_has_unresolved_state "$STARTUP_ANOMALY_REASONS"; then
-    log_line "WARN" "startup_anomaly.gate_unresolved reason=unresolved_startup_anomaly_state reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    startup_anomaly_log_gate_unresolved "unresolved_startup_anomaly_state" "$status_marker_value" "$codex_exit_value"
     if ! write_startup_anomaly_gate_state "unresolved" "unresolved_startup_anomaly_state"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
   else
-    log_line "WARN" "startup_anomaly.gate_unresolved reason=missing_current_cycle_log_review_evidence reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    startup_anomaly_log_gate_unresolved \
+      "missing_current_cycle_log_review_evidence" \
+      "$status_marker_value" \
+      "$codex_exit_value"
     if ! write_startup_anomaly_gate_state "unresolved" "missing_current_cycle_log_review_evidence"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
@@ -2614,7 +2617,12 @@ EOF
   fi
   copy_postmortem_private_artifact "$report_last_message" "$report_last_message_private"
   report_marker="$(parse_postmortem_marker "$report_last_message")"
-  log_line "INFO" "postmortem.report.finish exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path_log_field path_redacted=1 report_exists=$([[ -e "$report_path" ]] && printf 1 || printf 0) report_nonempty=$([[ -s "$report_path" ]] && printf 1 || printf 0)"
+  log_line_parts "INFO" \
+    "postmortem.report.finish exit_code=$report_exit" \
+    " marker=${report_marker:-missing}" \
+    " report_path=$report_path_log_field path_redacted=1" \
+    " report_exists=$([[ -e "$report_path" ]] && printf 1 || printf 0)" \
+    " report_nonempty=$([[ -s "$report_path" ]] && printf 1 || printf 0)"
 
   if [[ "$report_exit" -eq 86 ]]; then
     POSTMORTEM_SEQUENCE_STATUS="report_quota_skipped"
@@ -2638,7 +2646,11 @@ EOF
     fi
     POSTMORTEM_SEQUENCE_STATUS="report_environment_skipped"
     write_environment_skipped_postmortem_report "$report_path" "$trigger" "$detail_text" "$child_exit" "postmortem.report" "$CODEX_POSTMORTEM_MODEL" "$report_environment_detail"
-    log_line "WARN" "postmortem.report skipped reason=local_codex_runtime_unwritable environment_reason=$(shell_quote "$report_environment_reason") exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path_log_field path_redacted=1"
+    log_line_parts "WARN" \
+      "postmortem.report skipped reason=local_codex_runtime_unwritable" \
+      " environment_reason=$(shell_quote "$report_environment_reason")" \
+      " exit_code=$report_exit marker=${report_marker:-missing}" \
+      " report_path=$report_path_log_field path_redacted=1"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
     rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
@@ -3157,7 +3169,12 @@ stop_parent_loop() {
   local skip_reason
   if skip_reason="$(parent_stop_skip_reason "$parent_comm" "$parent_summary" "${using_override:-0}")"; then
     PARENT_LOOP_STOP_OUTCOME="skipped_$skip_reason"
-    log_line "WARN" "parent loop stop skipped reason=$skip_reason execution_origin=$CODEX_EXECUTION_ORIGIN parent_pid=$parent_pid parent_comm=$parent_comm using_override=${using_override:-0} parent_args_class=$parent_args_class parent_args_hash=$parent_args_hash"
+    log_line_parts "WARN" \
+      "parent loop stop skipped reason=$skip_reason" \
+      " execution_origin=$CODEX_EXECUTION_ORIGIN" \
+      " parent_pid=$parent_pid parent_comm=$parent_comm" \
+      " using_override=${using_override:-0}" \
+      " parent_args_class=$parent_args_class parent_args_hash=$parent_args_hash"
     return 0
   fi
 
@@ -3721,7 +3738,12 @@ EOF
 
   local launch_started_at launch_returned_at launch_rc launch_verified launch_probe_attempts
   launch_started_at="$(timestamp_now)"
-  log_line "INFO" "fallback.screen.launch execution_origin=screen trigger=$trigger session_name=$session_name command=screen_-dmS launch_started_at=$launch_started_at stage_root=$(shell_quote "$screen_root") visible_root=$(shell_quote "$visible_screen_root")"
+  log_line_parts "INFO" \
+    "fallback.screen.launch execution_origin=screen trigger=$trigger" \
+    " session_name=$session_name command=screen_-dmS" \
+    " launch_started_at=$launch_started_at" \
+    " stage_root=$(shell_quote "$screen_root")" \
+    " visible_root=$(shell_quote "$visible_screen_root")"
   set +e
   CODEX_FALLBACK_CHAIN_TOKEN_FD=9 \
   9<<<"$fallback_chain_token" \
@@ -3749,7 +3771,14 @@ EOF
     return 8
   fi
   log_line "INFO" "fallback.screen.launch_verify execution_origin=screen trigger=$trigger session_name=$session_name launch_verified=1 probe_attempts=$launch_probe_attempts"
-  log_line "INFO" "fallback.screen.start execution_origin=screen trigger=$trigger session_name=$session_name detail=\"$detail_text\" transcript=$transcript_file poll_seconds=$CODEX_FALLBACK_SCREEN_POLL_SECONDS continuous=$CODEX_FALLBACK_SCREEN_CONTINUOUS max_children=$CODEX_FALLBACK_SCREEN_MAX_CHILDREN max_seconds=$CODEX_FALLBACK_SCREEN_MAX_SECONDS"
+  log_line_parts "INFO" \
+    "fallback.screen.start execution_origin=screen trigger=$trigger" \
+    " session_name=$session_name detail=\"$detail_text\"" \
+    " transcript=$transcript_file" \
+    " poll_seconds=$CODEX_FALLBACK_SCREEN_POLL_SECONDS" \
+    " continuous=$CODEX_FALLBACK_SCREEN_CONTINUOUS" \
+    " max_children=$CODEX_FALLBACK_SCREEN_MAX_CHILDREN" \
+    " max_seconds=$CODEX_FALLBACK_SCREEN_MAX_SECONDS"
   return 0
 }
 
@@ -5900,7 +5929,11 @@ acquire_active_lock_or_exit() {
         [[ -n "$token_fd" ]] && eval "exec ${token_fd}<&-" 2>/dev/null || true
         if [[ -n "$fallback_inherit_fail" ]]; then
           log_line "WARN" "active_lock.fallback_inherit_rejected path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} reason=$fallback_inherit_fail child_cycle=$CYCLE_ID"
-          log_line "WARN" "active_lock.held path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=exit reason=$fallback_inherit_fail"
+          log_line_parts "WARN" \
+            "active_lock.held path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR")" \
+            " owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown}" \
+            " owner_run_hash=${owner_run_hash:-unknown}" \
+            " action=exit reason=$fallback_inherit_fail"
           finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} requested_parent_cycle=${CODEX_PARENT_CYCLE_ID:-unknown} reason=$fallback_inherit_fail"
         fi
         log_line "INFO" "active_lock.inherited path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} child_cycle=$CYCLE_ID"
@@ -5912,7 +5945,11 @@ acquire_active_lock_or_exit() {
     fi
     lock_age_seconds="$(active_lock_age_seconds "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null || printf 'unknown')"
     if [[ "$lock_age_seconds" =~ ^[0-9]+$ && "$lock_age_seconds" -lt "$incomplete_lock_grace_seconds" ]]; then
-      log_line "WARN" "active_lock.incomplete path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} lock_age_seconds=$lock_age_seconds grace_seconds=$incomplete_lock_grace_seconds action=exit"
+      log_line_parts "WARN" \
+        "active_lock.incomplete path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR")" \
+        " owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown}" \
+        " lock_age_seconds=$lock_age_seconds" \
+        " grace_seconds=$incomplete_lock_grace_seconds action=exit"
       finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 reason=incomplete_recent_lock owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} lock_age_seconds=$lock_age_seconds grace_seconds=$incomplete_lock_grace_seconds"
     fi
     log_line "WARN" "active_lock.stale path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=reclaim"
@@ -6221,7 +6258,11 @@ upkeeper_preflight_explicit_target_or_exit() {
 
   selected_path="$(sed -n 's/^path=//p' <<<"$selection" | tail -1)"
   if [[ -n "$selected_path" && "$selected_path" != "$CODEX_TARGET_FILE" ]]; then
-    log_line "INFO" "review.preselect.explicit_target_normalized original_hash=$(shell_quote "$(cycle_start_metadata_hash "$CODEX_TARGET_FILE")") normalized_hash=$(shell_quote "$(cycle_start_metadata_hash "$selected_path")") path_redacted=1"
+    log_line_parts "INFO" \
+      "review.preselect.explicit_target_normalized" \
+      " original_hash=$(shell_quote "$(cycle_start_metadata_hash "$CODEX_TARGET_FILE")")" \
+      " normalized_hash=$(shell_quote "$(cycle_start_metadata_hash "$selected_path")")" \
+      " path_redacted=1"
     CODEX_TARGET_FILE="$selected_path"
   fi
 }
@@ -6397,7 +6438,11 @@ main() {
   local loop_parent_start_fingerprint
   loop_parent_start_fingerprint="$(process_start_fingerprint "$loop_parent_pid")"
 
-  log_line "INFO" "$(cycle_start_log_message "$direct_parent_pid" "$direct_parent_comm" "$direct_parent_start_fingerprint" "$loop_parent_pid" "$loop_parent_comm" "$loop_parent_start_fingerprint" "$loop_parent_override" "$wrapper_start_fingerprint")"
+  log_line_parts "INFO" \
+    "$(cycle_start_log_message \
+      "$direct_parent_pid" "$direct_parent_comm" "$direct_parent_start_fingerprint" \
+      "$loop_parent_pid" "$loop_parent_comm" "$loop_parent_start_fingerprint" \
+      "$loop_parent_override" "$wrapper_start_fingerprint")"
   automation_record_cycle_start || log_line "WARN" "automation.run_record.start_failed path=$(shell_quote "${RUN_AUTOMATION_RECORD_FILE:-unknown}")"
   upkeeper_precontact_backup_hmac_key_material >/dev/null
   precontact_backup_machine_preflight_or_exit
@@ -6484,8 +6529,52 @@ main() {
     fi
   fi
 
-  log_line "INFO" "quota.current execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL snapshot_selection=$before_selection snapshot_current=$before_snapshot_is_current snapshot_stale_after_reset=$before_snapshot_stale_after_reset primary_reset_expired=$before_primary_reset_expired secondary_reset_expired=$before_secondary_reset_expired primary_bucket_current=$before_primary_bucket_current secondary_bucket_current=$before_secondary_bucket_current matching_snapshot_count=$before_matching_snapshot_count expected_quota_identity=$expected_quota_identity quota_identity_status=$quota_identity_status$(quota_hashed_log_field limit_id "$limit_id")$(quota_hashed_log_field limit_name "$limit_name")$(quota_hashed_path_log_field source "$before_source")$(quota_sensitive_log_field limit_id "$limit_id")$(quota_sensitive_log_field limit_name "$limit_name")$(quota_sensitive_log_field plan_type "$plan_type")$(quota_sensitive_log_field source "$before_source")$(quota_sensitive_log_field snapshot_model_hint "$before_model_hint")$(quota_sensitive_log_field event_timestamp "$before_ts")$(quota_sensitive_log_field snapshot_age_seconds "$before_snapshot_age_seconds")$(quota_sensitive_log_field primary_used "${primary_used}%")$(quota_sensitive_log_field primary_left "${primary_left}%")$(quota_sensitive_log_field primary_window "${primary_window}m")$(quota_sensitive_log_field primary_reset "$(format_epoch_local "$primary_reset")")$(quota_sensitive_log_field primary_reset_age_seconds "$before_primary_reset_age_seconds")$(quota_sensitive_log_field secondary_used "${secondary_used}%")$(quota_sensitive_log_field secondary_left "${secondary_left}%")$(quota_sensitive_log_field secondary_window "${secondary_window}m")$(quota_sensitive_log_field secondary_reset "$(format_epoch_local "$secondary_reset")")$(quota_sensitive_log_field secondary_reset_age_seconds "$before_secondary_reset_age_seconds")"
-  log_line "INFO" "quota.projection execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL basis=$projected_basis expected_quota_identity=$expected_quota_identity quota_identity_status=$quota_identity_status primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision$(quota_sensitive_log_field projected_primary_delta_used "${projected_primary_delta}%")$(quota_sensitive_log_field projected_primary_used "${primary_projected_used}%")$(quota_sensitive_log_field projected_primary_left "${primary_projected_left}%")$(quota_sensitive_log_field projected_secondary_delta_used "${projected_secondary_delta}%")$(quota_sensitive_log_field projected_secondary_used "${secondary_projected_used}%")$(quota_sensitive_log_field projected_secondary_left "${secondary_projected_left}%")$(quota_sensitive_log_field left_thresholds "${five_hour_threshold}%/${week_threshold}%")$(quota_sensitive_log_field weekly_base_threshold "${CODEX_WEEK_STOP_PERCENT}%")$(quota_sensitive_log_field weekly_buffer "${week_buffer}%")"
+  log_line_parts "INFO" \
+    "quota.current execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL" \
+    " snapshot_selection=$before_selection snapshot_current=$before_snapshot_is_current" \
+    " snapshot_stale_after_reset=$before_snapshot_stale_after_reset" \
+    " primary_reset_expired=$before_primary_reset_expired" \
+    " secondary_reset_expired=$before_secondary_reset_expired" \
+    " primary_bucket_current=$before_primary_bucket_current" \
+    " secondary_bucket_current=$before_secondary_bucket_current" \
+    " matching_snapshot_count=$before_matching_snapshot_count" \
+    " expected_quota_identity=$expected_quota_identity" \
+    " quota_identity_status=$quota_identity_status" \
+    "$(quota_hashed_log_field limit_id "$limit_id")" \
+    "$(quota_hashed_log_field limit_name "$limit_name")" \
+    "$(quota_hashed_path_log_field source "$before_source")" \
+    "$(quota_sensitive_log_field limit_id "$limit_id")" \
+    "$(quota_sensitive_log_field limit_name "$limit_name")" \
+    "$(quota_sensitive_log_field plan_type "$plan_type")" \
+    "$(quota_sensitive_log_field source "$before_source")" \
+    "$(quota_sensitive_log_field snapshot_model_hint "$before_model_hint")" \
+    "$(quota_sensitive_log_field event_timestamp "$before_ts")" \
+    "$(quota_sensitive_log_field snapshot_age_seconds "$before_snapshot_age_seconds")" \
+    "$(quota_sensitive_log_field primary_used "${primary_used}%")" \
+    "$(quota_sensitive_log_field primary_left "${primary_left}%")" \
+    "$(quota_sensitive_log_field primary_window "${primary_window}m")" \
+    "$(quota_sensitive_log_field primary_reset "$(format_epoch_local "$primary_reset")")" \
+    "$(quota_sensitive_log_field primary_reset_age_seconds "$before_primary_reset_age_seconds")" \
+    "$(quota_sensitive_log_field secondary_used "${secondary_used}%")" \
+    "$(quota_sensitive_log_field secondary_left "${secondary_left}%")" \
+    "$(quota_sensitive_log_field secondary_window "${secondary_window}m")" \
+    "$(quota_sensitive_log_field secondary_reset "$(format_epoch_local "$secondary_reset")")" \
+    "$(quota_sensitive_log_field secondary_reset_age_seconds "$before_secondary_reset_age_seconds")"
+  log_line_parts "INFO" \
+    "quota.projection execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL" \
+    " basis=$projected_basis expected_quota_identity=$expected_quota_identity" \
+    " quota_identity_status=$quota_identity_status" \
+    " primary_decision=$primary_guardrail_decision" \
+    " secondary_decision=$secondary_guardrail_decision" \
+    "$(quota_sensitive_log_field projected_primary_delta_used "${projected_primary_delta}%")" \
+    "$(quota_sensitive_log_field projected_primary_used "${primary_projected_used}%")" \
+    "$(quota_sensitive_log_field projected_primary_left "${primary_projected_left}%")" \
+    "$(quota_sensitive_log_field projected_secondary_delta_used "${projected_secondary_delta}%")" \
+    "$(quota_sensitive_log_field projected_secondary_used "${secondary_projected_used}%")" \
+    "$(quota_sensitive_log_field projected_secondary_left "${secondary_projected_left}%")" \
+    "$(quota_sensitive_log_field left_thresholds "${five_hour_threshold}%/${week_threshold}%")" \
+    "$(quota_sensitive_log_field weekly_base_threshold "${CODEX_WEEK_STOP_PERCENT}%")" \
+    "$(quota_sensitive_log_field weekly_buffer "${week_buffer}%")"
 
   if [[ "$before_selection" != "exact_model" ]]; then
     log_line "WARN" "quota.current target_model=$CODEX_MODEL using snapshot_selection=$before_selection$(quota_sensitive_log_field snapshot_model_hint "$before_model_hint")"
@@ -6497,7 +6586,16 @@ main() {
     if [[ "$quota_identity_guardrail_decision" == "stop" ]]; then
       should_stop=1
       stop_reason="unsafe Spark quota identity ${quota_identity_status}; expected ${expected_quota_identity}"
-      log_line "WARN" "quota.identity_guardrail target_model=$CODEX_MODEL decision=stop expected_quota_identity=$expected_quota_identity quota_identity_status=$quota_identity_status$(quota_hashed_log_field limit_id "$limit_id")$(quota_hashed_log_field limit_name "$limit_name")$(quota_hashed_path_log_field source "$before_source")$(quota_sensitive_log_field limit_id "$limit_id")$(quota_sensitive_log_field limit_name "$limit_name")$(quota_sensitive_log_field source "$before_source")"
+      log_line_parts "WARN" \
+        "quota.identity_guardrail target_model=$CODEX_MODEL decision=stop" \
+        " expected_quota_identity=$expected_quota_identity" \
+        " quota_identity_status=$quota_identity_status" \
+        "$(quota_hashed_log_field limit_id "$limit_id")" \
+        "$(quota_hashed_log_field limit_name "$limit_name")" \
+        "$(quota_hashed_path_log_field source "$before_source")" \
+        "$(quota_sensitive_log_field limit_id "$limit_id")" \
+        "$(quota_sensitive_log_field limit_name "$limit_name")" \
+        "$(quota_sensitive_log_field source "$before_source")"
     fi
     if [[ "$primary_guardrail_decision" == "stop" ]]; then
       should_stop=1
@@ -6519,14 +6617,31 @@ main() {
         stop_reason="$stop_reason; "
       fi
       stop_reason="${stop_reason}quota snapshot stale after reset for all buckets; exact model snapshot is not current"
-      log_line "WARN" "quota.guardrails target_model=$CODEX_MODEL deferred reason=stale_snapshot_after_reset snapshot_current=$before_snapshot_is_current snapshot_stale_after_reset=$before_snapshot_stale_after_reset primary_bucket_current=$before_primary_bucket_current secondary_bucket_current=$before_secondary_bucket_current$(quota_sensitive_log_field primary_reset "$(format_epoch_local "$primary_reset")")$(quota_sensitive_log_field primary_reset_age_seconds "$before_primary_reset_age_seconds")$(quota_sensitive_log_field secondary_reset "$(format_epoch_local "$secondary_reset")")$(quota_sensitive_log_field secondary_reset_age_seconds "$before_secondary_reset_age_seconds")"
+      log_line_parts "WARN" \
+        "quota.guardrails target_model=$CODEX_MODEL deferred" \
+        " reason=stale_snapshot_after_reset" \
+        " snapshot_current=$before_snapshot_is_current" \
+        " snapshot_stale_after_reset=$before_snapshot_stale_after_reset" \
+        " primary_bucket_current=$before_primary_bucket_current" \
+        " secondary_bucket_current=$before_secondary_bucket_current" \
+        "$(quota_sensitive_log_field primary_reset "$(format_epoch_local "$primary_reset")")" \
+        "$(quota_sensitive_log_field primary_reset_age_seconds "$before_primary_reset_age_seconds")" \
+        "$(quota_sensitive_log_field secondary_reset "$(format_epoch_local "$secondary_reset")")" \
+        "$(quota_sensitive_log_field secondary_reset_age_seconds "$before_secondary_reset_age_seconds")"
     elif [[ "$primary_guardrail_decision" == "defer" || "$secondary_guardrail_decision" == "defer" ]]; then
       should_stop=1
       if [[ -n "$stop_reason" ]]; then
         stop_reason="$stop_reason; "
       fi
       stop_reason="${stop_reason}quota snapshot partial after reset; primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision"
-      log_line "WARN" "quota.guardrails target_model=$CODEX_MODEL partial_decision primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision primary_bucket_current=$before_primary_bucket_current secondary_bucket_current=$before_secondary_bucket_current primary_reset_expired=$before_primary_reset_expired secondary_reset_expired=$before_secondary_reset_expired"
+      log_line_parts "WARN" \
+        "quota.guardrails target_model=$CODEX_MODEL partial_decision" \
+        " primary_decision=$primary_guardrail_decision" \
+        " secondary_decision=$secondary_guardrail_decision" \
+        " primary_bucket_current=$before_primary_bucket_current" \
+        " secondary_bucket_current=$before_secondary_bucket_current" \
+        " primary_reset_expired=$before_primary_reset_expired" \
+        " secondary_reset_expired=$before_secondary_reset_expired"
     fi
   else
     should_stop=1
@@ -6538,7 +6653,12 @@ main() {
   fi
 
   if [[ "$should_stop" -eq 1 && "${CODEX_QUOTA_GUARDRAIL_BYPASS:-0}" == "1" ]]; then
-    log_line "WARN" "quota.guardrails bypassed=1 phase=before_run target_model=$CODEX_MODEL reason=$(shell_quote "$(quota_public_stop_reason "$stop_reason")") primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision identity_decision=$quota_identity_guardrail_decision"
+    log_line_parts "WARN" \
+      "quota.guardrails bypassed=1 phase=before_run target_model=$CODEX_MODEL" \
+      " reason=$(shell_quote "$(quota_public_stop_reason "$stop_reason")")" \
+      " primary_decision=$primary_guardrail_decision" \
+      " secondary_decision=$secondary_guardrail_decision" \
+      " identity_decision=$quota_identity_guardrail_decision"
     should_stop=0
   fi
 
@@ -6611,7 +6731,13 @@ main() {
   if upkeeper_issue_workflow_read_only_enabled; then
     log_line "INFO" "genie_protocol.backend_mode stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") source=issue_workflow_read_only mode=$(shell_quote "$backend_mode_summary") comment_transport=last_message_block"
   fi
-  log_line "INFO" "run.start plane=llm waiting_for=codex_backend_review $(log_kv execution_origin "$CODEX_EXECUTION_ORIGIN") $(log_kv prompt_file "${PROMPT_FILE:-inline/default}") $(log_kv compiled_prompt "$compiled_prompt_file") transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1"
+  log_line_parts "INFO" \
+    "run.start plane=llm waiting_for=codex_backend_review" \
+    " $(log_kv execution_origin "$CODEX_EXECUTION_ORIGIN")" \
+    " $(log_kv prompt_file "${PROMPT_FILE:-inline/default}")" \
+    " $(log_kv compiled_prompt "$compiled_prompt_file")" \
+    " transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")")" \
+    " path_redacted=1"
   RUN_CODEX_STARTED_EPOCH="$(date '+%s')"
   terminal_emit_progress "starting Codex review for ${RUN_SELECTED_REVIEW_PATH:-unknown} (plane=llm waiting_for=codex_backend_review model=$CODEX_MODEL effort=$CODEX_REASONING_EFFORT pass=${CODEX_PROMPT_PASS:-default} expected=model_patch_or_status; transcript=$RUN_TRANSCRIPT_FILE)"
   start_terminal_progress_heartbeat "primary" "$RUN_TRANSCRIPT_FILE" "$RUN_CODEX_STARTED_EPOCH" "${RUN_SELECTED_REVIEW_PATH:-unknown}"
@@ -6639,9 +6765,21 @@ main() {
   fi
 
   if [[ "$codex_exit" -eq 0 ]]; then
-    log_line "INFO" "run.finish plane=llm waiting_for=codex_backend_review wait_result=completed execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit codex_elapsed_seconds=$codex_elapsed_seconds transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1 transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
+    log_line_parts "INFO" \
+      "run.finish plane=llm waiting_for=codex_backend_review" \
+      " wait_result=completed execution_origin=$CODEX_EXECUTION_ORIGIN" \
+      " codex_exit=$codex_exit codex_elapsed_seconds=$codex_elapsed_seconds" \
+      " transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")")" \
+      " path_redacted=1 transcript_bytes=$run_transcript_bytes" \
+      " transcript_lines=$run_transcript_lines"
   else
-    log_line "ERROR" "run.finish plane=llm waiting_for=codex_backend_review wait_result=failed execution_origin=$CODEX_EXECUTION_ORIGIN codex_exit=$codex_exit codex_elapsed_seconds=$codex_elapsed_seconds transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1 transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
+    log_line_parts "ERROR" \
+      "run.finish plane=llm waiting_for=codex_backend_review" \
+      " wait_result=failed execution_origin=$CODEX_EXECUTION_ORIGIN" \
+      " codex_exit=$codex_exit codex_elapsed_seconds=$codex_elapsed_seconds" \
+      " transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")")" \
+      " path_redacted=1 transcript_bytes=$run_transcript_bytes" \
+      " transcript_lines=$run_transcript_lines"
   fi
   terminal_emit_progress "Codex review finished for ${RUN_SELECTED_REVIEW_PATH:-unknown} (plane=llm waiting_for=codex_backend_review exit=$codex_exit elapsed=${codex_elapsed_seconds}s; transcript=$RUN_TRANSCRIPT_FILE)"
   local after_quota_json=""
@@ -6669,7 +6807,32 @@ main() {
       after_primary_guardrail_decision="$(quota_bucket_decision "$after_primary_bucket_current" "$after_primary_left" "$five_hour_threshold")"
       after_secondary_guardrail_decision="$(quota_bucket_decision "$after_secondary_bucket_current" "$after_secondary_left" "$week_threshold")"
     fi
-    log_line "INFO" "quota.after execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL snapshot_selection=$after_selection snapshot_current=$after_snapshot_is_current snapshot_stale_after_reset=$after_snapshot_stale_after_reset primary_reset_expired=$after_primary_reset_expired secondary_reset_expired=$after_secondary_reset_expired primary_bucket_current=$after_primary_bucket_current secondary_bucket_current=$after_secondary_bucket_current$(quota_hashed_log_field limit_id "$after_limit_id")$(quota_hashed_log_field limit_name "$after_limit_name")$(quota_hashed_path_log_field source "$after_source") primary_decision=$after_primary_guardrail_decision secondary_decision=$after_secondary_guardrail_decision$(quota_sensitive_log_field limit_id "$after_limit_id")$(quota_sensitive_log_field limit_name "$after_limit_name")$(quota_sensitive_log_field plan_type "$after_plan_type")$(quota_sensitive_log_field source "$after_source")$(quota_sensitive_log_field snapshot_model_hint "$after_model_hint")$(quota_sensitive_log_field event_timestamp "$after_ts")$(quota_sensitive_log_field snapshot_age_seconds "$after_snapshot_age_seconds")$(quota_sensitive_log_field primary_used "${after_primary}%")$(quota_sensitive_log_field primary_left "${after_primary_left}%")$(quota_sensitive_log_field primary_reset_age_seconds "$after_primary_reset_age_seconds")$(quota_sensitive_log_field secondary_used "${after_secondary}%")$(quota_sensitive_log_field secondary_left "${after_secondary_left}%")$(quota_sensitive_log_field secondary_reset_age_seconds "$after_secondary_reset_age_seconds")"
+    log_line_parts "INFO" \
+      "quota.after execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL" \
+      " snapshot_selection=$after_selection snapshot_current=$after_snapshot_is_current" \
+      " snapshot_stale_after_reset=$after_snapshot_stale_after_reset" \
+      " primary_reset_expired=$after_primary_reset_expired" \
+      " secondary_reset_expired=$after_secondary_reset_expired" \
+      " primary_bucket_current=$after_primary_bucket_current" \
+      " secondary_bucket_current=$after_secondary_bucket_current" \
+      "$(quota_hashed_log_field limit_id "$after_limit_id")" \
+      "$(quota_hashed_log_field limit_name "$after_limit_name")" \
+      "$(quota_hashed_path_log_field source "$after_source")" \
+      " primary_decision=$after_primary_guardrail_decision" \
+      " secondary_decision=$after_secondary_guardrail_decision" \
+      "$(quota_sensitive_log_field limit_id "$after_limit_id")" \
+      "$(quota_sensitive_log_field limit_name "$after_limit_name")" \
+      "$(quota_sensitive_log_field plan_type "$after_plan_type")" \
+      "$(quota_sensitive_log_field source "$after_source")" \
+      "$(quota_sensitive_log_field snapshot_model_hint "$after_model_hint")" \
+      "$(quota_sensitive_log_field event_timestamp "$after_ts")" \
+      "$(quota_sensitive_log_field snapshot_age_seconds "$after_snapshot_age_seconds")" \
+      "$(quota_sensitive_log_field primary_used "${after_primary}%")" \
+      "$(quota_sensitive_log_field primary_left "${after_primary_left}%")" \
+      "$(quota_sensitive_log_field primary_reset_age_seconds "$after_primary_reset_age_seconds")" \
+      "$(quota_sensitive_log_field secondary_used "${after_secondary}%")" \
+      "$(quota_sensitive_log_field secondary_left "${after_secondary_left}%")" \
+      "$(quota_sensitive_log_field secondary_reset_age_seconds "$after_secondary_reset_age_seconds")"
   else
     after_primary=""
     after_secondary=""
@@ -6698,13 +6861,40 @@ main() {
     observed_secondary_delta="$(awk -v before="$secondary_used" -v after="$after_secondary" 'BEGIN { printf "%.1f", after - before }')"
     observed_delta_status="same_window"
     if [[ "$primary_reset" != "$after_primary_reset" || "$secondary_reset" != "$after_secondary_reset" ]]; then
-      log_line "INFO" "quota.reset_jitter status=tolerated primary_delta_seconds=$(quota_reset_epoch_delta_seconds "$primary_reset" "$after_primary_reset") secondary_delta_seconds=$(quota_reset_epoch_delta_seconds "$secondary_reset" "$after_secondary_reset") before_primary_reset=$(format_epoch_local "$primary_reset") after_primary_reset=$(format_epoch_local "$after_primary_reset") before_secondary_reset=$(format_epoch_local "$secondary_reset") after_secondary_reset=$(format_epoch_local "$after_secondary_reset")"
+      log_line_parts "INFO" \
+        "quota.reset_jitter status=tolerated" \
+        " primary_delta_seconds=$(quota_reset_epoch_delta_seconds "$primary_reset" "$after_primary_reset")" \
+        " secondary_delta_seconds=$(quota_reset_epoch_delta_seconds "$secondary_reset" "$after_secondary_reset")" \
+        " before_primary_reset=$(format_epoch_local "$primary_reset")" \
+        " after_primary_reset=$(format_epoch_local "$after_primary_reset")" \
+        " before_secondary_reset=$(format_epoch_local "$secondary_reset")" \
+        " after_secondary_reset=$(format_epoch_local "$after_secondary_reset")"
     fi
   elif [[ -n "$after_primary" && -n "$after_secondary" ]]; then
     observed_primary_delta="unavailable"
     observed_secondary_delta="unavailable"
     observed_delta_status="reset_changed"
-    log_line "WARN" "quota.jump execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL status=non_authoritative observed_delta_status=$observed_delta_status quota_identity_changed=$quota_snapshot_identity_changed$(quota_hashed_log_field before_limit_id "${limit_id:-unknown}")$(quota_hashed_log_field after_limit_id "${after_limit_id:-unknown}")$(quota_hashed_log_field before_limit_name "${limit_name:-unknown}")$(quota_hashed_log_field after_limit_name "${after_limit_name:-unknown}")$(quota_hashed_path_log_field before_source "${before_source:-unknown}")$(quota_hashed_path_log_field after_source "${after_source:-unknown}")$(quota_sensitive_log_field before_limit_id "${limit_id:-unknown}")$(quota_sensitive_log_field after_limit_id "${after_limit_id:-unknown}")$(quota_sensitive_log_field before_limit_name "${limit_name:-unknown}")$(quota_sensitive_log_field after_limit_name "${after_limit_name:-unknown}")$(quota_sensitive_log_fragment "$(quota_transition_fields "$primary_used" "$primary_left" "$secondary_used" "$secondary_left" "$after_primary" "$after_primary_left" "$after_secondary" "$after_secondary_left")")$(quota_sensitive_log_field before_primary_reset "$(format_epoch_local "$primary_reset")")$(quota_sensitive_log_field after_primary_reset "$(format_epoch_local "$after_primary_reset")")$(quota_sensitive_log_field before_secondary_reset "$(format_epoch_local "$secondary_reset")")$(quota_sensitive_log_field after_secondary_reset "$(format_epoch_local "$after_secondary_reset")")$(quota_sensitive_log_field before_source "${before_source:-unknown}")$(quota_sensitive_log_field after_source "${after_source:-unknown}")"
+    log_line_parts "WARN" \
+      "quota.jump execution_origin=$CODEX_EXECUTION_ORIGIN target_model=$CODEX_MODEL" \
+      " status=non_authoritative observed_delta_status=$observed_delta_status" \
+      " quota_identity_changed=$quota_snapshot_identity_changed" \
+      "$(quota_hashed_log_field before_limit_id "${limit_id:-unknown}")" \
+      "$(quota_hashed_log_field after_limit_id "${after_limit_id:-unknown}")" \
+      "$(quota_hashed_log_field before_limit_name "${limit_name:-unknown}")" \
+      "$(quota_hashed_log_field after_limit_name "${after_limit_name:-unknown}")" \
+      "$(quota_hashed_path_log_field before_source "${before_source:-unknown}")" \
+      "$(quota_hashed_path_log_field after_source "${after_source:-unknown}")" \
+      "$(quota_sensitive_log_field before_limit_id "${limit_id:-unknown}")" \
+      "$(quota_sensitive_log_field after_limit_id "${after_limit_id:-unknown}")" \
+      "$(quota_sensitive_log_field before_limit_name "${limit_name:-unknown}")" \
+      "$(quota_sensitive_log_field after_limit_name "${after_limit_name:-unknown}")" \
+      "$(quota_sensitive_log_fragment "$(quota_transition_fields "$primary_used" "$primary_left" "$secondary_used" "$secondary_left" "$after_primary" "$after_primary_left" "$after_secondary" "$after_secondary_left")")" \
+      "$(quota_sensitive_log_field before_primary_reset "$(format_epoch_local "$primary_reset")")" \
+      "$(quota_sensitive_log_field after_primary_reset "$(format_epoch_local "$after_primary_reset")")" \
+      "$(quota_sensitive_log_field before_secondary_reset "$(format_epoch_local "$secondary_reset")")" \
+      "$(quota_sensitive_log_field after_secondary_reset "$(format_epoch_local "$after_secondary_reset")")" \
+      "$(quota_sensitive_log_field before_source "${before_source:-unknown}")" \
+      "$(quota_sensitive_log_field after_source "${after_source:-unknown}")"
   else
     observed_primary_delta="unavailable"
     observed_secondary_delta="unavailable"
@@ -6740,7 +6930,14 @@ main() {
   status_marker_candidate_rejection_reason="$marker_candidate_rejection_reason"
   primary_session_diagnostics_source="${after_source:-}"
   if [[ "$codex_empty_transcript" == "1" ]]; then
-    log_line "WARN" "codex.session_diagnostics_ignored reason=empty_transcript codex_exit=$codex_exit transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1 transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines$(quota_hashed_path_log_field ignored_session_source "${after_source:-unknown}")$(quota_sensitive_log_field ignored_session_source "${after_source:-unknown}")"
+    log_line_parts "WARN" \
+      "codex.session_diagnostics_ignored reason=empty_transcript" \
+      " codex_exit=$codex_exit" \
+      " transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")")" \
+      " path_redacted=1 transcript_bytes=$run_transcript_bytes" \
+      " transcript_lines=$run_transcript_lines" \
+      "$(quota_hashed_path_log_field ignored_session_source "${after_source:-unknown}")" \
+      "$(quota_sensitive_log_field ignored_session_source "${after_source:-unknown}")"
     primary_session_diagnostics_source=""
     session_end_state="codex_no_output"
   else
@@ -6764,10 +6961,22 @@ main() {
     status_marker_source="exact"
   elif [[ -n "$status_marker" ]]; then
     status_marker_source="recovered_malformed_candidate"
-    log_line "WARN" "status_marker.candidate_recovered marker=$status_marker candidate_marker=$status_marker_candidate_marker reason=$status_marker_candidate_rejection_reason candidate=$(shell_quote "$(upkeeper_redact_model_text "$status_marker_candidate" 240)") detail_redacted=1 codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
+    log_line_parts "WARN" \
+      "status_marker.candidate_recovered marker=$status_marker" \
+      " candidate_marker=$status_marker_candidate_marker" \
+      " reason=$status_marker_candidate_rejection_reason" \
+      " candidate=$(shell_quote "$(upkeeper_redact_model_text "$status_marker_candidate" 240)")" \
+      " detail_redacted=1 codex_exit=$codex_exit" \
+      " task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
   elif [[ -n "$status_marker_candidate" ]]; then
     status_marker_source="rejected_malformed_candidate"
-    log_line "WARN" "status_marker.candidate_rejected candidate_marker=$status_marker_candidate_marker reason=$status_marker_candidate_rejection_reason candidate=$(shell_quote "$(upkeeper_redact_model_text "$status_marker_candidate" 240)") detail_redacted=1 codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
+    log_line_parts "WARN" \
+      "status_marker.candidate_rejected" \
+      " candidate_marker=$status_marker_candidate_marker" \
+      " reason=$status_marker_candidate_rejection_reason" \
+      " candidate=$(shell_quote "$(upkeeper_redact_model_text "$status_marker_candidate" 240)")" \
+      " detail_redacted=1 codex_exit=$codex_exit" \
+      " task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
   else
     status_marker_source="missing"
   fi
@@ -6775,7 +6984,12 @@ main() {
     if status_marker_review_recovery="$(recover_status_marker_from_review_outcome "$last_message_file" "$codex_exit" "$primary_session_task_complete_last_agent_message")"; then
       IFS=$'	' read -r status_marker status_marker_review_outcome status_marker_review_selected_file <<<"$status_marker_review_recovery"
       status_marker_source="review_outcome"
-      log_line "WARN" "status_marker.recovered_from_review_outcome marker=$status_marker review_outcome=$status_marker_review_outcome selected_file=$(shell_quote "$status_marker_review_selected_file") codex_exit=$codex_exit task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
+      log_line_parts "WARN" \
+        "status_marker.recovered_from_review_outcome marker=$status_marker" \
+        " review_outcome=$status_marker_review_outcome" \
+        " selected_file=$(shell_quote "$status_marker_review_selected_file")" \
+        " codex_exit=$codex_exit" \
+        " task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
     fi
   fi
   if [[ -z "$status_marker" && "${UPKEEPER_ALLOW_STATUS_RECOVERY:-0}" == "1" ]]; then
@@ -6794,7 +7008,14 @@ main() {
       fi
       backend_usage_limit_detected=1
       primary_failure_classification="PRIMARY_BACKEND_USAGE_LIMIT"
-      log_line "WARN" "primary.backend_usage_limit_detected target_model=$CODEX_MODEL reported_model=$(shell_quote "${backend_usage_limit_model:-unknown}") codex_exit=$codex_exit status_marker=missing session_end_state=$session_end_state blocked_until=$(shell_quote "$(format_epoch_local "$backend_usage_limit_reset_epoch")") transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1"
+      log_line_parts "WARN" \
+        "primary.backend_usage_limit_detected target_model=$CODEX_MODEL" \
+        " reported_model=$(shell_quote "${backend_usage_limit_model:-unknown}")" \
+        " codex_exit=$codex_exit status_marker=missing" \
+        " session_end_state=$session_end_state" \
+        " blocked_until=$(shell_quote "$(format_epoch_local "$backend_usage_limit_reset_epoch")")" \
+        " transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")")" \
+        " path_redacted=1"
       if ! write_primary_usage_limit_block_marker "$backend_usage_limit_reset_epoch" "${backend_usage_limit_reset_text:-}" "after_run"; then
         log_line "WARN" "primary.backend_usage_limit_marker_unavailable target_model=$CODEX_MODEL codex_exit=$codex_exit reset_epoch=${backend_usage_limit_reset_epoch:-unknown}"
       fi
@@ -6848,7 +7069,19 @@ main() {
   fi
 
   [[ -n "${primary_failure_classification:-}" ]] || primary_failure_classification="none"
-  log_line "INFO" "cycle.summary execution_origin=$CODEX_EXECUTION_ORIGIN model=$CODEX_MODEL observed_primary_delta=$observed_primary_delta observed_secondary_delta=$observed_secondary_delta observed_delta_status=$observed_delta_status status_marker=${status_marker:-missing} status_marker_source=$status_marker_source session_end_state=$session_end_state agent_messages=$primary_session_agent_message_count tool_calls=$primary_session_tool_call_count tool_results=$primary_session_tool_result_count task_complete_last_agent_message=$primary_session_task_complete_last_agent_message codex_exit=$codex_exit"
+  log_line_parts "INFO" \
+    "cycle.summary execution_origin=$CODEX_EXECUTION_ORIGIN model=$CODEX_MODEL" \
+    " observed_primary_delta=$observed_primary_delta" \
+    " observed_secondary_delta=$observed_secondary_delta" \
+    " observed_delta_status=$observed_delta_status" \
+    " status_marker=${status_marker:-missing}" \
+    " status_marker_source=$status_marker_source" \
+    " session_end_state=$session_end_state" \
+    " agent_messages=$primary_session_agent_message_count" \
+    " tool_calls=$primary_session_tool_call_count" \
+    " tool_results=$primary_session_tool_result_count" \
+    " task_complete_last_agent_message=$primary_session_task_complete_last_agent_message" \
+    " codex_exit=$codex_exit"
   log_review_report_summary "$last_message_file" "${status_marker:-missing}" "$codex_exit"
   lattice_record_pass_results "$last_message_file" "${RUN_SELECTED_REVIEW_PATH:-}" "$(lattice_planned_passes_csv)"
   enforce_startup_anomaly_changed_paths
@@ -6868,18 +7101,45 @@ main() {
       post_run_stop_reason="${post_run_stop_reason}post-run weekly left ${after_secondary_left}% <= ${week_threshold}% (base ${CODEX_WEEK_STOP_PERCENT}% + buffer ${week_buffer}%)"
     fi
     if [[ "$after_primary_guardrail_decision" == "defer" && "$after_secondary_guardrail_decision" == "defer" ]]; then
-      log_line "WARN" "quota.guardrails phase=after_run target_model=$CODEX_MODEL deferred reason=stale_snapshot_after_reset snapshot_current=$after_snapshot_is_current snapshot_stale_after_reset=${after_snapshot_stale_after_reset:-unknown} primary_bucket_current=${after_primary_bucket_current:-unknown} secondary_bucket_current=${after_secondary_bucket_current:-unknown}$(quota_sensitive_log_field primary_reset "$(format_epoch_local "$after_primary_reset")")$(quota_sensitive_log_field primary_reset_age_seconds "${after_primary_reset_age_seconds:-unknown}")$(quota_sensitive_log_field secondary_reset "$(format_epoch_local "$after_secondary_reset")")$(quota_sensitive_log_field secondary_reset_age_seconds "${after_secondary_reset_age_seconds:-unknown}")"
+      log_line_parts "WARN" \
+        "quota.guardrails phase=after_run target_model=$CODEX_MODEL deferred" \
+        " reason=stale_snapshot_after_reset" \
+        " snapshot_current=$after_snapshot_is_current" \
+        " snapshot_stale_after_reset=${after_snapshot_stale_after_reset:-unknown}" \
+        " primary_bucket_current=${after_primary_bucket_current:-unknown}" \
+        " secondary_bucket_current=${after_secondary_bucket_current:-unknown}" \
+        "$(quota_sensitive_log_field primary_reset "$(format_epoch_local "$after_primary_reset")")" \
+        "$(quota_sensitive_log_field primary_reset_age_seconds "${after_primary_reset_age_seconds:-unknown}")" \
+        "$(quota_sensitive_log_field secondary_reset "$(format_epoch_local "$after_secondary_reset")")" \
+        "$(quota_sensitive_log_field secondary_reset_age_seconds "${after_secondary_reset_age_seconds:-unknown}")"
     elif [[ "$after_primary_guardrail_decision" == "defer" || "$after_secondary_guardrail_decision" == "defer" ]]; then
-      log_line "WARN" "quota.guardrails phase=after_run target_model=$CODEX_MODEL partial_decision primary_decision=$after_primary_guardrail_decision secondary_decision=$after_secondary_guardrail_decision primary_bucket_current=${after_primary_bucket_current:-unknown} secondary_bucket_current=${after_secondary_bucket_current:-unknown} primary_reset_expired=${after_primary_reset_expired:-unknown} secondary_reset_expired=${after_secondary_reset_expired:-unknown}"
+      log_line_parts "WARN" \
+        "quota.guardrails phase=after_run target_model=$CODEX_MODEL partial_decision" \
+        " primary_decision=$after_primary_guardrail_decision" \
+        " secondary_decision=$after_secondary_guardrail_decision" \
+        " primary_bucket_current=${after_primary_bucket_current:-unknown}" \
+        " secondary_bucket_current=${after_secondary_bucket_current:-unknown}" \
+        " primary_reset_expired=${after_primary_reset_expired:-unknown}" \
+        " secondary_reset_expired=${after_secondary_reset_expired:-unknown}"
     fi
   fi
 
   if [[ "$post_run_should_stop" -eq 1 && "${CODEX_QUOTA_GUARDRAIL_BYPASS:-0}" == "1" ]]; then
-    log_line "WARN" "quota.guardrails bypassed=1 phase=after_run target_model=$CODEX_MODEL reason=$(shell_quote "$(quota_public_stop_reason "$post_run_stop_reason")") primary_decision=$after_primary_guardrail_decision secondary_decision=$after_secondary_guardrail_decision codex_exit=$codex_exit status_marker=${status_marker:-missing}"
+    log_line_parts "WARN" \
+      "quota.guardrails bypassed=1 phase=after_run target_model=$CODEX_MODEL" \
+      " reason=$(shell_quote "$(quota_public_stop_reason "$post_run_stop_reason")")" \
+      " primary_decision=$after_primary_guardrail_decision" \
+      " secondary_decision=$after_secondary_guardrail_decision" \
+      " codex_exit=$codex_exit status_marker=${status_marker:-missing}"
     post_run_should_stop=0
   fi
   if [[ "$post_run_should_stop" -eq 1 && "$backend_usage_limit_detected" == "1" ]]; then
-    log_line "WARN" "quota.guardrails phase=after_run target_model=$CODEX_MODEL action=defer_to_backend_usage_limit primary_decision=$after_primary_guardrail_decision secondary_decision=$after_secondary_guardrail_decision codex_exit=$codex_exit status_marker=${status_marker:-missing}"
+    log_line_parts "WARN" \
+      "quota.guardrails phase=after_run target_model=$CODEX_MODEL" \
+      " action=defer_to_backend_usage_limit" \
+      " primary_decision=$after_primary_guardrail_decision" \
+      " secondary_decision=$after_secondary_guardrail_decision" \
+      " codex_exit=$codex_exit status_marker=${status_marker:-missing}"
     post_run_should_stop=0
   fi
 
@@ -6890,9 +7150,53 @@ main() {
       ensure_codex_bwrap_tmp_writable_or_exit "after_run" "1"
     fi
     if [[ "$codex_exit" -ne 0 && -z "$status_marker" && "$session_end_state" == "no_agent_message" ]]; then
+      local quota_session_transition_fields
       primary_failure_classification="PRIMARY_NO_AGENT_MESSAGE_AFTER_QUOTA_EXHAUSTION"
-      log_line "WARN" "primary.failure_classification classification=$primary_failure_classification phase=after_run codex_exit=$codex_exit status_marker=missing session_end_state=$session_end_state agent_messages=$primary_session_agent_message_count tool_calls=$primary_session_tool_call_count quota_identity_changed=$quota_session_identity_changed observed_delta_status=$observed_delta_status rate_limit_reached_type=$primary_session_last_rate_limit_reached_type$(quota_hashed_log_field before_limit_id "${limit_id:-unknown}")$(quota_hashed_log_field after_limit_id "${after_limit_id:-unknown}")$(quota_hashed_log_field session_limit_id "$primary_session_last_rate_limit_limit_id")$(quota_sensitive_log_field before_limit_id "${limit_id:-unknown}")$(quota_sensitive_log_field after_limit_id "${after_limit_id:-unknown}")$(quota_sensitive_log_field session_limit_id "$primary_session_last_rate_limit_limit_id")$(quota_sensitive_log_fragment "$(quota_transition_fields "$primary_used" "$primary_left" "$secondary_used" "$secondary_left" "$after_primary" "$after_primary_left" "$after_secondary" "$after_secondary_left")")"
-      log_line "WARN" "primary.no_agent_quota_exhausted classification=$primary_failure_classification phase=after_run codex_exit=$codex_exit status_marker=missing session_end_state=$session_end_state quota_identity_changed=$quota_session_identity_changed observed_delta_status=$observed_delta_status fallback_child_id=pending$(quota_hashed_path_log_field session_source "${after_source:-unknown}")$(quota_hashed_log_field before_limit_id "${limit_id:-unknown}")$(quota_hashed_log_field after_limit_id "${after_limit_id:-unknown}")$(quota_hashed_log_field session_limit_id "$primary_session_last_rate_limit_limit_id")$(quota_hashed_log_field before_limit_name "${limit_name:-unknown}")$(quota_hashed_log_field after_limit_name "${after_limit_name:-unknown}")$(quota_hashed_log_field session_limit_name "$primary_session_last_rate_limit_limit_name")$(quota_sensitive_log_field session_source "${after_source:-unknown}")$(quota_sensitive_log_field before_limit_id "${limit_id:-unknown}")$(quota_sensitive_log_field after_limit_id "${after_limit_id:-unknown}")$(quota_sensitive_log_field session_limit_id "$primary_session_last_rate_limit_limit_id")$(quota_sensitive_log_field before_limit_name "${limit_name:-unknown}")$(quota_sensitive_log_field after_limit_name "${after_limit_name:-unknown}")$(quota_sensitive_log_field session_limit_name "$primary_session_last_rate_limit_limit_name")$(quota_sensitive_log_field session_primary_used "${primary_session_last_rate_limit_primary_used_percent}%")$(quota_sensitive_log_field session_secondary_used "${primary_session_last_rate_limit_secondary_used_percent}%")$(quota_sensitive_log_fragment "$(quota_transition_fields "$primary_used" "$primary_left" "$secondary_used" "$secondary_left" "$after_primary" "$after_primary_left" "$after_secondary" "$after_secondary_left")")"
+      quota_session_transition_fields="$(
+        quota_transition_fields \
+          "$primary_used" "$primary_left" "$secondary_used" "$secondary_left" \
+          "$after_primary" "$after_primary_left" "$after_secondary" "$after_secondary_left"
+      )"
+      quota_session_transition_fields="$(quota_sensitive_log_fragment "$quota_session_transition_fields")"
+      log_line_parts "WARN" \
+        "primary.failure_classification classification=$primary_failure_classification" \
+        " phase=after_run codex_exit=$codex_exit status_marker=missing" \
+        " session_end_state=$session_end_state" \
+        " agent_messages=$primary_session_agent_message_count" \
+        " tool_calls=$primary_session_tool_call_count" \
+        " quota_identity_changed=$quota_session_identity_changed" \
+        " observed_delta_status=$observed_delta_status" \
+        " rate_limit_reached_type=$primary_session_last_rate_limit_reached_type" \
+        "$(quota_hashed_log_field before_limit_id "${limit_id:-unknown}")" \
+        "$(quota_hashed_log_field after_limit_id "${after_limit_id:-unknown}")" \
+        "$(quota_hashed_log_field session_limit_id "$primary_session_last_rate_limit_limit_id")" \
+        "$(quota_sensitive_log_field before_limit_id "${limit_id:-unknown}")" \
+        "$(quota_sensitive_log_field after_limit_id "${after_limit_id:-unknown}")" \
+        "$(quota_sensitive_log_field session_limit_id "$primary_session_last_rate_limit_limit_id")" \
+        "$quota_session_transition_fields"
+      log_line_parts "WARN" \
+        "primary.no_agent_quota_exhausted classification=$primary_failure_classification" \
+        " phase=after_run codex_exit=$codex_exit status_marker=missing" \
+        " session_end_state=$session_end_state" \
+        " quota_identity_changed=$quota_session_identity_changed" \
+        " observed_delta_status=$observed_delta_status fallback_child_id=pending" \
+        "$(quota_hashed_path_log_field session_source "${after_source:-unknown}")" \
+        "$(quota_hashed_log_field before_limit_id "${limit_id:-unknown}")" \
+        "$(quota_hashed_log_field after_limit_id "${after_limit_id:-unknown}")" \
+        "$(quota_hashed_log_field session_limit_id "$primary_session_last_rate_limit_limit_id")" \
+        "$(quota_hashed_log_field before_limit_name "${limit_name:-unknown}")" \
+        "$(quota_hashed_log_field after_limit_name "${after_limit_name:-unknown}")" \
+        "$(quota_hashed_log_field session_limit_name "$primary_session_last_rate_limit_limit_name")" \
+        "$(quota_sensitive_log_field session_source "${after_source:-unknown}")" \
+        "$(quota_sensitive_log_field before_limit_id "${limit_id:-unknown}")" \
+        "$(quota_sensitive_log_field after_limit_id "${after_limit_id:-unknown}")" \
+        "$(quota_sensitive_log_field session_limit_id "$primary_session_last_rate_limit_limit_id")" \
+        "$(quota_sensitive_log_field before_limit_name "${limit_name:-unknown}")" \
+        "$(quota_sensitive_log_field after_limit_name "${after_limit_name:-unknown}")" \
+        "$(quota_sensitive_log_field session_limit_name "$primary_session_last_rate_limit_limit_name")" \
+        "$(quota_sensitive_log_field session_primary_used "${primary_session_last_rate_limit_primary_used_percent}%")" \
+        "$(quota_sensitive_log_field session_secondary_used "${primary_session_last_rate_limit_secondary_used_percent}%")" \
+        "$quota_session_transition_fields"
       write_primary_quota_blocked_marker "$post_run_stop_reason codex_exit=$codex_exit status_marker=missing session_end_state=$session_end_state classification=$primary_failure_classification" "after_run"
     fi
     if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then

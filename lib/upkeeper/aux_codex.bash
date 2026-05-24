@@ -51,7 +51,11 @@ aux_quota_allows_run() {
   projected_basis="$quota_projected_basis"
 
   if [[ -z "$primary_used" || -z "$secondary_used" || -z "$projected_primary_delta" || -z "$projected_secondary_delta" ]]; then
-    log_line "WARN" "$phase_label.skip reason=quota_snapshot_incomplete target_model=$target_model snapshot_selection=$selection snapshot_current=$snapshot_current$(quota_hashed_path_log_field source "$source")$(quota_sensitive_log_field source "$source")"
+    log_line_parts "WARN" \
+      "$phase_label.skip reason=quota_snapshot_incomplete target_model=$target_model" \
+      " snapshot_selection=$selection snapshot_current=$snapshot_current" \
+      "$(quota_hashed_path_log_field source "$source")" \
+      "$(quota_sensitive_log_field source "$source")"
     return 1
   fi
 
@@ -67,7 +71,39 @@ aux_quota_allows_run() {
     secondary_guardrail_decision="$(quota_bucket_decision "$secondary_bucket_current" "$secondary_projected_left" "$week_threshold")"
   fi
 
-  log_line "INFO" "$phase_label.quota target_model=$target_model snapshot_selection=$selection snapshot_current=$snapshot_current snapshot_stale_after_reset=$stale_after_reset primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired primary_bucket_current=$primary_bucket_current secondary_bucket_current=$secondary_bucket_current matching_snapshot_count=$matching_count expected_quota_identity=$expected_quota_identity quota_identity_status=$quota_identity_status$(quota_hashed_log_field limit_id "$limit_id")$(quota_hashed_log_field limit_name "$limit_name")$(quota_hashed_path_log_field source "$source") primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision projection_basis=$projected_basis$(quota_sensitive_log_field limit_id "$limit_id")$(quota_sensitive_log_field limit_name "$limit_name")$(quota_sensitive_log_field source "$source")$(quota_sensitive_log_field plan_type "$plan_type")$(quota_sensitive_log_field snapshot_model_hint "$model_hint")$(quota_sensitive_log_field event_timestamp "$ts")$(quota_sensitive_log_field primary_used "${primary_used}%")$(quota_sensitive_log_field primary_left "${primary_left}%")$(quota_sensitive_log_field secondary_used "${secondary_used}%")$(quota_sensitive_log_field secondary_left "${secondary_left}%")$(quota_sensitive_log_field projected_primary_delta_used "${projected_primary_delta}%")$(quota_sensitive_log_field projected_primary_left "${primary_projected_left}%")$(quota_sensitive_log_field projected_secondary_delta_used "${projected_secondary_delta}%")$(quota_sensitive_log_field projected_secondary_left "${secondary_projected_left}%")$(quota_sensitive_log_field left_thresholds "${five_hour_threshold}%/${week_threshold}%")$(quota_sensitive_log_field weekly_base_threshold "${CODEX_WEEK_STOP_PERCENT}%")$(quota_sensitive_log_field weekly_buffer "${week_buffer}%")"
+  log_line_parts "INFO" \
+    "$phase_label.quota target_model=$target_model snapshot_selection=$selection" \
+    " snapshot_current=$snapshot_current snapshot_stale_after_reset=$stale_after_reset" \
+    " primary_reset_expired=$primary_reset_expired" \
+    " secondary_reset_expired=$secondary_reset_expired" \
+    " primary_bucket_current=$primary_bucket_current" \
+    " secondary_bucket_current=$secondary_bucket_current" \
+    " matching_snapshot_count=$matching_count" \
+    " expected_quota_identity=$expected_quota_identity" \
+    " quota_identity_status=$quota_identity_status" \
+    "$(quota_hashed_log_field limit_id "$limit_id")" \
+    "$(quota_hashed_log_field limit_name "$limit_name")" \
+    "$(quota_hashed_path_log_field source "$source")" \
+    " primary_decision=$primary_guardrail_decision" \
+    " secondary_decision=$secondary_guardrail_decision" \
+    " projection_basis=$projected_basis" \
+    "$(quota_sensitive_log_field limit_id "$limit_id")" \
+    "$(quota_sensitive_log_field limit_name "$limit_name")" \
+    "$(quota_sensitive_log_field source "$source")" \
+    "$(quota_sensitive_log_field plan_type "$plan_type")" \
+    "$(quota_sensitive_log_field snapshot_model_hint "$model_hint")" \
+    "$(quota_sensitive_log_field event_timestamp "$ts")" \
+    "$(quota_sensitive_log_field primary_used "${primary_used}%")" \
+    "$(quota_sensitive_log_field primary_left "${primary_left}%")" \
+    "$(quota_sensitive_log_field secondary_used "${secondary_used}%")" \
+    "$(quota_sensitive_log_field secondary_left "${secondary_left}%")" \
+    "$(quota_sensitive_log_field projected_primary_delta_used "${projected_primary_delta}%")" \
+    "$(quota_sensitive_log_field projected_primary_left "${primary_projected_left}%")" \
+    "$(quota_sensitive_log_field projected_secondary_delta_used "${projected_secondary_delta}%")" \
+    "$(quota_sensitive_log_field projected_secondary_left "${secondary_projected_left}%")" \
+    "$(quota_sensitive_log_field left_thresholds "${five_hour_threshold}%/${week_threshold}%")" \
+    "$(quota_sensitive_log_field weekly_base_threshold "${CODEX_WEEK_STOP_PERCENT}%")" \
+    "$(quota_sensitive_log_field weekly_buffer "${week_buffer}%")"
 
   if [[ "${CODEX_QUOTA_GUARDRAIL_BYPASS:-0}" == "1" ]]; then
     log_line "WARN" "$phase_label.quota_bypass target_model=$target_model primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision quota_identity_status=$quota_identity_status"
@@ -75,19 +111,48 @@ aux_quota_allows_run() {
   fi
 
   if [[ "$selection" != "exact_model" ]]; then
-    log_line "WARN" "$phase_label.skip reason=quota_snapshot_not_exact target_model=$target_model snapshot_selection=$selection$(quota_hashed_path_log_field source "$source")$(quota_sensitive_log_field snapshot_model_hint "$model_hint")$(quota_sensitive_log_field source "$source")"
+    log_line_parts "WARN" \
+      "$phase_label.skip reason=quota_snapshot_not_exact target_model=$target_model" \
+      " snapshot_selection=$selection" \
+      "$(quota_hashed_path_log_field source "$source")" \
+      "$(quota_sensitive_log_field snapshot_model_hint "$model_hint")" \
+      "$(quota_sensitive_log_field source "$source")"
     return 1
   fi
   if ! quota_identity_allows_pre_run "$target_model" "$limit_id" "$limit_name"; then
-    log_line "WARN" "$phase_label.skip reason=quota_identity_conflict target_model=$target_model expected_quota_identity=$expected_quota_identity quota_identity_status=$quota_identity_status$(quota_hashed_log_field limit_id "$limit_id")$(quota_hashed_log_field limit_name "$limit_name")$(quota_hashed_path_log_field source "$source")$(quota_sensitive_log_field limit_id "$limit_id")$(quota_sensitive_log_field limit_name "$limit_name")$(quota_sensitive_log_field source "$source")"
+    log_line_parts "WARN" \
+      "$phase_label.skip reason=quota_identity_conflict target_model=$target_model" \
+      " expected_quota_identity=$expected_quota_identity" \
+      " quota_identity_status=$quota_identity_status" \
+      "$(quota_hashed_log_field limit_id "$limit_id")" \
+      "$(quota_hashed_log_field limit_name "$limit_name")" \
+      "$(quota_hashed_path_log_field source "$source")" \
+      "$(quota_sensitive_log_field limit_id "$limit_id")" \
+      "$(quota_sensitive_log_field limit_name "$limit_name")" \
+      "$(quota_sensitive_log_field source "$source")"
     return 1
   fi
   if [[ "$primary_guardrail_decision" == "defer" && "$secondary_guardrail_decision" == "defer" ]]; then
-    log_line "WARN" "$phase_label.skip reason=quota_snapshot_stale target_model=$target_model snapshot_current=$snapshot_current snapshot_stale_after_reset=$stale_after_reset primary_bucket_current=$primary_bucket_current secondary_bucket_current=$secondary_bucket_current$(quota_hashed_path_log_field source "$source")$(quota_sensitive_log_field source "$source")"
+    log_line_parts "WARN" \
+      "$phase_label.skip reason=quota_snapshot_stale target_model=$target_model" \
+      " snapshot_current=$snapshot_current snapshot_stale_after_reset=$stale_after_reset" \
+      " primary_bucket_current=$primary_bucket_current" \
+      " secondary_bucket_current=$secondary_bucket_current" \
+      "$(quota_hashed_path_log_field source "$source")" \
+      "$(quota_sensitive_log_field source "$source")"
     return 1
   fi
   if [[ "$primary_guardrail_decision" == "defer" || "$secondary_guardrail_decision" == "defer" ]]; then
-    log_line "WARN" "$phase_label.skip reason=quota_snapshot_partial target_model=$target_model primary_decision=$primary_guardrail_decision secondary_decision=$secondary_guardrail_decision primary_bucket_current=$primary_bucket_current secondary_bucket_current=$secondary_bucket_current primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired$(quota_hashed_path_log_field source "$source")$(quota_sensitive_log_field source "$source")"
+    log_line_parts "WARN" \
+      "$phase_label.skip reason=quota_snapshot_partial target_model=$target_model" \
+      " primary_decision=$primary_guardrail_decision" \
+      " secondary_decision=$secondary_guardrail_decision" \
+      " primary_bucket_current=$primary_bucket_current" \
+      " secondary_bucket_current=$secondary_bucket_current" \
+      " primary_reset_expired=$primary_reset_expired" \
+      " secondary_reset_expired=$secondary_reset_expired" \
+      "$(quota_hashed_path_log_field source "$source")" \
+      "$(quota_sensitive_log_field source "$source")"
     return 1
   fi
 

@@ -193,7 +193,11 @@ lattice_init_and_doctor_or_exit() {
   fi
 
   UPKEEPER_LATTICE_AVAILABLE="1"
-  log_line "INFO" "lattice.ready schema_version=1 db=$(shell_quote "$UPKEEPER_LATTICE_DB") journal_mode=$UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE selection_mode=$(shell_quote "$UPKEEPER_LATTICE_SELECTION_MODE") raw_storage=$(shell_quote "$UPKEEPER_LATTICE_RAW_STORAGE")"
+  log_line_parts "INFO" \
+    "lattice.ready schema_version=1 db=$(shell_quote "$UPKEEPER_LATTICE_DB")" \
+    " journal_mode=$UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE" \
+    " selection_mode=$(shell_quote "$UPKEEPER_LATTICE_SELECTION_MODE")" \
+    " raw_storage=$(shell_quote "$UPKEEPER_LATTICE_RAW_STORAGE")"
 }
 
 lattice_record_cycle_start() {

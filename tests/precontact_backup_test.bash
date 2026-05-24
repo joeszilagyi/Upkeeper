@@ -24,6 +24,16 @@ log_line() {
   printf '%s [%s] cycle=%s run_hash=%s %s\n' "$(timestamp_now)" "$level" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$*" >>"$LOG_FILE"
 }
 
+log_line_parts() {
+  local level="$1"
+  shift
+  local message="" part
+  for part in "$@"; do
+    message+="$part"
+  done
+  log_line "$level" "$message"
+}
+
 terminal_emit_progress() {
   :
 }

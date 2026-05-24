@@ -73,6 +73,18 @@ log_kv() {
   printf '%s=%s' "$key" "$(log_kv_value "$value")"
 }
 
+log_line_parts() {
+  local level="$1"
+  shift
+  local message=""
+  local part
+
+  for part in "$@"; do
+    message+="$part"
+  done
+  log_line "$level" "$message"
+}
+
 upkeeper_value_has_control_chars() {
   local value="${1:-}"
 

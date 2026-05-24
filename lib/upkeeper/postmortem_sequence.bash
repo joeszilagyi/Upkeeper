@@ -378,7 +378,11 @@ EOF
   fi
   copy_postmortem_private_artifact "$report_last_message" "$report_last_message_private"
   report_marker="$(parse_postmortem_marker "$report_last_message")"
-  log_line "INFO" "postmortem.report.finish exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path report_exists=$([[ -e "$report_path" ]] && printf 1 || printf 0) report_nonempty=$([[ -s "$report_path" ]] && printf 1 || printf 0)"
+  log_line_parts "INFO" \
+    "postmortem.report.finish exit_code=$report_exit" \
+    " marker=${report_marker:-missing} report_path=$report_path" \
+    " report_exists=$([[ -e "$report_path" ]] && printf 1 || printf 0)" \
+    " report_nonempty=$([[ -s "$report_path" ]] && printf 1 || printf 0)"
 
   if [[ "$report_exit" -eq 86 ]]; then
     POSTMORTEM_SEQUENCE_STATUS="report_quota_skipped"

@@ -379,7 +379,14 @@ EOF
     return 8
   fi
   log_line "INFO" "fallback.screen.launch_verify execution_origin=screen trigger=$trigger session_name=$session_name launch_verified=1 probe_attempts=$launch_probe_attempts"
-  log_line "INFO" "fallback.screen.start execution_origin=screen trigger=$trigger session_name=$session_name detail=\"$detail_text\" transcript=$transcript_file poll_seconds=$CODEX_FALLBACK_SCREEN_POLL_SECONDS continuous=$CODEX_FALLBACK_SCREEN_CONTINUOUS max_children=$CODEX_FALLBACK_SCREEN_MAX_CHILDREN max_seconds=$CODEX_FALLBACK_SCREEN_MAX_SECONDS"
+  log_line_parts "INFO" \
+    "fallback.screen.start execution_origin=screen trigger=$trigger" \
+    " session_name=$session_name detail=\"$detail_text\"" \
+    " transcript=$transcript_file" \
+    " poll_seconds=$CODEX_FALLBACK_SCREEN_POLL_SECONDS" \
+    " continuous=$CODEX_FALLBACK_SCREEN_CONTINUOUS" \
+    " max_children=$CODEX_FALLBACK_SCREEN_MAX_CHILDREN" \
+    " max_seconds=$CODEX_FALLBACK_SCREEN_MAX_SECONDS"
   return 0
 }
 
@@ -424,7 +431,13 @@ wait_for_screen_fallback_loop() {
       current_child_status="$(read_artifact_or_unknown "$status_file")"
       heartbeat="$(read_artifact_or_unknown "$screen_root/heartbeat.txt")"
       completed_count="$(read_artifact_or_unknown "$screen_root/completed-child-count.txt")"
-      log_line "INFO" "fallback.screen.wait execution_origin=screen trigger=$trigger session_name=$session_name status=running current_child_id=$current_child_id current_child_status=$current_child_status completed_children=$completed_count heartbeat=$heartbeat next_poll_seconds=$CODEX_FALLBACK_SCREEN_POLL_SECONDS"
+      log_line_parts "INFO" \
+        "fallback.screen.wait execution_origin=screen trigger=$trigger" \
+        " session_name=$session_name status=running" \
+        " current_child_id=$current_child_id" \
+        " current_child_status=$current_child_status" \
+        " completed_children=$completed_count heartbeat=$heartbeat" \
+        " next_poll_seconds=$CODEX_FALLBACK_SCREEN_POLL_SECONDS"
       screen_fallback_interruptible_poll_sleep "$session_name" "$done_file" "$CODEX_FALLBACK_SCREEN_POLL_SECONDS"
       continue
     fi
@@ -442,7 +455,13 @@ wait_for_screen_fallback_loop() {
       screen_write_state_atomic "$status_file" interrupted
       current_child_status="interrupted"
     fi
-    log_line "WARN" "fallback.screen.wait execution_origin=screen trigger=$trigger session_name=$session_name status=$missing_status done_file_missing=1 current_child_id=$current_child_id current_child_status=$current_child_status completed_children=$completed_count last_cycle_exit=$last_cycle_exit stop_reason=$stop_reason heartbeat=$heartbeat"
+    log_line_parts "WARN" \
+      "fallback.screen.wait execution_origin=screen trigger=$trigger" \
+      " session_name=$session_name status=$missing_status done_file_missing=1" \
+      " current_child_id=$current_child_id" \
+      " current_child_status=$current_child_status" \
+      " completed_children=$completed_count last_cycle_exit=$last_cycle_exit" \
+      " stop_reason=$stop_reason heartbeat=$heartbeat"
     break
   done
   FALLBACK_SCREEN_WATCH_ACTIVE="0"
@@ -467,6 +486,11 @@ wait_for_screen_fallback_loop() {
   completed_count="$(read_artifact_or_unknown "$screen_root/completed-child-count.txt")"
   last_cycle_exit="$(read_artifact_or_unknown "$screen_root/last-cycle-exit-code.txt")"
   stop_reason="$(read_artifact_or_unknown "$screen_root/stop-reason.txt")"
-  log_line "INFO" "fallback.screen.finish execution_origin=screen trigger=$trigger session_name=$session_name final_exit=$child_exit completed_children=$completed_count current_child_id=$current_child_id current_child_status=$current_child_status last_cycle_exit=$last_cycle_exit stop_reason=$stop_reason transcript=${FALLBACK_SCREEN_TRANSCRIPT_PATH:-none}"
+  log_line_parts "INFO" \
+    "fallback.screen.finish execution_origin=screen trigger=$trigger" \
+    " session_name=$session_name final_exit=$child_exit" \
+    " completed_children=$completed_count current_child_id=$current_child_id" \
+    " current_child_status=$current_child_status last_cycle_exit=$last_cycle_exit" \
+    " stop_reason=$stop_reason transcript=${FALLBACK_SCREEN_TRANSCRIPT_PATH:-none}"
   return 0
 }

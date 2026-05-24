@@ -3,6 +3,35 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Validation Dry-Run Helper
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #101 by consolidating repeated fake Upkeeper dry-run environment
+  setup inside `tools/validate_upkeeper.sh`
+- preserve stdout/stderr separation, return codes, log paths, transcript paths,
+  active-lock isolation, and no-backend dry-run defaults
+- keep the helper local to validation until another harness has a concrete
+  contract need for it
+
+Constraints:
+- do not change runtime Upkeeper behavior
+- keep per-fixture override hooks explicit for tests that intentionally vary
+  CODEX_HOME, health state, active locks, metadata verbosity, or log rotation
+- do not launch real backend Codex
+
+Files likely touched:
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `git diff --check`
+
 ## Review Module Registry
 
 Status: completed locally; pending PR/CI

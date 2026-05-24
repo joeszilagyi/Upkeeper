@@ -31,6 +31,55 @@ Validation:
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
 
+## Backlog Merge Steward
+
+Status: completed and merged
+
+Goal:
+- close issue #385 with a deterministic local merge steward for already-green
+  backlog PRs
+- refuse unsafe PR, check, branch, and worktree states before merging
+- drive or report the clean-sheet state needed before the next backlog loop
+
+Constraints:
+- no backend Codex calls
+- never rewrite or delete dirty user work
+- use the guarded `CODEX_ALLOW_PR_MERGE=<pr>` merge path for real merges
+- keep tests fixture-driven with fake `gh`/Git state
+
+Files likely touched:
+- `tools/backlog_merge_steward.py`
+- `tests/backlog_merge_steward_test.bash`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/backlog_merge_steward_test.bash`
+
+## Backlog Stop Triage
+
+Status: completed and merged
+
+Goal:
+- close issue #384 with a local no-backend triage command for stopped backlog
+  loops
+- emit both machine-readable restart status and a plain operator summary
+- cover known stopped-loop classes with deterministic fixtures
+
+Constraints:
+- no backend Codex calls
+- GitHub PR/check metadata is optional; local evidence must be enough for
+  common restart decisions
+- unknown or contradictory local evidence must fail closed and leave visible
+  obligation evidence instead of declaring a restart safe
+
+Files likely touched:
+- `tools/backlog_triage.py`
+- `tests/backlog_triage_test.bash`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/backlog_triage_test.bash`
+
 ## Negative-Space Validation Contract
 
 Status: completed and merged

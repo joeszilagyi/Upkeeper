@@ -3,6 +3,41 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Preservation Policy And Artifact Privacy
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #220 by defining preservation policy, evidence temperature, and
+  artifact privacy classes for Upkeeper evidence
+- make the policy part of the tracked security, Lattice, and compatibility
+  contract
+- add deterministic validation so the policy cannot silently drift
+
+Constraints:
+- no backend Codex calls
+- document existing evidence handling without weakening privacy defaults
+- keep private local evidence out of committed artifacts by default
+
+Files likely touched:
+- `docs/preservation-policy.md`
+- `docs/security.md`
+- `docs/lattice.md`
+- `docs/compatibility.md`
+- `README.md`
+- `docs/risk-register.md`
+- `tools/check_public_docs.sh`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/watch-pr.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
 ## Threat Model And Degraded-Mode Doctrine
 
 Status: completed locally; pending PR/CI

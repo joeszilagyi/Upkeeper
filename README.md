@@ -30,6 +30,11 @@ secret leakage, public-doc exposure, quota/fallback behavior, backups,
 validators, Lattice, dirty baselines, and unsafe targets.
 In short, `docs/security.md` is the threat model, degraded-mode doctrine, and override doctrine for wrapper safety decisions.
 
+The evidence preservation contract is tracked in
+`docs/preservation-policy.md`. It defines evidence temperature, artifact privacy
+classes, and promotion rules for logs, transcripts, backups, Lattice rows,
+exports, recovery records, obligations, postmortems, and public evidence.
+
 The compatibility surface is tracked in `docs/compatibility.md`. Public
 schemas, prompt markers, docs/help examples, and Lattice JSONL output are
 classified as `stable`, `experimental`, `deprecated`, or `removed`; unclassified

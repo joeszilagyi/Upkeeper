@@ -38,6 +38,86 @@ The paired authority docs make the control surface explicit:
 - `docs/negative-space-testing.md` lists deterministic "must not happen"
   validation contracts for safety boundaries.
 
+## Threat Model
+
+Upkeeper assumes a trusted local operator, a trusted central wrapper checkout,
+and a repository that is safe enough for local maintenance automation. It does
+not assume that backend model output is trustworthy or that local wrapper code
+is bug-free. The default response to uncertainty is to keep authority in the
+wrapper, write bounded local evidence, and fail closed before new backend work
+when machine-health state is not clean. The threat rows below intentionally use
+the same terms as the tracked issue: malicious model output, confused model
+output, buggy wrapper, bad config, operator mistake, filesystem weirdness,
+same-user process access, repo-local secret leakage, public docs leakage, and
+quota/fallback weirdness.
+
+Canonical threat categories:
+
+- malicious model output
+- confused model output
+- buggy wrapper
+- bad config
+- operator mistake
+- filesystem weirdness
+- same-user process access
+- repo-local secret leakage
+- public docs leakage
+- quota/fallback weirdness
+
+| Threat | Coverage status | Current doctrine |
+| --- | --- | --- |
+| Malicious model output | Partially covered | The wrapper owns target selection, GitHub effects, status parsing, quota checks, backups, and validation. Backend Codex stays inside the configured sandbox and cannot directly override wrapper safety blocks, but a trusted repo and same-user shell remain required. |
+| Confused model output | Partially covered | Parseable markers, selected-target authority, failure custody, and local validation reduce confused output from silently becoming success. Semantic correctness still needs tests, review, or a later fixing cycle. |
+| Buggy wrapper | Partially covered | Runtime logs, obligations, breadcrumb custody, focused tests, quick validation, and CI turn wrapper faults into tracked repair work. Some wrapper bugs will still first appear as failed or anomalous runs. |
+| Bad config | Partially covered | Config files are documented as trusted shell code, selected config paths are operator-controlled, and local env files are kept machine-local. Upkeeper does not safely execute hostile config. |
+| Operator mistake | Partially covered | One-cycle CLI overrides, explicit unsafe knobs, logs, and compatibility docs make intentional operator choices visible. Upkeeper cannot prevent every trusted operator command from doing harm. |
+| Filesystem weirdness | Partially covered | Unsafe logs, symlinked targets, ignored/runtime paths, non-private evidence directories, and unsafe session paths are rejected or degraded with evidence. Same-user races and hostile local filesystems are only partially covered. |
+| Same-user process access | Partially covered | Private permissions, ignored runtime state, encrypted selected-target backups, and token stripping limit accidental exposure. True isolation from another process running as the same OS user is out of scope without stronger OS confinement or a separate user. |
+| Repo-local secret leakage | Partially covered | Secret-bearing files should stay ignored, prompts/logs redact known sensitive paths, and public docs warn against sharing raw evidence. Upkeeper cannot guarantee that project commands or model output never print secrets. |
+| Public docs leakage | Partially covered | Public documentation policy, P26 review, docs checks, and release-note discipline reduce private-chat leakage. Operators still need to sanitize examples before publication. |
+| Quota/fallback weirdness | Partially covered | Session parsing, quota guardrails, cooldown markers, fallback limits, and stale-evidence obligations make quota and fallback state visible. Provider state can be stale or incomplete, so degraded or blocked outcomes remain possible. |
+
+Future work should reduce the partially covered rows by replacing broad
+model-dependent judgment with deterministic local checks, tighter confinement,
+and smaller authority surfaces.
+
+## Degraded-Mode Doctrine
+
+Degraded mode means Upkeeper can still preserve evidence and explain the next
+operator-safe action, but must not pretend the run is fully healthy. When a
+degraded condition affects safety or custody, machine health outranks fresh
+GitHub issue work.
+
+| Degraded condition | Default behavior | Override policy |
+| --- | --- | --- |
+| age is missing | Live full-burn paths that require encrypted selected-target backups stop before backend launch and print the bootstrap command. Dry-run and documentation-only paths may continue when they do not need a live encrypted backup. | Install `age` or choose a profile that does not require encrypted pre-contact backup. Codex cannot override this block. |
+| encrypted backup is required but unavailable | Stop before backend launch with evidence that backup protection was not established. | The operator may deliberately change backup requirements for a trusted run, but unsafe plaintext backup requires explicit unsafe knobs. Codex cannot override this block. |
+| Landlock/bwrap is unavailable | Required confinement preflights fail closed. Optional hardening layers may be reported as unavailable without claiming stronger isolation than exists. | The operator may use a profile whose documented sandbox requirements fit the machine. Codex cannot override or silently weaken confinement. |
+| Lattice is unavailable | If Lattice is required, fail closed. If Lattice is advisory, continue without Lattice and record degraded evidence so custody does not rely on missing ledger state. | The operator may make Lattice required or advisory through documented config. Codex cannot override missing required Lattice custody. |
+| validators are unavailable | Do not claim validation proof. Validation phases fail or skip with an explicit local-environment reason, and merge paths must preserve an obligation before continuing. | Fix the local dependency or choose a documented validation scope that does not need it. Codex cannot mark missing validators as passed. |
+| dirty baseline exists | Backlog may autoshelve local changes before issue work. Other paths fail or preserve an obligation when clean source state is required. | The operator may clean, commit, autoshelve, or rerun in a documented mode that permits dirt. Codex cannot pretend a dirty baseline is clean. |
+| target is unsafe | Reject the target before backend launch when possible, including symlinks, directories, ignored/runtime paths, `.git`, unreadable files, and binary-like files. | The operator must choose a safe target or change tracked selection policy deliberately. Codex cannot retarget around the block. |
+
+## Override Doctrine
+
+Overrides are operator controls, not model controls. A valid override should be
+visible in the command, config, log, obligation, or policy-decision evidence
+for that run. Unless a setting is a documented persistent config default,
+override effects expire after one cycle.
+
+| Block reason | Operator override allowed | Codex override | Evidence required | Expiry |
+| --- | --- | --- | --- | --- |
+| Missing `age` for encrypted-required live backup | Yes, by installing `age` or choosing a non-encrypted-required profile for trusted local work | Codex cannot override | Bootstrap output, config/profile, or preflight log | One-cycle for CLI changes; config changes persist until edited |
+| Encrypted backup required but unavailable | Yes, only with documented backup requirement changes and unsafe plaintext opt-in when plaintext is used | Codex cannot override | Backup mode, encrypted flag, unsafe opt-in, and stop/continue reason | One-cycle for CLI/env overrides unless committed config changes |
+| Landlock/bwrap required but unavailable | Yes, by selecting a documented profile that does not require that confinement layer | Codex cannot override | Preflight reason and effective sandbox/confinement profile | One-cycle for CLI/env overrides |
+| Lattice required but unavailable | Yes, by changing the requirement to advisory in config for a trusted run | Codex cannot override | Lattice requirement value, failure reason, and degraded or fail-closed log | One-cycle for CLI/env overrides |
+| Validators unavailable | Only by selecting a narrower documented validation scope; never by reporting success without proof | Codex cannot override | Skipped command, missing dependency, or failing validation evidence | One-cycle for validation-scope overrides |
+| Dirty baseline | Yes, by cleaning, committing, autoshelving, or using a mode that documents dirty-state handling | Codex cannot override | Git status or autoshelve branch/commit evidence | One-cycle for autoshelve or mode override |
+| Unsafe target | No direct bypass for unsafe paths; choose a safe target or change source/ignore policy in tracked code | Codex cannot override | Rejected path class and selection reason | No bypass |
+| Startup anomaly or open obligation | No bypass for normal unattended work; repair, resolve, or preserve the obligation first | Codex cannot override | Obligation id, mapped repair target, and resolution evidence | No bypass |
+| Quota guardrail or cooldown stop | Limited burn-mode bypass is allowed when documented and logged; stale evidence must become an obligation | Codex cannot override | Quota bucket, decision, reset/cooldown evidence, and bypass reason | One-cycle for CLI/env bypass |
+| External prompt or private issue packet exposure | Yes, only through explicit opt-in flags or env variables from trusted local context | Codex cannot override | Effective exposure flag and redacted private-packet log fields | One-cycle for CLI/env overrides |
+
 ## What Upkeeper Can Read
 
 Normal startup and dry-run paths can read:

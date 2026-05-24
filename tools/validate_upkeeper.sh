@@ -551,6 +551,52 @@ check_schema_compatibility_contract() {
     fail "prompt compatibility section missing pass-result marker contract"
 }
 
+check_threat_model_doctrine_contract() {
+  local term
+  local -a required_terms
+
+  log "checking threat model and degraded-mode doctrine contract"
+  required_terms=(
+    "## Threat Model"
+    "malicious model output"
+    "confused model output"
+    "buggy wrapper"
+    "bad config"
+    "operator mistake"
+    "filesystem weirdness"
+    "same-user process access"
+    "repo-local secret leakage"
+    "public docs leakage"
+    "quota/fallback weirdness"
+    "## Degraded-Mode Doctrine"
+    "age is missing"
+    "encrypted backup is required but unavailable"
+    "Landlock/bwrap is unavailable"
+    "Lattice is unavailable"
+    "validators are unavailable"
+    "dirty baseline exists"
+    "target is unsafe"
+    "## Override Doctrine"
+    "Operator override allowed"
+    "Codex cannot override"
+    "Evidence required"
+    "One-cycle"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq "$term" docs/security.md ||
+      fail "security docs missing threat/degraded doctrine term: $term"
+  done
+
+  grep -Fq "threat model, degraded-mode doctrine, and override doctrine" README.md ||
+    fail "README missing threat model and override doctrine pointer"
+  grep -Fq "threat model, degraded-mode doctrine, and override doctrine" docs/compatibility.md ||
+    fail "compatibility docs missing threat model and override doctrine contract"
+  grep -Fq "Threat/degraded-mode doctrine drift" docs/risk-register.md ||
+    fail "risk register missing threat/degraded doctrine drift risk"
+  grep -Fq "threat model and override doctrine" change_notes_2026.md ||
+    fail "change notes missing threat model and override doctrine entry"
+}
+
 check_syntax() {
   local module
 
@@ -6870,6 +6916,7 @@ run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contr
 run_check authority_control_docs_contract check_authority_control_docs_contract
 run_check policy_decisions_contract check_policy_decisions_contract
 run_check schema_compatibility_contract check_schema_compatibility_contract
+run_check threat_model_doctrine_contract check_threat_model_doctrine_contract
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation

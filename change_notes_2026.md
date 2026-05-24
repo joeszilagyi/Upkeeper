@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: threat model and override doctrine:
+	1. Added an explicit `docs/security.md` threat model covering malicious or confused model output, wrapper bugs, config mistakes, operator mistakes, filesystem weirdness, same-user access, secret leakage, public-doc leakage, and quota/fallback weirdness.
+	2. Documented degraded-mode behavior for missing `age`, unavailable encrypted backup, unavailable Landlock/bubblewrap, unavailable Lattice, missing validators, dirty baselines, and unsafe targets.
+	3. Documented override rules that keep safety overrides operator-visible, evidence-backed, and unavailable to backend Codex, with validation coverage for the doctrine.
+
 2026-05-24: compatibility promise for schemas and contracts:
 	1. Defined `stable`, `experimental`, `deprecated`, and `removed` compatibility classes for public schemas, prompt markers, docs/help examples, and Lattice JSONL rows.
 	2. Documented schema-version, migration, deprecation-warning, public-example validation, and Lattice import/export compatibility rules in the binding compatibility contract.

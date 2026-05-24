@@ -641,6 +641,7 @@ source_upkeeper_module() {
 # functions defined by earlier runtime, preflight, prompt, and fallback groups.
 UPKEEPER_MODULES=(
   # CLI/help and runtime evidence.
+  "review_modules.bash"
   "help_selection.bash"
   "runtime_foundation.bash"
   "transcript_artifacts.bash"

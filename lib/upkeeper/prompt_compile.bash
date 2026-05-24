@@ -6,37 +6,6 @@ default_review_prompt_path() {
   printf '%s/prompts/default-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
 }
 
-review_module_prompt_path() {
-  local module="$1"
-
-  case "$module" in
-    p24)
-      printf '%s/prompts/p24-de-llm-ing-viability-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
-      ;;
-    p25)
-      printf '%s/prompts/p25-contract-intent-compliance-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
-      ;;
-    p26)
-      printf '%s/prompts/p26-public-documentation-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
-      ;;
-    p27)
-      printf '%s/prompts/p27-educational-debrief-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
-      ;;
-    p28)
-      printf '%s/prompts/p28-unit-test-harvesting-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
-      ;;
-    p29)
-      printf '%s/prompts/p29-reuse-harvesting-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
-      ;;
-    p30)
-      printf '%s/prompts/p30-stark-protocol-review.md' "$UPKEEPER_IMPLEMENTATION_DIR"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
 issue_fix_prompt_json_string_literal() {
   local value="${1:-}"
   python3 - "$value" <<'PY'

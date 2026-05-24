@@ -543,6 +543,9 @@ Prompt behavior:
   - --no-config disables the default config for this invoked cycle.
   - --prompt TEXT appends extra task guidance inline; an empty value is rejected
     for the same reason.
+  - review-module ids, aliases, prompt paths, titles, and help summaries are
+    registry-backed so CLI normalization, prompt loading, help text, and
+    validation share the same P24-P30 metadata
   - --review-module=p24 appends the central P24 de-LLM-ing viability review
     module for this invoked cycle.
   - --review-module=p25 appends the central P25 contract and intent compliance

@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 TOOLS_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 ROOT_DIR="$(cd -- "$TOOLS_DIR/.." && pwd)"
+UPKEEPER_IMPLEMENTATION_DIR="$ROOT_DIR"
+source "$ROOT_DIR/lib/upkeeper/review_modules.bash"
 
 MODE="quick"
 VALIDATION_PROFILE="0"
@@ -1811,27 +1813,102 @@ check_prompt_module_contract() {
   done
 }
 
+check_review_module_registry_contract() {
+  local expected_modules module_id prompt_path title aliases help_summary
+  local normalized resolved_prompt_path
+
+  log "checking review-module registry contract"
+  [[ -s lib/upkeeper/review_modules.bash ]] || fail "review module registry module is missing or empty"
+  grep -Fq '"review_modules.bash"' Upkeeper || fail "module map does not load review_modules.bash"
+  grep -Fq '`review_modules.bash`' lib/upkeeper/README.md || fail "module README missing review_modules.bash ownership"
+  grep -Fq "review_module_registry_rows" lib/upkeeper/codex_io.bash &&
+    fail "codex I/O should consume registry helpers, not registry rows directly"
+  grep -Fq "case \"\$module\"" lib/upkeeper/prompt_compile.bash &&
+    fail "prompt compilation still has a review-module case block"
+  grep -Fq "review_module_prompt_path" lib/upkeeper/prompt_compile.bash ||
+    fail "prompt compilation no longer consumes the review-module prompt helper"
+  grep -Fq "review_module_flag_help_lines" lib/upkeeper/help_selection.bash ||
+    fail "help text does not consume review-module help registry"
+
+  expected_modules="p24,p25,p26,p27,p28,p29,p30"
+  [[ "$(review_module_ids_csv)" == "$expected_modules" ]] ||
+    fail "review module registry ids drifted from expected list"
+  [[ "$(review_module_ids_pipe)" == "p24|p25|p26|p27|p28|p29|p30" ]] ||
+    fail "review module registry pipe list drifted"
+
+  while IFS='|' read -r module_id prompt_path title aliases help_summary; do
+    [[ -n "$module_id" && -n "$prompt_path" && -n "$title" && -n "$help_summary" ]] ||
+      fail "review module registry row has empty required fields for $module_id"
+    [[ -s "$prompt_path" ]] || fail "registered review module prompt missing: $prompt_path"
+    normalized="$(normalize_review_module "$module_id")" ||
+      fail "registry id does not normalize: $module_id"
+    [[ "$normalized" == "$module_id" ]] || fail "registry id normalized to $normalized, expected $module_id"
+    resolved_prompt_path="$(review_module_prompt_relative_path "$module_id")" ||
+      fail "registry prompt lookup failed for $module_id"
+    [[ "$resolved_prompt_path" == "$prompt_path" ]] ||
+      fail "registry prompt lookup for $module_id returned $resolved_prompt_path, expected $prompt_path"
+    grep -Fq -- "--review-module=$module_id" docs/scripts/upkeeper.md ||
+      fail "operator guide missing registered module flag: $module_id"
+  done < <(review_module_registry_rows)
+
+  [[ "$(normalize_review_module library-reuse)" == "p29" ]] ||
+    fail "p29 library-reuse alias did not normalize"
+  [[ "$(normalize_review_module STARK_PROTOCOL)" == "p30" ]] ||
+    fail "p30 uppercase underscore alias did not normalize"
+}
+
 review_module_specs() {
-  cat <<'EOF'
-p24|prompts/p24-de-llm-ing-viability-review.md|P24 - De-LLM-ing Viability Review|P24: not applicable|no loss of operator-facing function;without material new runtime cost
-p25|prompts/p25-contract-intent-compliance-review.md|P25 - Contract And Intent Compliance Review|P25: not applicable|central-first;operator-visible behavior;smallest sufficient
-p26|prompts/p26-public-documentation-review.md|P26 - Public Documentation And Readability Review|P26: not applicable|current checked-in state as the delivered product
-p27|prompts/p27-educational-debrief-review.md|P27 - Educational Debrief Review|P27: not applicable|P27 Educational Debrief:;What went wrong:
-p28|prompts/p28-unit-test-harvesting-review.md|P28 - Unit Test Harvesting Review|P28: not applicable|without backend model quota
-p29|prompts/p29-reuse-harvesting-review.md|# P29 Reuse Harvesting Review|P29: not applicable|stable contract;generic "utils.bash" dumping ground;generic "utility dumping ground" functions;Relationship to P12, P24, P25, and P28;Wrong Abstraction Check;Shell Reuse Safety Gates;Command Reuse Rule;Registry Preference;Reuse Debt Output;ShellCheck Integration Policy
-p30|prompts/p30-stark-protocol-review.md|# P30 Stark Protocol Review|P30: not applicable|same weakness cannot get us twice;Permanent hardening test;Non-regression evidence;same weakness cannot silently recur
-EOF
+  local module_id prompt_path title aliases help_summary applicability terms
+
+  while IFS='|' read -r module_id prompt_path title aliases help_summary; do
+    case "$module_id" in
+      p24)
+        applicability="P24: not applicable"
+        terms="no loss of operator-facing function;without material new runtime cost"
+        ;;
+      p25)
+        applicability="P25: not applicable"
+        terms="central-first;operator-visible behavior;smallest sufficient"
+        ;;
+      p26)
+        applicability="P26: not applicable"
+        terms="current checked-in state as the delivered product"
+        ;;
+      p27)
+        applicability="P27: not applicable"
+        terms="P27 Educational Debrief:;What went wrong:"
+        ;;
+      p28)
+        applicability="P28: not applicable"
+        terms="without backend model quota"
+        ;;
+      p29)
+        applicability="P29: not applicable"
+        terms="stable contract;generic \"utils.bash\" dumping ground;generic \"utility dumping ground\" functions;Relationship to P12, P24, P25, and P28;Wrong Abstraction Check;Shell Reuse Safety Gates;Command Reuse Rule;Registry Preference;Reuse Debt Output;ShellCheck Integration Policy"
+        ;;
+      p30)
+        applicability="P30: not applicable"
+        terms="same weakness cannot get us twice;Permanent hardening test;Non-regression evidence;same weakness cannot silently recur"
+        ;;
+      *)
+        fail "review module registry has no validation terms for $module_id"
+        ;;
+    esac
+    printf '%s|%s|%s|%s|%s\n' "$module_id" "$prompt_path" "$title" "$applicability" "$terms"
+  done < <(review_module_registry_rows)
 }
 
 review_module_alias_specs() {
-  cat <<'EOF'
-p29|library-reuse,function-reuse,asset-reuse
-p30|stark-protocol,permanent-hardening,non-regression
-EOF
+  local module_id prompt_path title aliases help_summary
+
+  while IFS='|' read -r module_id prompt_path title aliases help_summary; do
+    [[ -n "$aliases" ]] || continue
+    printf '%s|%s\n' "$module_id" "$aliases"
+  done < <(review_module_registry_rows)
 }
 
 review_module_list_csv() {
-  review_module_specs | awk -F'|' 'BEGIN { ORS = "," } { print $1 }' | sed 's/,$//'
+  review_module_ids_csv
 }
 
 check_prompt_template() {
@@ -6006,6 +6083,7 @@ run_check syntax check_syntax
 run_check version_consistency check_version_consistency
 run_check module_map check_module_map
 run_check prompt_template check_prompt_template
+run_check review_module_registry_contract check_review_module_registry_contract
 run_check log_line_source_length_contract check_log_line_source_length_contract
 run_check prompt_public_lint_contract check_prompt_public_lint_contract
 run_check fault_injection_registry_contract check_fault_injection_registry_contract

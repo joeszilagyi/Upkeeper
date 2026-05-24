@@ -23,6 +23,35 @@ Constraints:
 Files likely touched:
 - `tools/backlog_triage.py`
 - `tests/backlog_triage_test.bash`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/backlog_triage_test.bash`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Breadcrumb Severity Gate
+
+Status: completed and merged
+
+Goal:
+- close issue #137 by making unresolved high/critical breadcrumb custody affect
+  normal Upkeeper rotation
+- keep the enforcement deterministic and pre-model
+- build on the local breadcrumb custody records from issue #124
+
+Constraints:
+- preserve explicit `--target-file` and issue-fix pins
+- keep low/medium breadcrumbs warning/custody-only by default
+- do not rescan large logs on the clean startup path; read current open custody
+  records instead
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/breadcrumb_gate.bash`
+- `tools/audit_upkeeper_breadcrumbs.py`
 - `tools/validate_upkeeper.sh`
 - `docs/scripts/upkeeper.md`
 - `docs/compatibility.md`
@@ -31,10 +60,71 @@ Files likely touched:
 
 Validation:
 - `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
-- `bash tests/backlog_triage_test.bash`
-- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Audit-Only Mode
+
+Status: completed and merged
+
+Goal:
+- close issue #132 by making audit-only/no-fix a first-class invocation surface
+- reuse the existing bug-report-only source-mutation guard and draft artifact
+  path instead of creating a second read-only workflow
+- document aliases and prove the mode records audit intent without allowing
+  tracked source mutation
+
+Constraints:
+- preserve existing `--bug-report-only`, `--file-bug-only`, and
+  `--report-bug-only` behavior
+- do not launch real backend Codex during validation
+- keep audit-only reports under ignored runtime evidence
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/help_selection.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
 - `tools/validate_upkeeper.sh --quick`
 - `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
+- `git diff --check`
+
+## Breadcrumb Custody Audit
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #124 with a deterministic local breadcrumb audit command
+- turn weak suspicious log/transcript clues into stable open/resolved/suppressed
+  local JSON records
+- add quick validation coverage and operator docs for the custody contract
+
+Constraints:
+- keep breadcrumb records ignored local runtime evidence
+- avoid backend Codex and GitHub I/O
+- reuse existing anomaly-custody classifications where practical, but keep this
+  audit command focused and deterministic
+
+Files likely touched:
+- `tools/audit_upkeeper_breadcrumbs.py`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
 - `git diff --check`
 
 ## Embedded Behavior Table Contracts

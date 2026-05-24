@@ -11,6 +11,16 @@ Version numbering note:
 	2. The command emits `safe_to_restart=yes|no|wait`, a reason, a next action, branch/PR/check metadata, and a short operator summary.
 	3. Local fixtures cover clean no-op, dirty worktree, active owner, active lock, open obligation, quota hibernation, pending CI, failed validation, merged-PR cleanup, and unknown PAGE/error evidence.
 
+2026-05-24: breadcrumb custody audit:
+	1. Added `tools/audit_upkeeper_breadcrumbs.py`, a deterministic local scanner that fingerprints suspicious log, transcript, automation-obligation, and tool-failure breadcrumbs.
+	2. The audit command can write ignored local custody records under `runtime/upkeeper-breadcrumbs/open`, `resolved`, and `suppressed`, preserving weak clues until they are explicitly resolved or suppressed.
+	3. Quick validation now covers breadcrumb record creation, duplicate updates, expected-fixture suppression, and resolve-missing behavior.
+
+2026-05-24: breadcrumb severity gate:
+	1. Open critical/high breadcrumb custody records now redirect normal Upkeeper target rotation to the configured Upkeeper gate target before backend work starts.
+	2. Explicit target pins and issue-fix pins remain visible as pinned work instead of being silently replaced, while low/medium breadcrumbs remain custody-only by default.
+	3. Suppressed breadcrumb records now carry a named suppression rationale plus an optional expiry field so suppression is machine-readable.
+
 2026-05-24: embedded behavior table contracts:
 	1. Quick validation now checks the embedded behavior table drift contract for startup anomaly changed-path allowlists, source-safe exclusions, command-kind classifiers, review-module ids, and Lattice pass-code mappings.
 	2. Compatibility and operator docs now identify those tables as operator-visible control-plane behavior that must change with validation coverage instead of drifting silently.
@@ -19,6 +29,11 @@ Version numbering note:
 	1. Obligation issue-report sync now verifies existing GitHub issue links are still open before accepting them as custody for an open automation obligation.
 	2. Closed linked issues are preserved as stale evidence, cleared from the active custody fields, and replaced with a fresh issue for the still-open obligation when GitHub filing is enabled.
 	3. If an existing linked issue cannot be verified, backlog records `github_verify_failed` and fails closed before normal issue selection instead of claiming clean custody.
+
+2026-05-24: audit-only no-fix mode:
+	1. Added `--audit-only` as the canonical read-only/no-fix audit mode, with `--review-only`, `--no-fix`, and `--read-only` as aliases.
+	2. Audit-only mode reuses the bug-report-only final-message report contract, records `audit_only=1` in cycle metadata, and stores local reports under ignored runtime audit evidence by default.
+	3. The source mutation guard now reports audit-only source changes as `AUDIT_ONLY_MUTATION_VIOLATION`, and local validation checks the CLI, help, config, prompt, and runtime report routing contract.
 
 2026-05-24: validation dry-run helper:
 	1. `tools/validate_upkeeper.sh` now centralizes repeated fake Upkeeper dry-run environment setup in a validator-local helper.

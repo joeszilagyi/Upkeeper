@@ -1147,6 +1147,85 @@ LOG
   rm -r "$temp_dir"
 }
 
+check_breadcrumb_audit_contract() {
+  local temp_dir open_count suppressed_count resolved_count page_record
+
+  log "checking breadcrumb audit contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-breadcrumb-audit.XXXXXX)"
+  mkdir -p "$temp_dir/transcripts" "$temp_dir/obligations/open" "$temp_dir/failures/open"
+  cat >"$temp_dir/Upkeeper.log" <<'LOG'
+2026-05-24T05:00:00 █ INFO    normal healthy line
+2026-05-24T05:00:01 █ PAGE    [ERROR] Upkeeper: live failure that needs custody
+2026-05-24T05:00:02 █ --FYI-- [WARN] cycle=abc run_hash=def startup_anomaly.gate_unresolved reason=changed_path_violation
+2026-05-24T05:00:03 [ERROR] cycle=fixture transcript directory is not private /tmp/upkeeper-transcripts-test.ABC/transcripts-link
+transcript_artifacts_test: ok
+LOG
+  cat >"$temp_dir/transcripts/session.log" <<'LOG'
+2026-05-24T05:00:04 [WARN] cycle=abc run_hash=ghi transcript.prune_blocked reason=missing_ownership_marker path_redacted=1
+LOG
+  cat >"$temp_dir/obligations/open/prior.json" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"prior","kind":"prior_run_anomaly","severity":"high","summary":"prior anomaly fixture","reason":"PRIOR_RUN_ANOMALY","root":"$ROOT_DIR","target_file":"Upkeeper"}
+JSON
+
+  tools/audit_upkeeper_breadcrumbs.py \
+    --root "$ROOT_DIR" \
+    --state-root "$temp_dir/breadcrumbs" \
+    --log "$temp_dir/Upkeeper.log" \
+    --transcript-dir "$temp_dir/transcripts" \
+    --obligation-root "$temp_dir/obligations" \
+    --failure-queue-root "$temp_dir/failures" \
+    --write \
+    --json >"$temp_dir/audit.json"
+
+  [[ "$(jq -r '.status' "$temp_dir/audit.json")" == "open_breadcrumbs" ]] ||
+    fail "breadcrumb audit did not report open breadcrumbs"
+  [[ "$(jq -r '.open_count' "$temp_dir/audit.json")" == "4" ]] ||
+    fail "breadcrumb audit did not collect expected open breadcrumbs"
+  [[ "$(jq -r '.suppressed_count' "$temp_dir/audit.json")" == "1" ]] ||
+    fail "breadcrumb audit did not suppress expected negative fixture"
+  open_count="$(find "$temp_dir/breadcrumbs/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$open_count" == "4" ]] || fail "breadcrumb audit wrote $open_count open records, expected 4"
+  suppressed_count="$(find "$temp_dir/breadcrumbs/suppressed" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$suppressed_count" == "1" ]] || fail "breadcrumb audit wrote $suppressed_count suppressed records, expected 1"
+  jq -e '.suppression_rationale == "expected_negative_fixture" and has("suppression_expires_at")' "$temp_dir/breadcrumbs/suppressed"/*.json >/dev/null ||
+    fail "breadcrumb audit suppression record lacks machine-readable rationale and expiry field"
+  page_record="$(find "$temp_dir/breadcrumbs/open" -maxdepth 1 -type f -name 'page_error-*.json' | head -1)"
+  [[ -n "$page_record" ]] || fail "breadcrumb audit did not write page_error record"
+
+  tools/audit_upkeeper_breadcrumbs.py \
+    --root "$ROOT_DIR" \
+    --state-root "$temp_dir/breadcrumbs" \
+    --log "$temp_dir/Upkeeper.log" \
+    --transcript-dir "$temp_dir/transcripts" \
+    --obligation-root "$temp_dir/obligations" \
+    --failure-queue-root "$temp_dir/failures" \
+    --write \
+    --json >"$temp_dir/audit-second.json"
+  [[ "$(jq -r '.occurrence_count' "$page_record")" == "2" ]] ||
+    fail "breadcrumb audit did not update existing breadcrumb occurrence count"
+
+  mkdir -p "$temp_dir/empty-transcripts" "$temp_dir/empty-obligations/open" "$temp_dir/empty-failures/open"
+  printf '2026-05-24T05:01:00 █ INFO clean\n' >"$temp_dir/clean.log"
+  tools/audit_upkeeper_breadcrumbs.py \
+    --root "$ROOT_DIR" \
+    --state-root "$temp_dir/breadcrumbs" \
+    --log "$temp_dir/clean.log" \
+    --transcript-dir "$temp_dir/empty-transcripts" \
+    --obligation-root "$temp_dir/empty-obligations" \
+    --failure-queue-root "$temp_dir/empty-failures" \
+    --write \
+    --resolve-missing \
+    --json >"$temp_dir/audit-resolved.json"
+  [[ "$(jq -r '.resolved_missing' "$temp_dir/audit-resolved.json")" == "4" ]] ||
+    fail "breadcrumb audit did not resolve missing open breadcrumbs"
+  resolved_count="$(find "$temp_dir/breadcrumbs/resolved" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$resolved_count" == "4" ]] || fail "breadcrumb audit resolved record count was $resolved_count, expected 4"
+  open_count="$(find "$temp_dir/breadcrumbs/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$open_count" == "0" ]] || fail "breadcrumb audit left open records after resolve-missing"
+
+  rm -r "$temp_dir"
+}
+
 check_automation_obligation_root_boundary_contract() {
   local temp_dir selected_json selected_after_current_removed
 
@@ -2317,10 +2396,14 @@ check_prompt_template() {
   grep -Fq "UPKEEPER_IGNORE_FILE" Upkeeper.conf || fail "root config missing .upkeeperignore default"
   grep -Fq "UPKEEPER_IGNORE_FILE" configurations/default.conf || fail "default profile missing .upkeeperignore default"
   grep -Fq "UPKEEPER_BUG_REPORT_ONLY" Upkeeper.conf || fail "root config missing bug-report-only default"
+  grep -Fq "UPKEEPER_BREADCRUMB_GATE_ENABLED" Upkeeper.conf || fail "root config missing breadcrumb gate default"
+  grep -Fq "UPKEEPER_AUDIT_ONLY" Upkeeper.conf || fail "root config missing audit-only default"
   grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" Upkeeper.conf || fail "root config missing issue-fix default"
   grep -Fq "UPKEEPER_FIX_ISSUE" Upkeeper.conf || fail "root config missing explicit issue-fix default"
   grep -Fq "UPKEEPER_PRECONTACT_BACKUP_ENABLED" Upkeeper.conf || fail "root config missing pre-contact backup defaults"
   grep -Fq "UPKEEPER_BUG_REPORT_ONLY" configurations/default.conf || fail "default profile missing bug-report-only default"
+  grep -Fq "UPKEEPER_BREADCRUMB_GATE_ENABLED" configurations/default.conf || fail "default profile missing breadcrumb gate default"
+  grep -Fq "UPKEEPER_AUDIT_ONLY" configurations/default.conf || fail "default profile missing audit-only default"
   grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" configurations/default.conf || fail "default profile missing issue-fix default"
   grep -Fq "UPKEEPER_FIX_ISSUE" configurations/default.conf || fail "default profile missing explicit issue-fix default"
   grep -Fq "UPKEEPER_PRECONTACT_BACKUP_ENABLED" configurations/default.conf || fail "default profile missing pre-contact backup defaults"
@@ -2563,6 +2646,10 @@ check_help_and_diff() {
   grep -Fq -- "--backup-queue" <<<"$help" || fail "help missing --backup-queue"
   grep -Fq -- "--max-cover" <<<"$help" || fail "help missing --max-cover"
   grep -Fq -- "--bug-report-only" <<<"$help" || fail "help missing --bug-report-only"
+  grep -Fq -- "--audit-only" <<<"$help" || fail "help missing --audit-only"
+  grep -Fq -- "--review-only" <<<"$help" || fail "help missing --review-only alias"
+  grep -Fq -- "--no-fix" <<<"$help" || fail "help missing --no-fix alias"
+  grep -Fq -- "--read-only" <<<"$help" || fail "help missing --read-only alias"
   grep -Fq -- "--fix-next-issue" <<<"$help" || fail "help missing --fix-next-issue"
   grep -Fq -- "--fix-issue=NUMBER" <<<"$help" || fail "help missing --fix-issue"
   grep -Fq -- "--issue-workflow-stage=comment|review|apply" <<<"$help" || fail "help missing issue workflow stage"
@@ -2571,6 +2658,10 @@ check_help_and_diff() {
   grep -Fq -- "--profile" <<<"$validation_help" || fail "validator help missing --profile"
   grep -Fq -- "UPKEEPER_MAX_COVER" <<<"$help" || fail "help missing UPKEEPER_MAX_COVER"
   grep -Fq -- "UPKEEPER_BUG_REPORT_ONLY" <<<"$help" || fail "help missing UPKEEPER_BUG_REPORT_ONLY"
+  grep -Fq -- "UPKEEPER_BREADCRUMB_GATE_ENABLED" <<<"$help" || fail "help missing UPKEEPER_BREADCRUMB_GATE_ENABLED"
+  grep -Fq -- "UPKEEPER_BREADCRUMB_STATE_DIR" <<<"$help" || fail "help missing UPKEEPER_BREADCRUMB_STATE_DIR"
+  grep -Fq -- "UPKEEPER_AUDIT_ONLY" <<<"$help" || fail "help missing UPKEEPER_AUDIT_ONLY"
+  grep -Fq -- "UPKEEPER_AUDIT_REPORT_DIR" <<<"$help" || fail "help missing UPKEEPER_AUDIT_REPORT_DIR"
   grep -Fq -- "UPKEEPER_FIX_NEXT_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_NEXT_ISSUE"
   grep -Fq -- "UPKEEPER_FIX_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_ISSUE"
   grep -Fq -- "UPKEEPER_ISSUE_WORKFLOW_STAGE" <<<"$help" || fail "help missing UPKEEPER_ISSUE_WORKFLOW_STAGE"
@@ -4166,6 +4257,22 @@ check_file_manifest_selection() {
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/manifest.log" || fail "manifest dry-run did not finish cleanly"
   jq -e '.schema_version == 2 and ((.root_hash // "") | length == 64) and (has("root") | not) and (.files | length) > 0 and ((.files[0].rel_path // "") | length > 0) and ([.files[] | select(has("abs_path"))] | length == 0)' "$manifest_path" >/dev/null || fail "manifest JSON contract is invalid"
 
+  mkdir -p "$temp_dir/breadcrumbs/open"
+  cat >"$temp_dir/breadcrumbs/open/high.json" <<'JSON'
+{"schema":1,"record_type":"upkeeper_breadcrumb","status":"open","id":"high-fixture","kind":"page_error","severity":"high","reason":"fixture severe breadcrumb"}
+JSON
+  UPKEEPER_BREADCRUMB_STATE_DIR="$temp_dir/breadcrumbs" run_manifest_dry_run "$temp_dir/breadcrumb-gate.log" \
+    --target-root=docs \
+    --selection-source=enumerate
+  grep -Fq "breadcrumb.gate status=blocking action=force_target target_file=Upkeeper" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb did not force the gate target"
+  grep -Fq "review.preselect path_hmac=" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb gate did not produce a redacted preselect log"
+  grep -Fq "selection_mode=explicit_target" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb gate did not use explicit target selection"
+  grep -Fq "basis=operator\\ --target-file=Upkeeper" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb gate did not redirect normal rotation to Upkeeper"
+
   (
     # Keep the unsafe-path contract covered without adding another expensive
     # dry-run invocation to this already broad full-validation fixture.
@@ -4352,6 +4459,13 @@ PY
     --bug-report-only
   grep -Fq "bug_report_only=1" "$temp_dir/bug-report-only.log" || fail "bug-report-only was not recorded in cycle.start"
   grep -Fq "bug_report_only.prompt appended" "$temp_dir/bug-report-only.log" || fail "bug-report-only prompt addendum was not appended"
+  run_manifest_dry_run "$temp_dir/audit-only.log" \
+    --target-file=Upkeeper \
+    --audit-only
+  grep -Fq "bug_report_only=1" "$temp_dir/audit-only.log" || fail "audit-only did not enable the no-fix report contract"
+  grep -Fq "audit_only=1" "$temp_dir/audit-only.log" || fail "audit-only was not recorded in cycle.start"
+  grep -Fq "bug_report_only.draft.destination mode=audit_only" "$temp_dir/audit-only.log" || fail "audit-only did not use the audit report destination"
+  grep -Fq "bug_report_only.prompt appended" "$temp_dir/audit-only.log" || fail "audit-only prompt addendum was not appended"
   bash tests/bug_report_only_test.bash
 
   mkdir -p "$temp_dir/bin"
@@ -6491,6 +6605,7 @@ run_check review_summary_parser check_review_summary_parser
 run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
 run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_contract
+run_check breadcrumb_audit_contract check_breadcrumb_audit_contract
 run_check automation_obligation_root_boundary_contract check_automation_obligation_root_boundary_contract
 run_check automation_obligation_reconciliation_contract check_automation_obligation_reconciliation_contract
 run_check automation_obligation_churn_contract check_automation_obligation_churn_contract

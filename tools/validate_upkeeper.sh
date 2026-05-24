@@ -1736,6 +1736,19 @@ SH
   rm -r "$temp_dir"
 }
 
+check_backlog_triage_contract() {
+  log "checking backlog stopped-loop triage contract"
+
+  [[ -x tools/backlog_triage.py ]] || fail "backlog triage command is missing or not executable"
+  [[ -s tests/backlog_triage_test.bash ]] || fail "backlog triage tests are missing or empty"
+  grep -Fq "safe_to_restart" tools/backlog_triage.py || fail "backlog triage does not emit safe_to_restart"
+  grep -Fq "unknown_log_error" tools/backlog_triage.py || fail "backlog triage does not fail closed on unknown log errors"
+  grep -Fq "backlog-triage-" tools/backlog_triage.py || fail "backlog triage does not leave visible obligation evidence"
+  grep -Fq "tools/backlog_triage.py" docs/scripts/upkeeper.md || fail "operator guide missing backlog triage command"
+  grep -Fq "safe_to_restart=yes|no|wait" docs/compatibility.md || fail "compatibility docs missing backlog triage output contract"
+  bash tests/backlog_triage_test.bash
+}
+
 check_backlog_quota_hibernation_contract() {
   local temp_dir status output hard_marker_root hard_marker_epoch
 
@@ -6668,6 +6681,7 @@ run_check automation_obligation_reconciliation_contract check_automation_obligat
 run_check automation_obligation_churn_contract check_automation_obligation_churn_contract
 run_check automation_obligation_issue_report_contract check_automation_obligation_issue_report_contract
 run_check backlog_launcher_contract check_backlog_launcher_contract
+run_check backlog_triage_contract check_backlog_triage_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract
 run_bounded_check backend_usage_limit_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_backend_usage_limit_contract

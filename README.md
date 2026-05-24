@@ -963,6 +963,8 @@ test loop does not spend cycles on known low-value or generated material.
 - [tools/stress_upkeeper_corpus.sh](tools/stress_upkeeper_corpus.sh): local
   no-quota sample-repo stress harness; run
   `tools/stress_upkeeper_corpus.sh --local`
+- [tools/backlog_triage.py](tools/backlog_triage.py): local no-backend
+  stopped-loop restart triage for backlog runs
 - [tools/check_public_docs.sh](tools/check_public_docs.sh): deterministic
   public documentation policy checks
 - [launcher_examples/README.md](launcher_examples/README.md): tracked shell

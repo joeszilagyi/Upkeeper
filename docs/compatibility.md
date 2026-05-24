@@ -236,6 +236,10 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Validation entrypoints remain available:
   `tools/validate_upkeeper.sh --deps`, `--smoke`, `--quick`, `--full`, and the
   additive `--profile` timing flag.
+- Stopped backlog loop triage remains local and no-backend. The focused
+  command `tools/backlog_triage.py` emits `safe_to_restart=yes|no|wait` plus a
+  reason and next action, using local evidence and optional GitHub PR/check
+  metadata.
 - Negative-space validation remains part of the tracked safety surface.
   `docs/negative-space-testing.md` names deterministic local proofs for
   behavior that must not happen, and those proofs should stay no-backend unless

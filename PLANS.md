@@ -3,9 +3,34 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Negative-Space Validation Contract
+## Backlog Stop Triage
 
 Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #384 with a local no-backend triage command for stopped backlog
+  loops
+- emit both machine-readable restart status and a plain operator summary
+- cover known stopped-loop classes with deterministic fixtures
+
+Constraints:
+- no backend Codex calls
+- GitHub PR/check metadata is optional; local evidence must be enough for
+  common restart decisions
+- unknown or contradictory local evidence must fail closed and leave visible
+  obligation evidence instead of declaring a restart safe
+
+Files likely touched:
+- `tools/backlog_triage.py`
+- `tests/backlog_triage_test.bash`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/backlog_triage_test.bash`
+
+## Negative-Space Validation Contract
+
+Status: completed and merged
 
 Goal:
 - close issue #230 by making negative-space testing a first-class validation

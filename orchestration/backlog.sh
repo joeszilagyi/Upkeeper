@@ -721,6 +721,76 @@ backlog_format_epoch() {
   printf 'unknown'
 }
 
+backlog_wait_detail_token() {
+  local value="${1:-unknown}"
+
+  value="${value//$'\r'/_}"
+  value="${value//$'\n'/_}"
+  value="${value//$'\t'/_}"
+  value="${value// /_}"
+  value="${value//;/_}"
+  value="${value//,/_}"
+  [[ -n "$value" ]] || value="unknown"
+  printf '%s\n' "$value"
+}
+
+backlog_wait_detail_since() {
+  local plane="${1:-unknown}"
+  local waiting_for="${2:-unknown}"
+  local wait_since_epoch="${3:-}"
+  local fragment
+
+  if [[ "$#" -ge 3 ]]; then
+    shift 3
+  else
+    set --
+  fi
+  if ! backlog_nonnegative_integer "$wait_since_epoch"; then
+    wait_since_epoch="$(backlog_now_epoch 2>/dev/null || date '+%s')"
+  fi
+
+  printf 'plane=%s waiting_for=%s wait_since_epoch=%s' \
+    "$(backlog_wait_detail_token "$plane")" \
+    "$(backlog_wait_detail_token "$waiting_for")" \
+    "$wait_since_epoch"
+  for fragment in "$@"; do
+    [[ -n "$fragment" ]] || continue
+    printf ' %s' "$(backlog_wait_detail_token "$fragment")"
+  done
+  printf '\n'
+}
+
+backlog_wait_detail() {
+  local plane="${1:-unknown}"
+  local waiting_for="${2:-unknown}"
+  local now_epoch
+
+  if [[ "$#" -ge 2 ]]; then
+    shift 2
+  else
+    set --
+  fi
+  now_epoch="$(backlog_now_epoch 2>/dev/null || date '+%s')"
+  backlog_wait_detail_since "$plane" "$waiting_for" "$now_epoch" "$@"
+}
+
+backlog_detail_with_elapsed() {
+  local detail="${1:-}"
+  local now_epoch wait_since_epoch elapsed
+
+  if [[ "$detail" =~ (^|[[:space:]])wait_since_epoch=([0-9]+)($|[[:space:]]) ]]; then
+    wait_since_epoch="${BASH_REMATCH[2]}"
+    now_epoch="$(backlog_now_epoch 2>/dev/null || date '+%s')"
+    if backlog_nonnegative_integer "$now_epoch" && [[ "$now_epoch" -ge "$wait_since_epoch" ]]; then
+      elapsed=$((now_epoch - wait_since_epoch))
+      printf '%s wait_elapsed_seconds=%s\n' "$detail" "$elapsed"
+      return 0
+    fi
+  fi
+
+  printf '%s\n' "$detail"
+}
+
 backlog_sleep_seconds() {
   local seconds="$1"
 
@@ -760,7 +830,7 @@ backlog_hibernate_until_epoch() {
   local blocked_bucket="$2"
   local reason="$3"
   local source="$4"
-  local grace poll max_sleep now_epoch wake_epoch wait_seconds chunk
+  local grace poll max_sleep now_epoch wait_start_epoch wake_epoch wait_seconds chunk
   local blocked_until_text wake_text
   local branch summary log_file
 
@@ -776,6 +846,7 @@ backlog_hibernate_until_epoch() {
     log "quota preflight: hibernation unavailable; invalid current time source=$source"
     return 4
   fi
+  wait_start_epoch="$now_epoch"
 
   grace="$(backlog_positive_integer_or_default "$BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS" 60)"
   poll="$(backlog_positive_integer_or_default "$BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS" 60)"
@@ -804,7 +875,9 @@ backlog_hibernate_until_epoch() {
   else
     log "quota preflight: quota blocked bucket=$blocked_bucket until=$blocked_until_text wake=$wake_text wait_seconds=$wait_seconds branch=$branch source=$source reason=$reason"
   fi
-  backlog_update_active_owner_heartbeat "quota_hibernating" "bucket=$blocked_bucket wake=$wake_text source=$source" "" "quota_wait_until_verified"
+  backlog_update_active_owner_heartbeat "quota_hibernating" \
+    "$(backlog_wait_detail_since quota quota_reset "$wait_start_epoch" "bucket=$blocked_bucket" "wake=$wake_text" "source=$source" "reason=$reason")" \
+    "" "quota_wait_until_verified"
 
   while true; do
     now_epoch="$(backlog_now_epoch)" || return 4
@@ -813,7 +886,9 @@ backlog_hibernate_until_epoch() {
     if [[ "$chunk" -gt "$poll" ]]; then
       chunk="$poll"
     fi
-    backlog_update_active_owner_heartbeat "quota_hibernating" "bucket=$blocked_bucket wake=$wake_text sleep=${chunk}s" "" "quota_wait_until_verified"
+    backlog_update_active_owner_heartbeat "quota_hibernating" \
+      "$(backlog_wait_detail_since quota quota_reset "$wait_start_epoch" "bucket=$blocked_bucket" "wake=$wake_text" "sleep=${chunk}s" "source=$source" "reason=$reason")" \
+      "" "quota_wait_until_verified"
     backlog_sleep_seconds "$chunk"
   done
 
@@ -962,14 +1037,31 @@ backlog_update_active_owner_heartbeat() {
   local detail="${2:-process_alive}"
   local pr_number="${3:-}"
   local check_status="${4:-owner_pid_start_cwd_verified}"
-  local owner_file branch log_file
+  local owner_file branch log_file log_detail
 
   backlog_current_process_owns_file || return 0
   owner_file="$(backlog_active_owner_file)"
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || backlog_owner_field "$owner_file" branch 2>/dev/null || printf 'unknown')"
   log_file="$(backlog_owner_field "$owner_file" log_file 2>/dev/null || printf '%s/loop.log' "$(backlog_state_root)")"
   backlog_write_owner_record "$owner_file" "$$" "$BACKLOG_ACTIVE_OWNER_START_TICKS" "$branch" "$log_file" "$state" "$detail" "$pr_number" "$check_status" || return 0
-  log "owner heartbeat: state=$state detail=$detail check_status=$check_status"
+  log_detail="$(backlog_detail_with_elapsed "$detail")"
+  log "owner heartbeat: state=$state detail=$log_detail check_status=$check_status"
+}
+
+backlog_refresh_active_owner_heartbeat() {
+  local owner_file state detail pr_number check_status
+
+  backlog_current_process_owns_file || return 0
+  owner_file="$(backlog_active_owner_file)"
+  state="$(backlog_owner_field "$owner_file" state 2>/dev/null || true)"
+  detail="$(backlog_owner_field "$owner_file" detail 2>/dev/null || true)"
+  pr_number="$(backlog_owner_field "$owner_file" pr_number 2>/dev/null || true)"
+  check_status="$(backlog_owner_field "$owner_file" check_status 2>/dev/null || true)"
+  backlog_update_active_owner_heartbeat \
+    "${state:-running}" \
+    "${detail:-$(backlog_wait_detail local_launcher owner_process_alive)}" \
+    "$pr_number" \
+    "${check_status:-owner_pid_start_cwd_verified}"
 }
 
 backlog_owner_health_status() {
@@ -1003,6 +1095,7 @@ backlog_owner_health_status() {
   stale_after="$(backlog_positive_integer_or_default "$BACKLOG_OWNER_HEARTBEAT_STALE_SECONDS" 300)"
   state="$(backlog_owner_field "$owner_file" state 2>/dev/null || true)"
   detail="$(backlog_owner_field "$owner_file" detail 2>/dev/null || true)"
+  detail="$(backlog_detail_with_elapsed "$detail")"
   branch="$(backlog_owner_field "$owner_file" branch 2>/dev/null || true)"
 
   if [[ "$age" -gt "$stale_after" ]]; then
@@ -1039,7 +1132,7 @@ write_backlog_active_owner() {
   start_ticks="$(backlog_process_start_ticks "$$")"
   BACKLOG_ACTIVE_OWNER_START_TICKS="$start_ticks"
 
-  backlog_write_owner_record "$owner_file" "$$" "$start_ticks" "$branch" "$log_file" "starting" "owner_claimed" "" "owner_pid_start_cwd_verified"
+  backlog_write_owner_record "$owner_file" "$$" "$start_ticks" "$branch" "$log_file" "starting" "$(backlog_wait_detail local_launcher owner_claimed)" "" "owner_pid_start_cwd_verified"
 }
 
 clear_backlog_active_owner() {
@@ -1068,7 +1161,7 @@ start_backlog_owner_heartbeat() {
       sleep_pid="$!"
       wait "$sleep_pid" || exit 0
       sleep_pid=""
-      backlog_update_active_owner_heartbeat "running" "owner_process_alive" "" "owner_pid_start_cwd_verified" || exit 0
+      backlog_refresh_active_owner_heartbeat || exit 0
     done
   ) &
   BACKLOG_OWNER_HEARTBEAT_PID="$!"
@@ -1149,6 +1242,7 @@ describe_active_backlog_owner() {
   owner_branch="$(backlog_owner_field "$owner_file" branch 2>/dev/null || true)"
   state="$(backlog_owner_field "$owner_file" state 2>/dev/null || true)"
   detail="$(backlog_owner_field "$owner_file" detail 2>/dev/null || true)"
+  detail="$(backlog_detail_with_elapsed "$detail")"
   check_status="$(backlog_owner_field "$owner_file" check_status 2>/dev/null || true)"
   health_status="$(backlog_owner_health_status "$owner_file" 2>/dev/null || true)"
 
@@ -1401,7 +1495,7 @@ backlog_active_validation_process_pids() {
 }
 
 backlog_wait_for_active_validation_readers_for_autoshelve() {
-  local wait_seconds poll_seconds end_epoch now_epoch active_pids active_count wait_left
+  local wait_seconds poll_seconds start_epoch end_epoch now_epoch active_pids active_count wait_left
   local pids
 
   wait_seconds="${BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_WAIT_SECONDS:-0}"
@@ -1409,6 +1503,7 @@ backlog_wait_for_active_validation_readers_for_autoshelve() {
   backlog_nonnegative_integer "$wait_seconds" || wait_seconds=0
   backlog_nonnegative_integer "$poll_seconds" || poll_seconds=5
   [[ "$poll_seconds" -gt 0 ]] || poll_seconds=5
+  start_epoch="$(backlog_now_epoch 2>/dev/null || date '+%s')"
 
   if [[ "$wait_seconds" -eq 0 ]]; then
     pids="$(backlog_active_validation_process_pids || true)"
@@ -1421,7 +1516,7 @@ backlog_wait_for_active_validation_readers_for_autoshelve() {
     return 0
   fi
 
-  end_epoch="$(( $(backlog_now_epoch 2>/dev/null || date '+%s') + wait_seconds ))"
+  end_epoch="$(( start_epoch + wait_seconds ))"
   while true; do
     pids="$(backlog_active_validation_process_pids || true)"
     if [[ -n "$pids" ]]; then
@@ -1433,6 +1528,9 @@ backlog_wait_for_active_validation_readers_for_autoshelve() {
         return 4
       fi
       wait_left=$((end_epoch - now_epoch))
+      backlog_update_active_owner_heartbeat "waiting_on_local_validation" \
+        "$(backlog_wait_detail_since local_validation active_validation_readers "$start_epoch" "active_count=$active_count" "sleep=${poll_seconds}s" "wait_left=${wait_left}s")" \
+        "" "validation_readers_active"
       log "control-plane autoshelve is waiting for ${active_count} active validation process(es) to finish; retrying in ${poll_seconds}s (${wait_left}s left)"
       log "blocked process ids: ${pids//$'\n'/, }"
       backlog_sleep_seconds "$poll_seconds"
@@ -1813,6 +1911,7 @@ current_backlog_pr() {
 checkout_backlog_branch() {
   local branch="$1"
 
+  log "branch sync: plane=git waiting_for=checkout_or_fetch branch=$branch"
   if git show-ref --verify --quiet "refs/heads/$branch"; then
     git checkout "$branch" >/dev/null
     git pull --ff-only origin "$branch"
@@ -1825,13 +1924,17 @@ checkout_backlog_branch() {
 open_backlog_pr() {
   local branch
 
+  log "new backlog PR setup: plane=git waiting_for=sync_main"
   git checkout main >/dev/null
   git pull --ff-only origin main >/dev/null
 
   branch="${BACKLOG_BRANCH_PREFIX}$(date +%Y%m%d-%H%M%S)"
+  log "new backlog PR setup: plane=git waiting_for=create_branch branch=$branch"
   git checkout -b "$branch" >/dev/null
   git commit --allow-empty -m "Start backlog issue batch" >/dev/null
+  log "new backlog PR setup: plane=git waiting_for=push_branch branch=$branch"
   git push -u origin "$branch" >/dev/null
+  log "new backlog PR setup: plane=github waiting_for=create_pull_request branch=$branch"
   gh pr create \
     --base main \
     --head "$branch" \
@@ -1989,7 +2092,9 @@ run_upkeeper_for_one_target() {
     fi
     upkeeper_args+=(--fix-issue="$issue_number")
     log "running Upkeeper for issue #$issue_number with $CODEX_MODEL/$CODEX_REASONING_EFFORT target=${target_hint:-wrapper-inferred}"
-    backlog_update_active_owner_heartbeat "running_upkeeper" "issue=$issue_number target=${target_hint:-wrapper-inferred}" "" "owner_pid_start_cwd_verified"
+    backlog_update_active_owner_heartbeat "running_upkeeper" \
+      "$(backlog_wait_detail llm codex_issue_repair "issue=$issue_number" "target=${target_hint:-wrapper-inferred}" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "expected=patch_or_status")" \
+      "" "owner_pid_start_cwd_verified"
     ./Upkeeper "${upkeeper_args[@]}"
     upkeeper_status="$?"
     if [[ "$upkeeper_status" -ne 0 ]]; then
@@ -2000,7 +2105,9 @@ run_upkeeper_for_one_target() {
     fi
   else
     log "no eligible issue found; running normal newest-file Upkeeper pass with $CODEX_MODEL/$CODEX_REASONING_EFFORT"
-    backlog_update_active_owner_heartbeat "running_upkeeper" "normal_newest_file_pass" "" "owner_pid_start_cwd_verified"
+    backlog_update_active_owner_heartbeat "running_upkeeper" \
+      "$(backlog_wait_detail llm codex_file_review "selection_order=newest" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "expected=review_or_status")" \
+      "" "owner_pid_start_cwd_verified"
     ./Upkeeper --selection-order=newest
   fi
 }
@@ -2021,7 +2128,9 @@ run_upkeeper_for_obligation() {
   prompt_root="$(dirname -- "$prompt_file")"
 
   log "running Upkeeper for automation obligation $obligation_id kind=$obligation_kind target=$target_hint"
-  backlog_update_active_owner_heartbeat "running_upkeeper" "obligation=$obligation_id target=$target_hint" "" "owner_pid_start_cwd_verified"
+  backlog_update_active_owner_heartbeat "running_upkeeper" \
+    "$(backlog_wait_detail llm codex_obligation_repair "obligation=$obligation_id" "kind=$obligation_kind" "target=$target_hint" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "expected=repair_or_preserve")" \
+    "" "owner_pid_start_cwd_verified"
   UPKEEPER_AUTOMATION_LAUNCHER="backlog" \
     UPKEEPER_AUTOMATION_VARIANT="issue-batch" \
     UPKEEPER_AUTOMATION_POLICY="pre-issue-health" \
@@ -2088,7 +2197,9 @@ run_per_bug_validation() {
   [[ "${BACKLOG_SKIP_LOCAL_VALIDATION:-0}" == "1" ]] && return 0
 
   validation_start="$SECONDS"
-  backlog_update_active_owner_heartbeat "validating" "per_bug_validation" "" "owner_pid_start_cwd_verified"
+  backlog_update_active_owner_heartbeat "validating" \
+    "$(backlog_wait_detail local_validation per_bug_validation "issue=${issue_number:-none}" "target=${target_hint:-none}" "expected=syntax_compile_diff_checks")" \
+    "" "owner_pid_start_cwd_verified"
   log "per-bug validation: bash syntax"
   bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || return $?
   run_changed_python_compile_validation || return $?
@@ -2104,7 +2215,9 @@ run_batch_validation() {
   [[ "${BACKLOG_SKIP_LOCAL_VALIDATION:-0}" == "1" ]] && return 0
 
   validation_start="$SECONDS"
-  backlog_update_active_owner_heartbeat "validating" "batch_validation" "" "owner_pid_start_cwd_verified"
+  backlog_update_active_owner_heartbeat "validating" \
+    "$(backlog_wait_detail local_validation batch_validation "expected=syntax_tests_docs_diff_quick_validator")" \
+    "" "owner_pid_start_cwd_verified"
   log "batch validation: bash syntax"
   bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || return $?
   log "batch validation: unit tests"
@@ -2153,9 +2266,9 @@ commit_and_push_changes() {
   else
     message="Apply backlog Upkeeper pass"
   fi
-  log "committing: $message"
+  log "committing: $message plane=git waiting_for=commit"
   git commit -m "$message" || return $?
-  log "pushing branch updates"
+  log "pushing branch updates plane=git waiting_for=push"
   git push || return $?
   return 0
 }
@@ -2320,7 +2433,9 @@ wait_for_pr_checks() {
   start_epoch="$(backlog_now_epoch)" || start_epoch=0
 
   while true; do
-    backlog_update_active_owner_heartbeat "waiting_on_pr_checks" "pr=$pr_number polling_checks" "$pr_number" "polling"
+    backlog_update_active_owner_heartbeat "waiting_on_pr_checks" \
+      "$(backlog_wait_detail_since github pr_checks "$start_epoch" "pr=$pr_number" "phase=polling")" \
+      "$pr_number" "polling"
     if backlog_pr_checks_once "$pr_number"; then
       status_rc=0
     else
@@ -2330,7 +2445,9 @@ wait_for_pr_checks() {
     status="$(sed -n '1p' <<<"$output")"
     case "$status_rc" in
       0)
-        backlog_update_active_owner_heartbeat "waiting_on_pr_checks" "pr=$pr_number checks_passed" "$pr_number" "pass"
+        backlog_update_active_owner_heartbeat "waiting_on_pr_checks" \
+          "$(backlog_wait_detail_since github pr_checks "$start_epoch" "pr=$pr_number" "phase=checks_passed")" \
+          "$pr_number" "pass"
         log "PR #$pr_number checks passed"
         return 0
         ;;
@@ -2342,7 +2459,9 @@ wait_for_pr_checks() {
           log "PR #$pr_number checks still pending after ${elapsed}s; owner remains healthy but configured timeout is ${timeout_seconds}s"
           return 2
         fi
-        backlog_update_active_owner_heartbeat "waiting_on_pr_checks" "pr=$pr_number checks_pending elapsed=${elapsed}s next_check=${interval}s" "$pr_number" "pending"
+        backlog_update_active_owner_heartbeat "waiting_on_pr_checks" \
+          "$(backlog_wait_detail_since github pr_checks "$start_epoch" "pr=$pr_number" "phase=checks_pending" "elapsed=${elapsed}s" "next_check=${interval}s")" \
+          "$pr_number" "pending"
         progress="$BACKLOG_PR_CHECKS_PROGRESS_SUMMARY"
         if [[ -n "$progress" ]]; then
           log "PR #$pr_number checks pending; holding owner lease; progress: $progress; checking again in ${interval}s"
@@ -2356,12 +2475,16 @@ wait_for_pr_checks() {
         elapsed=$((now_epoch - start_epoch))
         [[ "$elapsed" -ge 0 ]] || elapsed=0
         if [[ "$empty_grace_seconds" -le 0 || "$elapsed" -ge "$empty_grace_seconds" ]]; then
-          backlog_update_active_owner_heartbeat "waiting_on_pr_checks" "pr=$pr_number checks_absent_timeout elapsed=${elapsed}s" "$pr_number" "fail"
+          backlog_update_active_owner_heartbeat "waiting_on_pr_checks" \
+            "$(backlog_wait_detail_since github pr_checks "$start_epoch" "pr=$pr_number" "phase=checks_absent_timeout" "elapsed=${elapsed}s")" \
+            "$pr_number" "fail"
           log "PR #$pr_number checks were not reported after ${elapsed}s; configured empty-check grace is ${empty_grace_seconds}s"
           printf '%s\n' "$output" >&2
           return 1
         fi
-        backlog_update_active_owner_heartbeat "waiting_on_pr_checks" "pr=$pr_number checks_settling elapsed=${elapsed}s next_check=${interval}s" "$pr_number" "pending"
+        backlog_update_active_owner_heartbeat "waiting_on_pr_checks" \
+          "$(backlog_wait_detail_since github pr_checks "$start_epoch" "pr=$pr_number" "phase=checks_settling" "elapsed=${elapsed}s" "next_check=${interval}s")" \
+          "$pr_number" "pending"
         progress="$BACKLOG_PR_CHECKS_PROGRESS_SUMMARY"
         if [[ -n "$progress" ]]; then
           log "PR #$pr_number checks not reported yet; treating as pending/settling for up to ${empty_grace_seconds}s; progress: $progress; checking again in ${interval}s"
@@ -2371,7 +2494,9 @@ wait_for_pr_checks() {
         backlog_sleep_seconds "$interval"
         ;;
       *)
-        backlog_update_active_owner_heartbeat "waiting_on_pr_checks" "pr=$pr_number checks_failed" "$pr_number" "fail"
+        backlog_update_active_owner_heartbeat "waiting_on_pr_checks" \
+          "$(backlog_wait_detail_since github pr_checks "$start_epoch" "pr=$pr_number" "phase=checks_failed")" \
+          "$pr_number" "fail"
         printf '%s\n' "$output" >&2
         return 1
         ;;
@@ -2489,7 +2614,9 @@ merge_and_clean() {
     [[ "$status" -eq 2 ]] && return 2
     return "$status"
   }
+  log "merging PR #$pr_number: plane=github waiting_for=merge branch=$branch"
   CODEX_ALLOW_PR_MERGE="$pr_number" gh pr merge "$pr_number" --merge --delete-branch
+  log "syncing local main after PR #$pr_number: plane=git waiting_for=checkout_pull_prune"
   git checkout main >/dev/null
   git pull --ff-only origin main
   git fetch --prune origin
@@ -2526,7 +2653,7 @@ main() {
 
   pr_info="$(current_backlog_pr)"
   if [[ -z "$pr_info" ]]; then
-    log "opening new backlog PR"
+    log "opening new backlog PR plane=github waiting_for=create_pull_request"
     pr_info="$(open_backlog_pr)"
   fi
 

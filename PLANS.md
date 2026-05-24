@@ -3,6 +3,41 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Wait Plane Logging
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- make long-running backlog and Upkeeper output say which execution plane is
+  waiting: LLM/backend, GitHub checks, quota reset, local validation, or
+  obligation repair
+- preserve specific owner-heartbeat state instead of replacing it with generic
+  `owner_process_alive` messages during long Codex/backend waits
+- include elapsed wait metadata so later speed/cost work can identify which
+  plane consumed time
+
+Constraints:
+- keep this deterministic and pre-model; logging must not add backend calls
+- preserve existing owner-lease semantics and duplicate-run safety
+- keep live output ordinary enough for an operator to read without opening
+  private logs
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `Upkeeper`
+- `lib/upkeeper/progress_logging.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## PR440 Stabilization And Return To Issue Work
 
 Status: completed locally; pending PR/CI

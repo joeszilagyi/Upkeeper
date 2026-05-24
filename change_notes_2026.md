@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: backlog stale quota evidence custody:
+	1. Backlog quota preflight now records expired-reset stale quota evidence as a `stale_quota_evidence` automation obligation before burn bypass continues.
+	2. Repeated stale quota evidence updates one fingerprinted obligation instead of printing recurring warning-only output.
+	3. The stale quota obligation is retired automatically once current non-stale quota evidence is observed, keeping recovered quota state from blocking future work.
+
 2026-05-24: backlog batch-validation retry guard:
 	1. Batch merge validation now records a private retry marker after the first failed local validation phase on a branch/head/command.
 	2. A second identical retry fails closed from that marker, updates the existing repair obligation, and prints the retry fingerprint instead of rerunning the full validation command again.

@@ -23,6 +23,11 @@ The tracked authority surface is split across `docs/authority.md`,
 source, run shell, spend quota, touch evidence, affect GitHub, modify Lattice,
 and record local policy decisions as structured data.
 
+The compatibility surface is tracked in `docs/compatibility.md`. Public
+schemas, prompt markers, docs/help examples, and Lattice JSONL output are
+classified as `stable`, `experimental`, `deprecated`, or `removed`; unclassified
+tracked public behavior defaults to stable.
+
 > "Starfleet code requires a second backup?"
 >
 > "In case the first backup fails."

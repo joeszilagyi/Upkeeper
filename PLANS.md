@@ -4643,6 +4643,40 @@ Validation:
 - `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
 - `git diff --check`
 
+## Compatibility Promise For Schemas And Contracts
+
+Status: in progress
+
+Goal:
+- close issue #228 by defining explicit compatibility classes for Upkeeper
+  schemas, prompt contracts, docs/help, and Lattice import/export outputs
+- document schema-version, migration, deprecation-warning, public-example, and
+  Lattice import/export expectations in the binding compatibility surface
+- add deterministic validation so the compatibility promise cannot drift out of
+  public docs silently
+
+Constraints:
+- documentation and validation only; do not change runtime schema behavior in
+  this patch
+- keep backward-compatible behavior as the default
+- avoid broad validation or backend Codex calls
+
+Files likely touched:
+- `docs/compatibility.md`
+- `docs/lattice.md`
+- `docs/public-documentation-policy.md`
+- `prompts/README.md`
+- `README.md`
+- `tools/check_public_docs.sh`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Backlog Quality Gates
 
 Status: in progress

@@ -384,6 +384,14 @@ the JSONL may contain sensitive local evidence. Default exports also preserve
 the Git-import privacy contract by omitting raw contributor fields and raw
 commit subjects unless those values were explicitly included at import time.
 
+Lattice export/import compatibility is governed by
+`docs/compatibility.md`. Within a row version, `schema_version`, `row_type`,
+`row_version`, `logical_key`, source identity, repo identity, payload,
+`payload_sha256`, and exported epoch keep stable meanings. New optional payload
+fields may be added, but import must remain idempotent for the same logical key
+and payload hash, and different payloads for the same logical key must be
+recorded as conflicts rather than overwritten silently.
+
 If an operator needs a JSONL file for structural replay into another lattice
 database, use `export-jsonl --include-paths`. The default redacted export is
 safe for sharing and inspection, but it intentionally leaves path-bearing rows

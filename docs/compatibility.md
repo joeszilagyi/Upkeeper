@@ -134,6 +134,11 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Review-module flags, shorthand aliases, CSV normalization, prompt paths, and
   help text remain stable while their P24-P30 metadata is registry-backed in the
   central wrapper.
+- Startup anomaly changed-path allowlists, source-safe exclusion prefixes,
+  command-kind failure classifiers, review-module ids, and Lattice pass-code
+  mappings are embedded control-plane table behavior. Changes to those tables
+  should update validation, docs, and change notes in the same patch rather
+  than drifting silently.
 - Published loop exit meanings remain stable, especially successful work,
   intentional no-backend-task stop, fallback/postmortem failures, active locks,
   empty transcripts, local environment failures, and parent-stop guardrails.

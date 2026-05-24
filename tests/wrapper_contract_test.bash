@@ -206,9 +206,72 @@ JSON
   fi
 }
 
+test_operator_status_commands_are_local_and_structured() {
+  local status_root status_log json_output output command
+
+  status_root="$TEST_TMP_ROOT/operator-status"
+  status_log="$status_root/Upkeeper.log"
+  mkdir -p "$status_root/codex-home/sessions" "$status_root/failures/open" "$status_root/obligations/open"
+  cat >"$status_log" <<'EOF'
+2026-05-24T01:00:00 [INFO] cycle=cycle-status run_hash=hash-status cycle.summary execution_origin=primary model=gpt-5.5 status_marker=WORK_DONE codex_exit=0
+2026-05-24T01:00:01 [INFO] cycle=cycle-status run_hash=hash-status cycle.exit exit_code=0 reason=WORK_DONE
+EOF
+  printf '{}\n' >"$status_root/failures/open/example.json"
+  printf '{}\n' >"$status_root/obligations/open/example.json"
+
+  json_output="$(
+    cd "$ROOT_DIR"
+    CODEX_HOME="$status_root/codex-home" \
+      CODEX_LOG_FILE="$status_log" \
+      CODEX_ACTIVE_LOCK_DIR="$status_root/active.lock" \
+      CODEX_TOOL_FAILURE_QUEUE_DIR="$status_root/failures" \
+      UPKEEPER_OBLIGATION_DIR="$status_root/obligations" \
+      ./Upkeeper --json-status
+  )" || fail "--json-status failed"
+  python3 - "$json_output" <<'PY' || fail "--json-status did not emit expected schema"
+import json, sys
+data = json.loads(sys.argv[1])
+assert data["schema"] == "upkeeper.status.v1", data
+assert data["last_run"]["cycle_id"] == "cycle-status", data["last_run"]
+assert data["last_run"]["status_marker"] == "WORK_DONE", data["last_run"]
+assert data["open_failures"]["tool_failure_count"] == 1, data["open_failures"]
+assert data["open_failures"]["automation_obligation_count"] == 1, data["open_failures"]
+assert data["quota"]["snapshot"] == "missing", data["quota"]
+PY
+
+  for command in --status --doctor --last-run --open-failures --quota-status; do
+    output="$(
+      cd "$ROOT_DIR"
+      CODEX_HOME="$status_root/codex-home" \
+        CODEX_LOG_FILE="$status_log" \
+        CODEX_ACTIVE_LOCK_DIR="$status_root/active.lock" \
+        CODEX_TOOL_FAILURE_QUEUE_DIR="$status_root/failures" \
+        UPKEEPER_OBLIGATION_DIR="$status_root/obligations" \
+        ./Upkeeper "$command"
+    )" || fail "$command failed"
+    [[ -n "$output" ]] || fail "$command produced no output"
+  done
+
+  output="$(
+    cd "$ROOT_DIR"
+    CODEX_MODE="invalid-backend-mode" \
+      CODEX_HOME="$status_root/codex-home" \
+      CODEX_LOG_FILE="$status_log" \
+      CODEX_ACTIVE_LOCK_DIR="$status_root/active.lock" \
+      CODEX_TOOL_FAILURE_QUEUE_DIR="$status_root/failures" \
+      UPKEEPER_OBLIGATION_DIR="$status_root/obligations" \
+      ./Upkeeper --doctor
+  )" || fail "--doctor should report status even when backend CODEX_MODE is invalid"
+  grep -Fq "Doctor" <<<"$output" || fail "--doctor with invalid backend CODEX_MODE did not emit doctor output"
+  grep -Fq "invalid_backend_mode" <<<"$output" || fail "--doctor with invalid backend CODEX_MODE did not report invalid_backend_mode"
+
+  [[ ! -e "$status_root/active.lock" ]] || fail "status command acquired or created active lock"
+}
+
 test_codex_mode_rejects_malformed_and_unsafe_modes
 test_codex_mode_accepts_only_allowlisted_sandboxes
 test_parent_stop_guard_refuses_unsafe_shells_and_pids
 test_status_marker_rejects_decorated_or_ambiguous_candidates
 test_startup_anomaly_allowlist_reports_only_unallowed_redacted_paths
+test_operator_status_commands_are_local_and_structured
 printf 'ok - wrapper_contract\n'

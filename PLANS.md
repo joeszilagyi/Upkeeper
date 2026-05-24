@@ -3,6 +3,49 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Operator Status Commands
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #90 with a scoped first version of pre-model operator status
+  commands
+- add human-readable and JSON status surfaces for wrapper version, repo state,
+  config, last logged run, open local failure/obligation evidence, active lock,
+  quota snapshot state, and basic dependency availability
+- keep all status commands deterministic, local-only, and backend-free
+
+Constraints:
+- do not launch real backend Codex or acquire the active run lock for status
+- keep output stable enough for scripts while avoiding raw transcript/session
+  parsing beyond bounded local evidence
+- document the JSON schema as a first-version local status contract
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/help_selection.bash`
+- `lib/upkeeper/operator_status.bash`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `tests/wrapper_contract_test.bash`
+- `tools/validate_upkeeper.sh`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/wrapper_contract_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `./Upkeeper --status`
+- `./Upkeeper --json-status`
+- `./Upkeeper --last-run`
+- `./Upkeeper --open-failures`
+- `./Upkeeper --quota-status`
+- `./Upkeeper --doctor`
+- `git diff --check`
+
 ## Platform Support Boundary
 
 Status: completed and merged

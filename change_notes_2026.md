@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: Lattice run-value rows:
+	1. Lattice now records normalized `run_values` rows from deterministic pass-result markers, pass attributes, and cycle-finish status so value-oriented questions can be answered without transcript scraping.
+	2. The new `query run-values` surface can filter by path, cycle, value kind, value class, and evidence source, exposing pass outcomes, validation commands/results, residual risk, finding notes, cycle status, review outcome, finish reason, and exit codes.
+	3. JSONL export/import now carries run-value rows as ordinary repo-scoped SQLite evidence while malformed or missing value markers remain rejected/skipped evidence instead of fatal cycle failures.
+
 2026-05-23: v1.2.33 changes:
 	1. Pre-contact backup HMAC derivation now caches parent-process key material before subshell helpers run, so backup metadata and payload verification remain stable even when the persistent redaction key file is unavailable.
 	2. Transcript/live-output custody now reports validation and check command failures as informational custody notices while preserving test/build failures as terminal errors, preventing already-captured local check failures from becoming fresh prior-run warning obligations.

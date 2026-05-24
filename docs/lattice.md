@@ -144,6 +144,7 @@ selection_candidates
 review_passes
 file_pass_runs
 pass_run_attributes
+run_values
 file_events
 artifact_refs
 contributors
@@ -207,6 +208,25 @@ Queries expose:
 
 Pass counts are never encoded as pass-specific columns.
 
+## Run Values
+
+`run_values` stores normalized value evidence from deterministic wrapper inputs:
+pass-result markers, pass-result attributes, and cycle-finish status. It records
+the value kind, optional class/key, typed value column, evidence source,
+confidence, and links back to the cycle, file, and pass-run row when those
+anchors exist.
+
+This table is additive evidence, not a transcript scraper. Missing or malformed
+markers are rejected or skipped as evidence while the underlying cycle or pass
+recording continues under the existing validation rules. Path-oriented values
+are anchored through `files`/`file_pass_runs` joins instead of being copied as
+raw paths into the value text field.
+
+The first normalized value kinds include pass outcomes, applicability, change
+and regression status, validation commands/results, what changed, why it
+mattered, findings, proof-needed notes, residual risk, cycle status, review
+outcome, finish reason, and exit codes.
+
 ## Pass Result Markers
 
 The prompt asks agents to include additive pass-result lines:
@@ -243,6 +263,9 @@ tools/upkeeper_lattice.py query selection-candidates --mode oldest-mtime
 tools/upkeeper_lattice.py query selection-candidates --mode max-cover
 tools/upkeeper_lattice.py query explain-selection --cycle CYCLE_ID
 tools/upkeeper_lattice.py query explain-selection --path PATH
+tools/upkeeper_lattice.py query run-values --path PATH
+tools/upkeeper_lattice.py query run-values --kind validation_command
+tools/upkeeper_lattice.py query run-values --cycle CYCLE_ID
 ```
 
 Formats:

@@ -71,6 +71,32 @@ ALLOWED_OUTCOMES = {
     "regression_found",
     "unknown",
 }
+RUN_VALUE_KINDS = {
+    "applicability",
+    "change_status",
+    "cycle_status",
+    "exit_code",
+    "finding",
+    "finish_reason",
+    "pass_result",
+    "proof_needed",
+    "regression_status",
+    "residual_risk",
+    "review_outcome",
+    "validation_command",
+    "validation_result",
+    "what_changed",
+    "why_it_mattered",
+}
+RUN_VALUE_ATTRIBUTE_HINTS = (
+    ("validation_command", ("validation_command", "validation_cmd", "validator", "test_command", "test_cmd")),
+    ("validation_result", ("validation_result", "validation_status", "test_result", "test_status", "result")),
+    ("residual_risk", ("residual_risk", "remaining_risk", "risk")),
+    ("why_it_mattered", ("why_it_mattered", "why", "impact", "reason", "reuse_debt_reason")),
+    ("what_changed", ("what_changed", "change_summary", "changed_summary", "summary")),
+    ("finding", ("finding", "candidate", "reuse_debt_candidate")),
+    ("proof_needed", ("proof_needed", "reuse_debt_proof_needed")),
+)
 REVIEW_PASS_REGISTRY_FACT_TYPES = (
     ("default_in_repertoire", "integer"),
     ("module_prompt", "integer"),
@@ -445,6 +471,7 @@ REQUIRED_TABLES = [
     "review_passes",
     "file_pass_runs",
     "pass_run_attributes",
+    "run_values",
     "file_events",
     "artifact_refs",
     "contributors",
@@ -487,6 +514,10 @@ REQUIRED_INDEXES = {
     "idx_file_pass_runs_identity": "file_pass_runs",
     "idx_file_pass_runs_repo_pass_outcome": "file_pass_runs",
     "idx_file_events_repo_file_epoch": "file_events",
+    "idx_run_values_identity": "run_values",
+    "idx_run_values_repo_cycle_kind": "run_values",
+    "idx_run_values_repo_file_kind": "run_values",
+    "idx_run_values_pass_run": "run_values",
     "idx_git_commits_repo_sha": "git_commits",
     "idx_git_file_changes_unique_event": "git_file_changes",
     "idx_git_file_changes_repo_path_epoch": "git_file_changes",
@@ -937,6 +968,26 @@ CREATE_TABLE_SQL = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS run_values (
+      run_value_id integer primary key,
+      repo_id integer not null references repositories(repo_id),
+      cycle_pk integer references cycles(cycle_pk),
+      file_id integer references files(file_id),
+      file_pass_run_id integer references file_pass_runs(file_pass_run_id),
+      value_kind text not null,
+      value_class text,
+      value_key text,
+      value_text text,
+      value_integer integer,
+      value_real real,
+      value_json text,
+      evidence_source text not null,
+      confidence text,
+      source_id integer references source_records(source_id),
+      created_epoch integer not null
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS file_events (
       event_id integer primary key,
       repo_id integer not null references repositories(repo_id),
@@ -1282,6 +1333,10 @@ CREATE_INDEX_SQL = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_file_pass_runs_identity ON file_pass_runs(repo_id, file_id, coalesce(cycle_pk, -1), pass_code, confidence)",
     "CREATE INDEX IF NOT EXISTS idx_file_pass_runs_repo_file_pass ON file_pass_runs(repo_id, file_id, pass_code)",
     "CREATE INDEX IF NOT EXISTS idx_file_pass_runs_repo_pass_outcome ON file_pass_runs(repo_id, pass_code, outcome)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_run_values_identity ON run_values(repo_id, coalesce(cycle_pk, -1), coalesce(file_id, -1), coalesce(file_pass_run_id, -1), value_kind, coalesce(value_class, ''), coalesce(value_key, ''), evidence_source, coalesce(source_id, -1))",
+    "CREATE INDEX IF NOT EXISTS idx_run_values_repo_cycle_kind ON run_values(repo_id, cycle_pk, value_kind)",
+    "CREATE INDEX IF NOT EXISTS idx_run_values_repo_file_kind ON run_values(repo_id, file_id, value_kind)",
+    "CREATE INDEX IF NOT EXISTS idx_run_values_pass_run ON run_values(file_pass_run_id)",
     "CREATE INDEX IF NOT EXISTS idx_file_events_repo_file_epoch ON file_events(repo_id, file_id, event_epoch)",
     "CREATE INDEX IF NOT EXISTS idx_git_commits_repo_sha ON git_commits(repo_id, sha)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_contributors_identity_hash ON contributors(identity_hash) WHERE identity_hash IS NOT NULL",
@@ -9836,6 +9891,81 @@ def command_record_cycle_finish(args: argparse.Namespace) -> int:
                 f"update cycles set {set_clause} where cycle_pk=?",
                 [value for _, value in updates] + [cycle_pk],
             )
+        if status_marker:
+            record_run_value(
+                conn,
+                repo_id,
+                cycle_pk=cycle_pk,
+                file_id=cycle_selected_file_id,
+                file_pass_run_id=None,
+                value_kind="cycle_status",
+                value_class=status_marker,
+                value_key="status_marker",
+                value=status_marker,
+                evidence_source="cycle_finish",
+                confidence="observed",
+                source_id=source_id,
+            )
+        if review_outcome:
+            record_run_value(
+                conn,
+                repo_id,
+                cycle_pk=cycle_pk,
+                file_id=cycle_selected_file_id,
+                file_pass_run_id=None,
+                value_kind="review_outcome",
+                value_class=review_outcome,
+                value_key="review_outcome",
+                value=review_outcome,
+                evidence_source="cycle_finish",
+                confidence="reported",
+                source_id=source_id,
+            )
+        if finish_reason:
+            record_run_value(
+                conn,
+                repo_id,
+                cycle_pk=cycle_pk,
+                file_id=cycle_selected_file_id,
+                file_pass_run_id=None,
+                value_kind="finish_reason",
+                value_class=finish_level or "",
+                value_key="finish_reason",
+                value=finish_reason,
+                evidence_source="cycle_finish",
+                confidence="observed",
+                source_id=source_id,
+            )
+        if args.codex_exit is not None:
+            record_run_value(
+                conn,
+                repo_id,
+                cycle_pk=cycle_pk,
+                file_id=cycle_selected_file_id,
+                file_pass_run_id=None,
+                value_kind="exit_code",
+                value_class="codex",
+                value_key="codex_exit",
+                value=args.codex_exit,
+                evidence_source="cycle_finish",
+                confidence="observed",
+                source_id=source_id,
+            )
+        if args.wrapper_exit is not None:
+            record_run_value(
+                conn,
+                repo_id,
+                cycle_pk=cycle_pk,
+                file_id=cycle_selected_file_id,
+                file_pass_run_id=None,
+                value_kind="exit_code",
+                value_class="wrapper",
+                value_key="wrapper_exit",
+                value=args.wrapper_exit,
+                evidence_source="cycle_finish",
+                confidence="observed",
+                source_id=source_id,
+            )
         snapshot_id = latest_worktree_snapshot_id(
             conn,
             repo_id=repo_id,
@@ -10103,6 +10233,234 @@ def record_reuse_debt_event(
     )
 
 
+def normalize_run_value_kind(raw: str) -> str:
+    value = raw.strip().lower().replace("-", "_")
+    return value if value in RUN_VALUE_KINDS else ""
+
+
+def classify_run_value_attribute(namespace: str, key: str) -> str:
+    normalized = f"{namespace}:{key}".strip().lower().replace("-", "_")
+    short_key = key.strip().lower().replace("-", "_")
+    for value_kind, hints in RUN_VALUE_ATTRIBUTE_HINTS:
+        for hint in hints:
+            if short_key == hint or short_key.endswith(f"_{hint}") or normalized.endswith(f":{hint}"):
+                return value_kind
+    return ""
+
+
+def run_value_columns(value: Any) -> tuple[str | None, int | None, float | None, str | None]:
+    if value is None:
+        return (None, None, None, None)
+    if isinstance(value, bool):
+        return (None, 1 if value else 0, None, None)
+    if isinstance(value, int):
+        return (None, value, None, None)
+    if isinstance(value, float):
+        return (None, None, value, None)
+    if isinstance(value, (dict, list)):
+        return (None, None, None, json_dumps(value))
+    return (str(value), None, None, None)
+
+
+def record_run_value(
+    conn: sqlite3.Connection,
+    repo_id: int,
+    *,
+    cycle_pk: int | None,
+    file_id: int | None,
+    file_pass_run_id: int | None,
+    value_kind: str,
+    value: Any,
+    evidence_source: str,
+    value_class: str = "",
+    value_key: str = "",
+    confidence: str = "observed",
+    source_id: int | None = None,
+) -> int | None:
+    normalized_kind = normalize_run_value_kind(value_kind)
+    if not normalized_kind or not evidence_source:
+        return None
+    if value is None or value == "":
+        return None
+    value_text, value_integer, value_real, value_json = run_value_columns(value)
+    created_epoch = epoch_now()
+    identity = (
+        repo_id,
+        int(cycle_pk) if cycle_pk is not None else -1,
+        int(file_id) if file_id is not None else -1,
+        int(file_pass_run_id) if file_pass_run_id is not None else -1,
+        normalized_kind,
+        value_class or "",
+        value_key or "",
+        evidence_source,
+        int(source_id) if source_id is not None else -1,
+    )
+    existing = conn.execute(
+        """
+        select run_value_id
+        from run_values
+        where repo_id=?
+          and coalesce(cycle_pk, -1)=?
+          and coalesce(file_id, -1)=?
+          and coalesce(file_pass_run_id, -1)=?
+          and value_kind=?
+          and coalesce(value_class, '')=?
+          and coalesce(value_key, '')=?
+          and evidence_source=?
+          and coalesce(source_id, -1)=?
+        order by run_value_id desc
+        limit 1
+        """,
+        identity,
+    ).fetchone()
+    if existing is not None:
+        run_value_id = int(existing["run_value_id"])
+        conn.execute(
+            """
+            update run_values
+            set value_text=?, value_integer=?, value_real=?, value_json=?,
+                confidence=?, created_epoch=?
+            where run_value_id=?
+            """,
+            (
+                value_text,
+                value_integer,
+                value_real,
+                value_json,
+                confidence,
+                created_epoch,
+                run_value_id,
+            ),
+        )
+        return run_value_id
+    cur = conn.execute(
+        """
+        insert into run_values(
+          repo_id, cycle_pk, file_id, file_pass_run_id, value_kind, value_class,
+          value_key, value_text, value_integer, value_real, value_json,
+          evidence_source, confidence, source_id, created_epoch
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            repo_id,
+            cycle_pk,
+            file_id,
+            file_pass_run_id,
+            normalized_kind,
+            value_class or None,
+            value_key or None,
+            value_text,
+            value_integer,
+            value_real,
+            value_json,
+            evidence_source,
+            confidence,
+            source_id,
+            created_epoch,
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def record_pass_run_value_rows(
+    conn: sqlite3.Connection,
+    repo_id: int,
+    *,
+    cycle_pk: int | None,
+    file_id: int,
+    file_pass_run_id: int,
+    source_id: int,
+    pass_code: str,
+    applicable: int | None,
+    outcome: str,
+    changed: int | None,
+    regression: int | None,
+    confidence: str,
+    attributes: dict[str, Any] | None,
+) -> None:
+    record_run_value(
+        conn,
+        repo_id,
+        cycle_pk=cycle_pk,
+        file_id=file_id,
+        file_pass_run_id=file_pass_run_id,
+        value_kind="pass_result",
+        value_class=outcome,
+        value_key=pass_code,
+        value=outcome,
+        evidence_source="pass_result_marker",
+        confidence=confidence,
+        source_id=source_id,
+    )
+    if applicable is not None:
+        record_run_value(
+            conn,
+            repo_id,
+            cycle_pk=cycle_pk,
+            file_id=file_id,
+            file_pass_run_id=file_pass_run_id,
+            value_kind="applicability",
+            value_class="applicable" if applicable else "not_applicable",
+            value_key=pass_code,
+            value=applicable,
+            evidence_source="pass_result_marker",
+            confidence=confidence,
+            source_id=source_id,
+        )
+    if changed is not None:
+        record_run_value(
+            conn,
+            repo_id,
+            cycle_pk=cycle_pk,
+            file_id=file_id,
+            file_pass_run_id=file_pass_run_id,
+            value_kind="change_status",
+            value_class="changed" if changed else "unchanged",
+            value_key=pass_code,
+            value=changed,
+            evidence_source="pass_result_marker",
+            confidence=confidence,
+            source_id=source_id,
+        )
+    if regression is not None:
+        record_run_value(
+            conn,
+            repo_id,
+            cycle_pk=cycle_pk,
+            file_id=file_id,
+            file_pass_run_id=file_pass_run_id,
+            value_kind="regression_status",
+            value_class="regression" if regression else "no_regression",
+            value_key=pass_code,
+            value=regression,
+            evidence_source="pass_result_marker",
+            confidence=confidence,
+            source_id=source_id,
+        )
+    for attr_key, attr_value in (attributes or {}).items():
+        if ":" in attr_key:
+            namespace, key = attr_key.split(":", 1)
+        else:
+            namespace, key = "upkeeper.pass_result", attr_key
+        value_kind = classify_run_value_attribute(namespace, key)
+        if not value_kind:
+            continue
+        record_run_value(
+            conn,
+            repo_id,
+            cycle_pk=cycle_pk,
+            file_id=file_id,
+            file_pass_run_id=file_pass_run_id,
+            value_kind=value_kind,
+            value_class=pass_code,
+            value_key=key,
+            value=attr_value,
+            evidence_source="pass_result_attribute",
+            confidence=confidence,
+            source_id=source_id,
+        )
+
+
 def record_one_pass_result(
     conn: sqlite3.Connection,
     root: Path,
@@ -10294,6 +10652,21 @@ def record_one_pass_result(
                 epoch_now(),
             ),
         )
+    record_pass_run_value_rows(
+        conn,
+        repo_id,
+        cycle_pk=cycle_pk,
+        file_id=file_id,
+        file_pass_run_id=run_id,
+        source_id=source_id,
+        pass_code=pass_code,
+        applicable=applicable,
+        outcome=outcome,
+        changed=changed,
+        regression=regression,
+        confidence=confidence,
+        attributes=attributes,
+    )
     return run_id
 
 
@@ -13606,6 +13979,84 @@ def query_reuse_debt(conn: sqlite3.Connection, root: Path, repo_id: int, args: a
     return rows
 
 
+def materialized_run_value(row: dict[str, Any]) -> Any:
+    if row.get("value_json"):
+        try:
+            return json.loads(str(row["value_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return row["value_json"]
+    if row.get("value_text") is not None:
+        return row["value_text"]
+    if row.get("value_integer") is not None:
+        return row["value_integer"]
+    if row.get("value_real") is not None:
+        return row["value_real"]
+    return None
+
+
+def query_run_values(conn: sqlite3.Connection, root: Path, repo_id: int, args: argparse.Namespace) -> list[dict[str, Any]]:
+    del root
+    params: list[Any] = [repo_id]
+    where = ["rv.repo_id=?"]
+    if args.path:
+        file_id = file_id_for_path(conn, repo_id, external_rel_path(args.path))
+        if not file_id:
+            return []
+        where.append("rv.file_id=?")
+        params.append(file_id)
+    if args.cycle_id:
+        where.append("c.cycle_id=?")
+        params.append(args.cycle_id)
+    if args.kind:
+        value_kind = normalize_run_value_kind(args.kind)
+        if not value_kind:
+            fail(f"unknown run value kind: {args.kind}", EXIT_USAGE)
+        where.append("rv.value_kind=?")
+        params.append(value_kind)
+    if args.value_class:
+        where.append("rv.value_class=?")
+        params.append(args.value_class)
+    if args.evidence_source:
+        where.append("rv.evidence_source=?")
+        params.append(args.evidence_source)
+    limit = int(args.limit)
+    if limit < 1:
+        fail("--limit must be >= 1", EXIT_USAGE)
+    params.append(limit)
+    rows: list[dict[str, Any]] = []
+    for row in conn.execute(
+        f"""
+        select
+          rv.run_value_id,
+          c.cycle_id,
+          coalesce(f.current_path, f.canonical_path) as path,
+          p.pass_code,
+          rv.value_kind,
+          rv.value_class,
+          rv.value_key,
+          rv.value_text,
+          rv.value_integer,
+          rv.value_real,
+          rv.value_json,
+          rv.evidence_source,
+          rv.confidence,
+          rv.created_epoch
+        from run_values rv
+        left join cycles c on c.cycle_pk=rv.cycle_pk
+        left join files f on f.file_id=rv.file_id
+        left join file_pass_runs p on p.file_pass_run_id=rv.file_pass_run_id
+        where {" and ".join(where)}
+        order by rv.created_epoch desc, rv.run_value_id desc
+        limit ?
+        """,
+        params,
+    ):
+        payload = dict(row)
+        payload["value"] = materialized_run_value(payload)
+        rows.append(payload)
+    return rows
+
+
 def query_cycle_metrics(conn: sqlite3.Connection, root: Path, repo_id: int, args: argparse.Namespace) -> list[dict[str, Any]]:
     del root
     now_epoch = epoch_now()
@@ -13910,6 +14361,8 @@ def command_query(args: argparse.Namespace) -> int:
         rows = query_explain_selection(conn, root, repo_id, args)
     elif query_name == "reuse-debt":
         rows = query_reuse_debt(conn, root, repo_id, args)
+    elif query_name == "run-values":
+        rows = query_run_values(conn, root, repo_id, args)
     elif query_name == "metrics":
         rows = query_cycle_metrics(conn, root, repo_id, args)
     else:
@@ -14379,6 +14832,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     query_sub.choices["reuse-debt"].add_argument("--path")
     query_sub.choices["reuse-debt"].add_argument("--owner")
+    add_query_common(
+        query_sub.add_parser(
+            "run-values",
+            description=(
+                "List normalized run-value evidence such as pass outcomes, validation "
+                "commands/results, residual risk notes, and cycle finish status."
+            ),
+        )
+    )
+    query_sub.choices["run-values"].add_argument("--path")
+    query_sub.choices["run-values"].add_argument("--cycle", dest="cycle_id")
+    query_sub.choices["run-values"].add_argument("--kind", choices=sorted(RUN_VALUE_KINDS))
+    query_sub.choices["run-values"].add_argument("--value-class")
+    query_sub.choices["run-values"].add_argument("--evidence-source")
+    query_sub.choices["run-values"].add_argument("--limit", type=int, default=50)
     add_query_common(query_sub.add_parser("metrics"))
     query_sub.choices["metrics"].add_argument(
         "--window-days",

@@ -324,9 +324,22 @@ PY
     --outcome fixed \
     --changed 1 \
     --regression 0 \
-    --attribute custom:key=42 >$TEST_TMP_ROOT/lattice-p999.json
+    --attribute custom:key=42 \
+    --attribute "upkeeper.pass_result:what_changed=normalized run-value rows" \
+    --attribute "upkeeper.pass_result:validation_command=bash tests/lattice_test.bash" \
+    --attribute "upkeeper.pass_result:residual_risk=none" >$TEST_TMP_ROOT/lattice-p999.json
   assert_sql_value "1" "select count(*) from review_passes where pass_code='P999'"
   assert_sql_value "42" "select value_integer from pass_run_attributes where namespace='custom' and key='key'"
+  assert_sql_value "1" "select count(*) from run_values where value_kind='pass_result' and value_key='P999' and value_text='fixed'"
+  assert_sql_value "1" "select count(*) from run_values where value_kind='change_status' and value_key='P999' and value_integer=1"
+  assert_sql_value "1" "select count(*) from run_values where value_kind='validation_command' and value_key='validation_command' and value_text='bash tests/lattice_test.bash'"
+  assert_sql_value "1" "select count(*) from run_values where value_kind='residual_risk' and value_text='none'"
+  lattice query run-values --path "space name.sh" --kind validation_command --format json >"$TEST_TMP_ROOT/lattice-run-values.json"
+  python3 - "$TEST_TMP_ROOT/lattice-run-values.json" <<'PY' || fail "run-values query did not expose validation evidence"
+import json, sys
+rows = json.load(open(sys.argv[1], encoding="utf-8"))
+assert any(row.get("value") == "bash tests/lattice_test.bash" and row.get("pass_code") == "P999" for row in rows), rows
+PY
 
   mkdir -p "$REPO/runtime"
   local last_message_path="$REPO/runtime/last-message.txt"
@@ -362,6 +375,8 @@ EOF
   assert_sql_value "1" "select count(*) from file_events where event_kind='snapshot_before' and path='space name.sh'"
   assert_sql_value "1" "select count(*) from file_events where event_kind='snapshot_after' and path='space name.sh'"
   assert_sql_min "1" "select count(*) from file_events where event_kind='changed' and path='space name.sh'"
+  assert_sql_value "1" "select count(*) from run_values where value_kind='cycle_status' and value_key='status_marker' and value_text='WORK_DONE'"
+  assert_sql_value "1" "select count(*) from run_values where value_kind='finish_reason' and value_text='TEST_FINISH'"
 
   lattice record-cycle-start \
     --cycle-id cycle-clean \
@@ -584,6 +599,28 @@ dst_rows = dst.execute(
 ).fetchone()[0]
 if dst_rows != src_rows:
     raise AssertionError(f"imported file_pass_runs for space name.sh should match, source={src_rows} dst={dst_rows}")
+
+src_value_rows = src.execute(
+    """
+    select count(*)
+    from run_values rv
+    join files f on f.file_id = rv.file_id
+    where (f.current_path = 'space name.sh' or f.canonical_path = 'space name.sh')
+    """
+).fetchone()[0]
+if src_value_rows <= 0:
+    raise AssertionError(f"source DB has no run_values for space name.sh, got {src_value_rows}")
+
+dst_value_rows = dst.execute(
+    """
+    select count(*)
+    from run_values rv
+    join files f on f.file_id = rv.file_id
+    where (f.current_path = 'space name.sh' or f.canonical_path = 'space name.sh')
+    """
+).fetchone()[0]
+if dst_value_rows != src_value_rows:
+    raise AssertionError(f"imported run_values for space name.sh should match, source={src_value_rows} dst={dst_value_rows}")
 
 rollup = dst.execute(
     """

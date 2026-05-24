@@ -52,6 +52,28 @@ tools/validate_upkeeper.sh --smoke
 The CI workflow does not run real Codex backend work and does not upload runtime
 artifacts by default.
 
+## Supported Platforms And Portability
+
+The supported unattended-run baseline is Linux with a GNU userland, matching the
+`ubuntu-latest` GitHub Actions environment. That is the platform where release
+validation, full validation, stress corpus checks, and live launcher behavior
+are expected to work.
+
+WSL2 is supported as a Linux environment when the required commands below are
+installed and the checkout behaves like a normal Linux Git worktree. Native
+Windows shells, PowerShell, and `cmd.exe` are not supported launch surfaces.
+
+macOS is deferred. The current wrapper and validation harness still rely on
+Linux/GNU assumptions around utility behavior, process inspection, filesystem
+metadata, and sandbox-related tooling. The CI workflow documents this by
+starting on `ubuntu-latest` only; add `macos-latest` after the GNU/BSD utility
+differences are either removed or explicitly guarded.
+
+The validator makes that boundary explicit. `tools/validate_upkeeper.sh --deps`
+prints a platform row, and normal validation modes fail early on unsupported
+kernels with a pointer back to this document. When future patches add platform
+support, update this section, the validator platform gate, and CI together.
+
 ## Codex CLI Profiles
 
 This repository does not commit a project `.codex/config.toml`. The decision is
@@ -97,6 +119,7 @@ GitHub references:
 
 These commands are required by normal Upkeeper startup/runtime paths:
 
+- `bash`
 - `awk`
 - `cat`
 - `chmod`
@@ -127,10 +150,10 @@ These commands are required by normal Upkeeper startup/runtime paths:
 These commands are required for local validation paths and validation-helper
 scripts, but not for normal startup/runtime operation:
 
-- `bash`
 - `cp`
 - `diff`
 - `touch`
+- `uname`
 
 ## jq Decision And Install Commands
 

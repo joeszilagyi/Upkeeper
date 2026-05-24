@@ -112,15 +112,16 @@ tools/check_public_docs.sh
 `tools/validate_upkeeper.sh --quick` runs the checker as part of the normal
 Upkeeper validation harness.
 
-P27 is the saved learning pass for useful fixes:
+P27 is the after-action review pass for useful fixes and meaningful operations:
 
 ```sh
 ./Upkeeper --review-module=p27
 ```
 
-Use it when a run should explain what went wrong, why it probably happened, why
-it mattered, how the fix addresses it, what was already good, and what still
-can improve. Keep that note concise unless the lesson belongs in tracked docs.
+Use it when a run should explain the outcome, what went right, what went wrong,
+what was wasteful, what can improve next time, and whether the system learned
+anything reusable. Keep that note concise unless the lesson belongs in tracked
+docs.
 
 P28 is the unit-test harvesting pass:
 

@@ -566,8 +566,8 @@ Prompt behavior:
     contract and intent compliance review and
     `prompts/p26-public-documentation-review.md` for public documentation,
     comments, help text, and release-note clarity, plus
-    `prompts/p27-educational-debrief-review.md` for a concise saved learning
-    debrief after the fix, and
+    `prompts/p27-educational-debrief-review.md` for a concise saved
+    after-action review after meaningful work, and
     `prompts/p28-unit-test-harvesting-review.md` for turning cheap deterministic
     discoveries into local tests or fixtures, and
     `prompts/p29-reuse-harvesting-review.md` for bounded reuse harvesting of
@@ -592,7 +592,7 @@ Prompt behavior:
     review module for this invoked cycle.
   - --review-module=p26 appends the central P26 public documentation review
     module for this invoked cycle.
-  - --review-module=p27 appends the central P27 educational debrief review
+  - --review-module=p27 appends the central P27 after-action review
     module for this invoked cycle.
   - --review-module=p28 appends the central P28 unit test harvesting review
     module for this invoked cycle.

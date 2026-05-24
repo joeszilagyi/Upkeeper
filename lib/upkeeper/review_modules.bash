@@ -10,7 +10,7 @@ review_module_registry_rows() {
 p24|prompts/p24-de-llm-ing-viability-review.md|P24 - De-LLM-ing Viability Review|de-llm,de-llm-ing,dellm,de-llming|P24 de-LLM-ing viability review
 p25|prompts/p25-contract-intent-compliance-review.md|P25 - Contract And Intent Compliance Review|contract,contract-intent,intent,design-intent,architecture,architecture-fitness|P25 contract and intent compliance review
 p26|prompts/p26-public-documentation-review.md|P26 - Public Documentation And Readability Review|docs,documentation,public-docs,public-documentation,doc-rigor,readability|P26 public documentation review
-p27|prompts/p27-educational-debrief-review.md|P27 - Educational Debrief Review|education,educational,educational-mode,teaching,teach,debrief,learning|P27 educational debrief review
+p27|prompts/p27-educational-debrief-review.md|P27 - After-Action Review|after-action,after-action-review,aar,education,educational,educational-mode,teaching,teach,debrief,learning|P27 after-action review
 p28|prompts/p28-unit-test-harvesting-review.md|P28 - Unit Test Harvesting Review|unit-test,unit-tests,unit-testing,test-harvest,test-harvesting,fixture-harvest,fixture-harvesting|P28 unit test harvesting review
 p29|prompts/p29-reuse-harvesting-review.md|# P29 Reuse Harvesting Review|reuse,reuse-harvest,reuse-harvesting,reusable,library-reuse,function-reuse,asset-reuse,consolidation,extract-helper,helper-extraction|P29 reuse harvesting review
 p30|prompts/p30-stark-protocol-review.md|# P30 Stark Protocol Review|stark,stark-protocol,permanent-hardening,hardening,non-regression,regression-proof,no-repeat,final-hardening|P30 Stark Protocol permanent hardening review

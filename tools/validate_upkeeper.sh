@@ -2363,7 +2363,7 @@ review_module_specs() {
         ;;
       p27)
         applicability="P27: not applicable"
-        terms="P27 Educational Debrief:;What went wrong:"
+        terms="P27 After-Action Review:;Outcome:;What went right:;What went wrong:;What was wasteful:;Reusable learning:"
         ;;
       p28)
         applicability="P28: not applicable"
@@ -2502,7 +2502,7 @@ check_prompt_template() {
   grep -Fq ".upkeeperignore" docs/lattice.md || fail "Lattice docs missing .upkeeperignore candidate boundary"
   grep -Fq "Reusable Asset Ownership" lib/upkeeper/README.md || fail "module README missing reusable asset ownership map"
   grep -Fq "code-comment clarity" README.md || fail "README missing P26 summary"
-  grep -Fq "educational debrief" README.md || fail "README missing P27 summary"
+  grep -Fq "after-action reviews" README.md || fail "README missing P27 summary"
   grep -Fq "unit-test harvesting" README.md || fail "README missing P28 summary"
   grep -Fq "reuse harvesting" README.md || fail "README missing P29 summary"
   grep -Fq "Stark Protocol" README.md || fail "README missing P30 summary"
@@ -3300,6 +3300,43 @@ check_serious_finding_repro_contract() {
     fail "pull request template missing non-repro rationale checkbox"
   grep -Fq "Serious security, data-integrity" docs/release-checklist.md ||
     fail "release checklist missing serious finding repro release gate"
+}
+
+check_after_action_review_contract() {
+  local prompt_path="prompts/p27-educational-debrief-review.md"
+  local pr_template=".github/pull_request_template.md"
+  local phrase
+
+  log "checking after-action review contract"
+
+  [[ -s "$prompt_path" ]] || fail "P27 after-action review prompt is missing or empty"
+  [[ -s "$pr_template" ]] || fail "pull request template is missing or empty"
+
+  for phrase in \
+    "# P27 After-Action Review" \
+    "Self-optimization is part of this module" \
+    "outcome summary" \
+    "what went right" \
+    "what went wrong" \
+    "what was wasteful" \
+    "whether the system learned anything reusable" \
+    "P27 After-Action Review:" \
+    "Outcome:" \
+    "What went right:" \
+    "What went wrong:" \
+    "What was wasteful:" \
+    "What can improve next time:" \
+    "Reusable learning:"; do
+    grep -Fq "$phrase" "$prompt_path" "$pr_template" docs/public-documentation-policy.md README.md ||
+      fail "after-action review contract missing phrase: $phrase"
+  done
+
+  grep -Fq "after-action review pass" docs/public-documentation-policy.md ||
+    fail "public documentation policy missing after-action review wording"
+  grep -Fq "P27 review module for concise saved after-action reviews" README.md ||
+    fail "README missing after-action review prompt summary"
+  grep -Fq "central P27 after-action review" docs/scripts/upkeeper.md ||
+    fail "operator guide missing P27 after-action wording"
 }
 
 check_client_link_tools_contract() {
@@ -6775,6 +6812,7 @@ run_check release_readiness_docs_contract check_release_readiness_docs_contract
 run_check governance_docs_contract check_governance_docs_contract
 run_check negative_space_testing_contract check_negative_space_testing_contract
 run_check serious_finding_repro_contract check_serious_finding_repro_contract
+run_check after_action_review_contract check_after_action_review_contract
 run_check client_link_tools_contract check_client_link_tools_contract
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
 run_check test_invocation_mode_contract check_test_invocation_mode_contract

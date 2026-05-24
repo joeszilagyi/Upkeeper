@@ -1367,6 +1367,30 @@ parse_args() {
         printf '%s %s\n' "$SCRIPT_NAME" "$UPKEEPER_VERSION"
         exit 0
         ;;
+      --status)
+        UPKEEPER_OPERATOR_STATUS_COMMAND="status"
+        shift
+        ;;
+      --doctor)
+        UPKEEPER_OPERATOR_STATUS_COMMAND="doctor"
+        shift
+        ;;
+      --last-run)
+        UPKEEPER_OPERATOR_STATUS_COMMAND="last-run"
+        shift
+        ;;
+      --open-failures)
+        UPKEEPER_OPERATOR_STATUS_COMMAND="open-failures"
+        shift
+        ;;
+      --quota-status)
+        UPKEEPER_OPERATOR_STATUS_COMMAND="quota-status"
+        shift
+        ;;
+      --json-status)
+        UPKEEPER_OPERATOR_STATUS_COMMAND="json-status"
+        shift
+        ;;
       --prompt-file)
         [[ $# -ge 2 ]] || die "--prompt-file requires a path"
         PROMPT_FILE="$2"

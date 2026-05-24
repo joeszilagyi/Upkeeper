@@ -536,6 +536,7 @@ UPKEEPER_AUTOMATION_WORKFLOW="${UPKEEPER_AUTOMATION_WORKFLOW:-}"
 UPKEEPER_AUTOMATION_STAGE="${UPKEEPER_AUTOMATION_STAGE:-}"
 UPKEEPER_AUTOMATION_OBLIGATION_ID="${UPKEEPER_AUTOMATION_OBLIGATION_ID:-}"
 UPKEEPER_AUTOMATION_OBLIGATION_PATH="${UPKEEPER_AUTOMATION_OBLIGATION_PATH:-}"
+UPKEEPER_OPERATOR_STATUS_COMMAND="${UPKEEPER_OPERATOR_STATUS_COMMAND:-}"
 CODEX_ACTIVE_LOCK_DIR="${CODEX_ACTIVE_LOCK_DIR:-$ROOT_DIR/runtime/upkeeper-active.lock}"
 CODEX_WRAPPER_HEALTH_STATE_DIR="${CODEX_WRAPPER_HEALTH_STATE_DIR:-$CODEX_HOME_DIR/upkeeper/active-wrapper-runs}"
 CODEX_WRAPPER_HEALTH_ARCHIVE_DIR="${CODEX_WRAPPER_HEALTH_ARCHIVE_DIR:-$CODEX_HOME_DIR/upkeeper/retired-wrapper-runs}"
@@ -670,6 +671,7 @@ UPKEEPER_MODULES=(
   "file_manifest.bash"
   "worktree_state.bash"
   "quota_state.bash"
+  "operator_status.bash"
 
   # Prompt assembly and process control.
   "precontact_backup.bash"
@@ -6378,8 +6380,12 @@ upkeeper_internal_active_lock_self_test() {
 # 5. hand off to bounded fallback/postmortem only when that reduces risk.
 main() {
   apply_configured_cli_defaults
-  validate_codex_mode_args_or_exit
   parse_args "$@"
+  if [[ -n "${UPKEEPER_OPERATOR_STATUS_COMMAND:-}" ]]; then
+    upkeeper_operator_status_dispatch "$UPKEEPER_OPERATOR_STATUS_COMMAND"
+    return $?
+  fi
+  validate_codex_mode_args_or_exit
   if upkeeper_internal_current_cycle_log_review_requested; then
     upkeeper_emit_sanitized_current_cycle_log_review
     return 0

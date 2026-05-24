@@ -145,6 +145,10 @@ Future changes should preserve this operator-visible surface as far as possible:
   before backend work starts.
 - Review summaries continue to log outcome, selected file, findings, changes,
   verification, Codex exit, and final status-marker evidence when available.
+- `--status`, `--doctor`, `--last-run`, `--open-failures`,
+  `--quota-status`, and `--json-status` are local status reads. They do not
+  acquire the active run lock, launch backend Codex, call GitHub, or mutate
+  runtime evidence. `--json-status` emits schema `upkeeper.status.v1`.
 - Runtime artifacts stay under documented local paths such as `runtime/`,
   `runtime/upkeeper-transcripts`, `runtime/journals/upkeeper-postmortems`,
   `runtime/upkeeper-file-manifest.json`, and

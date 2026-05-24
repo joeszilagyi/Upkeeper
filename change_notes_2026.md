@@ -15,6 +15,11 @@ Version numbering note:
 	1. Long structured `log_line` call sites now use a shared `log_line_parts` helper and startup-anomaly gate logging helper so repeated field groups remain reviewable without changing emitted log fields.
 	2. Local validation now fails if `log_line` or `log_line_parts` call sites exceed 240 source characters, preventing the risky long-line pattern from returning.
 
+2026-05-24: operator status commands:
+	1. Added deterministic local status commands: `--status`, `--doctor`, `--last-run`, `--open-failures`, `--quota-status`, and `--json-status`.
+	2. `--json-status` emits schema `upkeeper.status.v1` with wrapper version/config, repo state, last logged run, open local failure/obligation counts, active lock state, quota snapshot summary, dependencies, and doctor findings.
+	3. Status commands do not acquire the active run lock, launch backend Codex, call GitHub, or mutate runtime evidence.
+
 2026-05-23: v1.2.33 changes:
 	1. Pre-contact backup HMAC derivation now caches parent-process key material before subshell helpers run, so backup metadata and payload verification remain stable even when the persistent redaction key file is unavailable.
 	2. Transcript/live-output custody now reports validation and check command failures as informational custody notices while preserving test/build failures as terminal errors, preventing already-captured local check failures from becoming fresh prior-run warning obligations.

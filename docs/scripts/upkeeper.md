@@ -12,7 +12,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
+Usage: Upkeeper [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: v1.2.33
@@ -41,6 +41,17 @@ Designed for loops like:
   while ./Upkeeper; do
     sleep 60
   done
+
+Operator status commands:
+  --status         Human-readable local wrapper health summary.
+  --doctor         Human-readable dependency, active-lock, and finding summary.
+  --last-run       Last logged cycle/result summary from the local log tail.
+  --open-failures  Count open local tool-failure and automation-obligation evidence.
+  --quota-status   Current local quota snapshot summary for the selected model.
+  --json-status    Machine-readable local status document, schema upkeeper.status.v1.
+
+Status commands are deterministic local reads. They do not acquire the active
+run lock, launch backend Codex, call GitHub, or mutate runtime evidence.
 
 Loop stop semantics:
   - exit 0 keeps the outer shell loop running

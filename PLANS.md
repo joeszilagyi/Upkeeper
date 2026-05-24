@@ -3,9 +3,46 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Wait Plane Logging
+## Tracked-Only Target Selection
 
 Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #75 by adding a backward-compatible knob for normal target
+  selection to exclude non-ignored untracked files
+- keep the default tracked-plus-untracked behavior unchanged
+- preserve `--target-file` as the strongest one-cycle pin, including for safe
+  non-ignored untracked files
+
+Constraints:
+- do not change `.upkeeperignore`, git-ignore, symlink, runtime, or source-safe
+  boundaries
+- keep manifest and enumerate selection deterministic and pre-model
+- update operator-facing help, docs, compatibility notes, and local validation
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/file_manifest.bash`
+- `lib/upkeeper/help_selection.bash`
+- `tools/validate_upkeeper.sh`
+- `Upkeeper.conf`
+- `configurations/default.conf`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
+- `git diff --check`
+
+## Wait Plane Logging
+
+Status: completed and merged
 
 Goal:
 - make long-running backlog and Upkeeper output say which execution plane is

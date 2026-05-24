@@ -466,6 +466,7 @@ CODEX_TARGET_FILE="${CODEX_TARGET_FILE:-$UPKEEPER_TARGET_FILE}"
 CODEX_PROMPT_PASS="${CODEX_PROMPT_PASS:-$UPKEEPER_PROMPT_PASS}"
 CODEX_SELECTION_SOURCE="${CODEX_SELECTION_SOURCE:-${UPKEEPER_SELECTION_SOURCE:-manifest}}"
 CODEX_SELECTION_ORDER="${CODEX_SELECTION_ORDER:-${UPKEEPER_SELECTION_ORDER:-oldest}}"
+CODEX_SELECT_UNTRACKED="${CODEX_SELECT_UNTRACKED:-${UPKEEPER_SELECT_UNTRACKED:-1}}"
 CODEX_FILE_MANIFEST_MODE="${CODEX_FILE_MANIFEST_MODE:-${UPKEEPER_FILE_MANIFEST_MODE:-auto}}"
 CODEX_FILE_MANIFEST_PATH="${CODEX_FILE_MANIFEST_PATH:-${UPKEEPER_FILE_MANIFEST_PATH:-$ROOT_DIR/runtime/upkeeper-file-manifest.json}}"
 CODEX_ALLOW_UNSAFE_MANIFEST_PATH="${CODEX_ALLOW_UNSAFE_MANIFEST_PATH:-${UPKEEPER_ALLOW_UNSAFE_MANIFEST_PATH:-0}}"
@@ -3419,6 +3420,7 @@ launch_screen_fallback_loop() {
   upkeeper_append_command_env_line runner_env_lines CODEX_TARGET_FILE "${CODEX_TARGET_FILE:-}"
   upkeeper_append_command_env_line runner_env_lines CODEX_SELECTION_SOURCE "${CODEX_SELECTION_SOURCE:-}"
   upkeeper_append_command_env_line runner_env_lines CODEX_SELECTION_ORDER "${CODEX_SELECTION_ORDER:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_SELECT_UNTRACKED "${CODEX_SELECT_UNTRACKED:-1}"
   upkeeper_append_command_env_line runner_env_lines CODEX_FILE_MANIFEST_MODE "${CODEX_FILE_MANIFEST_MODE:-}"
   upkeeper_append_command_env_line runner_env_lines CODEX_FILE_MANIFEST_PATH "${CODEX_FILE_MANIFEST_PATH:-}"
   upkeeper_append_command_env_line runner_env_lines CODEX_ALLOW_UNSAFE_MANIFEST_PATH "${CODEX_ALLOW_UNSAFE_MANIFEST_PATH:-0}"
@@ -4913,7 +4915,7 @@ upkeeper_emit_canonical_preselect_output() {
   local raw="$1"
   local marker_meta="${2:-}"
   local path epoch mtime age git_status content_state head_blob worktree_hash eligible_count
-  local selection_mode selection_source manifest_status selection_order target_root target_max_depth
+  local selection_mode selection_source manifest_status selection_order select_untracked target_root target_max_depth
   local include_globs exclude_globs selection_review_modules self_review_threshold_days selection_basis
   local failure_queue_selected failure_marker_id failure_marker_path failure_marker_first_seen_epoch
   local failure_marker_failure_count failure_marker_first_failure_kind failure_marker_first_failure_exit_line
@@ -4933,6 +4935,10 @@ upkeeper_emit_canonical_preselect_output() {
   selection_source="$(upkeeper_preselect_output_field selection_source "$raw")"
   manifest_status="$(upkeeper_preselect_output_field manifest_status "$raw")"
   selection_order="$(upkeeper_preselect_output_field selection_order "$raw")"
+  select_untracked="$(upkeeper_preselect_output_field select_untracked "$raw")"
+  if [[ -z "$select_untracked" ]]; then
+    select_untracked="$(truthy_as_int "${CODEX_SELECT_UNTRACKED:-1}")"
+  fi
   target_root="$(upkeeper_preselect_output_field target_root "$raw")"
   target_max_depth="$(upkeeper_preselect_output_field target_max_depth "$raw")"
   include_globs="$(upkeeper_preselect_output_field include_globs "$raw")"
@@ -4955,6 +4961,7 @@ upkeeper_emit_canonical_preselect_output() {
   printf 'selection_source=%s\n' "${selection_source:-unknown}"
   printf 'manifest_status=%s\n' "${manifest_status:-unknown}"
   printf 'selection_order=%s\n' "${selection_order:-unknown}"
+  printf 'select_untracked=%s\n' "${select_untracked:-1}"
   printf 'target_root=%s\n' "$(upkeeper_prompt_safe_inline_value "${target_root:-none}" "none")"
   printf 'target_max_depth=%s\n' "$(upkeeper_prompt_safe_inline_value "${target_max_depth:-none}" "none")"
   printf 'include_globs=%s\n' "$(upkeeper_prompt_safe_inline_value "${include_globs:-none}" "none")"
@@ -6051,6 +6058,7 @@ cycle_start_log_message() {
     fields+=("target_depth=$(shell_quote "${CODEX_TARGET_MAX_DEPTH:-none}")")
     fields+=("selection_source=$(shell_quote "$CODEX_SELECTION_SOURCE")")
     fields+=("selection_order=$(shell_quote "$CODEX_SELECTION_ORDER")")
+    fields+=("select_untracked=$(truthy_as_int "${CODEX_SELECT_UNTRACKED:-1}")")
     fields+=("issue_priority_labels=$(shell_quote "${CODEX_ISSUE_PRIORITY_LABELS:-none}")")
     fields+=("manifest_path=$(shell_quote "$CODEX_FILE_MANIFEST_PATH")")
     fields+=("include_globs=$(shell_quote "${CODEX_SELECTION_INCLUDE_GLOBS:-none}")")
@@ -6078,6 +6086,7 @@ cycle_start_log_message() {
     fields+=("local_env_file_hash=$(shell_quote "${UPKEEPER_LOCAL_ENV_SOURCE_HASH:-$(cycle_start_metadata_hash "$UPKEEPER_LOCAL_ENV_SOURCE")}")")
     fields+=("target_file_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_TARGET_FILE:-none}")")")
     fields+=("target_root_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_TARGET_ROOT:-none}")")")
+    fields+=("select_untracked=$(truthy_as_int "${CODEX_SELECT_UNTRACKED:-1}")")
     fields+=("issue_priority_labels_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_ISSUE_PRIORITY_LABELS:-none}")")")
     fields+=("manifest_path_hash=$(shell_quote "$(cycle_start_metadata_hash "$CODEX_FILE_MANIFEST_PATH")")")
     fields+=("include_globs_hash=$(shell_quote "$(cycle_start_metadata_hash "${CODEX_SELECTION_INCLUDE_GLOBS:-none}")")")

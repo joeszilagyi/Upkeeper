@@ -12,7 +12,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
+Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: v1.2.33
@@ -304,7 +304,7 @@ Important:
     `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT`,
     `UPKEEPER_PRECONTACT_BACKUP_ROOT`, and
     `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT`. They may also set selection defaults such as `UPKEEPER_SELECTION_SOURCE`,
-    `UPKEEPER_SELECTION_ORDER`,
+    `UPKEEPER_SELECTION_ORDER`, `UPKEEPER_SELECT_UNTRACKED`,
     `UPKEEPER_FILE_MANIFEST_MODE`, `UPKEEPER_TARGET_ROOT`,
     `UPKEEPER_TARGET_MAX_DEPTH`, `UPKEEPER_INCLUDE_GLOBS`,
     `UPKEEPER_EXCLUDE_GLOBS`, and `UPKEEPER_SELECTION_REVIEW_MODULES`. CLI
@@ -394,6 +394,10 @@ Prompt behavior:
     metadata, startup refreshes it before selection. Set
     `--selection-source=enumerate` for a one-cycle direct scan without using the
     manifest, or `--refresh-manifest` to rebuild the manifest immediately.
+    Normal selection includes tracked and non-ignored untracked files for
+    compatibility. Use `UPKEEPER_SELECT_UNTRACKED=0`, `--select-untracked=0`,
+    or `--tracked-only` when unattended rotation should ignore scratch files
+    that have not been added to Git.
   - Upkeeper Lattice is enabled by default as a local SQLite evidence ledger at:
       runtime/upkeeper-lattice/lattice.sqlite3
     It records cycle starts/finishes, preselection evidence, candidate rows,
@@ -545,6 +549,10 @@ Prompt behavior:
     --target-max-depth=N is an alias.
   - --selection-order=oldest, newest, or random chooses the target ordering for
     this invoked cycle. --random-target is shorthand for random ordering.
+  - --select-untracked=0, --no-select-untracked, or --tracked-only excludes
+    non-ignored untracked files from normal timestamp target selection for this
+    cycle. The default is --select-untracked=1 for compatibility. Explicit
+    --target-file pins can still target safe non-ignored untracked text files.
   - --selection-source=manifest uses the local manifest; --selection-source=enumerate
     bypasses it for this cycle. --refresh-manifest rebuilds and uses the
     manifest immediately.
@@ -610,6 +618,7 @@ Environment overrides:
   UPKEEPER_IGNORE_FAILURE_QUEUE Default: 0
   UPKEEPER_SELECTION_SOURCE     Default: manifest
   UPKEEPER_SELECTION_ORDER      Default: oldest
+  UPKEEPER_SELECT_UNTRACKED     Default: 1
   UPKEEPER_FILE_MANIFEST_MODE   Default: auto
   UPKEEPER_FILE_MANIFEST_PATH   Default: runtime/upkeeper-file-manifest.json
   UPKEEPER_IGNORE_FILE          Default: .upkeeperignore

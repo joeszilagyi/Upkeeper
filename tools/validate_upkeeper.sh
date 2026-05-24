@@ -1990,6 +1990,8 @@ check_help_and_diff() {
   grep -Fq -- "--target-root=PATH" <<<"$help" || fail "help missing --target-root"
   grep -Fq -- "--selection-source=manifest|enumerate" <<<"$help" || fail "help missing --selection-source"
   grep -Fq -- "--selection-order=oldest|newest|random" <<<"$help" || fail "help missing --selection-order"
+  grep -Fq -- "--select-untracked" <<<"$help" || fail "help missing --select-untracked"
+  grep -Fq -- "--tracked-only" <<<"$help" || fail "help missing --tracked-only"
   grep -Fq -- "--refresh-manifest" <<<"$help" || fail "help missing --refresh-manifest"
   grep -Fq -- "--manifest-file=PATH" <<<"$help" || fail "help missing --manifest-file"
   grep -Fq -- "--include-glob=PATTERN" <<<"$help" || fail "help missing --include-glob"
@@ -3358,15 +3360,19 @@ EOF
 }
 
 check_file_manifest_selection() {
-  local temp_dir manifest_path output rc lattice_db_path unsafe_manifest_path
+  local temp_dir manifest_path output rc lattice_db_path unsafe_manifest_path untracked_candidate untracked_name
 
   log "checking file manifest selection"
   temp_dir="$(mktemp -d /tmp/upkeeper-file-manifest.XXXXXX)"
   manifest_path="runtime/upkeeper-file-manifest-validation-${temp_dir##*/}.json"
   unsafe_manifest_path="$temp_dir/unsafe-manifest.json"
   lattice_db_path="runtime/upkeeper-lattice/file-manifest-${temp_dir##*/}.sqlite3"
+  untracked_name="upkeeper-untracked-select-${temp_dir##*/}.bash"
+  untracked_candidate="lib/upkeeper/$untracked_name"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
   mkdir -p runtime/upkeeper-lattice
+  printf '#!/usr/bin/env bash\nprintf "untracked selection fixture\\n"\n' >"$untracked_candidate"
+  touch -d '2001-01-01T00:00:00Z' "$untracked_candidate"
 
   run_manifest_dry_run() {
     local log_file="$1"
@@ -3492,6 +3498,33 @@ PY
   grep -Fq "include_globs=\\*.bash" "$temp_dir/enumerate.log" || fail "include glob was not shell-escaped in log"
   grep -Fq "exclude_globs=status_session.bash" "$temp_dir/enumerate.log" || fail "exclude glob was not logged"
   grep -Fq "selection_review_modules=p25\\,p26" "$temp_dir/enumerate.log" || fail "selection review module filter was not shell-escaped in log"
+
+  run_manifest_dry_run "$temp_dir/untracked-default.log" \
+    --selection-source=enumerate \
+    --selection-order=oldest \
+    --include-glob="$untracked_name"
+  grep -Fq "content_state=untracked" "$temp_dir/untracked-default.log" || fail "default selection did not include a non-ignored untracked candidate"
+  grep -Fq "select_untracked=1" "$temp_dir/untracked-default.log" || fail "default selection did not log select_untracked=1"
+  grep -Eq 'review\.preselect .* select_untracked=1( |$)' "$temp_dir/untracked-default.log" || fail "default selection did not carry select_untracked=1 into preselect evidence"
+
+  run_manifest_dry_run "$temp_dir/untracked-tracked-only.log" \
+    --selection-source=enumerate \
+    --selection-order=oldest \
+    --tracked-only \
+    --include-glob="$untracked_name"
+  grep -Fq "select_untracked=0" "$temp_dir/untracked-tracked-only.log" || fail "tracked-only selection was not logged at cycle start"
+  grep -Fq "review.preselect.none reason=no_eligible_script_tool" "$temp_dir/untracked-tracked-only.log" || fail "tracked-only selection did not exclude untracked candidates"
+  if grep -Fq "content_state=untracked" "$temp_dir/untracked-tracked-only.log"; then
+    fail "tracked-only normal selection still selected an untracked candidate"
+  fi
+
+  run_manifest_dry_run "$temp_dir/untracked-explicit.log" \
+    --selection-source=enumerate \
+    --tracked-only \
+    --target-file="$untracked_candidate"
+  grep -Fq "selection_mode=explicit_target" "$temp_dir/untracked-explicit.log" || fail "tracked-only mode incorrectly weakened explicit target selection"
+  grep -Fq "content_state=untracked" "$temp_dir/untracked-explicit.log" || fail "explicit untracked target was not preserved in tracked-only mode"
+  grep -Eq 'review\.preselect .* select_untracked=0( |$)' "$temp_dir/untracked-explicit.log" || fail "explicit tracked-only selection did not carry select_untracked=0 into preselect evidence"
 
   CODEX_FILE_MANIFEST_MODE=off run_manifest_dry_run "$temp_dir/mode-off.log" \
     --selection-source=manifest \
@@ -3710,6 +3743,7 @@ EOF
 
   rm -f "$manifest_path" "$manifest_path".tmp
   rm -f "$lattice_db_path" "$lattice_db_path-journal" "$lattice_db_path-wal" "$lattice_db_path-shm"
+  rm -f "$untracked_candidate"
   rm -r "$temp_dir"
 }
 

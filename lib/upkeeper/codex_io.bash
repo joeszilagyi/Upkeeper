@@ -1482,6 +1482,18 @@ parse_args() {
         CODEX_SELECTION_ORDER="random"
         shift
         ;;
+      --select-untracked=*)
+        CODEX_SELECT_UNTRACKED="$(config_truthy "${1#*=}" && printf 1 || printf 0)"
+        shift
+        ;;
+      --select-untracked)
+        CODEX_SELECT_UNTRACKED="1"
+        shift
+        ;;
+      --tracked-only|--no-select-untracked)
+        CODEX_SELECT_UNTRACKED="0"
+        shift
+        ;;
       --refresh-manifest)
         CODEX_FILE_MANIFEST_MODE="refresh"
         CODEX_SELECTION_SOURCE="manifest"

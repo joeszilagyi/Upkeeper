@@ -166,7 +166,11 @@ EOF
     fi
   done
 
-  log_line "INFO" "genie_protocol.ready broker=wrapper github_direct=blocked bin_dir=$(shell_quote "$RUN_GENIE_BIN_DIR") gh_config_dir=$(shell_quote "$RUN_GENIE_GH_CONFIG_DIR") commands=$(IFS=,; printf '%s' "${GENIE_PROTOCOL_BLOCKED_COMMANDS[*]}")" >/dev/null
+  log_line_parts "INFO" \
+    "genie_protocol.ready broker=wrapper github_direct=blocked" \
+    " bin_dir=$(shell_quote "$RUN_GENIE_BIN_DIR")" \
+    " gh_config_dir=$(shell_quote "$RUN_GENIE_GH_CONFIG_DIR")" \
+    " commands=$(IFS=,; printf '%s' "${GENIE_PROTOCOL_BLOCKED_COMMANDS[*]}")" >/dev/null
 }
 
 run_codex_exec_capture() {
@@ -1341,7 +1345,15 @@ PY
     fi
   fi
 
-  log_line "INFO" "$issue_event selected number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") selected_label=$(shell_quote "$CODEX_ISSUE_FIX_SELECTED_LABEL") labels=$(shell_quote "$CODEX_ISSUE_FIX_LABELS") created_at=$(shell_quote "$CODEX_ISSUE_FIX_CREATED_AT") target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}") inferred_target=$(shell_quote "${CODEX_ISSUE_FIX_TARGET_FILE:-none}") issue_packet_to_model=$(truthy_as_int "${UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL:-0}") url_hash=$(shell_quote "$url_hash") title_hash=$(shell_quote "$title_hash")"
+  log_line_parts "INFO" \
+    "$issue_event selected number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER")" \
+    " selected_label=$(shell_quote "$CODEX_ISSUE_FIX_SELECTED_LABEL")" \
+    " labels=$(shell_quote "$CODEX_ISSUE_FIX_LABELS")" \
+    " created_at=$(shell_quote "$CODEX_ISSUE_FIX_CREATED_AT")" \
+    " target_file=$(shell_quote "${CODEX_TARGET_FILE:-none}")" \
+    " inferred_target=$(shell_quote "${CODEX_ISSUE_FIX_TARGET_FILE:-none}")" \
+    " issue_packet_to_model=$(truthy_as_int "${UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL:-0}")" \
+    " url_hash=$(shell_quote "$url_hash") title_hash=$(shell_quote "$title_hash")"
 }
 
 parse_args() {
@@ -1665,7 +1677,11 @@ resolve_prompt_file() {
           ;;
         *)
           if [[ "$allow_external_prompt" == "1" ]]; then
-            log_line "WARN" "prompt_file_external_allowed execution_origin=$CODEX_EXECUTION_ORIGIN prompt_file=$(shell_quote "$PROMPT_FILE") trust_root=$(shell_quote "$prompt_trust_root") automation_launcher=$(shell_quote "${UPKEEPER_AUTOMATION_LAUNCHER:-$SCRIPT_NAME}")"
+            log_line_parts "WARN" \
+              "prompt_file_external_allowed execution_origin=$CODEX_EXECUTION_ORIGIN" \
+              " prompt_file=$(shell_quote "$PROMPT_FILE")" \
+              " trust_root=$(shell_quote "$prompt_trust_root")" \
+              " automation_launcher=$(shell_quote "${UPKEEPER_AUTOMATION_LAUNCHER:-$SCRIPT_NAME}")"
           else
             die "prompt file outside trust root; set UPKEEPER_ALLOW_EXTERNAL_PROMPT_FILE=1 to override: $PROMPT_FILE"
           fi

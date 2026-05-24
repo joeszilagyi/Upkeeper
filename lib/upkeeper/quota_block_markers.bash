@@ -211,7 +211,13 @@ EOF
   fi
   quota_block_copy_marker_to_private_store "$marker_path" "$(quota_block_marker_root)"
 
-  log_line "WARN" "quota.blocked_marker target_model=$CODEX_MODEL marker_source_phase=$marker_source_phase blocked_bucket=$blocked_buckets quota_identity_changed=$marker_identity_changed$(quota_hashed_path_log_field path "$marker_path")$(quota_sensitive_log_field path "$marker_path")$(quota_sensitive_log_field blocked_until "$(format_epoch_local "$blocked_until_epoch")")"
+  log_line_parts "WARN" \
+    "quota.blocked_marker target_model=$CODEX_MODEL" \
+    " marker_source_phase=$marker_source_phase blocked_bucket=$blocked_buckets" \
+    " quota_identity_changed=$marker_identity_changed" \
+    "$(quota_hashed_path_log_field path "$marker_path")" \
+    "$(quota_sensitive_log_field path "$marker_path")" \
+    "$(quota_sensitive_log_field blocked_until "$(format_epoch_local "$blocked_until_epoch")")"
 }
 
 write_primary_usage_limit_block_marker() {
@@ -263,7 +269,13 @@ EOF
   fi
   quota_block_copy_marker_to_private_store "$marker_path" "$(quota_block_marker_root)"
 
-  log_line "WARN" "quota.blocked_marker target_model=$CODEX_MODEL marker_source_phase=$marker_source_phase blocked_bucket=backend_usage_limit hard_block=1$(quota_hashed_path_log_field path "$marker_path")$(quota_sensitive_log_field path "$marker_path") blocked_until=$(shell_quote "$(format_epoch_local "$blocked_until_epoch")")"
+  log_line_parts "WARN" \
+    "quota.blocked_marker target_model=$CODEX_MODEL" \
+    " marker_source_phase=$marker_source_phase" \
+    " blocked_bucket=backend_usage_limit hard_block=1" \
+    "$(quota_hashed_path_log_field path "$marker_path")" \
+    "$(quota_sensitive_log_field path "$marker_path")" \
+    " blocked_until=$(shell_quote "$(format_epoch_local "$blocked_until_epoch")")"
 }
 
 enforce_primary_quota_block_marker() {
@@ -287,6 +299,14 @@ enforce_primary_quota_block_marker() {
   source_cycle="$(marker_field "$marker_path" "incident_cycle_id")"
   recommended_action="$(marker_field "$marker_path" "recommended_operator_action")"
 
-  log_line "WARN" "quota.cooldown active target_model=$CODEX_MODEL blocked_bucket=${blocked_bucket:-unknown} source_cycle=${source_cycle:-unknown}$(quota_hashed_path_log_field marker_path "$marker_path")$(quota_sensitive_log_field marker_path "$marker_path")$(quota_sensitive_log_field blocked_until "${blocked_until:-unknown}")$(quota_sensitive_log_field blocked_until_epoch "${blocked_until_epoch:-unknown}")$(quota_sensitive_log_field reason "${reason:-unknown}") recommended_operator_action=${recommended_action:-wait_until_reset_or_switch_primary_model}"
+  log_line_parts "WARN" \
+    "quota.cooldown active target_model=$CODEX_MODEL" \
+    " blocked_bucket=${blocked_bucket:-unknown} source_cycle=${source_cycle:-unknown}" \
+    "$(quota_hashed_path_log_field marker_path "$marker_path")" \
+    "$(quota_sensitive_log_field marker_path "$marker_path")" \
+    "$(quota_sensitive_log_field blocked_until "${blocked_until:-unknown}")" \
+    "$(quota_sensitive_log_field blocked_until_epoch "${blocked_until_epoch:-unknown}")" \
+    "$(quota_sensitive_log_field reason "${reason:-unknown}")" \
+    " recommended_operator_action=${recommended_action:-wait_until_reset_or_switch_primary_model}"
   finish_cycle 7 QUOTA_HANDOFF_COOLDOWN INFO "codex_exec_started=0 target_model=$CODEX_MODEL$(quota_hashed_path_log_field marker_path "$marker_path")"
 }

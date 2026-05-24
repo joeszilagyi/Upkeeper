@@ -440,7 +440,14 @@ PY
 
   automation_write_json "$path" "$payload"
   if declare -F log_line >/dev/null 2>&1; then
-    log_line "WARN" "automation.obligation.open id=$id kind=$(automation_shell_quote "$kind") severity=$severity launcher=$(automation_shell_quote "${UPKEEPER_AUTOMATION_LAUNCHER:-$SCRIPT_NAME}") target_scope=$(automation_shell_quote "$target_scope") target=$(automation_shell_quote "${selected_target:-machine-local}") reason=$(automation_shell_quote "$reason") path=$(automation_shell_quote "$path")"
+    log_line_parts "WARN" \
+      "automation.obligation.open id=$id kind=$(automation_shell_quote "$kind")" \
+      " severity=$severity" \
+      " launcher=$(automation_shell_quote "${UPKEEPER_AUTOMATION_LAUNCHER:-$SCRIPT_NAME}")" \
+      " target_scope=$(automation_shell_quote "$target_scope")" \
+      " target=$(automation_shell_quote "${selected_target:-machine-local}")" \
+      " reason=$(automation_shell_quote "$reason")" \
+      " path=$(automation_shell_quote "$path")"
   fi
 }
 

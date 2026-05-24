@@ -408,6 +408,28 @@ compile(path.read_text(encoding="utf-8"), str(path), "exec")
 PY
 }
 
+check_log_line_source_length_contract() {
+  local offenders
+
+  log "checking log-line source length contract"
+  grep -Fq 'log_line_parts()' lib/upkeeper/runtime_foundation.bash ||
+    fail "runtime foundation is missing log_line_parts helper"
+  grep -Fq 'startup_anomaly_log_gate_unresolved()' lib/upkeeper/startup_anomaly_state.bash ||
+    fail "startup anomaly gate logging is not centralized"
+
+  offenders="$(
+    awk '
+      length($0) > 240 && /log_line/ {
+        printf "%s:%d:%d:%s\n", FILENAME, FNR, length($0), $0
+      }
+    ' Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash
+  )"
+  if [[ -n "$offenders" ]]; then
+    printf '%s\n' "$offenders" >&2
+    fail "log_line/log_line_parts call sites exceed 240 characters"
+  fi
+}
+
 check_test_invocation_mode_contract() {
   local bad_modes
 
@@ -5835,6 +5857,7 @@ run_check syntax check_syntax
 run_check version_consistency check_version_consistency
 run_check module_map check_module_map
 run_check prompt_template check_prompt_template
+run_check log_line_source_length_contract check_log_line_source_length_contract
 run_check prompt_public_lint_contract check_prompt_public_lint_contract
 run_check fault_injection_registry_contract check_fault_injection_registry_contract
 run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contract

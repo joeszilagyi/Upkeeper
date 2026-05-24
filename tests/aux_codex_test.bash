@@ -22,6 +22,16 @@ log_line() {
   return 0
 }
 
+log_line_parts() {
+  local level="$1"
+  shift
+  local message="" part
+  for part in "$@"; do
+    message+="$part"
+  done
+  log_line "$level" "$message"
+}
+
 quota_state_json() {
   fail "quota_state_json should not run for invalid auxiliary mode"
 }

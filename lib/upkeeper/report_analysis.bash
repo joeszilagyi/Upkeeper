@@ -503,7 +503,13 @@ log_review_report_summary() {
   safe_findings="$(upkeeper_redact_model_text "$findings" 700)"
   safe_changes="$(upkeeper_redact_model_text "$changes" 700)"
   safe_verification="$(upkeeper_redact_model_text "$verification" 500)"
-  log_line "INFO" "review.summary status_marker=${status_marker_value:-missing} review_outcome=$outcome selected_file=$(shell_quote "$safe_selected_file") findings=$(shell_quote "$safe_findings") changes=$(shell_quote "$safe_changes") verification=$(shell_quote "$safe_verification") codex_exit=$codex_exit_value detail_redacted=1"
+  log_line_parts "INFO" \
+    "review.summary status_marker=${status_marker_value:-missing}" \
+    " review_outcome=$outcome selected_file=$(shell_quote "$safe_selected_file")" \
+    " findings=$(shell_quote "$safe_findings")" \
+    " changes=$(shell_quote "$safe_changes")" \
+    " verification=$(shell_quote "$safe_verification")" \
+    " codex_exit=$codex_exit_value detail_redacted=1"
   terminal_emit_progress "review completed outcome=$outcome status_marker=${status_marker_value:-missing} selected_file=$safe_selected_file"
   terminal_emit_review_finale "$outcome" "$safe_selected_file" "$safe_findings" "$safe_changes" "$safe_verification"
 
@@ -720,17 +726,17 @@ record_startup_anomaly_gate_review() {
   [[ "$STARTUP_ANOMALY_GATE" == "1" ]] || return 0
 
   if [[ "$STARTUP_ANOMALY_GATE_CHANGED_PATH_VIOLATION" == "1" ]]; then
-    log_line "WARN" "startup_anomaly.gate_unresolved reason=changed_path_violation reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    startup_anomaly_log_gate_unresolved "changed_path_violation" "$status_marker_value" "$codex_exit_value"
     if ! write_startup_anomaly_gate_state "unresolved" "changed_path_violation"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
   elif startup_anomaly_gate_has_unresolved_state "$STARTUP_ANOMALY_REASONS"; then
-    log_line "WARN" "startup_anomaly.gate_unresolved reason=unresolved_startup_anomaly_state reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    startup_anomaly_log_gate_unresolved "unresolved_startup_anomaly_state" "$status_marker_value" "$codex_exit_value"
     if ! write_startup_anomaly_gate_state "unresolved" "unresolved_startup_anomaly_state"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
   elif [[ "$codex_exit_value" != "0" ]]; then
-    log_line "WARN" "startup_anomaly.gate_unresolved reason=nonzero_codex_exit reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    startup_anomaly_log_gate_unresolved "nonzero_codex_exit" "$status_marker_value" "$codex_exit_value"
     if ! write_startup_anomaly_gate_state "unresolved" "nonzero_codex_exit"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
@@ -742,7 +748,10 @@ record_startup_anomaly_gate_review() {
     mark_startup_anomaly_gate_states_resolved
     log_line "INFO" "startup_anomaly.gate_resolved status=checked reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value"
   else
-    log_line "WARN" "startup_anomaly.gate_unresolved reason=missing_current_cycle_log_review_evidence reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value action=force_upkeeper_next_run"
+    startup_anomaly_log_gate_unresolved \
+      "missing_current_cycle_log_review_evidence" \
+      "$status_marker_value" \
+      "$codex_exit_value"
     if ! write_startup_anomaly_gate_state "unresolved" "missing_current_cycle_log_review_evidence"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi

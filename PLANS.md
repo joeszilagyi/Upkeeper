@@ -38,7 +38,7 @@ Validation:
 
 ## Platform Support Boundary
 
-Status: completed locally; pending PR/CI
+Status: completed and merged
 
 Goal:
 - close issue #93 by making supported operator platforms explicit
@@ -63,6 +63,35 @@ Validation:
 - `tools/validate_upkeeper.sh --deps`
 - `tools/check_public_docs.sh --quick`
 - `tools/validate_upkeeper.sh --smoke`
+- `git diff --check`
+
+## Log-Line Field Builder Cleanup
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #77 by replacing risky long `log_line` source call sites with
+  readable field fragments while preserving the emitted log fields
+- centralize repeated startup-anomaly unresolved logging
+- add deterministic validation so long log call sites do not drift back
+
+Constraints:
+- preserve existing log keys, order, redaction, and operator-visible behavior
+- keep the change deterministic and local; no backend Codex validation
+- avoid broad logging semantics changes outside source maintainability
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/*.bash`
+- `tools/validate_upkeeper.sh`
+- `tests/data_protection_redaction_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
 - `git diff --check`
 
 ## Tracked-Only Target Selection

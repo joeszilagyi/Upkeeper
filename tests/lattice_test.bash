@@ -82,7 +82,12 @@ make_repo() {
     git mv rename-old.sh rename-new.sh
     git commit -q -m "rename fixture"
     printf '# renamed path changed\n' >>rename-new.sh
+    rename_new_blob="$(git hash-object -w -- rename-new.sh)"
     git add rename-new.sh
+    git cat-file -e "$rename_new_blob^{blob}" 2>/dev/null || {
+      printf 'missing modified rename-new.sh blob after explicit object write\n' >&2
+      exit 1
+    }
     git commit -q -m "modify renamed fixture"
     git rm -q delete-me.sh
     git commit -q -m "delete fixture"

@@ -13,6 +13,7 @@ Version numbering note:
 	4. Quota bucket decisions now treat malformed or out-of-range percentage values as `defer`, preserving fail-closed quota behavior without relying on `awk` coercion.
 	5. Prior-run anomaly custody and obligation reconciliation now treat quoted backend source fixture lines, including `except Exception as exc:`, as transcript content instead of fresh PAGE errors.
 	6. Lattice cycle-finish recording now accepts transcript artifacts under Upkeeper-owned state/temp transcript directories, storing hashed artifact identity without failing optional Lattice recording merely because backlog keeps transcripts outside repo runtime.
+	7. Obligation reconciliation now checks quoted backend fixture evidence line-by-line, so existing aggregate prior-run records with repeated source fixture excerpts can resolve deterministically instead of staying in cooldown churn.
 
 2026-05-23: v1.2.32 changes:
 	1. Live output custody now reclassifies backend-emitted shell/test snippets that quote log markers, case globs, grep assertions, or `[WARN]`/`[ERROR]` assignments as quoted fixture/search output instead of fresh PAGE errors.

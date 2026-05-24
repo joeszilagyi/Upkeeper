@@ -1224,6 +1224,26 @@ records = [
         "schema": 1,
         "record_type": "automation_obligation",
         "status": "open",
+        "id": "quoted-source-fixture-aggregate",
+        "created_at": "2026-05-23T01:01:30-0700",
+        "kind": "prior_run_anomaly",
+        "severity": "high",
+        "summary": "quoted backend source fixture aggregate",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "Upkeeper",
+        "repair_target_file": "Upkeeper",
+        "reason": "PRIOR_RUN_ANOMALY",
+        "evidence": {
+            "source": "backlog_loop_log",
+            "kind": "page_error",
+            "normalized_excerpt": "2026-05-23T17:30:22 PAGE [ERROR] Upkeeper: primary: except Exception as exc:\\n2026-05-23T17:30:22 PAGE [ERROR] Upkeeper: primary: except Exception as exc:",
+        },
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
         "id": "cooling-down",
         "created_at": "2026-05-23T01:02:00-0700",
         "kind": "prior_run_anomaly",
@@ -1261,9 +1281,9 @@ PY
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
       bash -c 'source "$1"; automation_reconcile_open_obligations_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.obsolete_resolved' <<<"$reconciliation_json")" == "2" ]] ||
+  [[ "$(jq -r '.obsolete_resolved' <<<"$reconciliation_json")" == "3" ]] ||
     fail "automation obligation reconciliation did not resolve deterministic obsolete findings"
-  [[ "$(find "$temp_dir/obligations/resolved" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')" == "2" ]] ||
+  [[ "$(find "$temp_dir/obligations/resolved" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')" == "3" ]] ||
     fail "automation obligation reconciliation did not preserve obsolete findings as resolved evidence"
 
   selected_json="$(

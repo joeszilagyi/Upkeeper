@@ -126,6 +126,11 @@ Loop stop semantics:
     are still honored as live log sinks, but rotation and sibling archive
     pruning stay blocked unless explicitly enabled with
     `CODEX_LOG_FILE_ALLOW_UNSAFE=1` and a trusted Upkeeper rotation marker.
+  - Open breadcrumb custody records under `UPKEEPER_BREADCRUMB_STATE_DIR` with
+    severity `critical` or `high` redirect normal target rotation to the
+    configured Upkeeper gate target before backend work starts. Explicit target
+    pins and issue-fix pins remain visible as pinned work and are not silently
+    replaced.
 
 Transcript and live terminal behavior:
   - Default live terminal mode is `basic`: routine INFO logs stay in
@@ -670,6 +675,10 @@ Environment overrides:
   UPKEEPER_SELECTION_REVIEW_MODULES Default: empty
   UPKEEPER_MAX_COVER           Default: 0
   UPKEEPER_BUG_REPORT_ONLY     Default: 0
+  UPKEEPER_BREADCRUMB_GATE_ENABLED Default: 1
+  UPKEEPER_BREADCRUMB_STATE_DIR Default: runtime/upkeeper-breadcrumbs
+  UPKEEPER_BREADCRUMB_GATE_SEVERITIES Default: critical,high
+  UPKEEPER_BREADCRUMB_GATE_TARGET Default: Upkeeper
   UPKEEPER_ALLOW_GH_ISSUE_WRITE Default: 0
   UPKEEPER_BUG_REPORT_DRAFT_DIR Default: runtime/upkeeper-bug-report-drafts
   UPKEEPER_FIX_NEXT_ISSUE      Default: 0

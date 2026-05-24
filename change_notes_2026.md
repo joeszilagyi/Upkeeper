@@ -11,6 +11,11 @@ Version numbering note:
 	2. The audit command can write ignored local custody records under `runtime/upkeeper-breadcrumbs/open`, `resolved`, and `suppressed`, preserving weak clues until they are explicitly resolved or suppressed.
 	3. Quick validation now covers breadcrumb record creation, duplicate updates, expected-fixture suppression, and resolve-missing behavior.
 
+2026-05-24: breadcrumb severity gate:
+	1. Open critical/high breadcrumb custody records now redirect normal Upkeeper target rotation to the configured Upkeeper gate target before backend work starts.
+	2. Explicit target pins and issue-fix pins remain visible as pinned work instead of being silently replaced, while low/medium breadcrumbs remain custody-only by default.
+	3. Suppressed breadcrumb records now carry a named suppression rationale plus an optional expiry field so suppression is machine-readable.
+
 2026-05-24: closed obligation issue links:
 	1. Obligation issue-report sync now verifies existing GitHub issue links are still open before accepting them as custody for an open automation obligation.
 	2. Closed linked issues are preserved as stale evidence, cleared from the active custody fields, and replaced with a fresh issue for the still-open obligation when GitHub filing is enabled.

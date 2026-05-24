@@ -196,6 +196,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--tracked-only` keeps normal rotation to tracked files only. Explicit
   `--target-file` remains the strongest one-cycle pin for safe readable text
   targets, including non-ignored untracked files.
+- Open critical/high breadcrumb custody records are machine-health evidence.
+  Before normal rotation, they redirect the cycle to the configured Upkeeper
+  breadcrumb gate target so unresolved severe clues cannot passively rot while
+  ordinary timestamp selection continues. Explicit target pins and issue-fix
+  pins remain visible rather than being silently replaced.
 - `--max-cover` may ask Lattice to rank a broader current tracked text-file
   pool, but final selection still revalidates the live source-safe boundary in
   the same cycle.

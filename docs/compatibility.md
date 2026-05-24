@@ -95,6 +95,13 @@ Future changes should preserve this operator-visible surface as far as possible:
   `origin/<branch>`, the launcher pushes it before PR checks or merge. Dirty,
   missing-remote, or diverged local-ahead states fail closed with an explicit
   branch-state reason.
+- `./orchestration/watch-pr.sh [PR_NUMBER]` is the stable local PR-check watch
+  command for backlog/manual boundaries. With no PR number it infers the
+  current branch PR. It emits timestamped `status=pass|pending|fail` summaries
+  with check names, conclusions, and URLs when available; exits `0` on pass,
+  `1` on failed or unreadable checks, and `2` for pending checks when `--once`
+  is used. The command only inspects GitHub PR checks and does not launch
+  backend Codex or mutate the repository.
 - The tracked authority model remains part of the public contract. Changes to
   target authority, source-write authority, shell execution, quota spend,
   backup restore, evidence pruning, GitHub issue effects, Lattice writes, or

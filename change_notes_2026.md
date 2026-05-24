@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: local PR check watcher:
+	1. Added `orchestration/watch-pr.sh`, a no-backend helper for explicit or current-branch-inferred PR check watching.
+	2. The watcher prints timestamped pass/pending/fail summaries plus check names, conclusions, and URLs, with distinct exit codes for pass, fail, and pending `--once` results.
+	3. Backlog now prints the watcher command after creating or pushing active backlog PR branches so manual restart and merge boundaries have a deterministic local status command.
+
 2026-05-24: backlog stale quota evidence custody:
 	1. Backlog quota preflight now records expired-reset stale quota evidence as a `stale_quota_evidence` automation obligation before burn bypass continues.
 	2. Repeated stale quota evidence updates one fingerprinted obligation instead of printing recurring warning-only output.

@@ -5,7 +5,7 @@ Upkeeper changes. Keep entries brief and update their status before merge.
 
 ## Stale Quota Evidence Custody
 
-Status: completed locally; pending PR/CI
+Status: completed and merged
 
 Goal:
 - close issue #419 by making expired-reset stale quota evidence visible
@@ -64,9 +64,39 @@ Validation:
 - `tools/validate_upkeeper.sh --quick`
 - `git diff --check`
 
-## Backlog Local-Ahead Branch Guard
+## Local PR Check Watcher
 
 Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #402 with a deterministic local PR-check watcher for backlog and
+  manual restart boundaries
+- support explicit PR numbers and current-branch PR inference without backend
+  Codex or repository mutation
+- make backlog print the watcher command after creating or pushing PR updates
+
+Constraints:
+- no backend Codex calls
+- validation must fake `gh` instead of requiring live GitHub network
+- keep output stable enough for humans and later assistive tooling
+
+Files likely touched:
+- `orchestration/watch-pr.sh`
+- `orchestration/backlog.sh`
+- `tests/watch_pr_test.bash`
+- `tools/validate_upkeeper.sh`
+- operator-facing docs/release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/watch_pr_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Backlog Local-Ahead Branch Guard
+
+Status: completed and merged
 
 Goal:
 - close issue #416 by ensuring clean local commits on an active backlog PR

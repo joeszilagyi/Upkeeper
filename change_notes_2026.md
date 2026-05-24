@@ -11,6 +11,11 @@ Version numbering note:
 	2. The steward refuses draft, non-main, failing-check, pending-check, unmergeable, and dirty-secondary-main-worktree states before merge.
 	3. Real execution uses the guarded `CODEX_ALLOW_PR_MERGE=<pr>` merge path with GitHub branch deletion, then fetches/prunes and verifies local main is clean.
 
+2026-05-24: backlog stopped-loop triage:
+	1. Added `tools/backlog_triage.py`, a no-backend local command that classifies whether a stopped backlog loop is safe to restart.
+	2. The command emits `safe_to_restart=yes|no|wait`, a reason, a next action, branch/PR/check metadata, and a short operator summary.
+	3. Local fixtures cover clean no-op, dirty worktree, active owner, active lock, open obligation, quota hibernation, pending CI, failed validation, merged-PR cleanup, and unknown PAGE/error evidence.
+
 2026-05-24: negative-space validation contract:
 	1. Added `docs/negative-space-testing.md` as the tracked catalog for deterministic "must not happen" validation contracts.
 	2. The catalog links target selection, pre-contact backup redaction, replacement authority, source-mutation guards, malformed marker rejection, no-backend validation, config safety, and backend sandbox allowlisting to local proofs.

@@ -27,6 +27,31 @@ Validation:
 - `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
 - `bash tests/backlog_merge_steward_test.bash`
 
+## Backlog Stop Triage
+
+Status: completed and merged
+
+Goal:
+- close issue #384 with a local no-backend triage command for stopped backlog
+  loops
+- emit both machine-readable restart status and a plain operator summary
+- cover known stopped-loop classes with deterministic fixtures
+
+Constraints:
+- no backend Codex calls
+- GitHub PR/check metadata is optional; local evidence must be enough for
+  common restart decisions
+- unknown or contradictory local evidence must fail closed and leave visible
+  obligation evidence instead of declaring a restart safe
+
+Files likely touched:
+- `tools/backlog_triage.py`
+- `tests/backlog_triage_test.bash`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/backlog_triage_test.bash`
+
 ## Negative-Space Validation Contract
 
 Status: completed and merged

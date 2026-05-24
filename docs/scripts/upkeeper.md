@@ -990,6 +990,10 @@ prompts, backup log lines, or Lattice preselect evidence.
   `tools/backlog_merge_steward.py`. It refuses draft, non-main, failing-check,
   unmergeable, or dirty-secondary-worktree states and uses
   `CODEX_ALLOW_PR_MERGE=<pr>` for real merges.
+  Stopped-loop restart triage is available without backend work with
+  `tools/backlog_triage.py`. It reads local loop evidence, branch state,
+  obligations, locks, and optional PR metadata, then emits
+  `safe_to_restart=yes|no|wait`, a reason, and a next action.
   Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
   heavier config, manifest, Lattice, and review-module dry-run fixtures stay in
   full mode. Add `--profile` to validation runs to print per-check elapsed

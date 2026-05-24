@@ -4177,6 +4177,10 @@ check_lattice_contract() {
   log "checking Upkeeper Lattice"
   grep -Fq "lattice_unavailable_detail_summary" lib/upkeeper/lattice.bash ||
     fail "Lattice wrapper no longer summarizes unavailable details before logging"
+  grep -Fq "lattice_unavailable_context" lib/upkeeper/lattice.bash ||
+    fail "Lattice wrapper no longer classifies unavailable warnings"
+  grep -Fq "owner_issue=430" lib/upkeeper/lattice.bash ||
+    fail "Lattice unavailable warnings no longer name their owner issue"
   ! grep -Fq 'detail=$(shell_quote "$detail")' lib/upkeeper/lattice.bash ||
     fail "Lattice wrapper still logs raw unavailable detail payloads"
   bash tests/lattice_test.bash

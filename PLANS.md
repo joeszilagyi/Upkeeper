@@ -3,6 +3,40 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue 430 Lattice Degraded-Mode Ownership
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- make optional `lattice.unavailable` warnings carry a stable reason class and
+  owner issue so repeated degraded-mode output is not unowned noise
+- keep raw unavailable details bounded and redacted while preserving enough
+  local evidence for deterministic import/doctor checks
+- document when optional Lattice degraded mode continues versus blocks
+
+Constraints:
+- do not contact GitHub from this run
+- keep Lattice optional behavior backward compatible when
+  `UPKEEPER_LATTICE_REQUIRED=0`
+- preserve raw-detail redaction and path hashing for imported log evidence
+- keep validation local and deterministic
+
+Files likely touched:
+- `lib/upkeeper/lattice.bash`
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/lattice.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/lattice_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## PR440 Stabilization And Return To Issue Work
 
 Status: completed locally; pending PR/CI

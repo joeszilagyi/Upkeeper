@@ -1484,6 +1484,12 @@ test_wrapper_required_policy() {
   [[ "$rc" -eq 0 ]] || fail "REQUIRED=0 unsafe DB dry-run exited $rc, expected 0"
   grep -Fq "lattice.unavailable required=0" "$repo/Upkeeper.log" ||
     fail "REQUIRED=0 did not warn about unavailable lattice"
+  grep -Fq "reason_class=unsafe_db_path" "$repo/Upkeeper.log" ||
+    fail "REQUIRED=0 lattice warning did not classify degraded mode"
+  grep -Fq "owner_issue=430" "$repo/Upkeeper.log" ||
+    fail "REQUIRED=0 lattice warning did not name the owner issue"
+  grep -Fq "doctrine=optional_degraded_local_recovery" "$repo/Upkeeper.log" ||
+    fail "REQUIRED=0 lattice warning did not name degraded-mode doctrine"
   grep -Fq "detail_summary=" "$repo/Upkeeper.log" ||
     fail "REQUIRED=0 lattice warning did not use bounded detail_summary"
   [[ -s "$repo/runtime/upkeeper-lattice/recovery/lattice-unavailable.jsonl" ]] ||
@@ -1523,13 +1529,19 @@ test_wrapper_required_policy() {
     fail "REQUIRED=1 failure did not record codex_exec_started=0"
   grep -Fq "detail_summary=" "$repo/Upkeeper.log" ||
     fail "REQUIRED=1 lattice failure did not use bounded detail_summary"
+  grep -Fq "reason_class=unsafe_db_path" "$repo/Upkeeper.log" ||
+    fail "REQUIRED=1 lattice failure did not classify degraded mode"
+  grep -Fq "owner_issue=430" "$repo/Upkeeper.log" ||
+    fail "REQUIRED=1 lattice failure did not name the owner issue"
 }
 
 test_lattice_unavailable_summary_redacts_raw_detail() {
-  local detail summary
+  local context detail summary tool_context
 
   detail='{"status":"integrity_failure","checks":{"cycle_finish_report_only_outcome":{"ok":false,"selected_path":"/tmp/private/path.py"}}}'
   # shellcheck source=/dev/null
+  UPKEEPER_IMPLEMENTATION_DIR="$ROOT_DIR"
+  ROOT_DIR="$ROOT_DIR"
   source "$ROOT_DIR/lib/upkeeper/lattice.bash"
   summary="$(lattice_unavailable_detail_summary "$detail")"
   [[ "$summary" == *"detail_sha256="* ]] || fail "lattice unavailable summary missing detail hash"
@@ -1539,6 +1551,16 @@ test_lattice_unavailable_summary_redacts_raw_detail() {
     fail "lattice unavailable summary missing failed check name"
   [[ "$summary" != *"/tmp/private"* ]] || fail "lattice unavailable summary leaked raw path"
   [[ "$summary" != *"selected_path"* ]] || fail "lattice unavailable summary leaked raw detail key"
+
+  context="$(lattice_unavailable_context "$detail" "$TEST_TMP_ROOT/repo/runtime/upkeeper-lattice/lattice.sqlite3")"
+  [[ "$context" == *"reason_class=integrity_failure"* ]] || fail "lattice unavailable context did not classify JSON detail: $context"
+  [[ "$context" == *"owner_issue=430"* ]] || fail "lattice unavailable context missing owner issue: $context"
+  [[ "$context" == *"doctrine=optional_degraded_local_recovery"* ]] || fail "lattice unavailable context missing doctrine: $context"
+
+  tool_context="$("$LATTICE_TOOL" classify-unavailable --detail "DB unavailable: unable to open database file" --db-path "$TEST_TMP_ROOT/repo/runtime/upkeeper-backlog-lattice/lattice.sqlite3")"
+  [[ "$tool_context" == *"reason_class=backlog_lattice_db_open_failed"* ]] ||
+    fail "lattice classify-unavailable missed backlog DB reason class: $tool_context"
+  [[ "$tool_context" != *"$TEST_TMP_ROOT"* ]] || fail "lattice classify-unavailable leaked raw path: $tool_context"
 }
 
 test_out_of_scope_transcript_artifacts_are_safe() {

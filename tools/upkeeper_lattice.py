@@ -32,6 +32,8 @@ SCHEMA_VERSION = 1
 SCHEMA_ROW_VERSION = 1
 TEXT_SAMPLE_SIZE = 4096
 CANDIDATE_STATE_PRIORITY = {"selected": 3, "eligible": 2, "excluded": 1}
+LATTICE_UNAVAILABLE_OWNER_ISSUE = "430"
+LATTICE_UNAVAILABLE_DOCTRINE = "optional_degraded_local_recovery"
 
 EXIT_SUCCESS = 0
 EXIT_NO_MATCH = 1
@@ -318,6 +320,9 @@ UPKEEPER_LOG_SOURCE_SAFE_KEYS = {
 }
 UPKEEPER_LOG_LATTICE_UNAVAILABLE_SAFE_KEYS = UPKEEPER_LOG_SOURCE_SAFE_KEYS | {
     "required",
+    "reason_class",
+    "owner_issue",
+    "doctrine",
     "action",
     "detail_summary",
     "format",
@@ -1705,6 +1710,74 @@ def sanitize_nonverbose_upkeeper_log_fields(root: Path | None, fields: dict[str,
     return fields
 
 
+def lattice_unavailable_token(value: Any) -> str:
+    token = re.sub(r"[^A-Za-z0-9_.:-]+", "_", str(value or ""))[:96]
+    return token or "unknown"
+
+
+def classify_lattice_unavailable_detail(detail: Any, db_path: Any = "") -> dict[str, str]:
+    """Return bounded ownership fields for a Lattice degraded-mode event."""
+    text = str(detail or "")
+    reason_class = "unknown"
+    try:
+        data = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        lower = text.lower()
+        if "missing_lattice_tool" in lower:
+            reason_class = "missing_tool"
+        elif "unsafe_db_path" in lower or "unsafe db path" in lower:
+            reason_class = "unsafe_db_path"
+        elif "database is locked" in lower:
+            reason_class = "db_locked"
+        elif "permission denied" in lower:
+            reason_class = "permission_denied"
+        elif "readonly" in lower or "read-only" in lower:
+            reason_class = "db_read_only"
+        elif "unable to open database" in lower or "db unavailable" in lower:
+            reason_class = "db_open_failed"
+        elif "schema_mismatch" in lower:
+            reason_class = "schema_mismatch"
+        elif "integrity_failure" in lower:
+            reason_class = "integrity_failure"
+    else:
+        if isinstance(data, dict):
+            status = str(data.get("status") or "").strip()
+            checks = data.get("checks") if isinstance(data.get("checks"), dict) else {}
+            if status == "db_unavailable":
+                if checks.get("parent_exists") is False:
+                    reason_class = "missing_parent"
+                elif checks.get("db_exists") is False:
+                    reason_class = "missing_db"
+                elif checks.get("db_writable") is False:
+                    reason_class = "db_not_writable"
+                elif checks.get("open_error"):
+                    reason_class = "db_open_failed"
+                else:
+                    reason_class = "db_unavailable"
+            elif status in {"unsafe_db_path", "schema_mismatch", "integrity_failure"}:
+                reason_class = status
+            elif status:
+                reason_class = f"doctor_{status}"
+    db_text = str(db_path or "")
+    backlog_db_classes = {
+        "db_unavailable",
+        "db_open_failed",
+        "db_locked",
+        "db_not_writable",
+        "db_read_only",
+        "missing_db",
+        "missing_parent",
+        "permission_denied",
+    }
+    if "upkeeper-backlog-lattice" in db_text and reason_class in backlog_db_classes:
+        reason_class = f"backlog_lattice_{reason_class}"
+    return {
+        "reason_class": lattice_unavailable_token(reason_class),
+        "owner_issue": LATTICE_UNAVAILABLE_OWNER_ISSUE,
+        "doctrine": LATTICE_UNAVAILABLE_DOCTRINE,
+    }
+
+
 def sanitize_upkeeper_log_raw_text(
     root: Path | None,
     raw_text: str | None,
@@ -1895,6 +1968,7 @@ def summarize_lattice_unavailable_payload(payload: dict[str, Any], raw_line: str
     detail = payload.get("detail")
     if isinstance(detail, str) and detail:
         summary["detail_sha256"] = sha256_text(detail)
+    summary.update(classify_lattice_unavailable_detail(detail, db_path))
     return summary
 
 
@@ -6405,6 +6479,15 @@ def command_doctor(args: argparse.Namespace) -> int:
     return code
 
 
+def command_classify_unavailable(args: argparse.Namespace) -> int:
+    fields = classify_lattice_unavailable_detail(args.detail, args.db_path)
+    if args.format == "json":
+        print_json(fields)
+    else:
+        print(" ".join(f"{key}={value}" for key, value in fields.items()))
+    return EXIT_SUCCESS
+
+
 def record_cycle_link_from_env(conn: sqlite3.Connection, repo_id: int, cycle_pk: int, args: argparse.Namespace, source_id: int) -> None:
     parent_cycle_id = getattr(args, "parent_cycle_id", "") or os.environ.get("CODEX_PARENT_CYCLE_ID", "")
     child_cycle_id = getattr(args, "child_cycle_id", "") or os.environ.get("CODEX_SCREEN_FALLBACK_CHILD_ID", "")
@@ -8688,6 +8771,7 @@ def probe_import_upkeeper_log_decorated_lattice_unavailable() -> dict[str, Any]:
         log_path.write_text(
             "2026-05-21T12:52:24 \\u2588 INFO    [WARN] "
             f"cycle=cycle-unavailable run_hash=run-unavailable lattice.unavailable required=0 "
+            "reason_class=backlog_lattice_db_open_failed owner_issue=430 doctrine=optional_degraded_local_recovery "
             f"db={unavailable_db_path} detail_summary={detail_summary} action=continue_without_lattice\n",
             encoding="utf-8",
         )
@@ -8745,6 +8829,9 @@ def probe_import_upkeeper_log_decorated_lattice_unavailable() -> dict[str, Any]:
         "rows_written": payload.get("rows_written"),
         "event": parsed.get("event"),
         "required": parsed.get("required"),
+        "reason_class": parsed.get("reason_class"),
+        "owner_issue": parsed.get("owner_issue"),
+        "doctrine": parsed.get("doctrine"),
         "action": parsed.get("action"),
         "detail_summary": parsed.get("detail_summary"),
         "db_hmac_present": str(parsed.get("db_hmac") or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX),
@@ -8764,6 +8851,9 @@ def probe_import_upkeeper_log_decorated_lattice_unavailable() -> dict[str, Any]:
                 payload.get("rows_written") == 1,
                 parsed.get("event") == "lattice.unavailable",
                 parsed.get("required") == "0",
+                parsed.get("reason_class") == "backlog_lattice_db_open_failed",
+                parsed.get("owner_issue") == LATTICE_UNAVAILABLE_OWNER_ISSUE,
+                parsed.get("doctrine") == LATTICE_UNAVAILABLE_DOCTRINE,
                 parsed.get("action") == "continue_without_lattice",
                 str(parsed.get("db_hmac") or "").startswith(PASS_RESULT_PATH_HMAC_PREFIX),
                 parsed.get("detail_summary") == detail_summary.replace("\\ ", " "),
@@ -14161,6 +14251,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--backup", action="store_true")
     p.add_argument("--backup-output")
     p.set_defaults(func=command_doctor)
+
+    p = sub.add_parser("classify-unavailable", help="classify a bounded Lattice degraded-mode detail payload")
+    p.add_argument("--detail", default="")
+    p.add_argument("--db-path", default="")
+    p.add_argument("--format", choices=["log-fields", "json"], default="log-fields")
+    p.set_defaults(func=command_classify_unavailable)
 
     p = sub.add_parser("record-cycle-start")
     add_cycle_args(p)

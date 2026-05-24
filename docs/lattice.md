@@ -68,8 +68,18 @@ UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE=delete
 `UPKEEPER_LATTICE_ENABLED=1` means every wrapper cycle attempts to initialize,
 doctor, and record evidence. `UPKEEPER_LATTICE_REQUIRED=0` means a local DB
 problem logs one warning, writes a small recovery JSONL record when possible,
-and continues existing Upkeeper behavior. Set `UPKEEPER_LATTICE_REQUIRED=1`
-when a run must fail before Codex launch if Lattice is unavailable.
+and continues existing Upkeeper behavior. The warning includes a bounded
+`reason_class`, `owner_issue`, and degraded-mode `doctrine` so optional Lattice
+loss remains attributable instead of repeating as unowned warning noise. Local
+log import and `doctor` probes preserve those fields while hashing sensitive
+paths and details.
+
+Set `UPKEEPER_LATTICE_REQUIRED=1` when a run must fail before Codex launch if
+Lattice is unavailable. With the default optional mode, the replacement evidence
+is the bounded warning line plus `runtime/upkeeper-lattice/recovery/` JSONL
+spool records that can be imported later; the condition becomes blocking when
+`UPKEEPER_LATTICE_REQUIRED=1` or when `doctor` reports schema, integrity, or DB
+safety failures during an explicitly required Lattice run.
 
 The default SQLite journal mode is rollback journal (`delete`). WAL is opt-in
 with `UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE=wal`; when WAL is enabled,
@@ -91,6 +101,7 @@ The standalone CLI is:
 ```sh
 tools/upkeeper_lattice.py --root "$PWD" --db runtime/upkeeper-lattice/lattice.sqlite3 init
 tools/upkeeper_lattice.py doctor
+tools/upkeeper_lattice.py classify-unavailable --detail "DB unavailable: ..." --db-path runtime/upkeeper-lattice/lattice.sqlite3
 tools/upkeeper_lattice.py backup
 tools/upkeeper_lattice.py export-jsonl
 tools/upkeeper_lattice.py query least-reviewed

@@ -76,15 +76,50 @@ PY
   }
 }
 
+lattice_unavailable_context() {
+  local detail="$1"
+  local db_path="${2:-}"
+  local context reason_class
+
+  if [[ -r "$(lattice_tool_path)" ]]; then
+    if context="$(
+      python3 "$(lattice_tool_path)" --root "$ROOT_DIR" classify-unavailable \
+        --detail "$detail" \
+        --db-path "$db_path" \
+        --format log-fields 2>/dev/null
+    )"; then
+      printf '%s\n' "$context"
+      return 0
+    fi
+  fi
+
+  reason_class="unknown"
+  case "${detail,,}" in
+    *missing_lattice_tool*) reason_class="missing_tool" ;;
+    *unsafe_db_path*|*"unsafe db path"*) reason_class="unsafe_db_path" ;;
+    *"database is locked"*) reason_class="db_locked" ;;
+    *"permission denied"*) reason_class="permission_denied" ;;
+    *readonly*|*"read-only"*) reason_class="db_read_only" ;;
+    *"unable to open database"*|*"db unavailable"*) reason_class="db_open_failed" ;;
+    *schema_mismatch*) reason_class="schema_mismatch" ;;
+    *integrity_failure*) reason_class="integrity_failure" ;;
+  esac
+  if [[ "$db_path" == *upkeeper-backlog-lattice* ]] && [[ "$reason_class" == db_* || "$reason_class" == missing_* || "$reason_class" == permission_denied ]]; then
+    reason_class="backlog_lattice_${reason_class}"
+  fi
+  printf 'reason_class=%s owner_issue=430 doctrine=optional_degraded_local_recovery\n' "$reason_class"
+}
+
 lattice_warn_once() {
   local detail="$1"
-  local detail_summary
+  local detail_summary context
 
   lattice_spool_unavailable_event "$detail"
   [[ "${UPKEEPER_LATTICE_WARNED:-0}" == "1" ]] && return 0
   UPKEEPER_LATTICE_WARNED="1"
   detail_summary="$(lattice_unavailable_detail_summary "$detail")"
-  log_line "WARN" "lattice.unavailable required=${UPKEEPER_LATTICE_REQUIRED:-0} db=$(shell_quote "${UPKEEPER_LATTICE_DB:-}") detail_summary=$(shell_quote "$detail_summary") action=continue_without_lattice"
+  context="$(lattice_unavailable_context "$detail" "${UPKEEPER_LATTICE_DB:-}")"
+  log_line "WARN" "lattice.unavailable required=${UPKEEPER_LATTICE_REQUIRED:-0} $context db=$(shell_quote "${UPKEEPER_LATTICE_DB:-}") detail_summary=$(shell_quote "$detail_summary") action=continue_without_lattice"
 }
 
 lattice_spool_unavailable_event() {
@@ -116,6 +151,8 @@ row = {
         "run_hash": run_hash,
         "db_path": db_path,
         "detail": detail,
+        "owner_issue": "430",
+        "doctrine": "optional_degraded_local_recovery",
         "observed_epoch": int(time.time()),
     },
     "payload_sha256": "",
@@ -155,7 +192,7 @@ lattice_run() {
 }
 
 lattice_init_and_doctor_or_exit() {
-  local detail detail_summary
+  local detail detail_summary context
 
   UPKEEPER_LATTICE_AVAILABLE="0"
   lattice_enabled || return 0
@@ -163,7 +200,8 @@ lattice_init_and_doctor_or_exit() {
   if [[ ! -r "$(lattice_tool_path)" ]]; then
     detail="missing_lattice_tool:$(lattice_tool_path)"
     if lattice_required; then
-      log_line "ERROR" "lattice.unavailable required=1 reason=missing_tool tool=$(shell_quote "$(lattice_tool_path)")"
+      context="$(lattice_unavailable_context "$detail" "${UPKEEPER_LATTICE_DB:-}")"
+      log_line "ERROR" "lattice.unavailable required=1 reason=missing_tool $context tool=$(shell_quote "$(lattice_tool_path)")"
       finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=missing_tool tool=$(shell_quote "$(lattice_tool_path)")"
     fi
     lattice_warn_once "$detail"
@@ -174,7 +212,8 @@ lattice_init_and_doctor_or_exit() {
     detail="${LATTICE_LAST_OUTPUT:-init_failed}"
     if lattice_required; then
       detail_summary="$(lattice_unavailable_detail_summary "$detail")"
-      log_line "ERROR" "lattice.unavailable required=1 reason=init_failed db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail_summary=$(shell_quote "$detail_summary")"
+      context="$(lattice_unavailable_context "$detail" "$UPKEEPER_LATTICE_DB")"
+      log_line "ERROR" "lattice.unavailable required=1 reason=init_failed $context db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail_summary=$(shell_quote "$detail_summary")"
       finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=init_failed detail_summary=$(shell_quote "$detail_summary")"
     fi
     lattice_warn_once "$detail"
@@ -185,7 +224,8 @@ lattice_init_and_doctor_or_exit() {
     detail="${LATTICE_LAST_OUTPUT:-doctor_failed}"
     if lattice_required; then
       detail_summary="$(lattice_unavailable_detail_summary "$detail")"
-      log_line "ERROR" "lattice.unavailable required=1 reason=doctor_failed db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail_summary=$(shell_quote "$detail_summary")"
+      context="$(lattice_unavailable_context "$detail" "$UPKEEPER_LATTICE_DB")"
+      log_line "ERROR" "lattice.unavailable required=1 reason=doctor_failed $context db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail_summary=$(shell_quote "$detail_summary")"
       finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=doctor_failed detail_summary=$(shell_quote "$detail_summary")"
     fi
     lattice_warn_once "$detail"

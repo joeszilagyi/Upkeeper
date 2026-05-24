@@ -239,6 +239,11 @@ Important:
     for local scan bounds. The default finding cap is `0`, meaning all new
     findings inside the recent-line scan window are placed under custody instead
     of letting already-known obligations starve later PAGE alerts.
+    For broader local evidence sweeps outside the backlog loop,
+    `tools/audit_upkeeper_breadcrumbs.py` scans selected logs, transcripts, and
+    open marker roots into `runtime/upkeeper-breadcrumbs/{open,resolved,suppressed}`.
+    Those breadcrumb records are local evidence and can be resolved or suppressed
+    only by explicit state, not by disappearing from terminal output.
   - Light per-bug validation still avoids the full batch suite, but it now
     compiles changed Python files before commit. Lattice issue fixes that touch
     `tools/upkeeper_lattice.py` also run `tests/lattice_test.bash` before the
@@ -963,6 +968,9 @@ prompts, backup log lines, or Lattice preselect evidence.
   static/fixture checks, and `--full` for the broad deterministic integration
   gate before release or after touching module order, prompt packaging,
   symlink behavior, or failure-path guardrails.
+  Quick validation also owns the embedded behavior table drift contract for
+  startup anomaly allowlists, source-safe exclusions, command-kind
+  classifiers, review-module ids, and Lattice pass-code mappings.
   Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
   heavier config, manifest, Lattice, and review-module dry-run fixtures stay in
   full mode. Add `--profile` to validation runs to print per-check elapsed

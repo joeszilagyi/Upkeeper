@@ -1147,6 +1147,83 @@ LOG
   rm -r "$temp_dir"
 }
 
+check_breadcrumb_audit_contract() {
+  local temp_dir open_count suppressed_count resolved_count page_record
+
+  log "checking breadcrumb audit contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-breadcrumb-audit.XXXXXX)"
+  mkdir -p "$temp_dir/transcripts" "$temp_dir/obligations/open" "$temp_dir/failures/open"
+  cat >"$temp_dir/Upkeeper.log" <<'LOG'
+2026-05-24T05:00:00 █ INFO    normal healthy line
+2026-05-24T05:00:01 █ PAGE    [ERROR] Upkeeper: live failure that needs custody
+2026-05-24T05:00:02 █ --FYI-- [WARN] cycle=abc run_hash=def startup_anomaly.gate_unresolved reason=changed_path_violation
+2026-05-24T05:00:03 [ERROR] cycle=fixture transcript directory is not private /tmp/upkeeper-transcripts-test.ABC/transcripts-link
+transcript_artifacts_test: ok
+LOG
+  cat >"$temp_dir/transcripts/session.log" <<'LOG'
+2026-05-24T05:00:04 [WARN] cycle=abc run_hash=ghi transcript.prune_blocked reason=missing_ownership_marker path_redacted=1
+LOG
+  cat >"$temp_dir/obligations/open/prior.json" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"prior","kind":"prior_run_anomaly","severity":"high","summary":"prior anomaly fixture","reason":"PRIOR_RUN_ANOMALY","root":"$ROOT_DIR","target_file":"Upkeeper"}
+JSON
+
+  tools/audit_upkeeper_breadcrumbs.py \
+    --root "$ROOT_DIR" \
+    --state-root "$temp_dir/breadcrumbs" \
+    --log "$temp_dir/Upkeeper.log" \
+    --transcript-dir "$temp_dir/transcripts" \
+    --obligation-root "$temp_dir/obligations" \
+    --failure-queue-root "$temp_dir/failures" \
+    --write \
+    --json >"$temp_dir/audit.json"
+
+  [[ "$(jq -r '.status' "$temp_dir/audit.json")" == "open_breadcrumbs" ]] ||
+    fail "breadcrumb audit did not report open breadcrumbs"
+  [[ "$(jq -r '.open_count' "$temp_dir/audit.json")" == "4" ]] ||
+    fail "breadcrumb audit did not collect expected open breadcrumbs"
+  [[ "$(jq -r '.suppressed_count' "$temp_dir/audit.json")" == "1" ]] ||
+    fail "breadcrumb audit did not suppress expected negative fixture"
+  open_count="$(find "$temp_dir/breadcrumbs/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$open_count" == "4" ]] || fail "breadcrumb audit wrote $open_count open records, expected 4"
+  suppressed_count="$(find "$temp_dir/breadcrumbs/suppressed" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$suppressed_count" == "1" ]] || fail "breadcrumb audit wrote $suppressed_count suppressed records, expected 1"
+  page_record="$(find "$temp_dir/breadcrumbs/open" -maxdepth 1 -type f -name 'page_error-*.json' | head -1)"
+  [[ -n "$page_record" ]] || fail "breadcrumb audit did not write page_error record"
+
+  tools/audit_upkeeper_breadcrumbs.py \
+    --root "$ROOT_DIR" \
+    --state-root "$temp_dir/breadcrumbs" \
+    --log "$temp_dir/Upkeeper.log" \
+    --transcript-dir "$temp_dir/transcripts" \
+    --obligation-root "$temp_dir/obligations" \
+    --failure-queue-root "$temp_dir/failures" \
+    --write \
+    --json >"$temp_dir/audit-second.json"
+  [[ "$(jq -r '.occurrence_count' "$page_record")" == "2" ]] ||
+    fail "breadcrumb audit did not update existing breadcrumb occurrence count"
+
+  mkdir -p "$temp_dir/empty-transcripts" "$temp_dir/empty-obligations/open" "$temp_dir/empty-failures/open"
+  printf '2026-05-24T05:01:00 █ INFO clean\n' >"$temp_dir/clean.log"
+  tools/audit_upkeeper_breadcrumbs.py \
+    --root "$ROOT_DIR" \
+    --state-root "$temp_dir/breadcrumbs" \
+    --log "$temp_dir/clean.log" \
+    --transcript-dir "$temp_dir/empty-transcripts" \
+    --obligation-root "$temp_dir/empty-obligations" \
+    --failure-queue-root "$temp_dir/empty-failures" \
+    --write \
+    --resolve-missing \
+    --json >"$temp_dir/audit-resolved.json"
+  [[ "$(jq -r '.resolved_missing' "$temp_dir/audit-resolved.json")" == "4" ]] ||
+    fail "breadcrumb audit did not resolve missing open breadcrumbs"
+  resolved_count="$(find "$temp_dir/breadcrumbs/resolved" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$resolved_count" == "4" ]] || fail "breadcrumb audit resolved record count was $resolved_count, expected 4"
+  open_count="$(find "$temp_dir/breadcrumbs/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$open_count" == "0" ]] || fail "breadcrumb audit left open records after resolve-missing"
+
+  rm -r "$temp_dir"
+}
+
 check_automation_obligation_root_boundary_contract() {
   local temp_dir selected_json selected_after_current_removed
 
@@ -1928,6 +2005,240 @@ check_review_module_registry_contract() {
     fail "p30 uppercase underscore alias did not normalize"
 }
 
+check_embedded_behavior_table_contracts() {
+  log "checking embedded behavior table contracts"
+  python3 - "$ROOT_DIR" <<'PY' || fail "embedded behavior table contract check failed"
+import ast
+import importlib.util
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+issues: list[str] = []
+
+
+def read(rel: str) -> str:
+    return (root / rel).read_text(encoding="utf-8")
+
+
+def add_issue(message: str) -> None:
+    issues.append(message)
+
+
+def literal_assignments(text: str, name: str) -> list[object]:
+    pattern = re.compile(rf"^[ \t]*{re.escape(name)}\s*=\s*(\{{.*?\}}|\(.*?\))", re.M | re.S)
+    values: list[object] = []
+    for match in pattern.finditer(text):
+        try:
+            values.append(ast.literal_eval(match.group(1)))
+        except (SyntaxError, ValueError) as exc:
+            add_issue(f"{name} assignment is not a literal: {exc}")
+    return values
+
+
+def function_blocks(text: str, name: str) -> list[str]:
+    lines = text.splitlines()
+    blocks: list[str] = []
+    for index, line in enumerate(lines):
+        if not line.startswith(f"def {name}("):
+            continue
+        block = [line]
+        for next_line in lines[index + 1 :]:
+            if next_line and not next_line.startswith((" ", "\t")):
+                break
+            block.append(next_line)
+        blocks.append("\n".join(block))
+    return blocks
+
+
+def compile_command_kind_functions() -> list[tuple[str, object]]:
+    functions: list[tuple[str, object]] = []
+    for rel in (
+        "Upkeeper",
+        "lib/upkeeper/tool_failure_queue.bash",
+        "lib/upkeeper/transcript_output.bash",
+    ):
+        for ordinal, block in enumerate(function_blocks(read(rel), "command_kind"), start=1):
+            namespace: dict[str, object] = {}
+            try:
+                exec("import re\n" + block, namespace)
+            except Exception as exc:  # noqa: BLE001 - validator reports source drift.
+                add_issue(f"{rel} command_kind #{ordinal} did not compile: {exc}")
+                continue
+            fn = namespace.get("command_kind")
+            if not callable(fn):
+                add_issue(f"{rel} command_kind #{ordinal} did not define callable function")
+                continue
+            functions.append((f"{rel}#{ordinal}", fn))
+    return functions
+
+
+def review_module_rows() -> list[list[str]]:
+    command = (
+        f"cd {shlex.quote(str(root))}; "
+        "source lib/upkeeper/review_modules.bash; review_module_registry_rows"
+    )
+    output = subprocess.check_output(["bash", "-lc", command], text=True)
+    rows = [line.split("|") for line in output.splitlines() if line.strip()]
+    return rows
+
+
+def load_lattice_module():
+    spec = importlib.util.spec_from_file_location(
+        "upkeeper_lattice_contract",
+        root / "tools/upkeeper_lattice.py",
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load tools/upkeeper_lattice.py spec")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+worktree_state = read("lib/upkeeper/worktree_state.bash")
+allowed_exact_blocks = literal_assignments(worktree_state, "allowed_exact")
+allowed_prefix_blocks = literal_assignments(worktree_state, "allowed_prefixes")
+if len(allowed_exact_blocks) < 2:
+    add_issue("startup anomaly allowed_exact blocks missing")
+elif allowed_exact_blocks[0] != allowed_exact_blocks[1]:
+    add_issue("startup anomaly allowed_exact blocks drifted from each other")
+if len(allowed_prefix_blocks) < 2:
+    add_issue("startup anomaly allowed_prefixes blocks missing")
+elif tuple(allowed_prefix_blocks[0]) != tuple(allowed_prefix_blocks[1]):
+    add_issue("startup anomaly allowed_prefixes blocks drifted from each other")
+
+if allowed_exact_blocks and allowed_prefix_blocks:
+    allowed_exact = set(allowed_exact_blocks[0])
+    allowed_prefixes = tuple(allowed_prefix_blocks[0])
+
+    def startup_allowed(path: str) -> bool:
+        return (
+            path in allowed_exact
+            or re.fullmatch(r"change_notes_[0-9]{4}\.md", path) is not None
+            or any(path.startswith(prefix) for prefix in allowed_prefixes)
+        )
+
+    startup_fixtures = {
+        "Upkeeper": True,
+        "Upkeeper.conf": True,
+        "change_notes_2026.md": True,
+        "change_notes_2027.md": True,
+        "docs/scripts/upkeeper.md": True,
+        "lib/upkeeper/worktree_state.bash": True,
+        "prompts/default-review.md": True,
+        "templates/example.md": True,
+        "launcher_examples/run.sh": True,
+        "tests/wrapper_contract_test.bash": False,
+        "docs/security.md": False,
+        "runtime/upkeeper-file-manifest.json": False,
+        ".git/config": False,
+        "secrets.env": False,
+    }
+    for path, expected in startup_fixtures.items():
+        actual = startup_allowed(path)
+        if actual != expected:
+            add_issue(f"startup anomaly allowlist fixture {path!r} returned {actual}, expected {expected}")
+
+help_selection = read("lib/upkeeper/help_selection.bash")
+help_prefix_blocks = literal_assignments(help_selection, "excluded_prefixes")
+if not help_prefix_blocks:
+    add_issue("source-safe excluded_prefixes table missing from help_selection")
+else:
+    prefixes = tuple(help_prefix_blocks[0])
+    for expected in (".git/", "runtime/"):
+        if expected not in prefixes:
+            add_issue(f"source-safe excluded_prefixes missing {expected}")
+
+file_manifest = read("lib/upkeeper/file_manifest.bash")
+manifest_excluded_dirs = literal_assignments(file_manifest, "excluded_dirs")
+if not manifest_excluded_dirs:
+    add_issue("file manifest excluded_dirs table missing")
+else:
+    excluded_dirs = set(manifest_excluded_dirs[0])
+    for expected in (".git", "runtime"):
+        if expected not in excluded_dirs:
+            add_issue(f"file manifest excluded_dirs missing {expected}")
+
+default_prompt = read("prompts/default-review.md")
+for expected in ("  - .git/", "  - runtime/"):
+    if expected not in default_prompt:
+        add_issue(f"default prompt missing explicit source-safe exclusion {expected.strip()}")
+
+command_examples = {
+    "bash -n Upkeeper": "check",
+    "git diff --check": "check",
+    "tools/validate_upkeeper.sh --quick": "validation",
+    "python -m pytest tests": "tests",
+    "npm test": "tests",
+    "npm run build": "build",
+    "git status --short": "search",
+    "git commit -m msg": "git",
+    "command -v jq": "command",
+    "rg -n TODO Upkeeper": "search",
+}
+command_kind_functions = compile_command_kind_functions()
+if len(command_kind_functions) < 4:
+    add_issue(f"expected at least four command_kind classifier copies, found {len(command_kind_functions)}")
+for source, fn in command_kind_functions:
+    for command, expected in command_examples.items():
+        try:
+            actual = fn(command)
+        except Exception as exc:  # noqa: BLE001 - validator reports source drift.
+            add_issue(f"{source} command_kind raised for {command!r}: {exc}")
+            continue
+        if actual != expected:
+            add_issue(f"{source} command_kind({command!r})={actual!r}, expected {expected!r}")
+
+rows = review_module_rows()
+review_module_ids = [row[0] for row in rows if row]
+expected_review_module_ids = [f"p{i}" for i in range(24, 31)]
+if review_module_ids != expected_review_module_ids:
+    add_issue(f"review module ids drifted: {review_module_ids!r}")
+
+try:
+    lattice_module = load_lattice_module()
+except Exception as exc:  # noqa: BLE001 - validator reports import drift.
+    add_issue(f"could not import Lattice registry: {exc}")
+else:
+    registry_issues = lattice_module.validate_pass_registry_contract()
+    if registry_issues:
+        add_issue("Lattice pass registry contract failed: " + "; ".join(registry_issues))
+    lattice_module_ids = [
+        str(item.get("pass_code", "")).lower()
+        for item in lattice_module.PASS_REGISTRY
+        if item.get("module_prompt") is True
+    ]
+    if lattice_module_ids != review_module_ids:
+        add_issue(
+            "review module ids drifted from Lattice module passes: "
+            f"review={review_module_ids!r} lattice={lattice_module_ids!r}"
+        )
+
+lattice_wrapper = read("lib/upkeeper/lattice.bash")
+lattice_case_mappings = dict(
+    re.findall(r"\b(p[0-9]+)\)\s+passes\+=\((P[0-9]+)\)", lattice_wrapper)
+)
+for module_id in review_module_ids:
+    expected = module_id.upper()
+    actual = lattice_case_mappings.get(module_id)
+    if actual != expected:
+        add_issue(f"lattice planned pass mapping for {module_id} is {actual!r}, expected {expected!r}")
+
+for rel in ("docs/scripts/upkeeper.md", "docs/compatibility.md", "change_notes_2026.md"):
+    text = read(rel)
+    if "embedded behavior table" not in text and "embedded control-plane table" not in text:
+        add_issue(f"{rel} missing embedded behavior table ownership wording")
+
+if issues:
+    for issue in issues:
+        print(issue, file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
 review_module_specs() {
   local module_id prompt_path title aliases help_summary applicability terms
 
@@ -2602,6 +2913,78 @@ check_validation_environment_isolation() {
     fail "validation dry-run helper is not used by enough dry-run fixtures"
 }
 
+validation_quota_state_for_home() {
+  local codex_home="$1"
+  local model="${2:-gpt-5.5}"
+  local log_file="${3:-$codex_home/Upkeeper.log}"
+
+  CODEX_HOME_DIR="$codex_home" CODEX_SESSION_SCAN_LIMIT=200 LOG_FILE="$log_file" \
+    bash -lc 'cd "$1"; source lib/upkeeper/quota_state.bash; quota_state_json "$2"' \
+    bash "$ROOT_DIR" "$model"
+}
+
+check_validation_quota_session_fixture_contract() {
+  local temp_dir state diagnostics agent_messages reached_type
+  local current_home stale_home wrong_home nonfinite_home missing_home
+  local malformed_session empty_session empty_state
+
+  log "checking validation quota/session fixtures"
+  temp_dir="$(mktemp -d /tmp/upkeeper-validation-fixtures.XXXXXX)"
+
+  current_home="$temp_dir/current/codex-home"
+  write_validation_current_quota_snapshot "$current_home/sessions/2026/05/07/current.jsonl" "gpt-5.5"
+  state="$(validation_quota_state_for_home "$current_home" "gpt-5.5" "$temp_dir/current.log")"
+  [[ "$(jq -r '.snapshot_is_current' <<<"$state")" == "true" ]] ||
+    fail "current quota fixture did not parse as current"
+  [[ "$(jq -r '.snapshot.snapshot_stale_after_reset' <<<"$state")" == "false" ]] ||
+    fail "current quota fixture parsed as stale"
+
+  stale_home="$temp_dir/stale/codex-home"
+  write_validation_stale_quota_snapshot "$stale_home/sessions/2026/05/07/stale.jsonl" "gpt-5.5"
+  state="$(validation_quota_state_for_home "$stale_home" "gpt-5.5" "$temp_dir/stale.log")"
+  [[ "$(jq -r '.snapshot.snapshot_stale_after_reset' <<<"$state")" == "true" ]] ||
+    fail "stale quota fixture did not parse as stale-after-reset"
+  [[ "$(jq -r '.snapshot.primary_reset_expired' <<<"$state")" == "true" ]] ||
+    fail "stale quota fixture did not mark primary reset expired"
+
+  wrong_home="$temp_dir/wrong-model/codex-home"
+  write_validation_wrong_model_quota_snapshot "$wrong_home/sessions/2026/05/07/wrong.jsonl" "gpt-5.4"
+  state="$(validation_quota_state_for_home "$wrong_home" "gpt-5.5" "$temp_dir/wrong.log")"
+  [[ "$(jq -r '.snapshot_selection' <<<"$state")" == "overall_fallback" ]] ||
+    fail "wrong-model quota fixture did not parse as fallback evidence"
+  [[ "$(jq -r '.snapshot.model_hint' <<<"$state")" == "gpt-5.4" ]] ||
+    fail "wrong-model quota fixture lost model hint"
+
+  nonfinite_home="$temp_dir/nonfinite/codex-home"
+  write_validation_nonfinite_quota_snapshot "$nonfinite_home/sessions/2026/05/07/nonfinite.jsonl" "gpt-5.5"
+  state="$(validation_quota_state_for_home "$nonfinite_home" "gpt-5.5" "$temp_dir/nonfinite.log")"
+  [[ "$(jq -r '.error // ""' <<<"$state")" == "no_rate_limit_snapshot_found" ]] ||
+    fail "nonfinite quota fixture should not produce a usable snapshot"
+
+  missing_home="$temp_dir/missing-fields/codex-home"
+  write_validation_missing_rate_limit_fields_snapshot "$missing_home/sessions/2026/05/07/missing.jsonl" "gpt-5.5"
+  state="$(validation_quota_state_for_home "$missing_home" "gpt-5.5" "$temp_dir/missing.log")"
+  [[ "$(jq -r '.error // ""' <<<"$state")" == "no_rate_limit_snapshot_found" ]] ||
+    fail "missing-field quota fixture should not produce a usable snapshot"
+
+  malformed_session="$temp_dir/malformed/session.jsonl"
+  write_validation_malformed_session_jsonl "$malformed_session"
+  state="$(bash -lc 'cd "$1"; source lib/upkeeper/status_session.bash; parse_session_end_state "$2"' bash "$ROOT_DIR" "$malformed_session")"
+  [[ "$state" == "turn_aborted:rate_limit_retry" ]] || fail "malformed session fixture state was $state"
+  diagnostics="$(bash -lc 'cd "$1"; source lib/upkeeper/status_session.bash; session_diagnostics_json "$2"' bash "$ROOT_DIR" "$malformed_session")"
+  agent_messages="$(jq -r '.agent_message_count' <<<"$diagnostics")"
+  reached_type="$(jq -r '.last_rate_limit_reached_type' <<<"$diagnostics")"
+  [[ "$agent_messages" == "1" ]] || fail "malformed session fixture agent message count was $agent_messages"
+  [[ "$reached_type" == "unknown" ]] || fail "malformed session fixture rate-limit sentinel was $reached_type"
+
+  empty_session="$temp_dir/empty/session.jsonl"
+  write_validation_empty_session_jsonl "$empty_session"
+  empty_state="$(bash -lc 'cd "$1"; source lib/upkeeper/status_session.bash; parse_session_end_state "$2"' bash "$ROOT_DIR" "$empty_session")"
+  [[ "$empty_state" == "none" ]] || fail "empty session fixture state was $empty_state"
+
+  rm -r "$temp_dir"
+}
+
 check_dependency_guidance_contract() {
   log "checking dependency guidance contract"
 
@@ -2789,12 +3172,24 @@ check_wrapper_contract_tests() {
   bash tests/wrapper_contract_test.bash
 }
 
+prepare_validation_session_file() {
+  local session_file="$1"
+  local session_root
+
+  mkdir -p "$(dirname -- "$session_file")"
+  if [[ "$session_file" == */sessions/* ]]; then
+    session_root="${session_file%%/sessions/*}/sessions"
+    chmod 700 "$session_root" 2>/dev/null || true
+  fi
+}
+
 write_validation_quota_snapshot() {
   local session_file="$1"
   local model="$2"
   local primary_reset_offset="${3:-3600}"
   local secondary_reset_offset="${4:-86400}"
 
+  prepare_validation_session_file "$session_file"
   python3 - "$session_file" "$model" "$primary_reset_offset" "$secondary_reset_offset" <<'PY'
 import json
 import sys
@@ -2806,10 +3201,6 @@ path = Path(sys.argv[1])
 model = sys.argv[2]
 primary_reset_offset = int(sys.argv[3])
 secondary_reset_offset = int(sys.argv[4])
-path.parent.mkdir(parents=True, exist_ok=True)
-if "sessions" in path.parts:
-    session_root = Path(*path.parts[: path.parts.index("sessions") + 1])
-    session_root.chmod(0o700)
 now = int(time.time())
 event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
 rows = [
@@ -2842,6 +3233,114 @@ with path.open("w", encoding="utf-8") as handle:
     for row in rows:
         print(json.dumps(row, separators=(",", ":")), file=handle)
 PY
+}
+
+write_validation_current_quota_snapshot() {
+  write_validation_quota_snapshot "$1" "${2:-gpt-5.5}" 3600 86400
+}
+
+write_validation_stale_quota_snapshot() {
+  write_validation_quota_snapshot "$1" "${2:-gpt-5.5}" -3600 -7200
+}
+
+write_validation_wrong_model_quota_snapshot() {
+  write_validation_quota_snapshot "$1" "${2:-gpt-5.4}" 3600 86400
+}
+
+write_validation_nonfinite_quota_snapshot() {
+  local session_file="$1"
+  local model="${2:-gpt-5.5}"
+
+  prepare_validation_session_file "$session_file"
+  python3 - "$session_file" "$model" <<'PY'
+import json
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+model = sys.argv[2]
+now = int(time.time())
+event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
+rows = [
+    {"type": "turn_context", "payload": {"model": model}},
+    {
+        "timestamp": event_timestamp,
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "rate_limits": {
+                "limit_id": f"validation-{model}",
+                "limit_name": f"{model} validation",
+                "plan_type": "validation",
+                "rate_limit_reached_type": None,
+                "primary": {"used_percent": 10.0, "window_minutes": 300, "resets_at": "not-finite"},
+                "secondary": {"used_percent": 10.0, "window_minutes": 10080, "resets_at": "not-finite"},
+            },
+        },
+    },
+]
+with path.open("w", encoding="utf-8") as handle:
+    for row in rows:
+        print(json.dumps(row, separators=(",", ":")), file=handle)
+PY
+}
+
+write_validation_missing_rate_limit_fields_snapshot() {
+  local session_file="$1"
+  local model="${2:-gpt-5.5}"
+
+  prepare_validation_session_file "$session_file"
+  python3 - "$session_file" "$model" <<'PY'
+import json
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+model = sys.argv[2]
+event_timestamp = datetime.fromtimestamp(int(time.time()), timezone.utc).isoformat().replace("+00:00", "Z")
+rows = [
+    {"type": "turn_context", "payload": {"model": model}},
+    {
+        "timestamp": event_timestamp,
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "rate_limits": {
+                "limit_id": f"validation-{model}",
+                "limit_name": f"{model} validation",
+                "plan_type": "validation",
+            },
+        },
+    },
+]
+with path.open("w", encoding="utf-8") as handle:
+    for row in rows:
+        print(json.dumps(row, separators=(",", ":")), file=handle)
+PY
+}
+
+write_validation_malformed_session_jsonl() {
+  local session_file="$1"
+
+  prepare_validation_session_file "$session_file"
+  printf '%s\n' \
+    '[]' \
+    '{"type":"event_msg","payload":"not-an-object"}' \
+    '{"type":"event_msg","payload":{"type":"turn_aborted","reason":"rate limit / retry"}}' \
+    '{"type":"response_item","payload":{"type":"message","role":"assistant"}}' \
+    '{"type":"event_msg","payload":{"type":"token_count","rate_limits":"not-an-object"}}' \
+    >"$session_file"
+}
+
+write_validation_empty_session_jsonl() {
+  local session_file="$1"
+
+  prepare_validation_session_file "$session_file"
+  : >"$session_file"
 }
 
 check_cycle_start_log_contract() {
@@ -5456,13 +5955,7 @@ check_status_session_jsonl_contract() {
   log "checking status session JSONL contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-status-session.XXXXXX)"
   session_file="$temp_dir/session.jsonl"
-  printf '%s\n' \
-    '[]' \
-    '{"type":"event_msg","payload":"not-an-object"}' \
-    '{"type":"event_msg","payload":{"type":"turn_aborted","reason":"rate limit / retry"}}' \
-    '{"type":"response_item","payload":{"type":"message","role":"assistant"}}' \
-    '{"type":"event_msg","payload":{"type":"token_count","rate_limits":"not-an-object"}}' \
-    >"$session_file"
+  write_validation_malformed_session_jsonl "$session_file"
 
   state="$(bash -lc 'cd "$1"; source lib/upkeeper/status_session.bash; parse_session_end_state "$2"' bash "$ROOT_DIR" "$session_file")"
   [[ "$state" == "turn_aborted:rate_limit_retry" ]] || fail "malformed JSONL state was $state"
@@ -5666,45 +6159,7 @@ exit 101
 SH
   chmod +x "$temp_dir/bin/codex"
 
-  python3 - "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" <<'PY'
-import json
-import sys
-import time
-from datetime import datetime, timezone
-
-path = sys.argv[1]
-now = int(time.time())
-event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
-rows = [
-    {"type": "turn_context", "payload": {"model": "gpt-5.5"}},
-    {
-        "timestamp": event_timestamp,
-        "type": "event_msg",
-        "payload": {
-            "type": "token_count",
-            "rate_limits": {
-                "limit_id": "validation-gpt-5.5",
-                "limit_name": "gpt-5.5 validation",
-                "plan_type": "validation",
-                "rate_limit_reached_type": None,
-                "primary": {
-                    "used_percent": 10.0,
-                    "window_minutes": 300,
-                    "resets_at": now + 3600,
-                },
-                "secondary": {
-                    "used_percent": 10.0,
-                    "window_minutes": 10080,
-                    "resets_at": now + 86400,
-                },
-            },
-        },
-    },
-]
-with open(path, "w", encoding="utf-8") as handle:
-    for row in rows:
-        print(json.dumps(row, separators=(",", ":")), file=handle)
-PY
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
 
   set +e
   PATH="$temp_dir/bin:$PATH" \
@@ -6083,6 +6538,7 @@ run_check version_consistency check_version_consistency
 run_check module_map check_module_map
 run_check prompt_template check_prompt_template
 run_check review_module_registry_contract check_review_module_registry_contract
+run_check embedded_behavior_table_contracts check_embedded_behavior_table_contracts
 run_check log_line_source_length_contract check_log_line_source_length_contract
 run_check prompt_public_lint_contract check_prompt_public_lint_contract
 run_check fault_injection_registry_contract check_fault_injection_registry_contract
@@ -6091,6 +6547,7 @@ run_check authority_control_docs_contract check_authority_control_docs_contract
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
+run_check validation_quota_session_fixture_contract check_validation_quota_session_fixture_contract
 run_check dependency_guidance_contract check_dependency_guidance_contract
 run_check release_readiness_docs_contract check_release_readiness_docs_contract
 run_check governance_docs_contract check_governance_docs_contract
@@ -6113,6 +6570,7 @@ run_check review_summary_parser check_review_summary_parser
 run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
 run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_contract
+run_check breadcrumb_audit_contract check_breadcrumb_audit_contract
 run_check automation_obligation_root_boundary_contract check_automation_obligation_root_boundary_contract
 run_check automation_obligation_reconciliation_contract check_automation_obligation_reconciliation_contract
 run_check automation_obligation_churn_contract check_automation_obligation_churn_contract

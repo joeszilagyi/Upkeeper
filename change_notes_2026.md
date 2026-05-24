@@ -6,6 +6,15 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: breadcrumb custody audit:
+	1. Added `tools/audit_upkeeper_breadcrumbs.py`, a deterministic local scanner that fingerprints suspicious log, transcript, automation-obligation, and tool-failure breadcrumbs.
+	2. The audit command can write ignored local custody records under `runtime/upkeeper-breadcrumbs/open`, `resolved`, and `suppressed`, preserving weak clues until they are explicitly resolved or suppressed.
+	3. Quick validation now covers breadcrumb record creation, duplicate updates, expected-fixture suppression, and resolve-missing behavior.
+
+2026-05-24: embedded behavior table contracts:
+	1. Quick validation now checks the embedded behavior table drift contract for startup anomaly changed-path allowlists, source-safe exclusions, command-kind classifiers, review-module ids, and Lattice pass-code mappings.
+	2. Compatibility and operator docs now identify those tables as operator-visible control-plane behavior that must change with validation coverage instead of drifting silently.
+
 2026-05-24: closed obligation issue links:
 	1. Obligation issue-report sync now verifies existing GitHub issue links are still open before accepting them as custody for an open automation obligation.
 	2. Closed linked issues are preserved as stale evidence, cleared from the active custody fields, and replaced with a fresh issue for the still-open obligation when GitHub filing is enabled.
@@ -19,6 +28,11 @@ Version numbering note:
 2026-05-24: validation dry-run helper:
 	1. `tools/validate_upkeeper.sh` now centralizes repeated fake Upkeeper dry-run environment setup in a validator-local helper.
 	2. The helper preserves stdout/stderr separation, exit status, isolated CODEX_HOME, log/transcript roots, active locks, and no-backend defaults while still allowing explicit per-fixture overrides.
+
+2026-05-24: quota and session fixtures:
+	1. Validation now has named fixture writers for current, stale, wrong-model, malformed, empty, nonfinite, and missing-field quota/session JSONL cases.
+	2. The fixture contract is checked locally so parser safety cases stay reusable without reading real operator CODEX_HOME data.
+	3. Quota snapshot parsing now treats non-integer reset-window fields as unusable snapshot evidence instead of crashing the local quota preflight.
 
 2026-05-24: anomaly custody issue ownership:
 	1. Prior-run anomaly obligations now keep umbrella issue #418 as policy ownership only; each PAGE/error anomaly must have its own specific issue-ready record or GitHub issue before normal backlog work continues.

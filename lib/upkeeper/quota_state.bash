@@ -108,18 +108,27 @@ def snapshot_from_token_count(item, path: Path, source_mtime: float, model_hint)
     secondary = rate_limits.get("secondary") or {}
     if not primary or not secondary:
         return None
+    try:
+        primary_used_percent = float(primary.get("used_percent") or 0.0)
+        primary_window_minutes = int(primary.get("window_minutes") or 0)
+        primary_resets_at = int(primary.get("resets_at") or 0)
+        secondary_used_percent = float(secondary.get("used_percent") or 0.0)
+        secondary_window_minutes = int(secondary.get("window_minutes") or 0)
+        secondary_resets_at = int(secondary.get("resets_at") or 0)
+    except (TypeError, ValueError):
+        return None
     return {
         "event_timestamp": item.get("timestamp"),
         "limit_id": rate_limits.get("limit_id"),
         "limit_name": rate_limits.get("limit_name"),
         "plan_type": rate_limits.get("plan_type"),
         "rate_limit_reached_type": rate_limits.get("rate_limit_reached_type"),
-        "primary_used_percent": float(primary.get("used_percent") or 0.0),
-        "primary_window_minutes": int(primary.get("window_minutes") or 0),
-        "primary_resets_at": int(primary.get("resets_at") or 0),
-        "secondary_used_percent": float(secondary.get("used_percent") or 0.0),
-        "secondary_window_minutes": int(secondary.get("window_minutes") or 0),
-        "secondary_resets_at": int(secondary.get("resets_at") or 0),
+        "primary_used_percent": primary_used_percent,
+        "primary_window_minutes": primary_window_minutes,
+        "primary_resets_at": primary_resets_at,
+        "secondary_used_percent": secondary_used_percent,
+        "secondary_window_minutes": secondary_window_minutes,
+        "secondary_resets_at": secondary_resets_at,
         "source_path": str(path),
         "source_mtime": source_mtime,
         "model_hint": model_hint,

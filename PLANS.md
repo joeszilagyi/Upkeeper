@@ -27,14 +27,98 @@ Files likely touched:
 - `tools/validate_upkeeper.sh`
 - `docs/scripts/upkeeper.md`
 - `docs/compatibility.md`
-- `change_notes_2026.md`
-- `PLANS.md`
 
 Validation:
 - `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
 - `tools/validate_upkeeper.sh --quick`
 - `tools/check_public_docs.sh --quick`
 - `./Upkeeper --help`
+- `git diff --check`
+
+## Breadcrumb Custody Audit
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #124 with a deterministic local breadcrumb audit command
+- turn weak suspicious log/transcript clues into stable open/resolved/suppressed
+  local JSON records
+- add quick validation coverage and operator docs for the custody contract
+
+Constraints:
+- keep breadcrumb records ignored local runtime evidence
+- avoid backend Codex and GitHub I/O
+- reuse existing anomaly-custody classifications where practical, but keep this
+  audit command focused and deterministic
+
+Files likely touched:
+- `tools/audit_upkeeper_breadcrumbs.py`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
+- `git diff --check`
+
+## Embedded Behavior Table Contracts
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #106 by adding deterministic drift checks for high-risk embedded
+  tables and classifiers
+- cover startup anomaly changed-path allowlists, source-safe exclusions,
+  command-kind classifiers, review-module ids, and Lattice pass-code mappings
+- document the operator-visible ownership boundary for these tables
+
+Constraints:
+- keep checks no-quota and local to validation
+- do not extract runtime helpers until fixtures prove the drift surface
+- preserve current operator behavior and source-safe selection semantics
+
+Files likely touched:
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Quota And Session Fixtures
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #104 by naming reusable validation quota/session JSONL fixtures
+- cover current, stale, wrong-model, malformed, empty, nonfinite, and
+  missing-field cases without reading real operator CODEX_HOME data
+- reuse named fixtures in existing validation where practical
+
+Constraints:
+- keep fixtures generated under validator temp roots only
+- preserve existing quota/session parser behavior and diagnostics
+- do not launch real backend Codex
+
+Files likely touched:
+- `lib/upkeeper/quota_state.bash`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
 - `git diff --check`
 
 ## Shell Assignment Helper Fixtures

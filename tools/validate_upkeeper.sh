@@ -1450,7 +1450,7 @@ JSON
 }
 
 check_automation_obligation_issue_report_contract() {
-  local temp_dir sync_json fake_bin record_file umbrella_file report_file gh_args
+  local temp_dir sync_json fake_bin record_file umbrella_file closed_file open_file report_file gh_args
 
   log "checking automation obligation issue-report bridge contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-obligation-issue-report.XXXXXX)"
@@ -1466,14 +1466,22 @@ JSON
   cat >"$temp_dir/obligations/open/foreign.json" <<JSON
 {"schema":1,"record_type":"automation_obligation","status":"open","id":"foreign","created_at":"2026-05-23T02:01:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"foreign root","root":"$temp_dir/foreign-root","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY"}
 JSON
+  closed_file="$temp_dir/obligations/open/closed-linked.json"
+  cat >"$closed_file" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"closed-linked","created_at":"2026-05-23T02:02:00-0700","kind":"blocked","severity":"medium","summary":"blocked obligation kept a closed issue link","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"BLOCKED","issue_number":"111","github_issue_number":"111","github_issue_url":"https://github.com/example/upkeeper/issues/111"}
+JSON
+  open_file="$temp_dir/obligations/open/open-linked.json"
+  cat >"$open_file" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"open-linked","created_at":"2026-05-23T02:03:00-0700","kind":"blocked","severity":"medium","summary":"blocked obligation kept an open issue link","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"BLOCKED","issue_number":"222","github_issue_number":"222","github_issue_url":"https://github.com/example/upkeeper/issues/222"}
+JSON
 
   sync_json="$(
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="$temp_dir/reports" \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "2" ]] ||
+  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "4" ]] ||
     fail "automation obligation issue-report bridge did not scope to current root"
-  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "2" ]] ||
+  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "4" ]] ||
     fail "automation obligation issue-report bridge did not draft the current obligation"
   [[ "$(jq -r '.umbrella_unlinked' <<<"$sync_json")" == "1" ]] ||
     fail "automation obligation issue-report bridge did not unlink stale umbrella issues"
@@ -1498,8 +1506,22 @@ JSON
 
   cat >"$temp_dir/bin/gh" <<'SH'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >"$UPKEEPER_FAKE_GH_ARGS"
-printf 'https://github.com/example/upkeeper/issues/987\n'
+printf '%s\n' "$*" >>"$UPKEEPER_FAKE_GH_ARGS"
+if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
+  case "${3:-}" in
+    111)
+      printf '{"state":"CLOSED","title":"closed fixture","url":"https://github.com/example/upkeeper/issues/111"}\n'
+      ;;
+    222)
+      printf '{"state":"OPEN","title":"open fixture","url":"https://github.com/example/upkeeper/issues/222"}\n'
+      ;;
+    *)
+      printf '{"state":"OPEN","title":"existing fixture","url":"https://github.com/example/upkeeper/issues/%s"}\n' "${3:-0}"
+      ;;
+  esac
+else
+  printf 'https://github.com/example/upkeeper/issues/987\n'
+fi
 SH
   chmod 700 "$temp_dir/bin/gh"
   gh_args="$temp_dir/gh-args.txt"
@@ -1509,8 +1531,12 @@ SH
     UPKEEPER_OBLIGATION_GITHUB_ISSUE_WRITE=1 UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS=bug \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "2" ]] ||
+  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "3" ]] ||
     fail "automation obligation issue-report bridge did not create opted-in GitHub issue"
+  [[ "$(jq -r '.github_existing' <<<"$sync_json")" == "1" ]] ||
+    fail "automation obligation issue-report bridge did not preserve verified open GitHub issue links"
+  [[ "$(jq -r '.closed_issue_unlinked' <<<"$sync_json")" == "1" ]] ||
+    fail "automation obligation issue-report bridge did not unlink closed GitHub issue custody"
   [[ "$(jq -r '.github_issue_number' "$record_file")" == "987" ]] ||
     fail "automation obligation record did not store created GitHub issue number"
   [[ "$(jq -r '.issue_number' "$record_file")" == "987" ]] ||
@@ -1519,7 +1545,19 @@ SH
     fail "automation obligation record did not create a specific GitHub issue after unlinking umbrella"
   [[ "$(jq -r '.issue_number' "$umbrella_file")" == "987" ]] ||
     fail "automation obligation record did not store a specific issue number after unlinking umbrella"
+  [[ "$(jq -r '.stale_github_issue_number' "$closed_file")" == "111" ]] ||
+    fail "automation obligation record did not preserve stale closed issue evidence"
+  [[ "$(jq -r '.stale_github_issue_state' "$closed_file")" == "CLOSED" ]] ||
+    fail "automation obligation record did not record stale closed issue state"
+  [[ "$(jq -r '.github_issue_number' "$closed_file")" == "987" ]] ||
+    fail "automation obligation record did not create a fresh issue after closed issue link"
+  [[ "$(jq -r '.github_issue_number' "$open_file")" == "222" ]] ||
+    fail "automation obligation record did not preserve verified open issue link"
+  [[ "$(jq -r '.issue_report_state' "$open_file")" == "github_existing" ]] ||
+    fail "automation obligation record did not mark verified open issue link as existing"
   grep -Fq "issue create" "$gh_args" || fail "automation obligation GitHub issue command was not invoked"
+  grep -Fq "issue view 111" "$gh_args" || fail "automation obligation GitHub issue state was not checked for closed fixture"
+  grep -Fq "issue view 222" "$gh_args" || fail "automation obligation GitHub issue state was not checked for open fixture"
 
   rm -r "$temp_dir"
 }

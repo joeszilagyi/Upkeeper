@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: closed obligation issue links:
+	1. Obligation issue-report sync now verifies existing GitHub issue links are still open before accepting them as custody for an open automation obligation.
+	2. Closed linked issues are preserved as stale evidence, cleared from the active custody fields, and replaced with a fresh issue for the still-open obligation when GitHub filing is enabled.
+	3. If an existing linked issue cannot be verified, backlog records `github_verify_failed` and fails closed before normal issue selection instead of claiming clean custody.
+
 2026-05-24: anomaly custody issue ownership:
 	1. Prior-run anomaly obligations now keep umbrella issue #418 as policy ownership only; each PAGE/error anomaly must have its own specific issue-ready record or GitHub issue before normal backlog work continues.
 	2. Backlog now defaults obligation GitHub issue filing on and fails closed if filing fails, while retaining local reports only as evidence copies.

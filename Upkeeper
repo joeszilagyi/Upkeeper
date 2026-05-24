@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.33
+## Version: v1.2.34
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.33"
+UPKEEPER_VERSION="v1.2.34"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -785,7 +785,7 @@ upkeeper_live_output_false_positive_error_echo() {
   esac
 
   case "$payload" in
-    *'rg -n '*' || true'*|*'grep -Fq '*|*'grep -Eq '*|*'if grep '*|*'printf '*|*'echo '*|*'case '*|*'warn='*|*'err='*|*'payload='*|*'<<<'*|*'|| {'*|*'&&'*|*';;'*|*'*)'*|*"*'|"*|*"|'*"*)
+    *'rg -n '*' || true'*|*'grep -Fq '*|*'grep -Eq '*|*'if grep '*|*'printf '*|*'print('*|*'echo '*|*'case '*|*'warn='*|*'err='*|*'payload='*|*'<<<'*|*'|| {'*|*'&&'*|*';;'*|*'*)'*|*"*'|"*|*"|'*"*)
       ;;
     *)
       return 1
@@ -793,7 +793,7 @@ upkeeper_live_output_false_positive_error_echo() {
   esac
 
   case "$payload" in
-    'grep '*|'printf '*|'echo '*|'if grep '*|'case '*)
+    'grep '*|'printf '*|'print('*|'echo '*|'if grep '*|'case '*)
       return 0
       ;;
     *'[WARN]'*|*'[ERROR]'*|*'[INFO]'*|*$'\342\226\210'*|*'PAGE'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*)
@@ -942,6 +942,21 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
     *)
       printf 'live_output_custody_filter_self_test=fail reason=python_exception_handler_fixture_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-23T23:22:04 \342\226\210 PAGE [ERROR] Upkeeper: primary: print(f\'run_record_read=fail error={type(exc).__name__}:{exc}\')'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=python_print_diagnostic_fixture_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_source_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=python_print_diagnostic_fixture_not_classified output=%s\n' "$output" >&2
       return 1
       ;;
   esac

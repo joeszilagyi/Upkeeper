@@ -6324,6 +6324,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["cycle_finish_rejects_decorated_status_marker"] = decorated_marker_probe
         p29_reuse_debt_probe = probe_p29_reuse_debt_persistence()
         result["checks"]["p29_reuse_debt_persistence"] = p29_reuse_debt_probe
+        unsafe_missing_db_probe = probe_ordinary_command_rejects_unsafe_missing_db_without_create()
+        result["checks"]["ordinary_command_rejects_unsafe_missing_db_without_create"] = unsafe_missing_db_probe
         change_note_ref_probe = probe_change_note_file_identity_validation()
         result["checks"]["change_note_file_identity_validation"] = change_note_ref_probe
         candidate_symlink_probe = probe_candidate_symlink_exclusion()
@@ -6378,6 +6380,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(p29_reuse_debt_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(unsafe_missing_db_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         transient_temp_scope_probe = probe_cycle_finish_transient_artifact_scope()
@@ -7915,6 +7920,51 @@ def probe_p29_reuse_debt_persistence() -> dict[str, Any]:
                 set(attrs) >= expected_attrs,
             )
         ),
+    }
+
+
+def probe_ordinary_command_rejects_unsafe_missing_db_without_create() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-unsafe-db-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        db_path = root / "source-tree.sqlite3"
+        args = argparse.Namespace(
+            root=str(root),
+            db="source-tree.sqlite3",
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="minimal",
+            cycle_id="",
+            run_hash="",
+            pass_code="P1",
+            path="a.py",
+            applicable="1",
+            outcome="clean",
+            changed="0",
+            regression="0",
+            raw_line="",
+            attribute=[],
+            from_file="",
+            selected_path="",
+            planned_pass=[],
+            planned_passes="",
+        )
+        stdout = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(stdout):
+                exit_code = command_record_pass_result(args)
+        except SystemExit as exc:
+            try:
+                exit_code = int(exc.code)
+            except (TypeError, ValueError):
+                exit_code = EXIT_DB_UNAVAILABLE
+        payload_text = stdout.getvalue().strip()
+        payload = load_single_json_document(payload_text) if payload_text else {}
+        db_exists = db_path.exists()
+    return {
+        "exit_code": exit_code,
+        "status": payload.get("status"),
+        "db_exists": db_exists,
+        "ok": exit_code == EXIT_UNSAFE_DB_PATH and payload.get("status") == "unsafe_db_path" and not db_exists,
     }
 
 

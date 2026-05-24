@@ -1924,6 +1924,65 @@ checkout_backlog_branch() {
   fi
 }
 
+backlog_ensure_local_branch_pushed() {
+  local pr_number="$1"
+  local branch="$2"
+  local context="${3:-pr_checks}"
+  local current_branch counts remote_ahead local_ahead status_output
+
+  [[ -n "$branch" ]] || return 0
+  case "$branch" in
+    "$BACKLOG_BRANCH_PREFIX"*) ;;
+    *) return 0 ;;
+  esac
+
+  current_branch="$(git rev-parse --abbrev-ref HEAD)"
+  if [[ "$current_branch" != "$branch" ]]; then
+    log "local branch push guard blocked branch=$branch current_branch=$current_branch context=$context reason=wrong_branch action=stop_before_pr_checks"
+    return 1
+  fi
+
+  if ! git fetch origin "$branch" >/dev/null; then
+    log "local branch push guard blocked branch=$branch context=$context reason=fetch_failed action=stop_before_pr_checks"
+    return 1
+  fi
+  if ! git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+    log "local branch push guard blocked branch=$branch context=$context reason=missing_remote_ref action=stop_before_pr_checks"
+    return 1
+  fi
+
+  counts="$(git rev-list --left-right --count "origin/$branch...HEAD")" || {
+    log "local branch push guard blocked branch=$branch context=$context reason=compare_failed action=stop_before_pr_checks"
+    return 1
+  }
+  read -r remote_ahead local_ahead <<<"$counts"
+  remote_ahead="${remote_ahead:-0}"
+  local_ahead="${local_ahead:-0}"
+
+  if [[ "$local_ahead" == "0" && "$remote_ahead" == "0" ]]; then
+    return 0
+  fi
+
+  if [[ "$remote_ahead" != "0" ]]; then
+    log "local branch push guard blocked branch=$branch pr=$pr_number local_ahead=$local_ahead remote_ahead=$remote_ahead context=$context reason=diverged_or_behind action=manual_reconcile"
+    return 1
+  fi
+
+  status_output="$(git status --short)"
+  if [[ -n "$status_output" ]]; then
+    log "local branch push guard blocked branch=$branch pr=$pr_number local_ahead=$local_ahead context=$context reason=dirty_worktree action=stop_before_pr_checks"
+    return 1
+  fi
+
+  log "local branch push guard branch=$branch pr=$pr_number local_ahead=$local_ahead context=$context action=push_before_pr_checks"
+  if ! git push origin "HEAD:$branch" >/dev/null; then
+    log "local branch push guard blocked branch=$branch pr=$pr_number local_ahead=$local_ahead context=$context reason=push_failed action=stop_before_pr_checks"
+    return 1
+  fi
+  log "local branch push guard branch=$branch pr=$pr_number local_ahead=$local_ahead context=$context action=pushed_wait_for_fresh_checks"
+  return 0
+}
+
 open_backlog_pr() {
   local branch
 
@@ -2847,6 +2906,7 @@ merge_and_clean() {
   local branch="$2"
 
   run_batch_validation || return $?
+  backlog_ensure_local_branch_pushed "$pr_number" "$branch" "pre_batch_merge" || return $?
   wait_for_pr_checks "$pr_number" || {
     local status="$?"
     [[ "$status" -eq 2 ]] && return 2
@@ -2898,6 +2958,7 @@ main() {
   pr_number="$(awk -F '\t' '{print $1}' <<<"$pr_info")"
   branch="$(awk -F '\t' '{print $2}' <<<"$pr_info")"
   checkout_backlog_branch "$branch"
+  backlog_ensure_local_branch_pushed "$pr_number" "$branch" "post_branch_sync" || exit $?
 
   if ! run_backlog_anomaly_custody_audit; then
     status="$?"

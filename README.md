@@ -701,6 +701,12 @@ bounded output tail, stable fingerprint, likely owner path, and required proof
 command. The next backlog invocation selects that obligation before retrying the
 merge or starting fresh GitHub issue work.
 
+Backlog PR check and merge gates also protect against stale remote evidence. If
+the active backlog branch is clean and locally ahead of `origin/<branch>`, the
+launcher pushes those commits before waiting on PR checks or merging. Dirty,
+missing-remote, or diverged local-ahead branch states stop with a clear reason
+instead of treating older remote checks as current.
+
 For an explicit one-cycle Upkeeper self-review with all built-in P1-P23 passes,
 use equals-form operator flags:
 

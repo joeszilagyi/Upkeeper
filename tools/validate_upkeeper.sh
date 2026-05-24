@@ -1747,6 +1747,20 @@ check_backlog_batch_validation_obligation_contract() {
   bash tests/backlog_batch_validation_obligation_test.bash
 }
 
+check_backlog_local_ahead_guard_contract() {
+  log "checking backlog local-ahead branch push guard contract"
+
+  grep -Fq 'backlog_ensure_local_branch_pushed' orchestration/backlog.sh ||
+    fail "backlog launcher does not define a local-ahead branch push guard"
+  grep -Fq 'pre_batch_merge' orchestration/backlog.sh ||
+    fail "backlog launcher does not guard local-ahead branches before batch merge"
+  grep -Fq 'post_branch_sync' orchestration/backlog.sh ||
+    fail "backlog launcher does not guard local-ahead branches after branch sync"
+  [[ -s tests/backlog_local_ahead_guard_test.bash ]] ||
+    fail "backlog local-ahead guard tests are missing or empty"
+  bash tests/backlog_local_ahead_guard_test.bash
+}
+
 check_backlog_merge_steward_contract() {
   log "checking backlog merge-steward contract"
 
@@ -6706,6 +6720,7 @@ run_check automation_obligation_churn_contract check_automation_obligation_churn
 run_check automation_obligation_issue_report_contract check_automation_obligation_issue_report_contract
 run_check backlog_launcher_contract check_backlog_launcher_contract
 run_check backlog_batch_validation_obligation_contract check_backlog_batch_validation_obligation_contract
+run_check backlog_local_ahead_guard_contract check_backlog_local_ahead_guard_contract
 run_check backlog_merge_steward_contract check_backlog_merge_steward_contract
 run_check backlog_triage_contract check_backlog_triage_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract

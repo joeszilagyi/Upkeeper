@@ -3,6 +3,35 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Backlog Local-Ahead Branch Guard
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #416 by ensuring clean local commits on an active backlog PR
+  branch are pushed before PR check or merge decisions
+- fail closed with a clear branch-state summary when the branch is dirty,
+  missing its remote ref, or diverged from origin
+- prevent batch merge from reasoning from green checks on an older remote head
+
+Constraints:
+- no backend Codex calls
+- preserve dirty local work instead of pushing ambiguous state
+- keep detection local and deterministic with Git refs and ahead/behind counts
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tests/backlog_local_ahead_guard_test.bash`
+- `tools/validate_upkeeper.sh`
+- operator-facing docs/release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_local_ahead_guard_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Batch Validation Failure Obligations
 
 Status: completed locally; pending PR/CI

@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: backlog local-ahead branch guard:
+	1. Backlog now detects clean local commits on the active backlog PR branch after branch sync and before batch merge.
+	2. Safe local-ahead backlog branches are pushed before PR checks or merge decisions, so checks apply to the current local head.
+	3. Dirty, missing-remote, or diverged local backlog branches fail closed with a clear live-output reason instead of merging from stale remote check evidence.
+
 2026-05-24: backlog batch-validation failure obligations:
 	1. Backlog batch validation now records a structured local automation obligation when a merge-path validation phase fails, including the phase, command, exit code, bounded output tail, stable fingerprint, likely owner path, and required proof command.
 	2. Repeated identical batch-validation failures update the same obligation occurrence count instead of opening noisy duplicates.

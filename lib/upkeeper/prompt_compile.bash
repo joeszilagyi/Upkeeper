@@ -262,10 +262,11 @@ append_bug_report_only_prompt() {
   {
     printf '\nWRAPPER_BUG_REPORT_ONLY\n'
     printf 'bug_report_only=1\n'
+    printf 'audit_only=%s\n' "$(truthy_as_int "${CODEX_AUDIT_ONLY:-0}")"
     printf 'bug_report_draft_file=%s\n' "${RUN_BUG_REPORT_DRAFT_FILE:-none}"
     printf 'bug_report_issue_write_allowed=%s\n' "$(truthy_as_int "${UPKEEPER_ALLOW_GH_ISSUE_WRITE:-0}")"
     printf '\nRules for bug-report-only mode:\n'
-    printf -- '- This invoked cycle is investigation and bug filing only. Do not fix source defects in this cycle.\n'
+    printf -- '- This invoked cycle is investigation and bug filing only. Audit-only aliases use this same no-fix contract. Do not fix source defects in this cycle.\n'
     printf -- '- Do not edit, touch, format, delete, create, or apply patches to tracked source files.\n'
     printf -- '- This mode supersedes the normal clean-review instruction to touch the selected file. Do not touch it.\n'
     printf -- '- You may read files and run deterministic local commands needed to confirm or falsify findings.\n'

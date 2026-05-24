@@ -45,6 +45,7 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--selection-review-modules=...`, `--ignore-failure-queue`,
   `--backup-queue`, `-backup_queue`, `--prompt-pass=all`, `--max-cover`,
   `--bug-report-only`, `--file-bug-only`, `--report-bug-only`,
+  `--audit-only`, `--review-only`, `--no-fix`, `--read-only`,
   `--fix-next-issue`, `--fix-oldest-bug`, `--fix-issue=...`, and
   `--issue-workflow-stage=comment|review|apply`.
 - Upkeeper model override shorthands include `5.5_xhigh` and
@@ -207,6 +208,11 @@ Future changes should preserve this operator-visible surface as far as possible:
 - `--bug-report-only` is a no-fix mode. It must not edit or touch tracked
   source, and the wrapper must fail the cycle if the source mutation
   fingerprint changes during a non-dry-run bug-report-only cycle.
+- `--audit-only` is the canonical no-fix/read-only audit alias, with
+  `--review-only`, `--no-fix`, and `--read-only` accepted as equivalent
+  spellings. It uses the same source mutation guard and final-message report
+  contract as bug-report-only, records `audit_only=1` in cycle metadata, and
+  stores local report artifacts under ignored runtime audit evidence by default.
 - `--fix-next-issue`, `--fix-oldest-bug`, `--fix-issue=...`,
   `--issue-workflow-stage=...`, and `ChimneySweep` may require the GitHub CLI
   for pre-launch issue selection or loading, but normal Upkeeper and

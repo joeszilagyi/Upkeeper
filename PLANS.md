@@ -35,6 +35,36 @@ Validation:
 - `./Upkeeper --help`
 - `git diff --check`
 
+## Shell Assignment Helper Fixtures
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #103 by adding focused tests for jq-generated shell assignment
+  emitters before any reuse extraction
+- cover malformed JSON, bad prefixes, missing/null fields, arrays/objects,
+  spaces, quotes, newlines, and shell metacharacters
+- prove emitted assignments preserve values without executing embedded shell
+  text
+
+Constraints:
+- do not extract a shared helper until tests prove the current quoting contract
+- keep coverage local and no-quota
+- preserve current assignment function names, output format, and return
+  semantics
+
+Files likely touched:
+- `tests/wrapper_contract_test.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/wrapper_contract_test.bash`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Validation Dry-Run Helper
 
 Status: completed locally; pending PR/CI

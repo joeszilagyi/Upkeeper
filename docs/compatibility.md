@@ -80,6 +80,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   stale control-plane failures block fresh GitHub issue work or bug-hunting
   runs until they are repaired, resolved, or preserved as explicit obligations
   for the next run.
+- The tracked authority model remains part of the public contract. Changes to
+  target authority, source-write authority, shell execution, quota spend,
+  backup restore, evidence pruning, GitHub issue effects, Lattice writes, or
+  runtime evidence reads should update `docs/authority.md`,
+  `docs/capability-profiles.md`, and `docs/control-ledger.md`.
 - Backend Codex issue workflows use the Genie Protocol boundary. The wrapper
   owns GitHub reads and writes, passes only wrapper-fetched issue evidence plus
   local artifact paths into the model, strips GitHub token variables from the

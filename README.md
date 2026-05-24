@@ -17,6 +17,11 @@ release notes, prompts, comments, logs, and docs are expected to explain the
 tool from tracked source, not from private chat history. P26 exists to enforce
 that standard.
 
+The tracked authority surface is split across `docs/authority.md`,
+`docs/capability-profiles.md`, and `docs/control-ledger.md`. Those files define
+who may select targets, write source, run shell, spend quota, touch evidence,
+affect GitHub, and modify Lattice.
+
 > "Starfleet code requires a second backup?"
 >
 > "In case the first backup fails."

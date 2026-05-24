@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: anomaly custody issue ownership:
+	1. Prior-run anomaly obligations now keep umbrella issue #418 as policy ownership only; each PAGE/error anomaly must have its own specific issue-ready record or GitHub issue before normal backlog work continues.
+	2. Backlog now defaults obligation GitHub issue filing on and fails closed if filing fails, while retaining local reports only as evidence copies.
+	3. Anomaly custody no longer lets already-open obligations consume the finding cap, and the default cap is unbounded within the recent log scan so later PAGE alerts are not starved by known-open residue.
+	4. Quoted backend Python fixture lines such as `print(f'run_record_read=fail ...')` are treated as transcript/source text, and stale obligations containing that evidence resolve as obsolete instead of repeatedly blocking the loop.
+
 2026-05-24: fallback and postmortem guardrail contract:
 	1. Documented when fallback is allowed, when it is forbidden, how it handles dirty worktrees, whether it may mutate files, child-count/time limits, complete disablement switches, quota/spend bounds, evidence separation, and recovery success criteria.
 	2. Aligned operator guide, help text, default config comments, compatibility notes, and local validation so fallback/postmortem safety rules are a tracked contract instead of scattered implementation details.

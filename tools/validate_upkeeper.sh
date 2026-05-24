@@ -3251,6 +3251,57 @@ check_negative_space_testing_contract() {
     fail "negative-space proof missing unsafe backend mode fixture"
 }
 
+check_serious_finding_repro_contract() {
+  local doc_path="docs/negative-space-testing.md"
+  local issue_template=".github/ISSUE_TEMPLATE/serious-finding.yml"
+  local pr_template=".github/pull_request_template.md"
+  local phrase
+
+  log "checking serious finding repro contract"
+
+  [[ -s "$issue_template" ]] || fail "serious finding issue template is missing or empty"
+  [[ -s "$pr_template" ]] || fail "pull request template is missing or empty"
+
+  for phrase in \
+    "Serious Finding Repro Contract" \
+    "security boundary" \
+    "filesystem writes/deletes" \
+    "Lattice import/export/recovery" \
+    "target selection" \
+    "quota/fallback behavior" \
+    "status marker parsing" \
+    "failure queue" \
+    "runtime cleanup" \
+    "cross-platform assumptions" \
+    "local deterministic repro fixture" \
+    "cloud audit repro" \
+    "explicit documented non-repro rationale" \
+    "For serious issues opened before this template existed, the backfill rule is" \
+    "Release review treats missing repro status" \
+    "pre-existing serious issues as unfinished validation work"; do
+    grep -Fq "$phrase" "$doc_path" || fail "serious finding repro policy missing phrase: $phrase"
+  done
+
+  grep -Fq "Repro fixture status" "$issue_template" ||
+    fail "serious finding issue template does not ask for repro fixture status"
+  grep -Fq "local deterministic repro fixture included or planned" "$issue_template" ||
+    fail "serious finding issue template missing local fixture status option"
+  grep -Fq "cloud audit repro included or planned" "$issue_template" ||
+    fail "serious finding issue template missing cloud audit status option"
+  grep -Fq "explicit non-repro rationale included" "$issue_template" ||
+    fail "serious finding issue template missing non-repro rationale option"
+  grep -Fq "Serious Finding Repro Status" "$pr_template" ||
+    fail "pull request template does not ask for serious finding repro status"
+  grep -Fq "Local deterministic repro fixture" "$pr_template" ||
+    fail "pull request template missing local fixture checkbox"
+  grep -Fq "Cloud audit repro" "$pr_template" ||
+    fail "pull request template missing cloud audit checkbox"
+  grep -Fq "Explicit non-repro rationale" "$pr_template" ||
+    fail "pull request template missing non-repro rationale checkbox"
+  grep -Fq "Serious security, data-integrity" docs/release-checklist.md ||
+    fail "release checklist missing serious finding repro release gate"
+}
+
 check_client_link_tools_contract() {
   log "checking client link tools contract"
 
@@ -6723,6 +6774,7 @@ run_check dependency_guidance_contract check_dependency_guidance_contract
 run_check release_readiness_docs_contract check_release_readiness_docs_contract
 run_check governance_docs_contract check_governance_docs_contract
 run_check negative_space_testing_contract check_negative_space_testing_contract
+run_check serious_finding_repro_contract check_serious_finding_repro_contract
 run_check client_link_tools_contract check_client_link_tools_contract
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
 run_check test_invocation_mode_contract check_test_invocation_mode_contract

@@ -66,7 +66,7 @@ Validation:
 
 ## Local PR Check Watcher
 
-Status: completed locally; pending PR/CI
+Status: completed and merged
 
 Goal:
 - close issue #402 with a deterministic local PR-check watcher for backlog and
@@ -91,6 +91,37 @@ Validation:
 - `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
 - `bash tests/watch_pr_test.bash`
 - `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Serious Finding Repro Fixtures
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #139 by making serious security/data-integrity/control-plane
+  findings require deterministic repro proof or an explicit non-repro rationale
+- add GitHub issue and PR checklist hooks so new serious findings do not remain
+  prose-only
+- add quick-validator coverage for the policy and templates
+
+Constraints:
+- no backend Codex calls
+- keep the contract lightweight enough for docs-only and governance changes
+- allow explicit non-repro rationale when reproducing a finding would be unsafe
+  or too destructive
+
+Files likely touched:
+- `docs/negative-space-testing.md`
+- `docs/release-checklist.md`
+- `.github/ISSUE_TEMPLATE/*`
+- `.github/pull_request_template.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
 - `tools/validate_upkeeper.sh --quick`
 - `git diff --check`
 

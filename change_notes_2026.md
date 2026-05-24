@@ -11,6 +11,11 @@ Version numbering note:
 	2. The watcher prints timestamped pass/pending/fail summaries plus check names, conclusions, and URLs, with distinct exit codes for pass, fail, and pending `--once` results.
 	3. Backlog now prints the watcher command after creating or pushing active backlog PR branches so manual restart and merge boundaries have a deterministic local status command.
 
+2026-05-24: serious finding repro fixture policy:
+	1. Serious security, data-integrity, destructive-write, target-selection, recovery, and automation-control findings now have a tracked repro-status contract.
+	2. Added GitHub issue and pull request template hooks that ask for a local deterministic repro fixture, cloud audit repro, or explicit non-repro rationale.
+	3. Quick validation now checks that the serious-finding repro policy and templates remain present.
+
 2026-05-24: backlog stale quota evidence custody:
 	1. Backlog quota preflight now records expired-reset stale quota evidence as a `stale_quota_evidence` automation obligation before burn bypass continues.
 	2. Repeated stale quota evidence updates one fingerprinted obligation instead of printing recurring warning-only output.

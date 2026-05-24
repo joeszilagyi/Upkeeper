@@ -4245,7 +4245,11 @@ JSON
     --selection-source=enumerate
   grep -Fq "breadcrumb.gate status=blocking action=force_target target_file=Upkeeper" "$temp_dir/breadcrumb-gate.log" ||
     fail "high-severity breadcrumb did not force the gate target"
-  grep -Fq "review.preselect path=Upkeeper" "$temp_dir/breadcrumb-gate.log" ||
+  grep -Fq "review.preselect path_hmac=" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb gate did not produce a redacted preselect log"
+  grep -Fq "selection_mode=explicit_target" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb gate did not use explicit target selection"
+  grep -Fq "basis=operator\\ --target-file=Upkeeper" "$temp_dir/breadcrumb-gate.log" ||
     fail "high-severity breadcrumb gate did not redirect normal rotation to Upkeeper"
 
   (

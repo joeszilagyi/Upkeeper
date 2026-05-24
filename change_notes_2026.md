@@ -34,6 +34,10 @@ Version numbering note:
 	1. Added a narrow review-module registry for P24-P30 ids, aliases, prompt paths, titles, and help summaries.
 	2. Switched review-module CLI normalization, max-cover module selection, prompt path lookup, help generation, and validation metadata to consume the registry while preserving existing flags, aliases, logs, and prompt loading behavior.
 
+2026-05-24: shell assignment fixtures:
+	1. Added focused wrapper-contract tests for jq-generated shell assignment emitters before any reuse extraction.
+	2. The tests cover malformed JSON, invalid prefixes, null and missing fields, arrays/objects, spaces, quotes, newlines, and shell metacharacters while proving emitted assignments do not execute embedded shell text.
+
 2026-05-24: Lattice run-value rows:
 	1. Lattice now records normalized `run_values` rows from deterministic pass-result markers, pass attributes, and cycle-finish status so value-oriented questions can be answered without transcript scraping.
 	2. The new `query run-values` surface can filter by path, cycle, value kind, value class, and evidence source, exposing pass outcomes, validation commands/results, residual risk, finding notes, cycle status, review outcome, finish reason, and exit codes.

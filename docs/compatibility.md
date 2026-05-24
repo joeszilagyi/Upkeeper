@@ -57,7 +57,10 @@ Future changes should preserve this operator-visible surface as far as possible:
   default: Lattice is required, encrypted pre-contact backup is required, and
   the Codex sandbox mode is pinned before launch. Quota stop floors are set to
   zero, wrapper quota guardrail stops are bypassed, and persisted quota cooldown
-  markers are bypassed for those launcher runs.
+  markers are bypassed for those launcher runs. Backlog quota burn bypass still
+  records expired-reset stale quota evidence as a local `stale_quota_evidence`
+  automation obligation before continuing, and resolves that obligation when
+  current non-stale quota evidence appears.
 - `ChimneySweep` owns pre-model issue ranking for repair automation: clean
   actionable queues exit 25, security issues outrank data-integrity issues,
   data-integrity issues outrank the general queue, and the selected issue is

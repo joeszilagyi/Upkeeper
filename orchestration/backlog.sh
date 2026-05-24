@@ -77,6 +77,7 @@ BACKLOG_WATCH_FIFO_DIR=""
 BACKLOG_BATCH_VALIDATION_OBLIGATION_ID=""
 BACKLOG_BATCH_VALIDATION_OBLIGATION_PATH=""
 BACKLOG_BATCH_VALIDATION_REPEAT_EXIT_CODE=""
+BACKLOG_STALE_QUOTA_OBLIGATION_ID=""
 
 backlog_timestamp() {
   date '+%Y-%m-%dT%H:%M:%S'
@@ -897,6 +898,227 @@ backlog_hibernate_until_epoch() {
 
   log "quota preflight: quota hibernation complete; next backlog cycle may retry without backend work"
   return 3
+}
+
+backlog_open_stale_quota_obligation() {
+  local quota_json="$1"
+  local primary_decision="$2"
+  local secondary_decision="$3"
+  local obligation_root open_dir now branch_name payload id path seen_count
+
+  BACKLOG_STALE_QUOTA_OBLIGATION_ID=""
+  obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
+  open_dir="$obligation_root/open"
+  mkdir -p -- "$open_dir" || return 1
+  chmod 700 "$obligation_root" "$open_dir" 2>/dev/null || true
+
+  now="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
+  payload="$(
+    python3 - \
+      "$ROOT_DIR" \
+      "$CODEX_MODEL" \
+      "$primary_decision" \
+      "$secondary_decision" \
+      "$now" \
+      "$branch_name" \
+      "$quota_json" <<'PY'
+import hashlib
+import json
+import sys
+
+root, model, primary_decision, secondary_decision, now, branch, quota_json = sys.argv[1:8]
+quota = json.loads(quota_json)
+snapshot = quota.get("snapshot") or {}
+projection = quota.get("projection") or {}
+source_path = str(snapshot.get("source_path") or "")
+source_hash = hashlib.sha256(source_path.encode("utf-8")).hexdigest()[:24] if source_path else ""
+fingerprint_basis = {
+    "model": model,
+    "primary_decision": primary_decision,
+    "secondary_decision": secondary_decision,
+    "primary_reset_expired": bool(snapshot.get("primary_reset_expired")),
+    "secondary_reset_expired": bool(snapshot.get("secondary_reset_expired")),
+}
+fingerprint = hashlib.sha256(json.dumps(fingerprint_basis, sort_keys=True).encode("utf-8")).hexdigest()[:24]
+obligation_id = f"stale-quota-{fingerprint}"
+record = {
+    "schema": 1,
+    "record_type": "automation_obligation",
+    "status": "open",
+    "id": obligation_id,
+    "kind": "stale_quota_evidence",
+    "severity": "high",
+    "summary": "Backlog quota preflight saw stale quota evidence after reset",
+    "root": root,
+    "source": "backlog_quota_preflight",
+    "source_branch": branch,
+    "target_scope": "target",
+    "target_file": "orchestration/backlog.sh",
+    "repair_target_file": "orchestration/backlog.sh",
+    "reason": "STALE_QUOTA_EVIDENCE_AFTER_RESET",
+    "fingerprint": f"stale-quota-evidence:{fingerprint}",
+    "target_model": model,
+    "required_resolution": [
+        "inspect the quota preflight stale-evidence path",
+        "retire or refresh stale session/marker evidence when safe",
+        "keep unresolved stale quota evidence as non-perfect machine health",
+        "rerun tests/backlog_stale_quota_obligation_test.bash",
+        "rerun tools/validate_upkeeper.sh --quick",
+    ],
+    "evidence": {
+        "target_model": model,
+        "primary_decision": primary_decision,
+        "secondary_decision": secondary_decision,
+        "primary_reset_expired": snapshot.get("primary_reset_expired"),
+        "secondary_reset_expired": snapshot.get("secondary_reset_expired"),
+        "primary_bucket_current": snapshot.get("primary_bucket_current"),
+        "secondary_bucket_current": snapshot.get("secondary_bucket_current"),
+        "snapshot_stale_after_reset": snapshot.get("snapshot_stale_after_reset"),
+        "snapshot_selection": quota.get("snapshot_selection"),
+        "matching_snapshot_count": quota.get("matching_snapshot_count"),
+        "primary_reset_age_seconds": snapshot.get("primary_reset_age_seconds"),
+        "secondary_reset_age_seconds": snapshot.get("secondary_reset_age_seconds"),
+        "projection_basis": projection.get("basis"),
+        "source_path_redacted": bool(source_path),
+        "source_path_sha256": source_hash,
+    },
+}
+print(json.dumps(record, separators=(",", ":")))
+PY
+  )" || return 1
+
+  id="$(jq -r '.id' <<<"$payload")"
+  path="$open_dir/$id.json"
+  if [[ -f "$path" ]]; then
+    seen_count="$(jq -r '.seen_count // .occurrence_count // 1' "$path" 2>/dev/null || printf '1')"
+    payload="$(
+      jq \
+        --argjson next_count "$((seen_count + 1))" \
+        --arg updated_at "$now" \
+        --argjson replacement "$payload" \
+        '. as $old
+         | $replacement
+         | .created_at = ($old.created_at // $updated_at)
+         | .updated_at = $updated_at
+         | .seen_count = $next_count
+         | .occurrence_count = $next_count
+         | .first_source_branch = ($old.first_source_branch // $old.source_branch // $replacement.source_branch)
+         | .prior_evidence = ($old.evidence // {})' "$path"
+    )" || return 1
+  else
+    payload="$(jq --arg created_at "$now" '.created_at = $created_at | .updated_at = $created_at | .seen_count = 1 | .occurrence_count = 1' <<<"$payload")" || return 1
+  fi
+  python3 - "$path" "$payload" <<'PY'
+import json
+import os
+import sys
+
+path, payload = sys.argv[1:3]
+data = json.loads(payload)
+parent = os.path.dirname(path)
+os.makedirs(parent, mode=0o700, exist_ok=True)
+try:
+    os.chmod(parent, 0o700)
+except OSError:
+    pass
+tmp = f"{path}.tmp.{os.getpid()}"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+PY
+  BACKLOG_STALE_QUOTA_OBLIGATION_ID="$id"
+  log "quota preflight: stale quota evidence after reset recorded as non-perfect health obligation_id=$id action=keep_unresolved_health_blocker"
+}
+
+backlog_resolve_stale_quota_obligations() {
+  local model="$1"
+  local obligation_root open_dir resolved_dir output count
+
+  obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
+  open_dir="$obligation_root/open"
+  [[ -d "$open_dir" ]] || return 0
+  resolved_dir="$obligation_root/resolved"
+  mkdir -p -- "$resolved_dir" || return 0
+  chmod 700 "$obligation_root" "$open_dir" "$resolved_dir" 2>/dev/null || true
+  output="$(
+    python3 - "$open_dir" "$resolved_dir" "$model" <<'PY'
+import json
+import os
+import pathlib
+import sys
+from datetime import datetime
+
+open_dir = pathlib.Path(sys.argv[1])
+resolved_dir = pathlib.Path(sys.argv[2])
+model = sys.argv[3]
+
+
+def now_local():
+    return datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+count = 0
+resolved_ids = []
+for path in sorted(open_dir.glob("*.json")):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        continue
+    if data.get("kind") != "stale_quota_evidence" or data.get("target_model") != model:
+        continue
+    data["status"] = "resolved"
+    data["resolved_at"] = now_local()
+    data["resolution"] = "quota preflight observed current non-stale quota evidence"
+    destination = resolved_dir / path.name
+    write_json(destination, data)
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    count += 1
+    resolved_ids.append(str(data.get("id") or path.stem))
+print(json.dumps({"count": count, "ids": resolved_ids}, separators=(",", ":")))
+PY
+  )" || return 0
+  count="$(jq -r '.count // 0' <<<"$output" 2>/dev/null || printf '0')"
+  if [[ "$count" -gt 0 ]]; then
+    log "quota preflight: stale quota evidence retired count=$count target_model=$model action=resolved_non_perfect_health"
+  fi
 }
 
 require_clean_worktree() {
@@ -1864,6 +2086,15 @@ quota_preflight_allows_backlog_run() {
   primary_decision="$(quota_bucket_decision "$primary_bucket_current" "$primary_projected_left" "$(quota_5h_stop_percent_for_model "$CODEX_MODEL")")"
   secondary_decision="$(quota_bucket_decision "$secondary_bucket_current" "$secondary_projected_left" "$(quota_week_stop_percent_for_model "$CODEX_MODEL")")"
 
+  if [[ "$snapshot_stale_after_reset" == "true" && ( "$primary_decision" == "defer" || "$secondary_decision" == "defer" ) ]]; then
+    if ! backlog_open_stale_quota_obligation "$quota_json" "$primary_decision" "$secondary_decision"; then
+      log "quota preflight: stale quota evidence after reset could not be recorded as non-perfect health; failing closed"
+      return 4
+    fi
+  else
+    backlog_resolve_stale_quota_obligations "$CODEX_MODEL"
+  fi
+
   if [[ "$primary_decision" == "stop" || "$secondary_decision" == "stop" ]]; then
     if [[ "$BACKLOG_QUOTA_GUARDRAIL_BYPASS" == "1" ]]; then
       log "quota preflight: burn bypass continuing despite stop decision (primary=$primary_decision secondary=$secondary_decision)"
@@ -1891,7 +2122,7 @@ quota_preflight_allows_backlog_run() {
   if [[ "$primary_decision" == "defer" || "$secondary_decision" == "defer" ]]; then
     if [[ "$BACKLOG_QUOTA_GUARDRAIL_BYPASS" == "1" ]]; then
       if [[ "$snapshot_stale_after_reset" == "true" ]]; then
-        log "quota preflight: burn bypass continuing despite stale quota evidence after reset (primary=$primary_decision secondary=$secondary_decision primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired)"
+        log "quota preflight: burn bypass continuing despite stale quota evidence after reset; recorded_non_perfect_health=1 obligation_id=${BACKLOG_STALE_QUOTA_OBLIGATION_ID:-unknown} primary=$primary_decision secondary=$secondary_decision primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired"
       else
         log "quota preflight: burn bypass continuing despite stale quota evidence (primary=$primary_decision secondary=$secondary_decision)"
       fi
@@ -1899,10 +2130,14 @@ quota_preflight_allows_backlog_run() {
     fi
 
     if [[ "$snapshot_stale_after_reset" == "true" && "$primary_decision" == "defer" && "$secondary_decision" == "defer" ]]; then
-      log "quota preflight: stale quota evidence after reset; retrying guarded run this cycle to refresh quota state (primary=$primary_decision secondary=$secondary_decision primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired)"
+      log "quota preflight: stale quota evidence after reset recorded as non-perfect health obligation_id=${BACKLOG_STALE_QUOTA_OBLIGATION_ID:-unknown}; retrying guarded run this cycle to refresh quota state (primary=$primary_decision secondary=$secondary_decision primary_reset_expired=$primary_reset_expired secondary_reset_expired=$secondary_reset_expired)"
       return 0
     fi
-    log "quota preflight: deferring backlog run this cycle (primary=$primary_decision secondary=$secondary_decision)"
+    if [[ "$snapshot_stale_after_reset" == "true" ]]; then
+      log "quota preflight: deferring backlog run this cycle after recording stale quota evidence as non-perfect health obligation_id=${BACKLOG_STALE_QUOTA_OBLIGATION_ID:-unknown} (primary=$primary_decision secondary=$secondary_decision)"
+    else
+      log "quota preflight: deferring backlog run this cycle (primary=$primary_decision secondary=$secondary_decision)"
+    fi
     return 3
   fi
   return 0

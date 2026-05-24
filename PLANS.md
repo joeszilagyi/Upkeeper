@@ -3,9 +3,41 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Batch Validation Retry Guard
+## Stale Quota Evidence Custody
 
 Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #419 by making expired-reset stale quota evidence visible
+  machine health instead of an ignorable burn-bypass warning
+- record a structured, deduplicated automation obligation when stale quota
+  evidence cannot be reconciled before continuing
+- retire that obligation automatically once current non-stale quota evidence is
+  observed
+
+Constraints:
+- no backend Codex calls
+- keep quota evidence private and redact raw session paths from obligations
+- preserve burn-mode ability to continue only after non-perfect health is
+  recorded
+- keep repeated stale evidence to one fingerprinted obligation
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tests/backlog_stale_quota_obligation_test.bash`
+- `tools/validate_upkeeper.sh`
+- operator-facing docs/help/release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_stale_quota_obligation_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Batch Validation Retry Guard
+
+Status: completed and merged
 
 Goal:
 - close issue #413 by preventing repeated identical batch-validation failures

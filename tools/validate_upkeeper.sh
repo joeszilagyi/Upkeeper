@@ -623,6 +623,8 @@ check_backlog_launcher_contract() {
   grep -Fq 'BACKLOG_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota guardrail bypass on"
   grep -Fq 'BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota cooldown bypass on"
   grep -Fq 'quota preflight: burn bypass continuing despite stale quota evidence' orchestration/backlog.sh || fail "backlog launcher does not explain stale quota bypass"
+  grep -Fq 'backlog_open_stale_quota_obligation' orchestration/backlog.sh || fail "backlog launcher does not record stale quota evidence obligations"
+  grep -Fq 'recorded_non_perfect_health=1' tests/backlog_stale_quota_obligation_test.bash || fail "stale quota obligation test does not assert non-perfect health output"
   grep -Fq 'BACKLOG_OBLIGATION_RETRY_LIMIT="${BACKLOG_OBLIGATION_RETRY_LIMIT:-3}"' orchestration/backlog.sh || fail "backlog launcher does not define obligation retry limit"
   grep -Fq 'cooldown_deferred' orchestration/backlog.sh || fail "backlog launcher does not stop fresh issue work while every obligation is cooling down"
   grep -Fq 'BACKLOG_OBLIGATION_ISSUE_REPORTS="${BACKLOG_OBLIGATION_ISSUE_REPORTS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default obligation issue reports on"
@@ -1882,6 +1884,8 @@ EOF
   fi
   grep -Fq "quota blocked bucket=backend_usage_limit" "$temp_dir/hard-marker.err" ||
     fail "hard backend usage-limit marker did not drive quota hibernation"
+
+  bash tests/backlog_stale_quota_obligation_test.bash
 
   rm -r "$temp_dir"
 }

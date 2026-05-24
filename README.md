@@ -209,10 +209,11 @@ Lattice is required, encrypted pre-contact backup is required, and Codex is
 pinned to `--sandbox workspace-write` before launch. Quota thresholds are set to
 spend-to-zero (`CODEX_5H_STOP_PERCENT=0` and `CODEX_WEEK_STOP_PERCENT=0`), and
 wrapper quota guardrail stops plus persisted quota cooldown markers are bypassed
-for the launcher run. In bug-report-only mode, Codex must not edit or touch
-tracked source; it investigates, runs deterministic checks, and files issues or
-fully reports confirmed bugs. `-backup_queue` and `--backup-queue` switch that
-one cycle to
+for the launcher run. Expired-reset stale quota evidence is still recorded as
+non-perfect local health before burn bypass continues. In bug-report-only mode,
+Codex must not edit or touch tracked source; it investigates, runs
+deterministic checks, and files issues or fully reports confirmed bugs.
+`-backup_queue` and `--backup-queue` switch that one cycle to
 `runtime/unaddressed-tool-failures-backup`.
 
 For a scripted issue-fix cycle, use `ChimneySweep`:

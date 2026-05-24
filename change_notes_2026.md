@@ -11,6 +11,11 @@ Version numbering note:
 	2. The audit command can write ignored local custody records under `runtime/upkeeper-breadcrumbs/open`, `resolved`, and `suppressed`, preserving weak clues until they are explicitly resolved or suppressed.
 	3. Quick validation now covers breadcrumb record creation, duplicate updates, expected-fixture suppression, and resolve-missing behavior.
 
+2026-05-24: Lattice custody authority policy:
+	1. Documented that Lattice is supporting evidence, not sole custody authority, for audit, breadcrumb, anomaly, and automation-obligation custody while known Lattice integrity blockers remain open.
+	2. Required future Lattice-derived custody decisions to keep fallback log/transcript/runtime evidence checks or fail closed when that fallback evidence is unavailable.
+	3. Added validation that current breadcrumb/audit custody code does not require Lattice and that the policy remains present in public docs.
+
 2026-05-24: breadcrumb severity gate:
 	1. Open critical/high breadcrumb custody records now redirect normal Upkeeper target rotation to the configured Upkeeper gate target before backend work starts.
 	2. Explicit target pins and issue-fix pins remain visible as pinned work instead of being silently replaced, while low/medium breadcrumbs remain custody-only by default.

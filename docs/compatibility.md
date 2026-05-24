@@ -181,6 +181,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   `runtime/upkeeper-lattice/lattice.sqlite3`. Runtime artifacts under
   `runtime/upkeeper-lattice/`, including SQLite side files, backups, exports,
   and recovery records, remain ignored local state.
+- For audit, breadcrumb, anomaly, and automation-obligation custody, Lattice is
+  supporting evidence, not sole custody authority, until the tracked Lattice
+  integrity blockers are closed. Lattice-derived custody decisions must keep a
+  fallback log/transcript/runtime evidence check, or fail closed when that
+  fallback evidence is unavailable.
 - `UPKEEPER_PASS_RESULT` is additive. `UPKEEPER_STATUS` and
   `UPKEEPER_LOG_REVIEW` remain unchanged.
 - Review outcomes recognized in final prose include `REVIEWED_AND_FIXED`,

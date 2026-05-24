@@ -654,6 +654,13 @@ def quoted_backend_fixture_payload(payload):
         "except exception as exc:",
     }:
         return True
+    if payload.startswith("print(") and (
+        "run_record_read=fail" in payload
+        or " error=" in payload
+        or "exception" in payload
+        or "traceback" in payload
+    ):
+        return True
     shell_tokens = (
         "printf ",
         "printf '",
@@ -1463,6 +1470,11 @@ report_dir = pathlib.Path(sys.argv[2])
 root_dir = pathlib.Path(sys.argv[3]).resolve()
 github_write = sys.argv[4].strip().lower() in {"1", "true", "yes", "on"}
 github_labels = [label.strip() for label in sys.argv[5].split(",") if label.strip()]
+UMBRELLA_ISSUE_NUMBER = "418"
+UMBRELLA_ISSUE_TITLE = (
+    "High priority bug: non-perfect automated runs need mandatory local "
+    "remediation custody"
+)
 
 
 def now_local():
@@ -1515,6 +1527,48 @@ def first_nonempty(*values):
         if text:
             return text
     return ""
+
+
+def linked_issue_number(data):
+    return first_nonempty(
+        data.get("github_issue_number"),
+        data.get("issue_number"),
+        data.get("linked_issue_number"),
+    )
+
+
+def has_umbrella_issue_link(data):
+    if first_nonempty(data.get("kind")) != "prior_run_anomaly":
+        return False
+    return linked_issue_number(data) == UMBRELLA_ISSUE_NUMBER
+
+
+def clear_umbrella_issue_link(data, now):
+    if not has_umbrella_issue_link(data):
+        return False
+    data["owner_issue_number"] = first_nonempty(
+        data.get("owner_issue_number"),
+        linked_issue_number(data),
+        UMBRELLA_ISSUE_NUMBER,
+    )
+    data["owner_issue_title"] = first_nonempty(
+        data.get("owner_issue_title"),
+        data.get("issue_title"),
+        UMBRELLA_ISSUE_TITLE,
+    )
+    for key in (
+        "github_issue_number",
+        "github_issue_url",
+        "issue_number",
+        "issue_url",
+        "linked_issue_number",
+    ):
+        data[key] = ""
+    data["issue_title"] = ""
+    data["specific_issue_required"] = True
+    data["issue_report_link_basis"] = "umbrella_issue_requires_specific_report"
+    data["issue_report_unlinked_at"] = now
+    return True
 
 
 def same_root(data):
@@ -1670,9 +1724,12 @@ github_created = 0
 github_existing = 0
 github_failed = 0
 updated_records = 0
+umbrella_unlinked = 0
 now = now_local()
 
 for source_path, data in records:
+    if clear_umbrella_issue_link(data, now):
+        umbrella_unlinked += 1
     obligation_id = first_nonempty(data.get("id"), source_path.stem)
     title = title_for(data)
     report_path = report_dir / report_filename(obligation_id)
@@ -1680,16 +1737,18 @@ for source_path, data in records:
     drafted += 1
 
     data["issue_report_required"] = True
-    data["issue_report_state"] = "drafted"
+    data["issue_report_state"] = "drafted" if github_write else "issue_ready_only"
     data["issue_report_title"] = title
     data["issue_report_path"] = str(report_path)
     data["issue_report_updated_at"] = now
     data["issue_report_generator"] = "automation_sync_obligation_issue_reports_json"
 
     if github_write:
-        existing_number = first_nonempty(data.get("github_issue_number"))
+        existing_number = first_nonempty(data.get("github_issue_number"), data.get("issue_number"))
         if existing_number:
             github_existing += 1
+            data["github_issue_number"] = existing_number
+            data["issue_number"] = existing_number
             data["issue_report_state"] = "github_existing"
         else:
             issue_number, issue_url, error = create_github_issue(title, report_path)
@@ -1698,6 +1757,8 @@ for source_path, data in records:
                 data["issue_report_state"] = "github_created"
                 data["github_issue_number"] = issue_number
                 data["github_issue_url"] = issue_url
+                data["issue_number"] = issue_number
+                data["issue_url"] = issue_url
                 data["github_issue_created_at"] = now
             else:
                 github_failed += 1
@@ -1718,6 +1779,7 @@ print(
             "github_created": github_created,
             "github_existing": github_existing,
             "github_failed": github_failed,
+            "umbrella_unlinked": umbrella_unlinked,
             "report_dir": str(report_dir),
         },
         separators=(",", ":"),

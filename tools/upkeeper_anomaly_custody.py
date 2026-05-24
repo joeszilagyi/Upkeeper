@@ -170,6 +170,13 @@ def model_emitted_fixture_output(normalized: str) -> bool:
         "except exception as exc:",
     }:
         return True
+    if payload.startswith("print(") and (
+        "run_record_read=fail" in payload
+        or " error=" in payload
+        or "exception" in payload
+        or "traceback" in payload
+    ):
+        return True
 
     shell_fixture_tokens = (
         "printf ",
@@ -416,8 +423,11 @@ def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.P
         "policy": "pre-issue-health",
         "workflow": "",
         "stage": "pre_issue_selection",
-        "issue_number": DEFAULT_UMBRELLA_ISSUE,
-        "issue_title": DEFAULT_UMBRELLA_TITLE,
+        "issue_number": "",
+        "issue_title": "",
+        "owner_issue_number": DEFAULT_UMBRELLA_ISSUE,
+        "owner_issue_title": DEFAULT_UMBRELLA_TITLE,
+        "specific_issue_required": True,
         "target_scope": "target",
         "target_file": finding.target,
         "repair_target_file": finding.target,
@@ -490,14 +500,17 @@ def audit(args: argparse.Namespace) -> int:
     state_root = pathlib.Path(args.state_root)
     obligation_root = pathlib.Path(args.obligation_root)
     recent_lines = max(0, int(args.recent_lines))
-    max_findings = max(1, int(args.max_findings))
+    max_findings = max(0, int(args.max_findings))
 
     lines = tail_lines(loop_log, recent_lines)
     findings: list[Finding] = []
+    known_open_findings: list[tuple[dict, Finding]] = []
     expected_count = 0
     resolved_count = 0
     coalesced_count = 0
     seen_ids: set[str] = set()
+    known_open_ids: set[str] = set()
+    truncated_count = 0
     obligation_records = existing_obligation_records(obligation_root)
     for index, (line_number, raw_line) in enumerate(lines):
         classified = classify(lines, index, raw_line)
@@ -511,13 +524,21 @@ def audit(args: argparse.Namespace) -> int:
         if record and record.get("state") == "resolved":
             resolved_count += 1
             continue
+        if record and record.get("state") == "open":
+            if finding.ident in known_open_ids:
+                coalesced_count += 1
+                continue
+            known_open_ids.add(finding.ident)
+            known_open_findings.append((record, finding))
+            continue
         if finding.ident in seen_ids:
             coalesced_count += 1
             continue
         seen_ids.add(finding.ident)
+        if max_findings > 0 and len(findings) >= max_findings:
+            truncated_count += 1
+            continue
         findings.append(finding)
-        if len(findings) >= max_findings:
-            break
 
     private_dir(state_root)
     finding_dir = state_root / "findings"
@@ -539,8 +560,17 @@ def audit(args: argparse.Namespace) -> int:
         elif record.get("state") == "open":
             update_open_obligation(pathlib.Path(record["path"]), finding, loop_log)
             updated_obligations += 1
+    for record, finding in known_open_findings:
+        if args.write_obligations:
+            update_open_obligation(pathlib.Path(record["path"]), finding, loop_log)
+            updated_obligations += 1
 
-    status = "actionable" if findings else "clean"
+    if findings:
+        status = "actionable"
+    elif known_open_findings:
+        status = "known_open"
+    else:
+        status = "clean"
     latest = {
         "schema": 1,
         "record_type": "anomaly_custody_audit",
@@ -551,9 +581,11 @@ def audit(args: argparse.Namespace) -> int:
         "scanned_lines": len(lines),
         "recent_lines": recent_lines,
         "actionable_findings": len(findings),
+        "known_open_findings": len(known_open_findings),
         "expected_fixture_findings": expected_count,
         "resolved_fingerprint_findings": resolved_count,
         "coalesced_findings": coalesced_count,
+        "truncated_findings": truncated_count,
         "created_obligations": created_obligations,
         "updated_obligations": updated_obligations,
         "obligation_root": str(obligation_root),
@@ -565,7 +597,8 @@ def audit(args: argparse.Namespace) -> int:
         "anomaly custody: "
         f"status={status} scanned_lines={len(lines)} "
         f"actionable={len(findings)} expected_fixture={expected_count} "
-        f"resolved={resolved_count} coalesced={coalesced_count} "
+        f"known_open={len(known_open_findings)} resolved={resolved_count} "
+        f"coalesced={coalesced_count} truncated={truncated_count} "
         f"new_obligations={created_obligations} updated_obligations={updated_obligations}"
     )
     for finding in findings[:5]:
@@ -586,7 +619,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-root", required=True, help="runtime state root for custody records")
     parser.add_argument("--obligation-root", required=True, help="automation obligation root")
     parser.add_argument("--recent-lines", default="1200", help="number of recent loop-log lines to scan")
-    parser.add_argument("--max-findings", default="12", help="maximum actionable findings to record in one audit")
+    parser.add_argument("--max-findings", default="0", help="maximum new actionable findings to record in one audit; 0 means no cap")
     parser.add_argument("--write-obligations", action="store_true", help="open automation obligations for new actionable findings")
     return parser
 

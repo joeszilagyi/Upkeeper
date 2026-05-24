@@ -3,6 +3,39 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Anomaly Custody Issue Ownership
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- stop prior-run anomaly obligations from treating umbrella issue #418 as their
+  own open repair issue
+- keep model-emitted Python fixture snippets from becoming live PAGE anomalies
+  when the wrapper is quoting backend transcript content
+- ensure obligation issue-report sync can migrate existing local records away
+  from stale umbrella links into specific issue-ready records
+
+Constraints:
+- do not launch real backend Codex during validation
+- preserve local-only report generation when GitHub issue writing is disabled
+- keep repeated-fingerprint coalescing and expected negative-test detection
+  intact
+
+Files likely touched:
+- `tools/upkeeper_anomaly_custody.py`
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Fallback And Postmortem Guardrail Contract
 
 Status: completed locally; pending PR/CI

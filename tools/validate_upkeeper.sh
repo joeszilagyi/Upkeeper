@@ -553,7 +553,10 @@ check_backlog_launcher_contract() {
   grep -Fq 'BACKLOG_OBLIGATION_RETRY_LIMIT="${BACKLOG_OBLIGATION_RETRY_LIMIT:-3}"' orchestration/backlog.sh || fail "backlog launcher does not define obligation retry limit"
   grep -Fq 'cooldown_deferred' orchestration/backlog.sh || fail "backlog launcher does not stop fresh issue work while every obligation is cooling down"
   grep -Fq 'BACKLOG_OBLIGATION_ISSUE_REPORTS="${BACKLOG_OBLIGATION_ISSUE_REPORTS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default obligation issue reports on"
+  grep -Fq 'BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE="${BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default obligation GitHub issue filing on"
+  grep -Fq 'BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS="${BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS:-0}"' orchestration/backlog.sh || fail "backlog launcher still caps anomaly custody findings by default"
   grep -Fq 'backlog_sync_obligation_issue_reports' orchestration/backlog.sh || fail "backlog launcher does not sync obligation issue reports before selection"
+  grep -Fq 'automation obligation GitHub issue creation had failures; stopping before normal issue selection' orchestration/backlog.sh || fail "backlog launcher does not fail closed when obligation issue filing fails"
   grep -Fq 'backlog_ensure_transcript_artifact_marker' orchestration/backlog.sh || fail "backlog launcher does not trust its owned transcript artifact directory"
   grep -Fq 'CODEX_LOG_FILE_ALLOW_UNSAFE="${BACKLOG_CODEX_LOG_FILE_ALLOW_UNSAFE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not trust its owned custom log directory"
   grep -Fq 'BACKLOG_SOURCE_ONLY' orchestration/backlog.sh || fail "backlog launcher cannot be source-tested without running main"
@@ -988,9 +991,9 @@ LOG
     fail "prior-run anomaly custody opened duplicate local automation obligations"
   [[ "$(jq -s '[.[] | select(.evidence.kind == "previous_run_anomaly_summary")] | length' "$temp_dir"/obligations/open/*.json)" == "1" ]] ||
     fail "prior-run anomaly custody did not collapse repeated previous-run summaries to one owner"
-  jq -e 'select(.kind == "prior_run_anomaly") | select(.issue_number == "418") | select(.evidence.normalized_excerpt | contains("unexpected.wrapper.failure"))' \
+  jq -e 'select(.kind == "prior_run_anomaly") | select(.issue_number == "") | select(.owner_issue_number == "418") | select(.specific_issue_required == true) | select(.evidence.normalized_excerpt | contains("unexpected.wrapper.failure"))' \
     "$temp_dir"/obligations/open/*.json >/dev/null ||
-    fail "prior-run anomaly custody obligation did not preserve bounded evidence"
+    fail "prior-run anomaly custody obligation did not require a specific issue beyond the umbrella"
 
   tools/upkeeper_anomaly_custody.py \
     --root "$ROOT_DIR" \
@@ -1047,6 +1050,7 @@ LOG
 2026-05-23T07:02:16 █ PAGE    [ERROR] Upkeeper: primary: grep -Fq 'previous_cycle=prior-normal' "$tmp_dir/out" && echo 'normal_cycle=passed' || { echo 'normal_cycle=failed'; exit 1; }
 2026-05-23T07:29:58 █ PAGE    [ERROR] Upkeeper: primary: warn='[''WARN'']'
 2026-05-23T17:30:22 █ PAGE    [ERROR] Upkeeper: primary: except Exception as exc:
+2026-05-23T23:22:04 █ PAGE    [ERROR] Upkeeper: primary: print(f'run_record_read=fail error={type(exc).__name__}:{exc}')
 LOG
   tools/upkeeper_anomaly_custody.py \
     --root "$ROOT_DIR" \
@@ -1058,6 +1062,9 @@ LOG
     --write-obligations >"$temp_dir/model-fixture-audit.out"
   [[ "$(jq -r '.actionable_findings' "$temp_dir/model-fixture-custody/latest.json")" == "0" ]] ||
     fail "prior-run anomaly custody treated quoted backend fixture text as actionable"
+  if grep -R -Fq 'run_record_read=fail' "$temp_dir/model-fixture-obligations" 2>/dev/null; then
+    fail "prior-run anomaly custody opened an obligation for quoted Python fixture text"
+  fi
 
   grep -Fq 'run_backlog_anomaly_custody_audit' orchestration/backlog.sh ||
     fail "backlog launcher does not invoke prior-run anomaly custody before issue selection"
@@ -1443,7 +1450,7 @@ JSON
 }
 
 check_automation_obligation_issue_report_contract() {
-  local temp_dir sync_json fake_bin record_file report_file gh_args
+  local temp_dir sync_json fake_bin record_file umbrella_file report_file gh_args
 
   log "checking automation obligation issue-report bridge contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-obligation-issue-report.XXXXXX)"
@@ -1451,6 +1458,10 @@ check_automation_obligation_issue_report_contract() {
   record_file="$temp_dir/obligations/open/report-me.json"
   cat >"$record_file" <<JSON
 {"schema":1,"record_type":"automation_obligation","status":"open","id":"report-me","created_at":"2026-05-23T02:00:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"PAGE error was observed during unattended loop","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","source_cycle_id":"cycle-a","source_run_hash":"hash-a","occurrence_count":4,"evidence":{"source":"backlog_loop_log","excerpt":"$ROOT_DIR/Upkeeper PAGE [ERROR] example","normalized_excerpt":"Upkeeper PAGE [ERROR] example"},"required_resolution":["patch the wrapper","add deterministic validation"]}
+JSON
+  umbrella_file="$temp_dir/obligations/open/umbrella-linked.json"
+  cat >"$umbrella_file" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"umbrella-linked","created_at":"2026-05-23T02:00:30-0700","kind":"prior_run_anomaly","severity":"high","summary":"PAGE error kept an umbrella issue link","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","issue_number":"418","github_issue_number":"418","issue_title":"High priority bug: non-perfect automated runs need mandatory local remediation custody","evidence":{"source":"backlog_loop_log","excerpt":"$ROOT_DIR/Upkeeper PAGE [ERROR] stale umbrella","normalized_excerpt":"Upkeeper PAGE [ERROR] stale umbrella"}}
 JSON
   cat >"$temp_dir/obligations/open/foreign.json" <<JSON
 {"schema":1,"record_type":"automation_obligation","status":"open","id":"foreign","created_at":"2026-05-23T02:01:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"foreign root","root":"$temp_dir/foreign-root","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY"}
@@ -1460,10 +1471,12 @@ JSON
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="$temp_dir/reports" \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "1" ]] ||
+  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "2" ]] ||
     fail "automation obligation issue-report bridge did not scope to current root"
-  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "1" ]] ||
+  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "2" ]] ||
     fail "automation obligation issue-report bridge did not draft the current obligation"
+  [[ "$(jq -r '.umbrella_unlinked' <<<"$sync_json")" == "1" ]] ||
+    fail "automation obligation issue-report bridge did not unlink stale umbrella issues"
   report_file="$(jq -r '.issue_report_path' "$record_file")"
   [[ -f "$report_file" ]] || fail "automation obligation issue-report bridge did not write report file"
   grep -Fq "## Impact" "$report_file" || fail "automation obligation report missing impact section"
@@ -1472,8 +1485,16 @@ JSON
   if grep -Fq "$ROOT_DIR" "$report_file"; then
     fail "automation obligation report leaked absolute repo root"
   fi
-  [[ "$(jq -r '.issue_report_state' "$record_file")" == "drafted" ]] ||
-    fail "automation obligation record did not record drafted issue-report state"
+  [[ "$(jq -r '.issue_report_state' "$record_file")" == "issue_ready_only" ]] ||
+    fail "automation obligation record did not record local issue-ready state"
+  [[ "$(jq -r '.issue_number' "$umbrella_file")" == "" ]] ||
+    fail "automation obligation issue-report bridge kept the stale umbrella issue number"
+  [[ "$(jq -r '.github_issue_number' "$umbrella_file")" == "" ]] ||
+    fail "automation obligation issue-report bridge kept the stale umbrella GitHub issue number"
+  [[ "$(jq -r '.owner_issue_number' "$umbrella_file")" == "418" ]] ||
+    fail "automation obligation issue-report bridge did not preserve umbrella issue as policy owner"
+  [[ "$(jq -r '.specific_issue_required' "$umbrella_file")" == "true" ]] ||
+    fail "automation obligation issue-report bridge did not require a specific issue"
 
   cat >"$temp_dir/bin/gh" <<'SH'
 #!/usr/bin/env bash
@@ -1488,10 +1509,16 @@ SH
     UPKEEPER_OBLIGATION_GITHUB_ISSUE_WRITE=1 UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS=bug \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "1" ]] ||
+  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "2" ]] ||
     fail "automation obligation issue-report bridge did not create opted-in GitHub issue"
   [[ "$(jq -r '.github_issue_number' "$record_file")" == "987" ]] ||
     fail "automation obligation record did not store created GitHub issue number"
+  [[ "$(jq -r '.issue_number' "$record_file")" == "987" ]] ||
+    fail "automation obligation record did not store created issue number for selection"
+  [[ "$(jq -r '.github_issue_number' "$umbrella_file")" == "987" ]] ||
+    fail "automation obligation record did not create a specific GitHub issue after unlinking umbrella"
+  [[ "$(jq -r '.issue_number' "$umbrella_file")" == "987" ]] ||
+    fail "automation obligation record did not store a specific issue number after unlinking umbrella"
   grep -Fq "issue create" "$gh_args" || fail "automation obligation GitHub issue command was not invoked"
 
   rm -r "$temp_dir"

@@ -223,18 +223,23 @@ Important:
     backlog records repair-attempt metadata and cools that obligation down so
     another eligible obligation can run; if every obligation is cooling down,
     backlog exits without starting fresh issue work. After anomaly custody and
-    reconciliation, backlog also writes one deterministic issue-ready report for
-    every open current-root obligation before selecting work, so system-level
-    failures have durable issue text even when backend Codex never enters
-    bug-report-only mode. These local reports default to
-    ${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/obligation-issue-reports.
-    Wrapper-side GitHub issue creation is available only when explicitly
-    enabled with BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=1; otherwise the local
-    report is the authoritative filing artifact. Set
+    reconciliation, backlog writes one deterministic issue-ready report for
+    every open current-root obligation and, by default, files or links a GitHub
+    issue before selecting work. System-level failures therefore have concrete
+    issue custody even when backend Codex never enters bug-report-only mode. The
+    local report copy remains under
+    ${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/obligation-issue-reports
+    as evidence, not as a substitute for filing. If GitHub issue filing fails,
+    backlog stops before normal issue selection. Set
+    BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=0 only for a deliberate local-only dry
+    run. Set
     BACKLOG_OBLIGATION_RECONCILE=0 for a deliberate one-cycle bypass. Set
     BACKLOG_ANOMALY_CUSTODY=0 for a deliberate one-cycle bypass, or adjust
     BACKLOG_ANOMALY_CUSTODY_LINES and
-    BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS for local scan bounds.
+    BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS for local scan bounds. The default
+    finding cap is 0, meaning all new findings inside the recent-line scan
+    window are placed under custody instead of letting already-known obligations
+    starve later PAGE alerts.
   - Light per-bug validation still avoids the full batch suite, but it now
     compiles changed Python files before commit. Lattice issue fixes that touch
     tools/upkeeper_lattice.py also run tests/lattice_test.bash before the fix is

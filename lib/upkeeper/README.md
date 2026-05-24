@@ -44,6 +44,7 @@ unless there is no clearer owner and the new file has one named responsibility.
 - Runtime, logging, terminal, temp, and evidence helpers:
   `runtime_foundation.bash`
 - JSON field and time formatting helpers: `runtime_format_json.bash`
+- Structured local policy-decision schema helpers: `policy_decisions.bash`
 - Local SQLite evidence-ledger lifecycle hooks: `lattice.bash`
 - Shared automation run and obligation records:
   `automation_obligations.bash`
@@ -89,6 +90,7 @@ Runtime evidence:
 - `operator_guide.bash`
 - `cycle_cleanup_signals.bash`
 - `runtime_format_json.bash`
+- `policy_decisions.bash`
 - `automation_obligations.bash`
 - `breadcrumb_gate.bash`
 - `lattice.bash`

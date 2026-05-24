@@ -463,6 +463,7 @@ check_authority_control_docs_contract() {
   [[ -s docs/authority.md ]] || fail "docs/authority.md is missing"
   [[ -s docs/capability-profiles.md ]] || fail "docs/capability-profiles.md is missing"
   [[ -s docs/control-ledger.md ]] || fail "docs/control-ledger.md is missing"
+  [[ -s docs/policy-decisions.md ]] || fail "docs/policy-decisions.md is missing"
 
   grep -Fq "Authority Questions" docs/authority.md ||
     fail "authority model is missing the authority questions table"
@@ -473,7 +474,7 @@ check_authority_control_docs_contract() {
   grep -Fq "Control id" docs/control-ledger.md ||
     fail "control ledger is missing its control id table"
 
-  for control_id in AUTH-001 AUTH-002 AUTH-003 AUTH-004 AUTH-005 AUTH-006 AUTH-007 AUTH-008 AUTH-009 AUTH-010 AUTH-011 AUTH-012; do
+  for control_id in AUTH-001 AUTH-002 AUTH-003 AUTH-004 AUTH-005 AUTH-006 AUTH-007 AUTH-008 AUTH-009 AUTH-010 AUTH-011 AUTH-012 AUTH-013; do
     grep -Fq "| $control_id |" docs/control-ledger.md ||
       fail "control ledger missing $control_id"
   done
@@ -484,6 +485,28 @@ check_authority_control_docs_contract() {
     fail "security docs do not point to capability profiles"
   grep -Fq "docs/control-ledger.md" docs/compatibility.md ||
     fail "compatibility docs do not preserve the control-ledger contract"
+  grep -Fq "docs/policy-decisions.md" README.md ||
+    fail "README does not point to the policy decision schema"
+  grep -Fq "docs/policy-decisions.md" docs/authority.md ||
+    fail "authority docs do not point to policy decisions"
+  grep -Fq "docs/policy-decisions.md" docs/security.md ||
+    fail "security docs do not point to policy decisions"
+  grep -Fq "docs/policy-decisions.md" docs/compatibility.md ||
+    fail "compatibility docs do not preserve the policy decision schema contract"
+}
+
+check_policy_decisions_contract() {
+  log "checking structured policy decision contract"
+  [[ -s lib/upkeeper/policy_decisions.bash ]] || fail "policy decision module is missing or empty"
+  grep -Fq '"policy_decisions.bash"' Upkeeper || fail "module map does not load policy_decisions.bash"
+  grep -Fq '`policy_decisions.bash`' lib/upkeeper/README.md || fail "module README missing policy_decisions.bash ownership"
+  grep -Fq 'schema_version' docs/policy-decisions.md || fail "policy decision docs missing schema_version"
+  grep -Fq 'may_contact_backend' docs/policy-decisions.md || fail "policy decision docs missing backend-contact field"
+  grep -Fq 'may_write_source' docs/policy-decisions.md || fail "policy decision docs missing source-write field"
+  grep -Fq 'may_retarget' docs/policy-decisions.md || fail "policy decision docs missing retarget field"
+  grep -Fq 'denied_actions' docs/policy-decisions.md || fail "policy decision docs missing denied_actions field"
+  grep -Fq 'wrapper-local-control-plane' docs/capability-profiles.md || fail "capability profiles missing policy profile ids"
+  bash tests/policy_decisions_test.bash
 }
 
 check_syntax() {
@@ -6803,6 +6826,7 @@ run_check prompt_public_lint_contract check_prompt_public_lint_contract
 run_check fault_injection_registry_contract check_fault_injection_registry_contract
 run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contract
 run_check authority_control_docs_contract check_authority_control_docs_contract
+run_check policy_decisions_contract check_policy_decisions_contract
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation

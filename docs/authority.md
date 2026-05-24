@@ -79,5 +79,7 @@ backend-specific run.
 - `docs/capability-profiles.md` lists capabilities by actor and mode.
 - `docs/control-ledger.md` maps named controls to enforcement points, tests,
   evidence artifacts, and status.
+- `docs/policy-decisions.md` defines the schema for local authority decisions
+  that should be recorded as data instead of prompt prose.
 - `docs/security.md` describes local trust boundaries and secret handling.
 - `docs/compatibility.md` describes the stable public feature surface.

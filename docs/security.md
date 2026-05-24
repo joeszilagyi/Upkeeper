@@ -33,6 +33,8 @@ The paired authority docs make the control surface explicit:
 - `docs/capability-profiles.md` lists allowed capabilities by actor and mode.
 - `docs/control-ledger.md` maps control claims to enforcement points, tests,
   and evidence artifacts.
+- `docs/policy-decisions.md` defines the JSON schema for local policy
+  decisions that should survive prompt wording changes.
 - `docs/negative-space-testing.md` lists deterministic "must not happen"
   validation contracts for safety boundaries.
 

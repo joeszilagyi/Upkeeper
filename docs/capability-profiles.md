@@ -3,7 +3,8 @@
 This file is the tracked capability manifest for Upkeeper's local control plane.
 It describes which actor or mode may perform sensitive actions. The control
 ledger in `docs/control-ledger.md` names the checks that make these claims
-testable.
+testable. `docs/policy-decisions.md` defines the stable lowercase profile ids
+used when these claims are recorded as structured JSON policy decisions.
 
 ## Capability Legend
 
@@ -28,6 +29,24 @@ testable.
 | Fallback or postmortem backend | no | no | bounded | yes | yes | no | no | no | no | incident packet plus selected context |
 | Lattice CLI | no | no | no | local-only | no | no | local-only | no | yes | local runtime evidence |
 | Local validation and CI | no | no | fixture-only | yes | no | no | fixture-only | no | fixture-only | fixtures and local repo |
+
+## Stable Policy Profile Ids
+
+When Upkeeper records a schema-v1 policy decision, the `capability_profile`
+field uses one of these ids:
+
+| Human profile | Policy id |
+| --- | --- |
+| Operator | `operator` |
+| Wrapper local control plane | `wrapper-local-control-plane` |
+| Backend Codex default review | `backend-codex-default-review` |
+| Backend Codex bug-report-only | `backend-codex-bug-report-only` |
+| Backend Codex issue comment stage | `backend-codex-issue-comment` |
+| Backend Codex issue review stage | `backend-codex-issue-review` |
+| Backend Codex issue apply stage | `backend-codex-issue-apply` |
+| Fallback or postmortem backend | `fallback-postmortem-backend` |
+| Lattice CLI | `lattice-cli` |
+| Local validation and CI | `local-validation-ci` |
 
 ## Notes By Capability
 

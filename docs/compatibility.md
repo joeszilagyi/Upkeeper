@@ -45,6 +45,7 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--selection-review-modules=...`, `--ignore-failure-queue`,
   `--backup-queue`, `-backup_queue`, `--prompt-pass=all`, `--max-cover`,
   `--bug-report-only`, `--file-bug-only`, `--report-bug-only`,
+  `--audit-only`, `--review-only`, `--no-fix`, `--read-only`,
   `--fix-next-issue`, `--fix-oldest-bug`, `--fix-issue=...`, and
   `--issue-workflow-stage=comment|review|apply`.
 - Upkeeper model override shorthands include `5.5_xhigh` and
@@ -192,6 +193,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   `runtime/upkeeper-lattice/lattice.sqlite3`. Runtime artifacts under
   `runtime/upkeeper-lattice/`, including SQLite side files, backups, exports,
   and recovery records, remain ignored local state.
+- For audit, breadcrumb, anomaly, and automation-obligation custody, Lattice is
+  supporting evidence, not sole custody authority, until the tracked Lattice
+  integrity blockers are closed. Lattice-derived custody decisions must keep a
+  fallback log/transcript/runtime evidence check, or fail closed when that
+  fallback evidence is unavailable.
 - `UPKEEPER_PASS_RESULT` is additive. `UPKEEPER_STATUS` and
   `UPKEEPER_LOG_REVIEW` remain unchanged.
 - Review outcomes recognized in final prose include `REVIEWED_AND_FIXED`,
@@ -207,12 +213,22 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--tracked-only` keeps normal rotation to tracked files only. Explicit
   `--target-file` remains the strongest one-cycle pin for safe readable text
   targets, including non-ignored untracked files.
+- Open critical/high breadcrumb custody records are machine-health evidence.
+  Before normal rotation, they redirect the cycle to the configured Upkeeper
+  breadcrumb gate target so unresolved severe clues cannot passively rot while
+  ordinary timestamp selection continues. Explicit target pins and issue-fix
+  pins remain visible rather than being silently replaced.
 - `--max-cover` may ask Lattice to rank a broader current tracked text-file
   pool, but final selection still revalidates the live source-safe boundary in
   the same cycle.
 - `--bug-report-only` is a no-fix mode. It must not edit or touch tracked
   source, and the wrapper must fail the cycle if the source mutation
   fingerprint changes during a non-dry-run bug-report-only cycle.
+- `--audit-only` is the canonical no-fix/read-only audit alias, with
+  `--review-only`, `--no-fix`, and `--read-only` accepted as equivalent
+  spellings. It uses the same source mutation guard and final-message report
+  contract as bug-report-only, records `audit_only=1` in cycle metadata, and
+  stores local report artifacts under ignored runtime audit evidence by default.
 - `--fix-next-issue`, `--fix-oldest-bug`, `--fix-issue=...`,
   `--issue-workflow-stage=...`, and `ChimneySweep` may require the GitHub CLI
   for pre-launch issue selection or loading, but normal Upkeeper and
@@ -226,6 +242,10 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Validation entrypoints remain available:
   `tools/validate_upkeeper.sh --deps`, `--smoke`, `--quick`, `--full`, and the
   additive `--profile` timing flag.
+- Negative-space validation remains part of the tracked safety surface.
+  `docs/negative-space-testing.md` names deterministic local proofs for
+  behavior that must not happen, and those proofs should stay no-backend unless
+  an operator explicitly requests backend-specific testing.
 - The GitHub Actions no-quota CI workflow remains available at
   `.github/workflows/ci.yml` for pushes and pull requests.
 - The local stress-corpus entrypoint remains available:

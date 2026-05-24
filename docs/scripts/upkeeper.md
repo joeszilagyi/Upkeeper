@@ -12,7 +12,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 ## Behavior Summary
 
 ```text
-Usage: Upkeeper [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
+Usage: Upkeeper [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--audit-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
 Version: v1.2.33
@@ -126,6 +126,11 @@ Loop stop semantics:
     are still honored as live log sinks, but rotation and sibling archive
     pruning stay blocked unless explicitly enabled with
     `CODEX_LOG_FILE_ALLOW_UNSAFE=1` and a trusted Upkeeper rotation marker.
+  - Open breadcrumb custody records under `UPKEEPER_BREADCRUMB_STATE_DIR` with
+    severity `critical` or `high` redirect normal target rotation to the
+    configured Upkeeper gate target before backend work starts. Explicit target
+    pins and issue-fix pins remain visible as pinned work and are not silently
+    replaced.
 
 Transcript and live terminal behavior:
   - Default live terminal mode is `basic`: routine INFO logs stay in
@@ -450,6 +455,12 @@ Prompt behavior:
     recovery facts under ignored runtime state. Lattice does not replace live
     source-safe eligibility; explicit targets, startup anomaly gates, and the
     local failure queue still keep their existing priority.
+    For audit, breadcrumb, anomaly, and automation-obligation custody, Lattice
+    is supporting evidence, not sole custody authority, while the known Lattice
+    integrity blockers remain open. Custody decisions must keep fallback
+    log/transcript/runtime evidence available and confirm any future
+    Lattice-derived custody decision against that evidence, or fail closed when
+    the fallback evidence is unavailable.
     If Lattice is unavailable and `UPKEEPER_LATTICE_REQUIRED=0`, the wrapper
     logs one warning, spools a small recovery record when possible, and
     continues the existing cycle behavior. If `UPKEEPER_LATTICE_REQUIRED=1`,
@@ -630,6 +641,11 @@ Prompt behavior:
     review touch requirement for that invocation. By default it writes a local
     issue draft under runtime/upkeeper-bug-report-drafts and blocks direct
     GitHub issue creation unless `UPKEEPER_ALLOW_GH_ISSUE_WRITE=1`.
+  - --audit-only is the canonical no-fix/read-only audit alias; --review-only,
+    --no-fix, and --read-only are accepted aliases. It uses the same source
+    mutation guard and final-message draft contract as bug-report-only, records
+    `audit_only=1` in cycle metadata, and writes the local report under
+    `runtime/upkeeper-audits` by default.
   - --fix-next-issue, also accepted as --fix-oldest-bug, asks Upkeeper to pick
     the oldest open non-skipped GitHub issue by priority label order
     security > data-integrity > bug, infer a starting file from the issue body
@@ -677,8 +693,14 @@ Environment overrides:
   UPKEEPER_SELECTION_REVIEW_MODULES Default: empty
   UPKEEPER_MAX_COVER           Default: 0
   UPKEEPER_BUG_REPORT_ONLY     Default: 0
+  UPKEEPER_BREADCRUMB_GATE_ENABLED Default: 1
+  UPKEEPER_BREADCRUMB_STATE_DIR Default: runtime/upkeeper-breadcrumbs
+  UPKEEPER_BREADCRUMB_GATE_SEVERITIES Default: critical,high
+  UPKEEPER_BREADCRUMB_GATE_TARGET Default: Upkeeper
+  UPKEEPER_AUDIT_ONLY          Default: 0
   UPKEEPER_ALLOW_GH_ISSUE_WRITE Default: 0
   UPKEEPER_BUG_REPORT_DRAFT_DIR Default: runtime/upkeeper-bug-report-drafts
+  UPKEEPER_AUDIT_REPORT_DIR    Default: runtime/upkeeper-audits
   UPKEEPER_FIX_NEXT_ISSUE      Default: 0
   UPKEEPER_FIX_ISSUE           Default: empty
   UPKEEPER_ISSUE_WORKFLOW_STAGE Default: empty
@@ -995,6 +1017,11 @@ prompts, backup log lines, or Lattice preselect evidence.
 - Security and local trust boundaries are documented in `docs/security.md`.
   Read that page before using unreviewed config files, broad sandbox modes,
   shared machines, or repositories that may contain secrets.
+- Negative-space validation contracts are documented in
+  `docs/negative-space-testing.md`. Those entries name the deterministic local
+  proofs for behavior that must not happen, such as runtime artifact selection,
+  vault-root leaks, backend target replacement, read-only source mutation, and
+  real backend quota use during validation.
 - Local sample-repo stress testing is documented in `docs/stress-corpus.md`;
   those checks default to no real backend Codex work and keep model-backed
   sample runs behind explicit future opt-in commands.

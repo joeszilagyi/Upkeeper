@@ -23,6 +23,101 @@ Constraints:
 Files likely touched:
 - `orchestration/backlog.sh`
 - `tests/backlog_batch_validation_obligation_test.bash`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_batch_validation_obligation_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Negative-Space Validation Contract
+
+Status: completed and merged
+
+Goal:
+- close issue #230 by making negative-space testing a first-class validation
+  contract
+- document the major "must not happen" invariants Upkeeper depends on
+- add a deterministic quick-validator check that those invariants stay tied to
+  no-backend local tests, fixtures, or enforcement points
+
+Constraints:
+- do not add live backend Codex validation
+- keep the clean no-op and quick validation paths cheap
+- do not claim fuzzing or broad mutation testing; this is a catalog and proof
+  index for concrete local negative fixtures
+
+Files likely touched:
+- `docs/negative-space-testing.md`
+- `README.md`
+- `docs/scripts/upkeeper.md`
+- `docs/security.md`
+- `docs/compatibility.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Lattice Custody Authority Policy
+
+Status: completed and merged
+
+Goal:
+- close issue #138 by documenting and validating that Lattice is supporting
+  evidence, not sole custody authority, for audit and breadcrumb decisions while
+  listed Lattice integrity blockers remain open
+- prove current breadcrumb/audit custody code keeps fallback log, transcript,
+  obligation, and failure-queue evidence available without requiring Lattice
+- preserve Lattice as useful long-memory evidence without letting it become the
+  only source for control-plane custody
+
+Constraints:
+- no backend Codex validation
+- keep current Lattice runtime behavior unchanged
+- make the policy public and machine-checked
+
+Files likely touched:
+- `docs/lattice.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Breadcrumb Severity Gate
+
+Status: completed and merged
+
+Goal:
+- close issue #137 by making unresolved high/critical breadcrumb custody affect
+  normal Upkeeper rotation
+- keep the enforcement deterministic and pre-model
+- build on the local breadcrumb custody records from issue #124
+
+Constraints:
+- preserve explicit `--target-file` and issue-fix pins
+- keep low/medium breadcrumbs warning/custody-only by default
+- do not rescan large logs on the clean startup path; read current open custody
+  records instead
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/breadcrumb_gate.bash`
+- `tools/audit_upkeeper_breadcrumbs.py`
 - `tools/validate_upkeeper.sh`
 - `docs/scripts/upkeeper.md`
 - `docs/compatibility.md`
@@ -30,10 +125,42 @@ Files likely touched:
 - `PLANS.md`
 
 Validation:
-- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
-- `bash tests/backlog_batch_validation_obligation_test.bash`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Audit-Only Mode
+
+Status: completed and merged
+
+Goal:
+- close issue #132 by making audit-only/no-fix a first-class invocation surface
+- reuse the existing bug-report-only source-mutation guard and draft artifact
+  path instead of creating a second read-only workflow
+- document aliases and prove the mode records audit intent without allowing
+  tracked source mutation
+
+Constraints:
+- preserve existing `--bug-report-only`, `--file-bug-only`, and
+  `--report-bug-only` behavior
+- do not launch real backend Codex during validation
+- keep audit-only reports under ignored runtime evidence
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/help_selection.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
 - `tools/validate_upkeeper.sh --quick`
 - `tools/check_public_docs.sh --quick`
+- `./Upkeeper --help`
 - `git diff --check`
 
 ## Breadcrumb Custody Audit

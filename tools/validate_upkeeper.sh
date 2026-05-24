@@ -1187,6 +1187,8 @@ JSON
   [[ "$open_count" == "4" ]] || fail "breadcrumb audit wrote $open_count open records, expected 4"
   suppressed_count="$(find "$temp_dir/breadcrumbs/suppressed" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
   [[ "$suppressed_count" == "1" ]] || fail "breadcrumb audit wrote $suppressed_count suppressed records, expected 1"
+  jq -e '.suppression_rationale == "expected_negative_fixture" and has("suppression_expires_at")' "$temp_dir/breadcrumbs/suppressed"/*.json >/dev/null ||
+    fail "breadcrumb audit suppression record lacks machine-readable rationale and expiry field"
   page_record="$(find "$temp_dir/breadcrumbs/open" -maxdepth 1 -type f -name 'page_error-*.json' | head -1)"
   [[ -n "$page_record" ]] || fail "breadcrumb audit did not write page_error record"
 
@@ -1222,6 +1224,28 @@ JSON
   [[ "$open_count" == "0" ]] || fail "breadcrumb audit left open records after resolve-missing"
 
   rm -r "$temp_dir"
+}
+
+check_lattice_custody_policy_contract() {
+  log "checking Lattice custody authority policy"
+
+  for policy_path in docs/lattice.md docs/scripts/upkeeper.md docs/compatibility.md; do
+    grep -Fq "supporting evidence, not sole custody authority" "$policy_path" ||
+      fail "Lattice custody policy missing supporting-evidence wording in $policy_path"
+    grep -Fq "log/transcript/runtime evidence" "$policy_path" ||
+      fail "Lattice custody policy missing fallback evidence wording in $policy_path"
+  done
+
+  grep -Fq "issues #112, #113, #115, #116, #117, and #118" docs/lattice.md ||
+    fail "Lattice docs do not name the integrity blocker issue set"
+  for evidence_flag in --log --transcript-dir --obligation-root --failure-queue-root; do
+    grep -Fq -- "$evidence_flag" tools/audit_upkeeper_breadcrumbs.py ||
+      fail "breadcrumb audit tool missing fallback evidence option $evidence_flag"
+  done
+  if rg -n '\b(upkeeper_lattice\.py|UPKEEPER_LATTICE|lattice_record_|runtime/upkeeper-lattice)\b' \
+    tools/audit_upkeeper_breadcrumbs.py lib/upkeeper/breadcrumb_gate.bash >/dev/null; then
+    fail "breadcrumb/audit custody code now depends directly on Lattice"
+  fi
 }
 
 check_automation_obligation_root_boundary_contract() {
@@ -2392,10 +2416,14 @@ check_prompt_template() {
   grep -Fq "UPKEEPER_IGNORE_FILE" Upkeeper.conf || fail "root config missing .upkeeperignore default"
   grep -Fq "UPKEEPER_IGNORE_FILE" configurations/default.conf || fail "default profile missing .upkeeperignore default"
   grep -Fq "UPKEEPER_BUG_REPORT_ONLY" Upkeeper.conf || fail "root config missing bug-report-only default"
+  grep -Fq "UPKEEPER_BREADCRUMB_GATE_ENABLED" Upkeeper.conf || fail "root config missing breadcrumb gate default"
+  grep -Fq "UPKEEPER_AUDIT_ONLY" Upkeeper.conf || fail "root config missing audit-only default"
   grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" Upkeeper.conf || fail "root config missing issue-fix default"
   grep -Fq "UPKEEPER_FIX_ISSUE" Upkeeper.conf || fail "root config missing explicit issue-fix default"
   grep -Fq "UPKEEPER_PRECONTACT_BACKUP_ENABLED" Upkeeper.conf || fail "root config missing pre-contact backup defaults"
   grep -Fq "UPKEEPER_BUG_REPORT_ONLY" configurations/default.conf || fail "default profile missing bug-report-only default"
+  grep -Fq "UPKEEPER_BREADCRUMB_GATE_ENABLED" configurations/default.conf || fail "default profile missing breadcrumb gate default"
+  grep -Fq "UPKEEPER_AUDIT_ONLY" configurations/default.conf || fail "default profile missing audit-only default"
   grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" configurations/default.conf || fail "default profile missing issue-fix default"
   grep -Fq "UPKEEPER_FIX_ISSUE" configurations/default.conf || fail "default profile missing explicit issue-fix default"
   grep -Fq "UPKEEPER_PRECONTACT_BACKUP_ENABLED" configurations/default.conf || fail "default profile missing pre-contact backup defaults"
@@ -2638,6 +2666,10 @@ check_help_and_diff() {
   grep -Fq -- "--backup-queue" <<<"$help" || fail "help missing --backup-queue"
   grep -Fq -- "--max-cover" <<<"$help" || fail "help missing --max-cover"
   grep -Fq -- "--bug-report-only" <<<"$help" || fail "help missing --bug-report-only"
+  grep -Fq -- "--audit-only" <<<"$help" || fail "help missing --audit-only"
+  grep -Fq -- "--review-only" <<<"$help" || fail "help missing --review-only alias"
+  grep -Fq -- "--no-fix" <<<"$help" || fail "help missing --no-fix alias"
+  grep -Fq -- "--read-only" <<<"$help" || fail "help missing --read-only alias"
   grep -Fq -- "--fix-next-issue" <<<"$help" || fail "help missing --fix-next-issue"
   grep -Fq -- "--fix-issue=NUMBER" <<<"$help" || fail "help missing --fix-issue"
   grep -Fq -- "--issue-workflow-stage=comment|review|apply" <<<"$help" || fail "help missing issue workflow stage"
@@ -2646,6 +2678,10 @@ check_help_and_diff() {
   grep -Fq -- "--profile" <<<"$validation_help" || fail "validator help missing --profile"
   grep -Fq -- "UPKEEPER_MAX_COVER" <<<"$help" || fail "help missing UPKEEPER_MAX_COVER"
   grep -Fq -- "UPKEEPER_BUG_REPORT_ONLY" <<<"$help" || fail "help missing UPKEEPER_BUG_REPORT_ONLY"
+  grep -Fq -- "UPKEEPER_BREADCRUMB_GATE_ENABLED" <<<"$help" || fail "help missing UPKEEPER_BREADCRUMB_GATE_ENABLED"
+  grep -Fq -- "UPKEEPER_BREADCRUMB_STATE_DIR" <<<"$help" || fail "help missing UPKEEPER_BREADCRUMB_STATE_DIR"
+  grep -Fq -- "UPKEEPER_AUDIT_ONLY" <<<"$help" || fail "help missing UPKEEPER_AUDIT_ONLY"
+  grep -Fq -- "UPKEEPER_AUDIT_REPORT_DIR" <<<"$help" || fail "help missing UPKEEPER_AUDIT_REPORT_DIR"
   grep -Fq -- "UPKEEPER_FIX_NEXT_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_NEXT_ISSUE"
   grep -Fq -- "UPKEEPER_FIX_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_ISSUE"
   grep -Fq -- "UPKEEPER_ISSUE_WORKFLOW_STAGE" <<<"$help" || fail "help missing UPKEEPER_ISSUE_WORKFLOW_STAGE"
@@ -3097,6 +3133,52 @@ check_governance_docs_contract() {
     fail "risk register missing Lattice integrity risk"
   grep -Fq "Parallel worker collisions" docs/risk-register.md ||
     fail "risk register missing parallel worker risk"
+}
+
+check_negative_space_testing_contract() {
+  local doc_path="docs/negative-space-testing.md"
+  local linked_path invariant_id phrase
+
+  log "checking negative-space testing contract"
+
+  [[ -s "$doc_path" ]] || fail "negative-space testing docs are missing or empty"
+  for linked_path in README.md docs/security.md docs/compatibility.md docs/scripts/upkeeper.md; do
+    grep -Fq "$doc_path" "$linked_path" || fail "$linked_path does not link the negative-space testing contract"
+  done
+
+  for invariant_id in NS-001 NS-002 NS-003 NS-004 NS-005 NS-006 NS-007 NS-008; do
+    grep -Fq "$invariant_id" "$doc_path" || fail "negative-space catalog missing $invariant_id"
+  done
+  for phrase in \
+    "must not select runtime artifacts" \
+    "must not reveal the backup vault root" \
+    "must not replace a selected target" \
+    "must not leave tracked-source mutations" \
+    "must not be accepted as clean absence or successful work" \
+    "must not spend real backend quota" \
+    "must not be treated as safe" \
+    "must not be accepted as active protection"; do
+    grep -Fq "$phrase" "$doc_path" || fail "negative-space catalog missing phrase: $phrase"
+  done
+
+  grep -Fq "runtime_path_rejected" tests/precontact_backup_test.bash ||
+    fail "negative-space proof missing runtime target rejection fixture"
+  grep -Fq "compiled prompt leaked vault root" tests/precontact_backup_test.bash ||
+    fail "negative-space proof missing vault-root leak fixture"
+  grep -Fq "Replacement target selection is wrapper-only" tests/precontact_backup_test.bash ||
+    fail "negative-space proof missing replacement-authority fixture"
+  grep -Fq "source_mutation_guard.violation" Upkeeper ||
+    fail "negative-space proof missing source mutation guard"
+  grep -Fq "BUG_REPORT_ONLY_MUTATION_VIOLATION" Upkeeper ||
+    fail "negative-space proof missing bug-report-only mutation reason"
+  grep -Fq "test_status_marker_rejects_decorated_or_ambiguous_candidates" tests/wrapper_contract_test.bash ||
+    fail "negative-space proof missing malformed status-marker fixture"
+  grep -Fq "No mode launches a real Codex backend task" tools/validate_upkeeper.sh ||
+    fail "negative-space proof missing no-backend validation contract"
+  grep -Fq "config file must not be a symlink" Upkeeper ||
+    fail "negative-space proof missing unsafe config preflight"
+  grep -Fq "Genie Protocol requires sandboxed backend Codex execution" tests/wrapper_contract_test.bash ||
+    fail "negative-space proof missing unsafe backend mode fixture"
 }
 
 check_client_link_tools_contract() {
@@ -4241,6 +4323,22 @@ check_file_manifest_selection() {
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/manifest.log" || fail "manifest dry-run did not finish cleanly"
   jq -e '.schema_version == 2 and ((.root_hash // "") | length == 64) and (has("root") | not) and (.files | length) > 0 and ((.files[0].rel_path // "") | length > 0) and ([.files[] | select(has("abs_path"))] | length == 0)' "$manifest_path" >/dev/null || fail "manifest JSON contract is invalid"
 
+  mkdir -p "$temp_dir/breadcrumbs/open"
+  cat >"$temp_dir/breadcrumbs/open/high.json" <<'JSON'
+{"schema":1,"record_type":"upkeeper_breadcrumb","status":"open","id":"high-fixture","kind":"page_error","severity":"high","reason":"fixture severe breadcrumb"}
+JSON
+  UPKEEPER_BREADCRUMB_STATE_DIR="$temp_dir/breadcrumbs" run_manifest_dry_run "$temp_dir/breadcrumb-gate.log" \
+    --target-root=docs \
+    --selection-source=enumerate
+  grep -Fq "breadcrumb.gate status=blocking action=force_target target_file=Upkeeper" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb did not force the gate target"
+  grep -Fq "review.preselect path_hmac=" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb gate did not produce a redacted preselect log"
+  grep -Fq "selection_mode=explicit_target" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb gate did not use explicit target selection"
+  grep -Fq "basis=operator\\ --target-file=Upkeeper" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb gate did not redirect normal rotation to Upkeeper"
+
   (
     # Keep the unsafe-path contract covered without adding another expensive
     # dry-run invocation to this already broad full-validation fixture.
@@ -4427,6 +4525,13 @@ PY
     --bug-report-only
   grep -Fq "bug_report_only=1" "$temp_dir/bug-report-only.log" || fail "bug-report-only was not recorded in cycle.start"
   grep -Fq "bug_report_only.prompt appended" "$temp_dir/bug-report-only.log" || fail "bug-report-only prompt addendum was not appended"
+  run_manifest_dry_run "$temp_dir/audit-only.log" \
+    --target-file=Upkeeper \
+    --audit-only
+  grep -Fq "bug_report_only=1" "$temp_dir/audit-only.log" || fail "audit-only did not enable the no-fix report contract"
+  grep -Fq "audit_only=1" "$temp_dir/audit-only.log" || fail "audit-only was not recorded in cycle.start"
+  grep -Fq "bug_report_only.draft.destination mode=audit_only" "$temp_dir/audit-only.log" || fail "audit-only did not use the audit report destination"
+  grep -Fq "bug_report_only.prompt appended" "$temp_dir/audit-only.log" || fail "audit-only prompt addendum was not appended"
   bash tests/bug_report_only_test.bash
 
   mkdir -p "$temp_dir/bin"
@@ -6547,6 +6652,7 @@ run_check validation_quota_session_fixture_contract check_validation_quota_sessi
 run_check dependency_guidance_contract check_dependency_guidance_contract
 run_check release_readiness_docs_contract check_release_readiness_docs_contract
 run_check governance_docs_contract check_governance_docs_contract
+run_check negative_space_testing_contract check_negative_space_testing_contract
 run_check client_link_tools_contract check_client_link_tools_contract
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
 run_check test_invocation_mode_contract check_test_invocation_mode_contract
@@ -6567,6 +6673,7 @@ run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
 run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_contract
 run_check breadcrumb_audit_contract check_breadcrumb_audit_contract
+run_check lattice_custody_policy_contract check_lattice_custody_policy_contract
 run_check automation_obligation_root_boundary_contract check_automation_obligation_root_boundary_contract
 run_check automation_obligation_reconciliation_contract check_automation_obligation_reconciliation_contract
 run_check automation_obligation_churn_contract check_automation_obligation_churn_contract

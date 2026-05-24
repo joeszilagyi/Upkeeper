@@ -11,10 +11,25 @@ Version numbering note:
 	2. Repeated identical batch-validation failures update the same obligation occurrence count instead of opening noisy duplicates.
 	3. The next backlog invocation sees that obligation before merge retry or fresh issue selection, so local validation breakage becomes mandatory machine-health work instead of manual chat memory.
 
+2026-05-24: negative-space validation contract:
+	1. Added `docs/negative-space-testing.md` as the tracked catalog for deterministic "must not happen" validation contracts.
+	2. The catalog links target selection, pre-contact backup redaction, replacement authority, source-mutation guards, malformed marker rejection, no-backend validation, config safety, and backend sandbox allowlisting to local proofs.
+	3. `tools/validate_upkeeper.sh --quick` now checks that the catalog and its public documentation links stay present.
+
 2026-05-24: breadcrumb custody audit:
 	1. Added `tools/audit_upkeeper_breadcrumbs.py`, a deterministic local scanner that fingerprints suspicious log, transcript, automation-obligation, and tool-failure breadcrumbs.
 	2. The audit command can write ignored local custody records under `runtime/upkeeper-breadcrumbs/open`, `resolved`, and `suppressed`, preserving weak clues until they are explicitly resolved or suppressed.
 	3. Quick validation now covers breadcrumb record creation, duplicate updates, expected-fixture suppression, and resolve-missing behavior.
+
+2026-05-24: Lattice custody authority policy:
+	1. Documented that Lattice is supporting evidence, not sole custody authority, for audit, breadcrumb, anomaly, and automation-obligation custody while known Lattice integrity blockers remain open.
+	2. Required future Lattice-derived custody decisions to keep fallback log/transcript/runtime evidence checks or fail closed when that fallback evidence is unavailable.
+	3. Added validation that current breadcrumb/audit custody code does not require Lattice and that the policy remains present in public docs.
+
+2026-05-24: breadcrumb severity gate:
+	1. Open critical/high breadcrumb custody records now redirect normal Upkeeper target rotation to the configured Upkeeper gate target before backend work starts.
+	2. Explicit target pins and issue-fix pins remain visible as pinned work instead of being silently replaced, while low/medium breadcrumbs remain custody-only by default.
+	3. Suppressed breadcrumb records now carry a named suppression rationale plus an optional expiry field so suppression is machine-readable.
 
 2026-05-24: embedded behavior table contracts:
 	1. Quick validation now checks the embedded behavior table drift contract for startup anomaly changed-path allowlists, source-safe exclusions, command-kind classifiers, review-module ids, and Lattice pass-code mappings.
@@ -24,6 +39,11 @@ Version numbering note:
 	1. Obligation issue-report sync now verifies existing GitHub issue links are still open before accepting them as custody for an open automation obligation.
 	2. Closed linked issues are preserved as stale evidence, cleared from the active custody fields, and replaced with a fresh issue for the still-open obligation when GitHub filing is enabled.
 	3. If an existing linked issue cannot be verified, backlog records `github_verify_failed` and fails closed before normal issue selection instead of claiming clean custody.
+
+2026-05-24: audit-only no-fix mode:
+	1. Added `--audit-only` as the canonical read-only/no-fix audit mode, with `--review-only`, `--no-fix`, and `--read-only` as aliases.
+	2. Audit-only mode reuses the bug-report-only final-message report contract, records `audit_only=1` in cycle metadata, and stores local reports under ignored runtime audit evidence by default.
+	3. The source mutation guard now reports audit-only source changes as `AUDIT_ONLY_MUTATION_VIOLATION`, and local validation checks the CLI, help, config, prompt, and runtime report routing contract.
 
 2026-05-24: validation dry-run helper:
 	1. `tools/validate_upkeeper.sh` now centralizes repeated fake Upkeeper dry-run environment setup in a validator-local helper.

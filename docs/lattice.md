@@ -52,6 +52,22 @@ selection still starts from live local files, ignores `.git/`, `runtime/`,
 caches, and vendor content, and then applies explicit target, startup-anomaly,
 and failure-queue priority rules before normal oldest-mtime rotation.
 
+Lattice is supporting evidence, not sole custody authority, for audit,
+breadcrumb, anomaly, or automation-obligation decisions while the known Lattice
+integrity blockers tracked in issues #112, #113, #115, #116, #117, and #118
+remain open. Custody decisions must continue to have fallback
+log/transcript/runtime evidence available, such as local log lines, transcript
+files, runtime breadcrumb JSON, automation obligations, or tool-failure queue
+records. A future Lattice-derived custody decision must either confirm against
+that fallback evidence or fail closed with a local explanation when the fallback
+evidence is unavailable.
+
+The current breadcrumb audit and startup gate do not require Lattice. They read
+logs, transcript directories, automation-obligation records, tool-failure queue
+records, and `runtime/upkeeper-breadcrumbs` JSON directly so custody can still
+work when Lattice is unavailable or when its integrity policy is deliberately
+weaker than the live local evidence.
+
 ## Defaults
 
 The tracked configs define:

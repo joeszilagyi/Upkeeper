@@ -1187,6 +1187,8 @@ JSON
   [[ "$open_count" == "4" ]] || fail "breadcrumb audit wrote $open_count open records, expected 4"
   suppressed_count="$(find "$temp_dir/breadcrumbs/suppressed" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
   [[ "$suppressed_count" == "1" ]] || fail "breadcrumb audit wrote $suppressed_count suppressed records, expected 1"
+  jq -e '.suppression_rationale == "expected_negative_fixture" and has("suppression_expires_at")' "$temp_dir/breadcrumbs/suppressed"/*.json >/dev/null ||
+    fail "breadcrumb audit suppression record lacks machine-readable rationale and expiry field"
   page_record="$(find "$temp_dir/breadcrumbs/open" -maxdepth 1 -type f -name 'page_error-*.json' | head -1)"
   [[ -n "$page_record" ]] || fail "breadcrumb audit did not write page_error record"
 
@@ -1222,6 +1224,28 @@ JSON
   [[ "$open_count" == "0" ]] || fail "breadcrumb audit left open records after resolve-missing"
 
   rm -r "$temp_dir"
+}
+
+check_lattice_custody_policy_contract() {
+  log "checking Lattice custody authority policy"
+
+  for policy_path in docs/lattice.md docs/scripts/upkeeper.md docs/compatibility.md; do
+    grep -Fq "supporting evidence, not sole custody authority" "$policy_path" ||
+      fail "Lattice custody policy missing supporting-evidence wording in $policy_path"
+    grep -Fq "log/transcript/runtime evidence" "$policy_path" ||
+      fail "Lattice custody policy missing fallback evidence wording in $policy_path"
+  done
+
+  grep -Fq "issues #112, #113, #115, #116, #117, and #118" docs/lattice.md ||
+    fail "Lattice docs do not name the integrity blocker issue set"
+  for evidence_flag in --log --transcript-dir --obligation-root --failure-queue-root; do
+    grep -Fq -- "$evidence_flag" tools/audit_upkeeper_breadcrumbs.py ||
+      fail "breadcrumb audit tool missing fallback evidence option $evidence_flag"
+  done
+  if rg -n '\b(upkeeper_lattice\.py|UPKEEPER_LATTICE|lattice_record_|runtime/upkeeper-lattice)\b' \
+    tools/audit_upkeeper_breadcrumbs.py lib/upkeeper/breadcrumb_gate.bash >/dev/null; then
+    fail "breadcrumb/audit custody code now depends directly on Lattice"
+  fi
 }
 
 check_automation_obligation_root_boundary_contract() {
@@ -2381,11 +2405,13 @@ check_prompt_template() {
   grep -Fq "UPKEEPER_IGNORE_FILE" Upkeeper.conf || fail "root config missing .upkeeperignore default"
   grep -Fq "UPKEEPER_IGNORE_FILE" configurations/default.conf || fail "default profile missing .upkeeperignore default"
   grep -Fq "UPKEEPER_BUG_REPORT_ONLY" Upkeeper.conf || fail "root config missing bug-report-only default"
+  grep -Fq "UPKEEPER_BREADCRUMB_GATE_ENABLED" Upkeeper.conf || fail "root config missing breadcrumb gate default"
   grep -Fq "UPKEEPER_AUDIT_ONLY" Upkeeper.conf || fail "root config missing audit-only default"
   grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" Upkeeper.conf || fail "root config missing issue-fix default"
   grep -Fq "UPKEEPER_FIX_ISSUE" Upkeeper.conf || fail "root config missing explicit issue-fix default"
   grep -Fq "UPKEEPER_PRECONTACT_BACKUP_ENABLED" Upkeeper.conf || fail "root config missing pre-contact backup defaults"
   grep -Fq "UPKEEPER_BUG_REPORT_ONLY" configurations/default.conf || fail "default profile missing bug-report-only default"
+  grep -Fq "UPKEEPER_BREADCRUMB_GATE_ENABLED" configurations/default.conf || fail "default profile missing breadcrumb gate default"
   grep -Fq "UPKEEPER_AUDIT_ONLY" configurations/default.conf || fail "default profile missing audit-only default"
   grep -Fq "UPKEEPER_FIX_NEXT_ISSUE" configurations/default.conf || fail "default profile missing issue-fix default"
   grep -Fq "UPKEEPER_FIX_ISSUE" configurations/default.conf || fail "default profile missing explicit issue-fix default"
@@ -2641,6 +2667,8 @@ check_help_and_diff() {
   grep -Fq -- "--profile" <<<"$validation_help" || fail "validator help missing --profile"
   grep -Fq -- "UPKEEPER_MAX_COVER" <<<"$help" || fail "help missing UPKEEPER_MAX_COVER"
   grep -Fq -- "UPKEEPER_BUG_REPORT_ONLY" <<<"$help" || fail "help missing UPKEEPER_BUG_REPORT_ONLY"
+  grep -Fq -- "UPKEEPER_BREADCRUMB_GATE_ENABLED" <<<"$help" || fail "help missing UPKEEPER_BREADCRUMB_GATE_ENABLED"
+  grep -Fq -- "UPKEEPER_BREADCRUMB_STATE_DIR" <<<"$help" || fail "help missing UPKEEPER_BREADCRUMB_STATE_DIR"
   grep -Fq -- "UPKEEPER_AUDIT_ONLY" <<<"$help" || fail "help missing UPKEEPER_AUDIT_ONLY"
   grep -Fq -- "UPKEEPER_AUDIT_REPORT_DIR" <<<"$help" || fail "help missing UPKEEPER_AUDIT_REPORT_DIR"
   grep -Fq -- "UPKEEPER_FIX_NEXT_ISSUE" <<<"$help" || fail "help missing UPKEEPER_FIX_NEXT_ISSUE"
@@ -4283,6 +4311,22 @@ check_file_manifest_selection() {
   grep -Fq "target_depth=1" "$temp_dir/manifest.log" || fail "manifest target depth was not logged"
   grep -Fq "cycle.exit exit_code=0 reason=DRY_RUN" "$temp_dir/manifest.log" || fail "manifest dry-run did not finish cleanly"
   jq -e '.schema_version == 2 and ((.root_hash // "") | length == 64) and (has("root") | not) and (.files | length) > 0 and ((.files[0].rel_path // "") | length > 0) and ([.files[] | select(has("abs_path"))] | length == 0)' "$manifest_path" >/dev/null || fail "manifest JSON contract is invalid"
+
+  mkdir -p "$temp_dir/breadcrumbs/open"
+  cat >"$temp_dir/breadcrumbs/open/high.json" <<'JSON'
+{"schema":1,"record_type":"upkeeper_breadcrumb","status":"open","id":"high-fixture","kind":"page_error","severity":"high","reason":"fixture severe breadcrumb"}
+JSON
+  UPKEEPER_BREADCRUMB_STATE_DIR="$temp_dir/breadcrumbs" run_manifest_dry_run "$temp_dir/breadcrumb-gate.log" \
+    --target-root=docs \
+    --selection-source=enumerate
+  grep -Fq "breadcrumb.gate status=blocking action=force_target target_file=Upkeeper" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb did not force the gate target"
+  grep -Fq "review.preselect path_hmac=" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb gate did not produce a redacted preselect log"
+  grep -Fq "selection_mode=explicit_target" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb gate did not use explicit target selection"
+  grep -Fq "basis=operator\\ --target-file=Upkeeper" "$temp_dir/breadcrumb-gate.log" ||
+    fail "high-severity breadcrumb gate did not redirect normal rotation to Upkeeper"
 
   (
     # Keep the unsafe-path contract covered without adding another expensive
@@ -6618,6 +6662,7 @@ run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
 run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_contract
 run_check breadcrumb_audit_contract check_breadcrumb_audit_contract
+run_check lattice_custody_policy_contract check_lattice_custody_policy_contract
 run_check automation_obligation_root_boundary_contract check_automation_obligation_root_boundary_contract
 run_check automation_obligation_reconciliation_contract check_automation_obligation_reconciliation_contract
 run_check automation_obligation_churn_contract check_automation_obligation_churn_contract

@@ -35,10 +35,77 @@ Validation:
 - `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
 - `tools/validate_upkeeper.sh --quick`
 - `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Lattice Custody Authority Policy
+
+Status: completed and merged
+
+Goal:
+- close issue #138 by documenting and validating that Lattice is supporting
+  evidence, not sole custody authority, for audit and breadcrumb decisions while
+  listed Lattice integrity blockers remain open
+- prove current breadcrumb/audit custody code keeps fallback log, transcript,
+  obligation, and failure-queue evidence available without requiring Lattice
+- preserve Lattice as useful long-memory evidence without letting it become the
+  only source for control-plane custody
+
+Constraints:
+- no backend Codex validation
+- keep current Lattice runtime behavior unchanged
+- make the policy public and machine-checked
+
+Files likely touched:
+- `docs/lattice.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Breadcrumb Severity Gate
+
+Status: completed and merged
+
+Goal:
+- close issue #137 by making unresolved high/critical breadcrumb custody affect
+  normal Upkeeper rotation
+- keep the enforcement deterministic and pre-model
+- build on the local breadcrumb custody records from issue #124
+
+Constraints:
+- preserve explicit `--target-file` and issue-fix pins
+- keep low/medium breadcrumbs warning/custody-only by default
+- do not rescan large logs on the clean startup path; read current open custody
+  records instead
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/breadcrumb_gate.bash`
+- `tools/audit_upkeeper_breadcrumbs.py`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
 
 ## Audit-Only Mode
 
-Status: completed locally; pending PR/CI
+Status: completed and merged
 
 Goal:
 - close issue #132 by making audit-only/no-fix a first-class invocation surface

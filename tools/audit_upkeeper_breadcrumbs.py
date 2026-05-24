@@ -290,6 +290,8 @@ def write_records(state_root: Path, open_items: list[Breadcrumb], suppressed_ite
         path = suppressed_dir / f"{item.ident}.json"
         payload = record_payload(item, seen_at=seen_at, existing=read_json(path))
         payload["suppression_reason"] = "expected local negative-test fixture context"
+        payload["suppression_rationale"] = "expected_negative_fixture"
+        payload["suppression_expires_at"] = None
         write_json_atomic(path, payload)
         written_suppressed += 1
 

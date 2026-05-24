@@ -187,6 +187,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   `runtime/upkeeper-lattice/lattice.sqlite3`. Runtime artifacts under
   `runtime/upkeeper-lattice/`, including SQLite side files, backups, exports,
   and recovery records, remain ignored local state.
+- For audit, breadcrumb, anomaly, and automation-obligation custody, Lattice is
+  supporting evidence, not sole custody authority, until the tracked Lattice
+  integrity blockers are closed. Lattice-derived custody decisions must keep a
+  fallback log/transcript/runtime evidence check, or fail closed when that
+  fallback evidence is unavailable.
 - `UPKEEPER_PASS_RESULT` is additive. `UPKEEPER_STATUS` and
   `UPKEEPER_LOG_REVIEW` remain unchanged.
 - Review outcomes recognized in final prose include `REVIEWED_AND_FIXED`,
@@ -202,6 +207,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   `--tracked-only` keeps normal rotation to tracked files only. Explicit
   `--target-file` remains the strongest one-cycle pin for safe readable text
   targets, including non-ignored untracked files.
+- Open critical/high breadcrumb custody records are machine-health evidence.
+  Before normal rotation, they redirect the cycle to the configured Upkeeper
+  breadcrumb gate target so unresolved severe clues cannot passively rot while
+  ordinary timestamp selection continues. Explicit target pins and issue-fix
+  pins remain visible rather than being silently replaced.
 - `--max-cover` may ask Lattice to rank a broader current tracked text-file
   pool, but final selection still revalidates the live source-safe boundary in
   the same cycle.

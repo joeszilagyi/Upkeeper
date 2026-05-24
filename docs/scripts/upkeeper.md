@@ -126,6 +126,11 @@ Loop stop semantics:
     are still honored as live log sinks, but rotation and sibling archive
     pruning stay blocked unless explicitly enabled with
     `CODEX_LOG_FILE_ALLOW_UNSAFE=1` and a trusted Upkeeper rotation marker.
+  - Open breadcrumb custody records under `UPKEEPER_BREADCRUMB_STATE_DIR` with
+    severity `critical` or `high` redirect normal target rotation to the
+    configured Upkeeper gate target before backend work starts. Explicit target
+    pins and issue-fix pins remain visible as pinned work and are not silently
+    replaced.
 
 Transcript and live terminal behavior:
   - Default live terminal mode is `basic`: routine INFO logs stay in
@@ -443,6 +448,12 @@ Prompt behavior:
     recovery facts under ignored runtime state. Lattice does not replace live
     source-safe eligibility; explicit targets, startup anomaly gates, and the
     local failure queue still keep their existing priority.
+    For audit, breadcrumb, anomaly, and automation-obligation custody, Lattice
+    is supporting evidence, not sole custody authority, while the known Lattice
+    integrity blockers remain open. Custody decisions must keep fallback
+    log/transcript/runtime evidence available and confirm any future
+    Lattice-derived custody decision against that evidence, or fail closed when
+    the fallback evidence is unavailable.
     If Lattice is unavailable and `UPKEEPER_LATTICE_REQUIRED=0`, the wrapper
     logs one warning, spools a small recovery record when possible, and
     continues the existing cycle behavior. If `UPKEEPER_LATTICE_REQUIRED=1`,
@@ -675,6 +686,10 @@ Environment overrides:
   UPKEEPER_SELECTION_REVIEW_MODULES Default: empty
   UPKEEPER_MAX_COVER           Default: 0
   UPKEEPER_BUG_REPORT_ONLY     Default: 0
+  UPKEEPER_BREADCRUMB_GATE_ENABLED Default: 1
+  UPKEEPER_BREADCRUMB_STATE_DIR Default: runtime/upkeeper-breadcrumbs
+  UPKEEPER_BREADCRUMB_GATE_SEVERITIES Default: critical,high
+  UPKEEPER_BREADCRUMB_GATE_TARGET Default: Upkeeper
   UPKEEPER_AUDIT_ONLY          Default: 0
   UPKEEPER_ALLOW_GH_ISSUE_WRITE Default: 0
   UPKEEPER_BUG_REPORT_DRAFT_DIR Default: runtime/upkeeper-bug-report-drafts

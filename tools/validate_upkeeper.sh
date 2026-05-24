@@ -1362,10 +1362,16 @@ check_automation_obligation_issue_report_contract() {
 
   log "checking automation obligation issue-report bridge contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-obligation-issue-report.XXXXXX)"
-  mkdir -p "$temp_dir/obligations/open" "$temp_dir/bin"
+  mkdir -p "$temp_dir/obligations/open" "$temp_dir/obligations/resolved" "$temp_dir/bin"
   record_file="$temp_dir/obligations/open/report-me.json"
   cat >"$record_file" <<JSON
 {"schema":1,"record_type":"automation_obligation","status":"open","id":"report-me","created_at":"2026-05-23T02:00:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"PAGE error was observed during unattended loop","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","source_cycle_id":"cycle-a","source_run_hash":"hash-a","occurrence_count":4,"evidence":{"source":"backlog_loop_log","excerpt":"$ROOT_DIR/Upkeeper PAGE [ERROR] example","normalized_excerpt":"Upkeeper PAGE [ERROR] example"},"required_resolution":["patch the wrapper","add deterministic validation"]}
+JSON
+  cat >"$temp_dir/obligations/open/create-me.json" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"create-me","created_at":"2026-05-23T02:00:30-0700","kind":"prior_run_anomaly","severity":"high","summary":"new unlinked anomaly","root":"$ROOT_DIR","target_scope":"target","target_file":"lib/upkeeper/lattice.bash","repair_target_file":"lib/upkeeper/lattice.bash","reason":"PRIOR_RUN_ANOMALY","source_cycle_id":"cycle-b","source_run_hash":"hash-b","evidence":{"source":"backlog_loop_log","excerpt":"$ROOT_DIR/lib/upkeeper/lattice.bash PAGE [ERROR] example","normalized_excerpt":"lattice PAGE [ERROR] example"}}
+JSON
+  cat >"$temp_dir/obligations/resolved/linked-owner.json" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"resolved","id":"linked-owner","created_at":"2026-05-23T01:00:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"previous matching anomaly","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","github_issue_number":"555","github_issue_url":"https://github.com/example/upkeeper/issues/555","evidence":{"source":"backlog_loop_log","normalized_excerpt":"Upkeeper PAGE [ERROR] example"}}
 JSON
   cat >"$temp_dir/obligations/open/foreign.json" <<JSON
 {"schema":1,"record_type":"automation_obligation","status":"open","id":"foreign","created_at":"2026-05-23T02:01:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"foreign root","root":"$temp_dir/foreign-root","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY"}
@@ -1375,10 +1381,18 @@ JSON
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="$temp_dir/reports" \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "1" ]] ||
+  [[ "$(jq -r '.open_scanned' <<<"$sync_json")" == "3" ]] ||
+    fail "automation obligation issue-report bridge did not report scanned open obligations"
+  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "2" ]] ||
     fail "automation obligation issue-report bridge did not scope to current root"
-  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "1" ]] ||
+  [[ "$(jq -r '.foreign_root_deferred' <<<"$sync_json")" == "1" ]] ||
+    fail "automation obligation issue-report bridge did not report deferred foreign-root obligations"
+  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "2" ]] ||
     fail "automation obligation issue-report bridge did not draft the current obligation"
+  [[ "$(jq -r '.linked_existing' <<<"$sync_json")" == "1" ]] ||
+    fail "automation obligation issue-report bridge did not link matching existing issue"
+  [[ "$(jq -r '.issue_ready_only' <<<"$sync_json")" == "1" ]] ||
+    fail "automation obligation issue-report bridge did not report local issue-ready-only obligations"
   report_file="$(jq -r '.issue_report_path' "$record_file")"
   [[ -f "$report_file" ]] || fail "automation obligation issue-report bridge did not write report file"
   grep -Fq "## Impact" "$report_file" || fail "automation obligation report missing impact section"
@@ -1387,8 +1401,12 @@ JSON
   if grep -Fq "$ROOT_DIR" "$report_file"; then
     fail "automation obligation report leaked absolute repo root"
   fi
-  [[ "$(jq -r '.issue_report_state' "$record_file")" == "drafted" ]] ||
-    fail "automation obligation record did not record drafted issue-report state"
+  [[ "$(jq -r '.github_issue_number' "$record_file")" == "555" ]] ||
+    fail "automation obligation record did not inherit matching existing issue number"
+  [[ "$(jq -r '.issue_report_state' "$record_file")" == "issue_linked" ]] ||
+    fail "automation obligation record did not record linked issue-report state"
+  [[ "$(jq -r '.issue_report_state' "$temp_dir/obligations/open/create-me.json")" == "issue_ready_only" ]] ||
+    fail "automation obligation record did not record issue-ready-only state"
 
   cat >"$temp_dir/bin/gh" <<'SH'
 #!/usr/bin/env bash
@@ -1405,7 +1423,9 @@ SH
   )"
   [[ "$(jq -r '.github_created' <<<"$sync_json")" == "1" ]] ||
     fail "automation obligation issue-report bridge did not create opted-in GitHub issue"
-  [[ "$(jq -r '.github_issue_number' "$record_file")" == "987" ]] ||
+  [[ "$(jq -r '.github_existing' <<<"$sync_json")" == "1" ]] ||
+    fail "automation obligation issue-report bridge did not preserve existing linked issue"
+  [[ "$(jq -r '.github_issue_number' "$temp_dir/obligations/open/create-me.json")" == "987" ]] ||
     fail "automation obligation record did not store created GitHub issue number"
   grep -Fq "issue create" "$gh_args" || fail "automation obligation GitHub issue command was not invoked"
 

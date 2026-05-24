@@ -155,9 +155,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   normal bug-finding or GitHub issue-selection policies. Backup failure-queue
   runs use `runtime/unaddressed-tool-failures-backup`.
 - Backlog issue batches generate deterministic issue-ready reports for open
-  current-root automation obligations before normal issue selection. The local
-  reports are runtime evidence, not source, and GitHub issue creation remains a
-  wrapper-side opt-in through `BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=1`.
+  current-root automation obligations before normal issue selection, after first
+  mapping matching obligation signatures to existing issue links when local
+  evidence already has one. The local reports are runtime evidence, not source,
+  and GitHub issue creation remains a wrapper-side opt-in through
+  `BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=1`.
 - Upkeeper Lattice is additive local runtime evidence at
   `runtime/upkeeper-lattice/lattice.sqlite3`. Runtime artifacts under
   `runtime/upkeeper-lattice/`, including SQLite side files, backups, exports,

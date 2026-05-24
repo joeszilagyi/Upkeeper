@@ -196,10 +196,13 @@ Important:
     backlog records repair-attempt metadata and cools that obligation down so
     another eligible obligation can run; if every obligation is cooling down,
     backlog exits without starting fresh issue work. After anomaly custody and
-    reconciliation, backlog also writes one deterministic issue-ready report for
-    every open current-root obligation before selecting work, so system-level
-    failures have durable issue text even when backend Codex never enters
-    bug-report-only mode. These local reports default to
+    reconciliation, backlog also maps open current-root obligations to existing
+    issue links by stable obligation signature, then writes or refreshes one
+    deterministic issue-ready report for every current-root obligation before
+    selecting work, so system-level failures have durable issue text even when
+    backend Codex never enters bug-report-only mode. The launcher summary
+    reports scanned, linked, issue-ready, GitHub-created, deferred, and
+    still-local-only counts. These local reports default to
     ${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/obligation-issue-reports.
     Wrapper-side GitHub issue creation is available only when explicitly
     enabled with BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=1; otherwise the local

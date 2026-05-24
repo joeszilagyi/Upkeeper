@@ -1692,7 +1692,7 @@ backlog_select_open_obligation_json() {
 }
 
 backlog_reconcile_open_obligations() {
-  local output status duplicate_count current_before current_after foreign_count groups
+  local output status duplicate_count current_before current_after foreign_count groups total_resolved obsolete_resolved
 
   [[ "$BACKLOG_OBLIGATION_RECONCILE" == "1" ]] || return 0
   output="$(
@@ -1706,14 +1706,16 @@ backlog_reconcile_open_obligations() {
   current_after="$(jq -r '.current_root_open_after // 0' <<<"$output")"
   foreign_count="$(jq -r '.deferred_foreign_root_count // 0' <<<"$output")"
   groups="$(jq -r '.duplicate_groups // 0' <<<"$output")"
+  total_resolved="$(jq -r '.total_resolved // 0' <<<"$output")"
+  obsolete_resolved="$(jq -r '.obsolete_resolved // 0' <<<"$output")"
   if [[ "$status" == "reconciled" || "$foreign_count" != "0" ]]; then
-    log "automation obligation reconciliation: status=$status current_open_before=$current_before current_open_after=$current_after duplicate_groups=$groups duplicates_resolved=$duplicate_count foreign_deferred=$foreign_count"
+    log "automation obligation reconciliation: status=$status current_open_before=$current_before current_open_after=$current_after resolved=$total_resolved duplicates_resolved=$duplicate_count obsolete_resolved=$obsolete_resolved duplicate_groups=$groups foreign_deferred=$foreign_count"
   fi
   return 0
 }
 
 backlog_sync_obligation_issue_reports() {
-  local output status current_open drafted updated github_created github_failed report_dir
+  local output status scanned current_open foreign_deferred drafted linked updated github_created github_existing github_failed issue_ready_only local_only local_only_reason report_dir
 
   [[ "$BACKLOG_OBLIGATION_ISSUE_REPORTS" == "1" ]] || return 0
   prepare_backlog_runtime_env
@@ -1726,14 +1728,21 @@ backlog_sync_obligation_issue_reports() {
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )" || return $?
   status="$(jq -r '.status // "unknown"' <<<"$output")"
+  scanned="$(jq -r '.open_scanned // .current_root_open // 0' <<<"$output")"
   current_open="$(jq -r '.current_root_open // 0' <<<"$output")"
+  foreign_deferred="$(jq -r '.foreign_root_deferred // 0' <<<"$output")"
   drafted="$(jq -r '.drafted // 0' <<<"$output")"
+  linked="$(jq -r '.linked_existing // 0' <<<"$output")"
   updated="$(jq -r '.updated_records // 0' <<<"$output")"
   github_created="$(jq -r '.github_created // 0' <<<"$output")"
+  github_existing="$(jq -r '.github_existing // 0' <<<"$output")"
   github_failed="$(jq -r '.github_failed // 0' <<<"$output")"
+  issue_ready_only="$(jq -r '.issue_ready_only // 0' <<<"$output")"
+  local_only="$(jq -r '.still_local_only // 0' <<<"$output")"
+  local_only_reason="$(jq -r '.still_local_only_reason // ""' <<<"$output")"
   report_dir="$(jq -r '.report_dir // ""' <<<"$output")"
-  if [[ "$current_open" != "0" || "$github_failed" != "0" ]]; then
-    log "automation obligation issue reports: status=$status current_open=$current_open drafted=$drafted records_updated=$updated github_created=$github_created github_failed=$github_failed report_dir=$report_dir"
+  if [[ "$current_open" != "0" || "$foreign_deferred" != "0" || "$github_failed" != "0" ]]; then
+    log "automation obligation issue reports: status=$status scanned=$scanned current_open=$current_open foreign_deferred=$foreign_deferred linked_existing=$linked issue_ready=$drafted issue_ready_only=$issue_ready_only github_existing=$github_existing github_created=$github_created github_failed=$github_failed still_local_only=$local_only reason=${local_only_reason:-none} records_updated=$updated report_dir=$report_dir"
   fi
   if [[ "$BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE" == "1" && "$github_failed" != "0" ]]; then
     log "automation obligation GitHub issue creation had failures; local issue reports remain authoritative"

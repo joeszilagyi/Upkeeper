@@ -3,6 +3,48 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue 444 Obligation Issue Promotion Hardening
+
+Status: completed locally
+
+Goal:
+- ensure actionable current-root automation obligations become issue-linked
+  records instead of long-lived local-only JSON evidence
+- reuse existing issue links for matching obligation signatures before drafting
+  or creating new issue reports
+- make backlog output summarize scanned, linked, promoted, resolved/deferred,
+  and still-local-only obligation dispositions in ordinary operator language
+
+Constraints:
+- do not contact GitHub directly from this run
+- keep GitHub writes opt-in through existing wrapper policy
+- keep local evidence private and bounded
+- preserve deterministic pre-model reconciliation and selection behavior
+
+Files likely touched:
+- `lib/upkeeper/automation_obligations.bash`
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `./Upkeeper --help`
+- `./Upkeeper --version`
+- `git diff --check`
+
+Completed in this patch:
+- Added stable-signature issue-link reuse during obligation issue-report sync.
+- Added launcher summary fields for scanned, linked, issue-ready, GitHub-created,
+  deferred, and still-local-only obligations.
+- Extended local validation to cover linked existing issues, issue-ready-only
+  reports, deferred foreign-root accounting, and opt-in fake GitHub creation.
+
 ## Issue 430 Lattice Degraded-Mode Ownership
 
 Status: completed locally; pending PR/CI

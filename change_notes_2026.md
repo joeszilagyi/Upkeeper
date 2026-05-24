@@ -10,6 +10,11 @@ Version numbering note:
 	1. Backlog watch output now recognizes explicit expected-negative-fixture sentinels from passing validation probes and reclassifies marked `PAGE [ERROR]` evidence as `--FYI-- expected_negative_fixture=...` instead of an unqualified live control-plane failure.
 	2. Transcript artifact negative-path tests now bracket the intentional unsafe transcript-directory errors with fixture context, while formatter validation still proves real wrapper/control-plane errors stay `PAGE`.
 
+2026-05-23: obligation issue promotion hardening:
+	1. Backlog obligation issue-report sync now maps open current-root obligations to existing issue links by stable obligation signature before refreshing issue-ready reports or creating GitHub issues, so repeated evidence can attach to a known bug instead of remaining only in local obligation JSON.
+	2. The launcher summary now reports obligations scanned, linked to existing issues, issue-ready-only, GitHub-created/existing, deferred, and still-local-only counts with a reason when local issue reports remain the only filing artifact.
+	3. Local validation covers signature-based issue linking, foreign-root deferral accounting, issue-ready-only reporting, and opt-in fake GitHub issue creation without contacting the network.
+
 2026-05-23: Lattice degraded-mode ownership:
 	1. Optional `lattice.unavailable` warnings now include bounded `reason_class`, `owner_issue`, and degraded-mode `doctrine` fields so recurring Lattice loss has a stable owner and classification instead of appearing as unowned warning noise.
 	2. `tools/upkeeper_lattice.py classify-unavailable` provides a deterministic local classifier for unavailable detail payloads, and Lattice log/recovery import preserves the safe ownership fields while continuing to hash sensitive paths and raw details.

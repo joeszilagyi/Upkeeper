@@ -1510,6 +1510,56 @@ def first_nonempty(*values):
     return ""
 
 
+def stable_issue_number(value):
+    text = first_nonempty(value)
+    return text if re.fullmatch(r"[1-9][0-9]*", text) else ""
+
+
+def normalized_repo_target(value):
+    raw = first_nonempty(value).replace("\\", "/")
+    if not raw or raw in {".", "none", "unknown", "null"}:
+        return ""
+    if os.path.isabs(raw):
+        try:
+            relative = os.path.relpath(raw, root_dir)
+        except ValueError:
+            return ""
+        relative = relative.replace("\\", "/")
+        if relative == ".." or relative.startswith("../"):
+            return ""
+        raw = relative
+    normalized = os.path.normpath(raw).replace("\\", "/")
+    if normalized in {"", ".", ".."} or normalized.startswith("../"):
+        return ""
+    return normalized
+
+
+def evidence_fingerprint(data):
+    evidence = data.get("last_evidence")
+    if not isinstance(evidence, dict):
+        evidence = data.get("evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
+    return first_nonempty(
+        data.get("fingerprint"),
+        evidence.get("fingerprint"),
+        evidence.get("normalized_excerpt"),
+        evidence.get("kind"),
+    )
+
+
+def obligation_signature(data):
+    target = normalized_repo_target(first_nonempty(data.get("target_file")))
+    repair_target = normalized_repo_target(first_nonempty(data.get("repair_target_file")))
+    kind = first_nonempty(data.get("kind"))
+    reason = first_nonempty(data.get("reason"))
+    target_scope = first_nonempty(data.get("target_scope"), "target")
+    fingerprint = evidence_fingerprint(data)
+    if not kind or not reason or not (target or repair_target):
+        return ()
+    return (kind, reason, target_scope, target, repair_target, fingerprint)
+
+
 def same_root(data):
     raw = first_nonempty(data.get("root"))
     if not raw:
@@ -1598,6 +1648,7 @@ def body_for(data, title, source_path):
         bullet("occurrence count", data.get("occurrence_count")),
         bullet("repair attempts", data.get("repair_attempt_count")),
         bullet("blocked attempts", data.get("blocked_attempt_count")),
+        bullet("linked issue", first_nonempty(data.get("github_issue_number"), data.get("issue_number"))),
         "",
         "## Evidence",
         evidence_block(data),
@@ -1644,24 +1695,60 @@ def create_github_issue(title, body_path):
     return (match.group(1) if match else "", output, "")
 
 
-records = []
-if open_dir.is_dir():
-    for path in sorted(open_dir.glob("*.json")):
+def load_json_records(directory):
+    if not directory.is_dir():
+        return []
+    loaded = []
+    for path in sorted(directory.glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         if not isinstance(data, dict):
             continue
-        if data.get("status", "open") != "open" or not same_root(data):
-            continue
-        records.append((path, data))
+        loaded.append((path, data))
+    return loaded
+
+
+open_records_all = load_json_records(open_dir)
+resolved_records_all = load_json_records(open_dir.parent / "resolved")
+foreign_root_deferred = sum(
+    1 for _, data in open_records_all if data.get("status", "open") == "open" and not same_root(data)
+)
+records = [
+    (path, data)
+    for path, data in open_records_all
+    if data.get("status", "open") == "open" and same_root(data)
+]
+
+issue_index = {}
+for _, data in open_records_all + resolved_records_all:
+    if not same_root(data):
+        continue
+    issue_number = stable_issue_number(
+        first_nonempty(data.get("github_issue_number"), data.get("issue_number"), data.get("linked_issue_number"))
+    )
+    if not issue_number:
+        continue
+    signature = obligation_signature(data)
+    if not signature:
+        continue
+    issue_index.setdefault(
+        signature,
+        {
+            "github_issue_number": issue_number,
+            "github_issue_url": first_nonempty(data.get("github_issue_url"), data.get("issue_url")),
+            "source_obligation_id": first_nonempty(data.get("id")),
+        },
+    )
 
 private_dir(report_dir)
 drafted = 0
+linked_existing = 0
 github_created = 0
 github_existing = 0
 github_failed = 0
+issue_ready_only = 0
 updated_records = 0
 now = now_local()
 
@@ -1669,6 +1756,24 @@ for source_path, data in records:
     obligation_id = first_nonempty(data.get("id"), source_path.stem)
     title = title_for(data)
     report_path = report_dir / report_filename(obligation_id)
+    existing_issue_number = stable_issue_number(first_nonempty(data.get("github_issue_number"), data.get("issue_number")))
+    if existing_issue_number and not first_nonempty(data.get("github_issue_number")):
+        data["github_issue_number"] = existing_issue_number
+        data["issue_report_link_basis"] = "source_issue_number"
+        data["issue_report_linked_at"] = now
+        linked_existing += 1
+    elif not existing_issue_number:
+        linked = issue_index.get(obligation_signature(data))
+        if linked:
+            data["github_issue_number"] = linked["github_issue_number"]
+            if linked.get("github_issue_url"):
+                data["github_issue_url"] = linked["github_issue_url"]
+            data["issue_report_link_basis"] = "stable_obligation_signature"
+            data["issue_report_linked_at"] = now
+            data["issue_report_link_source_obligation_id"] = linked.get("source_obligation_id", "")
+            existing_issue_number = linked["github_issue_number"]
+            linked_existing += 1
+
     write_text_private(report_path, body_for(data, title, source_path))
     drafted += 1
 
@@ -1696,6 +1801,13 @@ for source_path, data in records:
                 github_failed += 1
                 data["issue_report_state"] = "github_failed"
                 data["github_issue_create_error"] = redact(error)[:300]
+                issue_ready_only += 1
+    elif first_nonempty(data.get("github_issue_number")):
+        data["issue_report_state"] = "issue_linked"
+    else:
+        data["issue_report_state"] = "issue_ready_only"
+        data["issue_report_local_only_reason"] = "github_write_disabled"
+        issue_ready_only += 1
 
     write_json_private(source_path, data)
     updated_records += 1
@@ -1704,13 +1816,23 @@ print(
     json.dumps(
         {
             "status": "synced",
+            "open_scanned": len(open_records_all),
             "current_root_open": len(records),
+            "foreign_root_deferred": foreign_root_deferred,
             "drafted": drafted,
+            "linked_existing": linked_existing,
             "updated_records": updated_records,
             "github_write": github_write,
             "github_created": github_created,
             "github_existing": github_existing,
             "github_failed": github_failed,
+            "issue_ready_only": issue_ready_only,
+            "still_local_only": issue_ready_only,
+            "still_local_only_reason": (
+                "github_issue_create_failed"
+                if github_failed
+                else ("github_write_disabled" if issue_ready_only else "")
+            ),
             "report_dir": str(report_dir),
         },
         separators=(",", ":"),

@@ -22,6 +22,21 @@ test_log_kv_encodes_control_characters() {
   [[ "$encoded" == prompt_file=* ]] || fail "log_kv did not preserve the field name"
 }
 
+test_log_line_parts_concatenates_exact_message() {
+  local output
+
+  # shellcheck source=/dev/null
+  source "$PROJECT_ROOT/lib/upkeeper/runtime_foundation.bash"
+
+  log_line() {
+    printf '<%s>%s\n' "$1" "$2"
+  }
+
+  output="$(log_line_parts INFO "quota.current " "target_model=gpt-5.5" " snapshot_current=true")"
+  [[ "$output" == "<INFO>quota.current target_model=gpt-5.5 snapshot_current=true" ]] ||
+    fail "log_line_parts did not preserve exact concatenation"
+}
+
 test_prompt_file_rejects_control_characters() {
   local capture="$TEST_TMP_ROOT/prompt-file.err"
 
@@ -115,6 +130,7 @@ JSON
 }
 
 test_log_kv_encodes_control_characters
+test_log_line_parts_concatenates_exact_message
 test_prompt_file_rejects_control_characters
 test_startup_state_prompt_summary_is_redacted
 test_startup_changed_path_log_is_redacted_and_diagnostic_is_private

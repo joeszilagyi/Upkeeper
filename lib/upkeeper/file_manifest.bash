@@ -488,5 +488,9 @@ PY
   count="$(sed -n 's/^count=//p' <<<"$output" | tail -1)"
   fingerprint="$(sed -n 's/^fingerprint=//p' <<<"$output" | tail -1)"
 
-  log_line "INFO" "file_manifest.ready action=${action:-unknown} reason=${reason:-unknown} source=${source:-unknown} select_untracked=${select_untracked:-unknown} count=${count:-unknown} path=$(shell_quote "$manifest_path") fingerprint=${fingerprint:-unknown}"
+  log_line_parts "INFO" \
+    "file_manifest.ready action=${action:-unknown} reason=${reason:-unknown}" \
+    " source=${source:-unknown} select_untracked=${select_untracked:-unknown}" \
+    " count=${count:-unknown} path=$(shell_quote "$manifest_path")" \
+    " fingerprint=${fingerprint:-unknown}"
 }

@@ -136,7 +136,11 @@ acquire_active_lock_or_exit() {
 
         if [[ -n "$fallback_inherit_fail" ]]; then
           log_line "WARN" "active_lock.fallback_inherit_rejected path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} reason=$fallback_inherit_fail child_cycle=$CYCLE_ID"
-          log_line "WARN" "active_lock.held path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=exit reason=$fallback_inherit_fail"
+          log_line_parts "WARN" \
+            "active_lock.held path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR")" \
+            " owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown}" \
+            " owner_run_hash=${owner_run_hash:-unknown}" \
+            " action=exit reason=$fallback_inherit_fail"
           finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} requested_parent_cycle=${CODEX_PARENT_CYCLE_ID:-unknown} reason=$fallback_inherit_fail"
         fi
         log_line "INFO" "active_lock.inherited path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} child_cycle=$CYCLE_ID"
@@ -150,7 +154,11 @@ acquire_active_lock_or_exit() {
     # A newly-created lock with no trusted state can be another wrapper between
     # mkdir and atomic state publish. Fail closed briefly instead of reclaiming it.
     if [[ "$lock_age_seconds" =~ ^[0-9]+$ && "$lock_age_seconds" -lt "$incomplete_lock_grace_seconds" ]]; then
-      log_line "WARN" "active_lock.incomplete path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} lock_age_seconds=$lock_age_seconds grace_seconds=$incomplete_lock_grace_seconds action=exit"
+      log_line_parts "WARN" \
+        "active_lock.incomplete path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR")" \
+        " owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown}" \
+        " lock_age_seconds=$lock_age_seconds" \
+        " grace_seconds=$incomplete_lock_grace_seconds action=exit"
       finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 reason=incomplete_recent_lock owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} lock_age_seconds=$lock_age_seconds grace_seconds=$incomplete_lock_grace_seconds"
     fi
     log_line "WARN" "active_lock.stale path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=reclaim"

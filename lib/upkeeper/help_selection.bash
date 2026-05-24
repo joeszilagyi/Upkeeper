@@ -1842,7 +1842,28 @@ append_preselected_review_target() {
     fi
   } >>"$compiled_file"
 
-  log_line "INFO" "review.preselect path_hmac=$(help_selection_path_hmac "$selected_path") path_redacted=1 epoch=${selected_epoch:-unknown} age=$(shell_quote "${selected_age:-unknown}") git_status=${selected_git_status:-unknown} content_state=${selected_content_state:-unknown} content_changed=${selected_content_changed:-unknown} worktree_hmac=${selected_worktree_hash:-unknown} eligible_count=${eligible_count:-unknown} selection_mode=${selection_mode:-unknown} selection_source=${selection_source:-unknown} manifest_status=$(shell_quote "${manifest_status:-unknown}") selection_order=${selection_order:-unknown} select_untracked=${select_untracked:-unknown} target_root=$(shell_quote "${target_root:-none}") target_depth=$(shell_quote "${target_max_depth:-none}") include_globs=$(shell_quote "${include_globs:-none}") exclude_globs=$(shell_quote "${exclude_globs:-none}") selection_review_modules=$(shell_quote "${selection_review_modules:-none}") failure_queue_selected=${failure_queue_selected:-0} failure_marker_id=$(shell_quote "${failure_marker_id:-none}") basis=$(shell_quote "${selected_basis:-unknown}")"
+  log_line_parts "INFO" \
+    "review.preselect path_hmac=$(help_selection_path_hmac "$selected_path")" \
+    " path_redacted=1 epoch=${selected_epoch:-unknown}" \
+    " age=$(shell_quote "${selected_age:-unknown}")" \
+    " git_status=${selected_git_status:-unknown}" \
+    " content_state=${selected_content_state:-unknown}" \
+    " content_changed=${selected_content_changed:-unknown}" \
+    " worktree_hmac=${selected_worktree_hash:-unknown}" \
+    " eligible_count=${eligible_count:-unknown}" \
+    " selection_mode=${selection_mode:-unknown}" \
+    " selection_source=${selection_source:-unknown}" \
+    " manifest_status=$(shell_quote "${manifest_status:-unknown}")" \
+    " selection_order=${selection_order:-unknown}" \
+    " select_untracked=${select_untracked:-unknown}" \
+    " target_root=$(shell_quote "${target_root:-none}")" \
+    " target_depth=$(shell_quote "${target_max_depth:-none}")" \
+    " include_globs=$(shell_quote "${include_globs:-none}")" \
+    " exclude_globs=$(shell_quote "${exclude_globs:-none}")" \
+    " selection_review_modules=$(shell_quote "${selection_review_modules:-none}")" \
+    " failure_queue_selected=${failure_queue_selected:-0}" \
+    " failure_marker_id=$(shell_quote "${failure_marker_id:-none}")" \
+    " basis=$(shell_quote "${selected_basis:-unknown}")"
   terminal_emit_progress "selected file ${selected_path:-unknown} (age=${selected_age:-unknown}; mode=${selection_mode:-unknown}; source=${selection_source:-unknown}; order=${selection_order:-unknown}; select_untracked=${select_untracked:-unknown}; reason=${selected_basis:-unknown}; eligible=${eligible_count:-unknown})"
 }
 

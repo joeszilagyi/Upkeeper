@@ -126,7 +126,11 @@ adopt_completed_fallback_screen_result_on_signal() {
   raw_child_exit="$(tr -d '[:space:]' <"$exit_file")"
   child_exit="$(screen_fallback_exit_code_or_default "$raw_child_exit" "")"
   if [[ -z "$child_exit" ]]; then
-    log_line "WARN" "signal.completed_fallback_result invalid_exit_code_artifact=1 signal=$signal_name session_name=${FALLBACK_SCREEN_SESSION_NAME:-none} exit_file=$(shell_quote "$exit_file") raw_exit=$(shell_quote "$raw_child_exit") default_exit=8"
+    log_line_parts "WARN" \
+      "signal.completed_fallback_result invalid_exit_code_artifact=1" \
+      " signal=$signal_name session_name=${FALLBACK_SCREEN_SESSION_NAME:-none}" \
+      " exit_file=$(shell_quote "$exit_file")" \
+      " raw_exit=$(shell_quote "$raw_child_exit") default_exit=8"
     child_exit="8"
   fi
 
@@ -137,7 +141,14 @@ adopt_completed_fallback_screen_result_on_signal() {
   completed_count="$(read_artifact_or_unknown "$screen_root/completed-child-count.txt")"
   last_cycle_exit="$(read_artifact_or_unknown "$screen_root/last-cycle-exit-code.txt")"
   stop_reason="$(read_artifact_or_unknown "$screen_root/stop-reason.txt")"
-  log_line "WARN" "signal.completed_fallback_result signal=$signal_name execution_origin=$CODEX_EXECUTION_ORIGIN session_name=${FALLBACK_SCREEN_SESSION_NAME:-none} final_exit=$child_exit current_child_id=$current_child_id current_child_status=$current_child_status completed_children=$completed_count last_cycle_exit=$last_cycle_exit stop_reason=$stop_reason"
+  log_line_parts "WARN" \
+    "signal.completed_fallback_result signal=$signal_name" \
+    " execution_origin=$CODEX_EXECUTION_ORIGIN" \
+    " session_name=${FALLBACK_SCREEN_SESSION_NAME:-none}" \
+    " final_exit=$child_exit current_child_id=$current_child_id" \
+    " current_child_status=$current_child_status" \
+    " completed_children=$completed_count last_cycle_exit=$last_cycle_exit" \
+    " stop_reason=$stop_reason"
   teardown_fallback_screen_session "completed_result_$signal_name"
   finish_cycle "$child_exit" FALLBACK_CHILD_COMPLETED_BEFORE_SIGNAL WARN "signal=$signal_name fallback_screen_session=${FALLBACK_SCREEN_SESSION_NAME:-none} fallback_trigger=${FALLBACK_SCREEN_TRIGGER:-none} transcript=${FALLBACK_SCREEN_TRANSCRIPT_PATH:-none}"
 }

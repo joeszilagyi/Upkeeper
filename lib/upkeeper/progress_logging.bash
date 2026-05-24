@@ -90,7 +90,13 @@ start_terminal_progress_heartbeat() {
     done
   ) &
   RUN_TERMINAL_PROGRESS_PID="$!"
-  log_line "INFO" "terminal_progress.start plane=llm waiting_for=codex_backend_review pid=$RUN_TERMINAL_PROGRESS_PID label=$label interval_seconds=$interval target=$(shell_quote "$(upkeeper_redact_model_text "${target:-unknown}" 240)") transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1"
+  log_line_parts "INFO" \
+    "terminal_progress.start plane=llm waiting_for=codex_backend_review" \
+    " pid=$RUN_TERMINAL_PROGRESS_PID label=$label" \
+    " interval_seconds=$interval" \
+    " target=$(shell_quote "$(upkeeper_redact_model_text "${target:-unknown}" 240)")" \
+    " transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")")" \
+    " path_redacted=1"
 }
 
 start_run_mark_heartbeat() {

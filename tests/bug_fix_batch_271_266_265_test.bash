@@ -18,6 +18,16 @@ log_line() {
   :
 }
 
+log_line_parts() {
+  local level="$1"
+  shift
+  local message="" part
+  for part in "$@"; do
+    message+="$part"
+  done
+  log_line "$level" "$message"
+}
+
 run_mktemp() {
   local label="${1:-tmp}"
   mkdir -p -- "$RUN_TMP_DIR"

@@ -14,6 +14,16 @@ log_line() {
   :
 }
 
+log_line_parts() {
+  local level="$1"
+  shift
+  local message="" part
+  for part in "$@"; do
+    message+="$part"
+  done
+  log_line "$level" "$message"
+}
+
 shell_quote() {
   printf '%q' "$1"
 }

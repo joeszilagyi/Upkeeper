@@ -36,6 +36,35 @@ Validation:
 - `tools/stress_upkeeper_corpus.sh --local`
 - `git diff --check`
 
+## Issue 103 jq Shell Assignment Scaffolding
+
+Status: completed locally
+
+Goal:
+- add focused characterization tests for the Codex I/O JSON-to-shell-assignment
+  helpers before any reuse extraction
+- cover malformed JSON, missing fields, shell metacharacters, nulls,
+  arrays/objects, and invalid assignment prefixes
+- extract only the shared jq assignment scaffolding if tests preserve exact
+  quoting and return semantics
+
+Constraints:
+- no GitHub or real backend Codex I/O
+- preserve existing shell assignment output for callers that eval the helpers
+- keep helper inputs static and local so jq program text is not operator data
+
+Files likely touched:
+- `lib/upkeeper/codex_io.bash`
+- `tests/wrapper_contract_test.bash`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/wrapper_contract_test.bash`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Issue 444 Obligation Issue Promotion Hardening
 
 Status: completed locally

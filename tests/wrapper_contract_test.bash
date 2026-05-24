@@ -206,9 +206,153 @@ JSON
   fi
 }
 
+test_json_shell_assignment_helpers_preserve_contract() {
+  local json output expected rc expected_selected
+
+  json="$(cat <<'JSON'
+{"outcome":"done ok","selected_file":"a b\u0027c;$(touch should_not_exist)","findings":{"nested":"object"},"changes":null,"verification":["array","value"]}
+JSON
+)"
+  output="$(
+    cd "$ROOT_DIR"
+    source lib/upkeeper/codex_io.bash
+    review_summary_assignments "$json" summary
+  )"
+  expected="$(cat <<'EOF'
+summary_outcome='done ok'
+summary_selected_file='a b'\''c;$(touch should_not_exist)'
+summary_findings='{"nested":"object"}'
+summary_changes=''
+summary_verification='["array","value"]'
+EOF
+)"
+  [[ "$output" == "$expected" ]] ||
+    fail "review summary assignment quoting changed: $output"
+
+  (
+    cd "$TEST_TMP_ROOT"
+    eval "$output"
+    expected_selected="$(printf "a b'c;%s" '$(touch should_not_exist)')"
+    [[ "$summary_selected_file" == "$expected_selected" ]] || {
+      printf 'summary_selected_file was not preserved after eval: %s\n' "$summary_selected_file" >&2
+      exit 1
+    }
+    [[ "$summary_findings" == '{"nested":"object"}' ]] || {
+      printf 'object scalar coercion changed: %s\n' "$summary_findings" >&2
+      exit 1
+    }
+    [[ "$summary_verification" == '["array","value"]' ]] || {
+      printf 'array scalar coercion changed: %s\n' "$summary_verification" >&2
+      exit 1
+    }
+    [[ ! -e should_not_exist ]] || {
+      printf 'shell metacharacter assignment executed unexpectedly\n' >&2
+      exit 1
+    }
+  ) || fail "review summary assignments were not safe to eval"
+
+  output="$(
+    cd "$ROOT_DIR"
+    source lib/upkeeper/codex_io.bash
+    status_marker_analysis_assignments '{}' marker
+  )"
+  expected="$(cat <<'EOF'
+marker_candidate_line=''
+marker_candidate_marker=''
+marker_candidate_rejection_reason=''
+marker_accepted_marker=''
+EOF
+)"
+  [[ "$output" == "$expected" ]] ||
+    fail "missing status marker fields did not use stable fallbacks: $output"
+
+  output="$(
+    cd "$ROOT_DIR"
+    source lib/upkeeper/codex_io.bash
+    quota_json_assignments '{}' quota
+  )"
+  [[ "$(wc -l <<<"$output")" -eq 27 ]] ||
+    fail "quota assignment field count changed: $output"
+  grep -Fxq "quota_ts='unknown'" <<<"$output" ||
+    fail "quota timestamp fallback changed: $output"
+  grep -Fxq "quota_matching_snapshot_count='0'" <<<"$output" ||
+    fail "quota count fallback changed: $output"
+  grep -Fxq "quota_primary_used=''" <<<"$output" ||
+    fail "quota empty fallback changed: $output"
+
+  output="$(
+    cd "$ROOT_DIR"
+    source lib/upkeeper/codex_io.bash
+    session_diagnostics_assignments '{}' session
+  )"
+  expected="$(cat <<'EOF'
+session_agent_message_count='0'
+session_tool_call_count='0'
+session_tool_result_count='0'
+session_task_complete_last_agent_message='missing'
+session_last_rate_limit_reached_type='unknown'
+session_last_rate_limit_limit_id='unknown'
+session_last_rate_limit_limit_name='unknown'
+session_last_rate_limit_plan_type='unknown'
+session_last_rate_limit_primary_used_percent='unknown'
+session_last_rate_limit_secondary_used_percent='unknown'
+EOF
+)"
+  [[ "$output" == "$expected" ]] ||
+    fail "session diagnostic fallback assignments changed: $output"
+
+  output="$(
+    cd "$ROOT_DIR"
+    source lib/upkeeper/codex_io.bash
+    review_pass_coverage_assignments '{}' coverage
+  )"
+  expected="$(cat <<'EOF'
+coverage_status='unknown'
+coverage_expected='23'
+coverage_present='0'
+coverage_missing='unknown'
+EOF
+)"
+  [[ "$output" == "$expected" ]] ||
+    fail "review pass coverage fallback assignments changed: $output"
+
+  set +e
+  output="$(
+    {
+      cd "$ROOT_DIR"
+      source lib/upkeeper/codex_io.bash
+      review_summary_assignments '{' summary
+    } 2>&1
+  )"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 1 ]] || fail "malformed JSON exited $rc instead of 1"
+  grep -Fq "parse error" <<<"$output" ||
+    fail "malformed JSON did not report jq parse context: $output"
+  grep -Fq "die invalid\\ review\\ summary\\ JSON\\ for\\ shell\\ assignment\\ prefix:\\ summary" <<<"$output" ||
+    fail "malformed JSON did not emit the stable die command: $output"
+
+  set +e
+  output="$(
+    {
+      cd "$ROOT_DIR"
+      source lib/upkeeper/codex_io.bash
+      review_summary_assignments '{}' 'bad-prefix;touch should_not_exist'
+    } 2>&1
+  )"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 1 ]] || fail "bad assignment prefix exited $rc instead of 1"
+  grep -Fq "die invalid\\ shell\\ assignment\\ prefix:" <<<"$output" ||
+    fail "bad assignment prefix did not emit the stable die command: $output"
+  [[ ! -e "$ROOT_DIR/should_not_exist" && ! -e "$TEST_TMP_ROOT/should_not_exist" ]] ||
+    fail "bad assignment prefix executed shell metacharacters"
+}
+
 test_codex_mode_rejects_malformed_and_unsafe_modes
 test_codex_mode_accepts_only_allowlisted_sandboxes
 test_parent_stop_guard_refuses_unsafe_shells_and_pids
 test_status_marker_rejects_decorated_or_ambiguous_candidates
 test_startup_anomaly_allowlist_reports_only_unallowed_redacted_paths
+test_json_shell_assignment_helpers_preserve_contract
 printf 'ok - wrapper_contract\n'

@@ -236,144 +236,114 @@ validate_assignment_prefix() {
   fi
 }
 
+json_shell_path_assignments() {
+  local json="$1"
+  local prefix="$2"
+  local source_label="$3"
+  local assignment_specs_json="$4"
+
+  validate_assignment_prefix "$prefix" || return 1
+  jq -r --arg prefix "$prefix" --argjson assignments "$assignment_specs_json" '
+    . as $input |
+    def value($path; $fallback):
+      ($input | getpath($path) // $fallback | tostring);
+    def assignment($name; $path; $fallback):
+      "\($prefix)_\($name)=\((value($path; $fallback)) | @sh)";
+    $assignments[] | assignment(.[0]; .[1]; .[2])
+  ' <<<"$json" || {
+    emit_assignment_failure_command "invalid $source_label JSON for shell assignment prefix: $prefix"
+    return 1
+  }
+}
+
 quota_json_assignments() {
   local json="$1"
   local prefix="$2"
 
-  validate_assignment_prefix "$prefix" || return 1
-  jq -r --arg prefix "$prefix" '
-    def value($path; $fallback):
-      (getpath($path) // $fallback | tostring);
-    def assignment($name; $path; $fallback):
-      "\($prefix)_\($name)=\((value($path; $fallback)) | @sh)";
-    [
-      assignment("error"; ["error"]; ""),
-      assignment("ts"; ["snapshot", "event_timestamp"]; "unknown"),
-      assignment("source"; ["snapshot", "source_path"]; "unknown"),
-      assignment("model_hint"; ["snapshot", "model_hint"]; "unknown"),
-      assignment("selection"; ["snapshot_selection"]; "unknown"),
-      assignment("snapshot_is_current"; ["snapshot_is_current"]; "false"),
-      assignment("matching_snapshot_count"; ["matching_snapshot_count"]; "0"),
-      assignment("snapshot_age_seconds"; ["snapshot", "snapshot_age_seconds"]; "unknown"),
-      assignment("primary_reset_age_seconds"; ["snapshot", "primary_reset_age_seconds"]; "unknown"),
-      assignment("secondary_reset_age_seconds"; ["snapshot", "secondary_reset_age_seconds"]; "unknown"),
-      assignment("snapshot_stale_after_reset"; ["snapshot", "snapshot_stale_after_reset"]; "false"),
-      assignment("primary_reset_expired"; ["snapshot", "primary_reset_expired"]; "false"),
-      assignment("secondary_reset_expired"; ["snapshot", "secondary_reset_expired"]; "false"),
-      assignment("primary_bucket_current"; ["snapshot", "primary_bucket_current"]; "false"),
-      assignment("secondary_bucket_current"; ["snapshot", "secondary_bucket_current"]; "false"),
-      assignment("primary_used"; ["snapshot", "primary_used_percent"]; ""),
-      assignment("primary_window"; ["snapshot", "primary_window_minutes"]; ""),
-      assignment("primary_reset"; ["snapshot", "primary_resets_at"]; ""),
-      assignment("secondary_used"; ["snapshot", "secondary_used_percent"]; ""),
-      assignment("secondary_window"; ["snapshot", "secondary_window_minutes"]; ""),
-      assignment("secondary_reset"; ["snapshot", "secondary_resets_at"]; ""),
-      assignment("plan_type"; ["snapshot", "plan_type"]; "unknown"),
-      assignment("limit_id"; ["snapshot", "limit_id"]; "unknown"),
-      assignment("limit_name"; ["snapshot", "limit_name"]; "unknown"),
-      assignment("projected_primary_delta"; ["projection", "primary_delta"]; ""),
-      assignment("projected_secondary_delta"; ["projection", "secondary_delta"]; ""),
-      assignment("projected_basis"; ["projection", "basis"]; "unknown")
-    ] | .[]
-  ' <<<"$json" || {
-    emit_assignment_failure_command "invalid quota snapshot JSON for shell assignment prefix: $prefix"
-    return 1
-  }
+  json_shell_path_assignments "$json" "$prefix" "quota snapshot" '[
+    ["error", ["error"], ""],
+    ["ts", ["snapshot", "event_timestamp"], "unknown"],
+    ["source", ["snapshot", "source_path"], "unknown"],
+    ["model_hint", ["snapshot", "model_hint"], "unknown"],
+    ["selection", ["snapshot_selection"], "unknown"],
+    ["snapshot_is_current", ["snapshot_is_current"], "false"],
+    ["matching_snapshot_count", ["matching_snapshot_count"], "0"],
+    ["snapshot_age_seconds", ["snapshot", "snapshot_age_seconds"], "unknown"],
+    ["primary_reset_age_seconds", ["snapshot", "primary_reset_age_seconds"], "unknown"],
+    ["secondary_reset_age_seconds", ["snapshot", "secondary_reset_age_seconds"], "unknown"],
+    ["snapshot_stale_after_reset", ["snapshot", "snapshot_stale_after_reset"], "false"],
+    ["primary_reset_expired", ["snapshot", "primary_reset_expired"], "false"],
+    ["secondary_reset_expired", ["snapshot", "secondary_reset_expired"], "false"],
+    ["primary_bucket_current", ["snapshot", "primary_bucket_current"], "false"],
+    ["secondary_bucket_current", ["snapshot", "secondary_bucket_current"], "false"],
+    ["primary_used", ["snapshot", "primary_used_percent"], ""],
+    ["primary_window", ["snapshot", "primary_window_minutes"], ""],
+    ["primary_reset", ["snapshot", "primary_resets_at"], ""],
+    ["secondary_used", ["snapshot", "secondary_used_percent"], ""],
+    ["secondary_window", ["snapshot", "secondary_window_minutes"], ""],
+    ["secondary_reset", ["snapshot", "secondary_resets_at"], ""],
+    ["plan_type", ["snapshot", "plan_type"], "unknown"],
+    ["limit_id", ["snapshot", "limit_id"], "unknown"],
+    ["limit_name", ["snapshot", "limit_name"], "unknown"],
+    ["projected_primary_delta", ["projection", "primary_delta"], ""],
+    ["projected_secondary_delta", ["projection", "secondary_delta"], ""],
+    ["projected_basis", ["projection", "basis"], "unknown"]
+  ]'
 }
 
 status_marker_analysis_assignments() {
   local json="$1"
   local prefix="$2"
 
-  validate_assignment_prefix "$prefix" || return 1
-  jq -r --arg prefix "$prefix" '
-    def value($path; $fallback):
-      (getpath($path) // $fallback | tostring);
-    def assignment($name; $path; $fallback):
-      "\($prefix)_\($name)=\((value($path; $fallback)) | @sh)";
-    [
-      assignment("candidate_line"; ["candidate_line"]; ""),
-      assignment("candidate_marker"; ["candidate_marker"]; ""),
-      assignment("candidate_rejection_reason"; ["candidate_rejection_reason"]; ""),
-      assignment("accepted_marker"; ["accepted_marker"]; "")
-    ] | .[]
-  ' <<<"$json" || {
-    emit_assignment_failure_command "invalid status marker analysis JSON for shell assignment prefix: $prefix"
-    return 1
-  }
+  json_shell_path_assignments "$json" "$prefix" "status marker analysis" '[
+    ["candidate_line", ["candidate_line"], ""],
+    ["candidate_marker", ["candidate_marker"], ""],
+    ["candidate_rejection_reason", ["candidate_rejection_reason"], ""],
+    ["accepted_marker", ["accepted_marker"], ""]
+  ]'
 }
 
 session_diagnostics_assignments() {
   local json="$1"
   local prefix="$2"
 
-  validate_assignment_prefix "$prefix" || return 1
-  jq -r --arg prefix "$prefix" '
-    def value($path; $fallback):
-      (getpath($path) // $fallback | tostring);
-    def assignment($name; $path; $fallback):
-      "\($prefix)_\($name)=\((value($path; $fallback)) | @sh)";
-    [
-      assignment("agent_message_count"; ["agent_message_count"]; "0"),
-      assignment("tool_call_count"; ["tool_call_count"]; "0"),
-      assignment("tool_result_count"; ["tool_result_count"]; "0"),
-      assignment("task_complete_last_agent_message"; ["task_complete_last_agent_message"]; "missing"),
-      assignment("last_rate_limit_reached_type"; ["last_rate_limit_reached_type"]; "unknown"),
-      assignment("last_rate_limit_limit_id"; ["last_rate_limit_limit_id"]; "unknown"),
-      assignment("last_rate_limit_limit_name"; ["last_rate_limit_limit_name"]; "unknown"),
-      assignment("last_rate_limit_plan_type"; ["last_rate_limit_plan_type"]; "unknown"),
-      assignment("last_rate_limit_primary_used_percent"; ["last_rate_limit_primary_used_percent"]; "unknown"),
-      assignment("last_rate_limit_secondary_used_percent"; ["last_rate_limit_secondary_used_percent"]; "unknown")
-    ] | .[]
-  ' <<<"$json" || {
-    emit_assignment_failure_command "invalid session diagnostics JSON for shell assignment prefix: $prefix"
-    return 1
-  }
+  json_shell_path_assignments "$json" "$prefix" "session diagnostics" '[
+    ["agent_message_count", ["agent_message_count"], "0"],
+    ["tool_call_count", ["tool_call_count"], "0"],
+    ["tool_result_count", ["tool_result_count"], "0"],
+    ["task_complete_last_agent_message", ["task_complete_last_agent_message"], "missing"],
+    ["last_rate_limit_reached_type", ["last_rate_limit_reached_type"], "unknown"],
+    ["last_rate_limit_limit_id", ["last_rate_limit_limit_id"], "unknown"],
+    ["last_rate_limit_limit_name", ["last_rate_limit_limit_name"], "unknown"],
+    ["last_rate_limit_plan_type", ["last_rate_limit_plan_type"], "unknown"],
+    ["last_rate_limit_primary_used_percent", ["last_rate_limit_primary_used_percent"], "unknown"],
+    ["last_rate_limit_secondary_used_percent", ["last_rate_limit_secondary_used_percent"], "unknown"]
+  ]'
 }
 
 review_summary_assignments() {
   local json="$1"
   local prefix="$2"
 
-  validate_assignment_prefix "$prefix" || return 1
-  jq -r --arg prefix "$prefix" '
-    def value($path; $fallback):
-      (getpath($path) // $fallback | tostring);
-    def assignment($name; $path; $fallback):
-      "\($prefix)_\($name)=\((value($path; $fallback)) | @sh)";
-    [
-      assignment("outcome"; ["outcome"]; ""),
-      assignment("selected_file"; ["selected_file"]; ""),
-      assignment("findings"; ["findings"]; ""),
-      assignment("changes"; ["changes"]; ""),
-      assignment("verification"; ["verification"]; "")
-    ] | .[]
-  ' <<<"$json" || {
-    emit_assignment_failure_command "invalid review summary JSON for shell assignment prefix: $prefix"
-    return 1
-  }
+  json_shell_path_assignments "$json" "$prefix" "review summary" '[
+    ["outcome", ["outcome"], ""],
+    ["selected_file", ["selected_file"], ""],
+    ["findings", ["findings"], ""],
+    ["changes", ["changes"], ""],
+    ["verification", ["verification"], ""]
+  ]'
 }
 
 review_pass_coverage_assignments() {
   local json="$1"
   local prefix="$2"
 
-  validate_assignment_prefix "$prefix" || return 1
-  jq -r --arg prefix "$prefix" '
-    def value($path; $fallback):
-      (getpath($path) // $fallback | tostring);
-    def assignment($name; $path; $fallback):
-      "\($prefix)_\($name)=\((value($path; $fallback)) | @sh)";
-    [
-      assignment("status"; ["status"]; "unknown"),
-      assignment("expected"; ["expected"]; "23"),
-      assignment("present"; ["present"]; "0"),
-      assignment("missing"; ["missing"]; "unknown")
-    ] | .[]
-  ' <<<"$json" || {
-    emit_assignment_failure_command "invalid review pass coverage JSON for shell assignment prefix: $prefix"
-    return 1
-  }
+  json_shell_path_assignments "$json" "$prefix" "review pass coverage" '[
+    ["status", ["status"], "unknown"],
+    ["expected", ["expected"], "23"],
+    ["present", ["present"], "0"],
+    ["missing", ["missing"], "unknown"]
+  ]'
 }
 
 resolve_path() {

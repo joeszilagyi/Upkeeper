@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: Lattice run-value rows:
+	1. Lattice now records normalized `run_values` rows from deterministic pass-result markers, pass attributes, and cycle-finish status so value-oriented questions can be answered without transcript scraping.
+	2. The new `query run-values` surface can filter by path, cycle, value kind, value class, and evidence source, exposing pass outcomes, validation commands/results, residual risk, finding notes, cycle status, review outcome, finish reason, and exit codes.
+	3. JSONL export/import now carries run-value rows as ordinary repo-scoped SQLite evidence while malformed or missing value markers remain rejected/skipped evidence instead of fatal cycle failures.
+
 2026-05-24: log-line maintainability:
 	1. Long structured `log_line` call sites now use a shared `log_line_parts` helper and startup-anomaly gate logging helper so repeated field groups remain reviewable without changing emitted log fields.
 	2. Local validation now fails if `log_line` or `log_line_parts` call sites exceed 240 source characters, preventing the risky long-line pattern from returning.

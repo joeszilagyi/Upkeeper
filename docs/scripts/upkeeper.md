@@ -232,6 +232,13 @@ Important:
     the still-open obligation. Set
     `BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=0` only for a deliberate local-only
     dry run.
+    Local batch-merge validation failures use the same obligation lane: if a
+    batch validation phase fails, backlog records the failed phase, command,
+    exit code, bounded output tail, stable fingerprint, likely owner path, and
+    required proof command under `runtime/upkeeper-obligations/open` before it
+    exits. Repeating the same failure updates the existing obligation instead
+    of creating duplicates, and the next invocation repairs that obligation
+    before retrying the merge or selecting another GitHub issue.
     Set `BACKLOG_OBLIGATION_RECONCILE=0` for a
     deliberate one-cycle bypass. Set
     `BACKLOG_ANOMALY_CUSTODY=0` for a deliberate one-cycle bypass, or adjust

@@ -694,6 +694,13 @@ wrapper-brokered for every stage: the backend reads wrapper-fetched evidence and
 writes local artifacts, while the wrapper posts comments or other issue updates
 after validation.
 
+Backlog batch merges treat failed local validation as mandatory machine-health
+work. When a batch validation phase fails, `orchestration/backlog.sh` writes or
+updates a local automation obligation with the phase, command, exit code,
+bounded output tail, stable fingerprint, likely owner path, and required proof
+command. The next backlog invocation selects that obligation before retrying the
+merge or starting fresh GitHub issue work.
+
 For an explicit one-cycle Upkeeper self-review with all built-in P1-P23 passes,
 use equals-form operator flags:
 

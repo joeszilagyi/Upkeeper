@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: backlog batch-validation failure obligations:
+	1. Backlog batch validation now records a structured local automation obligation when a merge-path validation phase fails, including the phase, command, exit code, bounded output tail, stable fingerprint, likely owner path, and required proof command.
+	2. Repeated identical batch-validation failures update the same obligation occurrence count instead of opening noisy duplicates.
+	3. The next backlog invocation sees that obligation before merge retry or fresh issue selection, so local validation breakage becomes mandatory machine-health work instead of manual chat memory.
+
 2026-05-24: breadcrumb custody audit:
 	1. Added `tools/audit_upkeeper_breadcrumbs.py`, a deterministic local scanner that fingerprints suspicious log, transcript, automation-obligation, and tool-failure breadcrumbs.
 	2. The audit command can write ignored local custody records under `runtime/upkeeper-breadcrumbs/open`, `resolved`, and `suppressed`, preserving weak clues until they are explicitly resolved or suppressed.

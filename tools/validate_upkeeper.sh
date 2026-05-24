@@ -1712,6 +1712,17 @@ SH
   rm -r "$temp_dir"
 }
 
+check_backlog_batch_validation_obligation_contract() {
+  log "checking backlog batch-validation obligation contract"
+  grep -Fq 'run_batch_validation_phase "batch_validation.quick_validator"' orchestration/backlog.sh ||
+    fail "backlog batch validation does not route quick-validator failures through the obligation wrapper"
+  grep -Fq 'backlog_open_batch_validation_obligation' orchestration/backlog.sh ||
+    fail "backlog launcher cannot open obligations for local batch-validation failures"
+  grep -Fq 'local_validation_failure' tests/backlog_batch_validation_obligation_test.bash ||
+    fail "batch-validation obligation test does not assert local validation failure kind"
+  bash tests/backlog_batch_validation_obligation_test.bash
+}
+
 check_backlog_quota_hibernation_contract() {
   local temp_dir status output hard_marker_root hard_marker_epoch
 
@@ -6561,6 +6572,7 @@ run_check automation_obligation_reconciliation_contract check_automation_obligat
 run_check automation_obligation_churn_contract check_automation_obligation_churn_contract
 run_check automation_obligation_issue_report_contract check_automation_obligation_issue_report_contract
 run_check backlog_launcher_contract check_backlog_launcher_contract
+run_check backlog_batch_validation_obligation_contract check_backlog_batch_validation_obligation_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract
 run_bounded_check backend_usage_limit_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_backend_usage_limit_contract

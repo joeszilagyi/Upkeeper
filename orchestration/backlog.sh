@@ -2192,6 +2192,243 @@ run_focused_issue_validation() {
   fi
 }
 
+backlog_batch_validation_owner_hint() {
+  local phase="${1:-}"
+  local command_text="${2:-}"
+  local output_file="${3:-}"
+  local output_text
+
+  output_text=""
+  if [[ -n "$output_file" && -r "$output_file" ]]; then
+    output_text="$(tail -n 80 -- "$output_file" 2>/dev/null || true)"
+  fi
+
+  case "$command_text $output_text" in
+    *"tools/validate_upkeeper.sh"*|*"validate_upkeeper:"*)
+      case "$output_text" in
+        *"backlog launcher"*|*"orchestration/backlog.sh"*)
+          printf '%s\n' "orchestration/backlog.sh"
+          return 0
+          ;;
+      esac
+      printf '%s\n' "tools/validate_upkeeper.sh"
+      return 0
+      ;;
+    *"tools/check_public_docs.sh"*|*"check_public_docs:"*)
+      printf '%s\n' "tools/check_public_docs.sh"
+      return 0
+      ;;
+    *"git diff --check"*|*"trailing whitespace"*|*"new blank line at EOF"*)
+      printf '%s\n' "Upkeeper"
+      return 0
+      ;;
+    *"tests/"*".bash"*)
+      python3 - "$output_text" <<'PY'
+import re
+import sys
+
+text = sys.argv[1]
+match = re.search(r"(tests/[A-Za-z0-9_.-]+\.bash)", text)
+print(match.group(1) if match else "tests")
+PY
+      return 0
+      ;;
+  esac
+
+  case "$phase" in
+    batch_validation.bash_syntax)
+      printf '%s\n' "orchestration/backlog.sh"
+      ;;
+    batch_validation.unit_tests)
+      printf '%s\n' "tests"
+      ;;
+    batch_validation.docs_quick)
+      printf '%s\n' "tools/check_public_docs.sh"
+      ;;
+    batch_validation.diff_whitespace)
+      printf '%s\n' "Upkeeper"
+      ;;
+    batch_validation.quick_validator)
+      printf '%s\n' "tools/validate_upkeeper.sh"
+      ;;
+    *)
+      printf '%s\n' "orchestration/backlog.sh"
+      ;;
+  esac
+}
+
+backlog_open_batch_validation_obligation() {
+  local phase="$1"
+  local exit_code="$2"
+  local output_file="$3"
+  local owner_hint="$4"
+  shift 4
+  local -a command_args=("$@")
+  local obligation_root open_dir command_text now payload id path seen_count
+
+  obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
+  open_dir="$obligation_root/open"
+  mkdir -p -- "$open_dir" || return 1
+  chmod 700 "$obligation_root" "$open_dir" 2>/dev/null || true
+
+  command_text="$(printf '%q ' "${command_args[@]}")"
+  command_text="${command_text% }"
+  now="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  payload="$(
+    python3 - \
+      "$ROOT_DIR" \
+      "$phase" \
+      "$exit_code" \
+      "$owner_hint" \
+      "$output_file" \
+      "$now" \
+      "${pr_number:-}" \
+      "${branch:-}" \
+      "$command_text" \
+      "${command_args[@]}" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import sys
+
+root, phase, exit_code, owner_hint, output_file, now, pr_number, branch, command_text, *command = sys.argv[1:]
+try:
+    raw_text = pathlib.Path(output_file).read_text(encoding="utf-8", errors="replace")
+except OSError:
+    raw_text = ""
+
+tail_lines = raw_text.splitlines()[-80:]
+tail_text = "\n".join(tail_lines)
+
+def normalize(value: str) -> str:
+    value = value.replace(root, "<repo-root>")
+    value = re.sub(r"/tmp/upkeeper[-A-Za-z0-9_./]*", "/tmp/upkeeper-<tmp>", value)
+    value = re.sub(r"/home/[^/\s]+/\.local/state/upkeeper/[^\s]+", "<upkeeper-state>", value)
+    value = re.sub(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:+-]+", "<timestamp>", value)
+    return value
+
+normalized_tail = normalize(tail_text)
+fingerprint = hashlib.sha256(
+    f"backlog-batch-validation\0{phase}\0{exit_code}\0{command_text}\0{normalized_tail}".encode("utf-8")
+).hexdigest()[:24]
+obligation_id = f"batch-validation-{fingerprint}"
+required = [
+    f"repair the failing local batch validation phase: {phase}",
+    f"rerun the failing command: {command_text}",
+    "rerun tools/validate_upkeeper.sh --quick",
+]
+record = {
+    "schema": 1,
+    "record_type": "automation_obligation",
+    "status": "open",
+    "id": obligation_id,
+    "kind": "local_validation_failure",
+    "severity": "high",
+    "summary": f"Backlog batch validation failed during {phase}",
+    "root": root,
+    "source": "backlog_batch_validation",
+    "source_pr_number": pr_number,
+    "source_branch": branch,
+    "failed_phase": phase,
+    "command": command,
+    "command_text": command_text,
+    "exit_code": str(exit_code),
+    "fingerprint": f"backlog-batch-validation:{fingerprint}",
+    "target_scope": "target",
+    "target_file": owner_hint,
+    "repair_target_file": owner_hint,
+    "reason": "BATCH_VALIDATION_FAILED",
+    "required_resolution": required,
+    "evidence": {
+        "source": "batch_validation_output",
+        "tail_line_count": len(tail_lines),
+        "tail": tail_lines,
+        "normalized_tail": normalized_tail,
+    },
+}
+print(json.dumps(record, separators=(",", ":")))
+PY
+  )" || return 1
+
+  id="$(jq -r '.id' <<<"$payload")"
+  path="$open_dir/$id.json"
+  if [[ -f "$path" ]]; then
+    seen_count="$(jq -r '.seen_count // .occurrence_count // 1' "$path" 2>/dev/null || printf '1')"
+    payload="$(
+      jq \
+        --argjson next_count "$((seen_count + 1))" \
+        --arg updated_at "$now" \
+        --argjson replacement "$payload" \
+        '. as $old
+         | $replacement
+         | .created_at = ($old.created_at // $updated_at)
+         | .updated_at = $updated_at
+         | .seen_count = $next_count
+         | .occurrence_count = $next_count
+         | .first_source_pr_number = ($old.first_source_pr_number // $old.source_pr_number // $replacement.source_pr_number)
+         | .prior_evidence_tail = ($old.evidence.tail // [])' "$path"
+    )" || return 1
+  else
+    payload="$(jq --arg created_at "$now" '.created_at = $created_at | .updated_at = $created_at | .seen_count = 1 | .occurrence_count = 1' <<<"$payload")" || return 1
+  fi
+  python3 - "$path" "$payload" <<'PY'
+import json
+import os
+import sys
+
+path, payload = sys.argv[1:3]
+data = json.loads(payload)
+parent = os.path.dirname(path)
+os.makedirs(parent, mode=0o700, exist_ok=True)
+try:
+    os.chmod(parent, 0o700)
+except OSError:
+    pass
+tmp = f"{path}.tmp.{os.getpid()}"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+PY
+  log "automation obligation opened for batch validation failure id=$id phase=$phase target=$owner_hint path=$path"
+}
+
+run_batch_validation_phase() {
+  local phase="$1"
+  local label="$2"
+  shift 2
+  local output_file rc owner_hint command_text
+
+  output_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-backlog-validation.XXXXXX")"
+  log "batch validation: $label"
+  set +e
+  "$@" 2>&1 | tee "$output_file"
+  rc="${PIPESTATUS[0]}"
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    command_text="$(printf '%q ' "$@")"
+    owner_hint="$(backlog_batch_validation_owner_hint "$phase" "$command_text" "$output_file")"
+    backlog_open_batch_validation_obligation "$phase" "$rc" "$output_file" "$owner_hint" "$@" || true
+    rm -f -- "$output_file"
+    return "$rc"
+  fi
+  rm -f -- "$output_file"
+  return 0
+}
+
 run_per_bug_validation() {
   local issue_number="${1:-}"
   local target_hint="${2:-}"
@@ -2221,18 +2458,16 @@ run_batch_validation() {
   backlog_update_active_owner_heartbeat "validating" \
     "$(backlog_wait_detail local_validation batch_validation "expected=syntax_tests_docs_diff_quick_validator")" \
     "" "owner_pid_start_cwd_verified"
-  log "batch validation: bash syntax"
-  bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || return $?
-  log "batch validation: unit tests"
-  for test_script in tests/*.bash; do
-    bash "$test_script" || return $?
-  done
-  log "batch validation: docs quick checks"
-  tools/check_public_docs.sh --quick || return $?
-  log "batch validation: diff whitespace"
-  git diff --check || return $?
-  log "batch validation: quick validator"
-  tools/validate_upkeeper.sh --quick || return $?
+  run_batch_validation_phase "batch_validation.bash_syntax" "bash syntax" \
+    bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || return $?
+  run_batch_validation_phase "batch_validation.unit_tests" "unit tests" \
+    bash -c 'set -euo pipefail; for test_script in tests/*.bash; do bash "$test_script"; done' || return $?
+  run_batch_validation_phase "batch_validation.docs_quick" "docs quick checks" \
+    tools/check_public_docs.sh --quick || return $?
+  run_batch_validation_phase "batch_validation.diff_whitespace" "diff whitespace" \
+    git diff --check || return $?
+  run_batch_validation_phase "batch_validation.quick_validator" "quick validator" \
+    tools/validate_upkeeper.sh --quick || return $?
   log "batch validation: complete in $((SECONDS - validation_start))s"
 }
 

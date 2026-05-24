@@ -3,6 +3,39 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Batch Validation Failure Obligations
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #412 by making local backlog batch-validation failures durable
+  machine-health obligations
+- preserve the failed phase, command, exit code, bounded output tail,
+  fingerprint, likely owner path, and required validation proof
+- ensure the next unattended backlog invocation repairs the validation failure
+  before merge retry or fresh GitHub issue work
+
+Constraints:
+- keep the mechanism local, deterministic, and pre-model
+- deduplicate repeated identical validation failures by stable fingerprint
+- preserve existing fail-closed merge behavior when validation fails
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tests/backlog_batch_validation_obligation_test.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_batch_validation_obligation_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Breadcrumb Custody Audit
 
 Status: completed locally; pending PR/CI

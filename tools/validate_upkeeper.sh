@@ -2828,6 +2828,78 @@ check_validation_environment_isolation() {
     fail "validation dry-run helper is not used by enough dry-run fixtures"
 }
 
+validation_quota_state_for_home() {
+  local codex_home="$1"
+  local model="${2:-gpt-5.5}"
+  local log_file="${3:-$codex_home/Upkeeper.log}"
+
+  CODEX_HOME_DIR="$codex_home" CODEX_SESSION_SCAN_LIMIT=200 LOG_FILE="$log_file" \
+    bash -lc 'cd "$1"; source lib/upkeeper/quota_state.bash; quota_state_json "$2"' \
+    bash "$ROOT_DIR" "$model"
+}
+
+check_validation_quota_session_fixture_contract() {
+  local temp_dir state diagnostics agent_messages reached_type
+  local current_home stale_home wrong_home nonfinite_home missing_home
+  local malformed_session empty_session empty_state
+
+  log "checking validation quota/session fixtures"
+  temp_dir="$(mktemp -d /tmp/upkeeper-validation-fixtures.XXXXXX)"
+
+  current_home="$temp_dir/current/codex-home"
+  write_validation_current_quota_snapshot "$current_home/sessions/2026/05/07/current.jsonl" "gpt-5.5"
+  state="$(validation_quota_state_for_home "$current_home" "gpt-5.5" "$temp_dir/current.log")"
+  [[ "$(jq -r '.snapshot_is_current' <<<"$state")" == "true" ]] ||
+    fail "current quota fixture did not parse as current"
+  [[ "$(jq -r '.snapshot.snapshot_stale_after_reset' <<<"$state")" == "false" ]] ||
+    fail "current quota fixture parsed as stale"
+
+  stale_home="$temp_dir/stale/codex-home"
+  write_validation_stale_quota_snapshot "$stale_home/sessions/2026/05/07/stale.jsonl" "gpt-5.5"
+  state="$(validation_quota_state_for_home "$stale_home" "gpt-5.5" "$temp_dir/stale.log")"
+  [[ "$(jq -r '.snapshot.snapshot_stale_after_reset' <<<"$state")" == "true" ]] ||
+    fail "stale quota fixture did not parse as stale-after-reset"
+  [[ "$(jq -r '.snapshot.primary_reset_expired' <<<"$state")" == "true" ]] ||
+    fail "stale quota fixture did not mark primary reset expired"
+
+  wrong_home="$temp_dir/wrong-model/codex-home"
+  write_validation_wrong_model_quota_snapshot "$wrong_home/sessions/2026/05/07/wrong.jsonl" "gpt-5.4"
+  state="$(validation_quota_state_for_home "$wrong_home" "gpt-5.5" "$temp_dir/wrong.log")"
+  [[ "$(jq -r '.snapshot_selection' <<<"$state")" == "overall_fallback" ]] ||
+    fail "wrong-model quota fixture did not parse as fallback evidence"
+  [[ "$(jq -r '.snapshot.model_hint' <<<"$state")" == "gpt-5.4" ]] ||
+    fail "wrong-model quota fixture lost model hint"
+
+  nonfinite_home="$temp_dir/nonfinite/codex-home"
+  write_validation_nonfinite_quota_snapshot "$nonfinite_home/sessions/2026/05/07/nonfinite.jsonl" "gpt-5.5"
+  state="$(validation_quota_state_for_home "$nonfinite_home" "gpt-5.5" "$temp_dir/nonfinite.log")"
+  [[ "$(jq -r '.error // ""' <<<"$state")" == "no_rate_limit_snapshot_found" ]] ||
+    fail "nonfinite quota fixture should not produce a usable snapshot"
+
+  missing_home="$temp_dir/missing-fields/codex-home"
+  write_validation_missing_rate_limit_fields_snapshot "$missing_home/sessions/2026/05/07/missing.jsonl" "gpt-5.5"
+  state="$(validation_quota_state_for_home "$missing_home" "gpt-5.5" "$temp_dir/missing.log")"
+  [[ "$(jq -r '.error // ""' <<<"$state")" == "no_rate_limit_snapshot_found" ]] ||
+    fail "missing-field quota fixture should not produce a usable snapshot"
+
+  malformed_session="$temp_dir/malformed/session.jsonl"
+  write_validation_malformed_session_jsonl "$malformed_session"
+  state="$(bash -lc 'cd "$1"; source lib/upkeeper/status_session.bash; parse_session_end_state "$2"' bash "$ROOT_DIR" "$malformed_session")"
+  [[ "$state" == "turn_aborted:rate_limit_retry" ]] || fail "malformed session fixture state was $state"
+  diagnostics="$(bash -lc 'cd "$1"; source lib/upkeeper/status_session.bash; session_diagnostics_json "$2"' bash "$ROOT_DIR" "$malformed_session")"
+  agent_messages="$(jq -r '.agent_message_count' <<<"$diagnostics")"
+  reached_type="$(jq -r '.last_rate_limit_reached_type' <<<"$diagnostics")"
+  [[ "$agent_messages" == "1" ]] || fail "malformed session fixture agent message count was $agent_messages"
+  [[ "$reached_type" == "unknown" ]] || fail "malformed session fixture rate-limit sentinel was $reached_type"
+
+  empty_session="$temp_dir/empty/session.jsonl"
+  write_validation_empty_session_jsonl "$empty_session"
+  empty_state="$(bash -lc 'cd "$1"; source lib/upkeeper/status_session.bash; parse_session_end_state "$2"' bash "$ROOT_DIR" "$empty_session")"
+  [[ "$empty_state" == "none" ]] || fail "empty session fixture state was $empty_state"
+
+  rm -r "$temp_dir"
+}
+
 check_dependency_guidance_contract() {
   log "checking dependency guidance contract"
 
@@ -3015,12 +3087,24 @@ check_wrapper_contract_tests() {
   bash tests/wrapper_contract_test.bash
 }
 
+prepare_validation_session_file() {
+  local session_file="$1"
+  local session_root
+
+  mkdir -p "$(dirname -- "$session_file")"
+  if [[ "$session_file" == */sessions/* ]]; then
+    session_root="${session_file%%/sessions/*}/sessions"
+    chmod 700 "$session_root" 2>/dev/null || true
+  fi
+}
+
 write_validation_quota_snapshot() {
   local session_file="$1"
   local model="$2"
   local primary_reset_offset="${3:-3600}"
   local secondary_reset_offset="${4:-86400}"
 
+  prepare_validation_session_file "$session_file"
   python3 - "$session_file" "$model" "$primary_reset_offset" "$secondary_reset_offset" <<'PY'
 import json
 import sys
@@ -3032,10 +3116,6 @@ path = Path(sys.argv[1])
 model = sys.argv[2]
 primary_reset_offset = int(sys.argv[3])
 secondary_reset_offset = int(sys.argv[4])
-path.parent.mkdir(parents=True, exist_ok=True)
-if "sessions" in path.parts:
-    session_root = Path(*path.parts[: path.parts.index("sessions") + 1])
-    session_root.chmod(0o700)
 now = int(time.time())
 event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
 rows = [
@@ -3068,6 +3148,114 @@ with path.open("w", encoding="utf-8") as handle:
     for row in rows:
         print(json.dumps(row, separators=(",", ":")), file=handle)
 PY
+}
+
+write_validation_current_quota_snapshot() {
+  write_validation_quota_snapshot "$1" "${2:-gpt-5.5}" 3600 86400
+}
+
+write_validation_stale_quota_snapshot() {
+  write_validation_quota_snapshot "$1" "${2:-gpt-5.5}" -3600 -7200
+}
+
+write_validation_wrong_model_quota_snapshot() {
+  write_validation_quota_snapshot "$1" "${2:-gpt-5.4}" 3600 86400
+}
+
+write_validation_nonfinite_quota_snapshot() {
+  local session_file="$1"
+  local model="${2:-gpt-5.5}"
+
+  prepare_validation_session_file "$session_file"
+  python3 - "$session_file" "$model" <<'PY'
+import json
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+model = sys.argv[2]
+now = int(time.time())
+event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
+rows = [
+    {"type": "turn_context", "payload": {"model": model}},
+    {
+        "timestamp": event_timestamp,
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "rate_limits": {
+                "limit_id": f"validation-{model}",
+                "limit_name": f"{model} validation",
+                "plan_type": "validation",
+                "rate_limit_reached_type": None,
+                "primary": {"used_percent": 10.0, "window_minutes": 300, "resets_at": "not-finite"},
+                "secondary": {"used_percent": 10.0, "window_minutes": 10080, "resets_at": "not-finite"},
+            },
+        },
+    },
+]
+with path.open("w", encoding="utf-8") as handle:
+    for row in rows:
+        print(json.dumps(row, separators=(",", ":")), file=handle)
+PY
+}
+
+write_validation_missing_rate_limit_fields_snapshot() {
+  local session_file="$1"
+  local model="${2:-gpt-5.5}"
+
+  prepare_validation_session_file "$session_file"
+  python3 - "$session_file" "$model" <<'PY'
+import json
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+model = sys.argv[2]
+event_timestamp = datetime.fromtimestamp(int(time.time()), timezone.utc).isoformat().replace("+00:00", "Z")
+rows = [
+    {"type": "turn_context", "payload": {"model": model}},
+    {
+        "timestamp": event_timestamp,
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "rate_limits": {
+                "limit_id": f"validation-{model}",
+                "limit_name": f"{model} validation",
+                "plan_type": "validation",
+            },
+        },
+    },
+]
+with path.open("w", encoding="utf-8") as handle:
+    for row in rows:
+        print(json.dumps(row, separators=(",", ":")), file=handle)
+PY
+}
+
+write_validation_malformed_session_jsonl() {
+  local session_file="$1"
+
+  prepare_validation_session_file "$session_file"
+  printf '%s\n' \
+    '[]' \
+    '{"type":"event_msg","payload":"not-an-object"}' \
+    '{"type":"event_msg","payload":{"type":"turn_aborted","reason":"rate limit / retry"}}' \
+    '{"type":"response_item","payload":{"type":"message","role":"assistant"}}' \
+    '{"type":"event_msg","payload":{"type":"token_count","rate_limits":"not-an-object"}}' \
+    >"$session_file"
+}
+
+write_validation_empty_session_jsonl() {
+  local session_file="$1"
+
+  prepare_validation_session_file "$session_file"
+  : >"$session_file"
 }
 
 check_cycle_start_log_contract() {
@@ -5675,13 +5863,7 @@ check_status_session_jsonl_contract() {
   log "checking status session JSONL contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-status-session.XXXXXX)"
   session_file="$temp_dir/session.jsonl"
-  printf '%s\n' \
-    '[]' \
-    '{"type":"event_msg","payload":"not-an-object"}' \
-    '{"type":"event_msg","payload":{"type":"turn_aborted","reason":"rate limit / retry"}}' \
-    '{"type":"response_item","payload":{"type":"message","role":"assistant"}}' \
-    '{"type":"event_msg","payload":{"type":"token_count","rate_limits":"not-an-object"}}' \
-    >"$session_file"
+  write_validation_malformed_session_jsonl "$session_file"
 
   state="$(bash -lc 'cd "$1"; source lib/upkeeper/status_session.bash; parse_session_end_state "$2"' bash "$ROOT_DIR" "$session_file")"
   [[ "$state" == "turn_aborted:rate_limit_retry" ]] || fail "malformed JSONL state was $state"
@@ -5885,45 +6067,7 @@ exit 101
 SH
   chmod +x "$temp_dir/bin/codex"
 
-  python3 - "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" <<'PY'
-import json
-import sys
-import time
-from datetime import datetime, timezone
-
-path = sys.argv[1]
-now = int(time.time())
-event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
-rows = [
-    {"type": "turn_context", "payload": {"model": "gpt-5.5"}},
-    {
-        "timestamp": event_timestamp,
-        "type": "event_msg",
-        "payload": {
-            "type": "token_count",
-            "rate_limits": {
-                "limit_id": "validation-gpt-5.5",
-                "limit_name": "gpt-5.5 validation",
-                "plan_type": "validation",
-                "rate_limit_reached_type": None,
-                "primary": {
-                    "used_percent": 10.0,
-                    "window_minutes": 300,
-                    "resets_at": now + 3600,
-                },
-                "secondary": {
-                    "used_percent": 10.0,
-                    "window_minutes": 10080,
-                    "resets_at": now + 86400,
-                },
-            },
-        },
-    },
-]
-with open(path, "w", encoding="utf-8") as handle:
-    for row in rows:
-        print(json.dumps(row, separators=(",", ":")), file=handle)
-PY
+  write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
 
   set +e
   PATH="$temp_dir/bin:$PATH" \
@@ -6311,6 +6455,7 @@ run_check authority_control_docs_contract check_authority_control_docs_contract
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
+run_check validation_quota_session_fixture_contract check_validation_quota_session_fixture_contract
 run_check dependency_guidance_contract check_dependency_guidance_contract
 run_check release_readiness_docs_contract check_release_readiness_docs_contract
 run_check governance_docs_contract check_governance_docs_contract

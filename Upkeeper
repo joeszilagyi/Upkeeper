@@ -7070,9 +7070,8 @@ main() {
   if upkeeper_issue_workflow_comment_stage_enabled; then
     if upkeeper_issue_workflow_post_comment; then
       if [[ "${status_marker:-}" == "BLOCKED" ]]; then
-        status_marker="WORK_DONE"
         status_marker_source="issue_workflow_comment_relay"
-        log_line "INFO" "issue.workflow_comment.status_recovered marker=$status_marker stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE")"
+        log_line "INFO" "issue.workflow_comment.status_preserved marker=$status_marker stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") reason=comment_stage_did_not_mutate_source"
       fi
     else
       status_marker="BLOCKED"

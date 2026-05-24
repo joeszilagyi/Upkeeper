@@ -136,6 +136,12 @@ Future changes should preserve this operator-visible surface as far as possible:
   empty transcripts, local environment failures, and parent-stop guardrails.
   A successful fallback child with a successful postmortem sequence may complete
   cleanly; postmortem failures still propagate as recovery failures.
+- Fallback and postmortem guardrails are part of the stable operator surface:
+  fallback is primary-only, disabled inside fallback children, bounded by
+  screen child/time limits, subject to exact-model quota checks, blocked by
+  unsafe local evidence paths, and fully disabled only when
+  `CODEX_FALLBACK_ENABLED=0`, `CODEX_FALLBACK_SCREEN_ENABLED=0`, and
+  `CODEX_POSTMORTEM_ENABLED=0` are set together.
 - `Upkeeper.log` keeps cycle/run evidence in parseable timestamped lines with
   `cycle=...`, `run_hash=...`, event names, and key-value fields.
 - Unsafe log paths fail closed before Codex launch: symlink log files,

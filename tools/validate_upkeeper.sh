@@ -3323,6 +3323,60 @@ check_quota_fallback_exit_contract() {
   rm -r "$temp_dir"
 }
 
+check_fallback_postmortem_guardrail_contract() {
+  log "checking fallback/postmortem guardrail contract"
+
+  grep -Fq "## Fallback And Postmortem Guardrails" docs/security.md ||
+    fail "security doc missing fallback/postmortem guardrail section"
+  grep -Fq "Fallback is allowed only when all of these are true" docs/security.md ||
+    fail "security doc missing fallback allowed criteria"
+  grep -Fq "Fallback is forbidden or skipped when any of these are true" docs/security.md ||
+    fail "security doc missing fallback forbidden criteria"
+  grep -Fq "A fallback child may mutate files only within the same mode and task boundary" docs/security.md ||
+    fail "security doc missing fallback mutation boundary"
+  grep -Fq "Fallback is not a dirty-worktree bypass" docs/security.md ||
+    fail "security doc missing dirty-worktree fallback boundary"
+  grep -Fq "Disable all recovery model work with" docs/security.md ||
+    fail "security doc missing full recovery disablement guidance"
+  grep -Fq "CODEX_FALLBACK_SCREEN_MAX_CHILDREN" docs/security.md ||
+    fail "security doc missing screen child limit"
+  grep -Fq "CODEX_FALLBACK_SCREEN_MAX_SECONDS" docs/security.md ||
+    fail "security doc missing screen time limit"
+  grep -Fq "Fallback evidence is separated from primary evidence" docs/security.md ||
+    fail "security doc missing evidence separation"
+  grep -Fq "Fallback success means" docs/security.md ||
+    fail "security doc missing fallback success criteria"
+
+  grep -Fq "fallback/postmortem guardrail contract" docs/scripts/upkeeper.md ||
+    fail "operator guide missing fallback guardrail contract"
+  grep -Fq "CODEX_POSTMORTEM_HARDENING_OPT_IN" docs/scripts/upkeeper.md ||
+    fail "operator guide missing postmortem hardening opt-in"
+  grep -Fq "keeps hardening report-only unless CODEX_POSTMORTEM_HARDENING_OPT_IN=1" docs/scripts/upkeeper.md ||
+    fail "operator guide does not state hardening is opt-in"
+  grep -Fq "CODEX_FALLBACK_ENABLED=0 CODEX_FALLBACK_SCREEN_ENABLED=0 CODEX_POSTMORTEM_ENABLED=0" docs/scripts/upkeeper.md ||
+    fail "operator guide missing full recovery disablement command"
+  grep -Fq "CODEX_POSTMORTEM_HARDENING_OPT_IN" lib/upkeeper/help_selection.bash ||
+    fail "help text missing postmortem hardening opt-in"
+
+  grep -Fq "CODEX_FALLBACK_ENABLED=0," Upkeeper.conf ||
+    fail "default config missing fallback disablement comment"
+  grep -Fq "CODEX_FALLBACK_SCREEN_ENABLED=0" configurations/default.conf ||
+    fail "default profile missing screen fallback disablement knob"
+  grep -Fq "Fallback and postmortem guardrails are part of the stable operator surface" docs/compatibility.md ||
+    fail "compatibility doc missing stable fallback guardrail surface"
+
+  grep -Fq "fallback_would_rediscover_dirty_block" lib/upkeeper/fallback_availability.bash ||
+    fail "fallback availability missing dirty rediscovery guard"
+  grep -Fq "CODEX_FALLBACK_ENABLED=0" lib/upkeeper/fallback_orchestration.bash ||
+    fail "direct fallback child does not disable recursive fallback"
+  grep -Fq "CODEX_POSTMORTEM_ENABLED=0" lib/upkeeper/fallback_orchestration.bash ||
+    fail "direct fallback child does not disable recursive postmortem"
+  grep -Fq "CODEX_FALLBACK_ENABLED=0" lib/upkeeper/fallback_screen.bash ||
+    fail "screen fallback child does not disable recursive fallback"
+  grep -Fq "CODEX_POSTMORTEM_ENABLED=0" lib/upkeeper/fallback_screen.bash ||
+    fail "screen fallback child does not disable recursive postmortem"
+}
+
 check_review_module_flags() {
   local temp_dir output rc module_id module_aliases
   local -a module_flags alias_flags
@@ -5910,6 +5964,7 @@ run_check previous_run_anomaly_summary_contract check_previous_run_anomaly_summa
 run_check postmortem_context_marker_classification check_postmortem_context_marker_classification
 run_check postmortem_sequence_marker_contract check_postmortem_sequence_marker_contract
 run_check postmortem_privacy_contract check_postmortem_privacy_contract
+run_check fallback_postmortem_guardrail_contract check_fallback_postmortem_guardrail_contract
 run_check entrypoint_internal_self_tests check_entrypoint_internal_self_tests
 run_check live_output_filter_pipe check_live_output_filter_pipe
 run_check review_summary_parser check_review_summary_parser

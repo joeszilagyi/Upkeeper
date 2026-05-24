@@ -3,9 +3,46 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Authority Model And Control Ledger
+## Fallback And Postmortem Guardrail Contract
 
 Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #95 by making fallback and postmortem recovery rules explicit
+- document when fallback is allowed, when it is forbidden, whether it may
+  mutate files, dirty-worktree behavior, child limits, disablement switches,
+  quota/spend protections, evidence separation, and success criteria
+- bind the documented contract with deterministic local validation so future
+  behavior changes cannot silently drift
+
+Constraints:
+- do not launch real backend Codex during validation
+- preserve existing fallback behavior unless documentation reveals a missing
+  local guard that must be enforced
+- keep clean no-op and status paths deterministic and pre-model
+
+Files likely touched:
+- `Upkeeper.conf`
+- `configurations/default.conf`
+- `lib/upkeeper/help_selection.bash`
+- `docs/security.md`
+- `docs/compatibility.md`
+- `docs/scripts/upkeeper.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Authority Model And Control Ledger
+
+Status: completed and merged
 
 Goal:
 - close issue #216 by adding tracked authority, capability, and control-ledger

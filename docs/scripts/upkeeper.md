@@ -448,6 +448,12 @@ Prompt behavior:
     recovery facts under ignored runtime state. Lattice does not replace live
     source-safe eligibility; explicit targets, startup anomaly gates, and the
     local failure queue still keep their existing priority.
+    For audit, breadcrumb, anomaly, and automation-obligation custody, Lattice
+    is supporting evidence, not sole custody authority, while the known Lattice
+    integrity blockers remain open. Custody decisions must keep fallback
+    log/transcript/runtime evidence available and confirm any future
+    Lattice-derived custody decision against that evidence, or fail closed when
+    the fallback evidence is unavailable.
     If Lattice is unavailable and `UPKEEPER_LATTICE_REQUIRED=0`, the wrapper
     logs one warning, spools a small recovery record when possible, and
     continues the existing cycle behavior. If `UPKEEPER_LATTICE_REQUIRED=1`,

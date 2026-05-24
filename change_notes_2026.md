@@ -16,6 +16,11 @@ Version numbering note:
 	2. Added GitHub issue and pull request template hooks that ask for a local deterministic repro fixture, cloud audit repro, or explicit non-repro rationale.
 	3. Quick validation now checks that the serious-finding repro policy and templates remain present.
 
+2026-05-24: after-action review contract:
+	1. P27 now defines a concise after-action review shape that includes outcome, what went right, what went wrong, waste, next improvement, and reusable learning.
+	2. The pull request template now asks for the same after-action review fields so successful and mostly-successful work can preserve optimization signal.
+	3. Quick validation now checks that the P27 prompt, public docs, and PR template retain the after-action review contract.
+
 2026-05-24: backlog stale quota evidence custody:
 	1. Backlog quota preflight now records expired-reset stale quota evidence as a `stale_quota_evidence` automation obligation before burn bypass continues.
 	2. Repeated stale quota evidence updates one fingerprinted obligation instead of printing recurring warning-only output.

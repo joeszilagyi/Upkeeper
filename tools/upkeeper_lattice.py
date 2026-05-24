@@ -620,14 +620,14 @@ PASS_REGISTRY.extend(
         },
         {
             "pass_code": "P27",
-            "title": "Educational Debrief Review",
+            "title": "After-Action Review",
             "prompt_source_path": "prompts/p27-educational-debrief-review.md",
             "default_in_repertoire": False,
             "module_prompt": True,
-            "aliases": ["education", "debrief", "learning"],
+            "aliases": ["after-action", "after-action-review", "aar", "education", "debrief", "learning"],
             "active": True,
             "introduced_version": "v1.1.9",
-            "applicability_hint": "saved educational debrief after useful work",
+            "applicability_hint": "saved after-action review after meaningful work",
             "schedule_hint": "explicit review module",
         },
         {

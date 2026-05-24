@@ -96,7 +96,7 @@ Validation:
 
 ## Serious Finding Repro Fixtures
 
-Status: completed locally; pending PR/CI
+Status: completed and merged
 
 Goal:
 - close issue #139 by making serious security/data-integrity/control-plane
@@ -116,6 +116,37 @@ Files likely touched:
 - `docs/release-checklist.md`
 - `.github/ISSUE_TEMPLATE/*`
 - `.github/pull_request_template.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## After-Action Review Contract
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #335 by making after-action review a first-class Upkeeper
+  contract instead of a failure-only debrief habit
+- update P27, operator docs, and the PR template to capture outcome, what went
+  right, what went wrong, waste, next improvement, and reusable learning
+- add quick-validator coverage so the required shape cannot silently drift
+
+Constraints:
+- no backend Codex calls
+- keep after-action review concise; do not require tracked docs for every run
+- preserve `P27: not applicable` for routine edits with no reusable lesson
+
+Files likely touched:
+- `prompts/p27-educational-debrief-review.md`
+- `.github/pull_request_template.md`
+- `docs/public-documentation-policy.md`
+- `docs/scripts/upkeeper.md`
+- `README.md`
 - `tools/validate_upkeeper.sh`
 - `change_notes_2026.md`
 

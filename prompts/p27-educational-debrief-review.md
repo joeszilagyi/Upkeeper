@@ -1,12 +1,18 @@
-# P27 Educational Debrief Review
+# P27 After-Action Review
 
 Use this as an Upkeeper review module when you want the run to leave behind a
-concise learning note, not only a fix.
+concise after-action review, not only a fix.
 
 P27 is for operators who want Upkeeper to improve the repository and improve the
 human feedback loop at the same time. Professionals can adapt the lesson into
 team practice. Hobbyists can use it to spend spare cycles on backlog and learn
-what broke, why it broke, and how to avoid the same shape later.
+what went right, what went wrong, what was wasteful, and how to avoid the same
+shape later.
+
+Self-optimization is part of this module. A meaningful operation should be able
+to yield a compact lesson about reducing repeated LLM work, tightening local
+airlocks, improving operator clarity, or making clean no-op paths faster and
+more trustworthy.
 
 This module does not replace normal selected-file review. Follow the normal
 selected-file rule and all normal applicable P1-P26 instructions. In addition,
@@ -38,21 +44,24 @@ If P27 applies, verify that the selected-file response includes:
 
 No extra tooling is required beyond the normal selected-file work.
 
-## P27 - Educational Debrief Review
+## P27 - After-Action Review
 
 Goal:
 
-After fixing or reviewing the selected file, write a lean educational debrief
+After fixing or reviewing the selected file, write a lean after-action review
 that explains the lesson in plain engineering language.
 
-The debrief should help a future reader understand:
+The review should help a future reader understand:
 
+- outcome summary
+- what went right
 - what went wrong
 - why it probably happened
 - why it mattered
+- what was wasteful
 - how to avoid the same pattern
 - how the fix addressed it
-- what the original code or docs already did well
+- whether the system learned anything reusable
 - what could still be improved later
 
 Do not turn this into a tutorial on basic syntax. Do not shame the original
@@ -69,19 +78,22 @@ belongs in a durable tracked doc.
 Use this compact structure:
 
 ```text
-P27 Educational Debrief:
+P27 After-Action Review:
+- Outcome:
+- What went right:
 - What went wrong:
 - Why it probably happened:
 - Why it mattered:
+- What was wasteful:
 - How to avoid it:
 - How it was fixed:
-- What was already good:
-- Still worth improving:
+- Reusable learning:
+- What can improve next time:
 ```
 
 Each bullet should usually be one or two sentences. If there was no bug but
-there was a useful clean review, keep the debrief shorter and focus on what was
-already good and what to watch later.
+there was a useful clean review, keep the review shorter and focus on the
+outcome, what went right, waste avoided, and what to watch later.
 
 ### When To Add A Tracked Doc
 
@@ -102,6 +114,7 @@ Otherwise, the saved transcript/finale is enough.
 
 Prefer:
 
+- balanced signal from success, failure, and cost
 - concrete behavior over abstract blame
 - one root cause, or two at most
 - direct names for files, flags, env vars, logs, markers, or functions
@@ -118,7 +131,7 @@ Avoid:
 
 ### Output Contract
 
-When P27 applies, include exactly one `P27 Educational Debrief:` block in the
+When P27 applies, include exactly one `P27 After-Action Review:` block in the
 final response using the saved structure above.
 
 If P27 does not apply, include:

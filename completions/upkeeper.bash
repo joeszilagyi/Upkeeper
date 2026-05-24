@@ -73,7 +73,7 @@ _upkeeper_complete() {
       return 0
       ;;
     --review-module=*)
-      _upkeeper_complete_csv_value "$cur" "p24 p25 p26 p27 p28 p29 p30 de-llm contract docs educational-debrief unit-test-harvesting reuse library-reuse function-reuse asset-reuse stark stark-protocol permanent-hardening hardening non-regression regression-proof no-repeat final-hardening"
+      _upkeeper_complete_csv_value "$cur" "p24 p25 p26 p27 p28 p29 p30 de-llm contract docs after-action after-action-review educational-debrief unit-test-harvesting reuse library-reuse function-reuse asset-reuse stark stark-protocol permanent-hardening hardening non-regression regression-proof no-repeat final-hardening"
       return 0
       ;;
     --review-modules=*|--selection-review-modules=*)

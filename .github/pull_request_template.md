@@ -6,6 +6,15 @@
 
 -
 
+## After-Action Review
+
+- Outcome:
+- What went right:
+- What went wrong:
+- What was wasteful:
+- What can improve next time:
+- Reusable learning:
+
 ## Serious Finding Repro Status
 
 For security, data-integrity, destructive-write, target-selection, recovery, or

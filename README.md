@@ -103,7 +103,7 @@ On each cycle it:
   registry loaders, config readers, data readers, and input-boundary CLIs
 - can append opt-in P24/P25/P26/P27/P28/P29/P30 review modules for de-LLM-ing
   viability, contract/intent compliance, public documentation clarity,
-  educational debriefs, unit-test harvesting, reuse harvesting, and permanent
+  after-action reviews, unit-test harvesting, reuse harvesting, and permanent
   hardening
 - provides `FlameOn`, a thin one-command launcher for the highest local
   max-cover smoke/burn cycle that defaults to filing/reporting bugs instead of
@@ -750,10 +750,10 @@ operator guides, module docs, or public policy. It treats every patch and
 release as public material and checks whether a future reader can understand the
 important intent from the repository itself.
 
-P27 applies when a run should leave a concise learning note after the fix. It
-captures what went wrong, why it probably happened, why it mattered, how to
-avoid the pattern, how it was fixed, what was already good, and what can still
-improve.
+P27 applies when a run should leave a concise after-action review after
+meaningful work. It captures the outcome, what went right, what went wrong,
+what was wasteful, what can improve next time, and whether the system learned
+anything reusable.
 
 P28 applies when a bug, reusable exploratory command, parser edge case,
 validation path, or deterministic LLM-discovered fact can become a cheap local
@@ -1002,7 +1002,7 @@ test loop does not spend cycles on known low-value or generated material.
 - [prompts/p26-public-documentation-review.md](prompts/p26-public-documentation-review.md):
   P26 review module for public documentation and code-comment clarity
 - [prompts/p27-educational-debrief-review.md](prompts/p27-educational-debrief-review.md):
-  P27 review module for concise saved educational debriefs
+  P27 review module for concise saved after-action reviews
 - [prompts/p28-unit-test-harvesting-review.md](prompts/p28-unit-test-harvesting-review.md):
   P28 review module for turning useful discoveries into local tests or fixtures
 - [prompts/p29-reuse-harvesting-review.md](prompts/p29-reuse-harvesting-review.md):

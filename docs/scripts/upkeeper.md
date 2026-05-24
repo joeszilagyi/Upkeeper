@@ -226,7 +226,10 @@ Important:
     bug-report-only mode. The local report copy is retained under
     `${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/obligation-issue-reports`
     as evidence, not as a substitute for filing. If GitHub issue filing fails,
-    backlog stops before normal issue selection. Set
+    backlog stops before normal issue selection. Existing GitHub issue links are
+    accepted only after the bridge verifies the issue is still open; closed
+    links are preserved as stale evidence and replaced with a fresh issue for
+    the still-open obligation. Set
     `BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=0` only for a deliberate local-only
     dry run.
     Set `BACKLOG_OBLIGATION_RECONCILE=0` for a

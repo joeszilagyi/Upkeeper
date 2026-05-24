@@ -1571,6 +1571,24 @@ def clear_umbrella_issue_link(data, now):
     return True
 
 
+def clear_stale_issue_link(data, now, number, state, url, title):
+    data["stale_github_issue_number"] = number
+    data["stale_github_issue_state"] = state
+    data["stale_github_issue_url"] = url
+    data["stale_github_issue_title"] = title
+    for key in (
+        "github_issue_number",
+        "github_issue_url",
+        "issue_number",
+        "issue_url",
+        "linked_issue_number",
+    ):
+        data[key] = ""
+    data["issue_report_link_basis"] = "closed_issue_requires_specific_report"
+    data["issue_report_unlinked_at"] = now
+    data["specific_issue_required"] = True
+
+
 def same_root(data):
     raw = first_nonempty(data.get("root"))
     if not raw:
@@ -1705,6 +1723,26 @@ def create_github_issue(title, body_path):
     return (match.group(1) if match else "", output, "")
 
 
+def read_github_issue(number):
+    cmd = ["gh", "issue", "view", number, "--json", "state,title,url"]
+    try:
+        completed = subprocess.run(cmd, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        return "", "", "", str(exc)
+    output = (completed.stdout or "").strip()
+    error = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        return "", "", "", error or f"gh exited {completed.returncode}"
+    try:
+        data = json.loads(output)
+    except json.JSONDecodeError as exc:
+        return "", "", "", f"invalid gh issue JSON: {exc}"
+    if not isinstance(data, dict):
+        return "", "", "", "invalid gh issue JSON shape"
+    state = first_nonempty(data.get("state")).upper()
+    return state, first_nonempty(data.get("url")), first_nonempty(data.get("title")), ""
+
+
 records = []
 if open_dir.is_dir():
     for path in sorted(open_dir.glob("*.json")):
@@ -1725,6 +1763,7 @@ github_existing = 0
 github_failed = 0
 updated_records = 0
 umbrella_unlinked = 0
+closed_issue_unlinked = 0
 now = now_local()
 
 for source_path, data in records:
@@ -1746,11 +1785,29 @@ for source_path, data in records:
     if github_write:
         existing_number = first_nonempty(data.get("github_issue_number"), data.get("issue_number"))
         if existing_number:
-            github_existing += 1
-            data["github_issue_number"] = existing_number
-            data["issue_number"] = existing_number
-            data["issue_report_state"] = "github_existing"
-        else:
+            state, issue_url, issue_title, error = read_github_issue(existing_number)
+            if error:
+                github_failed += 1
+                data["issue_report_state"] = "github_verify_failed"
+                data["github_issue_verify_error"] = redact(error)[:300]
+                write_json_private(source_path, data)
+                updated_records += 1
+                continue
+            if state == "OPEN":
+                github_existing += 1
+                data["github_issue_number"] = existing_number
+                data["issue_number"] = existing_number
+                if issue_url:
+                    data["github_issue_url"] = issue_url
+                    data["issue_url"] = issue_url
+                if issue_title:
+                    data.setdefault("github_issue_title", issue_title)
+                data["issue_report_state"] = "github_existing"
+            else:
+                clear_stale_issue_link(data, now, existing_number, state or "UNKNOWN", issue_url, issue_title)
+                closed_issue_unlinked += 1
+                existing_number = ""
+        if not existing_number:
             issue_number, issue_url, error = create_github_issue(title, report_path)
             if issue_number:
                 github_created += 1
@@ -1780,6 +1837,7 @@ print(
             "github_existing": github_existing,
             "github_failed": github_failed,
             "umbrella_unlinked": umbrella_unlinked,
+            "closed_issue_unlinked": closed_issue_unlinked,
             "report_dir": str(report_dir),
         },
         separators=(",", ":"),

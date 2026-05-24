@@ -3,6 +3,39 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Closed Obligation Issue Links
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- prevent open automation obligations from treating closed GitHub issues as
+  valid custody
+- preserve stale closed links as evidence while creating a fresh issue for the
+  still-open obligation
+- fail closed if an existing linked issue cannot be verified during GitHub-write
+  sync
+
+Constraints:
+- keep local-only issue report generation available when GitHub writing is
+  explicitly disabled
+- avoid backend Codex; this is deterministic wrapper/bridge behavior
+- validate with a fake `gh` command before touching live runs
+
+Files likely touched:
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
 ## Anomaly Custody Issue Ownership
 
 Status: completed locally; pending PR/CI

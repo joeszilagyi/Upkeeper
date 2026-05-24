@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: backlog merge steward:
+	1. Added `tools/backlog_merge_steward.py`, a local no-backend guard for already-green backlog PR cleanup.
+	2. The steward refuses draft, non-main, failing-check, pending-check, unmergeable, and dirty-secondary-main-worktree states before merge.
+	3. Real execution uses the guarded `CODEX_ALLOW_PR_MERGE=<pr>` merge path with GitHub branch deletion, then fetches/prunes and verifies local main is clean.
+
 2026-05-24: embedded behavior table contracts:
 	1. Quick validation now checks the embedded behavior table drift contract for startup anomaly changed-path allowlists, source-safe exclusions, command-kind classifiers, review-module ids, and Lattice pass-code mappings.
 	2. Compatibility and operator docs now identify those tables as operator-visible control-plane behavior that must change with validation coverage instead of drifting silently.

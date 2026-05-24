@@ -959,6 +959,10 @@ prompts, backup log lines, or Lattice preselect evidence.
   Quick validation also owns the embedded behavior table drift contract for
   startup anomaly allowlists, source-safe exclusions, command-kind
   classifiers, review-module ids, and Lattice pass-code mappings.
+  Green backlog PR cleanup can be preflighted or executed through
+  `tools/backlog_merge_steward.py`. It refuses draft, non-main, failing-check,
+  unmergeable, or dirty-secondary-worktree states and uses
+  `CODEX_ALLOW_PR_MERGE=<pr>` for real merges.
   Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
   heavier config, manifest, Lattice, and review-module dry-run fixtures stay in
   full mode. Add `--profile` to validation runs to print per-check elapsed

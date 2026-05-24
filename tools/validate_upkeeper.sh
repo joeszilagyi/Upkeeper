@@ -3124,6 +3124,52 @@ check_governance_docs_contract() {
     fail "risk register missing parallel worker risk"
 }
 
+check_negative_space_testing_contract() {
+  local doc_path="docs/negative-space-testing.md"
+  local linked_path invariant_id phrase
+
+  log "checking negative-space testing contract"
+
+  [[ -s "$doc_path" ]] || fail "negative-space testing docs are missing or empty"
+  for linked_path in README.md docs/security.md docs/compatibility.md docs/scripts/upkeeper.md; do
+    grep -Fq "$doc_path" "$linked_path" || fail "$linked_path does not link the negative-space testing contract"
+  done
+
+  for invariant_id in NS-001 NS-002 NS-003 NS-004 NS-005 NS-006 NS-007 NS-008; do
+    grep -Fq "$invariant_id" "$doc_path" || fail "negative-space catalog missing $invariant_id"
+  done
+  for phrase in \
+    "must not select runtime artifacts" \
+    "must not reveal the backup vault root" \
+    "must not replace a selected target" \
+    "must not leave tracked-source mutations" \
+    "must not be accepted as clean absence or successful work" \
+    "must not spend real backend quota" \
+    "must not be treated as safe" \
+    "must not be accepted as active protection"; do
+    grep -Fq "$phrase" "$doc_path" || fail "negative-space catalog missing phrase: $phrase"
+  done
+
+  grep -Fq "runtime_path_rejected" tests/precontact_backup_test.bash ||
+    fail "negative-space proof missing runtime target rejection fixture"
+  grep -Fq "compiled prompt leaked vault root" tests/precontact_backup_test.bash ||
+    fail "negative-space proof missing vault-root leak fixture"
+  grep -Fq "Replacement target selection is wrapper-only" tests/precontact_backup_test.bash ||
+    fail "negative-space proof missing replacement-authority fixture"
+  grep -Fq "source_mutation_guard.violation" Upkeeper ||
+    fail "negative-space proof missing source mutation guard"
+  grep -Fq "BUG_REPORT_ONLY_MUTATION_VIOLATION" Upkeeper ||
+    fail "negative-space proof missing bug-report-only mutation reason"
+  grep -Fq "test_status_marker_rejects_decorated_or_ambiguous_candidates" tests/wrapper_contract_test.bash ||
+    fail "negative-space proof missing malformed status-marker fixture"
+  grep -Fq "No mode launches a real Codex backend task" tools/validate_upkeeper.sh ||
+    fail "negative-space proof missing no-backend validation contract"
+  grep -Fq "config file must not be a symlink" Upkeeper ||
+    fail "negative-space proof missing unsafe config preflight"
+  grep -Fq "Genie Protocol requires sandboxed backend Codex execution" tests/wrapper_contract_test.bash ||
+    fail "negative-space proof missing unsafe backend mode fixture"
+}
+
 check_client_link_tools_contract() {
   log "checking client link tools contract"
 
@@ -6595,6 +6641,7 @@ run_check validation_quota_session_fixture_contract check_validation_quota_sessi
 run_check dependency_guidance_contract check_dependency_guidance_contract
 run_check release_readiness_docs_contract check_release_readiness_docs_contract
 run_check governance_docs_contract check_governance_docs_contract
+run_check negative_space_testing_contract check_negative_space_testing_contract
 run_check client_link_tools_contract check_client_link_tools_contract
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
 run_check test_invocation_mode_contract check_test_invocation_mode_contract

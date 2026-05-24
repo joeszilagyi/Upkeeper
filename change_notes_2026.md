@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: negative-space validation contract:
+	1. Added `docs/negative-space-testing.md` as the tracked catalog for deterministic "must not happen" validation contracts.
+	2. The catalog links target selection, pre-contact backup redaction, replacement authority, source-mutation guards, malformed marker rejection, no-backend validation, config safety, and backend sandbox allowlisting to local proofs.
+	3. `tools/validate_upkeeper.sh --quick` now checks that the catalog and its public documentation links stay present.
+
 2026-05-24: breadcrumb custody audit:
 	1. Added `tools/audit_upkeeper_breadcrumbs.py`, a deterministic local scanner that fingerprints suspicious log, transcript, automation-obligation, and tool-failure breadcrumbs.
 	2. The audit command can write ignored local custody records under `runtime/upkeeper-breadcrumbs/open`, `resolved`, and `suppressed`, preserving weak clues until they are explicitly resolved or suppressed.

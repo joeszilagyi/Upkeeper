@@ -236,6 +236,10 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Validation entrypoints remain available:
   `tools/validate_upkeeper.sh --deps`, `--smoke`, `--quick`, `--full`, and the
   additive `--profile` timing flag.
+- Negative-space validation remains part of the tracked safety surface.
+  `docs/negative-space-testing.md` names deterministic local proofs for
+  behavior that must not happen, and those proofs should stay no-backend unless
+  an operator explicitly requests backend-specific testing.
 - The GitHub Actions no-quota CI workflow remains available at
   `.github/workflows/ci.yml` for pushes and pull requests.
 - The local stress-corpus entrypoint remains available:

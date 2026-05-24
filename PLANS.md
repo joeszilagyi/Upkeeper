@@ -3,6 +3,42 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## PR440 Stabilization And Return To Issue Work
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- get PR #440 from obligation-remediation churn to a mergeable, validated
+  control-plane patch
+- close the stale operator-guide validation failure from the `v1.2.33` bump
+- prevent the `except Exception as exc:` source fixture PAGE line from being
+  reopened by prior-run anomaly custody after live output already reclassifies it
+- preserve the obligation-first contract while restoring a clean baseline so
+  later backlog loops can return to ordinary GitHub issue fixes
+
+Constraints:
+- do not launch live backend Codex validation
+- keep real PAGE/ERROR wrapper failures visible
+- do not silently delete local obligation evidence
+- update public operator docs and release notes for operator-visible behavior
+
+Files touched:
+- `tools/upkeeper_anomaly_custody.py`
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/validate_upkeeper.sh`
+- `tools/upkeeper_lattice.py`
+- `tests/lattice_test.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `PLANS.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## X99 Obligation Churn Hardening
 
 Status: completed locally; pending PR/CI

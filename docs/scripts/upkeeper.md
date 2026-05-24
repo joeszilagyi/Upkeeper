@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.32
+Version: v1.2.33
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -179,8 +179,9 @@ Important:
     of the same anomaly class update the existing obligation with occurrence
     counts and last-seen evidence instead of opening a new obligation for each
     cycle id or run hash. Quoted backend shell/test fixture snippets that contain
-    embedded `[WARN]`, `[ERROR]`, `PAGE`, or control-plane log text are treated as
-    transcript content, not as new wrapper failures. Immediately after the
+    embedded `[WARN]`, `[ERROR]`, `PAGE`, control-plane log text, or quoted
+    source-code fixture lines are treated as transcript content, not as new
+    wrapper failures. Immediately after the
     backlog branch is checked out, before PR, merge, quota, or issue-selection
     gates, backlog also reconciles open current-root obligations deterministically: records
     with matching root, kind, reason, target, issue, and stable fingerprint are
@@ -394,6 +395,10 @@ Prompt behavior:
     logs one warning, spools a small recovery record when possible, and
     continues the existing cycle behavior. If `UPKEEPER_LATTICE_REQUIRED=1`,
     startup fails before Codex launch.
+    Transient transcript artifacts may live under repo runtime, Upkeeper-owned
+    state directories, or Upkeeper-owned temp directories; Lattice records their
+    hashed identity without treating those operator-local transcript locations
+    as unsafe source paths.
   - Exception: when the repo-local Upkeeper implementation itself is eligible
     and has not been touched for at least 7 days, it is selected first. If it is
     newer than that threshold, normal oldest-file selection applies.

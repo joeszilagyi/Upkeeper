@@ -199,6 +199,13 @@ Important:
     before it can fail closed as missing checks. Set
     `BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE=0` only for an intentional manual
     override.
+  - Use `./orchestration/watch-pr.sh [PR_NUMBER]` for a local, no-backend PR
+    check watch outside the backlog loop. With no PR number, it infers the PR
+    for the current branch. `--once` prints one timestamped state and exits,
+    while `--interval SECONDS` controls polling while checks are pending. The
+    watcher exits `0` when checks pass, `1` on failed/unreadable checks, and
+    `2` for pending checks in `--once` mode. Backlog prints the same command as
+    a helper after it creates or pushes an active backlog PR branch.
   - After syncing the active backlog PR branch, and again before batch merge,
     the launcher checks whether the local branch contains commits not yet on
     `origin/<branch>`. A clean local-ahead branch is pushed before PR checks or
@@ -1011,6 +1018,10 @@ prompts, backup log lines, or Lattice preselect evidence.
   `tools/backlog_triage.py`. It reads local loop evidence, branch state,
   obligations, locks, and optional PR metadata, then emits
   `safe_to_restart=yes|no|wait`, a reason, and a next action.
+  PR check watching is available without backend work with
+  `./orchestration/watch-pr.sh [PR_NUMBER]`. It prints timestamped
+  pass/pending/fail counts, per-check names, conclusions, and URLs when present;
+  `--once` exits immediately and `--interval SECONDS` controls polling.
   Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
   heavier config, manifest, Lattice, and review-module dry-run fixtures stay in
   full mode. Add `--profile` to validation runs to print per-check elapsed

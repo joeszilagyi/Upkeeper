@@ -2149,6 +2149,13 @@ current_backlog_pr() {
     | sed -n '1p'
 }
 
+backlog_log_pr_watch_hint() {
+  local pr_number="${1:-}"
+
+  [[ -n "$pr_number" ]] || return 0
+  log "PR #$pr_number checks may be pending; watch with: ./orchestration/watch-pr.sh $pr_number"
+}
+
 checkout_backlog_branch() {
   local branch="$1"
 
@@ -2218,11 +2225,12 @@ backlog_ensure_local_branch_pushed() {
     return 1
   fi
   log "local branch push guard branch=$branch pr=$pr_number local_ahead=$local_ahead context=$context action=pushed_wait_for_fresh_checks"
+  backlog_log_pr_watch_hint "$pr_number"
   return 0
 }
 
 open_backlog_pr() {
-  local branch
+  local branch pr_number
 
   log "new backlog PR setup: plane=git waiting_for=sync_main"
   git checkout main >/dev/null
@@ -2245,7 +2253,9 @@ Target: up to ${BACKLOG_BATCH_LIMIT} bug or data-protection fixes, newest non-fe
 
 Validation: script-local quick validation plus required PR checks before merge." >/dev/null
 
-  printf '%s\t%s\n' "$(gh pr view --json number --jq '.number')" "$branch"
+  pr_number="$(gh pr view --json number --jq '.number')"
+  backlog_log_pr_watch_hint "$pr_number"
+  printf '%s\t%s\n' "$pr_number" "$branch"
 }
 
 pr_body() {
@@ -3002,6 +3012,7 @@ commit_and_push_changes() {
   git commit -m "$message" || return $?
   log "pushing branch updates plane=git waiting_for=push"
   git push || return $?
+  backlog_log_pr_watch_hint "${pr_number:-}"
   return 0
 }
 

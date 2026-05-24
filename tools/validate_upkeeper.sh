@@ -1780,6 +1780,28 @@ check_backlog_merge_steward_contract() {
   bash tests/backlog_merge_steward_test.bash
 }
 
+check_backlog_pr_watch_contract() {
+  log "checking backlog PR-watch helper contract"
+
+  [[ -x orchestration/watch-pr.sh ]] || fail "backlog PR watcher is missing or not executable"
+  [[ -s tests/watch_pr_test.bash ]] || fail "backlog PR watcher tests are missing or empty"
+  grep -Fq 'gh pr checks "$pr_number" --watch=false --json' orchestration/watch-pr.sh ||
+    fail "backlog PR watcher does not use local gh PR check inspection"
+  grep -Fq 'gh pr view --json number --jq' orchestration/watch-pr.sh ||
+    fail "backlog PR watcher cannot infer the current branch PR"
+  grep -Fq -- '--once' orchestration/watch-pr.sh ||
+    fail "backlog PR watcher does not expose one-shot mode"
+  grep -Fq -- '--interval' orchestration/watch-pr.sh ||
+    fail "backlog PR watcher does not expose polling interval control"
+  grep -Fq 'backlog_log_pr_watch_hint' orchestration/backlog.sh ||
+    fail "backlog launcher does not print the PR watcher helper after PR updates"
+  grep -Fq './orchestration/watch-pr.sh' docs/scripts/upkeeper.md ||
+    fail "operator guide missing PR watcher command"
+  grep -Fq 'status=pass|pending|fail' docs/compatibility.md ||
+    fail "compatibility docs missing PR watcher output contract"
+  bash tests/watch_pr_test.bash
+}
+
 check_backlog_triage_contract() {
   log "checking backlog stopped-loop triage contract"
 
@@ -6730,6 +6752,7 @@ run_check backlog_launcher_contract check_backlog_launcher_contract
 run_check backlog_batch_validation_obligation_contract check_backlog_batch_validation_obligation_contract
 run_check backlog_local_ahead_guard_contract check_backlog_local_ahead_guard_contract
 run_check backlog_merge_steward_contract check_backlog_merge_steward_contract
+run_check backlog_pr_watch_contract check_backlog_pr_watch_contract
 run_check backlog_triage_contract check_backlog_triage_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract

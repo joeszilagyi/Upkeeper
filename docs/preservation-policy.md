@@ -8,7 +8,9 @@ different privacy risk, recovery value, and retention pressure.
 This policy defines evidence temperature, artifact privacy classes, default
 handling rules, and recovery expectations. It is a local operator policy unless
 a specific artifact is deliberately sanitized and promoted into tracked source
-or a public issue.
+or a public issue. `docs/source-rights-metadata.md` defines the separate
+source-rights review used before OSINT or citation material may enter prompts,
+exports, archives, or public evidence packets.
 
 ## Evidence Temperature
 
@@ -51,8 +53,9 @@ The default class for raw runtime evidence is `private-operator`. An artifact
 becomes `public-safe` only after it is intentionally written or sanitized for
 tracked source, public docs, PR text, or a GitHub issue. Anything containing or
 near credentials, private age identities, tokens, private keys, PII-bearing
-data, paid/private source text, or customer material is `secret-adjacent`
-regardless of where it was found.
+data, or customer material is `secret-adjacent` regardless of where it was
+found. Paid/private source text and license-restricted source text require
+source-rights review before any use beyond metadata.
 
 ## Artifact Handling Matrix
 
@@ -123,5 +126,5 @@ the raw local artifact can usually cool from warm to cold or trashable.
 Changes that alter how Upkeeper keeps, prunes, compresses, redacts, exports, or
 recovers logs, transcripts, backups, Lattice rows, exports, recovery artifacts,
 obligations, postmortems, manifests, or public evidence packets should update
-this file, `docs/security.md`, `docs/compatibility.md`, and validation coverage
-in the same patch.
+this file, `docs/source-rights-metadata.md`, `docs/security.md`,
+`docs/compatibility.md`, and validation coverage in the same patch.

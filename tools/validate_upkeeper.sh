@@ -655,6 +655,62 @@ check_preservation_policy_contract() {
     fail "change notes missing preservation policy entry"
 }
 
+check_source_rights_metadata_contract() {
+  local term
+  local -a required_terms
+
+  log "checking source rights metadata contract"
+  [[ -s docs/source-rights-metadata.md ]] ||
+    fail "source rights metadata policy is missing or empty"
+
+  required_terms=(
+    "## Source Sensitivity Labels"
+    "public"
+    "local-private"
+    "secret-adjacent"
+    "credential-bearing"
+    "PII-bearing"
+    "paid-access"
+    "license-restricted"
+    "prompt-safe"
+    "prompt-unsafe"
+    "export-safe"
+    "export-unsafe"
+    "## Rights And Reuse Fields"
+    "may_store_metadata"
+    "may_store_full_text"
+    "may_quote"
+    "may_upload"
+    "may_export"
+    "may_summarize"
+    "may_use_for_wikipedia_citation"
+    "may_include_in_public_evidence_packet"
+    "may_archive"
+    "robots_or_terms_restriction"
+    "## Default Deny Rules"
+    "## OSINT And Citation Workflow"
+    "## Relationship To Preservation Policy"
+    "upkeeper.source_rights.v1"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq "$term" docs/source-rights-metadata.md ||
+      fail "source rights metadata missing required term: $term"
+  done
+
+  grep -Fq "docs/source-rights-metadata.md" README.md ||
+    fail "README missing source rights metadata pointer"
+  grep -Fq "docs/source-rights-metadata.md" docs/preservation-policy.md ||
+    fail "preservation docs missing source rights metadata pointer"
+  grep -Fq "docs/source-rights-metadata.md" docs/security.md ||
+    fail "security docs missing source rights metadata pointer"
+  grep -Fq "docs/source-rights-metadata.md" docs/compatibility.md ||
+    fail "compatibility docs missing source rights metadata contract"
+  grep -Fq "Source rights drift" docs/risk-register.md ||
+    fail "risk register missing source rights drift risk"
+  grep -Fq "source rights metadata model" change_notes_2026.md ||
+    fail "change notes missing source rights metadata entry"
+}
+
 check_syntax() {
   local module
 
@@ -7159,6 +7215,7 @@ run_check policy_decisions_contract check_policy_decisions_contract
 run_check schema_compatibility_contract check_schema_compatibility_contract
 run_check threat_model_doctrine_contract check_threat_model_doctrine_contract
 run_check preservation_policy_contract check_preservation_policy_contract
+run_check source_rights_metadata_contract check_source_rights_metadata_contract
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation

@@ -13,6 +13,11 @@ Version numbering note:
 	4. Quoted backend source snippets that call `log_line` or `log_line_parts` are treated as fixture echoes rather than fresh live PAGE failures.
 	5. Empty-transcript Codex exit failures now use a stable `codex_exec_empty_transcript` obligation identity, and the backlog launcher preserves the child-owned obligation instead of filing a second wrapper-failure record for the same cycle.
 
+2026-05-24: source rights metadata model:
+	1. Added `docs/source-rights-metadata.md` as the tracked source sensitivity, rights, and reuse metadata model for OSINT and citation artifacts.
+	2. Defined public, local-private, secret-adjacent, credential-bearing, PII-bearing, paid-access, license-restricted, prompt-safe, prompt-unsafe, export-safe, and export-unsafe labels.
+	3. Defined rights fields for metadata storage, full-text storage, quoting, upload, export, summarization, Wikipedia citation use, public evidence packets, archiving, and robots/terms restrictions, with validation coverage so the vocabulary cannot silently drift.
+
 2026-05-24: per-bug source contract gate:
 	1. `tools/validate_upkeeper.sh --source-contracts` now runs the cheapest source-only validation contracts used by backlog per-bug commit gates.
 	2. Backlog per-bug validation now runs that source-contract gate when Upkeeper source, tools, or tests changed, catching oversized structured log call sites before commit and push.

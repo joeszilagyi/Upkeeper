@@ -2086,7 +2086,7 @@ quota_preflight_allows_backlog_run() {
   primary_decision="$(quota_bucket_decision "$primary_bucket_current" "$primary_projected_left" "$(quota_5h_stop_percent_for_model "$CODEX_MODEL")")"
   secondary_decision="$(quota_bucket_decision "$secondary_bucket_current" "$secondary_projected_left" "$(quota_week_stop_percent_for_model "$CODEX_MODEL")")"
 
-  if [[ "$snapshot_stale_after_reset" == "true" && ( "$primary_decision" == "defer" || "$secondary_decision" == "defer" ) ]]; then
+  if [[ "$snapshot_stale_after_reset" == "true" ]]; then
     if ! backlog_open_stale_quota_obligation "$quota_json" "$primary_decision" "$secondary_decision"; then
       log "quota preflight: stale quota evidence after reset could not be recorded as non-perfect health; failing closed"
       return 4

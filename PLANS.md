@@ -3,6 +3,37 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Descriptive Automation Obligation Issue Titles
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #455 by making prior-run anomaly obligation issue names
+  deterministic, evidence-specific, and less duplicative
+- preserve script-owned issue filing; no model call should decide the title
+- keep existing generic/open obligation records repairable by deriving a
+  better report title from their stored evidence
+
+Constraints:
+- no backend Codex calls
+- keep title generation short, redacted, and based only on local obligation
+  fields or bounded evidence excerpts
+- preserve manually specific issue titles while replacing generic umbrella or
+  prior-run placeholders
+
+Files likely touched:
+- `tools/upkeeper_anomaly_custody.py`
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper FlameOn ChimneySweep lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/watch-pr.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Preservation Policy And Artifact Privacy
 
 Status: completed locally; pending PR/CI

@@ -1475,6 +1475,45 @@ UMBRELLA_ISSUE_TITLE = (
     "High priority bug: non-perfect automated runs need mandatory local "
     "remediation custody"
 )
+EVENT_TOKEN_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+\b")
+KNOWN_EVENT_SIGNALS = (
+    "operator_guide.stale",
+    "previous_run.anomaly_summary",
+    "startup_anomaly.gate_unresolved",
+    "startup_anomaly.gate_violation",
+    "startup_anomaly.gate",
+    "lattice.unavailable",
+    "transcript.prune_blocked",
+    "log.rotate_blocked",
+    "quota.guardrails",
+    "quota.cooldown",
+    "automation.obligation.open",
+    "cycle.exit",
+    "run.finish",
+)
+IGNORED_EVENT_TOKEN_SUFFIXES = (
+    ".bash",
+    ".conf",
+    ".json",
+    ".jsonl",
+    ".md",
+    ".py",
+    ".sh",
+    ".sqlite3",
+    ".txt",
+)
+PRIOR_RUN_KIND_LABELS = {
+    "page_error": "PAGE error",
+    "failed_pr_check_gate": "PR check gate failure",
+    "nonzero_cycle_exit": "nonzero cycle exit",
+    "nonzero_launcher_exit": "nonzero launcher exit",
+    "lattice_unavailable": "lattice degraded mode",
+    "startup_anomaly_unresolved": "startup anomaly unresolved",
+    "previous_run_anomaly_summary": "previous-run anomaly summary",
+    "startup_anomaly_gate_active": "startup anomaly gate active",
+    "warning_line": "warning",
+    "expected_fixture_output": "expected fixture output",
+}
 
 
 def now_local():
@@ -1527,6 +1566,98 @@ def first_nonempty(*values):
         if text:
             return text
     return ""
+
+
+def compact_title_text(value, width=90):
+    text = " ".join(stable_text(value).replace("\r", " ").replace("\t", " ").split())
+    text = text.strip(" \"'`[](){}")
+    if len(text) <= width:
+        return text
+    return text[: width - 3].rstrip(" ./_-") + "..."
+
+
+def generic_prior_run_issue_title(value):
+    text = stable_text(value).strip()
+    if not text:
+        return True
+    return text == UMBRELLA_ISSUE_TITLE or text.startswith(
+        "High priority bug: automation obligation prior_run_anomaly needs repair"
+    )
+
+
+def evidence_for_title(data):
+    evidence = data.get("last_evidence")
+    if not isinstance(evidence, dict):
+        evidence = data.get("evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
+    return evidence
+
+
+def prior_run_kind(data, evidence, text):
+    explicit = first_nonempty(data.get("anomaly_kind"), evidence.get("kind"))
+    if explicit:
+        return explicit
+    lower = text.lower()
+    if "lattice.unavailable" in lower:
+        return "lattice_unavailable"
+    if "startup_anomaly.gate_unresolved" in lower:
+        return "startup_anomaly_unresolved"
+    if "previous_run.anomaly_summary" in lower:
+        return "previous_run_anomaly_summary"
+    if "checks_failed" in lower or "checks failed" in lower:
+        return "failed_pr_check_gate"
+    if "cycle.exit" in lower:
+        return "nonzero_cycle_exit"
+    if "page" in lower or "[error]" in lower:
+        return "page_error"
+    if "[warn]" in lower:
+        return "warning_line"
+    return "prior_run_anomaly"
+
+
+def prior_run_signal(kind, text):
+    lower = text.lower()
+    for signal in KNOWN_EVENT_SIGNALS:
+        if signal in lower:
+            return signal
+    if kind == "failed_pr_check_gate":
+        return "PR checks"
+    if kind == "page_error" and "page" in lower:
+        return "PAGE"
+    for token in EVENT_TOKEN_RE.findall(text):
+        token_lower = token.lower()
+        if token_lower.startswith("v") and len(token_lower) > 1 and token_lower[1].isdigit():
+            continue
+        if token_lower.endswith(IGNORED_EVENT_TOKEN_SUFFIXES):
+            continue
+        return compact_title_text(token, 70)
+    return ""
+
+
+def prior_run_title_label(data):
+    stored = first_nonempty(data.get("anomaly_title_label"))
+    if stored:
+        return compact_title_text(stored)
+    evidence = evidence_for_title(data)
+    text = first_nonempty(
+        evidence.get("normalized_excerpt"),
+        evidence.get("excerpt"),
+        data.get("fingerprint"),
+        data.get("summary"),
+    )
+    kind = prior_run_kind(data, evidence, text)
+    label = PRIOR_RUN_KIND_LABELS.get(kind, kind.replace("_", " "))
+    signal = first_nonempty(data.get("anomaly_signal"), prior_run_signal(kind, text))
+    if not signal:
+        return label
+    if signal.lower().replace(".", "_").replace(" ", "_") == kind:
+        return signal
+    if signal.lower() in label.lower():
+        return label
+    if label.lower() in signal.lower():
+        return signal
+    return compact_title_text(f"{signal} {label}")
 
 
 def linked_issue_number(data):
@@ -1616,8 +1747,17 @@ def report_filename(obligation_id):
 
 
 def title_for(data):
+    existing = first_nonempty(data.get("issue_title"))
     kind = first_nonempty(data.get("kind"), data.get("reason"), "automation obligation")
-    target = first_nonempty(data.get("repair_target_file"), data.get("target_file"), "machine-local state")
+    if existing and (kind != "prior_run_anomaly" or not generic_prior_run_issue_title(existing)):
+        return compact_title_text(existing, 180)
+    target = compact_title_text(
+        first_nonempty(data.get("repair_target_file"), data.get("target_file"), "machine-local state"),
+        80,
+    )
+    if kind == "prior_run_anomaly":
+        label = prior_run_title_label(data)
+        return f"High priority bug: prior-run {label} needs repair for {target}"[:180]
     return f"High priority bug: automation obligation {kind} needs repair for {target}"[:180]
 
 
@@ -1771,6 +1911,9 @@ for source_path, data in records:
         umbrella_unlinked += 1
     obligation_id = first_nonempty(data.get("id"), source_path.stem)
     title = title_for(data)
+    if first_nonempty(data.get("kind")) == "prior_run_anomaly" and generic_prior_run_issue_title(data.get("issue_title")):
+        data["issue_title"] = title
+        data["issue_title_basis"] = "prior_run_anomaly_signal"
     report_path = report_dir / report_filename(obligation_id)
     write_text_private(report_path, body_for(data, title, source_path))
     drafted += 1

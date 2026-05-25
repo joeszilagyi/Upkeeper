@@ -328,6 +328,15 @@ Future changes should preserve this operator-visible surface as far as possible:
   current-root automation obligations before normal issue selection. The local
   reports are runtime evidence, not source, and GitHub issue creation remains a
   wrapper-side opt-in through `BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=1`.
+  Before a new issue is created, the bridge enumerates open GitHub issues and
+  links the obligation to an exact title match when one exists. If open-issue
+  lookup fails, the bridge fails closed instead of creating a possible
+  duplicate. System-level obligations such as child exits, missing status
+  markers, backend context overflow, and empty transcripts reconcile by failure
+  class, reason, target, and repair target rather than by volatile per-cycle
+  fingerprints. Obligations already linked to the same specific GitHub issue
+  title and number also reconcile as one local owner even when their evidence
+  fingerprints differ.
 - The parallel-worker lease registry is a local no-backend compatibility
   surface for future isolated backlog workers. `tools/backlog_parallel_leases.py`
   stores leases under the selected backlog state root, rejects active duplicate

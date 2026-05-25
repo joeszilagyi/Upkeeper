@@ -2343,7 +2343,7 @@ backlog_reconcile_open_obligations() {
 }
 
 backlog_sync_obligation_issue_reports() {
-  local output status current_open drafted updated github_created github_existing github_failed report_dir umbrella_unlinked
+  local output status current_open drafted updated github_created github_existing github_reused github_failed report_dir umbrella_unlinked
 
   [[ "$BACKLOG_OBLIGATION_ISSUE_REPORTS" == "1" ]] || return 0
   prepare_backlog_runtime_env
@@ -2361,11 +2361,12 @@ backlog_sync_obligation_issue_reports() {
   updated="$(jq -r '.updated_records // 0' <<<"$output")"
   github_created="$(jq -r '.github_created // 0' <<<"$output")"
   github_existing="$(jq -r '.github_existing // 0' <<<"$output")"
+  github_reused="$(jq -r '.github_reused // 0' <<<"$output")"
   github_failed="$(jq -r '.github_failed // 0' <<<"$output")"
   umbrella_unlinked="$(jq -r '.umbrella_unlinked // 0' <<<"$output")"
   report_dir="$(jq -r '.report_dir // ""' <<<"$output")"
   if [[ "$current_open" != "0" || "$github_failed" != "0" ]]; then
-    log "automation obligation issue reports: status=$status current_open=$current_open drafted=$drafted records_updated=$updated github_created=$github_created github_existing=$github_existing github_failed=$github_failed umbrella_unlinked=$umbrella_unlinked report_dir=$report_dir"
+    log "automation obligation issue reports: status=$status current_open=$current_open drafted=$drafted records_updated=$updated github_created=$github_created github_existing=$github_existing github_reused=$github_reused github_failed=$github_failed umbrella_unlinked=$umbrella_unlinked report_dir=$report_dir"
   fi
   if [[ "$BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE" == "1" && "$github_failed" != "0" ]]; then
     log "automation obligation GitHub issue creation had failures; stopping before normal issue selection"

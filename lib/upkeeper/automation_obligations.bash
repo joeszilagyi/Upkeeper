@@ -852,16 +852,20 @@ def group_key(item):
     if system_obligation(item):
         if not repair_target:
             repair_target = target
-        fingerprint = stable_value(item.get("fingerprint"))
+        fingerprint = ""
         issue_number = ""
     else:
-        fingerprint = stable_value(item.get("fingerprint")) or evidence_value(
-            item,
-            "fingerprint",
-            "kind",
-            "normalized_excerpt",
-        )
-        issue_number = stable_value(item.get("issue_number"))
+        issue_number = stable_value(item.get("issue_number")) or stable_value(item.get("github_issue_number"))
+        issue_title = stable_value(item.get("issue_report_title")) or stable_value(item.get("issue_title"))
+        if issue_number and issue_title:
+            fingerprint = ""
+        else:
+            fingerprint = stable_value(item.get("fingerprint")) or evidence_value(
+                item,
+                "fingerprint",
+                "kind",
+                "normalized_excerpt",
+            )
     key_parts = [
         stable_value(item.get("kind")),
         stable_value(item.get("reason")),
@@ -1982,6 +1986,64 @@ def read_github_issue(number):
     return state, first_nonempty(data.get("url")), first_nonempty(data.get("title")), ""
 
 
+open_issue_title_cache = None
+open_issue_lookup_error = ""
+
+
+def load_open_issue_title_cache():
+    global open_issue_title_cache, open_issue_lookup_error
+    if open_issue_title_cache is not None or open_issue_lookup_error:
+        return open_issue_title_cache if open_issue_title_cache is not None else {}
+    cmd = ["gh", "issue", "list", "--state", "open", "--limit", "1000", "--json", "number,title,url"]
+    try:
+        completed = subprocess.run(cmd, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        open_issue_lookup_error = str(exc)
+        return {}
+    output = (completed.stdout or "").strip()
+    error = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        open_issue_lookup_error = error or f"gh exited {completed.returncode}"
+        return {}
+    try:
+        rows = json.loads(output or "[]")
+    except json.JSONDecodeError as exc:
+        open_issue_lookup_error = f"invalid gh issue list JSON: {exc}"
+        return {}
+    if not isinstance(rows, list):
+        open_issue_lookup_error = "invalid gh issue list JSON shape"
+        return {}
+    cache = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        title = first_nonempty(row.get("title"))
+        number = first_nonempty(row.get("number"))
+        if not title or not number:
+            continue
+        entry = {"number": number, "url": first_nonempty(row.get("url"))}
+        cache.setdefault(title, entry)
+    open_issue_title_cache = cache
+    return cache
+
+
+def find_open_issue_by_title(title):
+    cache = load_open_issue_title_cache()
+    if open_issue_lookup_error:
+        return "", "", open_issue_lookup_error
+    entry = cache.get(title)
+    if not entry:
+        return "", "", ""
+    return first_nonempty(entry.get("number")), first_nonempty(entry.get("url")), ""
+
+
+def remember_open_issue(title, number, url):
+    cache = load_open_issue_title_cache()
+    if open_issue_lookup_error:
+        return
+    cache.setdefault(title, {"number": first_nonempty(number), "url": first_nonempty(url)})
+
+
 records = []
 if open_dir.is_dir():
     for path in sorted(open_dir.glob("*.json")):
@@ -1999,6 +2061,7 @@ private_dir(report_dir)
 drafted = 0
 github_created = 0
 github_existing = 0
+github_reused = 0
 github_failed = 0
 updated_records = 0
 umbrella_unlinked = 0
@@ -2050,6 +2113,24 @@ for source_path, data in records:
                 closed_issue_unlinked += 1
                 existing_number = ""
         if not existing_number:
+            issue_number, issue_url, error = find_open_issue_by_title(title)
+            if error:
+                github_failed += 1
+                data["issue_report_state"] = "github_lookup_failed"
+                data["github_issue_lookup_error"] = redact(error)[:300]
+                write_json_private(source_path, data)
+                updated_records += 1
+                continue
+            if issue_number:
+                github_reused += 1
+                data["issue_report_state"] = "github_reused_existing_title"
+                data["github_issue_number"] = issue_number
+                data["github_issue_url"] = issue_url
+                data["issue_number"] = issue_number
+                data["issue_url"] = issue_url
+                data["issue_report_link_basis"] = "open_issue_title_match"
+                existing_number = issue_number
+        if not existing_number:
             issue_number, issue_url, error = create_github_issue(title, report_path)
             if issue_number:
                 github_created += 1
@@ -2059,6 +2140,7 @@ for source_path, data in records:
                 data["issue_number"] = issue_number
                 data["issue_url"] = issue_url
                 data["github_issue_created_at"] = now
+                remember_open_issue(title, issue_number, issue_url)
             else:
                 github_failed += 1
                 data["issue_report_state"] = "github_failed"
@@ -2077,6 +2159,7 @@ print(
             "github_write": github_write,
             "github_created": github_created,
             "github_existing": github_existing,
+            "github_reused": github_reused,
             "github_failed": github_failed,
             "umbrella_unlinked": umbrella_unlinked,
             "closed_issue_unlinked": closed_issue_unlinked,

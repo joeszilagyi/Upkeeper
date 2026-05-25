@@ -3,6 +3,43 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Duplicate Obligation Issue Filing Circuit Breaker
+
+Status: completed locally
+
+Goal:
+- stop repeated local machine-health obligations from filing many GitHub bugs
+  for the same underlying failure family
+- make local reconciliation collapse system-level failures by class, reason,
+  target, and repair target instead of volatile per-cycle fingerprints
+- make already-linked obligations collapse by specific issue title and issue
+  number instead of keeping volatile evidence fingerprints open separately
+- make the obligation issue-report bridge reuse an existing open GitHub issue
+  with the same operator-facing title before creating another issue
+- preserve durable evidence by moving duplicate local records to resolved state
+  with duplicate metadata rather than deleting evidence
+
+Constraints:
+- no backend Codex validation
+- do not lose existing local obligation evidence
+- keep issue creation wrapper-owned and deterministic
+- keep GitHub writes out of validation fixtures; use fake `gh` commands
+
+Files likely touched:
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `lib/upkeeper/help_selection.bash`
+- `orchestration/backlog.sh`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Backlog Wrapper Failure Catchment
 
 Status: completed locally; consolidated on `backlog/20260524-201224`

@@ -233,8 +233,13 @@ Important:
     backlog branch is checked out, before PR, merge, quota, or issue-selection
     gates, backlog also reconciles open current-root obligations deterministically: records
     with matching root, kind, reason, target, issue, and stable fingerprint are
-    condensed to one active owner, and duplicates are moved to resolved evidence
-    with `duplicate_of` metadata. Deterministically obsolete findings, such as a
+    condensed to one active owner. System-level wrapper failures such as empty
+    transcripts and child exits are instead grouped by failure class, reason,
+    target, and repair target so per-cycle output fingerprints cannot create a
+    public issue cascade. Records already linked to the same specific issue
+    title and issue number also reconcile as one local owner even when their
+    evidence fingerprints differ. Duplicates are moved to resolved evidence with
+    `duplicate_of` metadata. Deterministically obsolete findings, such as a
     stale operator-guide warning after the guide matches the wrapper version, are
     moved to resolved evidence with an explicit reason. If the same obligation
     reports `BLOCKED` repeatedly, backlog records repair-attempt metadata and
@@ -253,7 +258,9 @@ Important:
     backlog stops before normal issue selection. Existing GitHub issue links are
     accepted only after the bridge verifies the issue is still open; closed
     links are preserved as stale evidence and replaced with a fresh issue for
-    the still-open obligation. Set
+    the still-open obligation. Before creating any new issue, the bridge lists
+    open GitHub issues and reuses an exact title match; if that lookup fails, it
+    fails closed instead of risking duplicate public bugs. Set
     `BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=0` only for a deliberate local-only
     dry run.
     Local batch-merge validation failures use the same obligation lane: if a

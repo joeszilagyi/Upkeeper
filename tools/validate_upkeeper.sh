@@ -1736,6 +1736,7 @@ records = [
         "repair_target_file": "lib/upkeeper/transcript_output.bash",
         "issue_number": "590",
         "reason": "CODEX_EXEC_EMPTY_TRANSCRIPT",
+        "fingerprint": "empty-transcript:first-cycle",
     },
     {
         "schema": 1,
@@ -1752,6 +1753,7 @@ records = [
         "repair_target_file": "",
         "issue_number": "592",
         "reason": "CODEX_EXEC_EMPTY_TRANSCRIPT",
+        "fingerprint": "empty-transcript:second-cycle",
     },
     {
         "schema": 1,
@@ -1769,6 +1771,42 @@ records = [
         "issue_number": "146",
         "reason": "MISSING_STATUS_MARKER",
         "fingerprint": "missing-status:lattice:146",
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "issue-linked-owner",
+        "created_at": "2026-05-22T02:20:00-0700",
+        "kind": "prior_run_anomaly",
+        "severity": "high",
+        "summary": "issue-linked owner",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "Upkeeper",
+        "repair_target_file": "Upkeeper",
+        "issue_number": "701",
+        "issue_report_title": "High priority bug: prior-run PAGE error needs repair for Upkeeper",
+        "reason": "PRIOR_RUN_ANOMALY",
+        "fingerprint": "prior-page:first-cycle",
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "issue-linked-duplicate",
+        "created_at": "2026-05-22T02:21:00-0700",
+        "kind": "prior_run_anomaly",
+        "severity": "high",
+        "summary": "issue-linked duplicate",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "Upkeeper",
+        "repair_target_file": "Upkeeper",
+        "issue_number": "701",
+        "issue_report_title": "High priority bug: prior-run PAGE error needs repair for Upkeeper",
+        "reason": "PRIOR_RUN_ANOMALY",
+        "fingerprint": "prior-page:second-cycle",
     },
     {
         "schema": 1,
@@ -1813,19 +1851,19 @@ PY
   )"
   [[ "$(jq -r '.status' <<<"$reconciliation_json")" == "reconciled" ]] ||
     fail "automation obligation reconciliation did not report reconciled status"
-  [[ "$(jq -r '.current_root_open_before' <<<"$reconciliation_json")" == "5" ]] ||
+  [[ "$(jq -r '.current_root_open_before' <<<"$reconciliation_json")" == "7" ]] ||
     fail "automation obligation reconciliation counted the wrong current-root input"
-  [[ "$(jq -r '.current_root_open_after' <<<"$reconciliation_json")" == "3" ]] ||
+  [[ "$(jq -r '.current_root_open_after' <<<"$reconciliation_json")" == "4" ]] ||
     fail "automation obligation reconciliation left the wrong current-root output"
   [[ "$(jq -r '.deferred_foreign_root_count' <<<"$reconciliation_json")" == "1" ]] ||
     fail "automation obligation reconciliation lost foreign-root evidence count"
-  [[ "$(jq -r '.duplicates_resolved' <<<"$reconciliation_json")" == "2" ]] ||
-    fail "automation obligation reconciliation did not resolve both duplicate groups"
+  [[ "$(jq -r '.duplicates_resolved' <<<"$reconciliation_json")" == "3" ]] ||
+    fail "automation obligation reconciliation did not resolve all duplicate groups"
 
   open_count="$(find "$temp_dir/obligations/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
   resolved_count="$(find "$temp_dir/obligations/resolved" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
-  [[ "$open_count" == "4" ]] || fail "automation obligation reconciliation removed wrong open count"
-  [[ "$resolved_count" == "2" ]] || fail "automation obligation reconciliation did not preserve two resolved duplicates"
+  [[ "$open_count" == "5" ]] || fail "automation obligation reconciliation removed wrong open count"
+  [[ "$resolved_count" == "3" ]] || fail "automation obligation reconciliation did not preserve three resolved duplicates"
   owner_file="$temp_dir/obligations/open/owner-current.json"
   duplicate_file="$temp_dir/obligations/resolved/duplicate-current.json"
   [[ "$(jq -r '.occurrence_count' "$owner_file")" == "2" ]] ||
@@ -1837,9 +1875,13 @@ PY
   [[ "$(jq -r '.duplicate_of' "$duplicate_file")" == "owner-current" ]] ||
     fail "automation obligation reconciliation did not point duplicate at owner"
   [[ "$(jq -r '.occurrence_count' "$temp_dir/obligations/open/empty-owner.json")" == "2" ]] ||
-    fail "automation obligation reconciliation did not collapse empty-transcript duplicates across issue numbers"
+    fail "automation obligation reconciliation did not collapse empty-transcript duplicates across issue numbers and volatile fingerprints"
   [[ "$(jq -r '.duplicate_of' "$temp_dir/obligations/resolved/empty-duplicate-with-different-issue.json")" == "empty-owner" ]] ||
     fail "automation obligation reconciliation did not point empty-transcript duplicate at owner"
+  [[ "$(jq -r '.occurrence_count' "$temp_dir/obligations/open/issue-linked-owner.json")" == "2" ]] ||
+    fail "automation obligation reconciliation did not collapse same-issue volatile-fingerprint duplicates"
+  [[ "$(jq -r '.duplicate_of' "$temp_dir/obligations/resolved/issue-linked-duplicate.json")" == "issue-linked-owner" ]] ||
+    fail "automation obligation reconciliation did not point same-issue duplicate at owner"
   ! jq -e 'has("_path") or has("_foreign_root")' "$owner_file" >/dev/null ||
     fail "automation obligation reconciliation leaked private helper fields onto owner"
   ! jq -e 'has("_path") or has("_foreign_root")' "$duplicate_file" >/dev/null ||
@@ -2025,7 +2067,7 @@ JSON
 }
 
 check_automation_obligation_issue_report_contract() {
-  local temp_dir sync_json fake_bin record_file umbrella_file closed_file open_file report_file gh_args
+  local temp_dir sync_json fake_bin record_file duplicate_title_file umbrella_file closed_file open_file report_file gh_args
 
   log "checking automation obligation issue-report bridge contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-obligation-issue-report.XXXXXX)"
@@ -2033,6 +2075,10 @@ check_automation_obligation_issue_report_contract() {
   record_file="$temp_dir/obligations/open/report-me.json"
   cat >"$record_file" <<JSON
 {"schema":1,"record_type":"automation_obligation","status":"open","id":"report-me","created_at":"2026-05-23T02:00:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"PAGE error was observed during unattended loop","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","source_cycle_id":"cycle-a","source_run_hash":"hash-a","occurrence_count":4,"evidence":{"source":"backlog_loop_log","excerpt":"$ROOT_DIR/Upkeeper PAGE [ERROR] example","normalized_excerpt":"Upkeeper PAGE [ERROR] example"},"required_resolution":["patch the wrapper","add deterministic validation"]}
+JSON
+  duplicate_title_file="$temp_dir/obligations/open/z-report-me-too.json"
+  cat >"$duplicate_title_file" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"report-me-too","created_at":"2026-05-23T02:00:05-0700","kind":"prior_run_anomaly","severity":"high","summary":"same PAGE error title should reuse existing GitHub issue","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","source_cycle_id":"cycle-b","source_run_hash":"hash-b","occurrence_count":1,"evidence":{"source":"backlog_loop_log","excerpt":"$ROOT_DIR/Upkeeper PAGE [ERROR] another example","normalized_excerpt":"Upkeeper PAGE [ERROR] another example"}}
 JSON
   guide_file="$temp_dir/obligations/open/operator-guide-stale.json"
   cat >"$guide_file" <<JSON
@@ -2058,9 +2104,9 @@ JSON
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="$temp_dir/reports" \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "5" ]] ||
+  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "6" ]] ||
     fail "automation obligation issue-report bridge did not scope to current root"
-  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "5" ]] ||
+  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "6" ]] ||
     fail "automation obligation issue-report bridge did not draft the current obligation"
   [[ "$(jq -r '.umbrella_unlinked' <<<"$sync_json")" == "1" ]] ||
     fail "automation obligation issue-report bridge did not unlink stale umbrella issues"
@@ -2104,6 +2150,8 @@ if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
       printf '{"state":"OPEN","title":"existing fixture","url":"https://github.com/example/upkeeper/issues/%s"}\n' "${3:-0}"
       ;;
   esac
+elif [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
+  printf '[]\n'
 else
   printf 'https://github.com/example/upkeeper/issues/987\n'
 fi
@@ -2116,18 +2164,24 @@ SH
     UPKEEPER_OBLIGATION_GITHUB_ISSUE_WRITE=1 UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS=bug \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "4" ]] ||
+  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "3" ]] ||
     fail "automation obligation issue-report bridge did not create opted-in GitHub issue"
   [[ "$(jq -r '.github_existing' <<<"$sync_json")" == "1" ]] ||
     fail "automation obligation issue-report bridge did not preserve verified open GitHub issue links"
+  [[ "$(jq -r '.github_reused' <<<"$sync_json")" == "2" ]] ||
+    fail "automation obligation issue-report bridge did not reuse existing open title matches"
   [[ "$(jq -r '.closed_issue_unlinked' <<<"$sync_json")" == "1" ]] ||
     fail "automation obligation issue-report bridge did not unlink closed GitHub issue custody"
   [[ "$(jq -r '.github_issue_number' "$record_file")" == "987" ]] ||
     fail "automation obligation record did not store created GitHub issue number"
   [[ "$(jq -r '.issue_number' "$record_file")" == "987" ]] ||
     fail "automation obligation record did not store created issue number for selection"
+  [[ "$(jq -r '.issue_report_state' "$duplicate_title_file")" == "github_reused_existing_title" ]] ||
+    fail "automation obligation duplicate-title record did not reuse the existing GitHub issue"
+  [[ "$(jq -r '.issue_number' "$duplicate_title_file")" == "987" ]] ||
+    fail "automation obligation duplicate-title record did not link to reused issue number"
   [[ "$(jq -r '.github_issue_number' "$umbrella_file")" == "987" ]] ||
-    fail "automation obligation record did not create a specific GitHub issue after unlinking umbrella"
+    fail "automation obligation record did not link a specific GitHub issue after unlinking umbrella"
   [[ "$(jq -r '.issue_number' "$umbrella_file")" == "987" ]] ||
     fail "automation obligation record did not store a specific issue number after unlinking umbrella"
   [[ "$(jq -r '.stale_github_issue_number' "$closed_file")" == "111" ]] ||
@@ -2140,6 +2194,7 @@ SH
     fail "automation obligation record did not preserve verified open issue link"
   [[ "$(jq -r '.issue_report_state' "$open_file")" == "github_existing" ]] ||
     fail "automation obligation record did not mark verified open issue link as existing"
+  grep -Fq "issue list" "$gh_args" || fail "automation obligation GitHub issue title lookup was not invoked"
   grep -Fq "issue create" "$gh_args" || fail "automation obligation GitHub issue command was not invoked"
   grep -Fq "issue view 111" "$gh_args" || fail "automation obligation GitHub issue state was not checked for closed fixture"
   grep -Fq "issue view 222" "$gh_args" || fail "automation obligation GitHub issue state was not checked for open fixture"

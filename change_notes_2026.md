@@ -13,6 +13,12 @@ Version numbering note:
 	4. Quoted backend source snippets that call `log_line` or `log_line_parts` are treated as fixture echoes rather than fresh live PAGE failures.
 	5. Empty-transcript Codex exit failures now use a stable `codex_exec_empty_transcript` obligation identity, and the backlog launcher preserves the child-owned obligation instead of filing a second wrapper-failure record for the same cycle.
 
+2026-05-25: duplicate obligation issue filing circuit breaker:
+	1. Open system-level automation obligations now reconcile by failure class, reason, target scope, target, and repair target instead of volatile per-cycle fingerprints, so repeated child-exit or empty-transcript records collapse to one local owner before GitHub issue sync.
+	2. The obligation issue-report bridge now enumerates open GitHub issues and reuses an exact title match before creating a new issue; if that lookup fails, it fails closed instead of risking duplicate public bugs.
+	3. Obligations already linked to the same specific issue title and issue number now reconcile as one local owner even when their evidence fingerprints differ, so catch-up syncs can retire duplicate local custody records after exact-title GitHub reuse.
+	4. Backlog logs now report `github_reused` counts during obligation issue sync, making duplicate-prevention behavior visible in operator output.
+
 2026-05-24: source rights metadata model:
 	1. Added `docs/source-rights-metadata.md` as the tracked source sensitivity, rights, and reuse metadata model for OSINT and citation artifacts.
 	2. Defined public, local-private, secret-adjacent, credential-bearing, PII-bearing, paid-access, license-restricted, prompt-safe, prompt-unsafe, export-safe, and export-unsafe labels.

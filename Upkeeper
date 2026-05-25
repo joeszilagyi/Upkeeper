@@ -740,6 +740,37 @@ resolved_status_marker_from_analysis() {
   fi
 }
 
+recover_status_marker_from_review_outcome_without_task_complete() {
+  local last_message_file="$1"
+  local codex_exit_value="$2"
+  local task_complete_last_agent_message="$3"
+  local summary_json recovery_outcome recovery_selected_file recovered_marker
+
+  [[ "$codex_exit_value" != "0" ]] || return 1
+  [[ "$task_complete_last_agent_message" != "present" ]] || return 1
+  [[ -n "$last_message_file" && -f "$last_message_file" ]] || return 1
+
+  summary_json="$(review_report_summary_json "$last_message_file")" || return 1
+  eval "$(review_summary_assignments "$summary_json" recovery)"
+
+  case "$recovery_outcome" in
+    REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN)
+      recovered_marker="WORK_DONE"
+      ;;
+    STOPPED_ON_BLOCKER)
+      recovered_marker="BLOCKED"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  if [[ -n "$recovery_selected_file" && "$recovery_selected_file" != "unknown" && -n "${RUN_SELECTED_REVIEW_PATH:-}" && "$recovery_selected_file" != "$RUN_SELECTED_REVIEW_PATH" ]]; then
+    return 1
+  fi
+  printf '%s\t%s\t%s\n' "$recovered_marker" "$recovery_outcome" "$recovery_selected_file"
+  return 0
+}
+
 # Pre-contact backup computes related HMACs from command substitutions. Keep a
 # parent-process key so those subshells do not generate inconsistent fallbacks
 # when the persistent redaction key cannot be written.
@@ -7309,6 +7340,18 @@ main() {
     fi
   fi
   if [[ -z "$status_marker" && "${UPKEEPER_ALLOW_STATUS_RECOVERY:-0}" == "1" ]]; then
+    if status_marker_review_recovery="$(recover_status_marker_from_review_outcome_without_task_complete "$last_message_file" "$codex_exit" "$primary_session_task_complete_last_agent_message")"; then
+      IFS=$'	' read -r status_marker status_marker_review_outcome status_marker_review_selected_file <<<"$status_marker_review_recovery"
+      status_marker_source="review_outcome"
+      log_line_parts "WARN" \
+        "status_marker.recovered_from_review_outcome marker=$status_marker" \
+        " review_outcome=$status_marker_review_outcome" \
+        " selected_file=$(shell_quote "$status_marker_review_selected_file")" \
+        " codex_exit=$codex_exit" \
+        " task_complete_last_agent_message=$primary_session_task_complete_last_agent_message"
+    fi
+  fi
+  if [[ -z "$status_marker" && "${UPKEEPER_ALLOW_STATUS_RECOVERY:-0}" == "1" ]]; then
     if status_marker_blocker_recovery="$(recover_status_marker_from_blocker_request "$last_message_file" "$codex_exit" "$primary_session_task_complete_last_agent_message")"; then
       IFS=$'	' read -r status_marker status_marker_blocker_reason _ <<<"$status_marker_blocker_recovery"
       status_marker_source="blocker_request"
@@ -7601,6 +7644,19 @@ main() {
         if [[ "$session_end_state" == turn_aborted:* ]]; then
           log_line "WARN" "codex turn aborted without an UPKEEPER_STATUS marker reason=${session_end_state#turn_aborted:}"
           finish_cycle 6 TURN_ABORTED_WITHOUT_MARKER WARN "reason=${session_end_state#turn_aborted:} codex_exit=$codex_exit"
+        fi
+        if [[ -n "$status_marker" ]]; then
+          case "$status_marker" in
+            WORK_DONE)
+              finish_cycle 0 WORK_DONE INFO "codex_exit=$codex_exit status_marker_source=$status_marker_source"
+              ;;
+            BLOCKED)
+              finish_cycle 2 BLOCKED WARN "codex_exit=$codex_exit status_marker_source=$status_marker_source"
+              ;;
+            *)
+              finish_cycle 3 "$status_marker" ERROR "codex_exit=$codex_exit status_marker_source=$status_marker_source"
+              ;;
+          esac
         fi
         log_line "ERROR" "codex exited non-zero without an UPKEEPER_STATUS marker"
       else

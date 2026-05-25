@@ -58,7 +58,7 @@ embedded_control_event_re = re.compile(
     r")\b"
 )
 structured_log_re = re.compile(
-    r"^[^ \t\r\n]+[ \t]+\[[A-Z]+\][ \t]+cycle=[^ \t\r\n]+(?:[ \t]|\r?\n|$)"
+    r"^[^ \t\r\n]+[ \t]+(?:\u2588[ \t]+(?:(?:--FYI--|[A-Z]+)[ \t]+)?)?\[[A-Z]+\][ \t]+cycle=[^ \t\r\n]+(?:[ \t]|\r?\n|$)"
 )
 direct_custody_re = re.compile(
     r"^[^ \t\r\n]+[ \t]+(?:\u2588[ \t]+)?"

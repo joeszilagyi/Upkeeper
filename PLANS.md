@@ -3,6 +3,41 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Lattice Degraded-Mode Ownership
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #430 by making optional `lattice.unavailable` degraded mode
+  classified and owned instead of an anonymous detail hash
+- preserve optional Lattice behavior when `UPKEEPER_LATTICE_REQUIRED=0` while
+  making the fallback evidence and owner contract clear in live logs and
+  recovery rows
+- extend local Lattice validation so the unsafe/unavailable fixture proves the
+  warning has reason, owner, and replacement-evidence fields
+
+Constraints:
+- no backend Codex calls
+- keep raw Lattice failure detail redacted; only bounded summaries and reason
+  classes can reach logs
+- preserve fail-closed behavior when `UPKEEPER_LATTICE_REQUIRED=1`
+
+Files likely touched:
+- `lib/upkeeper/lattice.bash`
+- `tests/lattice_test.bash`
+- `docs/lattice.md`
+- `docs/security.md`
+- `README.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/lattice_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Preservation Policy And Artifact Privacy
 
 Status: completed locally; pending PR/CI

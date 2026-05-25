@@ -1523,10 +1523,26 @@ test_wrapper_required_policy() {
   [[ "$rc" -eq 0 ]] || fail "REQUIRED=0 unsafe DB dry-run exited $rc, expected 0"
   grep -Fq "lattice.unavailable required=0" "$repo/Upkeeper.log" ||
     fail "REQUIRED=0 did not warn about unavailable lattice"
+  grep -Fq "reason=init_failed" "$repo/Upkeeper.log" ||
+    fail "REQUIRED=0 lattice warning did not identify init failure"
+  grep -Fq "owner_issue=430" "$repo/Upkeeper.log" ||
+    fail "REQUIRED=0 lattice warning did not identify owning issue"
+  grep -Fq "owner_contract=advisory_lattice_degraded" "$repo/Upkeeper.log" ||
+    fail "REQUIRED=0 lattice warning did not identify degraded-mode contract"
+  grep -Fq "replacement_evidence=local_logs_runtime_obligations" "$repo/Upkeeper.log" ||
+    fail "REQUIRED=0 lattice warning did not identify replacement evidence"
   grep -Fq "detail_summary=" "$repo/Upkeeper.log" ||
     fail "REQUIRED=0 lattice warning did not use bounded detail_summary"
   [[ -s "$repo/runtime/upkeeper-lattice/recovery/lattice-unavailable.jsonl" ]] ||
     fail "REQUIRED=0 did not spool recovery evidence"
+  jq -e '
+    .payload.reason == "init_failed"
+    and .payload.owner_issue == "430"
+    and .payload.owner_contract == "advisory_lattice_degraded"
+    and .payload.replacement_evidence == "local_logs_runtime_obligations"
+    and (.payload.detail_summary | contains("detail_sha256="))
+  ' "$repo/runtime/upkeeper-lattice/recovery/lattice-unavailable.jsonl" >/dev/null ||
+    fail "REQUIRED=0 recovery evidence did not preserve degraded-mode ownership fields"
 
   set +e
   (
@@ -1576,6 +1592,10 @@ test_lattice_unavailable_summary_redacts_raw_detail() {
   [[ "$summary" == *"json_status=integrity_failure"* ]] || fail "lattice unavailable summary missing JSON status"
   [[ "$summary" == *"first_failed_check=cycle_finish_report_only_outcome"* ]] ||
     fail "lattice unavailable summary missing failed check name"
+  [[ "$(lattice_unavailable_summary_field "$summary" "json_status")" == "integrity_failure" ]] ||
+    fail "lattice unavailable summary field parser missed JSON status"
+  [[ "$(lattice_unavailable_summary_field "$summary" "first_failed_check")" == "cycle_finish_report_only_outcome" ]] ||
+    fail "lattice unavailable summary field parser missed first failed check"
   [[ "$summary" != *"/tmp/private"* ]] || fail "lattice unavailable summary leaked raw path"
   [[ "$summary" != *"selected_path"* ]] || fail "lattice unavailable summary leaked raw detail key"
 }

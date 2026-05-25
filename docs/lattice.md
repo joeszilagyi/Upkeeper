@@ -84,7 +84,12 @@ UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE=delete
 `UPKEEPER_LATTICE_ENABLED=1` means every wrapper cycle attempts to initialize,
 doctor, and record evidence. `UPKEEPER_LATTICE_REQUIRED=0` means a local DB
 problem logs one warning, writes a small recovery JSONL record when possible,
-and continues existing Upkeeper behavior. Set `UPKEEPER_LATTICE_REQUIRED=1`
+and continues existing Upkeeper behavior. Optional degraded-mode warnings are
+not anonymous: the `lattice.unavailable` log line includes a reason class,
+`owner_issue=430`, `owner_contract=advisory_lattice_degraded`, and
+`replacement_evidence=local_logs_runtime_obligations`. Recovery JSONL rows carry
+the same ownership fields plus the bounded `detail_summary`; raw failure detail
+stays in private local recovery evidence. Set `UPKEEPER_LATTICE_REQUIRED=1`
 when a run must fail before Codex launch if Lattice is unavailable.
 
 The default SQLite journal mode is rollback journal (`delete`). WAL is opt-in

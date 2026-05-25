@@ -480,8 +480,11 @@ Prompt behavior:
     the fallback evidence is unavailable.
     If Lattice is unavailable and `UPKEEPER_LATTICE_REQUIRED=0`, the wrapper
     logs one warning, spools a small recovery record when possible, and
-    continues the existing cycle behavior. If `UPKEEPER_LATTICE_REQUIRED=1`,
-    startup fails before Codex launch.
+    continues the existing cycle behavior. The warning includes a reason class,
+    `owner_issue=430`, `owner_contract=advisory_lattice_degraded`, and
+    `replacement_evidence=local_logs_runtime_obligations` so repeated degraded
+    mode has explicit custody. If `UPKEEPER_LATTICE_REQUIRED=1`, startup fails
+    before Codex launch.
     Transient transcript artifacts may live under repo runtime, Upkeeper-owned
     state directories, or Upkeeper-owned temp directories; Lattice records their
     hashed identity without treating those operator-local transcript locations

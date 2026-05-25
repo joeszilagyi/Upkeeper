@@ -816,6 +816,9 @@ upkeeper_live_output_false_positive_error_echo() {
   local payload
 
   case "$line" in
+    *' PAGE [ERROR] cycle='*|*' [ERROR] cycle='*)
+      payload="${line#* [ERROR] }"
+      ;;
     *' [ERROR] Upkeeper: primary: '*)
       payload="${line#* [ERROR] Upkeeper: primary: }"
       ;;
@@ -831,6 +834,9 @@ upkeeper_live_output_false_positive_error_echo() {
   esac
 
   case "$payload" in
+    *'cycle.exit'*|*'run.finish'*|*'cycle.summary'*|*'cycle.start'*|*'run.start'*)
+      return 0
+      ;;
     *'rg -n '*' || true'*|*'grep -Fq '*|*'grep -Eq '*|*'if grep '*|*'printf '*|*'echo '*|*'case '*|*'warn='*|*'err='*|*'payload='*|*'<<<'*|*'|| {'*|*'&&'*|*';;'*|*'*)'*|*"*'|"*|*"|'*"*)
       ;;
     *)

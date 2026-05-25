@@ -3,12 +3,13 @@ emit_codex_transcript_summary() {
   local transcript_file="$2"
   local codex_exit="$3"
   local signal_lines="${CODEX_TRANSCRIPT_SIGNAL_LINES:-80}"
-  local error_tail_lines="${CODEX_TRANSCRIPT_ERROR_TAIL_LINES:-120}"
+  local error_tail_lines="${CODEX_TRANSCRIPT_ERROR_TAIL_LINES:-24}"
+  local error_tail_bytes="${CODEX_TRANSCRIPT_ERROR_TAIL_MAX_BYTES:-12000}"
 
   terminal_wants_full_output && return 0
   [[ -n "$transcript_file" && -f "$transcript_file" ]] || return 0
 
-  python3 - "$label" "$transcript_file" "$codex_exit" "$signal_lines" "$error_tail_lines" "$LOG_FILE" "$CYCLE_ID" "$CYCLE_RUN_HASH" <<'PY'
+  python3 - "$label" "$transcript_file" "$codex_exit" "$signal_lines" "$error_tail_lines" "$error_tail_bytes" "$LOG_FILE" "$CYCLE_ID" "$CYCLE_RUN_HASH" <<'PY'
 from datetime import datetime, timezone
 from pathlib import Path
 import errno
@@ -19,7 +20,7 @@ import re
 import stat
 import sys
 
-label, path_raw, exit_raw, signal_raw, tail_raw, log_raw, cycle_id, run_hash = sys.argv[1:9]
+label, path_raw, exit_raw, signal_raw, tail_raw, tail_bytes_raw, log_raw, cycle_id, run_hash = sys.argv[1:10]
 path = Path(path_raw)
 log_path = Path(log_raw)
 
@@ -53,7 +54,11 @@ except ValueError:
 try:
     tail_limit = max(0, int(tail_raw))
 except ValueError:
-    tail_limit = 120
+    tail_limit = 24
+try:
+    tail_byte_limit = max(0, int(tail_bytes_raw))
+except ValueError:
+    tail_byte_limit = 12000
 try:
     text = path.read_text(encoding='utf-8', errors='replace')
 except OSError:
@@ -155,6 +160,26 @@ def short(value: str, limit: int = 300) -> str:
     if len(value) > limit:
         return value[: limit - 15].rstrip() + '...<truncated>'
     return value
+
+def bounded_tail(raw_lines: list[str], line_limit: int, byte_limit: int) -> tuple[list[str], int]:
+    if line_limit <= 0:
+        return [], 0
+    selected = raw_lines[-line_limit:]
+    if byte_limit <= 0:
+        return [short(line) for line in selected], 0
+    kept_reversed = []
+    used = 0
+    omitted = 0
+    for line in reversed(selected):
+        rendered = short(line)
+        rendered_bytes = len(rendered.encode('utf-8', errors='surrogateescape')) + 3
+        if kept_reversed and used + rendered_bytes > byte_limit:
+            omitted += 1
+            continue
+        kept_reversed.append(rendered)
+        used += rendered_bytes
+    kept_reversed.reverse()
+    return kept_reversed, omitted
 
 def field_value(value: str) -> str:
     return short(value).replace(' ', '\\ ')
@@ -404,9 +429,12 @@ if not silent_terminal and diagnostic_terminal and signals and signal_limit:
         print(f'  {line}', file=sys.stderr)
 if not silent_terminal and exit_raw not in {'0', ''} and tail_limit:
     tail_lines = runtime_lines if runtime_lines else lines
-    print(f'{ts_terminal()} [ERROR] Upkeeper: {label} failure transcript tail (last {min(tail_limit, len(tail_lines))} lines):', file=sys.stderr)
-    for line in tail_lines[-tail_limit:]:
-        print(f'  {short(line)}', file=sys.stderr)
+    rendered_tail, omitted_tail = bounded_tail(tail_lines, tail_limit, tail_byte_limit)
+    print(f'{ts_terminal()} [ERROR] Upkeeper: {label} failure transcript tail (last {len(rendered_tail)} of {min(tail_limit, len(tail_lines))} candidate lines; bounded):', file=sys.stderr)
+    if omitted_tail:
+        print(f'  ...<{omitted_tail} earlier tail lines omitted by live-output byte cap>', file=sys.stderr)
+    for line in rendered_tail:
+        print(f'  {line}', file=sys.stderr)
 PY
 }
 
@@ -446,7 +474,7 @@ def terminal_mode() -> str:
 
 mode = terminal_mode()
 silent = mode in {"silent", "full"}
-  basic = mode == "basic"
+basic = mode == "basic"
 diagnostic = mode in {"verbose", "debug1"}
 llm_status_enabled = mode in {"basic", "verbose", "debug1"}
 

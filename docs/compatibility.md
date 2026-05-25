@@ -177,6 +177,19 @@ Future changes should preserve this operator-visible surface as far as possible:
   outcome, the backlog launcher writes or updates a `wrapper_execution_failure`
   obligation with a private bounded child-output tail and likely wrapper owner
   path before exiting, except for the already-modeled blocked and quota lanes.
+  If the child run already opened a durable automation obligation for the same
+  failure, the backlog launcher preserves that native owner instead of filing a
+  duplicate outer wrapper-failure record.
+  Backend context-window overflows are a specialized child-failure obligation
+  kind, `backend_context_overflow`, and must point at bounded-evidence handling
+  instead of filing as generic missing-status residue. Empty-transcript Codex
+  exits are a specialized child-failure obligation kind,
+  `codex_exec_empty_transcript`, and repeated empty-transcript records for the
+  same repair target must collapse even when issue-report numbers differ. Later
+  prior-run anomaly scans may coalesce `run.finish`, `cycle.exit`,
+  transcript-capture, live-output-filter, and missing-status companion PAGE
+  lines into the owning terminal-failure obligation; they must not fan out one
+  failed cycle into multiple unrelated obligations.
 - Backlog PR check and merge decisions are made against the current backlog
   branch head. If the local backlog branch is clean and ahead of
   `origin/<branch>`, the launcher pushes it before PR checks or merge. Dirty,

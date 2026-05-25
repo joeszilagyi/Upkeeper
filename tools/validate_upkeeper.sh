@@ -1296,6 +1296,7 @@ LOG
   cat >"$temp_dir/model-fixture.log" <<'LOG'
 2026-05-23T07:07:51 █ INFO    [ERROR] Upkeeper: primary: printf '"'%s [WARN] cycle=prior-cycle run_hash=abc startup_anomaly.gate_unresolved reason=changed_path_violation reasons=previous_run_anomaly boot_id=boot-current\n' "$stamp_old" >>"$log_file"
 2026-05-23T07:07:52 █ INFO    [ERROR] Upkeeper: primary: echo "2026-05-23T07:00:00 █ PAGE [ERROR] cycle=quoted run_hash=abc runner.output"
+2026-05-23T07:07:53 █ PAGE    [ERROR] Upkeeper: primary: log_line_parts "WARN" "cycle=$cycle run_hash=abc previous_run.anomaly_summary listed_total=1"
 2026-05-23T07:21:59 █ PAGE    [ERROR] Upkeeper: primary: *'"'[ERROR]'*|*'[WARN]'*|*'█'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*)
 2026-05-23T07:02:16 █ PAGE    [ERROR] Upkeeper: primary: grep -Fq 'previous_cycle=prior-normal' "$tmp_dir/out" && echo 'normal_cycle=passed' || { echo 'normal_cycle=failed'; exit 1; }
 2026-05-23T07:29:58 █ PAGE    [ERROR] Upkeeper: primary: warn='[''WARN'']'
@@ -1312,12 +1313,104 @@ LOG
     --write-obligations >"$temp_dir/model-fixture-audit.out"
   [[ "$(jq -r '.actionable_findings' "$temp_dir/model-fixture-custody/latest.json")" == "0" ]] ||
     fail "prior-run anomaly custody treated quoted backend fixture text as actionable"
-  if grep -R -Fq 'run_record_read=fail' "$temp_dir/model-fixture-obligations" 2>/dev/null; then
-    fail "prior-run anomaly custody opened an obligation for quoted Python fixture text"
-  fi
+	  if grep -R -Fq 'run_record_read=fail' "$temp_dir/model-fixture-obligations" 2>/dev/null; then
+	    fail "prior-run anomaly custody opened an obligation for quoted Python fixture text"
+	  fi
 
-  grep -Fq 'run_backlog_anomaly_custody_audit' orchestration/backlog.sh ||
-    fail "backlog launcher does not invoke prior-run anomaly custody before issue selection"
+	  mkdir -p "$temp_dir/cascade-obligations/open"
+	  python3 - "$ROOT_DIR" "$temp_dir/cascade-obligations/open/owner.json" <<'PY'
+import json
+import sys
+
+root, path = sys.argv[1:3]
+record = {
+    "schema": 1,
+    "record_type": "automation_obligation",
+    "status": "open",
+    "id": "owner",
+    "kind": "missing_status_marker",
+    "reason": "MISSING_STATUS_MARKER",
+    "root": root,
+    "source_cycle_id": "cycle-fail",
+    "source_run_hash": "hashfail",
+    "target_file": "Upkeeper",
+    "repair_target_file": "Upkeeper",
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(record, handle)
+    handle.write("\n")
+PY
+	  cat >"$temp_dir/failure-cascade.log" <<'LOG'
+2026-05-25T09:21:24 █ PAGE    [ERROR] Upkeeper: primary failure transcript tail (last 120 lines):
+2026-05-25T09:21:24 █ INFO    2800:2026-05-22T16:28:54-0700 [WARN] cycle=old-cycle run_hash=oldhash central_wrapper.health status=quarantine
+2026-05-25T09:21:24 █ PAGE    [ERROR] cycle=cycle-fail run_hash=hashfail run.finish execution_origin=primary codex_exit=1 session_end_state=no_agent_message
+2026-05-25T09:21:28 █ PAGE    [ERROR] cycle=cycle-fail run_hash=hashfail codex exited non-zero without an UPKEEPER_STATUS marker
+2026-05-25T09:21:30 █ PAGE    [ERROR] cycle=cycle-fail run_hash=hashfail cycle.exit exit_code=3 reason=MISSING_STATUS_MARKER codex_exit=1 status_marker_source=missing
+LOG
+	  tools/upkeeper_anomaly_custody.py \
+	    --root "$ROOT_DIR" \
+	    --loop-log "$temp_dir/failure-cascade.log" \
+	    --state-root "$temp_dir/cascade-custody" \
+	    --obligation-root "$temp_dir/cascade-obligations" \
+	    --recent-lines 100 \
+	    --max-findings 10 \
+	    --write-obligations >"$temp_dir/cascade-audit.out"
+	  [[ "$(jq -r '.actionable_findings' "$temp_dir/cascade-custody/latest.json")" == "0" ]] ||
+	    fail "prior-run anomaly custody opened secondary obligations for an owned terminal-failure cascade"
+	  [[ "$(jq -r '.coalesced_findings' "$temp_dir/cascade-custody/latest.json")" -ge 3 ]] ||
+	    fail "prior-run anomaly custody did not coalesce owned terminal-failure companion lines"
+	  [[ "$(find "$temp_dir/cascade-obligations/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')" == "1" ]] ||
+	    fail "prior-run anomaly custody wrote extra obligations for owned terminal-failure companion lines"
+	  [[ "$(jq -r '.coalesced_failure_evidence_count' "$temp_dir/cascade-obligations/open/owner.json")" -ge 3 ]] ||
+	    fail "terminal-failure owner did not record coalesced companion evidence"
+
+	  mkdir -p "$temp_dir/empty-cascade-obligations/open"
+	  python3 - "$ROOT_DIR" "$temp_dir/empty-cascade-obligations/open/owner.json" <<'PY'
+import json
+import sys
+
+root, path = sys.argv[1:3]
+record = {
+    "schema": 1,
+    "record_type": "automation_obligation",
+    "status": "open",
+    "id": "owner",
+    "kind": "codex_exec_empty_transcript",
+    "reason": "CODEX_EXEC_EMPTY_TRANSCRIPT",
+    "root": root,
+    "source_cycle_id": "cycle-empty",
+    "source_run_hash": "hashempty",
+    "target_file": "lib/upkeeper/transcript_output.bash",
+    "repair_target_file": "lib/upkeeper/transcript_output.bash",
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(record, handle)
+    handle.write("\n")
+PY
+	  cat >"$temp_dir/empty-failure-cascade.log" <<'LOG'
+2026-05-25T10:26:02 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hashempty codex.transcript_capture_failed label=primary tee_exit=141 codex_exit=101
+2026-05-25T10:26:02 █ INFO    [WARN] cycle=cycle-empty run_hash=hashempty codex.live_output_filter_failed label=primary filter_exit=1 codex_exit=101
+2026-05-25T10:26:02 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hashempty run.finish codex_exit=101 transcript_bytes=0 transcript_lines=0
+2026-05-25T10:26:05 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hashempty codex exited non-zero without transcript output
+2026-05-25T10:26:07 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hashempty cycle.exit exit_code=3 reason=CODEX_EXEC_EMPTY_TRANSCRIPT codex_exit=101 transcript_bytes=0 transcript_lines=0
+LOG
+	  tools/upkeeper_anomaly_custody.py \
+	    --root "$ROOT_DIR" \
+	    --loop-log "$temp_dir/empty-failure-cascade.log" \
+	    --state-root "$temp_dir/empty-cascade-custody" \
+	    --obligation-root "$temp_dir/empty-cascade-obligations" \
+	    --recent-lines 100 \
+	    --max-findings 10 \
+	    --write-obligations >"$temp_dir/empty-cascade-audit.out"
+	  [[ "$(jq -r '.actionable_findings' "$temp_dir/empty-cascade-custody/latest.json")" == "0" ]] ||
+	    fail "prior-run anomaly custody opened secondary obligations for an owned empty-transcript cascade"
+	  [[ "$(jq -r '.coalesced_findings' "$temp_dir/empty-cascade-custody/latest.json")" -ge 4 ]] ||
+	    fail "prior-run anomaly custody did not coalesce owned empty-transcript companion lines"
+	  [[ "$(find "$temp_dir/empty-cascade-obligations/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')" == "1" ]] ||
+	    fail "prior-run anomaly custody wrote extra obligations for owned empty-transcript companion lines"
+
+	  grep -Fq 'run_backlog_anomaly_custody_audit' orchestration/backlog.sh ||
+	    fail "backlog launcher does not invoke prior-run anomaly custody before issue selection"
   grep -Fq 'run_upkeeper_for_obligation' orchestration/backlog.sh ||
     fail "backlog launcher does not route selected obligations to Upkeeper"
 
@@ -1537,6 +1630,38 @@ records = [
         "schema": 1,
         "record_type": "automation_obligation",
         "status": "open",
+        "id": "empty-owner",
+        "created_at": "2026-05-22T02:10:00-0700",
+        "kind": "codex_exec_empty_transcript",
+        "severity": "high",
+        "summary": "empty transcript owner",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "lib/upkeeper/transcript_output.bash",
+        "repair_target_file": "lib/upkeeper/transcript_output.bash",
+        "issue_number": "590",
+        "reason": "CODEX_EXEC_EMPTY_TRANSCRIPT",
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "empty-duplicate-with-different-issue",
+        "created_at": "2026-05-22T02:11:00-0700",
+        "kind": "codex_exec_empty_transcript",
+        "severity": "high",
+        "summary": "empty transcript duplicate",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "lib/upkeeper/transcript_output.bash",
+        "repair_target_file": "",
+        "issue_number": "592",
+        "reason": "CODEX_EXEC_EMPTY_TRANSCRIPT",
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
         "id": "duplicate-current",
         "created_at": "2026-05-22T02:00:00-0700",
         "kind": "missing_status_marker",
@@ -1593,19 +1718,19 @@ PY
   )"
   [[ "$(jq -r '.status' <<<"$reconciliation_json")" == "reconciled" ]] ||
     fail "automation obligation reconciliation did not report reconciled status"
-  [[ "$(jq -r '.current_root_open_before' <<<"$reconciliation_json")" == "3" ]] ||
+  [[ "$(jq -r '.current_root_open_before' <<<"$reconciliation_json")" == "5" ]] ||
     fail "automation obligation reconciliation counted the wrong current-root input"
-  [[ "$(jq -r '.current_root_open_after' <<<"$reconciliation_json")" == "2" ]] ||
+  [[ "$(jq -r '.current_root_open_after' <<<"$reconciliation_json")" == "3" ]] ||
     fail "automation obligation reconciliation left the wrong current-root output"
   [[ "$(jq -r '.deferred_foreign_root_count' <<<"$reconciliation_json")" == "1" ]] ||
     fail "automation obligation reconciliation lost foreign-root evidence count"
-  [[ "$(jq -r '.duplicates_resolved' <<<"$reconciliation_json")" == "1" ]] ||
-    fail "automation obligation reconciliation did not resolve one duplicate"
+  [[ "$(jq -r '.duplicates_resolved' <<<"$reconciliation_json")" == "2" ]] ||
+    fail "automation obligation reconciliation did not resolve both duplicate groups"
 
   open_count="$(find "$temp_dir/obligations/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
   resolved_count="$(find "$temp_dir/obligations/resolved" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
-  [[ "$open_count" == "3" ]] || fail "automation obligation reconciliation removed wrong open count"
-  [[ "$resolved_count" == "1" ]] || fail "automation obligation reconciliation did not preserve one resolved duplicate"
+  [[ "$open_count" == "4" ]] || fail "automation obligation reconciliation removed wrong open count"
+  [[ "$resolved_count" == "2" ]] || fail "automation obligation reconciliation did not preserve two resolved duplicates"
   owner_file="$temp_dir/obligations/open/owner-current.json"
   duplicate_file="$temp_dir/obligations/resolved/duplicate-current.json"
   [[ "$(jq -r '.occurrence_count' "$owner_file")" == "2" ]] ||
@@ -1616,6 +1741,10 @@ PY
     fail "automation obligation reconciliation did not mark duplicate resolved"
   [[ "$(jq -r '.duplicate_of' "$duplicate_file")" == "owner-current" ]] ||
     fail "automation obligation reconciliation did not point duplicate at owner"
+  [[ "$(jq -r '.occurrence_count' "$temp_dir/obligations/open/empty-owner.json")" == "2" ]] ||
+    fail "automation obligation reconciliation did not collapse empty-transcript duplicates across issue numbers"
+  [[ "$(jq -r '.duplicate_of' "$temp_dir/obligations/resolved/empty-duplicate-with-different-issue.json")" == "empty-owner" ]] ||
+    fail "automation obligation reconciliation did not point empty-transcript duplicate at owner"
   ! jq -e 'has("_path") or has("_foreign_root")' "$owner_file" >/dev/null ||
     fail "automation obligation reconciliation leaked private helper fields onto owner"
   ! jq -e 'has("_path") or has("_foreign_root")' "$duplicate_file" >/dev/null ||
@@ -1625,8 +1754,8 @@ PY
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
       bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.id' <<<"$selected_json")" == "owner-current" ]] ||
-    fail "automation obligation selection did not select reconciled owner"
+  [[ "$(jq -r '.id' <<<"$selected_json")" == "empty-owner" ]] ||
+    fail "automation obligation selection did not prioritize reconciled empty-transcript owner"
   [[ "$(jq -r '.deferred_foreign_root_count' <<<"$selected_json")" == "1" ]] ||
     fail "automation obligation selection lost foreign count after reconciliation"
 

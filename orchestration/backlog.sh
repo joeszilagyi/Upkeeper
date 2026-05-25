@@ -206,7 +206,7 @@ backlog_payload_is_model_shell_fixture() {
   local payload="$1"
 
   case "$payload" in
-    *"[ERROR] Upkeeper: "*": echo "*|*"[ERROR] Upkeeper: "*": printf "*|*"[WARN] Upkeeper: "*": echo "*|*"[WARN] Upkeeper: "*": printf "*)
+    *"[ERROR] Upkeeper: "*": echo "*|*"[ERROR] Upkeeper: "*": printf "*|*"[ERROR] Upkeeper: "*": log_line "*|*"[ERROR] Upkeeper: "*": log_line_parts "*|*"[WARN] Upkeeper: "*": echo "*|*"[WARN] Upkeeper: "*": printf "*|*"[WARN] Upkeeper: "*": log_line "*|*"[WARN] Upkeeper: "*": log_line_parts "*)
       return 0
       ;;
     *)
@@ -1940,18 +1940,45 @@ backlog_run_upkeeper_capture() {
   return "$status"
 }
 
+backlog_child_output_native_obligation_line() {
+  local output_file="$1"
+
+  [[ -n "$output_file" && -f "$output_file" ]] || return 1
+  awk '
+    BEGIN { found = 0 }
+    /^[0-9][0-9][0-9][0-9]-/ &&
+    /automation[.]obligation[.]open/ &&
+    /(ACTION|[[]WARN[]] cycle=)/ &&
+    / reason=(CODEX_EXEC_EMPTY_TRANSCRIPT|MISSING_STATUS_MARKER|BACKEND_CONTEXT_LENGTH_EXCEEDED|TURN_ABORTED_WITHOUT_MARKER|UPKEEPER_CHILD_EXIT_NONZERO|LATTICE_UNAVAILABLE)/ &&
+    !/Upkeeper: primary:/ {
+      print
+      found = 1
+      exit
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$output_file"
+}
+
 backlog_open_wrapper_failure_obligation() {
   local exit_code="$1"
   local output_file="$2"
   local workflow="$3"
   local context_id="$4"
   local target_hint="$5"
-  local obligation_root open_dir now payload id path seen_count
+  local obligation_root open_dir now payload id path seen_count native_line native_reason
 
   BACKLOG_WRAPPER_FAILURE_OBLIGATION_ID=""
   BACKLOG_WRAPPER_FAILURE_OBLIGATION_PATH=""
   [[ "$exit_code" -ne 0 ]] || return 0
   [[ -n "$output_file" && -f "$output_file" ]] || return 0
+
+  if native_line="$(backlog_child_output_native_obligation_line "$output_file")"; then
+    native_reason="$(sed -n 's/.* reason=\([^[:space:]]*\).*/\1/p' <<<"$native_line" | head -n 1)"
+    [[ -n "$native_reason" ]] || native_reason="unknown"
+    BACKLOG_FAILURE_OBLIGATION_RECORDED=1
+    log "Upkeeper child already opened automation obligation; preserving native owner reason=$native_reason"
+    return 0
+  fi
 
   obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
   open_dir="$obligation_root/open"
@@ -2056,24 +2083,86 @@ def target_from_tail() -> str:
     return "Upkeeper"
 
 
+def failure_profile() -> dict[str, str]:
+    lower = raw_text.lower()
+    if (
+        "context_length_exceeded" in lower
+        or "context length exceeded" in lower
+        or "remote compact" in lower
+        or "input exceeds the context window" in lower
+        or "maximum context length" in lower
+    ):
+        target = "lib/upkeeper/transcript_output.bash"
+        if not target_exists(target):
+            target = target_from_tail()
+        return {
+            "kind": "backend_context_overflow",
+            "reason": "BACKEND_CONTEXT_LENGTH_EXCEEDED",
+            "target": target,
+            "summary": "Codex backend context window was exceeded before Upkeeper could report a clean status",
+            "issue_title": f"High priority bug: backend context overflow needs bounded evidence for {target}",
+            "fingerprint_prefix": "backlog-backend-context-overflow",
+        }
+    if (
+        "codex_exec_empty_transcript" in lower
+        or "codex exited non-zero without transcript output" in lower
+        or ("codex_exit=101" in lower and ("transcript_bytes=0" in lower or "transcript_lines=0" in lower))
+        or ("codex.transcript_capture_failed" in lower and "codex_exit=101" in lower)
+    ):
+        target = "lib/upkeeper/transcript_output.bash"
+        if not target_exists(target):
+            target = target_from_tail()
+        return {
+            "kind": "codex_exec_empty_transcript",
+            "reason": "CODEX_EXEC_EMPTY_TRANSCRIPT",
+            "target": target,
+            "summary": "Codex exited nonzero without transcript output before Upkeeper could report a clean status",
+            "issue_title": f"High priority bug: empty Codex transcript failure needs repair for {target}",
+            "fingerprint_prefix": "backlog-codex-empty-transcript",
+        }
+    target = target_from_tail()
+    return {
+        "kind": "wrapper_execution_failure",
+        "reason": "UPKEEPER_CHILD_EXIT_NONZERO",
+        "target": target,
+        "summary": f"Backlog observed Upkeeper child exit {exit_code} before a clean launcher outcome",
+        "issue_title": f"High priority bug: Upkeeper child exit {exit_code} needs repair for {target}",
+        "fingerprint_prefix": "backlog-wrapper-failure",
+    }
+
+
+def first_match(pattern: str) -> str:
+    match = re.search(pattern, raw_text)
+    return match.group(1) if match else ""
+
+
 normalized_tail = normalize(tail_text)
+profile = failure_profile()
+target = profile["target"]
+source_cycle_id = first_match(r"\bcycle=([^ \t]+)")
+source_run_hash = first_match(r"\brun_hash=([0-9A-Za-z._:-]+)")
 fingerprint = hashlib.sha256(
-    f"backlog-wrapper-failure\0{exit_code}\0{workflow}\0{context_id}\0{normalized_tail}".encode("utf-8", "surrogateescape")
+    f"{profile['fingerprint_prefix']}\0{exit_code}\0{workflow}\0{context_id}\0{target}\0{normalized_tail}".encode("utf-8", "surrogateescape")
 ).hexdigest()[:24]
-target = target_from_tail()
 excerpt = "\n".join(tail_lines[-20:])
 normalized_excerpt = "\n".join(normalized_tail.splitlines()[-20:])
-obligation_id = f"wrapper-failure-{fingerprint}"
+id_prefix = {
+    "backend_context_overflow": "context-overflow",
+    "codex_exec_empty_transcript": "empty-transcript",
+}.get(profile["kind"], "wrapper-failure")
+obligation_id = f"{id_prefix}-{fingerprint}"
 record = {
     "schema": 1,
     "record_type": "automation_obligation",
     "status": "open",
     "id": obligation_id,
-    "kind": "wrapper_execution_failure",
+    "kind": profile["kind"],
     "severity": "high",
-    "summary": f"Backlog observed Upkeeper child exit {exit_code} before a clean launcher outcome",
+    "summary": profile["summary"],
     "root": root,
     "source": "backlog_child_exit_catchment",
+    "source_cycle_id": source_cycle_id,
+    "source_run_hash": source_run_hash,
     "source_pr_number": pr_number,
     "source_branch": branch,
     "workflow": workflow,
@@ -2081,15 +2170,16 @@ record = {
     "target_scope": "target",
     "target_file": target,
     "repair_target_file": target,
-    "reason": "UPKEEPER_CHILD_EXIT_NONZERO",
+    "reason": profile["reason"],
     "exit_code": str(exit_code),
-    "fingerprint": f"backlog-wrapper-failure:{fingerprint}",
-    "issue_title": f"High priority bug: Upkeeper child exit {exit_code} needs repair for {target}",
+    "fingerprint": f"{profile['fingerprint_prefix']}:{fingerprint}",
+    "issue_title": profile["issue_title"],
     "issue_title_basis": "backlog_child_exit_catchment",
     "specific_issue_required": True,
     "required_resolution": [
         "inspect the captured child-output tail before normal backlog issue work",
         "repair the wrapper, launcher, or detector defect that let the child exit nonzero",
+        "keep live failure evidence bounded so later repair cycles do not re-ingest oversized transcript tails",
         "prove the failure path writes a normal cycle outcome or a durable obligation instead of disappearing between loop iterations",
         "rerun tests/backlog_wrapper_failure_obligation_test.bash",
         "rerun tools/validate_upkeeper.sh --quick",

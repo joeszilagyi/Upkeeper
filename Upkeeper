@@ -7428,19 +7428,30 @@ patterns = [
   r"maximum context length",
 ]
 
+
+def detect_context_overflow(text: str) -> str:
+  for pattern in patterns:
+    if re.search(pattern, text, flags=re.IGNORECASE):
+      return pattern
+  return ""
+
 try:
   with open(path, "rb") as handle:
     handle.seek(0, 2)
     size = handle.tell()
     handle.seek(max(0, size - 256 * 1024))
-    text = handle.read().decode("utf-8", "replace")
+    tail_text = handle.read().decode("utf-8", "replace")
+
+    matched = detect_context_overflow(tail_text)
+    if not matched and size > 256 * 1024:
+      handle.seek(0)
+      full_text = handle.read().decode("utf-8", "replace")
+      matched = detect_context_overflow(full_text)
+    if matched:
+      print(matched)
+      raise SystemExit(0)
 except OSError:
   raise SystemExit(1)
-
-for pattern in patterns:
-  if re.search(pattern, text, flags=re.IGNORECASE):
-    print(pattern)
-    raise SystemExit(0)
 
 raise SystemExit(1)
 PY

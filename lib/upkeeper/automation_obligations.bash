@@ -665,6 +665,8 @@ def quoted_backend_fixture_payload(payload):
         "printf ",
         "printf '",
         'printf "',
+        "log_line ",
+        "log_line_parts ",
         "echo ",
         "grep ",
         "grep -fq ",
@@ -712,7 +714,7 @@ def quoted_backend_fixture_payload(payload):
     )
     if "warn=" in payload or "err=" in payload:
         return True
-    if payload.startswith(("grep ", "printf ", "echo ", "if grep ", "case ")):
+    if payload.startswith(("grep ", "printf ", "log_line ", "log_line_parts ", "echo ", "if grep ", "case ")):
         return True
     if any(token in payload for token in shell_tokens) and any(token in payload for token in embedded_tokens):
         return True

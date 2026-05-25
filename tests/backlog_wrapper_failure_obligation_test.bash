@@ -68,5 +68,48 @@ EOF
     fail "selected obligation lost crashing-module repair target"
 }
 
+test_context_overflow_opens_specific_obligation() {
+  local old_obligation_dir output_file record_count record_file selected_json
+
+  old_obligation_dir="$BACKLOG_OBLIGATION_DIR"
+  BACKLOG_OBLIGATION_DIR="$TEST_TMP_ROOT/context-obligations"
+  export BACKLOG_OBLIGATION_DIR
+
+  output_file="$TEST_TMP_ROOT/upkeeper-context-overflow.log"
+  cat >"$output_file" <<EOF
+2026-05-25T09:21:24 [ERROR] cycle=20260525T091753-0700-794159 run_hash=37298bda08cddbd0 primary failure transcript tail
+error: context_length_exceeded while remote compact tried to preserve backend context
+tokens used 187,563
+2026-05-25T09:21:24 [ERROR] cycle=20260525T091753-0700-794159 run_hash=37298bda08cddbd0 run.finish execution_origin=primary codex_exit=1
+EOF
+
+  backlog_open_wrapper_failure_obligation 3 "$output_file" "obligation-repair" "prior-run-context" "Upkeeper" >/dev/null
+  record_count="$(find "$BACKLOG_OBLIGATION_DIR/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$record_count" == "1" ]] || fail "context overflow wrote $record_count obligations, expected 1"
+  record_file="$(find "$BACKLOG_OBLIGATION_DIR/open" -maxdepth 1 -type f -name '*.json' | sort | head -n 1)"
+  [[ "$(jq -r '.kind' "$record_file")" == "backend_context_overflow" ]] ||
+    fail "context overflow was not classified as backend_context_overflow"
+  [[ "$(jq -r '.reason' "$record_file")" == "BACKEND_CONTEXT_LENGTH_EXCEEDED" ]] ||
+    fail "context overflow did not preserve a specific reason"
+  [[ "$(jq -r '.repair_target_file' "$record_file")" == "lib/upkeeper/transcript_output.bash" ]] ||
+    fail "context overflow was not mapped to transcript-output repair"
+  [[ "$(jq -r '.source_cycle_id' "$record_file")" == "20260525T091753-0700-794159" ]] ||
+    fail "context overflow did not preserve source cycle id"
+  [[ "$(jq -r '.source_run_hash' "$record_file")" == "37298bda08cddbd0" ]] ||
+    fail "context overflow did not preserve source run hash"
+  jq -e '.issue_title | contains("backend context overflow")' "$record_file" >/dev/null ||
+    fail "context overflow issue title was not descriptive"
+  jq -e '.required_resolution[] | select(contains("bounded"))' "$record_file" >/dev/null ||
+    fail "context overflow obligation did not require bounded evidence"
+
+  selected_json="$(backlog_select_open_obligation_json)"
+  [[ "$(jq -r '.kind' <<<"$selected_json")" == "backend_context_overflow" ]] ||
+    fail "selected context overflow obligation did not preserve specific kind"
+
+  BACKLOG_OBLIGATION_DIR="$old_obligation_dir"
+  export BACKLOG_OBLIGATION_DIR
+}
+
 test_wrapper_failure_opens_deduped_obligation
+test_context_overflow_opens_specific_obligation
 printf 'backlog_wrapper_failure_obligation_test: ok\n'

@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-25: v1.2.36 changes:
+	1. Backlog child-failure catchment now classifies backend context-window exhaustion as `backend_context_overflow` with a specific repair target and source cycle/run hash, instead of leaving it as generic missing-status noise.
+	2. Prior-run anomaly custody now coalesces terminal-failure companion lines such as failed `run.finish`, missing-status PAGE output, and nonzero `cycle.exit` evidence into the existing terminal-failure obligation for the same cycle or run hash.
+	3. Live failure transcript tails default to 24 lines with a byte cap while preserving the private transcript artifact, reducing the chance that a repair loop re-ingests an oversized failure transcript.
+	4. Quoted backend source snippets that call `log_line` or `log_line_parts` are treated as fixture echoes rather than fresh live PAGE failures.
+
 2026-05-24: per-bug source contract gate:
 	1. `tools/validate_upkeeper.sh --source-contracts` now runs the cheapest source-only validation contracts used by backlog per-bug commit gates.
 	2. Backlog per-bug validation now runs that source-contract gate when Upkeeper source, tools, or tests changed, catching oversized structured log call sites before commit and push.

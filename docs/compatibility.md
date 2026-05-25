@@ -177,6 +177,12 @@ Future changes should preserve this operator-visible surface as far as possible:
   outcome, the backlog launcher writes or updates a `wrapper_execution_failure`
   obligation with a private bounded child-output tail and likely wrapper owner
   path before exiting, except for the already-modeled blocked and quota lanes.
+  Backend context-window overflows are a specialized child-failure obligation
+  kind, `backend_context_overflow`, and must point at bounded-evidence handling
+  instead of filing as generic missing-status residue. Later prior-run anomaly
+  scans may coalesce `run.finish`, `cycle.exit`, and missing-status companion
+  PAGE lines into the owning terminal-failure obligation; they must not fan out
+  one failed cycle into multiple unrelated obligations.
 - Backlog PR check and merge decisions are made against the current backlog
   branch head. If the local backlog branch is clean and ahead of
   `origin/<branch>`, the launcher pushes it before PR checks or merge. Dirty,

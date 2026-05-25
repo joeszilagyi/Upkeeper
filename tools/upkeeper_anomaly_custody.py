@@ -50,6 +50,7 @@ KNOWN_EVENT_SIGNALS = (
     "automation.obligation.open",
     "cycle.exit",
     "run.finish",
+    "context_length_exceeded",
 )
 IGNORED_EVENT_TOKEN_SUFFIXES = (
     ".bash",
@@ -72,6 +73,7 @@ ANOMALY_KIND_LABELS = {
     "previous_run_anomaly_summary": "previous-run anomaly summary",
     "startup_anomaly_gate_active": "startup anomaly gate active",
     "warning_line": "warning",
+    "backend_context_overflow": "backend context overflow",
     "expected_fixture_output": "expected fixture output",
 }
 DYNAMIC_FINGERPRINT_PATTERNS = (
@@ -239,6 +241,39 @@ def context_has(lines: list[tuple[int, str]], index: int, needle: str, radius: i
     return any(needle in line for _, line in lines[low:high])
 
 
+def failure_transcript_tail_echo(lines: list[tuple[int, str]], index: int, normalized: str) -> bool:
+    lower = normalized.lower()
+    terminal_tokens = (
+        "run.finish",
+        "cycle.exit",
+        "codex exited non-zero",
+        "automation.obligation.open",
+    )
+    if "failure transcript tail" in lower:
+        return True
+    if any(token in lower for token in terminal_tokens):
+        return False
+    low = max(0, index - 140)
+    for prior_index in range(index - 1, low - 1, -1):
+        prior_lower = strip_prefix(lines[prior_index][1]).lower()
+        if "failure transcript tail" in prior_lower:
+            return True
+        if "codex review finished" in prior_lower or "review completed" in prior_lower:
+            return False
+    return False
+
+
+def backend_context_overflow_text(normalized: str) -> bool:
+    lower = normalized.lower()
+    return (
+        "context_length_exceeded" in lower
+        or "context length exceeded" in lower
+        or "remote compact" in lower
+        or "input exceeds the context window" in lower
+        or "maximum context length" in lower
+    )
+
+
 def expected_fixture(lines: list[tuple[int, str]], index: int, line: str) -> bool:
     if (
         "transcript directory is not private /tmp/upkeeper-transcripts-test." in line
@@ -292,6 +327,8 @@ def model_emitted_fixture_output(normalized: str) -> bool:
         "printf ",
         "printf '",
         'printf "',
+        "log_line ",
+        "log_line_parts ",
         "echo ",
         "grep ",
         "grep -fq ",
@@ -339,7 +376,7 @@ def model_emitted_fixture_output(normalized: str) -> bool:
     )
     if "warn=" in payload or "err=" in payload:
         return True
-    if payload.startswith(("grep ", "printf ", "echo ", "if grep ", "case ")):
+    if payload.startswith(("grep ", "printf ", "log_line ", "log_line_parts ", "echo ", "if grep ", "case ")):
         return True
     if any(token in payload for token in shell_fixture_tokens) and any(
         token in payload for token in embedded_log_tokens
@@ -352,6 +389,8 @@ def model_emitted_fixture_output(normalized: str) -> bool:
 
 def target_for(normalized: str) -> str:
     lower = normalized.lower()
+    if backend_context_overflow_text(normalized):
+        return "lib/upkeeper/transcript_output.bash"
     if "lattice" in lower:
         return "tools/upkeeper_lattice.py"
     if "startup_anomaly" in lower or "previous_run.anomaly" in lower:
@@ -383,6 +422,15 @@ def classify(lines: list[tuple[int, str]], index: int, raw_line: str) -> Classif
         return None
     if "upkeeper: what was wrong:" in lower:
         return None
+    if failure_transcript_tail_echo(lines, index, normalized):
+        return None
+    if backend_context_overflow_text(normalized):
+        return Classification(
+            "backend_context_overflow",
+            "high",
+            target,
+            "backend context window was exceeded before a clean status marker",
+        )
     if "█ page" in raw_line.lower() or "[error]" in lower:
         return Classification("page_error", "high", target, "pageable error output is not part of a healthy run")
     if "checks_failed" in lower or "checks failed" in lower or "stopping before selecting another issue" in lower:
@@ -440,6 +488,8 @@ def stable_fingerprint(kind: str, normalized: str) -> str:
         return "lattice.unavailable"
     if kind == "failed_pr_check_gate":
         return "failed_pr_check_gate"
+    if kind == "backend_context_overflow":
+        return "backend_context_overflow"
     return normalize_fingerprint_text(normalized)
 
 
@@ -618,6 +668,101 @@ def update_open_obligation(path: pathlib.Path, finding: Finding, loop_log: pathl
     write_json(path, data)
 
 
+def terminal_failure_companion(finding: Finding) -> bool:
+    lower = finding.normalized.lower()
+    if finding.kind == "backend_context_overflow":
+        return True
+    if "run.finish" in lower and (
+        "codex_exit=" in lower
+        or "wait_result=failed" in lower
+        or "status_marker=missing" in lower
+        or "session_end_state=no_agent_message" in lower
+    ):
+        return True
+    if "codex exited non-zero without an upkeeper_status marker" in lower:
+        return True
+    if "cycle.exit exit_code=" in lower and (
+        "missing_status_marker" in lower
+        or "status_marker_source=missing" in lower
+        or "codex_exit=1" in lower
+    ):
+        return True
+    return False
+
+
+def terminal_failure_owner(record: dict, finding: Finding, root: pathlib.Path) -> bool:
+    if record.get("state") != "open":
+        return False
+    data = record.get("data")
+    if not isinstance(data, dict):
+        return False
+    record_root = str(data.get("root") or "")
+    if record_root and pathlib.Path(record_root).resolve() != root:
+        return False
+    kind = str(data.get("kind") or "")
+    reason = str(data.get("reason") or "")
+    if kind not in {
+        "missing_status_marker",
+        "wrapper_execution_failure",
+        "backend_context_overflow",
+        "codex_exec_empty_transcript",
+        "turn_aborted_without_marker",
+    } and reason not in {
+        "MISSING_STATUS_MARKER",
+        "UPKEEPER_CHILD_EXIT_NONZERO",
+        "BACKEND_CONTEXT_LENGTH_EXCEEDED",
+        "CODEX_EXEC_EMPTY_TRANSCRIPT",
+        "TURN_ABORTED_WITHOUT_MARKER",
+    }:
+        return False
+    source_cycle_id = str(data.get("source_cycle_id") or "")
+    source_run_hash = str(data.get("source_run_hash") or "")
+    if finding.cycle_id and source_cycle_id == finding.cycle_id:
+        return True
+    if finding.run_hash and source_run_hash == finding.run_hash:
+        return True
+    return False
+
+
+def terminal_failure_owner_record(
+    finding: Finding,
+    obligation_records: dict[str, dict],
+    root: pathlib.Path,
+) -> dict | None:
+    if not terminal_failure_companion(finding):
+        return None
+    for record in obligation_records.values():
+        if terminal_failure_owner(record, finding, root):
+            return record
+    return None
+
+
+def update_terminal_failure_owner(path: pathlib.Path, finding: Finding, loop_log: pathlib.Path) -> None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(data, dict):
+        return
+    try:
+        coalesced_count = int(data.get("coalesced_failure_evidence_count") or 0)
+    except (TypeError, ValueError):
+        coalesced_count = 0
+    data["updated_at"] = now_local()
+    data["coalesced_failure_evidence_count"] = coalesced_count + 1
+    data["last_coalesced_failure_evidence"] = {
+        "source": "backlog_loop_log",
+        "loop_log": str(loop_log),
+        "line_number": finding.line_number,
+        "kind": finding.kind,
+        "reason": finding.reason,
+        "fingerprint": finding.fingerprint,
+        "excerpt": finding.excerpt,
+        "normalized_excerpt": finding.normalized,
+    }
+    write_json(path, data)
+
+
 def audit(args: argparse.Namespace) -> int:
     root = pathlib.Path(args.root).resolve()
     loop_log = pathlib.Path(args.loop_log).expanduser()
@@ -635,6 +780,8 @@ def audit(args: argparse.Namespace) -> int:
     seen_ids: set[str] = set()
     known_open_ids: set[str] = set()
     truncated_count = 0
+    created_obligations = 0
+    updated_obligations = 0
     obligation_records = existing_obligation_records(obligation_root)
     for index, (line_number, raw_line) in enumerate(lines):
         classified = classify(lines, index, raw_line)
@@ -643,6 +790,13 @@ def audit(args: argparse.Namespace) -> int:
         finding = make_finding(lines, index, line_number, raw_line, classified)
         if finding.status == "expected_fixture":
             expected_count += 1
+            continue
+        terminal_owner = terminal_failure_owner_record(finding, obligation_records, root)
+        if terminal_owner is not None:
+            if args.write_obligations:
+                update_terminal_failure_owner(pathlib.Path(terminal_owner["path"]), finding, loop_log)
+                updated_obligations += 1
+            coalesced_count += 1
             continue
         record = obligation_records.get(finding.ident)
         if record and record.get("state") == "resolved":
@@ -666,8 +820,6 @@ def audit(args: argparse.Namespace) -> int:
 
     private_dir(state_root)
     finding_dir = state_root / "findings"
-    created_obligations = 0
-    updated_obligations = 0
     for finding in findings:
         write_json(finding_dir / f"{finding.ident}.json", finding_payload(finding, root, loop_log))
         if not args.write_obligations:

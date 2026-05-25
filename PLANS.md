@@ -4956,3 +4956,41 @@ Validation:
 - `git diff --check`
 - `tools/validate_upkeeper.sh --quick`
 - `tools/validate_upkeeper.sh --full`
+
+## Successive Loop Failure Catchment
+
+Status: in progress
+
+Goal:
+- keep one backend failure from fanning into several independent prior-run
+  obligations on the next loop
+- classify backend context-window failures as their own repairable control-plane
+  problem instead of generic missing-status noise
+- keep failure transcript evidence bounded in live output so later custody and
+  repair prompts do not re-ingest large transcript tails
+- treat quoted `log_line_parts` source snippets as backend fixture echoes, not
+  live wrapper PAGE failures
+
+Constraints:
+- work in a side branch while the active backlog loop owns the main worktree
+- do not launch real backend Codex validation
+- preserve durable obligations for real non-zero exits; only coalesce companion
+  log lines into the owning terminal-failure obligation
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `lib/upkeeper/transcript_output.bash`
+- `tools/upkeeper_anomaly_custody.py`
+- `lib/upkeeper/automation_obligations.bash`
+- `tests/backlog_wrapper_failure_obligation_test.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_wrapper_failure_obligation_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`

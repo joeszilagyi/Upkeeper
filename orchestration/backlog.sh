@@ -206,7 +206,7 @@ backlog_payload_is_model_shell_fixture() {
   local payload="$1"
 
   case "$payload" in
-    *"[ERROR] Upkeeper: "*": echo "*|*"[ERROR] Upkeeper: "*": printf "*|*"[WARN] Upkeeper: "*": echo "*|*"[WARN] Upkeeper: "*": printf "*)
+    *"[ERROR] Upkeeper: "*": echo "*|*"[ERROR] Upkeeper: "*": printf "*|*"[ERROR] Upkeeper: "*": log_line "*|*"[ERROR] Upkeeper: "*": log_line_parts "*|*"[WARN] Upkeeper: "*": echo "*|*"[WARN] Upkeeper: "*": printf "*|*"[WARN] Upkeeper: "*": log_line "*|*"[WARN] Upkeeper: "*": log_line_parts "*)
       return 0
       ;;
     *)
@@ -2056,24 +2056,65 @@ def target_from_tail() -> str:
     return "Upkeeper"
 
 
+def failure_profile() -> dict[str, str]:
+    lower = raw_text.lower()
+    if (
+        "context_length_exceeded" in lower
+        or "context length exceeded" in lower
+        or "remote compact" in lower
+        or "input exceeds the context window" in lower
+        or "maximum context length" in lower
+    ):
+        target = "lib/upkeeper/transcript_output.bash"
+        if not target_exists(target):
+            target = target_from_tail()
+        return {
+            "kind": "backend_context_overflow",
+            "reason": "BACKEND_CONTEXT_LENGTH_EXCEEDED",
+            "target": target,
+            "summary": "Codex backend context window was exceeded before Upkeeper could report a clean status",
+            "issue_title": f"High priority bug: backend context overflow needs bounded evidence for {target}",
+            "fingerprint_prefix": "backlog-backend-context-overflow",
+        }
+    target = target_from_tail()
+    return {
+        "kind": "wrapper_execution_failure",
+        "reason": "UPKEEPER_CHILD_EXIT_NONZERO",
+        "target": target,
+        "summary": f"Backlog observed Upkeeper child exit {exit_code} before a clean launcher outcome",
+        "issue_title": f"High priority bug: Upkeeper child exit {exit_code} needs repair for {target}",
+        "fingerprint_prefix": "backlog-wrapper-failure",
+    }
+
+
+def first_match(pattern: str) -> str:
+    match = re.search(pattern, raw_text)
+    return match.group(1) if match else ""
+
+
 normalized_tail = normalize(tail_text)
+profile = failure_profile()
+target = profile["target"]
+source_cycle_id = first_match(r"\bcycle=([^ \t]+)")
+source_run_hash = first_match(r"\brun_hash=([0-9A-Za-z._:-]+)")
 fingerprint = hashlib.sha256(
-    f"backlog-wrapper-failure\0{exit_code}\0{workflow}\0{context_id}\0{normalized_tail}".encode("utf-8", "surrogateescape")
+    f"{profile['fingerprint_prefix']}\0{exit_code}\0{workflow}\0{context_id}\0{target}\0{normalized_tail}".encode("utf-8", "surrogateescape")
 ).hexdigest()[:24]
-target = target_from_tail()
 excerpt = "\n".join(tail_lines[-20:])
 normalized_excerpt = "\n".join(normalized_tail.splitlines()[-20:])
-obligation_id = f"wrapper-failure-{fingerprint}"
+obligation_id = f"{'context-overflow' if profile['kind'] == 'backend_context_overflow' else 'wrapper-failure'}-{fingerprint}"
 record = {
     "schema": 1,
     "record_type": "automation_obligation",
     "status": "open",
     "id": obligation_id,
-    "kind": "wrapper_execution_failure",
+    "kind": profile["kind"],
     "severity": "high",
-    "summary": f"Backlog observed Upkeeper child exit {exit_code} before a clean launcher outcome",
+    "summary": profile["summary"],
     "root": root,
     "source": "backlog_child_exit_catchment",
+    "source_cycle_id": source_cycle_id,
+    "source_run_hash": source_run_hash,
     "source_pr_number": pr_number,
     "source_branch": branch,
     "workflow": workflow,
@@ -2081,15 +2122,16 @@ record = {
     "target_scope": "target",
     "target_file": target,
     "repair_target_file": target,
-    "reason": "UPKEEPER_CHILD_EXIT_NONZERO",
+    "reason": profile["reason"],
     "exit_code": str(exit_code),
-    "fingerprint": f"backlog-wrapper-failure:{fingerprint}",
-    "issue_title": f"High priority bug: Upkeeper child exit {exit_code} needs repair for {target}",
+    "fingerprint": f"{profile['fingerprint_prefix']}:{fingerprint}",
+    "issue_title": profile["issue_title"],
     "issue_title_basis": "backlog_child_exit_catchment",
     "specific_issue_required": True,
     "required_resolution": [
         "inspect the captured child-output tail before normal backlog issue work",
         "repair the wrapper, launcher, or detector defect that let the child exit nonzero",
+        "keep live failure evidence bounded so later repair cycles do not re-ingest oversized transcript tails",
         "prove the failure path writes a normal cycle outcome or a durable obligation instead of disappearing between loop iterations",
         "rerun tests/backlog_wrapper_failure_obligation_test.bash",
         "rerun tools/validate_upkeeper.sh --quick",

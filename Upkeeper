@@ -6295,7 +6295,8 @@ upkeeper_preflight_explicit_target_or_exit() {
 }
 
 upkeeper_bind_issue_fix_obligation_context() {
-  local issue_number issue_target open_dir raw_match matched_id matched_path
+  local issue_number issue_target open_dir resolved_dir scan_source raw_match matched_id matched_path
+  local scan_status source_label
 
   issue_number="${CODEX_ISSUE_FIX_NUMBER:-}"
   [[ -n "$issue_number" ]] || return 0
@@ -6308,15 +6309,38 @@ upkeeper_bind_issue_fix_obligation_context() {
   fi
   [[ -d "$open_dir" ]] || return 0
 
-  raw_match="$(python3 - "$open_dir" "$issue_number" "$issue_target" <<'PY'
+  if ! resolved_dir="$(automation_obligation_root)/resolved"; then
+    resolved_dir=""
+  fi
+
+  for scan_source in "$open_dir" "$resolved_dir"; do
+    case "$scan_source" in
+      "$open_dir")
+        scan_status="open"
+        source_label="open"
+        ;;
+      "$resolved_dir")
+        scan_status="resolved"
+        source_label="resolved"
+        if [[ -z "$resolved_dir" || ! -d "$scan_source" ]]; then
+          continue
+        fi
+        ;;
+      *)
+        continue
+        ;;
+    esac
+
+    raw_match="$(python3 - "$scan_source" "$issue_number" "$issue_target" "$scan_status" <<'PY'
 import glob
 import json
 import os
 import sys
 
-open_dir, issue_number, issue_target = sys.argv[1:4]
+scan_source, issue_number, issue_target, scan_status = sys.argv[1:5]
 issue_number = str(issue_number or "").strip()
 issue_target = str(issue_target or "").strip()
+scan_status = str(scan_status or "").strip()
 
 
 def to_str(value):
@@ -6351,7 +6375,7 @@ for path in sorted(glob.glob(os.path.join(open_dir, "*.json"))):
       data = json.load(handle)
   except (OSError, json.JSONDecodeError):
     continue
-  if str(data.get("status", "")).strip() != "open":
+  if scan_status and str(data.get("status", "")).strip() != scan_status:
     continue
   if issue_match(data):
     open_matches.append((path, data))
@@ -6383,11 +6407,17 @@ if selected is not None:
   print(__import__("json").dumps({"id": filename, "path": path}))
 PY
 )"
+
+    if [[ -n "$raw_match" ]]; then
+      break
+    fi
+  done
+
   if [[ -z "$raw_match" ]]; then
     return 0
   fi
   if [[ "$raw_match" == "ambiguous" ]]; then
-    log_line "WARN" "issue_fix.obligation_bind ambiguous issue=$(shell_quote "$issue_number") target_file=$(shell_quote "$issue_target")"
+    log_line "WARN" "issue_fix.obligation_bind ambiguous issue=$(shell_quote "$issue_number") target_file=$(shell_quote "$issue_target") source_status=${source_label}"
     return 0
   fi
 
@@ -6404,6 +6434,7 @@ PY
   log_line_parts "INFO" \
     "issue_fix.obligation_bind" \
     " matched_id=$(shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_ID")" \
+    " matched_source=$(shell_quote "$source_label")" \
     " issue=$(shell_quote "$issue_number")" \
     " target_file=$(shell_quote "$issue_target")" \
     " source_path=$(shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_PATH")"

@@ -23,6 +23,11 @@ Version numbering note:
 	2. The lease primitive rejects duplicate active issue claims, rejects predicted target-file overlap, blocks use of the main checkout as a worker worktree, and supports TTL expiry plus explicit release.
 	3. Added deterministic validation and a proposed architecture decision so live parallel worker launch can build on a tested issue/target ownership contract instead of ad hoc manual loops.
 
+2026-05-24: prior-run incident rollups:
+	1. Prior-run anomaly custody now collapses same-source-cycle hard control-plane cascades into one `incident_rollup` obligation instead of opening sibling PAGE, nonzero-exit, startup-gate, and PR-gate obligations for the same blowup.
+	2. The rollup preserves each individual signal excerpt, fingerprint, target, cycle id, and run hash inside the obligation evidence so repair still has the full local context.
+	3. Deterministic validation covers rollup creation, repeat updates, descriptive issue titles, and sibling-obligation suppression.
+
 2026-05-24: per-bug source contract gate:
 	1. `tools/validate_upkeeper.sh --source-contracts` now runs the cheapest source-only validation contracts used by backlog per-bug commit gates.
 	2. Backlog per-bug validation now runs that source-contract gate when Upkeeper source, tools, or tests changed, catching oversized structured log call sites before commit and push.

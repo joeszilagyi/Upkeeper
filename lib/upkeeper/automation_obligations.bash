@@ -1597,6 +1597,7 @@ IGNORED_EVENT_TOKEN_SUFFIXES = (
     ".txt",
 )
 PRIOR_RUN_KIND_LABELS = {
+    "incident_rollup": "incident rollup",
     "page_error": "PAGE error",
     "failed_pr_check_gate": "PR check gate failure",
     "nonzero_cycle_exit": "nonzero cycle exit",
@@ -1711,6 +1712,8 @@ def prior_run_kind(data, evidence, text):
 
 
 def prior_run_signal(kind, text):
+    if kind == "incident_rollup":
+        return "incident.rollup"
     lower = text.lower()
     for signal in KNOWN_EVENT_SIGNALS:
         if signal in lower:
@@ -1741,6 +1744,8 @@ def prior_run_title_label(data):
         data.get("summary"),
     )
     kind = prior_run_kind(data, evidence, text)
+    if kind == "incident_rollup":
+        return "incident rollup"
     label = PRIOR_RUN_KIND_LABELS.get(kind, kind.replace("_", " "))
     signal = first_nonempty(data.get("anomaly_signal"), prior_run_signal(kind, text))
     if not signal:

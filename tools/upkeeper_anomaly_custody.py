@@ -64,6 +64,7 @@ IGNORED_EVENT_TOKEN_SUFFIXES = (
     ".txt",
 )
 ANOMALY_KIND_LABELS = {
+    "incident_rollup": "incident rollup",
     "page_error": "PAGE error",
     "failed_pr_check_gate": "PR check gate failure",
     "nonzero_cycle_exit": "nonzero cycle exit",
@@ -75,6 +76,14 @@ ANOMALY_KIND_LABELS = {
     "warning_line": "warning",
     "backend_context_overflow": "backend context overflow",
     "expected_fixture_output": "expected fixture output",
+}
+HARD_INCIDENT_KINDS = {
+    "page_error",
+    "failed_pr_check_gate",
+    "nonzero_cycle_exit",
+    "nonzero_launcher_exit",
+    "lattice_unavailable",
+    "startup_anomaly_unresolved",
 }
 DYNAMIC_FINGERPRINT_PATTERNS = (
     (re.compile(r"\bcycle=[^ \t]+"), "cycle=<cycle>"),
@@ -119,6 +128,8 @@ class Finding:
     cycle_id: str
     run_hash: str
     status: str
+    incident_key: str = ""
+    incident_signals: tuple[dict[str, object], ...] = ()
 
 
 def now_local() -> str:
@@ -181,6 +192,8 @@ def compact_title_text(value: str, width: int = 90) -> str:
 
 
 def anomaly_signal(kind: str, normalized: str) -> str:
+    if kind == "incident_rollup":
+        return "incident.rollup"
     lower = normalized.lower()
     for signal in KNOWN_EVENT_SIGNALS:
         if signal in lower:
@@ -202,6 +215,8 @@ def anomaly_signal(kind: str, normalized: str) -> str:
 
 
 def anomaly_title_label(kind: str, normalized: str) -> str:
+    if kind == "incident_rollup":
+        return "incident rollup"
     label = ANOMALY_KIND_LABELS.get(kind, kind.replace("_", " "))
     signal = anomaly_signal(kind, normalized)
     if not signal:
@@ -499,6 +514,114 @@ def finding_id(kind: str, normalized: str, target: str) -> tuple[str, str]:
     return f"prior-run-{digest[:24]}", fingerprint
 
 
+def hard_incident_kind(kind: str) -> bool:
+    return kind in HARD_INCIDENT_KINDS
+
+
+def incident_signal_payload(finding: Finding) -> dict[str, object]:
+    return {
+        "id": finding.ident,
+        "kind": finding.kind,
+        "severity": finding.severity,
+        "target_file": finding.target,
+        "reason": finding.reason,
+        "line_number": finding.line_number,
+        "fingerprint": finding.fingerprint,
+        "excerpt": finding.excerpt,
+        "normalized_excerpt": finding.normalized,
+        "cycle_id": finding.cycle_id,
+        "run_hash": finding.run_hash,
+    }
+
+
+def incident_signature(findings: list[Finding]) -> tuple[str, str]:
+    parts = sorted(
+        f"{finding.kind}\0{finding.target}\0{finding.fingerprint}"
+        for finding in findings
+        if hard_incident_kind(finding.kind)
+    )
+    if not parts:
+        parts = sorted(f"{finding.kind}\0{finding.target}\0{finding.fingerprint}" for finding in findings)
+    fingerprint = "incident_rollup " + " | ".join(
+        compact_title_text(part.replace("\0", ":"), 120) for part in parts
+    )
+    digest = hashlib.sha256(("\0".join(["incident_rollup", *parts])).encode("utf-8", "surrogateescape")).hexdigest()
+    return f"prior-run-incident-{digest[:24]}", fingerprint
+
+
+def roll_up_incident_findings(findings: list[Finding]) -> tuple[list[Finding], int, int]:
+    """Collapse same-source-cycle hard cascades into one actionable owner.
+
+    Exact repeated fingerprints are still coalesced earlier. This pass handles a
+    different failure mode: one bad source cycle can emit several distinct PAGE,
+    nonzero-exit, startup-gate, or degraded-mode signals that all point at the
+    same incident. Keeping the signals inside one rollup obligation prevents the
+    next loops from filing and selecting a swarm of sibling issue records.
+    """
+
+    by_cycle: dict[str, list[Finding]] = {}
+    cycle_order: list[str] = []
+    passthrough: list[Finding] = []
+    for finding in findings:
+        if not finding.cycle_id:
+            passthrough.append(finding)
+            continue
+        if finding.cycle_id not in by_cycle:
+            by_cycle[finding.cycle_id] = []
+            cycle_order.append(finding.cycle_id)
+        by_cycle[finding.cycle_id].append(finding)
+
+    rolled: list[Finding] = []
+    rollup_count = 0
+    rolled_signal_count = 0
+    consumed_ids: set[str] = set()
+
+    for cycle_id in cycle_order:
+        group = by_cycle[cycle_id]
+        hard = [finding for finding in group if hard_incident_kind(finding.kind)]
+        if len(hard) < 2:
+            continue
+        ordered = sorted(group, key=lambda item: item.line_number)
+        representative = hard[0]
+        ident, fingerprint = incident_signature(ordered)
+        signal_kinds = ", ".join(dict.fromkeys(finding.kind for finding in ordered))
+        signal_targets = ", ".join(dict.fromkeys(finding.target for finding in ordered))
+        normalized = (
+            f"incident_rollup cycle={cycle_id} hard_signals={len(hard)} "
+            f"signals={signal_kinds} targets={signal_targets}"
+        )
+        excerpt = bounded_excerpt(normalized)
+        rolled.append(
+            Finding(
+                ident=ident,
+                fingerprint=fingerprint,
+                kind="incident_rollup",
+                severity="high",
+                target="Upkeeper",
+                reason="multiple hard control-plane anomaly signals belong to one source-cycle incident",
+                line_number=ordered[0].line_number,
+                excerpt=excerpt,
+                normalized=normalized,
+                cycle_id=cycle_id,
+                run_hash=representative.run_hash,
+                status="actionable",
+                incident_key=f"cycle:{cycle_id}",
+                incident_signals=tuple(incident_signal_payload(finding) for finding in ordered),
+            )
+        )
+        rollup_count += 1
+        rolled_signal_count += len(ordered)
+        consumed_ids.update(finding.ident for finding in ordered)
+
+    result: list[Finding] = []
+    for finding in findings:
+        if finding.ident not in consumed_ids:
+            result.append(finding)
+    result.extend(rolled)
+    result.sort(key=lambda item: item.line_number)
+    return result, rollup_count, rolled_signal_count
+
+
 def make_finding(lines: list[tuple[int, str]], index: int, line_number: int, raw_line: str, item: Classification) -> Finding:
     normalized = strip_prefix(raw_line)
     cycle_match = CYCLE_RE.search(raw_line)
@@ -541,7 +664,7 @@ def existing_obligation_records(root: pathlib.Path) -> dict[str, dict]:
 
 
 def finding_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.Path) -> dict:
-    return {
+    payload = {
         "schema": 1,
         "record_type": "anomaly_custody_finding",
         "status": finding.status,
@@ -560,12 +683,17 @@ def finding_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.Path
         "normalized_excerpt": finding.normalized,
         "created_at": now_local(),
     }
+    if finding.incident_key:
+        payload["incident_key"] = finding.incident_key
+        payload["incident_signal_count"] = len(finding.incident_signals)
+        payload["incident_signals"] = list(finding.incident_signals)
+    return payload
 
 
 def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.Path) -> dict:
     title_label = anomaly_title_label(finding.kind, finding.normalized)
     signal = anomaly_signal(finding.kind, finding.normalized)
-    return {
+    payload = {
         "schema": 1,
         "record_type": "automation_obligation",
         "status": "open",
@@ -574,6 +702,7 @@ def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.P
         "kind": "prior_run_anomaly",
         "severity": finding.severity,
         "summary": anomaly_summary(finding),
+        "anomaly_kind": finding.kind,
         "anomaly_signal": signal,
         "anomaly_title_label": title_label,
         "fingerprint": finding.fingerprint,
@@ -623,6 +752,20 @@ def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.P
             "add deterministic validation for the repaired or intentionally expected outcome",
         ],
     }
+    if finding.incident_key:
+        payload["incident_key"] = finding.incident_key
+        payload["incident_signal_count"] = len(finding.incident_signals)
+        payload["evidence"]["incident_key"] = finding.incident_key
+        payload["evidence"]["incident_signal_count"] = len(finding.incident_signals)
+        payload["evidence"]["incident_signals"] = list(finding.incident_signals)
+        payload["required_resolution"] = [
+            "inspect every signal inside the incident rollup before normal backlog issue work",
+            "identify the single underlying source-cycle failure or explicitly split unrelated signals with deterministic evidence",
+            "patch the wrapper, launcher, tests, docs, or detector rule when the source is repairable now",
+            "preserve individual signal evidence inside the rollup instead of filing duplicate sibling obligations for the same incident",
+            "add deterministic validation for the repaired or intentionally expected outcome",
+        ]
+    return payload
 
 
 def update_open_obligation(path: pathlib.Path, finding: Finding, loop_log: pathlib.Path) -> None:
@@ -641,6 +784,7 @@ def update_open_obligation(path: pathlib.Path, finding: Finding, loop_log: pathl
     data["occurrence_count"] = occurrence_count + 1
     data["last_source_cycle_id"] = finding.cycle_id
     data["last_source_run_hash"] = finding.run_hash
+    data["anomaly_kind"] = finding.kind
     data["anomaly_signal"] = anomaly_signal(finding.kind, finding.normalized)
     data["anomaly_title_label"] = anomaly_title_label(finding.kind, finding.normalized)
     data["last_evidence"] = {
@@ -653,6 +797,12 @@ def update_open_obligation(path: pathlib.Path, finding: Finding, loop_log: pathl
         "excerpt": finding.excerpt,
         "normalized_excerpt": finding.normalized,
     }
+    if finding.incident_key:
+        data["incident_key"] = finding.incident_key
+        data["incident_signal_count"] = len(finding.incident_signals)
+        data["last_evidence"]["incident_key"] = finding.incident_key
+        data["last_evidence"]["incident_signal_count"] = len(finding.incident_signals)
+        data["last_evidence"]["incident_signals"] = list(finding.incident_signals)
     if not data.get("fingerprint"):
         data["fingerprint"] = finding.fingerprint
     if first_summary := anomaly_summary(finding):
@@ -784,11 +934,14 @@ def audit(args: argparse.Namespace) -> int:
     max_findings = max(0, int(args.max_findings))
 
     lines = tail_lines(loop_log, recent_lines)
+    candidate_findings: list[Finding] = []
     findings: list[Finding] = []
     known_open_findings: list[tuple[dict, Finding]] = []
     expected_count = 0
     resolved_count = 0
     coalesced_count = 0
+    incident_rollup_count = 0
+    incident_signal_count = 0
     seen_ids: set[str] = set()
     known_open_ids: set[str] = set()
     truncated_count = 0
@@ -810,6 +963,16 @@ def audit(args: argparse.Namespace) -> int:
                 updated_obligations += 1
             coalesced_count += 1
             continue
+        if finding.ident in seen_ids:
+            coalesced_count += 1
+            continue
+        seen_ids.add(finding.ident)
+        candidate_findings.append(finding)
+
+    candidate_findings, incident_rollup_count, incident_signal_count = roll_up_incident_findings(candidate_findings)
+    coalesced_count += max(0, incident_signal_count - incident_rollup_count)
+
+    for finding in candidate_findings:
         record = obligation_records.get(finding.ident)
         if record and record.get("state") == "resolved":
             resolved_count += 1
@@ -821,10 +984,6 @@ def audit(args: argparse.Namespace) -> int:
             known_open_ids.add(finding.ident)
             known_open_findings.append((record, finding))
             continue
-        if finding.ident in seen_ids:
-            coalesced_count += 1
-            continue
-        seen_ids.add(finding.ident)
         if max_findings > 0 and len(findings) >= max_findings:
             truncated_count += 1
             continue
@@ -873,6 +1032,8 @@ def audit(args: argparse.Namespace) -> int:
         "expected_fixture_findings": expected_count,
         "resolved_fingerprint_findings": resolved_count,
         "coalesced_findings": coalesced_count,
+        "incident_rollup_findings": incident_rollup_count,
+        "incident_signal_findings": incident_signal_count,
         "truncated_findings": truncated_count,
         "created_obligations": created_obligations,
         "updated_obligations": updated_obligations,
@@ -886,7 +1047,8 @@ def audit(args: argparse.Namespace) -> int:
         f"status={status} scanned_lines={len(lines)} "
         f"actionable={len(findings)} expected_fixture={expected_count} "
         f"known_open={len(known_open_findings)} resolved={resolved_count} "
-        f"coalesced={coalesced_count} truncated={truncated_count} "
+        f"coalesced={coalesced_count} incident_rollups={incident_rollup_count} "
+        f"truncated={truncated_count} "
         f"new_obligations={created_obligations} updated_obligations={updated_obligations}"
     )
     for finding in findings[:5]:

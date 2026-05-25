@@ -76,6 +76,38 @@ Validation:
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
 
+## Prior-Run Incident Rollups
+
+Status: completed locally; consolidated on `backlog/20260524-201224`
+
+Goal:
+- advance issue #390 by preventing one source-cycle control-plane failure from
+  becoming many sibling prior-run anomaly obligations and GitHub issues
+- add a deterministic incident rollup for same-cycle hard anomaly cascades while
+  preserving individual signal evidence inside the rollup record
+- keep isolated warnings and exact repeated fingerprints on the existing cheap
+  custody path
+
+Constraints:
+- no backend Codex validation
+- preserve the obligation-first launcher contract
+- keep rollup decisions local, bounded, and based only on recent loop-log
+  evidence
+
+Files likely touched:
+- `tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/automation_obligations.bash`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `python3 -m py_compile tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Status Marker Parser Crash Hardening
 
 Status: completed locally; consolidated on `backlog/20260524-201224`

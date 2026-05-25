@@ -706,6 +706,40 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
 done
  unset upkeeper_module
 
+# Keep status-marker recovery deterministic for this selected-target repair cycle.
+# Paired modules intentionally remain unchanged for focused regression repair.
+resolved_status_marker_from_analysis() {
+  local analysis="$1"
+  local codex_exit="$2"
+  local task_complete_last_agent_message="$3"
+  local accepted
+  local candidate
+  local candidate_rejection_reason
+
+  accepted="$(json_field "$analysis" '.accepted_marker')"
+  if [[ "$accepted" == "NO_CHANGES" ]]; then
+    accepted="WORK_DONE"
+  fi
+  if [[ -n "$accepted" ]]; then
+    printf '%s' "$accepted"
+    return 0
+  fi
+
+  candidate="$(json_field "$analysis" '.candidate_marker')"
+  candidate_rejection_reason="$(json_field "$analysis" '.candidate_rejection_reason')"
+  if [[ "$candidate" == "NO_CHANGES" ]]; then
+    candidate="WORK_DONE"
+  fi
+  if [[ -n "$candidate" ]]; then
+    case "$candidate_rejection_reason" in
+      markdown_backticks|quoted_marker|bullet_marker|trailing_content_after_marker)
+        printf '%s' "$candidate"
+        return 0
+        ;;
+    esac
+  fi
+}
+
 # Pre-contact backup computes related HMACs from command substitutions. Keep a
 # parent-process key so those subshells do not generate inconsistent fallbacks
 # when the persistent redaction key cannot be written.

@@ -262,10 +262,14 @@ def failure_transcript_tail_echo(lines: list[tuple[int, str]], index: int, norma
         "run.finish",
         "cycle.exit",
         "codex exited non-zero",
+        "startup_anomaly.gate_unresolved",
+        "checks_failed",
+        "checks failed",
+        "stopping before selecting another issue",
         "automation.obligation.open",
     )
     if "failure transcript tail" in lower:
-        return True
+        return not (CYCLE_RE.search(normalized) or RUN_HASH_RE.search(normalized))
     if any(token in lower for token in terminal_tokens):
         return False
     low = max(0, index - 140)

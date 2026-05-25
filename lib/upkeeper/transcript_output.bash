@@ -64,7 +64,7 @@ try:
 except OSError:
     raw = os.fspath(path)
     redaction_key = os.environ.get('UPKEEPER_REDACTION_KEY') or os.environ.get('UPKEEPER_LATTICE_REDACTION_KEY') or ''
-    material = f'path\0{raw}'.encode('utf-8', 'surrogateescape')
+    material = f'path{chr(0)}{raw}'.encode('utf-8', 'surrogateescape')
     if redaction_key:
         path_digest = hmac.new(redaction_key.encode('utf-8', 'surrogateescape'), material, hashlib.sha256).hexdigest()
     else:
@@ -72,6 +72,7 @@ except OSError:
     print(f'Upkeeper: {label} transcript unavailable transcript=path-hmac-sha256:{path_digest} path_redacted=1', file=sys.stderr)
     raise SystemExit(0)
 lines = text.splitlines()
+has_runtime_output = bool(lines)
 
 def strip_initial_prompt_echo(raw_lines: list[str]) -> tuple[list[str], bool]:
     filtered = []
@@ -355,6 +356,17 @@ summary = (
     f'diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count} signal_lines={len(signals)}'
 )
 log_lines = [f'{ts_log()} [INFO] cycle={cycle_id} run_hash={run_hash} {summary}']
+if exit_raw and exit_raw != "0":
+    if not lines:
+        log_lines.append(
+            f'{ts_log()} [ERROR] cycle={cycle_id} run_hash={run_hash} codex.transcript.empty '
+            f'label={label} transcript={path_label(path)} path_redacted=1'
+        )
+    elif not runtime_lines and stripped_prompt_echo:
+        log_lines.append(
+            f'{ts_log()} [WARN] cycle={cycle_id} run_hash={run_hash} codex.transcript.only_prompt_echo '
+            f'label={label} transcript={path_label(path)} path_redacted=1'
+        )
 for item in signals[-signal_limit:]:
     log_lines.append(f'{ts_log()} [INFO] cycle={cycle_id} run_hash={run_hash} codex.transcript.signal label={label} text={field_value(item)}')
 
@@ -421,6 +433,10 @@ try:
     append_log_lines_secure(log_path, log_lines)
 except OSError:
     pass
+
+if exit_raw and exit_raw != '0' and (not has_runtime_output or not runtime_lines):
+    print(f'{ts_terminal()} [ERROR] Upkeeper: {label} did not capture usable transcript content; transcript={path_label(path)} path_redacted=1 exit={exit_raw}', file=sys.stderr)
+
 if not silent_terminal and (diagnostic_terminal or exit_raw not in {'0', ''}):
     print(f'{ts_terminal()} [INFO] Upkeeper: {label} transcript captured transcript={path_label(path)} path_redacted=1 exit={exit_raw} lines={len(lines)} diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count}', file=sys.stderr)
 if not silent_terminal and diagnostic_terminal and signals and signal_limit:

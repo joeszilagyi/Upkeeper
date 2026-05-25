@@ -672,19 +672,31 @@ def terminal_failure_companion(finding: Finding) -> bool:
     lower = finding.normalized.lower()
     if finding.kind == "backend_context_overflow":
         return True
+    if "codex.transcript_capture_failed" in lower:
+        return True
+    if "codex.live_output_filter_failed" in lower:
+        return True
     if "run.finish" in lower and (
         "codex_exit=" in lower
         or "wait_result=failed" in lower
         or "status_marker=missing" in lower
         or "session_end_state=no_agent_message" in lower
+        or "transcript_bytes=0" in lower
+        or "transcript_lines=0" in lower
     ):
         return True
     if "codex exited non-zero without an upkeeper_status marker" in lower:
         return True
+    if "codex exited non-zero without transcript output" in lower:
+        return True
     if "cycle.exit exit_code=" in lower and (
         "missing_status_marker" in lower
+        or "codex_exec_empty_transcript" in lower
         or "status_marker_source=missing" in lower
         or "codex_exit=1" in lower
+        or "codex_exit=101" in lower
+        or "transcript_bytes=0" in lower
+        or "transcript_lines=0" in lower
     ):
         return True
     return False

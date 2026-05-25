@@ -110,6 +110,68 @@ EOF
   export BACKLOG_OBLIGATION_DIR
 }
 
+test_native_child_obligation_suppresses_outer_duplicate() {
+  local old_obligation_dir output_file output record_count
+
+  old_obligation_dir="$BACKLOG_OBLIGATION_DIR"
+  BACKLOG_OBLIGATION_DIR="$TEST_TMP_ROOT/native-owned-obligations"
+  export BACKLOG_OBLIGATION_DIR
+  BACKLOG_FAILURE_OBLIGATION_RECORDED=0
+
+  output_file="$TEST_TMP_ROOT/upkeeper-native-owned.log"
+  cat >"$output_file" <<EOF
+2026-05-25T10:26:02 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hash-empty codex.transcript_capture_failed label=primary tee_exit=141 codex_exit=101
+2026-05-25T10:26:06 █ ACTION  [WARN] cycle=cycle-empty run_hash=hash-empty automation.obligation.open id=31316b86572162b561475a3a kind=codex_exec_empty_transcript severity=high launcher=backlog target_scope=target target=lib/upkeeper/transcript_output.bash reason=CODEX_EXEC_EMPTY_TRANSCRIPT path=$TEST_TMP_ROOT/native.json
+2026-05-25T10:26:07 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hash-empty cycle.exit exit_code=3 reason=CODEX_EXEC_EMPTY_TRANSCRIPT codex_exit=101 transcript_bytes=0 transcript_lines=0
+EOF
+
+  backlog_open_wrapper_failure_obligation 3 "$output_file" "obligation-repair" "prior-run-empty" "Upkeeper" >"$TEST_TMP_ROOT/native-owned.out" 2>&1
+  output="$(cat "$TEST_TMP_ROOT/native-owned.out")"
+  grep -Fq "preserving native owner reason=CODEX_EXEC_EMPTY_TRANSCRIPT" <<<"$output" ||
+    fail "wrapper failure catchment did not preserve native child obligation owner"
+  [[ "$BACKLOG_FAILURE_OBLIGATION_RECORDED" == "1" ]] ||
+    fail "wrapper failure catchment did not mark native child obligation as recorded"
+  mkdir -p "$BACKLOG_OBLIGATION_DIR/open"
+  record_count="$(find "$BACKLOG_OBLIGATION_DIR/open" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$record_count" == "0" ]] ||
+    fail "wrapper failure catchment wrote $record_count duplicate obligations despite native owner"
+
+  BACKLOG_OBLIGATION_DIR="$old_obligation_dir"
+  export BACKLOG_OBLIGATION_DIR
+}
+
+test_empty_transcript_fallback_opens_specific_obligation() {
+  local old_obligation_dir output_file record_count record_file
+
+  old_obligation_dir="$BACKLOG_OBLIGATION_DIR"
+  BACKLOG_OBLIGATION_DIR="$TEST_TMP_ROOT/empty-transcript-obligations"
+  export BACKLOG_OBLIGATION_DIR
+
+  output_file="$TEST_TMP_ROOT/upkeeper-empty-transcript.log"
+  cat >"$output_file" <<'EOF'
+2026-05-25T10:28:02 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hash-empty codex.transcript_capture_failed label=primary tee_exit=141 codex_exit=101
+2026-05-25T10:28:02 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hash-empty run.finish codex_exit=101 transcript_bytes=0 transcript_lines=0
+2026-05-25T10:28:05 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hash-empty codex exited non-zero without transcript output
+2026-05-25T10:28:08 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hash-empty cycle.exit exit_code=3 reason=CODEX_EXEC_EMPTY_TRANSCRIPT codex_exit=101 transcript_bytes=0 transcript_lines=0
+EOF
+
+  backlog_open_wrapper_failure_obligation 3 "$output_file" "obligation-repair" "prior-run-empty" "Upkeeper" >/dev/null
+  record_count="$(find "$BACKLOG_OBLIGATION_DIR/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+  [[ "$record_count" == "1" ]] || fail "empty transcript fallback wrote $record_count obligations, expected 1"
+  record_file="$(find "$BACKLOG_OBLIGATION_DIR/open" -maxdepth 1 -type f -name '*.json' | sort | head -n 1)"
+  [[ "$(jq -r '.kind' "$record_file")" == "codex_exec_empty_transcript" ]] ||
+    fail "empty transcript fallback was not classified as codex_exec_empty_transcript"
+  [[ "$(jq -r '.reason' "$record_file")" == "CODEX_EXEC_EMPTY_TRANSCRIPT" ]] ||
+    fail "empty transcript fallback did not preserve specific reason"
+  [[ "$(jq -r '.repair_target_file' "$record_file")" == "lib/upkeeper/transcript_output.bash" ]] ||
+    fail "empty transcript fallback was not mapped to transcript-output repair"
+
+  BACKLOG_OBLIGATION_DIR="$old_obligation_dir"
+  export BACKLOG_OBLIGATION_DIR
+}
+
 test_wrapper_failure_opens_deduped_obligation
 test_context_overflow_opens_specific_obligation
+test_native_child_obligation_suppresses_outer_duplicate
+test_empty_transcript_fallback_opens_specific_obligation
 printf 'backlog_wrapper_failure_obligation_test: ok\n'

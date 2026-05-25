@@ -11,6 +11,7 @@ Version numbering note:
 	2. Prior-run anomaly custody now coalesces terminal-failure companion lines such as failed `run.finish`, missing-status PAGE output, and nonzero `cycle.exit` evidence into the existing terminal-failure obligation for the same cycle or run hash.
 	3. Live failure transcript tails default to 24 lines with a byte cap while preserving the private transcript artifact, reducing the chance that a repair loop re-ingests an oversized failure transcript.
 	4. Quoted backend source snippets that call `log_line` or `log_line_parts` are treated as fixture echoes rather than fresh live PAGE failures.
+	5. Empty-transcript Codex exit failures now use a stable `codex_exec_empty_transcript` obligation identity, and the backlog launcher preserves the child-owned obligation instead of filing a second wrapper-failure record for the same cycle.
 
 2026-05-24: per-bug source contract gate:
 	1. `tools/validate_upkeeper.sh --source-contracts` now runs the cheapest source-only validation contracts used by backlog per-bug commit gates.

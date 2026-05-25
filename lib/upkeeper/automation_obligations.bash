@@ -289,6 +289,17 @@ automation_obligation_repair_target_hint() {
   esac
 }
 
+automation_obligation_stable_cycle_identity() {
+  local reason="$1"
+
+  case "$reason" in
+    CODEX_EXEC_EMPTY_TRANSCRIPT|MISSING_STATUS_MARKER|BACKEND_CONTEXT_LENGTH_EXCEEDED|TURN_ABORTED_WITHOUT_MARKER|UPKEEPER_CHILD_EXIT_NONZERO)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 automation_open_cycle_obligation() {
   local exit_code="$1"
   local reason="$2"
@@ -297,7 +308,7 @@ automation_open_cycle_obligation() {
   local codex_exit="$5"
   local codex_exec_started="$6"
   local selected_target="$7"
-  local severity kind summary id open_dir path payload now target_scope repair_target_hint required_resolution_json
+  local severity kind summary id open_dir path payload now target_scope repair_target_hint repair_target_file fingerprint required_resolution_json
 
   automation_framework_enabled || return 0
   automation_cycle_exit_requires_obligation "$exit_code" "$reason" || return 0
@@ -324,7 +335,17 @@ automation_open_cycle_obligation() {
     fi
     return 0
   fi
-  id="$(printf '%s' "$kind|$target_scope|$CYCLE_ID|$CYCLE_RUN_HASH|$selected_target|$repair_target_hint" | automation_hash_text)"
+  repair_target_file="$repair_target_hint"
+  if [[ -z "$repair_target_file" && "$target_scope" != "machine" ]]; then
+    repair_target_file="$selected_target"
+  fi
+  if automation_obligation_stable_cycle_identity "$reason"; then
+    fingerprint="cycle-obligation:$kind:$reason:$target_scope:$selected_target:$repair_target_file"
+    id="$(printf '%s' "$fingerprint" | automation_hash_text)"
+  else
+    fingerprint=""
+    id="$(printf '%s' "$kind|$target_scope|$CYCLE_ID|$CYCLE_RUN_HASH|$selected_target|$repair_target_file" | automation_hash_text)"
+  fi
   open_dir="$(automation_obligation_root)/open"
   automation_private_dir "$open_dir" || return 1
   path="$open_dir/$id.json"
@@ -349,7 +370,8 @@ automation_open_cycle_obligation() {
       "${CODEX_ISSUE_FIX_TITLE:-}" \
       "$selected_target" \
       "$target_scope" \
-      "$repair_target_hint" \
+      "$repair_target_file" \
+      "$fingerprint" \
       "$required_resolution_json" \
       "$exit_code" \
       "$reason" \
@@ -381,6 +403,7 @@ import sys
     selected_target,
     target_scope,
     repair_target_file,
+    fingerprint,
     required_resolution_json,
     exit_code,
     reason,
@@ -390,7 +413,7 @@ import sys
     codex_exec_started,
     run_record,
     transcript,
-    ) = sys.argv[1:28]
+    ) = sys.argv[1:29]
 try:
     required_resolution = json.loads(required_resolution_json)
 except json.JSONDecodeError:
@@ -422,6 +445,7 @@ print(
             "target_scope": target_scope,
             "target_file": selected_target,
             "repair_target_file": repair_target_file,
+            "fingerprint": fingerprint,
             "exit_code": exit_code,
             "reason": reason,
             "level": level,
@@ -437,6 +461,38 @@ print(
 )
 PY
   )"
+
+  if [[ -f "$path" ]]; then
+    payload="$(
+      python3 - "$path" "$payload" "$now" <<'PY'
+import json
+import sys
+
+path, payload, updated_at = sys.argv[1:4]
+try:
+    with open(path, "r", encoding="utf-8") as handle:
+        old = json.load(handle)
+except (OSError, json.JSONDecodeError):
+    old = {}
+new = json.loads(payload)
+try:
+    old_count = int(old.get("occurrence_count") or old.get("seen_count") or 1)
+except (TypeError, ValueError):
+    old_count = 1
+new["created_at"] = old.get("created_at") or new.get("created_at") or updated_at
+new["updated_at"] = updated_at
+new["occurrence_count"] = old_count + 1
+new["seen_count"] = old_count + 1
+new["first_source_cycle_id"] = old.get("first_source_cycle_id") or old.get("source_cycle_id") or new.get("source_cycle_id", "")
+new["first_source_run_hash"] = old.get("first_source_run_hash") or old.get("source_run_hash") or new.get("source_run_hash", "")
+if old.get("issue_number") and not new.get("issue_number"):
+    new["issue_number"] = old.get("issue_number")
+if old.get("issue_title") and not new.get("issue_title"):
+    new["issue_title"] = old.get("issue_title")
+print(json.dumps(new, separators=(",", ":")))
+PY
+    )"
+  fi
 
   automation_write_json "$path" "$payload"
   if declare -F log_line >/dev/null 2>&1; then
@@ -767,22 +823,52 @@ def obsolete_resolution_reason(item):
     return ""
 
 
+SYSTEM_OBLIGATION_KINDS = {
+    "backend_context_overflow",
+    "codex_exec_empty_transcript",
+    "missing_status_marker",
+    "turn_aborted_without_marker",
+    "wrapper_execution_failure",
+}
+SYSTEM_OBLIGATION_REASONS = {
+    "BACKEND_CONTEXT_LENGTH_EXCEEDED",
+    "CODEX_EXEC_EMPTY_TRANSCRIPT",
+    "MISSING_STATUS_MARKER",
+    "TURN_ABORTED_WITHOUT_MARKER",
+    "UPKEEPER_CHILD_EXIT_NONZERO",
+}
+
+
+def system_obligation(item):
+    return (
+        stable_value(item.get("kind")) in SYSTEM_OBLIGATION_KINDS
+        or stable_value(item.get("reason")) in SYSTEM_OBLIGATION_REASONS
+    )
+
+
 def group_key(item):
     target = normalized_repo_target(item.get("target_file", ""))
     repair_target = normalized_repo_target(item.get("repair_target_file", ""))
-    fingerprint = stable_value(item.get("fingerprint")) or evidence_value(
-        item,
-        "fingerprint",
-        "kind",
-        "normalized_excerpt",
-    )
+    if system_obligation(item):
+        if not repair_target:
+            repair_target = target
+        fingerprint = stable_value(item.get("fingerprint"))
+        issue_number = ""
+    else:
+        fingerprint = stable_value(item.get("fingerprint")) or evidence_value(
+            item,
+            "fingerprint",
+            "kind",
+            "normalized_excerpt",
+        )
+        issue_number = stable_value(item.get("issue_number"))
     key_parts = [
         stable_value(item.get("kind")),
         stable_value(item.get("reason")),
         stable_value(item.get("target_scope", "target") or "target"),
         target,
         repair_target,
-        stable_value(item.get("issue_number")),
+        issue_number,
         fingerprint,
     ]
     return tuple(key_parts)
@@ -799,7 +885,10 @@ kind_rank = {
     "precontact_backup_prereq_missing": 1,
     "precontact_backup_unavailable": 2,
     "lattice_unavailable": 3,
-    "missing_status_marker": 4,
+    "codex_exec_empty_transcript": 4,
+    "missing_status_marker": 5,
+    "backend_context_overflow": 6,
+    "wrapper_execution_failure": 7,
 }
 
 
@@ -958,7 +1047,10 @@ kind_rank = {
     "precontact_backup_prereq_missing": 1,
     "precontact_backup_unavailable": 2,
     "lattice_unavailable": 3,
-    "missing_status_marker": 4,
+    "codex_exec_empty_transcript": 4,
+    "missing_status_marker": 5,
+    "backend_context_overflow": 6,
+    "wrapper_execution_failure": 7,
 }
 
 

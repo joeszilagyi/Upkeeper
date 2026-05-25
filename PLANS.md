@@ -15,6 +15,9 @@ Goal:
   repeated failures, and route the next cycle to the likely wrapper owner file
 - preserve known blocked and quota exits while making unexpected child exits
   impossible to lose between loop iterations
+- preserve a child-owned native obligation, such as
+  `codex_exec_empty_transcript`, instead of filing a duplicate outer catchment
+  record for the same failed cycle
 
 Constraints:
 - no backend Codex validation
@@ -22,6 +25,8 @@ Constraints:
 - store only bounded output evidence in private local obligation state
 - do not widen normal issue selection or merge behavior when the child exits
   successfully
+- reconcile repeated system-level obligations by failure class and repair
+  target, not by the issue number later attached to one duplicate
 
 Files likely touched:
 - `orchestration/backlog.sh`

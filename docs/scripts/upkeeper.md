@@ -263,13 +263,20 @@ Important:
     Child wrapper failures use the same catchment: when the backlog launcher
     observes `./Upkeeper` exit non-zero outside the known blocked/quota lanes,
     it records a `wrapper_execution_failure` obligation from a private bounded
-    child-output capture before the launcher exits. Backend context-window
-    overflows are classified as `backend_context_overflow` obligations so the
-    next run repairs bounded evidence handling instead of treating the failure
-    as generic missing-status noise. Related terminal-failure companion lines in
-    the next anomaly scan are coalesced into the owning obligation instead of
-    opening several separate prior-run bugs for the same failed cycle. Failure
-    transcript tails shown in live output are bounded by
+    child-output capture before the launcher exits. If the child already opened
+    a durable automation obligation for that failure, backlog preserves that
+    native owner instead of filing a second outer wrapper-failure record.
+    Backend context-window overflows are classified as
+    `backend_context_overflow` obligations so the next run repairs bounded
+    evidence handling instead of treating the failure as generic missing-status
+    noise. Empty-transcript Codex exits are classified as
+    `codex_exec_empty_transcript` obligations and repeated empty-transcript
+    records for the same repair target reconcile to one owner even if issue
+    reports were already filed for earlier duplicates. Related
+    terminal-failure companion lines in the next anomaly scan are coalesced into
+    the owning obligation instead of opening several separate prior-run bugs for
+    the same failed cycle. Failure transcript tails shown in live output are
+    bounded by
     `CODEX_TRANSCRIPT_ERROR_TAIL_LINES` and
     `CODEX_TRANSCRIPT_ERROR_TAIL_MAX_BYTES`; the full transcript remains in the
     private transcript artifact for inspection.

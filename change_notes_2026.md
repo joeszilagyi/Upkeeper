@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: parallel backlog worker lease primitive:
+	1. Added `tools/backlog_parallel_leases.py`, a no-backend local lease registry for future isolated parallel backlog workers.
+	2. The lease primitive rejects duplicate active issue claims, rejects predicted target-file overlap, blocks use of the main checkout as a worker worktree, and supports TTL expiry plus explicit release.
+	3. Added deterministic validation and a proposed architecture decision so live parallel worker launch can build on a tested issue/target ownership contract instead of ad hoc manual loops.
+
 2026-05-24: per-bug source contract gate:
 	1. `tools/validate_upkeeper.sh --source-contracts` now runs the cheapest source-only validation contracts used by backlog per-bug commit gates.
 	2. Backlog per-bug validation now runs that source-contract gate when Upkeeper source, tools, or tests changed, catching oversized structured log call sites before commit and push.

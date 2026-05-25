@@ -267,6 +267,13 @@ Important:
     for local scan bounds. The default finding cap is `0`, meaning all new
     findings inside the recent-line scan window are placed under custody instead
     of letting already-known obligations starve later PAGE alerts.
+    `tools/backlog_parallel_leases.py` is the local no-backend lease primitive
+    for future isolated parallel backlog workers. It records worker issue and
+    predicted-target ownership under the backlog state root, rejects duplicate
+    issue or target claims, rejects using the main checkout as a worker worktree,
+    supports TTL expiry/release, and prints a compact worker status table. It
+    does not launch Codex or create PRs; live parallel worker supervision remains
+    opt-in future behavior built on this lease contract.
     For broader local evidence sweeps outside the backlog loop,
     `tools/audit_upkeeper_breadcrumbs.py` scans selected logs, transcripts, and
     open marker roots into `runtime/upkeeper-breadcrumbs/{open,resolved,suppressed}`.

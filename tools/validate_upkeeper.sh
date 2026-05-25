@@ -2000,6 +2000,24 @@ check_backlog_triage_contract() {
   bash tests/backlog_triage_test.bash
 }
 
+check_backlog_parallel_leases_contract() {
+  log "checking backlog parallel-worker lease contract"
+
+  [[ -x tools/backlog_parallel_leases.py ]] || fail "parallel backlog lease helper is missing or not executable"
+  [[ -s tests/backlog_parallel_leases_test.bash ]] || fail "parallel backlog lease tests are missing or empty"
+  grep -Fq "worker_worktree_is_main_checkout" tools/backlog_parallel_leases.py ||
+    fail "parallel backlog lease helper does not block the main checkout as a worker"
+  grep -Fq "conflict_reason" tools/backlog_parallel_leases.py ||
+    fail "parallel backlog lease helper does not expose deterministic conflict reasons"
+  grep -Fq "target_file" tools/backlog_parallel_leases.py ||
+    fail "parallel backlog lease helper does not lease predicted target files"
+  grep -Fq "tools/backlog_parallel_leases.py" docs/scripts/upkeeper.md ||
+    fail "operator guide missing parallel backlog lease helper"
+  grep -Fq "parallel-worker lease registry" docs/compatibility.md ||
+    fail "compatibility docs missing parallel worker lease registry contract"
+  bash tests/backlog_parallel_leases_test.bash
+}
+
 check_backlog_quota_hibernation_contract() {
   local temp_dir status output hard_marker_root hard_marker_epoch
 
@@ -7058,6 +7076,7 @@ run_check backlog_local_ahead_guard_contract check_backlog_local_ahead_guard_con
 run_check backlog_merge_steward_contract check_backlog_merge_steward_contract
 run_check backlog_pr_watch_contract check_backlog_pr_watch_contract
 run_check backlog_triage_contract check_backlog_triage_contract
+run_check backlog_parallel_leases_contract check_backlog_parallel_leases_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract
 run_bounded_check backend_usage_limit_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_backend_usage_limit_contract

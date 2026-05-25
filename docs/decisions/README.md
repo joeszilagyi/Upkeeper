@@ -19,3 +19,6 @@ Each decision should include:
   trusted shell-sourced config, central-first symlink model, no real backend in
   validation by default, ignored local runtime evidence, fallback/postmortem
   safety boundaries, and local quota snapshot parsing.
+- [0002 Parallel backlog workers](0002-parallel-backlog-workers.md):
+  proposed local lease registry for isolated backlog workers before any live
+  parallel backend launcher exists.

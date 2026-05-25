@@ -304,6 +304,15 @@ Future changes should preserve this operator-visible surface as far as possible:
   current-root automation obligations before normal issue selection. The local
   reports are runtime evidence, not source, and GitHub issue creation remains a
   wrapper-side opt-in through `BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=1`.
+- The parallel-worker lease registry is a local no-backend compatibility
+  surface for future isolated backlog workers. `tools/backlog_parallel_leases.py`
+  stores leases under the selected backlog state root, rejects active duplicate
+  issue claims, rejects active predicted-target overlap, rejects worker leases
+  that point at the main checkout or a nested worktree, supports TTL expiry and
+  explicit release, and prints a stable tabular status header:
+  `worker_id status issue model effort branch worktree target expires_in next_action`.
+  It does not create worktrees, branches, PRs, GitHub labels, comments, or
+  backend Codex work by itself.
 - Upkeeper Lattice is additive local runtime evidence at
   `runtime/upkeeper-lattice/lattice.sqlite3`. Runtime artifacts under
   `runtime/upkeeper-lattice/`, including SQLite side files, backups, exports,

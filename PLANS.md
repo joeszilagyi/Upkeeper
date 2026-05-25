@@ -3,6 +3,41 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Parallel Backlog Worker Lease Primitive
+
+Status: in progress
+
+Goal:
+- make progress on issue #367 by defining the safe first slice for future
+  parallel backlog workers
+- add a deterministic local lease registry so synthetic workers cannot claim the
+  same issue or predicted target before any backend work starts
+- keep live parallel worker launch out of scope until lease, worktree, PR, quota,
+  and cleanup contracts have local proof
+
+Constraints:
+- no backend Codex calls
+- do not alter the default single-worker backlog launcher behavior
+- do not touch the active loop checkout
+- keep the primitive local and no-GitHub-write for this first slice
+
+Files likely touched:
+- `tools/backlog_parallel_leases.py`
+- `tests/backlog_parallel_leases_test.bash`
+- `docs/decisions/0002-parallel-backlog-workers.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `README.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_parallel_leases_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Per-Bug Source Contract Gate
 
 Status: completed locally; pending PR/CI

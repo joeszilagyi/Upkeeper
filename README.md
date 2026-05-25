@@ -456,8 +456,10 @@ UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE="delete"
 
 If the local DB is unavailable and `UPKEEPER_LATTICE_REQUIRED=0`, Upkeeper logs
 one warning, spools a small recovery record when possible, and continues the
-existing cycle behavior. Set `UPKEEPER_LATTICE_REQUIRED=1` only when a run must
-fail before Codex launch unless Lattice is writable and healthy.
+existing cycle behavior. That warning is owned instead of anonymous: it includes
+the failure reason, `owner_issue=430`, the `advisory_lattice_degraded` contract,
+and the fallback evidence class. Set `UPKEEPER_LATTICE_REQUIRED=1` only when a
+run must fail before Codex launch unless Lattice is writable and healthy.
 
 Selected-target pre-contact backups are enabled and required by default. The
 default vault is outside the repository, and Upkeeper logs only an opaque

@@ -16,6 +16,18 @@ lattice_tool_path() {
   printf '%s/tools/upkeeper_lattice.py' "$UPKEEPER_IMPLEMENTATION_DIR"
 }
 
+lattice_degraded_owner_issue() {
+  printf '%s\n' "430"
+}
+
+lattice_degraded_owner_contract() {
+  printf '%s\n' "advisory_lattice_degraded"
+}
+
+lattice_replacement_evidence_class() {
+  printf '%s\n' "local_logs_runtime_obligations"
+}
+
 lattice_unavailable_detail_summary() {
   local detail="$1"
 
@@ -76,19 +88,74 @@ PY
   }
 }
 
-lattice_warn_once() {
-  local detail="$1"
-  local detail_summary
+lattice_unavailable_summary_field() {
+  local summary="$1"
+  local key="$2"
 
-  lattice_spool_unavailable_event "$detail"
+  python3 - "$summary" "$key" <<'PY' 2>/dev/null || true
+import sys
+
+summary, key = sys.argv[1:3]
+prefix = f"{key}="
+for part in summary.split():
+    if part.startswith(prefix):
+        print(part[len(prefix):])
+        break
+PY
+}
+
+lattice_warn_once() {
+  local reason detail detail_summary detail_status first_failed_check
+  local owner_issue owner_contract replacement_evidence
+
+  if [[ "$#" -ge 2 ]]; then
+    reason="$1"
+    detail="$2"
+  else
+    reason="unclassified"
+    detail="${1:-}"
+  fi
+
+  detail_summary="$(lattice_unavailable_detail_summary "$detail")"
+  detail_status="$(lattice_unavailable_summary_field "$detail_summary" "json_status")"
+  first_failed_check="$(lattice_unavailable_summary_field "$detail_summary" "first_failed_check")"
+  owner_issue="$(lattice_degraded_owner_issue)"
+  owner_contract="$(lattice_degraded_owner_contract)"
+  replacement_evidence="$(lattice_replacement_evidence_class)"
+
+  lattice_spool_unavailable_event \
+    "$reason" \
+    "$detail" \
+    "$detail_summary" \
+    "$detail_status" \
+    "$first_failed_check" \
+    "$owner_issue" \
+    "$owner_contract" \
+    "$replacement_evidence"
   [[ "${UPKEEPER_LATTICE_WARNED:-0}" == "1" ]] && return 0
   UPKEEPER_LATTICE_WARNED="1"
-  detail_summary="$(lattice_unavailable_detail_summary "$detail")"
-  log_line "WARN" "lattice.unavailable required=${UPKEEPER_LATTICE_REQUIRED:-0} db=$(shell_quote "${UPKEEPER_LATTICE_DB:-}") detail_summary=$(shell_quote "$detail_summary") action=continue_without_lattice"
+  log_line_parts "WARN" \
+    "lattice.unavailable required=${UPKEEPER_LATTICE_REQUIRED:-0}" \
+    " reason=$(shell_quote "$reason")" \
+    " owner_issue=$(shell_quote "$owner_issue")" \
+    " owner_contract=$(shell_quote "$owner_contract")" \
+    " replacement_evidence=$(shell_quote "$replacement_evidence")" \
+    " db=$(shell_quote "${UPKEEPER_LATTICE_DB:-}")" \
+    " detail_status=$(shell_quote "${detail_status:-unknown}")" \
+    " first_failed_check=$(shell_quote "${first_failed_check:-none}")" \
+    " detail_summary=$(shell_quote "$detail_summary")" \
+    " action=continue_without_lattice"
 }
 
 lattice_spool_unavailable_event() {
-  local detail="$1"
+  local reason="$1"
+  local detail="$2"
+  local detail_summary="$3"
+  local detail_status="$4"
+  local first_failed_check="$5"
+  local owner_issue="$6"
+  local owner_contract="$7"
+  local replacement_evidence="$8"
   local recovery_dir recovery_file
 
   recovery_dir="$ROOT_DIR/runtime/upkeeper-lattice/recovery"
@@ -99,13 +166,33 @@ lattice_spool_unavailable_event() {
     "$CYCLE_ID" \
     "$CYCLE_RUN_HASH" \
     "${UPKEEPER_LATTICE_DB:-}" \
-    "$detail" <<'PY' 2>/dev/null || true
+    "$reason" \
+    "$detail" \
+    "$detail_summary" \
+    "$detail_status" \
+    "$first_failed_check" \
+    "$owner_issue" \
+    "$owner_contract" \
+    "$replacement_evidence" <<'PY' 2>/dev/null || true
 import json
 import os
 import sys
 import time
 
-path, cycle_id, run_hash, db_path, detail = sys.argv[1:6]
+(
+    path,
+    cycle_id,
+    run_hash,
+    db_path,
+    reason,
+    detail,
+    detail_summary,
+    detail_status,
+    first_failed_check,
+    owner_issue,
+    owner_contract,
+    replacement_evidence,
+) = sys.argv[1:13]
 row = {
     "schema_version": 1,
     "row_type": "lattice_unavailable",
@@ -115,6 +202,13 @@ row = {
         "cycle_id": cycle_id,
         "run_hash": run_hash,
         "db_path": db_path,
+        "reason": reason,
+        "detail_summary": detail_summary,
+        "detail_status": detail_status,
+        "first_failed_check": first_failed_check,
+        "owner_issue": owner_issue,
+        "owner_contract": owner_contract,
+        "replacement_evidence": replacement_evidence,
         "detail": detail,
         "observed_epoch": int(time.time()),
     },
@@ -166,7 +260,7 @@ lattice_init_and_doctor_or_exit() {
       log_line "ERROR" "lattice.unavailable required=1 reason=missing_tool tool=$(shell_quote "$(lattice_tool_path)")"
       finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=missing_tool tool=$(shell_quote "$(lattice_tool_path)")"
     fi
-    lattice_warn_once "$detail"
+    lattice_warn_once "missing_tool" "$detail"
     return 0
   fi
 
@@ -177,7 +271,7 @@ lattice_init_and_doctor_or_exit() {
       log_line "ERROR" "lattice.unavailable required=1 reason=init_failed db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail_summary=$(shell_quote "$detail_summary")"
       finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=init_failed detail_summary=$(shell_quote "$detail_summary")"
     fi
-    lattice_warn_once "$detail"
+    lattice_warn_once "init_failed" "$detail"
     return 0
   fi
 
@@ -188,7 +282,7 @@ lattice_init_and_doctor_or_exit() {
       log_line "ERROR" "lattice.unavailable required=1 reason=doctor_failed db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail_summary=$(shell_quote "$detail_summary")"
       finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=doctor_failed detail_summary=$(shell_quote "$detail_summary")"
     fi
-    lattice_warn_once "$detail"
+    lattice_warn_once "doctor_failed" "$detail"
     return 0
   fi
 
@@ -217,7 +311,7 @@ lattice_record_cycle_start() {
     --parent-cycle-id "${CODEX_PARENT_CYCLE_ID:-}" \
     --child-cycle-id "${CODEX_SCREEN_FALLBACK_CHILD_ID:-}" \
     --fallback-trigger "${CODEX_FALLBACK_TRIGGER:-}"; then
-    lattice_warn_once "${LATTICE_LAST_OUTPUT:-record_cycle_start_failed}"
+    lattice_warn_once "record_cycle_start_failed" "${LATTICE_LAST_OUTPUT:-record_cycle_start_failed}"
   fi
 }
 
@@ -252,7 +346,7 @@ lattice_record_preselect() {
     args+=(--candidate-file "$candidate_file")
   fi
   if ! lattice_run "${args[@]}"; then
-    lattice_warn_once "${LATTICE_LAST_OUTPUT:-record_preselect_failed}"
+    lattice_warn_once "record_preselect_failed" "${LATTICE_LAST_OUTPUT:-record_preselect_failed}"
   fi
 }
 
@@ -271,7 +365,7 @@ lattice_record_pass_results() {
     --from-file "$last_message_file" \
     --selected-path "$selected_path" \
     --planned-passes "$planned_passes"; then
-    lattice_warn_once "${LATTICE_LAST_OUTPUT:-record_pass_result_failed}"
+    lattice_warn_once "record_pass_result_failed" "${LATTICE_LAST_OUTPUT:-record_pass_result_failed}"
   fi
 }
 
@@ -348,6 +442,6 @@ lattice_record_cycle_finish() {
   fi
 
   if ! lattice_run "${args[@]}"; then
-    lattice_warn_once "${LATTICE_LAST_OUTPUT:-record_cycle_finish_failed}"
+    lattice_warn_once "record_cycle_finish_failed" "${LATTICE_LAST_OUTPUT:-record_cycle_finish_failed}"
   fi
 }

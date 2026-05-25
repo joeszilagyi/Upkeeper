@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: Lattice degraded-mode ownership:
+	1. Optional `lattice.unavailable` warnings now include a reason class, `owner_issue=430`, `owner_contract=advisory_lattice_degraded`, and the replacement evidence class.
+	2. Lattice-unavailable recovery JSONL rows now preserve the same ownership fields with the bounded detail summary, so recurring advisory degraded mode is not anonymous local noise.
+	3. Local Lattice validation now checks the warning and recovery ownership fields while preserving fail-closed behavior when Lattice is required.
+
 2026-05-24: preservation policy and artifact privacy:
 	1. Added `docs/preservation-policy.md` with evidence temperature values for hot, warm, cold, frozen, and trashable evidence.
 	2. Defined artifact privacy classes for public-safe, private-operator, and secret-adjacent material across logs, transcripts, backups, Lattice rows, exports, recovery records, obligations, postmortems, manifests, and public issue or PR text.

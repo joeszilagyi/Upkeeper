@@ -7277,6 +7277,8 @@ main() {
   local primary_failure_classification
   local backend_usage_limit_detection backend_usage_limit_model backend_usage_limit_reset_text backend_usage_limit_reset_epoch
   local backend_usage_limit_detected=0
+  local backend_context_overflow_detection
+  local backend_context_overflow_detected=0
   local post_run_should_stop=0
   local post_run_stop_reason=""
   local primary_session_diagnostics_source=""
@@ -7377,6 +7379,48 @@ main() {
     fi
   fi
   if [[ "$codex_exit" -ne 0 && -z "$status_marker" ]]; then
+    if backend_context_overflow_detection="$(python3 - "$RUN_TRANSCRIPT_FILE" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+patterns = [
+  r"context_length_exceeded",
+  r"input exceeds the context window",
+  r"remote compact",
+  r"maximum context length",
+]
+
+try:
+  with open(path, "rb") as handle:
+    handle.seek(0, 2)
+    size = handle.tell()
+    handle.seek(max(0, size - 256 * 1024))
+    text = handle.read().decode("utf-8", "replace")
+except OSError:
+  raise SystemExit(1)
+
+for pattern in patterns:
+  if re.search(pattern, text, flags=re.IGNORECASE):
+    print(pattern)
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+)"; then
+      backend_context_overflow_detected=1
+      status_marker="BACKEND_CONTEXT_LENGTH_EXCEEDED"
+      status_marker_source="backend_context_overflow"
+      primary_failure_classification="PRIMARY_BACKEND_CONTEXT_LENGTH_EXCEEDED"
+      log_line_parts "WARN" \
+        "primary.context_overflow_detected" \
+        " target_model=$CODEX_MODEL" \
+        " matched_pattern=$(shell_quote "$backend_context_overflow_detection")" \
+        " codex_exit=$codex_exit status_marker=missing" \
+        " session_end_state=$session_end_state" \
+        " transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")")" \
+        " path_redacted=1"
+    fi
     if backend_usage_limit_detection="$(backend_usage_limit_summary_from_transcript "$RUN_TRANSCRIPT_FILE")"; then
       IFS=$'	' read -r backend_usage_limit_model backend_usage_limit_reset_text backend_usage_limit_reset_epoch <<<"$backend_usage_limit_detection"
       if ! [[ "$backend_usage_limit_reset_epoch" =~ ^[0-9]+$ && "$backend_usage_limit_reset_epoch" -gt "$(date '+%s')" ]]; then
@@ -7664,6 +7708,9 @@ main() {
           finish_cycle 6 TURN_ABORTED_WITHOUT_MARKER WARN "reason=${session_end_state#turn_aborted:} codex_exit=$codex_exit"
         fi
         if [[ -n "$status_marker" ]]; then
+          if [[ "$status_marker" == "BACKEND_CONTEXT_LENGTH_EXCEEDED" ]]; then
+            finish_cycle 3 BACKEND_CONTEXT_LENGTH_EXCEEDED ERROR "codex_exit=$codex_exit status_marker_source=$status_marker_source"
+          fi
           case "$status_marker" in
             WORK_DONE)
               finish_cycle 0 WORK_DONE INFO "codex_exit=$codex_exit status_marker_source=$status_marker_source"
@@ -7675,8 +7722,9 @@ main() {
               finish_cycle 3 "$status_marker" ERROR "codex_exit=$codex_exit status_marker_source=$status_marker_source"
               ;;
           esac
+        else
+          log_line "ERROR" "codex exited non-zero without an UPKEEPER_STATUS marker"
         fi
-        log_line "ERROR" "codex exited non-zero without an UPKEEPER_STATUS marker"
       else
         log_line "ERROR" "missing UPKEEPER_STATUS marker in Codex final response"
       fi

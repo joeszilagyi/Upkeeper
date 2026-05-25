@@ -1,7 +1,12 @@
 marker_analysis_json() {
-  local last_message_file="$1"
-  local marker_prefix="$2"
-  local allowed_markers="$3"
+  local last_message_file="${1:-}"
+  local marker_prefix="${2:-}"
+  local allowed_markers="${3:-}"
+
+  if [[ -z "$marker_prefix" || -z "$allowed_markers" ]]; then
+    printf '{"accepted_marker":"","candidate_marker":"","candidate_line":"","candidate_rejection_reason":"invalid_marker_analysis_args"}'
+    return 0
+  fi
 
   if [[ ! -f "$last_message_file" ]]; then
     printf '{"accepted_marker":"","candidate_marker":"","candidate_line":"","candidate_rejection_reason":""}'
@@ -103,11 +108,11 @@ PY
 }
 
 while_marker_analysis_json() {
-  marker_analysis_json "$1" "UPKEEPER_STATUS" "WORK_DONE NO_CHANGES NO_BACKEND_TASK BLOCKED"
+  marker_analysis_json "${1:-}" "UPKEEPER_STATUS" "WORK_DONE NO_CHANGES NO_BACKEND_TASK BLOCKED"
 }
 
 postmortem_marker_analysis_json() {
-  marker_analysis_json "$1" "CODEX_POSTMORTEM_STATUS" "REPORT_WRITTEN HARDENING_DONE BLOCKED"
+  marker_analysis_json "${1:-}" "CODEX_POSTMORTEM_STATUS" "REPORT_WRITTEN HARDENING_DONE BLOCKED"
 }
 
 parse_postmortem_marker() {

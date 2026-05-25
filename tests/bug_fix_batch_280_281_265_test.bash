@@ -34,6 +34,40 @@ EOF
   [[ -z "$(json_field "$analysis" '.candidate_marker')" ]] || fail "did not expect candidate for exact final marker"
 }
 
+test_marker_analysis_missing_args_is_nonfatal() {
+  local messages="$TEST_TMP_ROOT/missing-args.txt"
+  local analysis accepted reason
+
+  write_message_file "$messages" <<'EOF'
+UPKEEPER_STATUS: WORK_DONE
+EOF
+
+  analysis="$(marker_analysis_json "$messages")"
+  accepted="$(json_field "$analysis" '.accepted_marker')"
+  reason="$(json_field "$analysis" '.candidate_rejection_reason')"
+  [[ -z "$accepted" ]] || fail "expected missing parser args to avoid accepting a marker, got $accepted"
+  [[ "$reason" == "invalid_marker_analysis_args" ]] || fail "expected invalid_marker_analysis_args, got $reason"
+}
+
+test_entrypoint_status_marker_override_uses_status_contract() {
+  local messages="$TEST_TMP_ROOT/entrypoint-duplicate-marker.txt"
+  local analysis accepted
+
+  write_message_file "$messages" <<'EOF'
+UPKEEPER_STATUS: WORK_DONE
+Summary line after first marker.
+`UPKEEPER_STATUS: BLOCKED`
+Trailing human note after the final marker.
+EOF
+
+  analysis="$(
+    UPKEEPER_CONFIG_DISABLE=1 UPKEEPER_LOCAL_ENV_DISABLE=1 CODEX_LOG_FILE="$TEST_TMP_ROOT/source-upkeeper.log" \
+      bash -lc 'cd "$1"; source ./Upkeeper; while_marker_analysis_json "$2"' bash "$PROJECT_ROOT" "$messages"
+  )"
+  accepted="$(json_field "$analysis" '.accepted_marker')"
+  [[ "$accepted" == "BLOCKED" ]] || fail "expected entrypoint override to recover final marker, got analysis=$analysis"
+}
+
 test_status_marker_ignores_non_final_markers_and_code_fence() {
   local messages="$TEST_TMP_ROOT/ignore-middle.txt"
   write_message_file "$messages" <<'EOF'
@@ -129,6 +163,8 @@ EOF
 }
 
 test_status_marker_final_line_is_authoritative
+test_marker_analysis_missing_args_is_nonfatal
+test_entrypoint_status_marker_override_uses_status_contract
 test_status_marker_ignores_non_final_markers_and_code_fence
 test_status_marker_rejects_malformed_final_marker_and_keeps_reason
 test_status_marker_recovers_inline_backtick_final_marker

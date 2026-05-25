@@ -3,6 +3,36 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Status Marker Parser Crash Hardening
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- stop prior-run anomaly repair from repeating PAGE churn when backend Codex
+  exits before producing an `UPKEEPER_STATUS` marker
+- repair the entrypoint-only status-marker parser override so it calls the
+  shared marker parser with the required status contract arguments
+- make marker parser and assignment handling tolerate malformed internal calls
+  without shell `set -u` crashes
+
+Constraints:
+- no backend Codex validation
+- keep status-marker acceptance rules unchanged for valid transcripts
+- preserve the existing obligation and anomaly custody flow; only remove the
+  wrapper crash that prevents normal failure classification
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/report_analysis.bash`
+- focused wrapper/status-marker tests
+- versioned operator notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/bug_fix_batch_280_281_265_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Per-Bug Source Contract Gate
 
 Status: completed locally; pending PR/CI

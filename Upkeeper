@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.33
+## Version: v1.2.34
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.33"
+UPKEEPER_VERSION="v1.2.34"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -1432,9 +1432,9 @@ PY
 # recover the last exact/quoted/backtick/bullet-marked occurrence as the
 # terminal accepted marker instead of treating the transcript as malformed.
 while_marker_analysis_json() {
-  local last_message_file="$1"
+  local last_message_file="${1:-}"
   local base_analysis
-  base_analysis="$(marker_analysis_json "$last_message_file")"
+  base_analysis="$(marker_analysis_json "$last_message_file" "UPKEEPER_STATUS" "WORK_DONE NO_CHANGES NO_BACKEND_TASK BLOCKED")"
   local base_accepted base_candidate_rejection_reason
 
   base_accepted="$(json_field "$base_analysis" '.accepted_marker')"
@@ -7231,6 +7231,10 @@ main() {
   local post_run_should_stop=0
   local post_run_stop_reason=""
   local primary_session_diagnostics_source=""
+  marker_candidate_line=""
+  marker_candidate_marker=""
+  marker_candidate_rejection_reason=""
+  marker_accepted_marker=""
   status_marker_analysis="$(while_marker_analysis_json "$last_message_file")"
   eval "$(status_marker_analysis_assignments "$status_marker_analysis" marker)"
   status_marker_candidate="$marker_candidate_line"

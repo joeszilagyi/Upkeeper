@@ -241,7 +241,10 @@ Important:
     issue-ready report for every open current-root obligation and, by default,
     files or links a GitHub issue before selecting work. System-level failures
     therefore have concrete issue custody even when backend Codex never enters
-    bug-report-only mode. The local report copy is retained under
+    bug-report-only mode. Prior-run anomaly report titles are derived locally
+    from the anomaly signal or stable fingerprint, such as
+    `operator_guide.stale warning`, instead of using one repeated
+    `prior_run_anomaly` title. The local report copy is retained under
     `${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/obligation-issue-reports`
     as evidence, not as a substitute for filing. If GitHub issue filing fails,
     backlog stops before normal issue selection. Existing GitHub issue links are

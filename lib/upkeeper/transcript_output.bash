@@ -446,8 +446,7 @@ def terminal_mode() -> str:
 
 mode = terminal_mode()
 silent = mode in {"silent", "full"}
-quiet = mode == "quiet"
-basic = mode == "basic"
+  basic = mode == "basic"
 diagnostic = mode in {"verbose", "debug1"}
 llm_status_enabled = mode in {"basic", "verbose", "debug1"}
 

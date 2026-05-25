@@ -260,6 +260,14 @@ def expected_fixture(lines: list[tuple[int, str]], index: int, line: str) -> boo
     return False
 
 
+def is_expected_final_review_stopper(line: str) -> bool:
+    lower = line.lower()
+    return (
+        "upkeeper: final review for" in lower
+        and "-> stopped_on_blocker" in lower
+    )
+
+
 def model_emitted_fixture_output(normalized: str) -> bool:
     lower = normalized.lower()
     marker = "upkeeper: primary:"
@@ -392,6 +400,8 @@ def classify(lines: list[tuple[int, str]], index: int, raw_line: str) -> Classif
     if "startup_anomaly.gate" in lower and ("status=active" in lower or "gate_violation" in lower):
         return Classification("startup_anomaly_gate_active", "medium", target, "startup anomaly gate was active")
     if "automation.obligation.open" in lower:
+        return None
+    if is_expected_final_review_stopper(normalized):
         return None
     if "[warn]" in lower or "█ --fyi--" in raw_line.lower():
         ignored_waits = (

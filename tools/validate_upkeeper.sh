@@ -62,11 +62,14 @@ WRAPPER_OPTIONAL_COMMANDS=(
 
 usage() {
   cat <<'USAGE'
-Usage: tools/validate_upkeeper.sh [--smoke|--quick|--full|--deps] [--profile]
+Usage: tools/validate_upkeeper.sh [--source-contracts|--smoke|--quick|--full|--deps] [--profile]
 
 Validate the central Upkeeper checkout.
 
 Modes:
+  --source-contracts
+            Run the cheapest source-only contracts needed by per-bug commit
+            gates, currently including log-line source length.
   --deps    Report runtime/tool dependency status.
   --smoke   Run the fast local edit-loop checks: syntax, version, module map,
             prompt templates, help/docs/diff, parser helpers, and launcher
@@ -168,6 +171,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --smoke)
       MODE="smoke"
+      ;;
+    --source-contracts)
+      MODE="source-contracts"
       ;;
     --quick)
       MODE="quick"
@@ -773,6 +779,8 @@ check_backlog_launcher_contract() {
   grep -Fq 'backlog_ensure_pr_checks_allow_next_issue' orchestration/backlog.sh || fail "backlog launcher does not gate issue selection on current PR checks"
   grep -Fq 'per-bug validation: python compile' orchestration/backlog.sh || fail "backlog launcher per-bug validation does not compile changed Python files"
   grep -Fq 'per-bug validation: lattice focused coverage (tests/lattice_test.bash)' orchestration/backlog.sh || fail "backlog launcher per-bug validation does not run focused Lattice coverage"
+  grep -Fq 'per-bug validation: source contracts' orchestration/backlog.sh || fail "backlog launcher per-bug validation does not run source contracts"
+  grep -Fq 'tools/validate_upkeeper.sh --source-contracts' orchestration/backlog.sh || fail "backlog launcher per-bug source contracts do not use the validator"
   grep -Fq 'BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default dirty-worktree autoshelve on"
   grep -Fq 'autoshelving local changes to' orchestration/backlog.sh || fail "backlog launcher does not explain dirty-worktree autoshelve"
   grep -Fq 'autoshelve_next_branch_name' orchestration/backlog.sh || fail "backlog launcher no longer avoids autoshelve branch-name collisions"
@@ -2922,6 +2930,7 @@ check_help_and_diff() {
   grep -Fq -- "--issue-workflow-stage=comment|review|apply" <<<"$help" || fail "help missing issue workflow stage"
   grep -Fq -- "5.3-codex-spark_xhigh" <<<"$help" || fail "help missing Spark model override"
   grep -Fq -- "--smoke" <<<"$validation_help" || fail "validator help missing --smoke"
+  grep -Fq -- "--source-contracts" <<<"$validation_help" || fail "validator help missing --source-contracts"
   grep -Fq -- "--profile" <<<"$validation_help" || fail "validator help missing --profile"
   grep -Fq -- "UPKEEPER_MAX_COVER" <<<"$help" || fail "help missing UPKEEPER_MAX_COVER"
   grep -Fq -- "UPKEEPER_BUG_REPORT_ONLY" <<<"$help" || fail "help missing UPKEEPER_BUG_REPORT_ONLY"
@@ -4636,6 +4645,7 @@ check_file_manifest_selection() {
       CODEX_FILE_MANIFEST_PATH="$manifest_path" \
       CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS=99999 \
       CODEX_TOOL_FAILURE_QUEUE_DIR="$temp_dir/failures" \
+      UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
       UPKEEPER_PRECONTACT_BACKUP_ENABLED=0 \
       UPKEEPER_SELECTION_RANDOM_SEED=validation-file-manifest-selection \
       UPKEEPER_LATTICE_DB="$lattice_db_path" \
@@ -4949,6 +4959,17 @@ EOF
   grep -Fq "target_file=lib/upkeeper/help_selection.bash" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not infer the explicit issue target"
   grep -Fq "review.preselect path_hmac=path-hmac-sha256:" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue did not pin the explicit inferred target"
   grep -Fq "issue.fix_prompt appended number=912" "$temp_dir/fix-explicit-issue.log" || fail "fix-issue prompt addendum was not appended"
+
+  mkdir -p "$temp_dir/obligations/open"
+  cat >"$temp_dir/obligations/open/issue-912-obligation.json" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"issue-912-obligation","created_at":"2026-05-24T19:00:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"issue-fix obligation binding fixture","root":"$ROOT_DIR","target_scope":"target","target_file":"lib/upkeeper/help_selection.bash","repair_target_file":"lib/upkeeper/help_selection.bash","reason":"PRIOR_RUN_ANOMALY","issue_number":"912","github_issue_number":"912","evidence":{"source":"validation","normalized_excerpt":"issue-fix obligation binding fixture"}}
+JSON
+  PATH="$temp_dir/bin:$PATH" run_manifest_dry_run "$temp_dir/fix-explicit-issue-obligation.log" \
+    --fix-issue=912
+  grep -Fq "issue_fix.obligation_bind matched_id=issue-912-obligation" "$temp_dir/fix-explicit-issue-obligation.log" ||
+    fail "fix-issue did not bind the matching automation obligation"
+  grep -Fq "matched_source=open" "$temp_dir/fix-explicit-issue-obligation.log" ||
+    fail "fix-issue obligation binding did not scan the open obligation directory"
 
   PATH="$temp_dir/bin:$PATH" run_manifest_dry_run "$temp_dir/fix-explicit-runtime-issue.log" \
     --fix-issue=913
@@ -6972,6 +6993,12 @@ require_commands
 if [[ "$MODE" == "deps" ]]; then
   check_dependencies
   log "dependency validation passed"
+  exit 0
+fi
+
+if [[ "$MODE" == "source-contracts" ]]; then
+  run_check log_line_source_length_contract check_log_line_source_length_contract
+  log "$MODE validation passed"
   exit 0
 fi
 

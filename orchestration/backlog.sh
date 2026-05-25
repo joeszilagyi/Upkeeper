@@ -2086,7 +2086,7 @@ quota_preflight_allows_backlog_run() {
   primary_decision="$(quota_bucket_decision "$primary_bucket_current" "$primary_projected_left" "$(quota_5h_stop_percent_for_model "$CODEX_MODEL")")"
   secondary_decision="$(quota_bucket_decision "$secondary_bucket_current" "$secondary_projected_left" "$(quota_week_stop_percent_for_model "$CODEX_MODEL")")"
 
-  if [[ "$snapshot_stale_after_reset" == "true" && ( "$primary_decision" == "defer" || "$secondary_decision" == "defer" ) ]]; then
+  if [[ "$snapshot_stale_after_reset" == "true" ]]; then
     if ! backlog_open_stale_quota_obligation "$quota_json" "$primary_decision" "$secondary_decision"; then
       log "quota preflight: stale quota evidence after reset could not be recorded as non-perfect health; failing closed"
       return 4
@@ -2497,6 +2497,26 @@ run_focused_issue_validation() {
       bash tests/lattice_test.bash || return $?
     fi
   fi
+}
+
+run_changed_source_contract_validation() {
+  local changed_count=0
+  local changed_path
+
+  while IFS= read -r -d '' changed_path; do
+    [[ -n "$changed_path" ]] || continue
+    changed_count=$((changed_count + 1))
+  done < <(
+    git diff --name-only -z --diff-filter=ACMR -- \
+      Upkeeper \
+      lib/upkeeper \
+      tools \
+      tests
+  )
+
+  [[ "$changed_count" -gt 0 ]] || return 0
+  log "per-bug validation: source contracts (${changed_count} changed file(s))"
+  tools/validate_upkeeper.sh --source-contracts || return $?
 }
 
 backlog_batch_validation_owner_hint() {
@@ -2942,12 +2962,13 @@ run_per_bug_validation() {
 
   validation_start="$SECONDS"
   backlog_update_active_owner_heartbeat "validating" \
-    "$(backlog_wait_detail local_validation per_bug_validation "issue=${issue_number:-none}" "target=${target_hint:-none}" "expected=syntax_compile_diff_checks")" \
+    "$(backlog_wait_detail local_validation per_bug_validation "issue=${issue_number:-none}" "target=${target_hint:-none}" "expected=syntax_compile_source_contract_diff_checks")" \
     "" "owner_pid_start_cwd_verified"
   log "per-bug validation: bash syntax"
   bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || return $?
   run_changed_python_compile_validation || return $?
   run_focused_issue_validation "$issue_number" "$target_hint" || return $?
+  run_changed_source_contract_validation || return $?
   log "per-bug validation: diff whitespace"
   git diff --check || return $?
   log "per-bug validation: complete in $((SECONDS - validation_start))s"

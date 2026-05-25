@@ -1009,10 +1009,11 @@ prompts, backup log lines, or Lattice preselect evidence.
   root `change_notes_YYYY.md`; version bumps should keep that file current.
 - The central checkout has a tracked validation harness at
   `tools/validate_upkeeper.sh`. Use `--deps` for runtime/tool dependency
-  status, `--smoke` for the fast local edit loop, `--quick` for bounded
-  static/fixture checks, and `--full` for the broad deterministic integration
-  gate before release or after touching module order, prompt packaging,
-  symlink behavior, or failure-path guardrails.
+  status, `--source-contracts` for the narrow source-only per-bug commit gate,
+  `--smoke` for the fast local edit loop, `--quick` for bounded static/fixture
+  checks, and `--full` for the broad deterministic integration gate before
+  release or after touching module order, prompt packaging, symlink behavior,
+  or failure-path guardrails.
   Quick validation also owns the embedded behavior table drift contract for
   startup anomaly allowlists, source-safe exclusions, command-kind
   classifiers, review-module ids, and Lattice pass-code mappings.

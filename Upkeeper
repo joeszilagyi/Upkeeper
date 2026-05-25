@@ -791,7 +791,7 @@ upkeeper_live_output_false_positive_error_echo() {
   esac
 
   case "$line:$payload" in
-    *' PAGE [ERROR] Upkeeper: primary: except Exception as exc:')
+    *' PAGE [ERROR] Upkeeper: primary: except Exception:'*|*' [ERROR] Upkeeper: primary: except Exception:'*)
       return 0
       ;;
   esac
@@ -943,7 +943,7 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
   esac
 
-  sample=$'2026-05-23T17:30:22 \342\226\210 PAGE [ERROR] Upkeeper: primary: except Exception as exc:'
+  sample=$'2026-05-23T17:30:22 \342\226\210 PAGE [ERROR] Upkeeper: primary: except Exception: continue'
   output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
   case "$output" in
     *' [ERROR] '*)
@@ -954,6 +954,21 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
     *)
       printf 'live_output_custody_filter_self_test=fail reason=python_exception_handler_fixture_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-24T11:15:23 [ERROR] Upkeeper: primary: except Exception: continue'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=python_exception_handler_non_page_fixture_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_source_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=python_exception_handler_non_page_fixture_not_classified output=%s\n' "$output" >&2
       return 1
       ;;
   esac
@@ -6279,6 +6294,152 @@ upkeeper_preflight_explicit_target_or_exit() {
   fi
 }
 
+upkeeper_bind_issue_fix_obligation_context() {
+  local issue_number issue_target open_dir resolved_dir scan_source raw_match matched_id matched_path
+  local scan_status source_label
+
+  issue_number="${CODEX_ISSUE_FIX_NUMBER:-}"
+  [[ -n "$issue_number" ]] || return 0
+  issue_target="${CODEX_ISSUE_FIX_TARGET_FILE:-${CODEX_TARGET_FILE:-}}"
+
+  upkeeper_issue_fix_next_enabled || return 0
+  [[ -n "${UPKEEPER_AUTOMATION_OBLIGATION_ID:-}" ]] && return 0
+  if ! open_dir="$(automation_obligation_root)/open"; then
+    return 0
+  fi
+  [[ -d "$open_dir" ]] || return 0
+
+  if ! resolved_dir="$(automation_obligation_root)/resolved"; then
+    resolved_dir=""
+  fi
+
+  for scan_source in "$open_dir" "$resolved_dir"; do
+    case "$scan_source" in
+      "$open_dir")
+        scan_status="open"
+        source_label="open"
+        ;;
+      "$resolved_dir")
+        scan_status="resolved"
+        source_label="resolved"
+        if [[ -z "$resolved_dir" || ! -d "$scan_source" ]]; then
+          continue
+        fi
+        ;;
+      *)
+        continue
+        ;;
+    esac
+
+    raw_match="$(python3 - "$scan_source" "$issue_number" "$issue_target" "$scan_status" <<'PY'
+import glob
+import json
+import os
+import sys
+
+scan_source, issue_number, issue_target, scan_status = sys.argv[1:5]
+issue_number = str(issue_number or "").strip()
+issue_target = str(issue_target or "").strip()
+scan_status = str(scan_status or "").strip()
+
+
+def to_str(value):
+  if value is None:
+    return ""
+  return str(value)
+
+
+def issue_match(data):
+  if not issue_number:
+    return False
+  return issue_number in (
+    to_str(data.get("issue_number")).strip(),
+    to_str(data.get("github_issue_number")).strip(),
+    to_str(data.get("linked_issue_number")).strip(),
+    to_str(data.get("owner_issue_number")).strip(),
+  )
+
+
+def target_match(data):
+  if not issue_target:
+    return False
+  target = to_str(data.get("target_file")).strip()
+  repair_target = to_str(data.get("repair_target_file")).strip()
+  return target == issue_target or repair_target == issue_target
+
+open_matches = []
+target_matches = []
+for path in sorted(glob.glob(os.path.join(scan_source, "*.json"))):
+  try:
+    with open(path, "r", encoding="utf-8") as handle:
+      data = json.load(handle)
+  except (OSError, json.JSONDecodeError):
+    continue
+  if scan_status and str(data.get("status", "")).strip() != scan_status:
+    continue
+  if issue_match(data):
+    open_matches.append((path, data))
+  elif target_match(data):
+    target_matches.append((path, data))
+
+selected = None
+if len(open_matches) == 1:
+  selected = open_matches[0]
+elif len(open_matches) > 1 and issue_target:
+  targeted = [
+    item for item in open_matches
+    if (
+      to_str(item[1].get("target_file")).strip() == issue_target
+      or to_str(item[1].get("repair_target_file")).strip() == issue_target
+    )
+  ]
+  if len(targeted) == 1:
+    selected = targeted[0]
+  elif len(targeted) > 1:
+    print("ambiguous")
+    raise SystemExit(0)
+if selected is None and len(target_matches) == 1:
+  selected = target_matches[0]
+
+if selected is not None:
+  path, _ = selected
+  filename = os.path.basename(path)
+  print(__import__("json").dumps({"id": filename, "path": path}))
+PY
+)"
+
+    if [[ -n "$raw_match" ]]; then
+      break
+    fi
+  done
+
+  if [[ -z "$raw_match" ]]; then
+    return 0
+  fi
+  if [[ "$raw_match" == "ambiguous" ]]; then
+    log_line "WARN" "issue_fix.obligation_bind ambiguous issue=$(shell_quote "$issue_number") target_file=$(shell_quote "$issue_target") source_status=${source_label}"
+    return 0
+  fi
+
+  matched_id="$(jq -r '.id // ""' <<<"$raw_match")"
+  matched_path="$(jq -r '.path // ""' <<<"$raw_match")"
+  if [[ -z "$matched_id" || -z "$matched_path" ]]; then
+    return 0
+  fi
+  matched_id="${matched_id%.json}"
+  UPKEEPER_AUTOMATION_OBLIGATION_ID="$matched_id"
+  UPKEEPER_AUTOMATION_OBLIGATION_PATH="$matched_path"
+  [[ -n "${UPKEEPER_AUTOMATION_WORKFLOW:-}" ]] || UPKEEPER_AUTOMATION_WORKFLOW="obligation-repair"
+  [[ -n "${UPKEEPER_AUTOMATION_STAGE:-}" ]] || UPKEEPER_AUTOMATION_STAGE="issue_fix"
+  log_line_parts "INFO" \
+    "issue_fix.obligation_bind" \
+    " matched_id=$(shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_ID")" \
+    " matched_source=$(shell_quote "$source_label")" \
+    " issue=$(shell_quote "$issue_number")" \
+    " target_file=$(shell_quote "$issue_target")" \
+    " source_path=$(shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_PATH")"
+}
+
 upkeeper_internal_active_lock_self_test_requested() {
   config_truthy "${UPKEEPER_INTERNAL_ACTIVE_LOCK_SELF_TEST:-0}"
 }
@@ -6463,6 +6624,7 @@ main() {
   upkeeper_precontact_backup_hmac_key_material >/dev/null
   precontact_backup_machine_preflight_or_exit
   resolve_issue_fix_next_or_exit
+  upkeeper_bind_issue_fix_obligation_context
   if ! run_issue_docs_contract_checks; then
     finish_cycle 70 ISSUE_FIX_DOCS_CONTRACT_CHECK_FAILED ERROR "codex_exec_started=0 number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
   fi
@@ -6922,6 +7084,7 @@ main() {
   local status_marker_review_recovery status_marker_review_outcome status_marker_review_selected_file
   local status_marker_blocker_recovery status_marker_blocker_reason
   local status_marker_candidate status_marker_candidate_marker status_marker_candidate_rejection_reason
+  local status_marker_candidate_warning_level
   local marker_candidate_line marker_candidate_marker marker_candidate_rejection_reason marker_accepted_marker
   local session_end_state
   local primary_session_diagnostics
@@ -6977,8 +7140,12 @@ main() {
   if [[ -n "$marker_accepted_marker" ]]; then
     status_marker_source="exact"
   elif [[ -n "$status_marker" ]]; then
+    status_marker_candidate_warning_level="WARN"
+    if [[ "$status_marker_candidate_rejection_reason" == "markdown_backticks" ]]; then
+      status_marker_candidate_warning_level="INFO"
+    fi
     status_marker_source="recovered_malformed_candidate"
-    log_line_parts "WARN" \
+    log_line_parts "$status_marker_candidate_warning_level" \
       "status_marker.candidate_recovered marker=$status_marker" \
       " candidate_marker=$status_marker_candidate_marker" \
       " reason=$status_marker_candidate_rejection_reason" \
@@ -7071,9 +7238,8 @@ main() {
   if upkeeper_issue_workflow_comment_stage_enabled; then
     if upkeeper_issue_workflow_post_comment; then
       if [[ "${status_marker:-}" == "BLOCKED" ]]; then
-        status_marker="WORK_DONE"
         status_marker_source="issue_workflow_comment_relay"
-        log_line "INFO" "issue.workflow_comment.status_recovered marker=$status_marker stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE")"
+        log_line "INFO" "issue.workflow_comment.status_preserved marker=$status_marker stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") reason=comment_stage_did_not_mutate_source"
       fi
     else
       status_marker="BLOCKED"

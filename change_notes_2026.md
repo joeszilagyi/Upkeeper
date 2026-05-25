@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-24: descriptive obligation issue titles:
+	1. Prior-run anomaly custody now writes script-derived `issue_title` values using the anomaly signal or stable fingerprint, so warnings such as `operator_guide.stale` no longer file as generic `prior_run_anomaly` issues.
+	2. The obligation issue-report bridge derives the same descriptive titles for older open records whose title was empty, generic, or still pointed at the umbrella custody issue.
+	3. Local validation now covers PAGE-error and operator-guide stale-warning report titles so GitHub issue filing stays deterministic and pre-model.
+
 2026-05-24: Lattice degraded-mode ownership:
 	1. Optional `lattice.unavailable` warnings now include a reason class, `owner_issue=430`, `owner_contract=advisory_lattice_degraded`, and the replacement evidence class.
 	2. Lattice-unavailable recovery JSONL rows now preserve the same ownership fields with the bounded detail summary, so recurring advisory degraded mode is not anonymous local noise.

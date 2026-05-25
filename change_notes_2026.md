@@ -10,6 +10,7 @@ Version numbering note:
 	1. `tools/validate_upkeeper.sh --source-contracts` now runs the cheapest source-only validation contracts used by backlog per-bug commit gates.
 	2. Backlog per-bug validation now runs that source-contract gate when Upkeeper source, tools, or tests changed, catching oversized structured log call sites before commit and push.
 	3. A PR-local blocker caused by an oversized `issue_fix.obligation_bind` log line was split with `log_line_parts` so runtime output stays structured while the source contract passes.
+	4. Issue-fix runs that map a GitHub issue back to an existing automation obligation now scan the selected open or resolved obligation directory correctly, preventing a pre-Codex `NameError` from aborting the next repair pass.
 
 2026-05-24: preservation policy and artifact privacy:
 	1. Added `docs/preservation-policy.md` with evidence temperature values for hot, warm, cold, frozen, and trashable evidence.

@@ -6369,7 +6369,7 @@ def target_match(data):
 
 open_matches = []
 target_matches = []
-for path in sorted(glob.glob(os.path.join(open_dir, "*.json"))):
+for path in sorted(glob.glob(os.path.join(scan_source, "*.json"))):
   try:
     with open(path, "r", encoding="utf-8") as handle:
       data = json.load(handle)

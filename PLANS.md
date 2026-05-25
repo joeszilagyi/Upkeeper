@@ -12,6 +12,8 @@ Goal:
   per-bug validation but failed later batch validation/CI
 - make the backlog per-bug commit path run a cheap source-contract gate for
   Upkeeper source changes before staging and pushing
+- repair the PR-local issue-fix obligation binding crash that used the wrong
+  Python scan-directory variable before Codex could start
 - preserve the low-cost loop path by avoiding full quick validation on every
   per-bug commit
 

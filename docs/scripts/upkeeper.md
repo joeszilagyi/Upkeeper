@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--audit-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.34
+Version: v1.2.35
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -260,6 +260,13 @@ Important:
     exits. Repeating the same failure updates the existing obligation instead
     of creating duplicates, and the next invocation repairs that obligation
     before retrying the merge or selecting another GitHub issue.
+    Child wrapper failures use the same catchment: when the backlog launcher
+    observes `./Upkeeper` exit non-zero outside the known blocked/quota lanes,
+    it records a `wrapper_execution_failure` obligation from a private bounded
+    child-output capture before the launcher exits. That obligation points to
+    the likely wrapper owner file when the tail contains a shell crash line, and
+    repeated identical crashes update one record instead of depending on the
+    next loop's log scan to rediscover the failure.
     Set `BACKLOG_OBLIGATION_RECONCILE=0` for a
     deliberate one-cycle bypass. Set
     `BACKLOG_ANOMALY_CUSTODY=0` for a deliberate one-cycle bypass, or adjust

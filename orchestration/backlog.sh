@@ -78,6 +78,10 @@ BACKLOG_BATCH_VALIDATION_OBLIGATION_ID=""
 BACKLOG_BATCH_VALIDATION_OBLIGATION_PATH=""
 BACKLOG_BATCH_VALIDATION_REPEAT_EXIT_CODE=""
 BACKLOG_STALE_QUOTA_OBLIGATION_ID=""
+BACKLOG_LAST_UPKEEPER_OUTPUT_FILE=""
+BACKLOG_FAILURE_OBLIGATION_RECORDED=0
+BACKLOG_WRAPPER_FAILURE_OBLIGATION_ID=""
+BACKLOG_WRAPPER_FAILURE_OBLIGATION_PATH=""
 
 backlog_timestamp() {
   date '+%Y-%m-%dT%H:%M:%S'
@@ -1903,6 +1907,264 @@ prepare_backlog_runtime_env() {
   backlog_ensure_transcript_artifact_marker
 }
 
+backlog_run_upkeeper_capture() {
+  local state_root output_file status tee_status had_errexit
+  local -a pipe_status=()
+
+  state_root="$(backlog_state_root)"
+  mkdir -p -- "$state_root/logs"
+  chmod 700 "$state_root" "$state_root/logs" 2>/dev/null || true
+  output_file="$(mktemp "$state_root/logs/upkeeper-child.XXXXXX.log")"
+  chmod 600 "$output_file" 2>/dev/null || true
+  BACKLOG_LAST_UPKEEPER_OUTPUT_FILE="$output_file"
+
+  had_errexit=0
+  case "$-" in
+    *e*)
+      had_errexit=1
+      ;;
+  esac
+  set +e
+  "$@" 2>&1 | tee "$output_file"
+  pipe_status=("${PIPESTATUS[@]}")
+  status="${pipe_status[0]:-1}"
+  tee_status="${pipe_status[1]:-0}"
+  if [[ "$had_errexit" == "1" ]]; then
+    set -e
+  else
+    set +e
+  fi
+  if [[ "$status" -eq 0 && "$tee_status" -ne 0 ]]; then
+    return "$tee_status"
+  fi
+  return "$status"
+}
+
+backlog_open_wrapper_failure_obligation() {
+  local exit_code="$1"
+  local output_file="$2"
+  local workflow="$3"
+  local context_id="$4"
+  local target_hint="$5"
+  local obligation_root open_dir now payload id path seen_count
+
+  BACKLOG_WRAPPER_FAILURE_OBLIGATION_ID=""
+  BACKLOG_WRAPPER_FAILURE_OBLIGATION_PATH=""
+  [[ "$exit_code" -ne 0 ]] || return 0
+  [[ -n "$output_file" && -f "$output_file" ]] || return 0
+
+  obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
+  open_dir="$obligation_root/open"
+  mkdir -p -- "$open_dir" || return 1
+  chmod 700 "$obligation_root" "$open_dir" 2>/dev/null || true
+  now="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+
+  payload="$(
+    python3 - \
+      "$ROOT_DIR" \
+      "$exit_code" \
+      "$output_file" \
+      "$workflow" \
+      "$context_id" \
+      "$target_hint" \
+      "$now" \
+      "${pr_number:-}" \
+      "${branch:-}" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import re
+import sys
+
+root, exit_code, output_file, workflow, context_id, target_hint, now, pr_number, branch = sys.argv[1:10]
+root_path = pathlib.Path(root).resolve()
+try:
+    raw_text = pathlib.Path(output_file).read_text(encoding="utf-8", errors="replace")
+except OSError:
+    raw_text = ""
+
+tail_lines = raw_text.splitlines()[-100:]
+tail_text = "\n".join(tail_lines)
+
+
+def normalize(value: str) -> str:
+    value = value.replace(root, "<repo-root>")
+    value = re.sub(r"/tmp/upkeeper[-A-Za-z0-9_./]*", "/tmp/upkeeper-<tmp>", value)
+    value = re.sub(r"/home/[^/\s]+/\.local/state/upkeeper/[^\s]+", "<upkeeper-state>", value)
+    value = re.sub(r"path-hmac-sha256:[0-9a-f]{16,64}", "path-hmac-sha256:<digest>", value)
+    value = re.sub(r"run_hash=[0-9a-f]{8,64}", "run_hash=<hash>", value)
+    value = re.sub(r"cycle=20[0-9A-Za-z:+-]+", "cycle=<cycle>", value)
+    value = re.sub(r"session id: [0-9a-f-]+", "session id: <session>", value, flags=re.I)
+    value = re.sub(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:+-]+", "<timestamp>", value)
+    return "\n".join(line.rstrip() for line in value.splitlines() if line.strip())
+
+
+def repo_target(value: str) -> str:
+    value = str(value or "").strip().replace("\\", "/")
+    if not value or value in {".", "none", "unknown", "null"}:
+        return ""
+    if os.path.isabs(value):
+        try:
+            value = os.path.relpath(value, root)
+        except ValueError:
+            return ""
+        value = value.replace("\\", "/")
+    normalized = os.path.normpath(value).replace("\\", "/")
+    if normalized in {"", ".", ".."} or normalized.startswith("../"):
+        return ""
+    if normalized == "Upkeeper":
+        return normalized
+    if normalized.startswith(("lib/upkeeper/", "orchestration/", "tools/", "tests/", "docs/", "prompts/", "configurations/")):
+        return normalized
+    return ""
+
+
+def target_exists(value: str) -> bool:
+    if not value:
+        return False
+    try:
+        return (root_path / value).is_file()
+    except OSError:
+        return False
+
+
+def target_from_tail() -> str:
+    patterns = [
+        re.compile(re.escape(root) + r"/([^:\s]+): line \d+:"),
+        re.compile(r"\b((?:lib/upkeeper|orchestration|tools|tests|docs|prompts|configurations)/[A-Za-z0-9_./-]+): line \d+:"),
+        re.compile(r"\./(Upkeeper): line \d+:"),
+        re.compile(r"\b(Upkeeper): line \d+:"),
+    ]
+    upkeeper_fallback = ""
+    for line in reversed(tail_lines):
+        for pattern in patterns:
+            match = pattern.search(line)
+            if not match:
+                continue
+            candidate = repo_target(match.group(1))
+            if target_exists(candidate):
+                if candidate == "Upkeeper":
+                    upkeeper_fallback = candidate
+                    continue
+                return candidate
+    if upkeeper_fallback:
+        return upkeeper_fallback
+    hinted = repo_target(target_hint)
+    if target_exists(hinted):
+        return hinted
+    return "Upkeeper"
+
+
+normalized_tail = normalize(tail_text)
+fingerprint = hashlib.sha256(
+    f"backlog-wrapper-failure\0{exit_code}\0{workflow}\0{context_id}\0{normalized_tail}".encode("utf-8", "surrogateescape")
+).hexdigest()[:24]
+target = target_from_tail()
+excerpt = "\n".join(tail_lines[-20:])
+normalized_excerpt = "\n".join(normalized_tail.splitlines()[-20:])
+obligation_id = f"wrapper-failure-{fingerprint}"
+record = {
+    "schema": 1,
+    "record_type": "automation_obligation",
+    "status": "open",
+    "id": obligation_id,
+    "kind": "wrapper_execution_failure",
+    "severity": "high",
+    "summary": f"Backlog observed Upkeeper child exit {exit_code} before a clean launcher outcome",
+    "root": root,
+    "source": "backlog_child_exit_catchment",
+    "source_pr_number": pr_number,
+    "source_branch": branch,
+    "workflow": workflow,
+    "context_id": context_id,
+    "target_scope": "target",
+    "target_file": target,
+    "repair_target_file": target,
+    "reason": "UPKEEPER_CHILD_EXIT_NONZERO",
+    "exit_code": str(exit_code),
+    "fingerprint": f"backlog-wrapper-failure:{fingerprint}",
+    "issue_title": f"High priority bug: Upkeeper child exit {exit_code} needs repair for {target}",
+    "issue_title_basis": "backlog_child_exit_catchment",
+    "specific_issue_required": True,
+    "required_resolution": [
+        "inspect the captured child-output tail before normal backlog issue work",
+        "repair the wrapper, launcher, or detector defect that let the child exit nonzero",
+        "prove the failure path writes a normal cycle outcome or a durable obligation instead of disappearing between loop iterations",
+        "rerun tests/backlog_wrapper_failure_obligation_test.bash",
+        "rerun tools/validate_upkeeper.sh --quick",
+    ],
+    "evidence": {
+        "source": "backlog_child_output",
+        "output_file": output_file,
+        "tail_line_count": len(tail_lines),
+        "excerpt": excerpt,
+        "normalized_excerpt": normalized_excerpt,
+        "normalized_tail_sha256": hashlib.sha256(normalized_tail.encode("utf-8", "surrogateescape")).hexdigest(),
+    },
+}
+print(json.dumps(record, separators=(",", ":")))
+PY
+  )" || return 1
+
+  id="$(jq -r '.id' <<<"$payload")"
+  path="$open_dir/$id.json"
+  if [[ -f "$path" ]]; then
+    seen_count="$(jq -r '.seen_count // .occurrence_count // 1' "$path" 2>/dev/null || printf '1')"
+    payload="$(
+      jq \
+        --argjson next_count "$((seen_count + 1))" \
+        --arg updated_at "$now" \
+        --argjson replacement "$payload" \
+        '. as $old
+         | $replacement
+         | .created_at = ($old.created_at // $updated_at)
+         | .updated_at = $updated_at
+         | .seen_count = $next_count
+         | .occurrence_count = $next_count
+         | .first_source_pr_number = ($old.first_source_pr_number // $old.source_pr_number // $replacement.source_pr_number)
+         | .prior_evidence_excerpt = ($old.evidence.excerpt // "")' "$path"
+    )" || return 1
+  else
+    payload="$(jq --arg created_at "$now" '.created_at = $created_at | .updated_at = $created_at | .seen_count = 1 | .occurrence_count = 1' <<<"$payload")" || return 1
+  fi
+  python3 - "$path" "$payload" <<'PY'
+import json
+import os
+import sys
+
+path, payload = sys.argv[1:3]
+data = json.loads(payload)
+parent = os.path.dirname(path)
+os.makedirs(parent, mode=0o700, exist_ok=True)
+try:
+    os.chmod(parent, 0o700)
+except OSError:
+    pass
+tmp = f"{path}.tmp.{os.getpid()}"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+PY
+  BACKLOG_WRAPPER_FAILURE_OBLIGATION_ID="$id"
+  BACKLOG_WRAPPER_FAILURE_OBLIGATION_PATH="$path"
+  BACKLOG_FAILURE_OBLIGATION_RECORDED=1
+  log "automation obligation opened for Upkeeper child failure id=$id exit_code=$exit_code target=$(jq -r '.repair_target_file' <<<"$payload") path=$path"
+}
+
 backlog_ensure_transcript_artifact_marker() {
   local transcript_dir marker_path marker_value
 
@@ -2405,7 +2667,7 @@ run_upkeeper_for_one_target() {
     backlog_update_active_owner_heartbeat "running_upkeeper" \
       "$(backlog_wait_detail llm codex_issue_repair "issue=$issue_number" "target=${target_hint:-wrapper-inferred}" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "expected=patch_or_status")" \
       "" "owner_pid_start_cwd_verified"
-    ./Upkeeper "${upkeeper_args[@]}"
+    backlog_run_upkeeper_capture ./Upkeeper "${upkeeper_args[@]}"
     upkeeper_status="$?"
     if [[ "$upkeeper_status" -ne 0 ]]; then
       if [[ "$upkeeper_status" -eq 2 ]]; then
@@ -2418,7 +2680,7 @@ run_upkeeper_for_one_target() {
     backlog_update_active_owner_heartbeat "running_upkeeper" \
       "$(backlog_wait_detail llm codex_file_review "selection_order=newest" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "expected=review_or_status")" \
       "" "owner_pid_start_cwd_verified"
-    ./Upkeeper --selection-order=newest
+    backlog_run_upkeeper_capture ./Upkeeper --selection-order=newest
   fi
 }
 
@@ -2448,7 +2710,7 @@ run_upkeeper_for_obligation() {
     UPKEEPER_AUTOMATION_OBLIGATION_ID="$obligation_id" \
     UPKEEPER_AUTOMATION_OBLIGATION_PATH="$obligation_path" \
     UPKEEPER_PROMPT_TRUST_ROOT="$prompt_root" \
-    ./Upkeeper --ignore-failure-queue --target-file="$target_hint" --prompt-file "$prompt_file"
+    backlog_run_upkeeper_capture ./Upkeeper --ignore-failure-queue --target-file="$target_hint" --prompt-file "$prompt_file"
   upkeeper_status="$?"
   if [[ "$upkeeper_status" -ne 0 ]]; then
     if [[ "$upkeeper_status" -eq 2 ]]; then
@@ -3575,6 +3837,15 @@ main() {
     backlog_emit_job_finish_summary "Upkeeper deferred on quota or backend usage limit" "quota cooldown marker recorded; outer loop may sleep before the next preflight"
     exit 0
   elif [[ "$run_status" -ne 0 ]]; then
+    if [[ "$BACKLOG_FAILURE_OBLIGATION_RECORDED" != "1" ]]; then
+      if [[ "$obligation_selected" == "1" ]]; then
+        backlog_open_wrapper_failure_obligation "$run_status" "${BACKLOG_LAST_UPKEEPER_OUTPUT_FILE:-}" "obligation-repair" "$obligation_id" "$target_hint" || true
+      elif [[ -n "$issue_number" ]]; then
+        backlog_open_wrapper_failure_obligation "$run_status" "${BACKLOG_LAST_UPKEEPER_OUTPUT_FILE:-}" "issue-repair" "$issue_number" "$target_hint" || true
+      else
+        backlog_open_wrapper_failure_obligation "$run_status" "${BACKLOG_LAST_UPKEEPER_OUTPUT_FILE:-}" "newest-file-review" "" "$target_hint" || true
+      fi
+    fi
     if [[ "$obligation_selected" == "1" ]]; then
       backlog_record_obligation_attempt "$obligation_json" "failed" "$run_status" "Upkeeper exited with status $run_status" >/dev/null || true
     fi

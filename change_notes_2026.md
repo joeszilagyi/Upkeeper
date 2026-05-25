@@ -140,6 +140,15 @@ Version numbering note:
 	1. Documented when fallback is allowed, when it is forbidden, how it handles dirty worktrees, whether it may mutate files, child-count/time limits, complete disablement switches, quota/spend bounds, evidence separation, and recovery success criteria.
 	2. Aligned operator guide, help text, default config comments, compatibility notes, and local validation so fallback/postmortem safety rules are a tracked contract instead of scattered implementation details.
 
+2026-05-24: v1.2.35 changes:
+	1. Backlog now captures each child `./Upkeeper` invocation to a private
+	   bounded evidence file and opens a deduplicated
+	   `wrapper_execution_failure` obligation when the child exits non-zero
+	   outside the known blocked/quota lanes.
+	2. Child-failure obligations infer the likely wrapper owner file from shell
+	   crash tails such as `lib/upkeeper/...: line N` so the next run repairs
+	   the control-plane defect instead of only retrying the previous work item.
+
 2026-05-24: v1.2.34 changes:
 	1. Hardened the entrypoint status-marker parser override so it passes the
 	   shared marker parser's full status contract instead of crashing after

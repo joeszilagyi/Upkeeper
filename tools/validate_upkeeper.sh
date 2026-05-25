@@ -1938,6 +1938,19 @@ check_backlog_batch_validation_obligation_contract() {
   bash tests/backlog_batch_validation_obligation_test.bash
 }
 
+check_backlog_wrapper_failure_obligation_contract() {
+  log "checking backlog wrapper failure obligation contract"
+  grep -Fq 'backlog_run_upkeeper_capture ./Upkeeper' orchestration/backlog.sh ||
+    fail "backlog launcher does not capture child Upkeeper output"
+  grep -Fq 'backlog_open_wrapper_failure_obligation' orchestration/backlog.sh ||
+    fail "backlog launcher cannot open obligations for child Upkeeper failures"
+  grep -Fq 'wrapper_execution_failure' tests/backlog_wrapper_failure_obligation_test.bash ||
+    fail "wrapper failure obligation test does not assert wrapper execution failure kind"
+  grep -Fq 'lib/upkeeper/report_analysis.bash' tests/backlog_wrapper_failure_obligation_test.bash ||
+    fail "wrapper failure obligation test does not prove crash-tail target mapping"
+  bash tests/backlog_wrapper_failure_obligation_test.bash
+}
+
 check_backlog_local_ahead_guard_contract() {
   log "checking backlog local-ahead branch push guard contract"
 
@@ -7054,6 +7067,7 @@ run_check automation_obligation_churn_contract check_automation_obligation_churn
 run_check automation_obligation_issue_report_contract check_automation_obligation_issue_report_contract
 run_check backlog_launcher_contract check_backlog_launcher_contract
 run_check backlog_batch_validation_obligation_contract check_backlog_batch_validation_obligation_contract
+run_check backlog_wrapper_failure_obligation_contract check_backlog_wrapper_failure_obligation_contract
 run_check backlog_local_ahead_guard_contract check_backlog_local_ahead_guard_contract
 run_check backlog_merge_steward_contract check_backlog_merge_steward_contract
 run_check backlog_pr_watch_contract check_backlog_pr_watch_contract

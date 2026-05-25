@@ -3,6 +3,39 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Backlog Wrapper Failure Catchment
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- make the backlog launcher record a durable obligation when its child
+  `./Upkeeper` process exits nonzero before Upkeeper can write its own clean
+  final state
+- capture bounded local child-output evidence outside the model path, dedupe
+  repeated failures, and route the next cycle to the likely wrapper owner file
+- preserve known blocked and quota exits while making unexpected child exits
+  impossible to lose between loop iterations
+
+Constraints:
+- no backend Codex validation
+- keep the catchment deterministic, pre-model, and local
+- store only bounded output evidence in private local obligation state
+- do not widen normal issue selection or merge behavior when the child exits
+  successfully
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tests/backlog_wrapper_failure_obligation_test.bash`
+- `tools/validate_upkeeper.sh`
+- operator docs and release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_wrapper_failure_obligation_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Status Marker Parser Crash Hardening
 
 Status: completed locally; pending PR/CI

@@ -172,6 +172,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   output tail, stable fingerprint, likely owner path, and required proof command
   before the launcher exits. The next backlog invocation must select that
   obligation before retrying the merge or selecting fresh issue work.
+- Backlog child wrapper failures are also machine-health obligations. If
+  `./Upkeeper` exits non-zero before the child run reaches a clean launcher
+  outcome, the backlog launcher writes or updates a `wrapper_execution_failure`
+  obligation with a private bounded child-output tail and likely wrapper owner
+  path before exiting, except for the already-modeled blocked and quota lanes.
 - Backlog PR check and merge decisions are made against the current backlog
   branch head. If the local backlog branch is clean and ahead of
   `origin/<branch>`, the launcher pushes it before PR checks or merge. Dirty,

@@ -1017,6 +1017,9 @@ test loop does not spend cycles on known low-value or generated material.
   no-backend guard for green backlog PR merge and clean-sheet cleanup
 - [tools/backlog_triage.py](tools/backlog_triage.py): local no-backend
   stopped-loop restart triage for backlog runs
+- [tools/backlog_parallel_leases.py](tools/backlog_parallel_leases.py): local
+  no-backend issue/target lease registry for future isolated parallel backlog
+  workers
 - [tools/check_public_docs.sh](tools/check_public_docs.sh): deterministic
   public documentation policy checks
 - [launcher_examples/README.md](launcher_examples/README.md): tracked shell

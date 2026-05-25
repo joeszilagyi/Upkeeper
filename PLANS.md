@@ -5,7 +5,7 @@ Upkeeper changes. Keep entries brief and update their status before merge.
 
 ## Backlog Wrapper Failure Catchment
 
-Status: completed locally; pending PR/CI
+Status: completed locally; consolidated on `backlog/20260524-201224`
 
 Goal:
 - make the backlog launcher record a durable obligation when its child
@@ -41,9 +41,44 @@ Validation:
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
 
+## Parallel Backlog Worker Lease Primitive
+
+Status: completed locally; consolidated on `backlog/20260524-201224`
+
+Goal:
+- make progress on issue #367 by defining the safe first slice for future
+  parallel backlog workers
+- add a deterministic local lease registry so synthetic workers cannot claim the
+  same issue or predicted target before any backend work starts
+- keep live parallel worker launch out of scope until lease, worktree, PR, quota,
+  and cleanup contracts have local proof
+
+Constraints:
+- no backend Codex calls
+- do not alter the default single-worker backlog launcher behavior
+- do not touch the active loop checkout
+- keep the primitive local and no-GitHub-write for this first slice
+
+Files likely touched:
+- `tools/backlog_parallel_leases.py`
+- `tests/backlog_parallel_leases_test.bash`
+- `docs/decisions/0002-parallel-backlog-workers.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `README.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_parallel_leases_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Status Marker Parser Crash Hardening
 
-Status: completed locally; pending PR/CI
+Status: completed locally; consolidated on `backlog/20260524-201224`
 
 Goal:
 - stop prior-run anomaly repair from repeating PAGE churn when backend Codex

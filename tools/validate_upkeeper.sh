@@ -1203,7 +1203,7 @@ PY
 }
 
 check_prior_run_anomaly_custody_contract() {
-  local temp_dir obligation_count selected_json prompt_file second_count
+  local temp_dir obligation_count selected_json prompt_file second_count incident_count
 
   log "checking prior-run anomaly custody contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-anomaly-custody.XXXXXX)"
@@ -1260,6 +1260,45 @@ LOG
     fail "prior-run anomaly custody recreated existing obligations instead of updating them"
   [[ "$(jq -r '.updated_obligations' "$temp_dir/custody/latest.json")" == "$obligation_count" ]] ||
     fail "prior-run anomaly custody did not update existing coalesced obligations"
+
+  cat >"$temp_dir/incident.log" <<'LOG'
+2026-05-24T20:52:30 █ PAGE    [ERROR] cycle=incident-cycle run_hash=incident123 Upkeeper: primary failure transcript tail
+2026-05-24T20:52:31 █ INFO    cycle=incident-cycle run_hash=incident123 cycle.exit exit_code=3 reason=MISSING_STATUS_MARKER
+2026-05-24T20:52:32 █ --FYI-- [WARN] cycle=incident-cycle run_hash=incident123 startup_anomaly.gate_unresolved reason=missing_status_marker
+2026-05-24T20:52:33 █ INFO    cycle=incident-cycle run_hash=incident123 backlog: PR #500 checks failed; stopping before selecting another issue
+LOG
+  tools/upkeeper_anomaly_custody.py \
+    --root "$ROOT_DIR" \
+    --loop-log "$temp_dir/incident.log" \
+    --state-root "$temp_dir/incident-custody" \
+    --obligation-root "$temp_dir/incident-obligations" \
+    --recent-lines 100 \
+    --max-findings 10 \
+    --write-obligations >"$temp_dir/incident-audit.out"
+  [[ "$(jq -r '.actionable_findings' "$temp_dir/incident-custody/latest.json")" == "1" ]] ||
+    fail "prior-run anomaly custody did not collapse same-cycle hard anomalies to one incident rollup"
+  [[ "$(jq -r '.incident_rollup_findings' "$temp_dir/incident-custody/latest.json")" == "1" ]] ||
+    fail "prior-run anomaly custody did not record the incident rollup count"
+  [[ "$(jq -r '.incident_signal_findings' "$temp_dir/incident-custody/latest.json")" == "4" ]] ||
+    fail "prior-run anomaly custody did not preserve all incident signals inside the rollup"
+  incident_count="$(find "$temp_dir/incident-obligations/open" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$incident_count" == "1" ]] ||
+    fail "prior-run anomaly custody opened sibling obligations for one source-cycle incident"
+  jq -e 'select(.anomaly_kind == "incident_rollup") | select(.incident_signal_count == 4) | select(.evidence.incident_signals | length == 4) | select(.issue_title == "High priority bug: prior-run incident rollup needs repair for Upkeeper") | select(.required_resolution[] | contains("inspect every signal inside the incident rollup"))' \
+    "$temp_dir"/incident-obligations/open/*.json >/dev/null ||
+    fail "prior-run anomaly custody incident rollup obligation did not preserve signal evidence and title"
+  tools/upkeeper_anomaly_custody.py \
+    --root "$ROOT_DIR" \
+    --loop-log "$temp_dir/incident.log" \
+    --state-root "$temp_dir/incident-custody" \
+    --obligation-root "$temp_dir/incident-obligations" \
+    --recent-lines 100 \
+    --max-findings 10 \
+    --write-obligations >"$temp_dir/incident-audit-second.out"
+  [[ "$(jq -r '.created_obligations' "$temp_dir/incident-custody/latest.json")" == "0" ]] ||
+    fail "prior-run anomaly custody recreated an existing incident rollup obligation"
+  [[ "$(jq -r '.updated_obligations' "$temp_dir/incident-custody/latest.json")" == "1" ]] ||
+    fail "prior-run anomaly custody did not update the existing incident rollup obligation"
 
   selected_json="$(
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \

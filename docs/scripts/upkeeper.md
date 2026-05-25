@@ -223,7 +223,10 @@ Important:
     prompt packet containing the bounded evidence excerpt. Repeated instances
     of the same anomaly class update the existing obligation with occurrence
     counts and last-seen evidence instead of opening a new obligation for each
-    cycle id or run hash. Quoted backend shell/test fixture snippets that contain
+    cycle id or run hash. When one source cycle emits multiple hard
+    control-plane signals, anomaly custody opens one incident-rollup obligation
+    that preserves the individual signal excerpts instead of filing sibling
+    obligations for the same blowup. Quoted backend shell/test fixture snippets that contain
     embedded `[WARN]`, `[ERROR]`, `PAGE`, control-plane log text, or quoted
     source-code fixture lines are treated as transcript content, not as new
     wrapper failures. Immediately after the

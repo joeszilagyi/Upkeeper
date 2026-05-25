@@ -7053,6 +7053,7 @@ main() {
   local status_marker_review_recovery status_marker_review_outcome status_marker_review_selected_file
   local status_marker_blocker_recovery status_marker_blocker_reason
   local status_marker_candidate status_marker_candidate_marker status_marker_candidate_rejection_reason
+  local status_marker_candidate_warning_level
   local marker_candidate_line marker_candidate_marker marker_candidate_rejection_reason marker_accepted_marker
   local session_end_state
   local primary_session_diagnostics
@@ -7108,8 +7109,12 @@ main() {
   if [[ -n "$marker_accepted_marker" ]]; then
     status_marker_source="exact"
   elif [[ -n "$status_marker" ]]; then
+    status_marker_candidate_warning_level="WARN"
+    if [[ "$status_marker_candidate_rejection_reason" == "markdown_backticks" ]]; then
+      status_marker_candidate_warning_level="INFO"
+    fi
     status_marker_source="recovered_malformed_candidate"
-    log_line_parts "WARN" \
+    log_line_parts "$status_marker_candidate_warning_level" \
       "status_marker.candidate_recovered marker=$status_marker" \
       " candidate_marker=$status_marker_candidate_marker" \
       " reason=$status_marker_candidate_rejection_reason" \

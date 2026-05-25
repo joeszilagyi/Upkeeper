@@ -746,7 +746,6 @@ recover_status_marker_from_review_outcome_without_task_complete() {
   local task_complete_last_agent_message="$3"
   local summary_json recovery_outcome recovery_selected_file recovered_marker
 
-  [[ "$codex_exit_value" != "0" ]] || return 1
   [[ "$task_complete_last_agent_message" != "present" ]] || return 1
   [[ -n "$last_message_file" && -f "$last_message_file" ]] || return 1
 
@@ -2007,7 +2006,7 @@ upkeeper_internal_precontact_backup_hmac_self_test() {
 }
 
 upkeeper_internal_review_summary_self_test() {
-  local temp_file summary selected_file outcome
+  local temp_file summary selected_file outcome recovered
 
   temp_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-review-summary-self-test.XXXXXX")" || {
     printf 'review_summary_self_test=fail reason=mktemp_failed\n' >&2
@@ -2042,6 +2041,25 @@ EOF
     printf 'review_summary_self_test=fail reason=valid_selected_file_not_preserved outcome=%s selected_file=%s\n' "$outcome" "$selected_file" >&2
     return 1
   fi
+
+  temp_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-review-summary-self-test.XXXXXX")" || {
+    printf 'review_summary_self_test=fail reason=mktemp_failed\n' >&2
+    return 2
+  }
+  cat >"$temp_file" <<'EOF'
+Final status: REVIEWED_CLEAN for `Upkeeper`
+EOF
+  if ! recovered="$(recover_status_marker_from_review_outcome_without_task_complete "$temp_file" 0 missing)"; then
+    rm -f -- "$temp_file"
+    printf 'review_summary_self_test=fail reason=zero_exit_no_task_complete_recovery_missing\n' >&2
+    return 1
+  fi
+  if [[ "$recovered" != $'WORK_DONE\tREVIEWED_CLEAN\tUpkeeper' ]]; then
+    rm -f -- "$temp_file"
+    printf 'review_summary_self_test=fail reason=zero_exit_no_task_complete_recovery_invalid recovery=%s\n' "$recovered" >&2
+    return 1
+  fi
+  rm -f -- "$temp_file"
 
   printf 'review_summary_self_test=pass\n'
   return 0

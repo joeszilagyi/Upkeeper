@@ -203,6 +203,12 @@ Future changes should preserve this operator-visible surface as far as possible:
   artifacts, obligation evidence, redaction defaults, compression, pruning, or
   public evidence promotion should update that policy and validation coverage
   in the same patch.
+- The source-rights metadata model in `docs/source-rights-metadata.md` is part
+  of the stable evidence and public-citation contract. Changes to source
+  sensitivity labels, rights fields, prompt-safe/export-safe decisions,
+  paid-access or license-restricted handling, Wikipedia citation use, public
+  evidence packets, archiving, or robots/terms restrictions should update that
+  model and validation coverage in the same patch.
 - Policy decision schema-v1 field names and types are stable. Future policy
   decision records may add optional fields, but removing, renaming, or changing
   the meaning of existing fields requires a new schema version and validation

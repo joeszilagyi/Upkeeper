@@ -4893,3 +4893,44 @@ Validation:
 - `git diff --check`
 - `tools/validate_upkeeper.sh --quick`
 - `tools/validate_upkeeper.sh --full`
+
+## Source Rights Metadata Model
+
+Status: completed
+
+Goal:
+- close issue #224 by defining a tracked source sensitivity, rights, and reuse
+  metadata model for OSINT and citation artifacts
+- connect that model to the existing preservation, security, compatibility, and
+  public documentation surfaces
+- add deterministic validation so the required labels and reuse fields cannot
+  silently drift out of tracked docs
+
+Constraints:
+- documentation and validation only; do not add runtime storage or backend
+  Codex behavior in this patch
+- keep defaults conservative: missing or unknown source-rights metadata denies
+  risky prompt, export, upload, archive, and public evidence actions
+- no real backend Codex validation
+
+Files likely touched:
+- `docs/source-rights-metadata.md`
+- `docs/preservation-policy.md`
+- `docs/security.md`
+- `docs/compatibility.md`
+- `docs/risk-register.md`
+- `README.md`
+- `tools/check_public_docs.sh`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Result:
+- Added the tracked source-rights metadata policy, linked it from the public
+  policy docs, and added public-doc plus quick-validator drift checks.

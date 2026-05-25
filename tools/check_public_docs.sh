@@ -74,6 +74,7 @@ grep -Fq "$wrapper_version changes" "$release_notes_file" || fail "$release_note
 [[ -s docs/public-documentation-policy.md ]] || fail "public documentation policy is missing or empty"
 [[ -s docs/security.md ]] || fail "security trust model is missing or empty"
 [[ -s docs/preservation-policy.md ]] || fail "preservation policy is missing or empty"
+[[ -s docs/source-rights-metadata.md ]] || fail "source rights metadata policy is missing or empty"
 [[ -s .upkeeperignore ]] || fail ".upkeeperignore is missing or empty"
 [[ -s LICENSE ]] || fail "LICENSE is missing or empty"
 grep -Fq "MIT License" LICENSE || fail "LICENSE is not MIT"
@@ -106,6 +107,7 @@ grep -Fq "tools/check_public_docs.sh" docs/public-documentation-policy.md || fai
 grep -Fq "docs/public-documentation-policy.md" README.md || fail "README does not link the public documentation policy"
 grep -Fq "docs/security.md" README.md || fail "README does not link the security trust model"
 grep -Fq "docs/preservation-policy.md" README.md || fail "README does not link the preservation policy"
+grep -Fq "docs/source-rights-metadata.md" README.md || fail "README does not link source rights metadata"
 grep -Fq "docs/policy-decisions.md" README.md || fail "README does not link policy decisions"
 grep -Fq "docs/security.md" docs/public-documentation-policy.md || fail "public documentation policy does not link the security trust model"
 grep -Fq "docs/policy-decisions.md" docs/authority.md || fail "authority model does not link policy decisions"
@@ -145,6 +147,24 @@ grep -Fq "secret-adjacent" docs/preservation-policy.md || fail "preservation pol
 grep -Fq "docs/preservation-policy.md" docs/security.md || fail "security docs do not link preservation policy"
 grep -Fq "docs/preservation-policy.md" docs/lattice.md || fail "Lattice docs do not link preservation policy"
 grep -Fq "docs/preservation-policy.md" docs/compatibility.md || fail "compatibility docs do not link preservation policy"
+grep -Fq "## Source Sensitivity Labels" docs/source-rights-metadata.md || fail "source rights metadata missing sensitivity section"
+grep -Fq "## Rights And Reuse Fields" docs/source-rights-metadata.md || fail "source rights metadata missing rights fields section"
+grep -Fq "## Default Deny Rules" docs/source-rights-metadata.md || fail "source rights metadata missing default deny rules"
+grep -Fq "## OSINT And Citation Workflow" docs/source-rights-metadata.md || fail "source rights metadata missing OSINT workflow"
+for source_rights_term in \
+  public local-private secret-adjacent credential-bearing PII-bearing \
+  paid-access license-restricted prompt-safe prompt-unsafe export-safe \
+  export-unsafe may_store_metadata may_store_full_text may_quote may_upload \
+  may_export may_summarize may_use_for_wikipedia_citation \
+  may_include_in_public_evidence_packet may_archive \
+  robots_or_terms_restriction; do
+  grep -Fq "$source_rights_term" docs/source-rights-metadata.md ||
+    fail "source rights metadata missing required term: $source_rights_term"
+done
+grep -Fq "docs/source-rights-metadata.md" docs/preservation-policy.md || fail "preservation docs do not link source rights metadata"
+grep -Fq "docs/source-rights-metadata.md" docs/security.md || fail "security docs do not link source rights metadata"
+grep -Fq "docs/source-rights-metadata.md" docs/compatibility.md || fail "compatibility docs do not link source rights metadata"
+grep -Fq "Source rights drift" docs/risk-register.md || fail "risk register missing source rights drift risk"
 grep -Fq "Upkeeper.conf" README.md || fail "README does not mention the default config file"
 grep -Fq "configurations/default.conf" README.md || fail "README does not mention the default configuration profile"
 grep -Fq "p26-public-documentation-review.md" README.md || fail "README does not link P26"

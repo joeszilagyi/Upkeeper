@@ -70,6 +70,8 @@ Tracked docs should form a readable path:
 - `docs/dependencies.md` defines runtime and validation dependencies.
 - `docs/security.md` defines local trust boundaries, secret handling, safe
   default commands, and what not to commit.
+- `docs/source-rights-metadata.md` defines source sensitivity and reuse rights
+  for OSINT, citation, prompt, export, archive, and public evidence decisions.
 - `docs/stress-corpus.md` defines sample-repo stress testing intent.
 - `lib/upkeeper/README.md` explains module ownership and load-order discipline.
 - `prompts/README.md` indexes prompt and review-module contracts.

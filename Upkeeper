@@ -745,6 +745,8 @@ recover_status_marker_from_review_outcome_without_task_complete() {
   local codex_exit_value="$2"
   local task_complete_last_agent_message="$3"
   local summary_json recovery_outcome recovery_selected_file recovered_marker
+  local resolved_selected_file recovered_resolved_selected_file
+  local normalized_selected_file
 
   [[ "$task_complete_last_agent_message" != "present" ]] || return 1
   [[ -n "$last_message_file" && -f "$last_message_file" ]] || return 1
@@ -763,8 +765,18 @@ recover_status_marker_from_review_outcome_without_task_complete() {
       return 1
       ;;
   esac
-  if [[ -n "$recovery_selected_file" && "$recovery_selected_file" != "unknown" && -n "${RUN_SELECTED_REVIEW_PATH:-}" && "$recovery_selected_file" != "$RUN_SELECTED_REVIEW_PATH" ]]; then
-    return 1
+  if [[ -n "$recovery_selected_file" && "$recovery_selected_file" != "unknown" && -n "${RUN_SELECTED_REVIEW_PATH:-}" ]]; then
+    if [[ "$recovery_selected_file" != "$RUN_SELECTED_REVIEW_PATH" ]]; then
+      recovered_resolved_selected_file="$(readlink -f -- "$recovery_selected_file" 2>/dev/null || printf '%s' "$recovery_selected_file")"
+      resolved_selected_file="$(readlink -f -- "$RUN_SELECTED_REVIEW_PATH" 2>/dev/null || printf '%s' "$RUN_SELECTED_REVIEW_PATH")"
+      normalized_selected_file="${recovery_selected_file#./}"
+
+      if [[ "$recovered_resolved_selected_file" != "$resolved_selected_file" && \
+        "$RUN_SELECTED_REVIEW_PATH" != *"/$normalized_selected_file" && \
+        "$(basename -- "$RUN_SELECTED_REVIEW_PATH")" != "$normalized_selected_file" ]]; then
+        return 1
+      fi
+    fi
   fi
   printf '%s\t%s\t%s\n' "$recovered_marker" "$recovery_outcome" "$recovery_selected_file"
   return 0
@@ -2007,6 +2019,7 @@ upkeeper_internal_precontact_backup_hmac_self_test() {
 
 upkeeper_internal_review_summary_self_test() {
   local temp_file summary selected_file outcome recovered
+  local old_run_selected_review_path
 
   temp_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-review-summary-self-test.XXXXXX")" || {
     printf 'review_summary_self_test=fail reason=mktemp_failed\n' >&2
@@ -2059,6 +2072,30 @@ EOF
     printf 'review_summary_self_test=fail reason=zero_exit_no_task_complete_recovery_invalid recovery=%s\n' "$recovered" >&2
     return 1
   fi
+
+  old_run_selected_review_path="${RUN_SELECTED_REVIEW_PATH-}"
+  RUN_SELECTED_REVIEW_PATH="$PWD/Upkeeper"
+  temp_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-review-summary-self-test.XXXXXX")" || {
+    RUN_SELECTED_REVIEW_PATH="$old_run_selected_review_path"
+    printf 'review_summary_self_test=fail reason=mktemp_failed\n' >&2
+    return 2
+  }
+  cat >"$temp_file" <<'EOF'
+Final status: REVIEWED_CLEAN for `Upkeeper`
+EOF
+  if ! recovered="$(recover_status_marker_from_review_outcome_without_task_complete "$temp_file" 0 missing)"; then
+    RUN_SELECTED_REVIEW_PATH="$old_run_selected_review_path"
+    rm -f -- "$temp_file"
+    printf 'review_summary_self_test=fail reason=absolute_target_recovery_missing\n' >&2
+    return 1
+  fi
+  if [[ "$recovered" != $'WORK_DONE\tREVIEWED_CLEAN\tUpkeeper' ]]; then
+    RUN_SELECTED_REVIEW_PATH="$old_run_selected_review_path"
+    rm -f -- "$temp_file"
+    printf 'review_summary_self_test=fail reason=absolute_target_recovery_invalid recovery=%s\n' "$recovered" >&2
+    return 1
+  fi
+  RUN_SELECTED_REVIEW_PATH="$old_run_selected_review_path"
   rm -f -- "$temp_file"
 
   printf 'review_summary_self_test=pass\n'

@@ -10,6 +10,44 @@ is_spark_model() {
   esac
 }
 
+quota_sum_percent_thresholds_fallback() {
+  local first="$1"
+  local second="$2"
+
+  [[ -n "$first" && -n "$second" ]] || {
+    printf '%s' "$first"
+    return 0
+  }
+
+  [[ "$first" =~ ^[-+]?[0-9]+([.][0-9]*)?$ || "$first" =~ ^[.][0-9]+$ ]] || {
+    printf '%s' "$first"
+    return 0
+  }
+  [[ "$second" =~ ^[-+]?[0-9]+([.][0-9]*)?$ || "$second" =~ ^[.][0-9]+$ ]] || {
+    printf '%s' "$first"
+    return 0
+  }
+
+  awk -v first="$first" -v second="$second" '
+    BEGIN {
+      value = first + second
+      if (value < 0) {
+        value = 0
+      } else if (value > 100) {
+        value = 100
+      }
+      if (value == int(value)) {
+        printf "%d", value
+      } else {
+        out = sprintf("%.10f", value)
+        sub(/0+$/, "", out)
+        sub(/[.]$/, "", out)
+        printf "%s", out
+      }
+    }
+  ' || printf '%s' "$first"
+}
+
 quota_5h_stop_percent_for_model() {
   local target_model="$1"
   if is_spark_model "$target_model"; then
@@ -31,8 +69,15 @@ quota_week_stop_buffer_percent_for_model() {
 quota_week_stop_percent_for_model() {
   local target_model="$1"
   local buffer
+  local percent
   buffer="$(quota_week_stop_buffer_percent_for_model "$target_model")"
-  sum_percent_thresholds "$CODEX_WEEK_STOP_PERCENT" "$buffer"
+  percent="$CODEX_WEEK_STOP_PERCENT"
+
+  if type -t sum_percent_thresholds >/dev/null 2>&1; then
+    sum_percent_thresholds "$percent" "$buffer"
+  else
+    quota_sum_percent_thresholds_fallback "$percent" "$buffer"
+  fi
 }
 
 quota_expected_identity_for_model() {

@@ -1386,6 +1386,94 @@ raise SystemExit(1)
 PY
 }
 
+# Keep this UPKEEPER_STATUS parser override in the entrypoint to recover
+# duplicate-marker finalization patterns introduced by selected-target reruns.
+# When multiple UPKEEPER_STATUS markers appear in non-fenced content, we
+# recover the last exact/quoted/backtick/bullet-marked occurrence as the
+# terminal accepted marker instead of treating the transcript as malformed.
+while_marker_analysis_json() {
+  local last_message_file="$1"
+  local base_analysis
+  base_analysis="$(marker_analysis_json "$last_message_file")"
+  local base_accepted base_candidate_rejection_reason
+
+  base_accepted="$(json_field "$base_analysis" '.accepted_marker')"
+  base_candidate_rejection_reason="$(json_field "$base_analysis" '.candidate_rejection_reason')"
+  if [[ -n "$base_accepted" || "$base_candidate_rejection_reason" != "multiple_markers" ]]; then
+    printf '%s' "$base_analysis"
+    return 0
+  fi
+
+  python3 - "$base_analysis" "$last_message_file" <<'PY'
+import json
+import sys
+
+path = sys.argv[2]
+base = json.loads(sys.argv[1] or "{}")
+
+cores = {
+    "UPKEEPER_STATUS: WORK_DONE": "WORK_DONE",
+    "UPKEEPER_STATUS: NO_CHANGES": "WORK_DONE",
+    "UPKEEPER_STATUS: NO_BACKEND_TASK": "NO_BACKEND_TASK",
+    "UPKEEPER_STATUS: BLOCKED": "BLOCKED",
+}
+
+
+def decorated_reason(line: str, core: str) -> str:
+    if line in {f"`{core}`", f"``{core}``"}:
+        return "markdown_backticks"
+    if len(line) >= 2 and line[0] == line[-1] and line[0] in {"'", '"'}:
+        if line[1:-1].strip() == core:
+            return "quoted_marker"
+    if line.lstrip().startswith(("-", "*", "+", ">")):
+        body = line.lstrip("-*+> \t").strip()
+        if body == core:
+            return "bullet_marker"
+    if line == core:
+        return "exact"
+    return "other"
+
+non_fenced_lines = []
+in_code_fence = False
+with open(path, "r", encoding="utf-8", errors="replace") as handle:
+    for raw_line in handle:
+        line = raw_line.rstrip("\r\n").strip()
+        if not line:
+            continue
+        if line.startswith("```"):
+            in_code_fence = not in_code_fence
+            continue
+        if in_code_fence:
+            continue
+        non_fenced_lines.append(line)
+
+if non_fenced_lines:
+    marker_hits = []
+    for index, line in enumerate(non_fenced_lines):
+        hits = [(core, status) for core, status in cores.items() if core in line]
+        if hits:
+            marker_hits.append((index, line, hits))
+
+if marker_hits:
+    accepted_status = ""
+    for _, line, hits in reversed(marker_hits):
+        if len(hits) != 1:
+            continue
+        core, status = hits[0]
+        reason = decorated_reason(line, core)
+        if reason in {"exact", "markdown_backticks", "quoted_marker", "bullet_marker"}:
+            accepted_status = status
+            break
+    if accepted_status:
+        base["accepted_marker"] = accepted_status
+        base["candidate_marker"] = ""
+        base["candidate_line"] = ""
+        base["candidate_rejection_reason"] = ""
+
+print(json.dumps(base, separators=(",", ":")))
+PY
+}
+
 # A current changed-path violation or backend failure keeps the startup anomaly
 # gate unresolved, but a valid current-cycle log-review acknowledgment must be
 # able to clear older unresolved gate-state files. Otherwise the gate can only

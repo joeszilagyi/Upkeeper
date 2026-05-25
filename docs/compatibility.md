@@ -308,6 +308,9 @@ Future changes should preserve this operator-visible surface as far as possible:
   `runtime/upkeeper-lattice/lattice.sqlite3`. Runtime artifacts under
   `runtime/upkeeper-lattice/`, including SQLite side files, backups, exports,
   and recovery records, remain ignored local state.
+- Advisory `lattice.unavailable` log lines remain non-fatal when
+  `UPKEEPER_LATTICE_REQUIRED=0`, but they must carry a reason class, owner issue
+  or contract, and replacement-evidence class instead of only a detail hash.
 - For audit, breadcrumb, anomaly, and automation-obligation custody, Lattice is
   supporting evidence, not sole custody authority, until the tracked Lattice
   integrity blockers are closed. Lattice-derived custody decisions must keep a

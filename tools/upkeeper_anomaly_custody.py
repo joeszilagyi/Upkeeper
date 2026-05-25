@@ -35,6 +35,45 @@ VISUAL_MARKER = re.compile(
 )
 CYCLE_RE = re.compile(r"\bcycle=([^ \t]+)")
 RUN_HASH_RE = re.compile(r"\brun_hash=([^ \t]+)")
+EVENT_TOKEN_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+\b")
+KNOWN_EVENT_SIGNALS = (
+    "operator_guide.stale",
+    "previous_run.anomaly_summary",
+    "startup_anomaly.gate_unresolved",
+    "startup_anomaly.gate_violation",
+    "startup_anomaly.gate",
+    "lattice.unavailable",
+    "transcript.prune_blocked",
+    "log.rotate_blocked",
+    "quota.guardrails",
+    "quota.cooldown",
+    "automation.obligation.open",
+    "cycle.exit",
+    "run.finish",
+)
+IGNORED_EVENT_TOKEN_SUFFIXES = (
+    ".bash",
+    ".conf",
+    ".json",
+    ".jsonl",
+    ".md",
+    ".py",
+    ".sh",
+    ".sqlite3",
+    ".txt",
+)
+ANOMALY_KIND_LABELS = {
+    "page_error": "PAGE error",
+    "failed_pr_check_gate": "PR check gate failure",
+    "nonzero_cycle_exit": "nonzero cycle exit",
+    "nonzero_launcher_exit": "nonzero launcher exit",
+    "lattice_unavailable": "lattice degraded mode",
+    "startup_anomaly_unresolved": "startup anomaly unresolved",
+    "previous_run_anomaly_summary": "previous-run anomaly summary",
+    "startup_anomaly_gate_active": "startup anomaly gate active",
+    "warning_line": "warning",
+    "expected_fixture_output": "expected fixture output",
+}
 DYNAMIC_FINGERPRINT_PATTERNS = (
     (re.compile(r"\bcycle=[^ \t]+"), "cycle=<cycle>"),
     (re.compile(r"\brun_hash=[^ \t]+"), "run_hash=<run_hash>"),
@@ -129,6 +168,69 @@ def bounded_excerpt(line: str, width: int = 260) -> str:
     if len(value) <= width:
         return value
     return value[: width - 3] + "..."
+
+
+def compact_title_text(value: str, width: int = 90) -> str:
+    text = " ".join(str(value).replace("\r", " ").replace("\t", " ").split())
+    text = text.strip(" \"'`[](){}")
+    if len(text) <= width:
+        return text
+    return text[: width - 3].rstrip(" ./_-") + "..."
+
+
+def anomaly_signal(kind: str, normalized: str) -> str:
+    lower = normalized.lower()
+    for signal in KNOWN_EVENT_SIGNALS:
+        if signal in lower:
+            return signal
+    if kind == "failed_pr_check_gate":
+        return "PR checks"
+    if kind == "nonzero_cycle_exit" and "cycle.exit" in lower:
+        return "cycle.exit"
+    if kind == "page_error" and "page" in lower:
+        return "PAGE"
+    for token in EVENT_TOKEN_RE.findall(normalized):
+        token_lower = token.lower()
+        if token_lower.startswith("v") and len(token_lower) > 1 and token_lower[1].isdigit():
+            continue
+        if token_lower.endswith(IGNORED_EVENT_TOKEN_SUFFIXES):
+            continue
+        return compact_title_text(token, 70)
+    return ""
+
+
+def anomaly_title_label(kind: str, normalized: str) -> str:
+    label = ANOMALY_KIND_LABELS.get(kind, kind.replace("_", " "))
+    signal = anomaly_signal(kind, normalized)
+    if not signal:
+        return label
+    if signal.lower().replace(".", "_").replace(" ", "_") == kind:
+        return signal
+    if signal.lower() in label.lower():
+        return label
+    if label.lower() in signal.lower():
+        return signal
+    return f"{signal} {label}"
+
+
+def anomaly_summary(finding: Finding) -> str:
+    label = anomaly_title_label(finding.kind, finding.normalized)
+    return f"Prior backlog log anomaly needs repair or explicit custody: {label}"
+
+
+def issue_title_for_finding(finding: Finding) -> str:
+    label = anomaly_title_label(finding.kind, finding.normalized)
+    target = compact_title_text(finding.target or "machine-local state", 80)
+    return f"High priority bug: prior-run {label} needs repair for {target}"[:180]
+
+
+def generic_prior_run_issue_title(value: object) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    return text == DEFAULT_UMBRELLA_TITLE or text.startswith(
+        "High priority bug: automation obligation prior_run_anomaly needs repair"
+    )
 
 
 def context_has(lines: list[tuple[int, str]], index: int, needle: str, radius: int = 12) -> bool:
@@ -411,7 +513,8 @@ def finding_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.Path
 
 
 def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.Path) -> dict:
-    summary = f"Prior backlog log anomaly needs repair or explicit custody: {finding.kind}"
+    title_label = anomaly_title_label(finding.kind, finding.normalized)
+    signal = anomaly_signal(finding.kind, finding.normalized)
     return {
         "schema": 1,
         "record_type": "automation_obligation",
@@ -420,7 +523,9 @@ def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.P
         "created_at": now_local(),
         "kind": "prior_run_anomaly",
         "severity": finding.severity,
-        "summary": summary,
+        "summary": anomaly_summary(finding),
+        "anomaly_signal": signal,
+        "anomaly_title_label": title_label,
         "fingerprint": finding.fingerprint,
         "first_seen_at": now_local(),
         "last_seen_at": now_local(),
@@ -434,7 +539,8 @@ def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.P
         "workflow": "",
         "stage": "pre_issue_selection",
         "issue_number": "",
-        "issue_title": "",
+        "issue_title": issue_title_for_finding(finding),
+        "issue_title_basis": "prior_run_anomaly_signal",
         "owner_issue_number": DEFAULT_UMBRELLA_ISSUE,
         "owner_issue_title": DEFAULT_UMBRELLA_TITLE,
         "specific_issue_required": True,
@@ -485,6 +591,8 @@ def update_open_obligation(path: pathlib.Path, finding: Finding, loop_log: pathl
     data["occurrence_count"] = occurrence_count + 1
     data["last_source_cycle_id"] = finding.cycle_id
     data["last_source_run_hash"] = finding.run_hash
+    data["anomaly_signal"] = anomaly_signal(finding.kind, finding.normalized)
+    data["anomaly_title_label"] = anomaly_title_label(finding.kind, finding.normalized)
     data["last_evidence"] = {
         "source": "backlog_loop_log",
         "loop_log": str(loop_log),
@@ -497,6 +605,12 @@ def update_open_obligation(path: pathlib.Path, finding: Finding, loop_log: pathl
     }
     if not data.get("fingerprint"):
         data["fingerprint"] = finding.fingerprint
+    if first_summary := anomaly_summary(finding):
+        if str(data.get("summary") or "").strip().endswith(f": {finding.kind}") or not str(data.get("summary") or "").strip():
+            data["summary"] = first_summary
+    if generic_prior_run_issue_title(data.get("issue_title")):
+        data["issue_title"] = issue_title_for_finding(finding)
+        data["issue_title_basis"] = "prior_run_anomaly_signal"
     evidence = data.get("evidence")
     if isinstance(evidence, dict):
         evidence.setdefault("fingerprint", finding.fingerprint)

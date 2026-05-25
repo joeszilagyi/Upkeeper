@@ -241,7 +241,10 @@ Important:
     issue-ready report for every open current-root obligation and, by default,
     files or links a GitHub issue before selecting work. System-level failures
     therefore have concrete issue custody even when backend Codex never enters
-    bug-report-only mode. The local report copy is retained under
+    bug-report-only mode. Prior-run anomaly report titles are derived locally
+    from the anomaly signal or stable fingerprint, such as
+    `operator_guide.stale warning`, instead of using one repeated
+    `prior_run_anomaly` title. The local report copy is retained under
     `${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/obligation-issue-reports`
     as evidence, not as a substitute for filing. If GitHub issue filing fails,
     backlog stops before normal issue selection. Existing GitHub issue links are
@@ -480,8 +483,11 @@ Prompt behavior:
     the fallback evidence is unavailable.
     If Lattice is unavailable and `UPKEEPER_LATTICE_REQUIRED=0`, the wrapper
     logs one warning, spools a small recovery record when possible, and
-    continues the existing cycle behavior. If `UPKEEPER_LATTICE_REQUIRED=1`,
-    startup fails before Codex launch.
+    continues the existing cycle behavior. The warning includes a reason class,
+    `owner_issue=430`, `owner_contract=advisory_lattice_degraded`, and
+    `replacement_evidence=local_logs_runtime_obligations` so repeated degraded
+    mode has explicit custody. If `UPKEEPER_LATTICE_REQUIRED=1`, startup fails
+    before Codex launch.
     Transient transcript artifacts may live under repo runtime, Upkeeper-owned
     state directories, or Upkeeper-owned temp directories; Lattice records their
     hashed identity without treating those operator-local transcript locations

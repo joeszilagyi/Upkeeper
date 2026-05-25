@@ -36,6 +36,73 @@ Validation:
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
 
+## Descriptive Automation Obligation Issue Titles
+
+Status: completed and merged
+
+Goal:
+- close issue #455 by making prior-run anomaly obligation issue names
+  deterministic, evidence-specific, and less duplicative
+- preserve script-owned issue filing; no model call should decide the title
+- keep existing generic/open obligation records repairable by deriving a
+  better report title from their stored evidence
+
+Constraints:
+- no backend Codex calls
+- keep title generation short, redacted, and based only on local obligation
+  fields or bounded evidence excerpts
+- preserve manually specific issue titles while replacing generic umbrella or
+  prior-run placeholders
+
+Files likely touched:
+- `tools/upkeeper_anomaly_custody.py`
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper FlameOn ChimneySweep lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/watch-pr.sh`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Lattice Degraded-Mode Ownership
+
+Status: completed and merged
+
+Goal:
+- close issue #430 by making optional `lattice.unavailable` degraded mode
+  classified and owned instead of an anonymous detail hash
+- preserve optional Lattice behavior when `UPKEEPER_LATTICE_REQUIRED=0` while
+  making the fallback evidence and owner contract clear in live logs and
+  recovery rows
+- extend local Lattice validation so the unsafe/unavailable fixture proves the
+  warning has reason, owner, and replacement-evidence fields
+
+Constraints:
+- no backend Codex calls
+- keep raw Lattice failure detail redacted; only bounded summaries and reason
+  classes can reach logs
+- preserve fail-closed behavior when `UPKEEPER_LATTICE_REQUIRED=1`
+
+Files likely touched:
+- `lib/upkeeper/lattice.bash`
+- `tests/lattice_test.bash`
+- `docs/lattice.md`
+- `docs/security.md`
+- `README.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/lattice_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Preservation Policy And Artifact Privacy
 
 Status: completed locally; pending PR/CI

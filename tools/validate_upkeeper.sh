@@ -1213,6 +1213,7 @@ check_prior_run_anomaly_custody_contract() {
 2026-05-21T12:00:01 █ --FYI-- [WARN] cycle=prior-cycle run_hash=abc123 previous_run.anomaly_summary scan_minutes=240 listed_total=1 action=force_upkeeper_self_review
 2026-05-21T12:00:03 █ --FYI-- [WARN] cycle=next-cycle run_hash=def456 previous_run.anomaly_summary scan_minutes=240 listed_total=7 action=force_upkeeper_self_review
 2026-05-21T12:00:02 █ PAGE    [ERROR] cycle=prior-cycle run_hash=abc123 unexpected.wrapper.failure reason=fixture
+2026-05-21T12:00:04 █ INFO    [WARN] cycle=guide-cycle run_hash=guidehash operator_guide.stale path=/home/joe/projects/Upkeeper/main/docs/scripts/upkeeper.md guide_version=v1.2.33 current_version=v1.2.34 action=manual_refresh_preserve_local_notes
 LOG
 
   tools/upkeeper_anomaly_custody.py \
@@ -1233,13 +1234,16 @@ LOG
   [[ "$(jq -r '.coalesced_findings' "$temp_dir/custody/latest.json")" == "1" ]] ||
     fail "prior-run anomaly custody did not coalesce duplicate dynamic cycle evidence"
   obligation_count="$(find "$temp_dir/obligations/open" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
-  [[ "$obligation_count" == "2" ]] ||
+  [[ "$obligation_count" == "3" ]] ||
     fail "prior-run anomaly custody opened duplicate local automation obligations"
   [[ "$(jq -s '[.[] | select(.evidence.kind == "previous_run_anomaly_summary")] | length' "$temp_dir"/obligations/open/*.json)" == "1" ]] ||
     fail "prior-run anomaly custody did not collapse repeated previous-run summaries to one owner"
   jq -e 'select(.kind == "prior_run_anomaly") | select(.issue_number == "") | select(.owner_issue_number == "418") | select(.specific_issue_required == true) | select(.evidence.normalized_excerpt | contains("unexpected.wrapper.failure"))' \
     "$temp_dir"/obligations/open/*.json >/dev/null ||
     fail "prior-run anomaly custody obligation did not require a specific issue beyond the umbrella"
+  jq -e 'select(.evidence.normalized_excerpt | contains("operator_guide.stale")) | select(.summary | contains("operator_guide.stale warning")) | select(.issue_title == "High priority bug: prior-run operator_guide.stale warning needs repair for Upkeeper") | select(.issue_title_basis == "prior_run_anomaly_signal")' \
+    "$temp_dir"/obligations/open/*.json >/dev/null ||
+    fail "prior-run anomaly custody did not create a descriptive operator-guide warning issue title"
 
   tools/upkeeper_anomaly_custody.py \
     --root "$ROOT_DIR" \
@@ -1806,6 +1810,10 @@ check_automation_obligation_issue_report_contract() {
   cat >"$record_file" <<JSON
 {"schema":1,"record_type":"automation_obligation","status":"open","id":"report-me","created_at":"2026-05-23T02:00:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"PAGE error was observed during unattended loop","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","source_cycle_id":"cycle-a","source_run_hash":"hash-a","occurrence_count":4,"evidence":{"source":"backlog_loop_log","excerpt":"$ROOT_DIR/Upkeeper PAGE [ERROR] example","normalized_excerpt":"Upkeeper PAGE [ERROR] example"},"required_resolution":["patch the wrapper","add deterministic validation"]}
 JSON
+  guide_file="$temp_dir/obligations/open/operator-guide-stale.json"
+  cat >"$guide_file" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"operator-guide-stale","created_at":"2026-05-23T02:00:15-0700","kind":"prior_run_anomaly","severity":"medium","summary":"Prior backlog log anomaly needs repair or explicit custody: warning_line","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","source_cycle_id":"cycle-guide","source_run_hash":"hash-guide","occurrence_count":8,"evidence":{"source":"backlog_loop_log","kind":"warning_line","excerpt":"2026-05-23T23:33:26 █ INFO [WARN] cycle=cycle-guide run_hash=hash-guide operator_guide.stale path=$ROOT_DIR/docs/scripts/upkeeper.md guide_version=v1.2.33 current_version=v1.2.34 action=manual_refresh_preserve_local_notes","normalized_excerpt":"[WARN] cycle=cycle-guide run_hash=hash-guide operator_guide.stale path=$ROOT_DIR/docs/scripts/upkeeper.md guide_version=v1.2.33 current_version=v1.2.34 action=manual_refresh_preserve_local_notes"}}
+JSON
   umbrella_file="$temp_dir/obligations/open/umbrella-linked.json"
   cat >"$umbrella_file" <<JSON
 {"schema":1,"record_type":"automation_obligation","status":"open","id":"umbrella-linked","created_at":"2026-05-23T02:00:30-0700","kind":"prior_run_anomaly","severity":"high","summary":"PAGE error kept an umbrella issue link","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","issue_number":"418","github_issue_number":"418","issue_title":"High priority bug: non-perfect automated runs need mandatory local remediation custody","evidence":{"source":"backlog_loop_log","excerpt":"$ROOT_DIR/Upkeeper PAGE [ERROR] stale umbrella","normalized_excerpt":"Upkeeper PAGE [ERROR] stale umbrella"}}
@@ -1826,9 +1834,9 @@ JSON
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="$temp_dir/reports" \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "4" ]] ||
+  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "5" ]] ||
     fail "automation obligation issue-report bridge did not scope to current root"
-  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "4" ]] ||
+  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "5" ]] ||
     fail "automation obligation issue-report bridge did not draft the current obligation"
   [[ "$(jq -r '.umbrella_unlinked' <<<"$sync_json")" == "1" ]] ||
     fail "automation obligation issue-report bridge did not unlink stale umbrella issues"
@@ -1842,6 +1850,12 @@ JSON
   fi
   [[ "$(jq -r '.issue_report_state' "$record_file")" == "issue_ready_only" ]] ||
     fail "automation obligation record did not record local issue-ready state"
+  [[ "$(jq -r '.issue_report_title' "$record_file")" == "High priority bug: prior-run PAGE error needs repair for Upkeeper" ]] ||
+    fail "automation obligation issue-report bridge did not derive a descriptive PAGE issue title"
+  [[ "$(jq -r '.issue_report_title' "$guide_file")" == "High priority bug: prior-run operator_guide.stale warning needs repair for Upkeeper" ]] ||
+    fail "automation obligation issue-report bridge did not derive a descriptive operator-guide warning title"
+  [[ "$(jq -r '.issue_title' "$guide_file")" == "High priority bug: prior-run operator_guide.stale warning needs repair for Upkeeper" ]] ||
+    fail "automation obligation issue-report bridge did not persist the derived operator-guide warning title"
   [[ "$(jq -r '.issue_number' "$umbrella_file")" == "" ]] ||
     fail "automation obligation issue-report bridge kept the stale umbrella issue number"
   [[ "$(jq -r '.github_issue_number' "$umbrella_file")" == "" ]] ||
@@ -1878,7 +1892,7 @@ SH
     UPKEEPER_OBLIGATION_GITHUB_ISSUE_WRITE=1 UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS=bug \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "3" ]] ||
+  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "4" ]] ||
     fail "automation obligation issue-report bridge did not create opted-in GitHub issue"
   [[ "$(jq -r '.github_existing' <<<"$sync_json")" == "1" ]] ||
     fail "automation obligation issue-report bridge did not preserve verified open GitHub issue links"
@@ -5496,6 +5510,12 @@ check_lattice_contract() {
   log "checking Upkeeper Lattice"
   grep -Fq "lattice_unavailable_detail_summary" lib/upkeeper/lattice.bash ||
     fail "Lattice wrapper no longer summarizes unavailable details before logging"
+  grep -Fq "lattice_degraded_owner_issue" lib/upkeeper/lattice.bash ||
+    fail "Lattice unavailable warnings no longer identify owning issue"
+  grep -Fq "owner_contract=advisory_lattice_degraded" docs/lattice.md ||
+    fail "Lattice docs no longer identify advisory degraded-mode ownership"
+  grep -Fq "replacement_evidence=local_logs_runtime_obligations" docs/scripts/upkeeper.md ||
+    fail "operator docs no longer identify Lattice replacement evidence"
   ! grep -Fq 'detail=$(shell_quote "$detail")' lib/upkeeper/lattice.bash ||
     fail "Lattice wrapper still logs raw unavailable detail payloads"
   bash tests/lattice_test.bash

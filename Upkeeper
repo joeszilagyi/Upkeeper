@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.36
+## Version: v1.2.37
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -861,8 +861,14 @@ upkeeper_live_output_false_positive_error_echo() {
     *' PAGE [ERROR] cycle='*|*' [ERROR] cycle='*)
       payload="${line#* [ERROR] }"
       ;;
+    *' [error] cycle='*)
+      payload="${line#* [error] }"
+      ;;
     *' [ERROR] Upkeeper: primary: '*)
       payload="${line#*\[ERROR\] Upkeeper: primary: }"
+      ;;
+    *' [error] Upkeeper: primary: '*)
+      payload="${line#*\[error\] Upkeeper: primary: }"
       ;;
     *)
       return 1
@@ -894,7 +900,7 @@ upkeeper_live_output_false_positive_error_echo() {
     'rg -n '*|'rg --'*|'grep '*|'printf '*|'echo '*|'if grep '*|'if [['*|'case '*|'sample='*|'payload='*)
       return 0
       ;;
-    *'[WARN]'*|*'[ERROR]'*|*'[INFO]'*|*$'\342\226\210'*|*'PAGE'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*)
+    *'[WARN]'*|*'[warn]'*|*'[ERROR]'*|*'[error]'*|*'[INFO]'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*|*$'\342\226\210'*|*'PAGE'*)
       return 0
       ;;
     *)
@@ -919,6 +925,7 @@ upkeeper_live_output_custody_filter() {
       rewritten="${line/ \[ERROR\] / [INFO] }"
       rewritten="${rewritten/ Upkeeper: / Upkeeper: live_output.false_positive_error_echo classification=quoted_backend_source_fixture }"
       rewritten="${rewritten//\[ERROR\]/[quoted-error]}"
+      rewritten="${rewritten//\[error\]/[quoted-error]}"
       rewritten="${rewritten//\[WARN\]/[quoted-warn]}"
       rewritten="${rewritten//PAGE/quoted-page}"
       printf '%s\n' "$rewritten"
@@ -1238,6 +1245,21 @@ upkeeper_internal_live_output_custody_filter_self_test() {
     printf 'live_output_custody_filter_self_test=fail reason=tool_failure_queue_open_prior_warning_not_classified output=%s\n' "$sample" >&2
     return 1
   fi
+
+  sample='2026-05-26T11:19:29 [ERROR] Upkeeper: primary: 2026-05-26T11:00:01-0700 [error] cycle=c1 run_hash=run1 widget failed in fixture'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*|*' PAGE '*|*' [error] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_error_page_error_lowercase_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_source_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_error_page_error_lowercase_fixture_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
 
   printf 'live_output_custody_filter_self_test=pass\n'
   return 0

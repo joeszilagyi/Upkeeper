@@ -46,6 +46,7 @@ cutoff = time.time() - (scan_minutes * 60)
 cycle_re = re.compile(r"\bcycle=([^ \t\r\n]+)")
 run_hash_re = re.compile(r"\brun_hash=([^ \t\r\n]+)")
 boot_id_re = re.compile(r"\bboot_id=([^ \t\r\n]+)")
+reason_re = re.compile(r"\breason=([^ \t\r\n]+)")
 embedded_log_level_re = re.compile(
     r"\[(DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|FATAL|CRITICAL|TRACE)\]",
     re.IGNORECASE,
@@ -92,6 +93,7 @@ def add_module_target_variants(value):
 
 
 add_module_target_variants(module_path)
+add_module_target_variants("lib/upkeeper/startup_anomaly_state.bash")
 
 def protected_boot_id(value):
     text = str(value or "unknown")
@@ -229,6 +231,7 @@ with handle:
                 "run_start": False,
                 "run_finish": False,
                 "gate_unresolved": False,
+                "gate_unresolved_reason": "",
                 "gate_resolved": False,
                 "watchdog_anomaly": False,
                 "last_boot_id": "unknown",
@@ -252,6 +255,9 @@ with handle:
             info["run_finish"] = True
         if " startup_anomaly.gate_unresolved " in line:
             info["gate_unresolved"] = True
+            reason_match = reason_re.search(line)
+            if reason_match:
+                info["gate_unresolved_reason"] = reason_match.group(1)
         if " startup_anomaly.gate_resolved " in line:
             info["gate_resolved"] = True
         if " watchdog.anomaly " in line:
@@ -285,9 +291,11 @@ for cycle, info in sorted(cycles.items(), key=lambda item: item[1]["last_epoch"]
         continue
     last_epoch = "unknown" if info["last_epoch"] is None else str(int(info["last_epoch"]))
     last_line = safe_embedded_log_excerpt(info["last_line"])
+    gate_reason = info.get("gate_unresolved_reason", "")
     print(
         f"previous_cycle={cycle} previous_run_hash={info['run_hash']} "
         f"reason={reason} scan_minutes={scan_minutes} last_epoch={last_epoch} "
+        f"gate_reason={gate_reason or 'unknown'} "
         f"previous_boot_id={protected_boot_id(info.get('last_boot_id', 'unknown'))} "
         f"current_boot_id={protected_boot_id(current_boot_raw)} "
         f"last_line={last_line!r}"
@@ -376,28 +384,291 @@ print(
 '
 }
 
+previous_run_anomaly_known_custody_filter() {
+  local obligation_root="${UPKEEPER_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
+  local candidate_file filter_status
+
+  candidate_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-previous-run-custody.XXXXXX")" || return 1
+  if ! cat >"$candidate_file"; then
+    rm -f "$candidate_file"
+    return 1
+  fi
+
+  python3 - "$ROOT_DIR" "$obligation_root" "$candidate_file" <<'PY'
+import json
+import os
+import pathlib
+import re
+import string
+import sys
+
+root_dir = pathlib.Path(sys.argv[1]).resolve()
+obligation_root = pathlib.Path(sys.argv[2])
+candidate_path = pathlib.Path(sys.argv[3])
+field_re_cache = {}
+
+
+def field(line, name):
+    pattern = field_re_cache.get(name)
+    if pattern is None:
+        pattern = re.compile(rf"(?:^| ){re.escape(name)}=([^ ]+)")
+        field_re_cache[name] = pattern
+    match = pattern.search(line)
+    return match.group(1) if match else ""
+
+
+def normalized_root(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        return str(pathlib.Path(raw).expanduser().resolve(strict=False))
+    except OSError:
+        return str(pathlib.Path(raw).expanduser().absolute())
+
+
+def safe_field(value, fallback="unknown", limit=160):
+    text = str(value or fallback)
+    text = re.sub(r"[^A-Za-z0-9_.:@%+=,-]", "_", text)
+    return (text[:limit] or fallback)
+
+
+def reason_class(value):
+    text = str(value or "").strip().lower()
+    allowed = string.ascii_lowercase + string.digits + "_-"
+    text = "".join(ch if ch in allowed else "_" for ch in text)
+    text = "_".join(token for token in text.split("_") if token)
+    return text[:80] or "unknown"
+
+
+def load_records():
+    records = []
+    for state in ("open", "resolved"):
+        base = obligation_root / state
+        if not base.is_dir():
+            continue
+        for path in sorted(base.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            if str(data.get("kind") or "") != "prior_run_anomaly":
+                continue
+            record_root = normalized_root(data.get("root", ""))
+            if record_root and record_root != str(root_dir):
+                continue
+            data["_custody_state"] = state
+            data["_path_stem"] = path.stem
+            records.append(data)
+    return records
+
+
+records = load_records()
+
+
+def record_id(record):
+    return str(record.get("id") or record.get("_path_stem") or "unknown").strip() or "unknown"
+
+
+def owner_issue(record):
+    for key in ("github_issue_number", "issue_number", "owner_issue_number", "linked_issue_number"):
+        value = str(record.get(key) or "").strip()
+        if value:
+            return value
+    return "unknown"
+
+
+def record_fingerprint(record):
+    value = str(record.get("fingerprint") or "").strip()
+    if value:
+        return value
+    for evidence_key in ("last_evidence", "evidence"):
+        evidence = record.get(evidence_key)
+        if not isinstance(evidence, dict):
+            continue
+        value = str(evidence.get("fingerprint") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def record_target(record):
+    return str(record.get("repair_target_file") or record.get("target_file") or "").strip()
+
+
+def record_source_value(record, *names):
+    sources = [record]
+    for key in ("evidence", "last_evidence"):
+        value = record.get(key)
+        if isinstance(value, dict):
+            sources.append(value)
+    for source in sources:
+        for name in names:
+            value = str(source.get(name) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def record_source_matches(record, line):
+    line_cycle = field(line, "previous_cycle")
+    line_hash = field(line, "previous_run_hash")
+    record_cycle = record_source_value(record, "source_cycle_id", "last_source_cycle_id")
+    record_hash = record_source_value(record, "source_run_hash", "last_source_run_hash")
+    if not record_cycle and not record_hash:
+        return False
+    if record_cycle and record_cycle != line_cycle:
+        return False
+    if record_hash and record_hash != line_hash:
+        return False
+    return True
+
+
+def startup_fingerprint_matches(record, line):
+    fingerprint = record_fingerprint(record)
+    if not fingerprint.startswith("startup_anomaly.gate_unresolved"):
+        return False
+    line_reason = field(line, "gate_reason") or field(line, "reason_class") or ""
+    if not line_reason or line_reason == "unknown":
+        return True
+    fp_reason = ""
+    match = re.search(r"\breason=([^ \t]+)", fingerprint)
+    if match:
+        fp_reason = match.group(1)
+    return not fp_reason or reason_class(fp_reason) == reason_class(line_reason)
+
+
+def previous_run_record_matches(record, line):
+    fingerprint = record_fingerprint(record)
+    target = record_target(record)
+    if fingerprint == "previous_run.anomaly_summary" and record_source_matches(record, line):
+        return True
+    if target == "lib/upkeeper/previous_run_anomalies.bash" and record_source_matches(record, line):
+        return True
+    normalized = "\n".join(
+        str(value or "")
+        for value in (
+            record.get("summary"),
+            record.get("anomaly_signal"),
+            record.get("anomaly_title_label"),
+            fingerprint,
+        )
+    ).lower()
+    return record_source_matches(record, line) and (
+        "previous_run.anomaly_summary" in normalized or "previous-run anomaly summary" in normalized
+    )
+
+
+def startup_record_matches(record, line):
+    target = record_target(record)
+    if (
+        target == "lib/upkeeper/startup_anomaly_state.bash"
+        and startup_fingerprint_matches(record, line)
+        and (record_source_matches(record, line) or "reason=startup_anomaly_gate_unresolved_state" in line)
+    ):
+        return True
+    normalized = "\n".join(
+        str(value or "")
+        for value in (
+            record.get("summary"),
+            record.get("anomaly_signal"),
+            record.get("anomaly_title_label"),
+            record_fingerprint(record),
+        )
+    ).lower()
+    return (
+        "startup_anomaly.gate_unresolved" in normalized
+        and startup_fingerprint_matches(record, line)
+        and (record_source_matches(record, line) or "reason=startup_anomaly_gate_unresolved_state" in line)
+    )
+
+
+def matching_record(line):
+    reason = field(line, "reason")
+    is_state = "reason=startup_anomaly_gate_unresolved_state" in line or bool(field(line, "state_id"))
+    if reason == "startup_anomaly_gate_unresolved" or is_state:
+        for record in records:
+            if startup_record_matches(record, line):
+                return record
+    for record in records:
+        if previous_run_record_matches(record, line):
+            return record
+    return None
+
+
+try:
+    candidate_lines = candidate_path.read_text(encoding="utf-8", errors="replace").splitlines()
+except OSError:
+    raise SystemExit(1)
+
+for line in candidate_lines:
+    if line:
+        record = matching_record(line)
+        if not record:
+            print(line)
+            continue
+        print(
+            "__KNOWN__ "
+            f"owner_obligation={safe_field(record_id(record))} "
+            f"owner_state={safe_field(record.get('_custody_state'))} "
+            f"owner_issue={safe_field(owner_issue(record))} "
+            f"fingerprint={safe_field(record_fingerprint(record))} "
+            f"reason={safe_field(field(line, 'reason'))}"
+        )
+PY
+  filter_status=$?
+  rm -f "$candidate_file"
+  return "$filter_status"
+}
+
 scan_previous_run_anomalies() {
   local -a anomalies=()
   local -a state_anomalies=()
+  local -a custody_filtered_anomalies=()
   local anomaly
-  local detail_level summary_line
+  local detail_level filter_status filtered_output summary_line known_residue_count=0
   PREVIOUS_RUN_ANOMALIES=""
   # Keep the scan path bound to this module's structured-line trust boundary.
   mapfile -t anomalies < <(previous_run_anomaly_lines_impl || true)
   mapfile -t state_anomalies < <(startup_anomaly_state_lines || true)
   anomalies+=("${state_anomalies[@]}")
   local -a active_anomalies=()
+  local -a custody_candidates=()
   for anomaly in "${anomalies[@]}"; do
     [[ -n "$anomaly" ]] || continue
     if [[ "$anomaly" == "__ACK__ "* ]]; then
       log_line "INFO" "previous_run.acknowledged ${anomaly#__ACK__ } boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
       continue
     fi
+    custody_candidates+=("$anomaly")
+  done
+  if [[ "${#custody_candidates[@]}" -gt 0 ]]; then
+    filtered_output="$(printf '%s\n' "${custody_candidates[@]}" | previous_run_anomaly_known_custody_filter)"
+    filter_status=$?
+    if [[ "$filter_status" -eq 0 ]]; then
+      mapfile -t custody_filtered_anomalies <<<"$filtered_output"
+    else
+      custody_filtered_anomalies=("${custody_candidates[@]}")
+    fi
+  fi
+  for anomaly in "${custody_filtered_anomalies[@]}"; do
+    [[ -n "$anomaly" ]] || continue
+    if [[ "$anomaly" == "__KNOWN__ "* ]]; then
+      known_residue_count=$((known_residue_count + 1))
+      log_line "INFO" "previous_run.known_anomaly_residue ${anomaly#__KNOWN__ } action=use_existing_custody boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
+      continue
+    fi
     active_anomalies+=("$anomaly")
   done
   anomalies=("${active_anomalies[@]}")
   if [[ "${#anomalies[@]}" -eq 0 ]]; then
-    log_line "INFO" "previous_run.scan status=clean scan_minutes=$CODEX_PREVIOUS_RUN_SCAN_MINUTES boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
+    if [[ "$known_residue_count" -gt 0 ]]; then
+      log_line "INFO" "previous_run.scan status=known_residue scan_minutes=$CODEX_PREVIOUS_RUN_SCAN_MINUTES known_count=$known_residue_count action=use_existing_custody boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
+    else
+      log_line "INFO" "previous_run.scan status=clean scan_minutes=$CODEX_PREVIOUS_RUN_SCAN_MINUTES boot_id=$(system_boot_id) uptime_seconds=$(system_uptime_seconds)"
+    fi
     return 0
   fi
 

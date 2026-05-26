@@ -481,6 +481,17 @@ def target_for(normalized: str) -> str:
     return "Upkeeper"
 
 
+def managed_quota_guardrail_telemetry(normalized: str) -> bool:
+    lower = normalized.lower()
+    if "quota.guardrails" not in lower:
+        return False
+    return (
+        " partial_decision" in lower
+        or " deferred" in lower
+        or " action=defer_to_backend_usage_limit" in lower
+    )
+
+
 def classify(lines: list[tuple[int, str]], index: int, raw_line: str) -> Classification | None:
     if "anomaly custody:" in raw_line:
         return None
@@ -531,6 +542,7 @@ def classify(lines: list[tuple[int, str]], index: int, raw_line: str) -> Classif
             or "quota hibernation complete" in lower
             or "quota.cooldown bypassed" in lower
             or "quota.guardrails bypassed=1" in lower
+            or managed_quota_guardrail_telemetry(normalized)
         )
         if not ignored_waits:
             return Classification("warning_line", "medium", target, "warning/advisory output needs custody")

@@ -1274,7 +1274,7 @@ PY
 }
 
 check_prior_run_anomaly_custody_contract() {
-  local temp_dir obligation_count selected_json prompt_file second_count incident_count
+  local temp_dir obligation_count selected_json prompt_file second_count incident_count quota_guardrail_count
 
   log "checking prior-run anomaly custody contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-anomaly-custody.XXXXXX)"
@@ -1475,6 +1475,25 @@ LOG
 	  if grep -R -Fq 'run_record_read=fail' "$temp_dir/model-fixture-obligations" 2>/dev/null; then
 	    fail "prior-run anomaly custody opened an obligation for quoted Python fixture text"
 	  fi
+
+  cat >"$temp_dir/quota-guardrail.log" <<'LOG'
+2026-05-24T17:13:59 █ INFO [WARN] cycle=20260524T171329-0700-3262200 run_hash=a2db6f11b8a2c14c quota.guardrails target_model=gpt-5.3-codex-spark partial_decision primary_decision=defer secondary_decision=allow primary_bucket_current=false secondary_bucket_current=true primary_reset_expired=true secondary_reset_expired=false
+2026-05-24T17:14:00 █ INFO [WARN] cycle=20260524T171329-0700-3262200 run_hash=a2db6f11b8a2c14c quota.guardrails phase=after_run target_model=gpt-5.3-codex-spark action=defer_to_backend_usage_limit primary_decision=defer secondary_decision=allow codex_exit=1 status_marker=missing
+LOG
+  mkdir -p "$temp_dir/quota-guardrail-obligations/open"
+  tools/upkeeper_anomaly_custody.py \
+    --root "$ROOT_DIR" \
+    --loop-log "$temp_dir/quota-guardrail.log" \
+    --state-root "$temp_dir/quota-guardrail-custody" \
+    --obligation-root "$temp_dir/quota-guardrail-obligations" \
+    --recent-lines 100 \
+    --max-findings 10 \
+    --write-obligations >"$temp_dir/quota-guardrail-audit.out"
+  [[ "$(jq -r '.actionable_findings' "$temp_dir/quota-guardrail-custody/latest.json")" == "0" ]] ||
+    fail "prior-run anomaly custody treated managed quota guardrail telemetry as actionable"
+  quota_guardrail_count="$(find "$temp_dir/quota-guardrail-obligations/open" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$quota_guardrail_count" == "0" ]] ||
+    fail "prior-run anomaly custody opened an obligation for managed quota guardrail telemetry"
 
 	  mkdir -p "$temp_dir/cascade-obligations/open"
 	  python3 - "$ROOT_DIR" "$temp_dir/cascade-obligations/open/owner.json" <<'PY'

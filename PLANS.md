@@ -3,9 +3,38 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Full Validator Quota-State Isolation
+## Expected Fixture Page Context
 
 Status: completed locally; pending PR/CI
+
+Goal:
+- keep passing negative-test fixture output from looking like live pageable
+  wrapper failures in interactive backlog output
+- add a machine-readable fixture tag so triage can distinguish expected test
+  evidence from current-cycle failures
+- preserve unqualified `PAGE [ERROR]` output for real wrapper/control-plane
+  failures
+
+Constraints:
+- do not hide the original fixture evidence
+- do not rely on future log lines for live-stream classification
+- keep anomaly custody behavior unchanged for stored logs
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- operator docs and release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Full Validator Quota-State Isolation
+
+Status: merged in PR #631
 
 Goal:
 - keep `tools/validate_upkeeper.sh --full` deterministic on machines with live

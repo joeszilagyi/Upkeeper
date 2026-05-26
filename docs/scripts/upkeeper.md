@@ -167,8 +167,11 @@ Important:
     their timestamp and bold marker text; `PAGE` puts the timestamp in bright
     white on a red background, renders the non-error payload text bright white,
     and highlights the `ERROR` text inside `[ERROR]` in the same red/blink style
-    as the `PAGE` marker. Loop logs keep the same block and marker text without
-    ANSI color for scripts and assistive tooling. Set
+    as the `PAGE` marker. Expected transcript negative-test fixture lines are
+    demoted to `--FYI--` and tagged with
+    `expected_negative_fixture=transcript_artifacts` while preserving the
+    original error evidence. Loop logs keep the same block and marker text
+    without ANSI color for scripts and assistive tooling. Set
     `BACKLOG_ALERT_COLOR=never` to disable terminal block color,
     `BACKLOG_ALERT_COLOR=always` to force it, or `BACKLOG_ALERT_BLINK=0` to
     keep `PAGE` red without blink.
@@ -232,7 +235,9 @@ Important:
     transcript content, not as new wrapper failures; lines already classified as
     `quoted_backend_source_fixture` are also treated as settled quote evidence.
     Backlog-temp negative-test lines from transcript and pre-contact fixtures
-    are accepted only when the matching test-success context appears nearby.
+    are accepted only when the matching test-success context appears nearby;
+    transcript fixture lines in the live watch stream are tagged with
+    `expected_negative_fixture` so triage can tell them from live failures.
     Source-cycle signals with an existing open or resolved owner obligation are
     coalesced under that owner instead of becoming a new incident rollup. Immediately after the
     backlog branch is checked out, before PR, merge, quota, or issue-selection

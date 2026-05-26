@@ -10,6 +10,10 @@ Version numbering note:
 	1. Prior-run anomaly custody now coalesces backlog job-summary footer lines such as `outcome/results: Upkeeper exited with status 3` and `final disposition: launcher exiting with status 3` into a nearby owned terminal-failure obligation instead of opening a duplicate prior-run anomaly.
 	2. Standalone nonzero launcher footer lines remain actionable when no nearby terminal-failure owner exists, preserving fail-closed custody for launcher failures without structured cycle evidence.
 
+2026-05-26: quoted prior-run fixture custody:
+	1. Prior-run anomaly custody now treats timestamped historical log snippets echoed through `Upkeeper: primary:` as quoted backend/source evidence instead of live control-plane output.
+	2. The quick validator covers prior-run summary and PAGE fixture snippets that previously created duplicate `prior_run_anomaly` issues for `Upkeeper` and `lib/upkeeper/previous_run_anomalies.bash`.
+
 2026-05-26: expected fixture page context:
 	1. Backlog watch output now demotes transcript-artifact negative-test
 	   `PAGE [ERROR]` fixture lines to `--FYI--` and appends

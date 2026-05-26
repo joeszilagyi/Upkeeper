@@ -3,6 +3,33 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Quoted Prior-Run Fixture Custody
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- stop anomaly custody from opening prior-run obligations for timestamped
+  historical log snippets echoed through `Upkeeper: primary:`
+- preserve live `PAGE`/`[ERROR]` custody when the line is actual wrapper output,
+  not backend/model/source text quoting old evidence
+- close issues #495 and #496 once deterministic validation proves the exact
+  quoted prior-run snippets are non-actionable
+
+Constraints:
+- no backend Codex validation
+- do not suppress standalone live prior-run anomalies
+- keep the existing expected-fixture and quoted-source filters narrow
+
+Files likely touched:
+- `tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Nonzero Launcher Footer Custody
 
 Status: completed locally; pending PR/CI

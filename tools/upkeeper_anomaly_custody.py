@@ -443,6 +443,10 @@ def model_emitted_fixture_output(normalized: str) -> bool:
         "run.finish",
         " █ ",
     )
+    if re.match(r"^\d{4}-\d{2}-\d{2}t\d{2}:\d{2}:\d{2}", payload) and any(
+        token in payload for token in embedded_log_tokens
+    ):
+        return True
     if "warn=" in payload or "err=" in payload:
         return True
     if payload.startswith(("rg -n ", "rg --", "grep ", "printf ", "log_line ", "log_line_parts ", "echo ", "if grep ", "if [[", "case ", "sample=", "payload=")):

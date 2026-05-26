@@ -170,7 +170,7 @@ backlog_emit_attention_line() {
 
 backlog_normalize_attention_line_timestamp() {
   local line="$1"
-  local original_ts ts rest marker payload
+  local original_ts ts rest marker payload fixture_reason
 
   backlog_line_starts_with_timestamp "$line" || {
     printf '%s\n' "$line"
@@ -184,6 +184,10 @@ backlog_normalize_attention_line_timestamp() {
     rest="${line#* }"
     if backlog_attention_marker_payload "$rest" >/dev/null; then
       IFS=$'\t' read -r marker payload < <(backlog_attention_marker_payload "$rest")
+      if fixture_reason="$(backlog_expected_negative_fixture_reason "$payload")"; then
+        marker="--FYI--"
+        payload="$(backlog_annotate_expected_negative_fixture "$payload" "$fixture_reason")"
+      fi
       backlog_emit_attention_line "$ts" "$marker" "$payload"
     else
       printf '%s %s\n' "$ts" "$rest"
@@ -215,14 +219,44 @@ backlog_payload_is_model_shell_fixture() {
   esac
 }
 
-backlog_attention_marker_for_line() {
+backlog_expected_negative_fixture_reason() {
   local payload="$1"
 
   case "$payload" in
     *"transcript directory is not private "*"upkeeper-transcripts-test."*)
-      printf '--FYI--\n'
+      printf 'transcript_artifacts\n'
       return 0
       ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+backlog_annotate_expected_negative_fixture() {
+  local payload="$1"
+  local reason="$2"
+
+  case "$payload" in
+    *"expected_negative_fixture="*)
+      printf '%s\n' "$payload"
+      ;;
+    *)
+      printf '%s expected_negative_fixture=%s\n' "$payload" "$reason"
+      ;;
+  esac
+}
+
+backlog_attention_marker_for_line() {
+  local payload="$1"
+  local fixture_reason
+
+  if fixture_reason="$(backlog_expected_negative_fixture_reason "$payload")"; then
+    printf '%s\n' '--FYI--'
+    return 0
+  fi
+
+  case "$payload" in
     *"Upkeeper: "*" cmd#"*" failed:"*|*"Upkeeper: "*" cmd#"*" exited nonzero:"*)
       printf 'WORKER\n'
       return 0
@@ -268,7 +302,7 @@ backlog_attention_marker_for_line() {
 
 backlog_format_attention_line() {
   local line="$1"
-  local original_ts ts rest marker payload
+  local original_ts ts rest marker payload fixture_reason
 
   if backlog_line_has_attention_marker "$line"; then
     backlog_normalize_attention_line_timestamp "$line"
@@ -290,6 +324,9 @@ backlog_format_attention_line() {
 
   marker="$(backlog_attention_marker_for_line "$rest")"
   payload="$rest"
+  if fixture_reason="$(backlog_expected_negative_fixture_reason "$payload")"; then
+    payload="$(backlog_annotate_expected_negative_fixture "$payload" "$fixture_reason")"
+  fi
   backlog_emit_attention_line "$ts" "$marker" "$payload"
 }
 

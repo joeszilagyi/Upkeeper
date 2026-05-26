@@ -1026,6 +1026,8 @@ PY
     backlog_format_attention_line "2026-05-16T18:20:30 Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)" >"$2/fyi.out"
     backlog_format_attention_line "2026-05-16T18:21:00 PAGE   [ERROR] already marked" >"$2/existing.out"
     backlog_format_attention_line "2026-05-16T18:21:01 █ RUN     backlog: running Upkeeper for issue #999 with gpt target=x" >"$2/existing-block.out"
+    backlog_format_attention_line "2026-05-16T18:21:09 PAGE   [ERROR] cycle=fixture transcript directory is not private /tmp/upkeeper-transcripts-test.ABC/transcripts-link" >"$2/expected-fixture-existing.out"
+    backlog_format_attention_line "2026-05-16T18:21:10 [ERROR] cycle=fixture transcript directory is not private /tmp/upkeeper-transcripts-test.ABC/transcripts-file" >"$2/expected-fixture-new.out"
     BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:02 Already up to date.")" >"$2/ok-color.out"
     BACKLOG_ALERT_COLOR=always backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:03 [ERROR] wrapper exploded")" >"$2/page-color.out"
     BACKLOG_ALERT_COLOR=always BACKLOG_ALERT_BLINK=0 backlog_color_attention_line "$(backlog_format_attention_line "2026-05-16T18:21:06 [ERROR] wrapper exploded")" >"$2/page-no-blink-color.out"
@@ -1058,6 +1060,10 @@ PY
     fail "backlog launcher did not normalize existing attention markers into visual-block format"
   grep -Fxq '2026-05-16T18:21:01 █ RUN     backlog: running Upkeeper for issue #999 with gpt target=x' "$temp_dir/existing-block.out" ||
     fail "backlog launcher duplicated an existing visual block marker"
+  grep -Fxq '2026-05-16T18:21:09 █ --FYI-- [ERROR] cycle=fixture transcript directory is not private /tmp/upkeeper-transcripts-test.ABC/transcripts-link expected_negative_fixture=transcript_artifacts' "$temp_dir/expected-fixture-existing.out" ||
+    fail "backlog launcher did not reclassify an existing PAGE transcript fixture with explicit context"
+  grep -Fxq '2026-05-16T18:21:10 █ --FYI-- [ERROR] cycle=fixture transcript directory is not private /tmp/upkeeper-transcripts-test.ABC/transcripts-file expected_negative_fixture=transcript_artifacts' "$temp_dir/expected-fixture-new.out" ||
+    fail "backlog launcher did not annotate new transcript fixture output with explicit context"
   grep -Fq $'\033[1;32m█\033[0m OK' "$temp_dir/ok-color.out" ||
     fail "backlog launcher did not color OK visual block green"
   grep -Fq $'\033[97;41m2026-05-16T18:21:03\033[0m \033[5;1;31m█\033[0m \033[5;1;31mPAGE   \033[0m \033[97m[\033[5;1;31mERROR\033[0m\033[97m] wrapper exploded\033[0m' "$temp_dir/page-color.out" ||

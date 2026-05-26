@@ -6,6 +6,12 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-26: expected fixture page context:
+	1. Backlog watch output now demotes transcript-artifact negative-test
+	   `PAGE [ERROR]` fixture lines to `--FYI--` and appends
+	   `expected_negative_fixture=transcript_artifacts`, preserving the evidence
+	   without presenting passing validation fixtures as live wrapper failures.
+
 2026-05-26: full validator quota-state isolation:
 	1. Validation-owned Upkeeper dry-runs now run with explicit quota guardrail and cooldown bypasses so `tools/validate_upkeeper.sh --full` stays deterministic on machines with live quota markers.
 	2. File-manifest full validation includes a future quota cooldown marker fixture and proves the audit-only dry-run still completes through the validator-owned no-quota path.

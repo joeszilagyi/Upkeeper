@@ -16,6 +16,11 @@ Version numbering note:
 	2. `--remediate-safe` cleans only explicitly safe untracked local artifacts, currently root scratch files such as literal `$db` sidecars and Python bytecode caches.
 	3. Backlog runs the audit before staging with safe remediation and blocker failure enabled, so tracked local-evidence artifacts and unsafe root evidence cannot be committed silently.
 
+2026-05-26: Kirk Protocol invariant registry:
+	1. Added `docs/kirk-invariants.md` and mirrored `KP-###` invariant metadata in the control-plane audit output.
+	2. Audit policy decisions now identify the failed invariant and emit operator-readable invariant failure lines.
+	3. `--snapshot-out` and `--before-snapshot` preserve local before/after audit deltas, and backlog records snapshots around branch sync, pre-staging, batch validation, and merge stewardship.
+
 2026-05-26: quota guardrail telemetry custody:
 	1. Prior-run anomaly custody now treats managed `quota.guardrails` deferred and partial-decision advisory lines as quota-health telemetry rather than opening duplicate `prior_run_anomaly` bug obligations.
 	2. Hard failures, PAGE errors, nonzero exits, identity guardrail stops, and stale-quota obligations remain the durable custody paths for quota-related problems.

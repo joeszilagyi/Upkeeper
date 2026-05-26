@@ -1717,11 +1717,21 @@ check_control_plane_audit_contract() {
     fail "control-plane audit does not classify unsafe unknown findings"
   grep -Fq "policy_decisions" tools/upkeeper_control_plane_audit.py ||
     fail "control-plane audit does not emit policy decisions"
+  grep -Fq "INVARIANT_REGISTRY" tools/upkeeper_control_plane_audit.py ||
+    fail "control-plane audit does not define invariant registry"
+  grep -Fq "KP-007" tools/upkeeper_control_plane_audit.py docs/kirk-invariants.md ||
+    fail "control-plane audit does not define before/after snapshot invariant"
+  grep -Fq -- "--snapshot-out" tools/upkeeper_control_plane_audit.py ||
+    fail "control-plane audit does not write before/after snapshots"
+  grep -Fq "snapshot_delta" tools/upkeeper_control_plane_audit.py tests/control_plane_audit_test.bash ||
+    fail "control-plane audit does not expose snapshot deltas"
   grep -Fq -- "--write-obligations" tools/upkeeper_control_plane_audit.py ||
     fail "control-plane audit does not write obligations for policy blockers"
+  grep -Fq "record_control_plane_snapshot" orchestration/backlog.sh ||
+    fail "backlog launcher does not record control-plane snapshots"
   grep -Fq "run_control_plane_pre_staging_audit" orchestration/backlog.sh ||
     fail "backlog staging path is not guarded by control-plane policy"
-  grep -Fq "tools/upkeeper_control_plane_audit.py" README.md docs/scripts/upkeeper.md docs/negative-space-testing.md ||
+  grep -Fq "tools/upkeeper_control_plane_audit.py" README.md docs/scripts/upkeeper.md docs/negative-space-testing.md docs/kirk-invariants.md ||
     fail "public docs missing control-plane audit command"
   python3 -m py_compile tools/upkeeper_control_plane_audit.py
   bash tests/control_plane_audit_test.bash

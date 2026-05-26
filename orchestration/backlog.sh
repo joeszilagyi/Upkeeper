@@ -1696,11 +1696,61 @@ cleanup_ephemeral_artifacts() {
   rm -f -- "$ROOT_DIR/\$db" "$ROOT_DIR/\$db-shm" "$ROOT_DIR/\$db-wal" 2>/dev/null || true
 }
 
+control_plane_snapshot_root() {
+  local state_root
+
+  state_root="$(backlog_state_root)"
+  printf '%s/control-plane-snapshots\n' "$state_root"
+}
+
+control_plane_snapshot_path() {
+  local stage="$1"
+  local snapshot_dir safe_stage
+
+  snapshot_dir="$(control_plane_snapshot_root)"
+  safe_stage="$(printf '%s' "$stage" | tr -c 'A-Za-z0-9_.-' '_')"
+  mkdir -p -- "$snapshot_dir" || return 1
+  chmod 700 "$snapshot_dir" 2>/dev/null || true
+  printf '%s/%s.%s.%s.json\n' "$snapshot_dir" "$safe_stage" "$(date '+%Y%m%dT%H%M%S%z')" "${BASHPID:-$$}"
+}
+
+record_control_plane_snapshot() {
+  local stage="$1"
+  local snapshot_path
+
+  [[ -x "$ROOT_DIR/tools/upkeeper_control_plane_audit.py" ]] || return 0
+  snapshot_path="$(control_plane_snapshot_path "$stage")" || return 0
+  "$ROOT_DIR/tools/upkeeper_control_plane_audit.py" \
+    --root "$ROOT_DIR" \
+    --no-default-log \
+    --no-runtime \
+    --stage "$stage" \
+    --snapshot-label "$stage" \
+    --snapshot-out "$snapshot_path" \
+    --fail-on never >/dev/null 2>&1 || true
+}
+
 run_control_plane_pre_staging_audit() {
-  local obligation_root
+  local obligation_root before_snapshot after_snapshot
+  local -a before_args=()
+  local -a after_args=()
 
   [[ -x "$ROOT_DIR/tools/upkeeper_control_plane_audit.py" ]] || return 0
   obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
+  before_snapshot="$(control_plane_snapshot_path pre-staging-before 2>/dev/null || true)"
+  if [[ -n "$before_snapshot" ]]; then
+    "$ROOT_DIR/tools/upkeeper_control_plane_audit.py" \
+      --root "$ROOT_DIR" \
+      --no-default-log \
+      --no-runtime \
+      --stage pre-staging-before \
+      --snapshot-label pre-staging-before \
+      --snapshot-out "$before_snapshot" \
+      --fail-on never >/dev/null 2>&1 || true
+    [[ -s "$before_snapshot" ]] && before_args=(--before-snapshot "$before_snapshot")
+  fi
+  after_snapshot="$(control_plane_snapshot_path pre-staging-after 2>/dev/null || true)"
+  [[ -n "$after_snapshot" ]] && after_args=(--snapshot-out "$after_snapshot")
   log "control-plane audit: pre-staging source-boundary policy"
   "$ROOT_DIR/tools/upkeeper_control_plane_audit.py" \
     --root "$ROOT_DIR" \
@@ -1710,6 +1760,9 @@ run_control_plane_pre_staging_audit() {
     --write-obligations \
     --obligation-root "$obligation_root" \
     --stage pre-staging \
+    --snapshot-label pre-staging-after \
+    "${before_args[@]}" \
+    "${after_args[@]}" \
     --fail-on blockers || return $?
 }
 
@@ -3415,29 +3468,51 @@ run_per_bug_validation() {
 }
 
 run_batch_validation() {
-  local validation_start
+  local validation_start rc
 
   [[ "${BACKLOG_SKIP_LOCAL_VALIDATION:-0}" == "1" ]] && return 0
 
   validation_start="$SECONDS"
+  record_control_plane_snapshot "batch-validation-before"
   backlog_update_active_owner_heartbeat "validating" \
     "$(backlog_wait_detail local_validation batch_validation "expected=syntax_tests_docs_diff_quick_validator")" \
     "" "owner_pid_start_cwd_verified"
   run_batch_validation_phase "batch_validation.bash_syntax" "bash syntax" \
-    bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || return $?
+    bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || {
+      rc="$?"
+      record_control_plane_snapshot "batch-validation-failed"
+      return "$rc"
+    }
   run_batch_validation_phase "batch_validation.unit_tests" "unit tests" \
     bash -c 'set -euo pipefail
 validation_root="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-backlog-batch-validation.XXXXXX")"
 trap '\''rm -r "$validation_root" 2>/dev/null || true'\'' EXIT
 export UPKEEPER_OBLIGATION_DIR="$validation_root/automation-obligations"
 export UPKEEPER_AUTOMATION_LEDGER_DIR="$validation_root/automation-ledger"
-for test_script in tests/*.bash; do bash "$test_script"; done' || return $?
+for test_script in tests/*.bash; do bash "$test_script"; done' || {
+      rc="$?"
+      record_control_plane_snapshot "batch-validation-failed"
+      return "$rc"
+    }
   run_batch_validation_phase "batch_validation.docs_quick" "docs quick checks" \
-    tools/check_public_docs.sh --quick || return $?
+    tools/check_public_docs.sh --quick || {
+      rc="$?"
+      record_control_plane_snapshot "batch-validation-failed"
+      return "$rc"
+    }
   run_batch_validation_phase "batch_validation.diff_whitespace" "diff whitespace" \
-    git diff --check || return $?
+    git diff --check || {
+      rc="$?"
+      record_control_plane_snapshot "batch-validation-failed"
+      return "$rc"
+    }
   run_batch_validation_phase "batch_validation.quick_validator" "quick validator" \
-    tools/validate_upkeeper.sh --quick || return $?
+    tools/validate_upkeeper.sh --quick || {
+      rc="$?"
+      record_control_plane_snapshot "batch-validation-failed"
+      return "$rc"
+    }
+  record_control_plane_snapshot "batch-validation-after"
   log "batch validation: complete in $((SECONDS - validation_start))s"
 }
 
@@ -3818,6 +3893,7 @@ merge_and_clean() {
   local pr_number="$1"
   local branch="$2"
 
+  record_control_plane_snapshot "merge-steward-before"
   run_batch_validation || return $?
   backlog_ensure_local_branch_pushed "$pr_number" "$branch" "pre_batch_merge" || return $?
   wait_for_pr_checks "$pr_number" || {
@@ -3836,6 +3912,7 @@ merge_and_clean() {
     git branch -d "$branch" >/dev/null || true
   fi
   require_clean_worktree
+  record_control_plane_snapshot "merge-steward-after"
   log "merged PR #$pr_number and returned to clean main"
 }
 
@@ -3872,6 +3949,7 @@ main() {
   branch="$(awk -F '\t' '{print $2}' <<<"$pr_info")"
   checkout_backlog_branch "$branch"
   backlog_ensure_local_branch_pushed "$pr_number" "$branch" "post_branch_sync" || exit $?
+  record_control_plane_snapshot "backlog-cycle-after-branch-sync"
 
   if ! run_backlog_anomaly_custody_audit; then
     status="$?"

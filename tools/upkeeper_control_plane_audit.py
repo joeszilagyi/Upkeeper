@@ -59,10 +59,22 @@ class Finding:
 
 
 @dataclass(frozen=True)
+class Invariant:
+    ident: str
+    description: str
+    severity: str
+    evidence_source: str
+    remediation_policy: str
+    operator_message: str
+    finding_classes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class PolicyRule:
     policy_class: str
     action: str
     blocks_stage: bool
+    invariant_id: str
     auto_clean: bool = False
     creates_obligation: bool = False
     repair_target_file: str = "Upkeeper"
@@ -79,6 +91,9 @@ class PolicyDecision:
     path: str
     blocks_stage: bool
     summary: str
+    invariant_id: str
+    invariant_severity: str
+    invariant_message: str
     obligation_id: str = ""
     obligation_path: str = ""
 
@@ -88,6 +103,7 @@ POLICY_TABLE = {
         "known_safe_cleanup",
         "clean_local_scratch_artifact",
         True,
+        "KP-002",
         auto_clean=True,
         repair_target_file="orchestration/backlog.sh",
     ),
@@ -95,6 +111,7 @@ POLICY_TABLE = {
         "known_safe_cleanup",
         "clean_local_bytecode_cache",
         True,
+        "KP-002",
         auto_clean=True,
         repair_target_file="orchestration/backlog.sh",
     ),
@@ -102,6 +119,7 @@ POLICY_TABLE = {
         "data_integrity_blocker",
         "block_before_staging",
         True,
+        "KP-001",
         creates_obligation=True,
         repair_target_file="orchestration/backlog.sh",
     ),
@@ -109,6 +127,7 @@ POLICY_TABLE = {
         "data_integrity_blocker",
         "block_before_staging",
         True,
+        "KP-001",
         creates_obligation=True,
         repair_target_file="orchestration/backlog.sh",
     ),
@@ -116,6 +135,7 @@ POLICY_TABLE = {
         "data_integrity_blocker",
         "block_before_staging",
         True,
+        "KP-001",
         creates_obligation=True,
         repair_target_file="orchestration/backlog.sh",
     ),
@@ -123,6 +143,7 @@ POLICY_TABLE = {
         "data_integrity_blocker",
         "block_before_staging",
         True,
+        "KP-001",
         creates_obligation=True,
         repair_target_file="orchestration/backlog.sh",
     ),
@@ -130,6 +151,7 @@ POLICY_TABLE = {
         "data_integrity_blocker",
         "block_before_staging",
         True,
+        "KP-001",
         creates_obligation=True,
         repair_target_file="lib/upkeeper/file_manifest.bash",
     ),
@@ -137,6 +159,7 @@ POLICY_TABLE = {
         "data_integrity_blocker",
         "block_before_staging",
         True,
+        "KP-001",
         creates_obligation=True,
         repair_target_file="lib/upkeeper/transcript_output.bash",
     ),
@@ -144,6 +167,7 @@ POLICY_TABLE = {
         "data_integrity_blocker",
         "block_before_staging",
         True,
+        "KP-001",
         creates_obligation=True,
         repair_target_file="Upkeeper",
     ),
@@ -151,6 +175,7 @@ POLICY_TABLE = {
         "data_integrity_blocker",
         "block_before_staging",
         True,
+        "KP-001",
         creates_obligation=True,
         repair_target_file="orchestration/backlog.sh",
     ),
@@ -158,6 +183,7 @@ POLICY_TABLE = {
         "unsafe_unknown",
         "block_before_staging",
         True,
+        "KP-003",
         creates_obligation=True,
         repair_target_file="Upkeeper",
     ),
@@ -165,6 +191,7 @@ POLICY_TABLE = {
         "unsafe_unknown",
         "create_automation_obligation",
         True,
+        "KP-003",
         creates_obligation=True,
         repair_target_file="Upkeeper",
     ),
@@ -172,6 +199,7 @@ POLICY_TABLE = {
         "actionable_wrapper_bug",
         "create_automation_obligation",
         False,
+        "KP-005",
         creates_obligation=True,
         repair_target_file="Upkeeper",
     ),
@@ -179,6 +207,7 @@ POLICY_TABLE = {
         "actionable_wrapper_bug",
         "create_automation_obligation",
         False,
+        "KP-005",
         creates_obligation=True,
         repair_target_file="Upkeeper",
     ),
@@ -186,19 +215,97 @@ POLICY_TABLE = {
         "operator_fyi",
         "report_only",
         False,
+        "KP-006",
         repair_target_file="Upkeeper",
     ),
     "open_automation_obligations": PolicyRule(
         "known_expected",
         "report_existing_obligations",
         False,
+        "KP-004",
         repair_target_file="Upkeeper",
     ),
     "deferred_issue_records_present": PolicyRule(
         "operator_fyi",
         "report_only",
         False,
+        "KP-004",
         repair_target_file="orchestration/backlog.sh",
+    ),
+}
+
+INVARIANT_REGISTRY = {
+    "KP-001": Invariant(
+        "KP-001",
+        "Local evidence artifacts must not become tracked source.",
+        "high",
+        "git ls-files and tracked source-boundary classes",
+        "block before staging and create automation obligation",
+        "tracked local evidence cannot be committed as source",
+        (
+            "tracked_root_scratch_artifact",
+            "tracked_python_bytecode_cache",
+            "tracked_log_artifact",
+            "tracked_lock_artifact",
+            "tracked_manifest_artifact",
+            "tracked_transcript_artifact",
+            "tracked_postmortem_artifact",
+            "tracked_runtime_artifact",
+        ),
+    ),
+    "KP-002": Invariant(
+        "KP-002",
+        "Only explicitly listed untracked scratch artifacts may be auto-cleaned.",
+        "medium",
+        "git status untracked paths and safe cleanup table",
+        "clean local scratch artifact, then re-audit",
+        "safe local scratch residue was removed before staging",
+        ("untracked_root_scratch_artifact", "untracked_python_bytecode_cache"),
+    ),
+    "KP-003": Invariant(
+        "KP-003",
+        "Unknown local-evidence-like root artifacts must fail closed.",
+        "high",
+        "git status or git ls-files root artifact classification",
+        "block or create automation obligation",
+        "unknown root evidence needs operator custody before it can be staged",
+        ("tracked_unknown_root_artifact", "unsafe_unknown_root_artifact"),
+    ),
+    "KP-004": Invariant(
+        "KP-004",
+        "Open obligations and deferred issue records must stay visible before new work.",
+        "high",
+        "runtime obligation inventory and optional state-root inventory",
+        "report existing custody and avoid treating the queue as clean",
+        "existing custody is visible and must be reconciled before fresh work",
+        ("open_automation_obligations", "deferred_issue_records_present"),
+    ),
+    "KP-005": Invariant(
+        "KP-005",
+        "Pageable error and nonzero terminal evidence must map to actionable custody.",
+        "high",
+        "recent loop log cycle.exit and PAGE [ERROR] markers",
+        "create automation obligation or require explicit expected-fixture classification",
+        "recent hard terminal evidence needs wrapper custody before normal work",
+        ("recent_nonzero_cycle_exit", "recent_page_error"),
+    ),
+    "KP-006": Invariant(
+        "KP-006",
+        "Active owner lock evidence must be visible before concurrent writers run.",
+        "medium",
+        "runtime active-lock inventory",
+        "report active lock and require owner verification",
+        "active lock state is present and should be verified before launching another writer",
+        ("active_lock_present",),
+    ),
+    "KP-007": Invariant(
+        "KP-007",
+        "Before/after audit snapshots must preserve resolved and remaining invariant state.",
+        "medium",
+        "control-plane audit snapshot delta",
+        "write snapshot evidence around staging, validation, and merge phases",
+        "snapshot delta records what was cleaned, blocked, resolved, or still present",
+        (),
     ),
 }
 
@@ -545,16 +652,18 @@ def recent_log_inventory(path: pathlib.Path | None, max_lines: int, findings: li
     }
 
 
-def private_dir(path: pathlib.Path) -> None:
+def private_dir(path: pathlib.Path, *, force_chmod: bool = True) -> None:
+    existed = path.exists()
     path.mkdir(parents=True, exist_ok=True)
-    try:
-        path.chmod(0o700)
-    except OSError:
-        pass
+    if force_chmod or not existed:
+        try:
+            path.chmod(0o700)
+        except OSError:
+            pass
 
 
-def write_private_json(path: pathlib.Path, data: dict[str, object]) -> None:
-    private_dir(path.parent)
+def write_private_json(path: pathlib.Path, data: dict[str, object], *, force_private_parent: bool = True) -> None:
+    private_dir(path.parent, force_chmod=force_private_parent)
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
@@ -586,6 +695,7 @@ def policy_for_finding(finding: dict[str, object]) -> PolicyRule:
             "unsafe_unknown",
             "block_before_staging",
             True,
+            "KP-003",
             creates_obligation=True,
             repair_target_file="Upkeeper",
         ),
@@ -594,6 +704,21 @@ def policy_for_finding(finding: dict[str, object]) -> PolicyRule:
 
 def decision_id(stage: str, finding: dict[str, object], rule: PolicyRule) -> str:
     return f"policy-{stable_hash(stage, str(finding.get('ident')), rule.policy_class, rule.action)}"
+
+
+def invariant_record(rule: PolicyRule) -> Invariant:
+    return INVARIANT_REGISTRY.get(
+        rule.invariant_id,
+        Invariant(
+            rule.invariant_id,
+            "Unregistered control-plane invariant.",
+            "high",
+            "control-plane audit policy table",
+            rule.action,
+            "unregistered invariant failed closed",
+            (),
+        ),
+    )
 
 
 def safe_repo_path(root: pathlib.Path, repo_path: str) -> pathlib.Path:
@@ -680,6 +805,8 @@ def obligation_payload(
         "policy_class": rule.policy_class,
         "policy_action": rule.action,
         "policy_decision_id": decision.ident,
+        "invariant_id": decision.invariant_id,
+        "invariant_message": decision.invariant_message,
         "specific_issue_required": True,
         "evidence": {
             "finding_id": str(finding.get("ident") or ""),
@@ -689,6 +816,7 @@ def obligation_payload(
             "summary": str(finding.get("summary") or ""),
             "remediation": str(finding.get("remediation") or ""),
             "blocks_stage": decision.blocks_stage,
+            "invariant_id": decision.invariant_id,
         },
         "required_resolution": [
             "inspect the control-plane audit finding before staging or model work",
@@ -743,6 +871,7 @@ def apply_policies(payload: dict[str, object], args: argparse.Namespace) -> tupl
         if not isinstance(finding, dict):
             continue
         rule = policy_for_finding(finding)
+        invariant = invariant_record(rule)
         decision = PolicyDecision(
             ident=decision_id(stage, finding, rule),
             finding_id=str(finding.get("ident") or ""),
@@ -753,6 +882,9 @@ def apply_policies(payload: dict[str, object], args: argparse.Namespace) -> tupl
             path=str(finding.get("path") or ""),
             blocks_stage=rule.blocks_stage,
             summary=str(finding.get("summary") or ""),
+            invariant_id=invariant.ident,
+            invariant_severity=invariant.severity,
+            invariant_message=invariant.operator_message,
         )
         if rule.auto_clean:
             if args.remediate_safe:
@@ -792,6 +924,21 @@ def decorate_payload(payload: dict[str, object], decisions: list[PolicyDecision]
     counts["blocker_count"] = blocker_count
     counts["obligation_written_count"] = sum(1 for item in decisions if item.status in {"obligation_written", "obligation_updated"})
     payload["policy_decisions"] = [asdict(item) for item in decisions]
+    payload["invariant_registry"] = [asdict(item) for item in INVARIANT_REGISTRY.values()]
+    payload["invariant_failures"] = [
+        {
+            "invariant_id": item.invariant_id,
+            "decision_id": item.ident,
+            "class": item.klass,
+            "severity": item.invariant_severity,
+            "action": item.action,
+            "status": item.status,
+            "path": item.path,
+            "message": item.invariant_message,
+        }
+        for item in decisions
+        if item.status not in {"cleaned", "already_clean"}
+    ]
     if counts.get("finding_count", 0) == 0:
         payload["status"] = "clean"
     elif blocker_count:
@@ -799,6 +946,54 @@ def decorate_payload(payload: dict[str, object], decisions: list[PolicyDecision]
     else:
         payload["status"] = "findings"
     return payload
+
+
+def payload_invariant_ids(payload: dict[str, object]) -> set[str]:
+    values: set[str] = set()
+    items = payload.get("invariant_failures", [])
+    if not isinstance(items, list):
+        return values
+    for item in items:
+        if isinstance(item, dict):
+            value = item.get("invariant_id")
+            if isinstance(value, str) and value:
+                values.add(value)
+    return values
+
+
+def load_snapshot(path: str) -> dict[str, object]:
+    if not path:
+        return {}
+    snapshot_path = pathlib.Path(path).resolve()
+    try:
+        data = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"control-plane audit: cannot read snapshot {snapshot_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SystemExit(f"control-plane audit: snapshot is not a JSON object: {snapshot_path}")
+    return data
+
+
+def add_snapshot_delta(payload: dict[str, object], before: dict[str, object] | None) -> None:
+    if not before:
+        return
+    before_counts = before.get("counts", {}) if isinstance(before.get("counts"), dict) else {}
+    after_counts = payload.get("counts", {}) if isinstance(payload.get("counts"), dict) else {}
+    before_ids = payload_invariant_ids(before)
+    after_ids = payload_invariant_ids(payload)
+    payload["snapshot_delta"] = {
+        "invariant_id": "KP-007",
+        "before_status": before.get("status"),
+        "after_status": payload.get("status"),
+        "before_finding_count": before_counts.get("finding_count", 0),
+        "after_finding_count": after_counts.get("finding_count", 0),
+        "before_blocker_count": before_counts.get("blocker_count", 0),
+        "after_blocker_count": after_counts.get("blocker_count", 0),
+        "cleaned_count": after_counts.get("cleaned_count", 0),
+        "resolved_invariants": sorted(before_ids - after_ids),
+        "new_invariants": sorted(after_ids - before_ids),
+        "remaining_invariants": sorted(before_ids & after_ids),
+    }
 
 
 def build_payload(args: argparse.Namespace) -> dict[str, object]:
@@ -867,6 +1062,7 @@ def print_text(payload: dict[str, object]) -> None:
             print(
                 "control_plane_audit: policy "
                 f"id={item.get('ident')} "
+                f"invariant={item.get('invariant_id')} "
                 f"class={item.get('klass')} "
                 f"policy={item.get('policy_class')} "
                 f"action={item.get('action')} "
@@ -876,6 +1072,33 @@ def print_text(payload: dict[str, object]) -> None:
             )
         if len(decisions) > 10:
             print(f"control_plane_audit: policy output truncated remaining={len(decisions) - 10}")
+    invariant_failures = payload.get("invariant_failures", [])
+    if isinstance(invariant_failures, list):
+        for item in invariant_failures[:10]:
+            if not isinstance(item, dict):
+                continue
+            print(
+                "control_plane_audit: invariant "
+                f"id={item.get('invariant_id')} "
+                f"status={item.get('status')} "
+                f"severity={item.get('severity')} "
+                f"action={item.get('action')} "
+                f"path={item.get('path')} "
+                f"message={item.get('message')}"
+            )
+        if len(invariant_failures) > 10:
+            print(f"control_plane_audit: invariant output truncated remaining={len(invariant_failures) - 10}")
+    delta = payload.get("snapshot_delta")
+    if isinstance(delta, dict):
+        print(
+            "control_plane_audit: snapshot_delta "
+            f"invariant={delta.get('invariant_id')} "
+            f"before_status={delta.get('before_status')} "
+            f"after_status={delta.get('after_status')} "
+            f"before_findings={delta.get('before_finding_count')} "
+            f"after_findings={delta.get('after_finding_count')} "
+            f"cleaned={delta.get('cleaned_count')}"
+        )
     findings = payload.get("findings", [])
     if isinstance(findings, list):
         for item in findings[:10]:
@@ -902,6 +1125,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--no-runtime", action="store_true", help="do not inventory runtime locks or obligation state")
     parser.add_argument("--max-log-lines", type=int, default=400, help="recent log lines to scan")
     parser.add_argument("--stage", default="manual", help="policy context for stable decision ids")
+    parser.add_argument("--snapshot-label", default="", help="optional label stored in the audit snapshot")
+    parser.add_argument("--before-snapshot", default="", help="prior audit snapshot used to compute a before/after delta")
+    parser.add_argument("--snapshot-out", default="", help="write the final decorated audit payload to this JSON file")
     parser.add_argument("--remediate-safe", action="store_true", help="clean only policy-listed safe untracked artifacts")
     parser.add_argument("--write-obligations", action="store_true", help="write blocker/actionable findings to the obligation root")
     parser.add_argument("--obligation-root", default="", help="automation obligation root; defaults to ROOT/runtime/upkeeper-obligations")
@@ -918,6 +1144,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    before_snapshot = load_snapshot(args.before_snapshot) if args.before_snapshot else {}
     payload = build_payload(args)
     decisions, changed = apply_policies(payload, args)
     if changed:
@@ -925,6 +1152,15 @@ def main(argv: list[str]) -> int:
         remaining, _ = apply_policies(payload, argparse.Namespace(**{**vars(args), "remediate_safe": False}))
         decisions.extend(remaining)
     payload = decorate_payload(payload, decisions)
+    payload["snapshot"] = {
+        "label": args.snapshot_label or args.stage,
+        "stage": args.stage,
+        "created_at": now_local(),
+        "invariant_id": "KP-007",
+    }
+    add_snapshot_delta(payload, before_snapshot)
+    if args.snapshot_out:
+        write_private_json(pathlib.Path(args.snapshot_out).resolve(), payload, force_private_parent=False)
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:

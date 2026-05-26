@@ -1005,6 +1005,9 @@ test loop does not spend cycles on known low-value or generated material.
   sensitivity, rights, and reuse metadata for OSINT and citation artifacts
 - [docs/negative-space-testing.md](docs/negative-space-testing.md):
   deterministic "must not happen" validation contracts for safety boundaries
+- [docs/kirk-invariants.md](docs/kirk-invariants.md): Kirk Protocol `KP-###`
+  invariant registry for control-plane audit findings, remediation policy, and
+  before/after snapshot boundaries
 - [docs/stress-corpus.md](docs/stress-corpus.md): local sample-repo
   stress-corpus contract and current coverage
 - [.github/workflows/ci.yml](.github/workflows/ci.yml): GitHub Actions
@@ -1033,7 +1036,8 @@ test loop does not spend cycles on known low-value or generated material.
   policy-listed untracked scratch artifacts such as literal root `$db` sidecars
   and Python bytecode caches. With `--write-obligations`, blocker and
   actionable findings are preserved under automation obligation custody before
-  staging or model work continues.
+  staging or model work continues. Audit output includes `KP-###` invariant ids
+  and can write before/after snapshots with `--snapshot-out`.
 - [tools/backlog_parallel_leases.py](tools/backlog_parallel_leases.py): local
   no-backend issue/target lease registry for future isolated parallel backlog
   workers

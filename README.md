@@ -1029,7 +1029,11 @@ test loop does not spend cycles on known low-value or generated material.
 - [tools/upkeeper_control_plane_audit.py](tools/upkeeper_control_plane_audit.py):
   local no-backend inventory for unexpected control-plane state such as tracked
   runtime evidence, root scratch artifacts, active locks, open obligations, and
-  recent hard loop markers
+  recent hard loop markers. With `--remediate-safe`, it removes only
+  policy-listed untracked scratch artifacts such as literal root `$db` sidecars
+  and Python bytecode caches. With `--write-obligations`, blocker and
+  actionable findings are preserved under automation obligation custody before
+  staging or model work continues.
 - [tools/backlog_parallel_leases.py](tools/backlog_parallel_leases.py): local
   no-backend issue/target lease registry for future isolated parallel backlog
   workers

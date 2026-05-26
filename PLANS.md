@@ -3,6 +3,39 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Control-Plane Audit Remediation
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #399 by adding a deterministic policy and remediation layer on
+  top of the control-plane audit inventory
+- clean only explicitly safe local scratch artifacts before staging, including
+  literal root `$db` sidecars and Python bytecode caches
+- fail closed or write automation obligations for local-evidence source
+  boundary violations and unsafe root artifacts
+
+Constraints:
+- no backend Codex validation and no live issue work
+- never delete or rewrite tracked source from the audit tool
+- keep the clean no-op path local, fast, and pre-model
+
+Files likely touched:
+- `tools/upkeeper_control_plane_audit.py`
+- `tests/control_plane_audit_test.bash`
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- README/operator docs and release notes
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_control_plane_audit.py`
+- `bash tests/control_plane_audit_test.bash`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
 ## Control-Plane Audit Inventory
 
 Status: completed locally; pending PR/CI

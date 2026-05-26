@@ -1459,6 +1459,8 @@ LOG
 2026-05-25T18:53:31 █ PAGE [INFO] Upkeeper: live_output.false_positive_error_echo classification=quoted_backend_source_fixture primary: payload='2026-05-25T18:40:10 [ERROR] Upkeeper: primary: rg -n "batch_validation|unit_tests|clean queue|expected 25|for test_script in\\ tests/*.bash|tests failed|local_valid|batch_validation" Upkeeper'
 2026-05-25T18:53:31 █ PAGE [ERROR] Upkeeper: primary: if [[ "$payload" == *"rg -n "*batch_validation*unit_tests*"expected 25"*"for test_script in"*"tests/*.bash"*"tests failed"*local_valid*batch_validation*Upkeeper" ]]; then
 2026-05-25T18:54:36 █ PAGE [INFO] Upkeeper: live_output.false_positive_error_echo classification=quoted_backend_source_fixture primary: *'[WARN]'*|*'[ERROR]'*|*'[INFO]'*|*'PAGE'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*)
+2026-05-24T18:22:11 █ PAGE [ERROR] Upkeeper: primary: 2026-05-21T12:00:01 ^V --FYI-- [WARN] cycle=prior-cycle run_hash=abc123 previous_run.anomaly_summary scan_minutes=240 listed_total=1 action=force_upkeeper_self_review
+2026-05-24T18:22:11 █ PAGE [ERROR] Upkeeper: primary: 2026-05-21T12:00:02 ^V PAGE [ERROR] cycle=prior-cycle run_hash=abc123 unexpected.wrapper.failure reason=fixture
 LOG
   tools/upkeeper_anomaly_custody.py \
     --root "$ROOT_DIR" \

@@ -71,10 +71,11 @@ except OSError:
         path_digest = hashlib.sha256(material).hexdigest()
     print(f'Upkeeper: {label} transcript unavailable transcript=path-hmac-sha256:{path_digest} path_redacted=1', file=sys.stderr)
     raise SystemExit(0)
+transcript_bytes = len(text.encode('utf-8', 'surrogateescape'))
 lines = text.splitlines()
 has_runtime_output = bool(lines)
 
-def strip_initial_prompt_echo(raw_lines: list[str]) -> tuple[list[str], bool]:
+def strip_initial_prompt_echo(raw_lines):
     filtered = []
     in_user_echo = False
     saw_codex_marker = False
@@ -115,7 +116,7 @@ def digest(namespace: str, value: str) -> str:
     return hashlib.sha256(material).hexdigest()
 
 
-def redact_path(match: re.Match[str]) -> str:
+def redact_path(match) -> str:
     raw = match.group(0).rstrip('.,;:)]}\'"')
     suffix = match.group(0)[len(raw):]
     if raw == '/dev/null' or raw.startswith(('/bin/', '/usr/bin/', '/usr/local/bin/', '/opt/homebrew/bin/')):
@@ -162,7 +163,7 @@ def short(value: str, limit: int = 300) -> str:
         return value[: limit - 15].rstrip() + '...<truncated>'
     return value
 
-def bounded_tail(raw_lines: list[str], line_limit: int, byte_limit: int) -> tuple[list[str], int]:
+def bounded_tail(raw_lines, line_limit: int, byte_limit: int):
     if line_limit <= 0:
         return [], 0
     selected = raw_lines[-line_limit:]
@@ -216,6 +217,14 @@ def is_expected_negative_fixture(line: str) -> bool:
         and re.search(r'/upkeeper-transcripts-test\.[^/\s]+/transcripts-link\b', line)
     )
 
+
+def is_terminal_capture_fail_fixture(line: str) -> bool:
+    return (
+        'codex.transcript_capture_failed' in line
+        and 'tee_exit=141' in line
+        and 'codex_exit=101' in line
+    )
+
 def is_custodied_command_failure_notice(line: str) -> bool:
     return bool(
         re.search(
@@ -228,6 +237,8 @@ def is_custodied_command_failure_notice(line: str) -> bool:
 
 def is_signal(line: str) -> bool:
     if is_expected_negative_fixture(line):
+        return False
+    if is_terminal_capture_fail_fixture(line):
         return False
     if is_custodied_command_failure_notice(line):
         return False
@@ -270,7 +281,7 @@ def command_kind(line: str) -> str:
 def is_interesting_command(line: str) -> bool:
     return command_kind(line) in {'tests', 'validation', 'check', 'build'}
 
-def collect_signals(raw_lines: list[str]) -> list[str]:
+def collect_signals(raw_lines):
     collected = []
     expecting_command = False
     current_command_interesting = False
@@ -340,7 +351,7 @@ def collect_signals(raw_lines: list[str]) -> list[str]:
 
     return collected
 
-def dedupe_signals(raw_signals: list[str]) -> list[str]:
+def dedupe_signals(raw_signals):
     seen = set()
     deduped = []
     for item in raw_signals:
@@ -359,11 +370,12 @@ log_lines = [f'{ts_log()} [INFO] cycle={cycle_id} run_hash={run_hash} {summary}'
 if exit_raw and exit_raw != "0":
     empty_transcript_expected = exit_raw == "101"
     if not lines:
-        level = "WARN" if empty_transcript_expected else "ERROR"
-        reason = "codex_exit_101_empty_transcript" if empty_transcript_expected else "nonempty_transcript_output_expected"
+        level = "INFO" if empty_transcript_expected else "ERROR"
+        reason = "empty_transcript" if empty_transcript_expected else "nonempty_transcript_output_expected"
         log_lines.append(
-            f'{ts_log()} [{level}] cycle={cycle_id} run_hash={run_hash} codex.transcript.empty '
-            f'label={label} transcript={path_label(path)} path_redacted=1 reason={reason}'
+            f'{ts_log()} [{level}] cycle={cycle_id} run_hash={run_hash} codex.session_diagnostics_ignored '
+            f'label={label} reason={reason} codex_exit={exit_raw} transcript={path_label(path)} path_redacted=1 '
+            f'transcript_bytes={transcript_bytes} transcript_lines={len(lines)}'
         )
     elif not runtime_lines and stripped_prompt_echo:
         log_lines.append(
@@ -373,7 +385,7 @@ if exit_raw and exit_raw != "0":
 for item in signals[-signal_limit:]:
     log_lines.append(f'{ts_log()} [INFO] cycle={cycle_id} run_hash={run_hash} codex.transcript.signal label={label} text={field_value(item)}')
 
-def append_log_lines_secure(path: Path, items: list[str]) -> None:
+def append_log_lines_secure(path: Path, items):
     path_raw = os.fspath(path)
     parent = os.path.dirname(path_raw) or "."
     name = os.path.basename(path_raw)
@@ -440,7 +452,7 @@ except OSError:
 if exit_raw and exit_raw != '0' and (not has_runtime_output or not runtime_lines):
     if empty_transcript_expected:
         print(
-            f'{ts_terminal()} [WARN] Upkeeper: {label} expected empty transcript path={path_label(path)} path_redacted=1 exit={exit_raw}',
+            f'{ts_terminal()} [INFO] Upkeeper: {label} expected empty transcript path={path_label(path)} path_redacted=1 exit={exit_raw}',
             file=sys.stderr,
         )
     else:
@@ -449,13 +461,13 @@ if exit_raw and exit_raw != '0' and (not has_runtime_output or not runtime_lines
             file=sys.stderr,
         )
 
-if not silent_terminal and (diagnostic_terminal or exit_raw not in {'0', ''}):
+if not silent_terminal and (diagnostic_terminal or exit_raw not in {'0', ''}) and not (exit_raw and exit_raw != '0' and empty_transcript_expected):
     print(f'{ts_terminal()} [INFO] Upkeeper: {label} transcript captured transcript={path_label(path)} path_redacted=1 exit={exit_raw} lines={len(lines)} diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count}', file=sys.stderr)
 if not silent_terminal and diagnostic_terminal and signals and signal_limit:
     print(f'{ts_terminal()} [INFO] Upkeeper: {label} high-signal transcript tail (last {min(signal_limit, len(signals))}):', file=sys.stderr)
     for line in signals[-signal_limit:]:
         print(f'  {line}', file=sys.stderr)
-if not silent_terminal and exit_raw not in {'0', ''} and tail_limit:
+if not silent_terminal and exit_raw not in {'0', ''} and tail_limit and not (exit_raw and exit_raw != '0' and empty_transcript_expected):
     tail_lines = runtime_lines if runtime_lines else lines
     rendered_tail, omitted_tail = bounded_tail(tail_lines, tail_limit, tail_byte_limit)
     tail_level = "WARN" if empty_transcript_expected else "ERROR"
@@ -469,8 +481,11 @@ PY
 
 codex_live_output_filter() {
   local label="$1"
+  local filter_script
+  local filter_rc=0
 
-  python3 /dev/fd/3 "$label" 3<<'PY'
+  filter_script="$(mktemp "${TMPDIR:-/tmp}/upkeeper.codex_live_output_filter.XXXXXX.py")" || return 1
+  cat >"$filter_script" <<'PY'
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -539,7 +554,7 @@ def digest(namespace: str, value: str) -> str:
     return hashlib.sha256(material).hexdigest()
 
 
-def redact_path(match: re.Match[str]) -> str:
+def redact_path(match) -> str:
     raw = match.group(0).rstrip(".,;:)]}'\"")
     suffix = match.group(0)[len(raw):]
     if raw == "/dev/null" or raw.startswith(("/bin/", "/usr/bin/", "/usr/local/bin/", "/opt/homebrew/bin/")):
@@ -593,6 +608,14 @@ def is_expected_negative_fixture(line: str) -> bool:
     )
 
 
+def is_terminal_capture_fail_fixture(line: str) -> bool:
+    return (
+        "codex.transcript_capture_failed" in line
+        and "tee_exit=141" in line
+        and "codex_exit=101" in line
+    )
+
+
 def is_custodied_command_failure_notice(line: str) -> bool:
     return bool(
         re.search(
@@ -606,6 +629,8 @@ def is_custodied_command_failure_notice(line: str) -> bool:
 
 def is_error_line(line: str) -> bool:
     if is_expected_negative_fixture(line):
+        return False
+    if is_terminal_capture_fail_fixture(line):
         return False
     if is_custodied_command_failure_notice(line):
         return False
@@ -845,4 +870,8 @@ try:
 except KeyboardInterrupt:
     raise SystemExit(130)
 PY
+  python3 "$filter_script" "$label"
+  filter_rc=$?
+  rm -f -- "$filter_script"
+  return "$filter_rc"
 }

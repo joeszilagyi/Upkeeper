@@ -346,6 +346,12 @@ UPKEEPER_LOG_LATTICE_UNAVAILABLE_SAFE_KEYS = UPKEEPER_LOG_SOURCE_SAFE_KEYS | {
     "required",
     "action",
     "detail_summary",
+    "reason",
+    "detail_status",
+    "first_failed_check",
+    "owner_issue",
+    "owner_contract",
+    "replacement_evidence",
     "format",
     "db_hmac",
 }
@@ -1950,6 +1956,21 @@ def summarize_lattice_unavailable_payload(payload: dict[str, Any], raw_line: str
     detail = payload.get("detail")
     if isinstance(detail, str) and detail:
         summary["detail_sha256"] = sha256_text(detail)
+    for key in (
+        "required",
+        "action",
+        "detail_summary",
+        "detail_status",
+        "first_failed_check",
+        "reason",
+        "owner_issue",
+        "owner_contract",
+        "replacement_evidence",
+        "format",
+    ):
+        value = payload.get(key)
+        if has_meaningful_value(value):
+            summary[key] = value
     return summary
 
 

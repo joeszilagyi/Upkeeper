@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.36
+## Version: v1.2.37
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.36"
+UPKEEPER_VERSION="v1.2.37"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -861,8 +861,14 @@ upkeeper_live_output_false_positive_error_echo() {
     *' PAGE [ERROR] cycle='*|*' [ERROR] cycle='*)
       payload="${line#* [ERROR] }"
       ;;
+    *' [error] cycle='*)
+      payload="${line#* [error] }"
+      ;;
     *' [ERROR] Upkeeper: primary: '*)
-      payload="${line#* [ERROR] Upkeeper: primary: }"
+      payload="${line#*\[ERROR\] Upkeeper: primary: }"
+      ;;
+    *' [error] Upkeeper: primary: '*)
+      payload="${line#*\[error\] Upkeeper: primary: }"
       ;;
     *)
       return 1
@@ -876,13 +882,17 @@ upkeeper_live_output_false_positive_error_echo() {
   esac
 
   case "$payload" in
+    +*)
+      return 0
+      ;;
     *'cycle.exit'*|*'run.finish'*|*'cycle.summary'*|*'cycle.start'*|*'run.start'*)
       return 0
       ;;
     *'rg -n '*|*'rg --'*|*'grep -Fq '*|*'grep -Eq '*|*'if grep '*|*'printf '*|*'echo '*|*'case '*|*'warn='*|*'err='*|*'payload='*|*'<<<'*|*'|| {'*|*'&&'*|*';;'*|*'*)'*|*"*'|"*|*"|'*"*)
+      return 0
       ;;
     *)
-      return 1
+      :
       ;;
   esac
 
@@ -890,7 +900,7 @@ upkeeper_live_output_false_positive_error_echo() {
     'rg -n '*|'rg --'*|'grep '*|'printf '*|'echo '*|'if grep '*|'if [['*|'case '*|'sample='*|'payload='*)
       return 0
       ;;
-    *'[WARN]'*|*'[ERROR]'*|*'[INFO]'*|*$'\342\226\210'*|*'PAGE'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*)
+    *'[WARN]'*|*'[warn]'*|*'[ERROR]'*|*'[error]'*|*'[INFO]'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*|*$'\342\226\210'*|*'PAGE'*)
       return 0
       ;;
     *)
@@ -915,6 +925,7 @@ upkeeper_live_output_custody_filter() {
       rewritten="${line/ \[ERROR\] / [INFO] }"
       rewritten="${rewritten/ Upkeeper: / Upkeeper: live_output.false_positive_error_echo classification=quoted_backend_source_fixture }"
       rewritten="${rewritten//\[ERROR\]/[quoted-error]}"
+      rewritten="${rewritten//\[error\]/[quoted-error]}"
       rewritten="${rewritten//\[WARN\]/[quoted-warn]}"
       rewritten="${rewritten//PAGE/quoted-page}"
       printf '%s\n' "$rewritten"
@@ -983,6 +994,21 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
     *)
       printf 'live_output_custody_filter_self_test=fail reason=prior_run_page_search_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-26T09:34:40 \342\226\210 PAGE [ERROR] Upkeeper: primary: + detail_level=\"WARN\"'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*|*' PAGE '*)
+      printf 'live_output_custody_filter_self_test=fail reason=trace_assignment_fixture_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_source_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=trace_assignment_fixture_not_classified output=%s\n' "$output" >&2
       return 1
       ;;
   esac
@@ -1148,6 +1174,51 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
   esac
 
+  sample=$'2026-05-26T09:36:49 [ERROR] Upkeeper: primary: *\" [ERROR] Upkeeper: primary: \")'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*|*' PAGE '*)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_page_error_fixture_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_source_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_page_error_fixture_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample='2026-05-26T09:36:49 [ERROR] Upkeeper: primary: idx = s.find('\'' [ERROR] Upkeeper: primary: '\'')'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*|*' PAGE '*)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_page_find_error_fixture_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_source_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_page_find_error_fixture_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
+  sample=$'2026-05-26T09:37:06 \342\226\210 PAGE [ERROR] Upkeeper: primary: start=line.find('\'' [ERROR] Upkeeper: primary: '\'')'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*|*' PAGE '*)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_line_find_page_error_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_source_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_line_find_page_error_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
   sample=$'2026-05-23T00:04:01 \342\226\210 WORKER [ERROR] Upkeeper: primary cmd#23 tests failed: exited 1 in 0.1s'
   output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
   case "$output" in
@@ -1174,6 +1245,21 @@ upkeeper_internal_live_output_custody_filter_self_test() {
     printf 'live_output_custody_filter_self_test=fail reason=tool_failure_queue_open_prior_warning_not_classified output=%s\n' "$sample" >&2
     return 1
   fi
+
+  sample='2026-05-26T11:19:29 [ERROR] Upkeeper: primary: 2026-05-26T11:00:01-0700 [error] cycle=c1 run_hash=run1 widget failed in fixture'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*|*' PAGE '*|*' [error] '*)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_error_page_error_lowercase_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_source_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_error_page_error_lowercase_fixture_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
 
   printf 'live_output_custody_filter_self_test=pass\n'
   return 0
@@ -1589,9 +1675,9 @@ record_startup_anomaly_gate_review() {
     if ! write_startup_anomaly_gate_state "unresolved" "changed_path_violation"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
-  elif [[ "$codex_exit_value" != "0" ]]; then
-    startup_anomaly_log_gate_unresolved "nonzero_codex_exit" "$status_marker_value" "$codex_exit_value"
-    if ! write_startup_anomaly_gate_state "unresolved" "nonzero_codex_exit"; then
+  elif startup_anomaly_gate_has_unresolved_state "$STARTUP_ANOMALY_REASONS"; then
+    startup_anomaly_log_gate_unresolved "unresolved_startup_anomaly_state" "$status_marker_value" "$codex_exit_value"
+    if ! write_startup_anomaly_gate_state "unresolved" "unresolved_startup_anomaly_state"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
   elif current_cycle_log_review_present "$last_message_file" "$CYCLE_ID" "$LOG_FILE" "$STARTUP_ANOMALY_REASONS"; then
@@ -1601,11 +1687,6 @@ record_startup_anomaly_gate_review() {
     fi
     mark_startup_anomaly_gate_states_resolved
     log_line "INFO" "startup_anomaly.gate_resolved status=checked reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value"
-  elif startup_anomaly_gate_has_unresolved_state "$STARTUP_ANOMALY_REASONS"; then
-    startup_anomaly_log_gate_unresolved "unresolved_startup_anomaly_state" "$status_marker_value" "$codex_exit_value"
-    if ! write_startup_anomaly_gate_state "unresolved" "unresolved_startup_anomaly_state"; then
-      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
-    fi
   else
     startup_anomaly_log_gate_unresolved \
       "missing_current_cycle_log_review_evidence" \

@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-26: v1.2.37 changes:
+	1. Live output custody now recognizes additional quoted backend-source fixtures, including lower-case error markers, trace assignment snippets, and prior-run search snippets, so repair prompts do not turn their own diagnostic text into fresh PAGE obligations.
+	2. Startup anomaly gate review now preserves unresolved local startup-anomaly state before considering Codex exit status, reducing misleading gate resolution after backend failures.
+	3. Operator-facing version metadata is synchronized across the wrapper header, `UPKEEPER_VERSION`, and the operator guide snapshot.
+
 2026-05-26: docs-only fast path:
 	1. Added `tools/docs_only_fast_path.sh --validate`, a local README/docs/prompt-only classifier and validation path that rejects mixed source changes before running public-docs, smoke, and diff checks.
 	2. The helper deliberately contains no backend Codex launch, GitHub CLI call, PR polling, `curl`, `wget`, or `git fetch`, so small docs edits can be proved locally before any PR/network bookkeeping.

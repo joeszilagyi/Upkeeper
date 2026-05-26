@@ -229,7 +229,12 @@ Important:
     obligations for the same blowup. Quoted backend shell/test fixture snippets that contain
     embedded `[WARN]`, `[ERROR]`, `PAGE`, diagnostic search commands,
     control-plane log text, or quoted source-code fixture lines are treated as
-    transcript content, not as new wrapper failures. Immediately after the
+    transcript content, not as new wrapper failures; lines already classified as
+    `quoted_backend_source_fixture` are also treated as settled quote evidence.
+    Backlog-temp negative-test lines from transcript and pre-contact fixtures
+    are accepted only when the matching test-success context appears nearby.
+    Source-cycle signals with an existing open or resolved owner obligation are
+    coalesced under that owner instead of becoming a new incident rollup. Immediately after the
     backlog branch is checked out, before PR, merge, quota, or issue-selection
     gates, backlog also reconciles open current-root obligations deterministically: records
     with matching root, kind, reason, target, issue, and stable fingerprint are

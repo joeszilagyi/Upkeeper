@@ -294,9 +294,23 @@ def backend_context_overflow_text(normalized: str) -> bool:
 
 
 def expected_fixture(lines: list[tuple[int, str]], index: int, line: str) -> bool:
+    lower = line.lower()
+    if "live_output.false_positive_error_echo classification=quoted_backend_source_fixture" in lower:
+        return True
     if (
-        "transcript directory is not private /tmp/upkeeper-transcripts-test." in line
+        "transcript directory is not private" in lower
+        and "upkeeper-transcripts-test." in lower
         and context_has(lines, index, "transcript_artifacts_test: ok", radius=20)
+    ):
+        return True
+    if (
+        "transcript.prune_blocked reason=missing_ownership_marker" in lower
+        and context_has(lines, index, "transcript_artifacts_test: ok", radius=20)
+    ):
+        return True
+    if (
+        "pre-contact backup prerequisite missing" in lower
+        and context_has(lines, index, "precontact_backup_test: ok", radius=80)
     ):
         return True
     if (
@@ -343,6 +357,8 @@ def model_emitted_fixture_output(normalized: str) -> bool:
         return True
 
     shell_fixture_tokens = (
+        "rg -n ",
+        "rg --",
         "printf ",
         "printf '",
         'printf "',
@@ -353,6 +369,7 @@ def model_emitted_fixture_output(normalized: str) -> bool:
         "grep -fq ",
         "grep -eq ",
         "if grep ",
+        "if [[",
         "case ",
         "cat >",
         "awk ",
@@ -360,6 +377,7 @@ def model_emitted_fixture_output(normalized: str) -> bool:
         "warn=",
         "err=",
         "payload=",
+        "sample=",
         "$stamp",
         "$local_stamp",
         "$tmp",
@@ -379,12 +397,15 @@ def model_emitted_fixture_output(normalized: str) -> bool:
     embedded_log_tokens = (
         "[warn]",
         "[error]",
+        "[quoted-warn]",
+        "[quoted-error]",
         "[info]",
         "(warn|error)",
         "warn|error",
         "warn",
         "error",
         " page ",
+        " quoted-page ",
         "startup_anomaly",
         "previous_run.anomaly",
         " cycle=",
@@ -395,7 +416,7 @@ def model_emitted_fixture_output(normalized: str) -> bool:
     )
     if "warn=" in payload or "err=" in payload:
         return True
-    if payload.startswith(("grep ", "printf ", "log_line ", "log_line_parts ", "echo ", "if grep ", "case ")):
+    if payload.startswith(("rg -n ", "rg --", "grep ", "printf ", "log_line ", "log_line_parts ", "echo ", "if grep ", "if [[", "case ", "sample=", "payload=")):
         return True
     if any(token in payload for token in shell_fixture_tokens) and any(
         token in payload for token in embedded_log_tokens
@@ -857,7 +878,7 @@ def terminal_failure_companion(finding: Finding) -> bool:
 
 
 def terminal_failure_owner(record: dict, finding: Finding, root: pathlib.Path) -> bool:
-    if record.get("state") != "open":
+    if record.get("state") not in {"open", "resolved"}:
         return False
     data = record.get("data")
     if not isinstance(data, dict):
@@ -868,12 +889,18 @@ def terminal_failure_owner(record: dict, finding: Finding, root: pathlib.Path) -
     kind = str(data.get("kind") or "")
     reason = str(data.get("reason") or "")
     if kind not in {
+        "blocked",
+        "local_validation_failure",
+        "lattice_unavailable",
         "missing_status_marker",
         "wrapper_execution_failure",
         "backend_context_overflow",
         "codex_exec_empty_transcript",
         "turn_aborted_without_marker",
     } and reason not in {
+        "BLOCKED",
+        "BATCH_VALIDATION_FAILED",
+        "LATTICE_UNAVAILABLE",
         "MISSING_STATUS_MARKER",
         "UPKEEPER_CHILD_EXIT_NONZERO",
         "BACKEND_CONTEXT_LENGTH_EXCEEDED",
@@ -888,6 +915,19 @@ def terminal_failure_owner(record: dict, finding: Finding, root: pathlib.Path) -
     if finding.run_hash and source_run_hash == finding.run_hash:
         return True
     return False
+
+
+def source_cycle_owner_record(
+    finding: Finding,
+    obligation_records: dict[str, dict],
+    root: pathlib.Path,
+) -> dict | None:
+    if not (finding.cycle_id or finding.run_hash):
+        return None
+    for record in obligation_records.values():
+        if terminal_failure_owner(record, finding, root):
+            return record
+    return None
 
 
 def terminal_failure_owner_record(
@@ -960,11 +1000,15 @@ def audit(args: argparse.Namespace) -> int:
         if finding.status == "expected_fixture":
             expected_count += 1
             continue
-        terminal_owner = terminal_failure_owner_record(finding, obligation_records, root)
+        terminal_owner = source_cycle_owner_record(finding, obligation_records, root)
+        if terminal_owner is None:
+            terminal_owner = terminal_failure_owner_record(finding, obligation_records, root)
         if terminal_owner is not None:
-            if args.write_obligations:
+            if args.write_obligations and terminal_owner.get("state") == "open":
                 update_terminal_failure_owner(pathlib.Path(terminal_owner["path"]), finding, loop_log)
                 updated_obligations += 1
+            elif terminal_owner.get("state") == "resolved":
+                resolved_count += 1
             coalesced_count += 1
             continue
         if finding.ident in seen_ids:

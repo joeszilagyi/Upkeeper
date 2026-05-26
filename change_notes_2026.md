@@ -24,6 +24,11 @@ Version numbering note:
 	2. ChimneySweep tests ignore ambient `UPKEEPER_OBLIGATION_DIR` by default and use an explicit fixture override when a test intentionally exercises obligation repair.
 	3. Live output custody now sanitizes quoted diagnostic search/source snippets after reclassifying them, preventing embedded `[ERROR]` or `PAGE` text from creating fresh anomaly obligations while a repair prompt inspects prior failures.
 
+2026-05-25: anomaly custody fixture suppression:
+	1. Prior-run anomaly custody now treats `quoted_backend_source_fixture` lines as already-classified quote output, so old diagnostic snippets containing `[ERROR]`, `[WARN]`, or `PAGE` cannot reopen fresh repair obligations after the live-output filter has sanitized them.
+	2. Backlog-temp transcript and pre-contact negative-test lines are recognized as expected fixture output when their matching local tests pass, preventing successful validation from creating new prior-run bugs.
+	3. Source-cycle evidence is now coalesced under an existing open or resolved owner obligation for the same cycle/run hash, so already-fixed blocked cycles do not reappear as new incident rollups.
+
 2026-05-24: source rights metadata model:
 	1. Added `docs/source-rights-metadata.md` as the tracked source sensitivity, rights, and reuse metadata model for OSINT and citation artifacts.
 	2. Defined public, local-private, secret-adjacent, credential-bearing, PII-bearing, paid-access, license-restricted, prompt-safe, prompt-unsafe, export-safe, and export-unsafe labels.

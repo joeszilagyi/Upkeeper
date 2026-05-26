@@ -338,7 +338,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   title and number also reconcile as one local owner even when their evidence
   fingerprints differ. Batch validation unit tests run with isolated
   obligation and automation-ledger roots, so local test fixtures cannot consume
-  the live backlog obligation queue.
+  the live backlog obligation queue. Prior-run anomaly custody preserves the
+  same boundary: quote lines already classified as `quoted_backend_source_fixture`
+  and successful backlog-temp negative-test fixture output do not become fresh
+  obligations, and source-cycle signals with an existing open or resolved owner
+  obligation are coalesced under that owner.
 - The parallel-worker lease registry is a local no-backend compatibility
   surface for future isolated backlog workers. `tools/backlog_parallel_leases.py`
   stores leases under the selected backlog state root, rejects active duplicate

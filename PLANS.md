@@ -3,6 +3,43 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Anomaly Custody Fixture Suppression
+
+Status: completed locally
+
+Goal:
+- stop prior-run anomaly custody from reopening quoted backend fixture text that
+  Upkeeper already reclassified as `quoted_backend_source_fixture`
+- treat backlog-temp negative-test lines from transcript and pre-contact tests
+  as expected fixture output when their matching tests pass
+- recognize already-resolved source-cycle owner obligations so old blocked
+  cycles do not reappear as fresh incident rollups
+- close the GitHub bugs created by the over-eager classifier once the
+  deterministic rule and validation are in place
+
+Constraints:
+- no backend Codex validation
+- do not hide live `PAGE` or `[ERROR]` lines without deterministic fixture,
+  quote, or resolved-owner evidence
+- preserve the resolved local obligation records for auditability
+
+Files likely touched:
+- `tools/upkeeper_anomaly_custody.py`
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- operator docs and release notes
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+- current loop-log anomaly-custody replay reports `actionable=0`
+
+Result:
+- current loop-log replay produced no actionable findings from the interrupted
+  fixture/quote residue
+
 ## Batch Validation State Isolation
 
 Status: completed locally

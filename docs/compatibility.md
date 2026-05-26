@@ -145,6 +145,12 @@ Future changes should preserve this operator-visible surface as far as possible:
   records expired-reset stale quota evidence as a local `stale_quota_evidence`
   automation obligation before continuing, and resolves that obligation when
   current non-stale quota evidence appears.
+- Backlog quota hibernation is local and pre-model. While sleeping for a quota
+  reset, it checks only local git branch/upstream refs; if the checked-out
+  backlog branch's upstream ref disappears after another worktree merges or
+  deletes the PR branch, hibernation exits cleanly with
+  `action=exit_for_merged_or_deleted_branch` instead of holding a retired branch
+  until quota reset.
 - `ChimneySweep` owns pre-model issue ranking for repair automation: clean
   actionable queues exit 25, security issues outrank data-integrity issues,
   data-integrity issues outrank the general queue, and the selected issue is

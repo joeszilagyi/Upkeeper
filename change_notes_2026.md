@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-26: backlog quota hibernation retired-branch exit:
+	1. Backlog quota hibernation now checks the current branch's local upstream ref before and during long sleeps.
+	2. If another worktree merges or deletes the active backlog PR branch while a launcher is hibernating, the launcher exits cleanly with `action=exit_for_merged_or_deleted_branch` instead of holding the retired branch until quota reset.
+	3. The check is local-only and does not poll GitHub, fetch, or launch backend Codex during quota hibernation.
+
 2026-05-26: v1.2.37 changes:
 	1. Live output custody now recognizes additional quoted backend-source fixtures, including lower-case error markers, trace assignment snippets, and prior-run search snippets, so repair prompts do not turn their own diagnostic text into fresh PAGE obligations.
 	2. Startup anomaly gate review now preserves unresolved local startup-anomaly state before considering Codex exit status, reducing misleading gate resolution after backend failures.

@@ -3,6 +3,42 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Quota Hibernation Retired-Branch Exit
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- stop backlog quota hibernation from holding a local branch after its upstream
+  backlog PR branch has been merged or deleted by another worktree
+- preserve the no-backend/no-network hibernation path by checking only local git
+  branch/upstream refs
+- print a plain operator reason and exit cleanly so the checkout can be synced
+  or cleaned instead of sleeping until quota reset
+
+Constraints:
+- no backend Codex validation
+- do not poll GitHub or fetch while hibernating
+- do not change normal quota block handling for active branches
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh`
+- operator docs, compatibility notes, and release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+Result:
+- fake-clock hibernation still sleeps until the reset grace on active branches
+- a backlog branch with a configured but missing local upstream ref exits
+  hibernation before sleeping and prints
+  `action=exit_for_merged_or_deleted_branch`
+
 ## Docs-Only Fast Path
 
 Status: completed locally; pending PR/CI

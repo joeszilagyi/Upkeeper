@@ -438,7 +438,7 @@ except OSError:
     pass
 
 if exit_raw and exit_raw != '0' and (not has_runtime_output or not runtime_lines):
-    if exit_raw == "101":
+    if empty_transcript_expected:
         print(
             f'{ts_terminal()} [WARN] Upkeeper: {label} expected empty transcript path={path_label(path)} path_redacted=1 exit={exit_raw}',
             file=sys.stderr,
@@ -458,7 +458,8 @@ if not silent_terminal and diagnostic_terminal and signals and signal_limit:
 if not silent_terminal and exit_raw not in {'0', ''} and tail_limit:
     tail_lines = runtime_lines if runtime_lines else lines
     rendered_tail, omitted_tail = bounded_tail(tail_lines, tail_limit, tail_byte_limit)
-    print(f'{ts_terminal()} [ERROR] Upkeeper: {label} failure transcript tail (last {len(rendered_tail)} of {min(tail_limit, len(tail_lines))} candidate lines; bounded):', file=sys.stderr)
+    tail_level = "WARN" if empty_transcript_expected else "ERROR"
+    print(f'{ts_terminal()} [{tail_level}] Upkeeper: {label} failure transcript tail (last {len(rendered_tail)} of {min(tail_limit, len(tail_lines))} candidate lines; bounded):', file=sys.stderr)
     if omitted_tail:
         print(f'  ...<{omitted_tail} earlier tail lines omitted by live-output byte cap>', file=sys.stderr)
     for line in rendered_tail:

@@ -930,7 +930,9 @@ check_backlog_launcher_contract() {
     fi
     [[ "$status" == "44" ]]
   ' bash "$ROOT_DIR" || fail "backlog merge path does not stop after batch validation failure"
-  grep -Fq 'rm -f -- "$ROOT_DIR/\$db"' orchestration/backlog.sh || fail "backlog launcher does not clean literal db scratch artifacts before staging"
+  grep -Fq 'run_control_plane_pre_staging_audit' orchestration/backlog.sh || fail "backlog launcher does not run the control-plane audit before staging"
+  grep -Fq -- '--remediate-safe' orchestration/backlog.sh || fail "backlog launcher does not use safe control-plane remediation before staging"
+  grep -Fq -- '--fail-on blockers' orchestration/backlog.sh || fail "backlog launcher does not fail closed on control-plane staging blockers"
   python3 - <<'PY' || fail "backlog autoshelve no longer runs before gh/jq/rg dependency gates"
 from pathlib import Path
 
@@ -1707,6 +1709,18 @@ check_control_plane_audit_contract() {
     fail "control-plane audit does not classify tracked runtime artifacts"
   grep -Fq "recent_nonzero_cycle_exit" tools/upkeeper_control_plane_audit.py ||
     fail "control-plane audit does not inventory recent loop outcome markers"
+  grep -Fq "POLICY_TABLE" tools/upkeeper_control_plane_audit.py ||
+    fail "control-plane audit does not define a policy table"
+  grep -Fq "known_safe_cleanup" tools/upkeeper_control_plane_audit.py ||
+    fail "control-plane audit does not classify known safe cleanup"
+  grep -Fq "unsafe_unknown" tools/upkeeper_control_plane_audit.py ||
+    fail "control-plane audit does not classify unsafe unknown findings"
+  grep -Fq "policy_decisions" tools/upkeeper_control_plane_audit.py ||
+    fail "control-plane audit does not emit policy decisions"
+  grep -Fq -- "--write-obligations" tools/upkeeper_control_plane_audit.py ||
+    fail "control-plane audit does not write obligations for policy blockers"
+  grep -Fq "run_control_plane_pre_staging_audit" orchestration/backlog.sh ||
+    fail "backlog staging path is not guarded by control-plane policy"
   grep -Fq "tools/upkeeper_control_plane_audit.py" README.md docs/scripts/upkeeper.md docs/negative-space-testing.md ||
     fail "public docs missing control-plane audit command"
   python3 -m py_compile tools/upkeeper_control_plane_audit.py

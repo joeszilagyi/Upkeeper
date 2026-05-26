@@ -11,6 +11,11 @@ Version numbering note:
 	2. The audit emits stable JSON or concise operator text for tracked local-evidence artifacts, root scratch files such as `$db`, active locks, open obligations, optional deferred issue records, and recent hard loop markers.
 	3. Quick validation now covers clean inventory, tracked `$db`, tracked runtime/log/transcript/postmortem/manifest artifacts, untracked root scratch, open obligation state, and recent nonzero/PAGE log markers.
 
+2026-05-26: control-plane audit remediation:
+	1. The control-plane audit now applies a stable policy table with machine-readable decision ids, policy classes, actions, blocker status, and optional obligation output.
+	2. `--remediate-safe` cleans only explicitly safe untracked local artifacts, currently root scratch files such as literal `$db` sidecars and Python bytecode caches.
+	3. Backlog runs the audit before staging with safe remediation and blocker failure enabled, so tracked local-evidence artifacts and unsafe root evidence cannot be committed silently.
+
 2026-05-26: quota guardrail telemetry custody:
 	1. Prior-run anomaly custody now treats managed `quota.guardrails` deferred and partial-decision advisory lines as quota-health telemetry rather than opening duplicate `prior_run_anomaly` bug obligations.
 	2. Hard failures, PAGE errors, nonzero exits, identity guardrail stops, and stale-quota obligations remain the durable custody paths for quota-related problems.

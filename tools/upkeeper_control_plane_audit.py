@@ -11,6 +11,7 @@ import pathlib
 import subprocess
 import sys
 from dataclasses import dataclass, asdict
+from datetime import datetime
 from typing import Iterable
 
 
@@ -34,6 +35,16 @@ LOCAL_EVIDENCE_ROOTS = (
     "postmortems/",
     "Upkeeper.log",
 )
+UNKNOWN_ROOT_EVIDENCE_NAMES = {
+    "core",
+    "core.dump",
+    "nohup.out",
+}
+UNKNOWN_ROOT_EVIDENCE_SUFFIXES = (
+    ".log",
+    ".pid",
+    ".trace",
+)
 
 
 @dataclass(frozen=True)
@@ -45,6 +56,151 @@ class Finding:
     source: str
     summary: str
     remediation: str
+
+
+@dataclass(frozen=True)
+class PolicyRule:
+    policy_class: str
+    action: str
+    blocks_stage: bool
+    auto_clean: bool = False
+    creates_obligation: bool = False
+    repair_target_file: str = "Upkeeper"
+
+
+@dataclass
+class PolicyDecision:
+    ident: str
+    finding_id: str
+    klass: str
+    policy_class: str
+    action: str
+    status: str
+    path: str
+    blocks_stage: bool
+    summary: str
+    obligation_id: str = ""
+    obligation_path: str = ""
+
+
+POLICY_TABLE = {
+    "untracked_root_scratch_artifact": PolicyRule(
+        "known_safe_cleanup",
+        "clean_local_scratch_artifact",
+        True,
+        auto_clean=True,
+        repair_target_file="orchestration/backlog.sh",
+    ),
+    "untracked_python_bytecode_cache": PolicyRule(
+        "known_safe_cleanup",
+        "clean_local_bytecode_cache",
+        True,
+        auto_clean=True,
+        repair_target_file="orchestration/backlog.sh",
+    ),
+    "tracked_root_scratch_artifact": PolicyRule(
+        "data_integrity_blocker",
+        "block_before_staging",
+        True,
+        creates_obligation=True,
+        repair_target_file="orchestration/backlog.sh",
+    ),
+    "tracked_python_bytecode_cache": PolicyRule(
+        "data_integrity_blocker",
+        "block_before_staging",
+        True,
+        creates_obligation=True,
+        repair_target_file="orchestration/backlog.sh",
+    ),
+    "tracked_log_artifact": PolicyRule(
+        "data_integrity_blocker",
+        "block_before_staging",
+        True,
+        creates_obligation=True,
+        repair_target_file="orchestration/backlog.sh",
+    ),
+    "tracked_lock_artifact": PolicyRule(
+        "data_integrity_blocker",
+        "block_before_staging",
+        True,
+        creates_obligation=True,
+        repair_target_file="orchestration/backlog.sh",
+    ),
+    "tracked_manifest_artifact": PolicyRule(
+        "data_integrity_blocker",
+        "block_before_staging",
+        True,
+        creates_obligation=True,
+        repair_target_file="lib/upkeeper/file_manifest.bash",
+    ),
+    "tracked_transcript_artifact": PolicyRule(
+        "data_integrity_blocker",
+        "block_before_staging",
+        True,
+        creates_obligation=True,
+        repair_target_file="lib/upkeeper/transcript_output.bash",
+    ),
+    "tracked_postmortem_artifact": PolicyRule(
+        "data_integrity_blocker",
+        "block_before_staging",
+        True,
+        creates_obligation=True,
+        repair_target_file="Upkeeper",
+    ),
+    "tracked_runtime_artifact": PolicyRule(
+        "data_integrity_blocker",
+        "block_before_staging",
+        True,
+        creates_obligation=True,
+        repair_target_file="orchestration/backlog.sh",
+    ),
+    "tracked_unknown_root_artifact": PolicyRule(
+        "unsafe_unknown",
+        "block_before_staging",
+        True,
+        creates_obligation=True,
+        repair_target_file="Upkeeper",
+    ),
+    "unsafe_unknown_root_artifact": PolicyRule(
+        "unsafe_unknown",
+        "create_automation_obligation",
+        True,
+        creates_obligation=True,
+        repair_target_file="Upkeeper",
+    ),
+    "recent_nonzero_cycle_exit": PolicyRule(
+        "actionable_wrapper_bug",
+        "create_automation_obligation",
+        False,
+        creates_obligation=True,
+        repair_target_file="Upkeeper",
+    ),
+    "recent_page_error": PolicyRule(
+        "actionable_wrapper_bug",
+        "create_automation_obligation",
+        False,
+        creates_obligation=True,
+        repair_target_file="Upkeeper",
+    ),
+    "active_lock_present": PolicyRule(
+        "operator_fyi",
+        "report_only",
+        False,
+        repair_target_file="Upkeeper",
+    ),
+    "open_automation_obligations": PolicyRule(
+        "known_expected",
+        "report_existing_obligations",
+        False,
+        repair_target_file="Upkeeper",
+    ),
+    "deferred_issue_records_present": PolicyRule(
+        "operator_fyi",
+        "report_only",
+        False,
+        repair_target_file="orchestration/backlog.sh",
+    ),
+}
 
 
 def stable_hash(*parts: str, length: int = 24) -> str:
@@ -126,6 +282,20 @@ def is_root_scratch(path: str) -> bool:
     return any(name.endswith(suffix) for suffix in ROOT_SCRATCH_SUFFIXES)
 
 
+def is_python_bytecode_cache(path: str) -> bool:
+    pure = pathlib.PurePosixPath(path)
+    return "__pycache__" in pure.parts or pure.suffix in {".pyc", ".pyo"}
+
+
+def is_unknown_root_evidence(path: str) -> bool:
+    if not is_root_path(path) or is_root_scratch(path) or path == "Upkeeper.log":
+        return False
+    name = pathlib.PurePosixPath(path).name
+    if name in UNKNOWN_ROOT_EVIDENCE_NAMES:
+        return True
+    return any(name.endswith(suffix) for suffix in UNKNOWN_ROOT_EVIDENCE_SUFFIXES)
+
+
 def local_evidence_class(path: str) -> tuple[str, str] | None:
     if path == "Upkeeper.log":
         return "tracked_log_artifact", "tracked Upkeeper.log is local runtime evidence"
@@ -172,6 +342,16 @@ def add_finding(
 
 def inventory_tracked_paths(paths: Iterable[str], findings: list[Finding]) -> None:
     for path in paths:
+        if is_python_bytecode_cache(path):
+            add_finding(
+                findings,
+                "tracked_python_bytecode_cache",
+                "high",
+                path,
+                "git_ls_files",
+                "Python bytecode cache is tracked as source",
+                "remove bytecode cache artifacts from tracked source and regenerate them locally when needed",
+            )
         if is_root_scratch(path):
             add_finding(
                 findings,
@@ -194,10 +374,30 @@ def inventory_tracked_paths(paths: Iterable[str], findings: list[Finding]) -> No
                 summary,
                 "untrack the local evidence artifact and keep it under ignored machine-local state",
             )
+        if is_unknown_root_evidence(path):
+            add_finding(
+                findings,
+                "tracked_unknown_root_artifact",
+                "high",
+                path,
+                "git_ls_files",
+                "root-level local evidence-like artifact is tracked as source",
+                "verify whether the artifact is source; if not, remove it from tracked source and preserve useful evidence under ignored runtime state",
+            )
 
 
 def inventory_untracked_paths(paths: Iterable[str], findings: list[Finding]) -> None:
     for path in paths:
+        if is_python_bytecode_cache(path):
+            add_finding(
+                findings,
+                "untracked_python_bytecode_cache",
+                "medium",
+                path,
+                "git_status",
+                "Python bytecode cache is present outside ignored runtime state",
+                "delete the bytecode cache before staging or committing",
+            )
         if is_root_scratch(path):
             add_finding(
                 findings,
@@ -207,6 +407,16 @@ def inventory_untracked_paths(paths: Iterable[str], findings: list[Finding]) -> 
                 "git_status",
                 "root scratch artifact is present outside ignored runtime state",
                 "delete it if disposable, or move evidence under ignored runtime state before continuing",
+            )
+        if is_unknown_root_evidence(path):
+            add_finding(
+                findings,
+                "unsafe_unknown_root_artifact",
+                "high",
+                path,
+                "git_status",
+                "root-level local evidence-like artifact is not in the safe cleanup table",
+                "inspect the artifact and either move it under ignored runtime state or add a reviewed source file explicitly",
             )
 
 
@@ -335,6 +545,262 @@ def recent_log_inventory(path: pathlib.Path | None, max_lines: int, findings: li
     }
 
 
+def private_dir(path: pathlib.Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.chmod(0o700)
+    except OSError:
+        pass
+
+
+def write_private_json(path: pathlib.Path, data: dict[str, object]) -> None:
+    private_dir(path.parent)
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def now_local() -> str:
+    return datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def policy_for_finding(finding: dict[str, object]) -> PolicyRule:
+    klass = str(finding.get("klass") or "")
+    return POLICY_TABLE.get(
+        klass,
+        PolicyRule(
+            "unsafe_unknown",
+            "block_before_staging",
+            True,
+            creates_obligation=True,
+            repair_target_file="Upkeeper",
+        ),
+    )
+
+
+def decision_id(stage: str, finding: dict[str, object], rule: PolicyRule) -> str:
+    return f"policy-{stable_hash(stage, str(finding.get('ident')), rule.policy_class, rule.action)}"
+
+
+def safe_repo_path(root: pathlib.Path, repo_path: str) -> pathlib.Path:
+    if repo_path == "" or pathlib.PurePosixPath(repo_path).is_absolute() or "\0" in repo_path:
+        raise ValueError("not a relative repository path")
+    target = (root / repo_path).resolve(strict=False)
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("path escapes repository root") from exc
+    return target
+
+
+def cleanup_bytecode_path(target: pathlib.Path) -> str:
+    if not target.exists() and not target.is_symlink():
+        return "already_clean"
+    if target.is_dir():
+        for child in sorted(target.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+            if child.is_dir() and not child.is_symlink():
+                child.rmdir()
+            else:
+                child.unlink()
+        target.rmdir()
+        return "cleaned"
+    target.unlink()
+    parent = target.parent
+    while parent.name == "__pycache__" or (parent.exists() and parent.name == "__pycache__"):
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent
+    return "cleaned"
+
+
+def cleanup_safe_artifact(root: pathlib.Path, finding: dict[str, object]) -> str:
+    repo_path = str(finding.get("path") or "")
+    target = safe_repo_path(root, repo_path)
+    klass = str(finding.get("klass") or "")
+    if klass == "untracked_root_scratch_artifact":
+        if not target.exists() and not target.is_symlink():
+            return "already_clean"
+        if target.is_dir() and not target.is_symlink():
+            raise OSError("root scratch artifact is a directory")
+        target.unlink()
+        return "cleaned"
+    if klass == "untracked_python_bytecode_cache":
+        return cleanup_bytecode_path(target)
+    raise OSError(f"{klass} is not a safe cleanup class")
+
+
+def obligation_id_for_decision(finding: dict[str, object], rule: PolicyRule) -> str:
+    return f"control-plane-{stable_hash(str(finding.get('ident')), rule.policy_class, rule.action)}"
+
+
+def obligation_payload(
+    root: pathlib.Path,
+    branch: str,
+    stage: str,
+    finding: dict[str, object],
+    decision: PolicyDecision,
+    rule: PolicyRule,
+) -> dict[str, object]:
+    ident = obligation_id_for_decision(finding, rule)
+    return {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": ident,
+        "kind": "control_plane_policy_blocker",
+        "severity": str(finding.get("severity") or "medium"),
+        "summary": str(finding.get("summary") or "control-plane audit policy blocker"),
+        "created_at": now_local(),
+        "root": str(root),
+        "source": "upkeeper_control_plane_audit",
+        "source_branch": branch,
+        "stage": stage,
+        "target_scope": "target",
+        "target_file": str(finding.get("path") or ""),
+        "repair_target_file": rule.repair_target_file,
+        "repair_target_basis": "control_plane_policy_table",
+        "repair_target_detail": str(finding.get("klass") or ""),
+        "reason": "CONTROL_PLANE_POLICY_BLOCKER",
+        "policy_class": rule.policy_class,
+        "policy_action": rule.action,
+        "policy_decision_id": decision.ident,
+        "specific_issue_required": True,
+        "evidence": {
+            "finding_id": str(finding.get("ident") or ""),
+            "class": str(finding.get("klass") or ""),
+            "path": str(finding.get("path") or ""),
+            "source": str(finding.get("source") or ""),
+            "summary": str(finding.get("summary") or ""),
+            "remediation": str(finding.get("remediation") or ""),
+            "blocks_stage": decision.blocks_stage,
+        },
+        "required_resolution": [
+            "inspect the control-plane audit finding before staging or model work",
+            "delete only explicitly safe untracked scratch artifacts; do not auto-delete tracked source",
+            "move local evidence under ignored runtime state or remove it from source with a reviewed patch",
+            "rerun tests/control_plane_audit_test.bash",
+            "rerun tools/validate_upkeeper.sh --quick",
+        ],
+    }
+
+
+def write_obligation(
+    root: pathlib.Path,
+    branch: str,
+    stage: str,
+    obligation_root: pathlib.Path,
+    finding: dict[str, object],
+    decision: PolicyDecision,
+    rule: PolicyRule,
+) -> tuple[str, str]:
+    payload = obligation_payload(root, branch, stage, finding, decision, rule)
+    open_dir = obligation_root / "open"
+    path = open_dir / f"{payload['id']}.json"
+    status = "obligation_written"
+    if path.exists():
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            current = {}
+        if isinstance(current, dict):
+            payload["created_at"] = current.get("created_at") or payload["created_at"]
+            payload["seen_count"] = int(current.get("seen_count") or 1) + 1
+            payload["updated_at"] = now_local()
+            status = "obligation_updated"
+    else:
+        payload["seen_count"] = 1
+    write_private_json(path, payload)
+    return status, str(path)
+
+
+def apply_policies(payload: dict[str, object], args: argparse.Namespace) -> tuple[list[PolicyDecision], bool]:
+    root = pathlib.Path(str(payload.get("root") or args.root)).resolve()
+    branch = str(payload.get("branch") or "unknown")
+    stage = str(args.stage or "manual")
+    obligation_root = pathlib.Path(args.obligation_root).resolve() if args.obligation_root else root / "runtime/upkeeper-obligations"
+    decisions: list[PolicyDecision] = []
+    changed = False
+    findings = payload.get("findings", [])
+    if not isinstance(findings, list):
+        findings = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        rule = policy_for_finding(finding)
+        decision = PolicyDecision(
+            ident=decision_id(stage, finding, rule),
+            finding_id=str(finding.get("ident") or ""),
+            klass=str(finding.get("klass") or ""),
+            policy_class=rule.policy_class,
+            action=rule.action,
+            status="reported",
+            path=str(finding.get("path") or ""),
+            blocks_stage=rule.blocks_stage,
+            summary=str(finding.get("summary") or ""),
+        )
+        if rule.auto_clean:
+            if args.remediate_safe:
+                try:
+                    decision.status = cleanup_safe_artifact(root, finding)
+                    changed = changed or decision.status == "cleaned"
+                except OSError as exc:
+                    decision.status = f"cleanup_failed:{exc}"
+            else:
+                decision.status = "cleanup_available"
+        elif rule.creates_obligation:
+            decision.obligation_id = obligation_id_for_decision(finding, rule)
+            if args.write_obligations:
+                status, path = write_obligation(root, branch, stage, obligation_root, finding, decision, rule)
+                decision.status = status
+                decision.obligation_path = path
+            elif rule.blocks_stage:
+                decision.status = "blocked"
+            else:
+                decision.status = "obligation_required"
+        elif rule.action == "report_only":
+            decision.status = "reported"
+        else:
+            decision.status = "reported"
+        decisions.append(decision)
+    return decisions, changed
+
+
+def decorate_payload(payload: dict[str, object], decisions: list[PolicyDecision]) -> dict[str, object]:
+    counts = payload.setdefault("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+        payload["counts"] = counts
+    blocker_count = sum(1 for item in decisions if item.blocks_stage and item.status not in {"cleaned", "already_clean"})
+    counts["policy_decision_count"] = len(decisions)
+    counts["cleaned_count"] = sum(1 for item in decisions if item.status == "cleaned")
+    counts["blocker_count"] = blocker_count
+    counts["obligation_written_count"] = sum(1 for item in decisions if item.status in {"obligation_written", "obligation_updated"})
+    payload["policy_decisions"] = [asdict(item) for item in decisions]
+    if counts.get("finding_count", 0) == 0:
+        payload["status"] = "clean"
+    elif blocker_count:
+        payload["status"] = "blocked"
+    else:
+        payload["status"] = "findings"
+    return payload
+
+
 def build_payload(args: argparse.Namespace) -> dict[str, object]:
     root = pathlib.Path(args.root).resolve()
     if not (root / ".git").exists():
@@ -350,7 +816,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, object]:
     log_path = pathlib.Path(args.log).resolve() if args.log else root / "Upkeeper.log"
     if args.no_default_log and not args.log:
         log_path = None
-    runtime = runtime_inventory(root, findings)
+    runtime = {"runtime_inventory_skipped": True} if args.no_runtime else runtime_inventory(root, findings)
     external_state = state_root_inventory(state_root, findings)
     recent_log = recent_log_inventory(log_path, args.max_log_lines, findings)
     findings = sorted(findings, key=lambda item: (item.severity, item.klass, item.path, item.ident))
@@ -386,10 +852,30 @@ def print_text(payload: dict[str, object]) -> None:
         "control_plane_audit: "
         f"status={payload.get('status')} "
         f"findings={counts.get('finding_count', 0)} "
+        f"blockers={counts.get('blocker_count', 0)} "
+        f"cleaned={counts.get('cleaned_count', 0)} "
+        f"obligations={counts.get('obligation_written_count', 0)} "
         f"tracked_changes={counts.get('tracked_change_count', 0)} "
         f"untracked={counts.get('untracked_path_count', 0)} "
         f"branch={payload.get('branch', 'unknown')}"
     )
+    decisions = payload.get("policy_decisions", [])
+    if isinstance(decisions, list):
+        for item in decisions[:10]:
+            if not isinstance(item, dict):
+                continue
+            print(
+                "control_plane_audit: policy "
+                f"id={item.get('ident')} "
+                f"class={item.get('klass')} "
+                f"policy={item.get('policy_class')} "
+                f"action={item.get('action')} "
+                f"status={item.get('status')} "
+                f"blocks_stage={str(item.get('blocks_stage')).lower()} "
+                f"path={item.get('path')}"
+            )
+        if len(decisions) > 10:
+            print(f"control_plane_audit: policy output truncated remaining={len(decisions) - 10}")
     findings = payload.get("findings", [])
     if isinstance(findings, list):
         for item in findings[:10]:
@@ -413,7 +899,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--state-root", default="", help="optional backlog state root to inventory")
     parser.add_argument("--log", default="", help="optional loop log path; defaults to Upkeeper.log when present")
     parser.add_argument("--no-default-log", action="store_true", help="do not read root Upkeeper.log unless --log is set")
+    parser.add_argument("--no-runtime", action="store_true", help="do not inventory runtime locks or obligation state")
     parser.add_argument("--max-log-lines", type=int, default=400, help="recent log lines to scan")
+    parser.add_argument("--stage", default="manual", help="policy context for stable decision ids")
+    parser.add_argument("--remediate-safe", action="store_true", help="clean only policy-listed safe untracked artifacts")
+    parser.add_argument("--write-obligations", action="store_true", help="write blocker/actionable findings to the obligation root")
+    parser.add_argument("--obligation-root", default="", help="automation obligation root; defaults to ROOT/runtime/upkeeper-obligations")
+    parser.add_argument(
+        "--fail-on",
+        choices=("findings", "blockers", "never"),
+        default="findings",
+        help="exit nonzero for all findings, only policy blockers, or never",
+    )
     parser.add_argument("--json", action="store_true", help="emit JSON instead of operator text")
     parser.add_argument("--no-fail", action="store_true", help="exit 0 even when findings are present")
     return parser.parse_args(argv)
@@ -422,11 +919,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     payload = build_payload(args)
+    decisions, changed = apply_policies(payload, args)
+    if changed:
+        payload = build_payload(args)
+        remaining, _ = apply_policies(payload, argparse.Namespace(**{**vars(args), "remediate_safe": False}))
+        decisions.extend(remaining)
+    payload = decorate_payload(payload, decisions)
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print_text(payload)
-    if payload.get("status") != "clean" and not args.no_fail:
+    fail_on = "never" if args.no_fail else args.fail_on
+    counts = payload.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    if fail_on == "findings" and counts.get("finding_count", 0):
+        return 2
+    if fail_on == "blockers" and counts.get("blocker_count", 0):
         return 2
     return 0
 

@@ -1681,9 +1681,36 @@ deferred_issue_file() {
 }
 
 cleanup_ephemeral_artifacts() {
+  if [[ -x "$ROOT_DIR/tools/upkeeper_control_plane_audit.py" ]]; then
+    "$ROOT_DIR/tools/upkeeper_control_plane_audit.py" \
+      --root "$ROOT_DIR" \
+      --no-default-log \
+      --no-runtime \
+      --remediate-safe \
+      --fail-on never \
+      --stage cleanup >/dev/null || true
+    return 0
+  fi
   find "$ROOT_DIR" -type d -name '__pycache__' -prune -exec rm -rf -- {} + 2>/dev/null || true
   find "$ROOT_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true
   rm -f -- "$ROOT_DIR/\$db" "$ROOT_DIR/\$db-shm" "$ROOT_DIR/\$db-wal" 2>/dev/null || true
+}
+
+run_control_plane_pre_staging_audit() {
+  local obligation_root
+
+  [[ -x "$ROOT_DIR/tools/upkeeper_control_plane_audit.py" ]] || return 0
+  obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
+  log "control-plane audit: pre-staging source-boundary policy"
+  "$ROOT_DIR/tools/upkeeper_control_plane_audit.py" \
+    --root "$ROOT_DIR" \
+    --no-default-log \
+    --no-runtime \
+    --remediate-safe \
+    --write-obligations \
+    --obligation-root "$obligation_root" \
+    --stage pre-staging \
+    --fail-on blockers || return $?
 }
 
 autoshelve_next_branch_name() {
@@ -3437,6 +3464,7 @@ commit_and_push_changes() {
       ;;
   esac
   cleanup_ephemeral_artifacts || return $?
+  run_control_plane_pre_staging_audit || return $?
   log "staging tracked changes"
   git add --all || return $?
   git diff --cached --check || return $?

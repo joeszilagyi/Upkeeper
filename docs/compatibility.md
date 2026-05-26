@@ -53,6 +53,10 @@ Schema and contract versions are compatibility boundaries, not decoration:
 - Lattice SQLite schema changes must advance or explicitly preserve the
   tracked schema/user-version contract, and JSONL exports must remain readable
   by same-version importers.
+- Control-plane audit remediation must stay conservative: safe cleanup may
+  delete only explicitly policy-listed untracked local artifacts, while tracked
+  source-boundary violations and unsafe unknown root artifacts must block or
+  enter automation obligation custody instead of being silently staged.
 
 ## Migration And Deprecation Rules
 

@@ -279,8 +279,13 @@ Important:
     `runtime/`, `Upkeeper.log`, transcripts, manifests, locks, postmortems,
     active owner locks, open automation obligations, deferred issue records
     when a state root is provided, and recent hard loop markers. The helper
-    does not contact GitHub, fetch, or launch backend Codex; it is a report-only
-    screen for the first Kirk Protocol inventory layer.
+    does not contact GitHub, fetch, or launch backend Codex. It also owns the
+    conservative Kirk Protocol policy table: `--remediate-safe` deletes only
+    explicitly listed untracked scratch artifacts such as literal root `$db`
+    sidecars and Python bytecode caches, while `--write-obligations` records
+    blocker/actionable findings under automation obligation custody. Backlog
+    runs this policy before staging so known local-evidence artifact classes
+    cannot be committed as source.
     Local batch-merge validation failures use the same obligation lane: if a
     batch validation phase fails, backlog records the failed phase, command,
     exit code, bounded output tail, stable fingerprint, likely owner path, and

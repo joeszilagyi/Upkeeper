@@ -1503,6 +1503,9 @@ PY
 2026-05-25T09:21:24 █ PAGE    [ERROR] cycle=cycle-fail run_hash=hashfail run.finish execution_origin=primary codex_exit=1 session_end_state=no_agent_message
 2026-05-25T09:21:28 █ PAGE    [ERROR] cycle=cycle-fail run_hash=hashfail codex exited non-zero without an UPKEEPER_STATUS marker
 2026-05-25T09:21:30 █ PAGE    [ERROR] cycle=cycle-fail run_hash=hashfail cycle.exit exit_code=3 reason=MISSING_STATUS_MARKER codex_exit=1 status_marker_source=missing
+2026-05-25T09:21:31 file worked: Upkeeper
+2026-05-25T09:21:31 outcome/results: Upkeeper exited with status 3
+2026-05-25T09:21:31 final disposition: launcher exiting with status 3
 LOG
 	  tools/upkeeper_anomaly_custody.py \
 	    --root "$ROOT_DIR" \
@@ -1514,12 +1517,29 @@ LOG
 	    --write-obligations >"$temp_dir/cascade-audit.out"
 	  [[ "$(jq -r '.actionable_findings' "$temp_dir/cascade-custody/latest.json")" == "0" ]] ||
 	    fail "prior-run anomaly custody opened secondary obligations for an owned terminal-failure cascade"
-	  [[ "$(jq -r '.coalesced_findings' "$temp_dir/cascade-custody/latest.json")" -ge 3 ]] ||
+	  [[ "$(jq -r '.coalesced_findings' "$temp_dir/cascade-custody/latest.json")" -ge 5 ]] ||
 	    fail "prior-run anomaly custody did not coalesce owned terminal-failure companion lines"
 	  [[ "$(find "$temp_dir/cascade-obligations/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')" == "1" ]] ||
 	    fail "prior-run anomaly custody wrote extra obligations for owned terminal-failure companion lines"
-	  [[ "$(jq -r '.coalesced_failure_evidence_count' "$temp_dir/cascade-obligations/open/owner.json")" -ge 3 ]] ||
+	  [[ "$(jq -r '.coalesced_failure_evidence_count' "$temp_dir/cascade-obligations/open/owner.json")" -ge 5 ]] ||
 	    fail "terminal-failure owner did not record coalesced companion evidence"
+
+	  cat >"$temp_dir/standalone-launcher-footer.log" <<'LOG'
+2026-05-25T09:21:31 outcome/results: Upkeeper exited with status 3
+LOG
+	  tools/upkeeper_anomaly_custody.py \
+	    --root "$ROOT_DIR" \
+	    --loop-log "$temp_dir/standalone-launcher-footer.log" \
+	    --state-root "$temp_dir/standalone-launcher-footer-custody" \
+	    --obligation-root "$temp_dir/standalone-launcher-footer-obligations" \
+	    --recent-lines 100 \
+	    --max-findings 10 \
+	    --write-obligations >"$temp_dir/standalone-launcher-footer-audit.out"
+	  [[ "$(jq -r '.actionable_findings' "$temp_dir/standalone-launcher-footer-custody/latest.json")" == "1" ]] ||
+	    fail "standalone nonzero launcher footer was not actionable"
+	  jq -e 'select(.evidence.kind == "nonzero_launcher_exit") | select(.evidence.normalized_excerpt | contains("Upkeeper exited with status 3"))' \
+	    "$temp_dir"/standalone-launcher-footer-obligations/open/*.json >/dev/null ||
+	    fail "standalone nonzero launcher footer did not preserve specific evidence"
 
 	  mkdir -p "$temp_dir/empty-cascade-obligations/open"
 	  python3 - "$ROOT_DIR" "$temp_dir/empty-cascade-obligations/open/owner.json" <<'PY'

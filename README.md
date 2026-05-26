@@ -314,6 +314,7 @@ prompt packaging, or symlink behavior:
 ```sh
 tools/validate_upkeeper.sh --deps
 tools/validate_upkeeper.sh --source-contracts
+tools/docs_only_fast_path.sh --validate
 tools/validate_upkeeper.sh --smoke
 tools/validate_upkeeper.sh --quick
 tools/validate_upkeeper.sh --quick --profile
@@ -324,6 +325,10 @@ Source-contract validation is the narrowest source-only gate used by the
 backlog launcher before per-bug commits. It catches cheap structural source
 contract failures, such as oversized `log_line` call sites, without running the
 broader quick suite.
+For committed or local README/docs/prompt-only edits,
+`tools/docs_only_fast_path.sh --validate` classifies the changed paths locally,
+rejects mixed source changes, and runs the no-network docs fast path without
+backend Codex, GitHub CLI, or PR polling.
 Smoke validation is the fast local edit-loop path: syntax, version/module-map
 contracts, prompt packaging, help/docs/diff checks, parser helpers, and launcher
 argument contracts. Quick validation adds bounded static/fixture checks and
@@ -342,7 +347,8 @@ pushes to `main`. The workflow installs required tools including `jq` and
 `age`, classifies the change scope, and then takes one of two paths:
 
 - docs-only changes: `tools/check_public_docs.sh --quick` plus
-  `tools/validate_upkeeper.sh --smoke`
+  `tools/validate_upkeeper.sh --smoke`, via
+  `tools/docs_only_fast_path.sh --validate`
 - broader changes: shell syntax checks, unit tests invoked with Bash from
   `tests/*.bash`, `tools/check_public_docs.sh --quick`, and
   `tools/validate_upkeeper.sh --full`
@@ -948,6 +954,7 @@ test loop does not spend cycles on known low-value or generated material.
 |   `-- *.sh
 |-- tools/
 |   |-- check_public_docs.sh
+|   |-- docs_only_fast_path.sh
 |   |-- doctor_upkeeper.sh
 |   |-- install_client_link.sh
 |   |-- stress_upkeeper_corpus.sh
@@ -1022,6 +1029,8 @@ test loop does not spend cycles on known low-value or generated material.
   workers
 - [tools/check_public_docs.sh](tools/check_public_docs.sh): deterministic
   public documentation policy checks
+- [tools/docs_only_fast_path.sh](tools/docs_only_fast_path.sh): local
+  no-backend, no-GitHub docs-only classifier and validation path
 - [launcher_examples/README.md](launcher_examples/README.md): tracked shell
   launcher examples for common Upkeeper loops
 - [completions/upkeeper.bash](completions/upkeeper.bash): optional Bash

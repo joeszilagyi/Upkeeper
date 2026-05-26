@@ -3714,6 +3714,63 @@ check_release_readiness_docs_contract() {
     fail "issue taxonomy labels for release gate are undocumented"
 }
 
+check_docs_only_fast_path_contract() {
+  local temp_dir docs_paths mixed_paths classify_out
+
+  log "checking docs-only fast path contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-docs-only-fast-path.XXXXXX)"
+  docs_paths="$temp_dir/docs.paths"
+  mixed_paths="$temp_dir/mixed.paths"
+
+  cat >"$docs_paths" <<'EOF'
+README.md
+docs/scripts/upkeeper.md
+prompts/p26-public-documentation-review.md
+.github/pull_request_template.md
+EOF
+  classify_out="$(tools/docs_only_fast_path.sh --classify-only --paths-from "$docs_paths")"
+  grep -Fq "docs_only=1" <<<"$classify_out" ||
+    fail "docs-only fast path did not classify public docs paths as docs-only"
+  grep -Fq "non_docs_count=0" <<<"$classify_out" ||
+    fail "docs-only fast path reported non-docs for docs-only paths"
+
+  cat >"$mixed_paths" <<'EOF'
+README.md
+Upkeeper
+tools/validate_upkeeper.sh
+EOF
+  classify_out="$(tools/docs_only_fast_path.sh --classify-only --paths-from "$mixed_paths")"
+  grep -Fq "docs_only=0" <<<"$classify_out" ||
+    fail "docs-only fast path accepted mixed source changes"
+  grep -Fq "non_doc_path=Upkeeper" <<<"$classify_out" ||
+    fail "docs-only fast path did not report the source path that forced the broader path"
+
+  grep -Fq "tools/check_public_docs.sh --quick" tools/docs_only_fast_path.sh ||
+    fail "docs-only fast path does not run public docs validation"
+  grep -Fq "tools/validate_upkeeper.sh --smoke" tools/docs_only_fast_path.sh ||
+    fail "docs-only fast path does not run smoke validation"
+  grep -Fq "git diff --check" tools/docs_only_fast_path.sh ||
+    fail "docs-only fast path does not run diff whitespace validation"
+  grep -Fq 'git diff --check "$base_ref" "$head_ref"' tools/docs_only_fast_path.sh ||
+    fail "docs-only fast path does not check committed ref-to-ref whitespace"
+  if grep -Eq '(^|[[:space:]])(gh|curl|wget)[[:space:]]|git fetch|codex exec|[.]/Upkeeper' tools/docs_only_fast_path.sh; then
+    fail "docs-only fast path contains network, GitHub CLI, backend, or wrapper launch commands"
+  fi
+  grep -Fq "tools/docs_only_fast_path.sh" .github/workflows/ci.yml ||
+    fail "CI docs-only path does not use the shared docs-only helper"
+  grep -Fq "fetch-depth: 2" .github/workflows/ci.yml ||
+    fail "CI checkout does not fetch enough local history for no-extra-fetch docs classification"
+  grep -Fq "scope_args+=(--base HEAD^1 --head HEAD)" .github/workflows/ci.yml ||
+    fail "CI pull-request docs-only path does not use local merge-parent refs"
+  if grep -Fq "git fetch --no-tags" .github/workflows/ci.yml; then
+    fail "CI docs-only classifier still performs an explicit fetch"
+  fi
+  grep -Fq "tools/docs_only_fast_path.sh --validate" README.md docs/scripts/upkeeper.md docs/dependencies.md docs/release-checklist.md ||
+    fail "docs-only fast path command is not documented in public operator docs"
+
+  rm -r "$temp_dir"
+}
+
 check_governance_docs_contract() {
   log "checking governance docs contract"
 
@@ -7477,6 +7534,7 @@ run_check validation_environment_isolation check_validation_environment_isolatio
 run_check validation_quota_session_fixture_contract check_validation_quota_session_fixture_contract
 run_check dependency_guidance_contract check_dependency_guidance_contract
 run_check release_readiness_docs_contract check_release_readiness_docs_contract
+run_check docs_only_fast_path_contract check_docs_only_fast_path_contract
 run_check governance_docs_contract check_governance_docs_contract
 run_check negative_space_testing_contract check_negative_space_testing_contract
 run_check serious_finding_repro_contract check_serious_finding_repro_contract

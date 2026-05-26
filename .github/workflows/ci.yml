@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
 
       - name: Install required tools
         run: |
@@ -46,54 +48,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docs_only=0
-          scope_known=0
-          changed_paths=()
+          scope_args=(--classify-only)
 
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            base_sha="${{ github.event.pull_request.base.sha }}"
-            head_sha="${{ github.event.pull_request.head.sha }}"
+            scope_args+=(--base HEAD^1 --head HEAD)
           else
             base_sha="${{ github.event.before }}"
-            head_sha="${{ github.sha }}"
-          fi
-
-          if [[ "$base_sha" == "0000000000000000000000000000000000000000" ]]; then
-            mapfile -t changed_paths < <(git ls-files)
-            scope_known=1
-          else
-            scope_known=1
-            for scope_sha in "$base_sha" "$head_sha"; do
-              [[ -n "$scope_sha" ]] || continue
-              if ! git cat-file -e "$scope_sha^{commit}" 2>/dev/null; then
-                if ! git fetch --no-tags --depth=1 origin "$scope_sha"; then
-                  scope_known=0
-                  break
-                fi
-              fi
-            done
-            if (( scope_known )); then
-              mapfile -t changed_paths < <(git diff --name-only "$base_sha" "$head_sha")
+            if [[ "$base_sha" != "0000000000000000000000000000000000000000" ]]; then
+              scope_args+=(--base "$base_sha" --head "${{ github.sha }}")
             fi
           fi
 
-          if (( scope_known )); then
-            docs_only=1
-            for path in "${changed_paths[@]}"; do
-              [[ -n "$path" ]] || continue
-              case "$path" in
-                README.md|AGENTS.md|PLANS.md|change_notes_*.md|docs/*.md|docs/*/*.md|prompts/*.md)
-                  ;;
-                *)
-                  docs_only=0
-                  break
-                  ;;
-              esac
-            done
+          if scope_output="$(tools/docs_only_fast_path.sh "${scope_args[@]}")"; then
+            printf '%s\n' "$scope_output"
+            printf '%s\n' "$scope_output" >>"$GITHUB_OUTPUT"
+          else
+            printf 'docs_only=0\n'
+            printf 'scope_known=0\n'
+            printf 'docs_only=0\n' >>"$GITHUB_OUTPUT"
+            printf 'scope_known=0\n' >>"$GITHUB_OUTPUT"
           fi
-
-          printf 'docs_only=%s\n' "$docs_only"
-          printf 'docs_only=%s\n' "$docs_only" >>"$GITHUB_OUTPUT"
 
       - name: Shell syntax
         if: steps.scope.outputs.docs_only != '1'
@@ -118,11 +92,24 @@ jobs:
           done
 
       - name: Public docs
+        if: steps.scope.outputs.docs_only != '1'
         run: tools/check_public_docs.sh --quick
 
-      - name: Smoke validation
+      - name: Docs-only fast path
         if: steps.scope.outputs.docs_only == '1'
-        run: tools/validate_upkeeper.sh --smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          scope_args=(--validate)
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            scope_args+=(--base HEAD^1 --head HEAD)
+          else
+            base_sha="${{ github.event.before }}"
+            if [[ "$base_sha" != "0000000000000000000000000000000000000000" ]]; then
+              scope_args+=(--base "$base_sha" --head "${{ github.sha }}")
+            fi
+          fi
+          tools/docs_only_fast_path.sh "${scope_args[@]}"
 
       - name: Full validation
         if: steps.scope.outputs.docs_only != '1'

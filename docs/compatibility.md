@@ -75,6 +75,8 @@ validation to check. The minimum local proof is one of:
 
 - `tools/check_public_docs.sh --quick` for public documentation links, help,
   and required wording.
+- `tools/docs_only_fast_path.sh --validate` for README/docs/prompt-only changes
+  that should stay on the no-backend, no-GitHub local validation path.
 - `tools/validate_upkeeper.sh --smoke` for fast schema/help/prompt drift.
 - `tools/validate_upkeeper.sh --quick` for fixture-backed parser, marker,
   issue-workflow, Lattice, and authority contracts.

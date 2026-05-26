@@ -59,10 +59,12 @@ Docs-only releases may use the cheaper docs path when no runtime, tool, config,
 prompt, test, or launcher behavior changed:
 
 ```sh
-tools/check_public_docs.sh --quick
-tools/validate_upkeeper.sh --smoke
-git diff --check
+tools/docs_only_fast_path.sh --validate
 ```
+
+That helper rejects mixed source changes, then runs the public-docs, smoke, and
+diff whitespace checks without backend Codex, GitHub CLI, PR polling, or network
+fetches.
 
 ## Documentation
 

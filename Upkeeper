@@ -732,7 +732,7 @@ resolved_status_marker_from_analysis() {
   fi
   if [[ -n "$candidate" ]]; then
     case "$candidate_rejection_reason" in
-      markdown_backticks|quoted_marker|bullet_marker|trailing_content_after_marker)
+      markdown_backticks|quoted_marker|bullet_marker|trailing_content_after_marker|trailing_punctuation)
         printf '%s' "$candidate"
         return 0
         ;;

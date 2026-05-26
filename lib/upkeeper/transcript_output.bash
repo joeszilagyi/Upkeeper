@@ -71,6 +71,7 @@ except OSError:
         path_digest = hashlib.sha256(material).hexdigest()
     print(f'Upkeeper: {label} transcript unavailable transcript=path-hmac-sha256:{path_digest} path_redacted=1', file=sys.stderr)
     raise SystemExit(0)
+transcript_bytes = len(text.encode('utf-8', 'surrogateescape'))
 lines = text.splitlines()
 has_runtime_output = bool(lines)
 
@@ -359,11 +360,12 @@ log_lines = [f'{ts_log()} [INFO] cycle={cycle_id} run_hash={run_hash} {summary}'
 if exit_raw and exit_raw != "0":
     empty_transcript_expected = exit_raw == "101"
     if not lines:
-        level = "WARN" if empty_transcript_expected else "ERROR"
-        reason = "codex_exit_101_empty_transcript" if empty_transcript_expected else "nonempty_transcript_output_expected"
+        level = "INFO" if empty_transcript_expected else "ERROR"
+        reason = "empty_transcript" if empty_transcript_expected else "nonempty_transcript_output_expected"
         log_lines.append(
-            f'{ts_log()} [{level}] cycle={cycle_id} run_hash={run_hash} codex.transcript.empty '
-            f'label={label} transcript={path_label(path)} path_redacted=1 reason={reason}'
+            f'{ts_log()} [{level}] cycle={cycle_id} run_hash={run_hash} codex.session_diagnostics_ignored '
+            f'label={label} reason={reason} codex_exit={exit_raw} transcript={path_label(path)} path_redacted=1 '
+            f'transcript_bytes={transcript_bytes} transcript_lines={len(lines)}'
         )
     elif not runtime_lines and stripped_prompt_echo:
         log_lines.append(
@@ -440,7 +442,7 @@ except OSError:
 if exit_raw and exit_raw != '0' and (not has_runtime_output or not runtime_lines):
     if empty_transcript_expected:
         print(
-            f'{ts_terminal()} [WARN] Upkeeper: {label} expected empty transcript path={path_label(path)} path_redacted=1 exit={exit_raw}',
+            f'{ts_terminal()} [INFO] Upkeeper: {label} expected empty transcript path={path_label(path)} path_redacted=1 exit={exit_raw}',
             file=sys.stderr,
         )
     else:
@@ -449,13 +451,13 @@ if exit_raw and exit_raw != '0' and (not has_runtime_output or not runtime_lines
             file=sys.stderr,
         )
 
-if not silent_terminal and (diagnostic_terminal or exit_raw not in {'0', ''}):
+if not silent_terminal and (diagnostic_terminal or exit_raw not in {'0', ''}) and not (exit_raw and exit_raw != '0' and empty_transcript_expected):
     print(f'{ts_terminal()} [INFO] Upkeeper: {label} transcript captured transcript={path_label(path)} path_redacted=1 exit={exit_raw} lines={len(lines)} diff_blocks={diff_count} hook_lines={hook_count} prompt_like_lines={prompt_count}', file=sys.stderr)
 if not silent_terminal and diagnostic_terminal and signals and signal_limit:
     print(f'{ts_terminal()} [INFO] Upkeeper: {label} high-signal transcript tail (last {min(signal_limit, len(signals))}):', file=sys.stderr)
     for line in signals[-signal_limit:]:
         print(f'  {line}', file=sys.stderr)
-if not silent_terminal and exit_raw not in {'0', ''} and tail_limit:
+if not silent_terminal and exit_raw not in {'0', ''} and tail_limit and not (exit_raw and exit_raw != '0' and empty_transcript_expected):
     tail_lines = runtime_lines if runtime_lines else lines
     rendered_tail, omitted_tail = bounded_tail(tail_lines, tail_limit, tail_byte_limit)
     tail_level = "WARN" if empty_transcript_expected else "ERROR"

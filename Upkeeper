@@ -1197,6 +1197,21 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
   esac
 
+  sample=$'2026-05-26T09:37:06 \342\226\210 PAGE [ERROR] Upkeeper: primary: start=line.find('\'' [ERROR] Upkeeper: primary: '\'')'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*|*' PAGE '*)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_line_find_page_error_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_source_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_line_find_page_error_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
   sample=$'2026-05-23T00:04:01 \342\226\210 WORKER [ERROR] Upkeeper: primary cmd#23 tests failed: exited 1 in 0.1s'
   output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
   case "$output" in

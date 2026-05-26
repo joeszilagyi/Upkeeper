@@ -2,7 +2,7 @@
 # historical log markers into fresh WARN/ERROR events in launcher output.
 
 previous_run_anomaly_lines_impl() {
-  local current_boot_id current_boot_id_hash redaction_key
+  local current_boot_id current_boot_id_hash redaction_key module_path
 
   if [[ ! -s "$LOG_FILE" ]]; then
     return 0
@@ -19,13 +19,15 @@ previous_run_anomaly_lines_impl() {
   else
     redaction_key="${ROOT_DIR:-$PWD}|upkeeper-redaction-fallback"
   fi
+  module_path="${BASH_SOURCE[0]:-$0}"
 
   UPKEEPER_PREVIOUS_RUN_REDACTION_KEY="$redaction_key" python3 - \
     "$LOG_FILE" \
     "$CYCLE_ID" \
     "$CODEX_PREVIOUS_RUN_SCAN_MINUTES" \
     "$current_boot_id" \
-    "$current_boot_id_hash" <<'PY'
+    "$current_boot_id_hash" \
+    "$module_path" <<'PY'
 import datetime as dt
 import hashlib
 import hmac
@@ -34,7 +36,7 @@ import re
 import sys
 import time
 
-log_path, current_cycle, minutes_raw, current_boot_raw, current_boot_protected = sys.argv[1:6]
+log_path, current_cycle, minutes_raw, current_boot_raw, current_boot_protected, module_path = sys.argv[1:7]
 redaction_key = os.environ.get("UPKEEPER_PREVIOUS_RUN_REDACTION_KEY", "")
 try:
     scan_minutes = max(0, int(minutes_raw))
@@ -58,7 +60,7 @@ embedded_control_event_re = re.compile(
     r")\b"
 )
 structured_log_re = re.compile(
-    r"^[^ \t\r\n]+[ \t]+\[[A-Z]+\][ \t]+cycle=[^ \t\r\n]+(?:[ \t]|\r?\n|$)"
+    r"^[^ \t\r\n]+[ \t]+(?:\u2588[ \t]+(?:(?:--FYI--|[A-Z]+)[ \t]+)?)?\[[A-Z]+\][ \t]+cycle=[^ \t\r\n]+(?:[ \t]|\r?\n|$)"
 )
 direct_custody_re = re.compile(
     r"^[^ \t\r\n]+[ \t]+(?:\u2588[ \t]+)?"
@@ -72,8 +74,24 @@ latest_previous_run_ack_reason = "previous_run_anomaly_gate_reviewed"
 custody_ack_kinds = {
     "page_error",
     "previous_run_anomaly_summary",
+    "previous_run_anomaly",
     "startup_anomaly_unresolved",
 }
+module_target_variants = set()
+
+
+def add_module_target_variants(value):
+    if not value:
+        return
+    for candidate in (value, value.strip()):
+        if candidate:
+            module_target_variants.add(candidate)
+            module_target_variants.add(os.path.abspath(candidate))
+            module_target_variants.add(os.path.realpath(candidate))
+            module_target_variants.add(os.path.normpath(candidate))
+
+
+add_module_target_variants(module_path)
 
 def protected_boot_id(value):
     text = str(value or "unknown")
@@ -184,9 +202,10 @@ with handle:
                     latest_previous_run_ack_reason = "previous_run_anomaly_gate_reviewed"
         custody_payload = direct_custody_payload(line)
         if custody_payload is not None:
+            target = custody_field(custody_payload, "target")
             if (
                 epoch is not None
-                and custody_field(custody_payload, "target") == "lib/upkeeper/previous_run_anomalies.bash"
+                and target in module_target_variants
                 and custody_field(custody_payload, "kind") in custody_ack_kinds
             ):
                 if latest_previous_run_ack_epoch is None or epoch > latest_previous_run_ack_epoch:

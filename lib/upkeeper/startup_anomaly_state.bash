@@ -422,7 +422,7 @@ startup_anomaly_gate_has_unresolved_state() {
   if ! startup_anomaly_validate_private_state_dir "$state_dir"; then
     return 1
   fi
-  [[ -n "$reasons_csv" ]] || reasons_csv="unknown"
+  [[ -n "$reasons_csv" ]] || reasons_csv=""
 
   reasons_py="$(printf '%s' "$reasons_csv")"
   hmac_key="$(startup_anomaly_redaction_key_material)"

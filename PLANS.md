@@ -3,6 +3,221 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Batch Validation State Isolation
+
+Status: completed locally
+
+Goal:
+- stop backlog batch validation from inheriting live automation-obligation state
+  into unit-test fixtures
+- make ChimneySweep clean-queue tests ignore ambient `UPKEEPER_OBLIGATION_DIR`
+  unless a fixture explicitly opts into an obligation root
+- prevent quoted diagnostic command text containing `[ERROR]` or `PAGE` from
+  becoming new anomaly custody while repair prompts inspect prior failures
+- reconcile duplicate blocked obligations created by the failed self-repair loop
+
+Constraints:
+- no backend Codex validation
+- preserve the existing live obligation evidence until deterministic
+  reconciliation can resolve it
+- keep validation isolation local to harnesses and batch validation, not normal
+  production launcher state
+
+Files likely touched:
+- `Upkeeper`
+- `orchestration/backlog.sh`
+- `tests/chimneysweep_test.bash`
+- `tools/validate_upkeeper.sh`
+- operator docs and release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `UPKEEPER_OBLIGATION_DIR=runtime/upkeeper-obligations bash tests/chimneysweep_test.bash`
+- isolated backlog batch-validation unit-test replay with live
+  `UPKEEPER_OBLIGATION_DIR` exported
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+Result:
+- local validation passed
+- duplicate blocked obligations from the interrupted loop were reconciled
+- the proven-fixed batch-validation, BLOCKED, and quoted diagnostic PAGE
+  obligations were moved to resolved local state
+
+## Duplicate Obligation Issue Filing Circuit Breaker
+
+Status: completed locally
+
+Goal:
+- stop repeated local machine-health obligations from filing many GitHub bugs
+  for the same underlying failure family
+- make local reconciliation collapse system-level failures by class, reason,
+  target, and repair target instead of volatile per-cycle fingerprints
+- make already-linked obligations collapse by specific issue title and issue
+  number instead of keeping volatile evidence fingerprints open separately
+- make the obligation issue-report bridge reuse an existing open GitHub issue
+  with the same operator-facing title before creating another issue
+- preserve durable evidence by moving duplicate local records to resolved state
+  with duplicate metadata rather than deleting evidence
+
+Constraints:
+- no backend Codex validation
+- do not lose existing local obligation evidence
+- keep issue creation wrapper-owned and deterministic
+- keep GitHub writes out of validation fixtures; use fake `gh` commands
+
+Files likely touched:
+- `lib/upkeeper/automation_obligations.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+- `lib/upkeeper/help_selection.bash`
+- `orchestration/backlog.sh`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Backlog Wrapper Failure Catchment
+
+Status: completed locally; consolidated on `backlog/20260524-201224`
+
+Goal:
+- make the backlog launcher record a durable obligation when its child
+  `./Upkeeper` process exits nonzero before Upkeeper can write its own clean
+  final state
+- capture bounded local child-output evidence outside the model path, dedupe
+  repeated failures, and route the next cycle to the likely wrapper owner file
+- preserve known blocked and quota exits while making unexpected child exits
+  impossible to lose between loop iterations
+- preserve a child-owned native obligation, such as
+  `codex_exec_empty_transcript`, instead of filing a duplicate outer catchment
+  record for the same failed cycle
+
+Constraints:
+- no backend Codex validation
+- keep the catchment deterministic, pre-model, and local
+- store only bounded output evidence in private local obligation state
+- do not widen normal issue selection or merge behavior when the child exits
+  successfully
+- reconcile repeated system-level obligations by failure class and repair
+  target, not by the issue number later attached to one duplicate
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tests/backlog_wrapper_failure_obligation_test.bash`
+- `tools/validate_upkeeper.sh`
+- operator docs and release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_wrapper_failure_obligation_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Parallel Backlog Worker Lease Primitive
+
+Status: completed locally; consolidated on `backlog/20260524-201224`
+
+Goal:
+- make progress on issue #367 by defining the safe first slice for future
+  parallel backlog workers
+- add a deterministic local lease registry so synthetic workers cannot claim the
+  same issue or predicted target before any backend work starts
+- keep live parallel worker launch out of scope until lease, worktree, PR, quota,
+  and cleanup contracts have local proof
+
+Constraints:
+- no backend Codex calls
+- do not alter the default single-worker backlog launcher behavior
+- do not touch the active loop checkout
+- keep the primitive local and no-GitHub-write for this first slice
+
+Files likely touched:
+- `tools/backlog_parallel_leases.py`
+- `tests/backlog_parallel_leases_test.bash`
+- `docs/decisions/0002-parallel-backlog-workers.md`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `README.md`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_parallel_leases_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Prior-Run Incident Rollups
+
+Status: completed locally; consolidated on `backlog/20260524-201224`
+
+Goal:
+- advance issue #390 by preventing one source-cycle control-plane failure from
+  becoming many sibling prior-run anomaly obligations and GitHub issues
+- add a deterministic incident rollup for same-cycle hard anomaly cascades while
+  preserving individual signal evidence inside the rollup record
+- keep isolated warnings and exact repeated fingerprints on the existing cheap
+  custody path
+
+Constraints:
+- no backend Codex validation
+- preserve the obligation-first launcher contract
+- keep rollup decisions local, bounded, and based only on recent loop-log
+  evidence
+
+Files likely touched:
+- `tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh`
+- `lib/upkeeper/automation_obligations.bash`
+- `lib/upkeeper/help_selection.bash`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `python3 -m py_compile tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Status Marker Parser Crash Hardening
+
+Status: completed locally; consolidated on `backlog/20260524-201224`
+
+Goal:
+- stop prior-run anomaly repair from repeating PAGE churn when backend Codex
+  exits before producing an `UPKEEPER_STATUS` marker
+- repair the entrypoint-only status-marker parser override so it calls the
+  shared marker parser with the required status contract arguments
+- make marker parser and assignment handling tolerate malformed internal calls
+  without shell `set -u` crashes
+
+Constraints:
+- no backend Codex validation
+- keep status-marker acceptance rules unchanged for valid transcripts
+- preserve the existing obligation and anomaly custody flow; only remove the
+  wrapper crash that prevents normal failure classification
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/report_analysis.bash`
+- focused wrapper/status-marker tests
+- versioned operator notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/bug_fix_batch_280_281_265_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Per-Bug Source Contract Gate
 
 Status: completed locally; pending PR/CI
@@ -4893,3 +5108,82 @@ Validation:
 - `git diff --check`
 - `tools/validate_upkeeper.sh --quick`
 - `tools/validate_upkeeper.sh --full`
+
+## Successive Loop Failure Catchment
+
+Status: completed locally; consolidated on `backlog/20260524-201224`
+
+Goal:
+- keep one backend failure from fanning into several independent prior-run
+  obligations on the next loop
+- classify backend context-window failures as their own repairable control-plane
+  problem instead of generic missing-status noise
+- keep failure transcript evidence bounded in live output so later custody and
+  repair prompts do not re-ingest large transcript tails
+- treat quoted `log_line_parts` source snippets as backend fixture echoes, not
+  live wrapper PAGE failures
+
+Constraints:
+- work in a side branch while the active backlog loop owns the main worktree
+- do not launch real backend Codex validation
+- preserve durable obligations for real non-zero exits; only coalesce companion
+  log lines into the owning terminal-failure obligation
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `lib/upkeeper/transcript_output.bash`
+- `tools/upkeeper_anomaly_custody.py`
+- `lib/upkeeper/automation_obligations.bash`
+- `tests/backlog_wrapper_failure_obligation_test.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `docs/compatibility.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `bash tests/backlog_wrapper_failure_obligation_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+## Source Rights Metadata Model
+
+Status: completed locally; consolidated on `backlog/20260524-201224`
+
+Goal:
+- close issue #224 by defining a tracked source sensitivity, rights, and reuse
+  metadata model for OSINT and citation artifacts
+- connect that model to the existing preservation, security, compatibility, and
+  public documentation surfaces
+- add deterministic validation so the required labels and reuse fields cannot
+  silently drift out of tracked docs
+
+Constraints:
+- documentation and validation only; do not add runtime storage or backend
+  Codex behavior in this patch
+- keep defaults conservative: missing or unknown source-rights metadata denies
+  risky prompt, export, upload, archive, and public evidence actions
+- no real backend Codex validation
+
+Files likely touched:
+- `docs/source-rights-metadata.md`
+- `docs/preservation-policy.md`
+- `docs/security.md`
+- `docs/compatibility.md`
+- `docs/risk-register.md`
+- `README.md`
+- `tools/check_public_docs.sh`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Result:
+- Added the tracked source-rights metadata policy, linked it from the public
+  policy docs, and added public-doc plus quick-validator drift checks.

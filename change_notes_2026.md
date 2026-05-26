@@ -6,6 +6,39 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-25: v1.2.36 changes:
+	1. Backlog child-failure catchment now classifies backend context-window exhaustion as `backend_context_overflow` with a specific repair target and source cycle/run hash, instead of leaving it as generic missing-status noise.
+	2. Prior-run anomaly custody now coalesces terminal-failure companion lines such as failed `run.finish`, missing-status PAGE output, and nonzero `cycle.exit` evidence into the existing terminal-failure obligation for the same cycle or run hash.
+	3. Live failure transcript tails default to 24 lines with a byte cap while preserving the private transcript artifact, reducing the chance that a repair loop re-ingests an oversized failure transcript.
+	4. Quoted backend source snippets that call `log_line` or `log_line_parts` are treated as fixture echoes rather than fresh live PAGE failures.
+	5. Empty-transcript Codex exit failures now use a stable `codex_exec_empty_transcript` obligation identity, and the backlog launcher preserves the child-owned obligation instead of filing a second wrapper-failure record for the same cycle.
+
+2026-05-25: duplicate obligation issue filing circuit breaker:
+	1. Open system-level automation obligations now reconcile by failure class, reason, target scope, target, and repair target instead of volatile per-cycle fingerprints, so repeated child-exit or empty-transcript records collapse to one local owner before GitHub issue sync.
+	2. The obligation issue-report bridge now enumerates open GitHub issues and reuses an exact title match before creating a new issue; if that lookup fails, it fails closed instead of risking duplicate public bugs.
+	3. Obligations already linked to the same specific issue title and issue number now reconcile as one local owner even when their evidence fingerprints differ, so catch-up syncs can retire duplicate local custody records after exact-title GitHub reuse.
+	4. Backlog logs now report `github_reused` counts during obligation issue sync, making duplicate-prevention behavior visible in operator output.
+
+2026-05-25: batch validation state isolation:
+	1. Backlog batch validation now runs unit tests with isolated obligation and automation-ledger roots, so launcher fixtures cannot inherit the live backlog obligation queue and turn a clean-queue assertion into obligation repair.
+	2. ChimneySweep tests ignore ambient `UPKEEPER_OBLIGATION_DIR` by default and use an explicit fixture override when a test intentionally exercises obligation repair.
+	3. Live output custody now sanitizes quoted diagnostic search/source snippets after reclassifying them, preventing embedded `[ERROR]` or `PAGE` text from creating fresh anomaly obligations while a repair prompt inspects prior failures.
+
+2026-05-24: source rights metadata model:
+	1. Added `docs/source-rights-metadata.md` as the tracked source sensitivity, rights, and reuse metadata model for OSINT and citation artifacts.
+	2. Defined public, local-private, secret-adjacent, credential-bearing, PII-bearing, paid-access, license-restricted, prompt-safe, prompt-unsafe, export-safe, and export-unsafe labels.
+	3. Defined rights fields for metadata storage, full-text storage, quoting, upload, export, summarization, Wikipedia citation use, public evidence packets, archiving, and robots/terms restrictions, with validation coverage so the vocabulary cannot silently drift.
+
+2026-05-24: parallel backlog worker lease primitive:
+	1. Added `tools/backlog_parallel_leases.py`, a no-backend local lease registry for future isolated parallel backlog workers.
+	2. The lease primitive rejects duplicate active issue claims, rejects predicted target-file overlap, blocks use of the main checkout as a worker worktree, and supports TTL expiry plus explicit release.
+	3. Added deterministic validation and a proposed architecture decision so live parallel worker launch can build on a tested issue/target ownership contract instead of ad hoc manual loops.
+
+2026-05-24: prior-run incident rollups:
+	1. Prior-run anomaly custody now collapses same-source-cycle hard control-plane cascades into one `incident_rollup` obligation instead of opening sibling PAGE, nonzero-exit, startup-gate, and PR-gate obligations for the same blowup.
+	2. The rollup preserves each individual signal excerpt, fingerprint, target, cycle id, and run hash inside the obligation evidence so repair still has the full local context.
+	3. Deterministic validation covers rollup creation, repeat updates, descriptive issue titles, and sibling-obligation suppression.
+
 2026-05-24: per-bug source contract gate:
 	1. `tools/validate_upkeeper.sh --source-contracts` now runs the cheapest source-only validation contracts used by backlog per-bug commit gates.
 	2. Backlog per-bug validation now runs that source-contract gate when Upkeeper source, tools, or tests changed, catching oversized structured log call sites before commit and push.
@@ -139,6 +172,24 @@ Version numbering note:
 2026-05-24: fallback and postmortem guardrail contract:
 	1. Documented when fallback is allowed, when it is forbidden, how it handles dirty worktrees, whether it may mutate files, child-count/time limits, complete disablement switches, quota/spend bounds, evidence separation, and recovery success criteria.
 	2. Aligned operator guide, help text, default config comments, compatibility notes, and local validation so fallback/postmortem safety rules are a tracked contract instead of scattered implementation details.
+
+2026-05-24: v1.2.35 changes:
+	1. Backlog now captures each child `./Upkeeper` invocation to a private
+	   bounded evidence file and opens a deduplicated
+	   `wrapper_execution_failure` obligation when the child exits non-zero
+	   outside the known blocked/quota lanes.
+	2. Child-failure obligations infer the likely wrapper owner file from shell
+	   crash tails such as `lib/upkeeper/...: line N` so the next run repairs
+	   the control-plane defect instead of only retrying the previous work item.
+
+2026-05-24: v1.2.34 changes:
+	1. Hardened the entrypoint status-marker parser override so it passes the
+	   shared marker parser's full status contract instead of crashing after
+	   backend failures without a final `UPKEEPER_STATUS`.
+	2. Marker analysis now returns explicit empty analysis for malformed
+	   internal calls, and the wrapper initializes marker-assignment defaults
+	   before evaluating parsed status-marker fields, preventing repeated PAGE
+	   churn from shell `set -u` crashes.
 
 2026-05-24: review-module registry:
 	1. Added a narrow review-module registry for P24-P30 ids, aliases, prompt paths, titles, and help summaries.

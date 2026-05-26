@@ -50,6 +50,7 @@ KNOWN_EVENT_SIGNALS = (
     "automation.obligation.open",
     "cycle.exit",
     "run.finish",
+    "context_length_exceeded",
 )
 IGNORED_EVENT_TOKEN_SUFFIXES = (
     ".bash",
@@ -63,6 +64,7 @@ IGNORED_EVENT_TOKEN_SUFFIXES = (
     ".txt",
 )
 ANOMALY_KIND_LABELS = {
+    "incident_rollup": "incident rollup",
     "page_error": "PAGE error",
     "failed_pr_check_gate": "PR check gate failure",
     "nonzero_cycle_exit": "nonzero cycle exit",
@@ -72,7 +74,16 @@ ANOMALY_KIND_LABELS = {
     "previous_run_anomaly_summary": "previous-run anomaly summary",
     "startup_anomaly_gate_active": "startup anomaly gate active",
     "warning_line": "warning",
+    "backend_context_overflow": "backend context overflow",
     "expected_fixture_output": "expected fixture output",
+}
+HARD_INCIDENT_KINDS = {
+    "page_error",
+    "failed_pr_check_gate",
+    "nonzero_cycle_exit",
+    "nonzero_launcher_exit",
+    "lattice_unavailable",
+    "startup_anomaly_unresolved",
 }
 DYNAMIC_FINGERPRINT_PATTERNS = (
     (re.compile(r"\bcycle=[^ \t]+"), "cycle=<cycle>"),
@@ -117,6 +128,8 @@ class Finding:
     cycle_id: str
     run_hash: str
     status: str
+    incident_key: str = ""
+    incident_signals: tuple[dict[str, object], ...] = ()
 
 
 def now_local() -> str:
@@ -179,6 +192,8 @@ def compact_title_text(value: str, width: int = 90) -> str:
 
 
 def anomaly_signal(kind: str, normalized: str) -> str:
+    if kind == "incident_rollup":
+        return "incident.rollup"
     lower = normalized.lower()
     for signal in KNOWN_EVENT_SIGNALS:
         if signal in lower:
@@ -200,6 +215,8 @@ def anomaly_signal(kind: str, normalized: str) -> str:
 
 
 def anomaly_title_label(kind: str, normalized: str) -> str:
+    if kind == "incident_rollup":
+        return "incident rollup"
     label = ANOMALY_KIND_LABELS.get(kind, kind.replace("_", " "))
     signal = anomaly_signal(kind, normalized)
     if not signal:
@@ -237,6 +254,43 @@ def context_has(lines: list[tuple[int, str]], index: int, needle: str, radius: i
     low = max(0, index - radius)
     high = min(len(lines), index + radius + 1)
     return any(needle in line for _, line in lines[low:high])
+
+
+def failure_transcript_tail_echo(lines: list[tuple[int, str]], index: int, normalized: str) -> bool:
+    lower = normalized.lower()
+    terminal_tokens = (
+        "run.finish",
+        "cycle.exit",
+        "codex exited non-zero",
+        "startup_anomaly.gate_unresolved",
+        "checks_failed",
+        "checks failed",
+        "stopping before selecting another issue",
+        "automation.obligation.open",
+    )
+    if "failure transcript tail" in lower:
+        return not (CYCLE_RE.search(normalized) or RUN_HASH_RE.search(normalized))
+    if any(token in lower for token in terminal_tokens):
+        return False
+    low = max(0, index - 140)
+    for prior_index in range(index - 1, low - 1, -1):
+        prior_lower = strip_prefix(lines[prior_index][1]).lower()
+        if "failure transcript tail" in prior_lower:
+            return True
+        if "codex review finished" in prior_lower or "review completed" in prior_lower:
+            return False
+    return False
+
+
+def backend_context_overflow_text(normalized: str) -> bool:
+    lower = normalized.lower()
+    return (
+        "context_length_exceeded" in lower
+        or "context length exceeded" in lower
+        or "remote compact" in lower
+        or "input exceeds the context window" in lower
+        or "maximum context length" in lower
+    )
 
 
 def expected_fixture(lines: list[tuple[int, str]], index: int, line: str) -> bool:
@@ -292,6 +346,8 @@ def model_emitted_fixture_output(normalized: str) -> bool:
         "printf ",
         "printf '",
         'printf "',
+        "log_line ",
+        "log_line_parts ",
         "echo ",
         "grep ",
         "grep -fq ",
@@ -339,7 +395,7 @@ def model_emitted_fixture_output(normalized: str) -> bool:
     )
     if "warn=" in payload or "err=" in payload:
         return True
-    if payload.startswith(("grep ", "printf ", "echo ", "if grep ", "case ")):
+    if payload.startswith(("grep ", "printf ", "log_line ", "log_line_parts ", "echo ", "if grep ", "case ")):
         return True
     if any(token in payload for token in shell_fixture_tokens) and any(
         token in payload for token in embedded_log_tokens
@@ -352,6 +408,8 @@ def model_emitted_fixture_output(normalized: str) -> bool:
 
 def target_for(normalized: str) -> str:
     lower = normalized.lower()
+    if backend_context_overflow_text(normalized):
+        return "lib/upkeeper/transcript_output.bash"
     if "lattice" in lower:
         return "tools/upkeeper_lattice.py"
     if "startup_anomaly" in lower or "previous_run.anomaly" in lower:
@@ -383,6 +441,15 @@ def classify(lines: list[tuple[int, str]], index: int, raw_line: str) -> Classif
         return None
     if "upkeeper: what was wrong:" in lower:
         return None
+    if failure_transcript_tail_echo(lines, index, normalized):
+        return None
+    if backend_context_overflow_text(normalized):
+        return Classification(
+            "backend_context_overflow",
+            "high",
+            target,
+            "backend context window was exceeded before a clean status marker",
+        )
     if "█ page" in raw_line.lower() or "[error]" in lower:
         return Classification("page_error", "high", target, "pageable error output is not part of a healthy run")
     if "checks_failed" in lower or "checks failed" in lower or "stopping before selecting another issue" in lower:
@@ -440,6 +507,8 @@ def stable_fingerprint(kind: str, normalized: str) -> str:
         return "lattice.unavailable"
     if kind == "failed_pr_check_gate":
         return "failed_pr_check_gate"
+    if kind == "backend_context_overflow":
+        return "backend_context_overflow"
     return normalize_fingerprint_text(normalized)
 
 
@@ -447,6 +516,114 @@ def finding_id(kind: str, normalized: str, target: str) -> tuple[str, str]:
     fingerprint = stable_fingerprint(kind, normalized)
     digest = hashlib.sha256(f"{kind}\0{target}\0{fingerprint}".encode("utf-8", "surrogateescape")).hexdigest()
     return f"prior-run-{digest[:24]}", fingerprint
+
+
+def hard_incident_kind(kind: str) -> bool:
+    return kind in HARD_INCIDENT_KINDS
+
+
+def incident_signal_payload(finding: Finding) -> dict[str, object]:
+    return {
+        "id": finding.ident,
+        "kind": finding.kind,
+        "severity": finding.severity,
+        "target_file": finding.target,
+        "reason": finding.reason,
+        "line_number": finding.line_number,
+        "fingerprint": finding.fingerprint,
+        "excerpt": finding.excerpt,
+        "normalized_excerpt": finding.normalized,
+        "cycle_id": finding.cycle_id,
+        "run_hash": finding.run_hash,
+    }
+
+
+def incident_signature(findings: list[Finding]) -> tuple[str, str]:
+    parts = sorted(
+        f"{finding.kind}\0{finding.target}\0{finding.fingerprint}"
+        for finding in findings
+        if hard_incident_kind(finding.kind)
+    )
+    if not parts:
+        parts = sorted(f"{finding.kind}\0{finding.target}\0{finding.fingerprint}" for finding in findings)
+    fingerprint = "incident_rollup " + " | ".join(
+        compact_title_text(part.replace("\0", ":"), 120) for part in parts
+    )
+    digest = hashlib.sha256(("\0".join(["incident_rollup", *parts])).encode("utf-8", "surrogateescape")).hexdigest()
+    return f"prior-run-incident-{digest[:24]}", fingerprint
+
+
+def roll_up_incident_findings(findings: list[Finding]) -> tuple[list[Finding], int, int]:
+    """Collapse same-source-cycle hard cascades into one actionable owner.
+
+    Exact repeated fingerprints are still coalesced earlier. This pass handles a
+    different failure mode: one bad source cycle can emit several distinct PAGE,
+    nonzero-exit, startup-gate, or degraded-mode signals that all point at the
+    same incident. Keeping the signals inside one rollup obligation prevents the
+    next loops from filing and selecting a swarm of sibling issue records.
+    """
+
+    by_cycle: dict[str, list[Finding]] = {}
+    cycle_order: list[str] = []
+    passthrough: list[Finding] = []
+    for finding in findings:
+        if not finding.cycle_id:
+            passthrough.append(finding)
+            continue
+        if finding.cycle_id not in by_cycle:
+            by_cycle[finding.cycle_id] = []
+            cycle_order.append(finding.cycle_id)
+        by_cycle[finding.cycle_id].append(finding)
+
+    rolled: list[Finding] = []
+    rollup_count = 0
+    rolled_signal_count = 0
+    consumed_ids: set[str] = set()
+
+    for cycle_id in cycle_order:
+        group = by_cycle[cycle_id]
+        hard = [finding for finding in group if hard_incident_kind(finding.kind)]
+        if len(hard) < 2:
+            continue
+        ordered = sorted(group, key=lambda item: item.line_number)
+        representative = hard[0]
+        ident, fingerprint = incident_signature(ordered)
+        signal_kinds = ", ".join(dict.fromkeys(finding.kind for finding in ordered))
+        signal_targets = ", ".join(dict.fromkeys(finding.target for finding in ordered))
+        normalized = (
+            f"incident_rollup cycle={cycle_id} hard_signals={len(hard)} "
+            f"signals={signal_kinds} targets={signal_targets}"
+        )
+        excerpt = bounded_excerpt(normalized)
+        rolled.append(
+            Finding(
+                ident=ident,
+                fingerprint=fingerprint,
+                kind="incident_rollup",
+                severity="high",
+                target="Upkeeper",
+                reason="multiple hard control-plane anomaly signals belong to one source-cycle incident",
+                line_number=ordered[0].line_number,
+                excerpt=excerpt,
+                normalized=normalized,
+                cycle_id=cycle_id,
+                run_hash=representative.run_hash,
+                status="actionable",
+                incident_key=f"cycle:{cycle_id}",
+                incident_signals=tuple(incident_signal_payload(finding) for finding in ordered),
+            )
+        )
+        rollup_count += 1
+        rolled_signal_count += len(ordered)
+        consumed_ids.update(finding.ident for finding in ordered)
+
+    result: list[Finding] = []
+    for finding in findings:
+        if finding.ident not in consumed_ids:
+            result.append(finding)
+    result.extend(rolled)
+    result.sort(key=lambda item: item.line_number)
+    return result, rollup_count, rolled_signal_count
 
 
 def make_finding(lines: list[tuple[int, str]], index: int, line_number: int, raw_line: str, item: Classification) -> Finding:
@@ -491,7 +668,7 @@ def existing_obligation_records(root: pathlib.Path) -> dict[str, dict]:
 
 
 def finding_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.Path) -> dict:
-    return {
+    payload = {
         "schema": 1,
         "record_type": "anomaly_custody_finding",
         "status": finding.status,
@@ -510,12 +687,17 @@ def finding_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.Path
         "normalized_excerpt": finding.normalized,
         "created_at": now_local(),
     }
+    if finding.incident_key:
+        payload["incident_key"] = finding.incident_key
+        payload["incident_signal_count"] = len(finding.incident_signals)
+        payload["incident_signals"] = list(finding.incident_signals)
+    return payload
 
 
 def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.Path) -> dict:
     title_label = anomaly_title_label(finding.kind, finding.normalized)
     signal = anomaly_signal(finding.kind, finding.normalized)
-    return {
+    payload = {
         "schema": 1,
         "record_type": "automation_obligation",
         "status": "open",
@@ -524,6 +706,7 @@ def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.P
         "kind": "prior_run_anomaly",
         "severity": finding.severity,
         "summary": anomaly_summary(finding),
+        "anomaly_kind": finding.kind,
         "anomaly_signal": signal,
         "anomaly_title_label": title_label,
         "fingerprint": finding.fingerprint,
@@ -573,6 +756,20 @@ def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.P
             "add deterministic validation for the repaired or intentionally expected outcome",
         ],
     }
+    if finding.incident_key:
+        payload["incident_key"] = finding.incident_key
+        payload["incident_signal_count"] = len(finding.incident_signals)
+        payload["evidence"]["incident_key"] = finding.incident_key
+        payload["evidence"]["incident_signal_count"] = len(finding.incident_signals)
+        payload["evidence"]["incident_signals"] = list(finding.incident_signals)
+        payload["required_resolution"] = [
+            "inspect every signal inside the incident rollup before normal backlog issue work",
+            "identify the single underlying source-cycle failure or explicitly split unrelated signals with deterministic evidence",
+            "patch the wrapper, launcher, tests, docs, or detector rule when the source is repairable now",
+            "preserve individual signal evidence inside the rollup instead of filing duplicate sibling obligations for the same incident",
+            "add deterministic validation for the repaired or intentionally expected outcome",
+        ]
+    return payload
 
 
 def update_open_obligation(path: pathlib.Path, finding: Finding, loop_log: pathlib.Path) -> None:
@@ -591,6 +788,7 @@ def update_open_obligation(path: pathlib.Path, finding: Finding, loop_log: pathl
     data["occurrence_count"] = occurrence_count + 1
     data["last_source_cycle_id"] = finding.cycle_id
     data["last_source_run_hash"] = finding.run_hash
+    data["anomaly_kind"] = finding.kind
     data["anomaly_signal"] = anomaly_signal(finding.kind, finding.normalized)
     data["anomaly_title_label"] = anomaly_title_label(finding.kind, finding.normalized)
     data["last_evidence"] = {
@@ -603,6 +801,12 @@ def update_open_obligation(path: pathlib.Path, finding: Finding, loop_log: pathl
         "excerpt": finding.excerpt,
         "normalized_excerpt": finding.normalized,
     }
+    if finding.incident_key:
+        data["incident_key"] = finding.incident_key
+        data["incident_signal_count"] = len(finding.incident_signals)
+        data["last_evidence"]["incident_key"] = finding.incident_key
+        data["last_evidence"]["incident_signal_count"] = len(finding.incident_signals)
+        data["last_evidence"]["incident_signals"] = list(finding.incident_signals)
     if not data.get("fingerprint"):
         data["fingerprint"] = finding.fingerprint
     if first_summary := anomaly_summary(finding):
@@ -618,6 +822,113 @@ def update_open_obligation(path: pathlib.Path, finding: Finding, loop_log: pathl
     write_json(path, data)
 
 
+def terminal_failure_companion(finding: Finding) -> bool:
+    lower = finding.normalized.lower()
+    if finding.kind == "backend_context_overflow":
+        return True
+    if "codex.transcript_capture_failed" in lower:
+        return True
+    if "codex.live_output_filter_failed" in lower:
+        return True
+    if "run.finish" in lower and (
+        "codex_exit=" in lower
+        or "wait_result=failed" in lower
+        or "status_marker=missing" in lower
+        or "session_end_state=no_agent_message" in lower
+        or "transcript_bytes=0" in lower
+        or "transcript_lines=0" in lower
+    ):
+        return True
+    if "codex exited non-zero without an upkeeper_status marker" in lower:
+        return True
+    if "codex exited non-zero without transcript output" in lower:
+        return True
+    if "cycle.exit exit_code=" in lower and (
+        "missing_status_marker" in lower
+        or "codex_exec_empty_transcript" in lower
+        or "status_marker_source=missing" in lower
+        or "codex_exit=1" in lower
+        or "codex_exit=101" in lower
+        or "transcript_bytes=0" in lower
+        or "transcript_lines=0" in lower
+    ):
+        return True
+    return False
+
+
+def terminal_failure_owner(record: dict, finding: Finding, root: pathlib.Path) -> bool:
+    if record.get("state") != "open":
+        return False
+    data = record.get("data")
+    if not isinstance(data, dict):
+        return False
+    record_root = str(data.get("root") or "")
+    if record_root and pathlib.Path(record_root).resolve() != root:
+        return False
+    kind = str(data.get("kind") or "")
+    reason = str(data.get("reason") or "")
+    if kind not in {
+        "missing_status_marker",
+        "wrapper_execution_failure",
+        "backend_context_overflow",
+        "codex_exec_empty_transcript",
+        "turn_aborted_without_marker",
+    } and reason not in {
+        "MISSING_STATUS_MARKER",
+        "UPKEEPER_CHILD_EXIT_NONZERO",
+        "BACKEND_CONTEXT_LENGTH_EXCEEDED",
+        "CODEX_EXEC_EMPTY_TRANSCRIPT",
+        "TURN_ABORTED_WITHOUT_MARKER",
+    }:
+        return False
+    source_cycle_id = str(data.get("source_cycle_id") or "")
+    source_run_hash = str(data.get("source_run_hash") or "")
+    if finding.cycle_id and source_cycle_id == finding.cycle_id:
+        return True
+    if finding.run_hash and source_run_hash == finding.run_hash:
+        return True
+    return False
+
+
+def terminal_failure_owner_record(
+    finding: Finding,
+    obligation_records: dict[str, dict],
+    root: pathlib.Path,
+) -> dict | None:
+    if not terminal_failure_companion(finding):
+        return None
+    for record in obligation_records.values():
+        if terminal_failure_owner(record, finding, root):
+            return record
+    return None
+
+
+def update_terminal_failure_owner(path: pathlib.Path, finding: Finding, loop_log: pathlib.Path) -> None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(data, dict):
+        return
+    try:
+        coalesced_count = int(data.get("coalesced_failure_evidence_count") or 0)
+    except (TypeError, ValueError):
+        coalesced_count = 0
+    data["updated_at"] = now_local()
+    data["coalesced_failure_evidence_count"] = coalesced_count + 1
+    data["last_coalesced_failure_evidence"] = {
+        "source": "backlog_loop_log",
+        "loop_log": str(loop_log),
+        "line_number": finding.line_number,
+        "kind": finding.kind,
+        "reason": finding.reason,
+        "fingerprint": finding.fingerprint,
+        "excerpt": finding.excerpt,
+        "normalized_excerpt": finding.normalized,
+    }
+    write_json(path, data)
+
+
 def audit(args: argparse.Namespace) -> int:
     root = pathlib.Path(args.root).resolve()
     loop_log = pathlib.Path(args.loop_log).expanduser()
@@ -627,14 +938,19 @@ def audit(args: argparse.Namespace) -> int:
     max_findings = max(0, int(args.max_findings))
 
     lines = tail_lines(loop_log, recent_lines)
+    candidate_findings: list[Finding] = []
     findings: list[Finding] = []
     known_open_findings: list[tuple[dict, Finding]] = []
     expected_count = 0
     resolved_count = 0
     coalesced_count = 0
+    incident_rollup_count = 0
+    incident_signal_count = 0
     seen_ids: set[str] = set()
     known_open_ids: set[str] = set()
     truncated_count = 0
+    created_obligations = 0
+    updated_obligations = 0
     obligation_records = existing_obligation_records(obligation_root)
     for index, (line_number, raw_line) in enumerate(lines):
         classified = classify(lines, index, raw_line)
@@ -644,6 +960,23 @@ def audit(args: argparse.Namespace) -> int:
         if finding.status == "expected_fixture":
             expected_count += 1
             continue
+        terminal_owner = terminal_failure_owner_record(finding, obligation_records, root)
+        if terminal_owner is not None:
+            if args.write_obligations:
+                update_terminal_failure_owner(pathlib.Path(terminal_owner["path"]), finding, loop_log)
+                updated_obligations += 1
+            coalesced_count += 1
+            continue
+        if finding.ident in seen_ids:
+            coalesced_count += 1
+            continue
+        seen_ids.add(finding.ident)
+        candidate_findings.append(finding)
+
+    candidate_findings, incident_rollup_count, incident_signal_count = roll_up_incident_findings(candidate_findings)
+    coalesced_count += max(0, incident_signal_count - incident_rollup_count)
+
+    for finding in candidate_findings:
         record = obligation_records.get(finding.ident)
         if record and record.get("state") == "resolved":
             resolved_count += 1
@@ -655,10 +988,6 @@ def audit(args: argparse.Namespace) -> int:
             known_open_ids.add(finding.ident)
             known_open_findings.append((record, finding))
             continue
-        if finding.ident in seen_ids:
-            coalesced_count += 1
-            continue
-        seen_ids.add(finding.ident)
         if max_findings > 0 and len(findings) >= max_findings:
             truncated_count += 1
             continue
@@ -666,8 +995,6 @@ def audit(args: argparse.Namespace) -> int:
 
     private_dir(state_root)
     finding_dir = state_root / "findings"
-    created_obligations = 0
-    updated_obligations = 0
     for finding in findings:
         write_json(finding_dir / f"{finding.ident}.json", finding_payload(finding, root, loop_log))
         if not args.write_obligations:
@@ -709,6 +1036,8 @@ def audit(args: argparse.Namespace) -> int:
         "expected_fixture_findings": expected_count,
         "resolved_fingerprint_findings": resolved_count,
         "coalesced_findings": coalesced_count,
+        "incident_rollup_findings": incident_rollup_count,
+        "incident_signal_findings": incident_signal_count,
         "truncated_findings": truncated_count,
         "created_obligations": created_obligations,
         "updated_obligations": updated_obligations,
@@ -722,7 +1051,8 @@ def audit(args: argparse.Namespace) -> int:
         f"status={status} scanned_lines={len(lines)} "
         f"actionable={len(findings)} expected_fixture={expected_count} "
         f"known_open={len(known_open_findings)} resolved={resolved_count} "
-        f"coalesced={coalesced_count} truncated={truncated_count} "
+        f"coalesced={coalesced_count} incident_rollups={incident_rollup_count} "
+        f"truncated={truncated_count} "
         f"new_obligations={created_obligations} updated_obligations={updated_obligations}"
     )
     for finding in findings[:5]:

@@ -39,6 +39,9 @@ The paired authority docs make the control surface explicit:
   validation contracts for safety boundaries.
 - `docs/preservation-policy.md` defines evidence temperature, artifact privacy
   classes, and promotion rules for local and public evidence.
+- `docs/source-rights-metadata.md` defines source sensitivity, rights, and reuse
+  metadata for OSINT and citation material before it enters prompts, exports,
+  archives, or public evidence packets.
 
 ## Threat Model
 
@@ -77,6 +80,7 @@ Canonical threat categories:
 | Same-user process access | Partially covered | Private permissions, ignored runtime state, encrypted selected-target backups, and token stripping limit accidental exposure. True isolation from another process running as the same OS user is out of scope without stronger OS confinement or a separate user. |
 | Repo-local secret leakage | Partially covered | Secret-bearing files should stay ignored, prompts/logs redact known sensitive paths, and public docs warn against sharing raw evidence. Upkeeper cannot guarantee that project commands or model output never print secrets. |
 | Public docs leakage | Partially covered | Public documentation policy, P26 review, docs checks, and release-note discipline reduce private-chat leakage. Operators still need to sanitize examples before publication. |
+| Source rights leakage | Partially covered | Source sensitivity and reuse metadata in `docs/source-rights-metadata.md` separates public, paid-access, license-restricted, PII-bearing, prompt-safe, and export-safe decisions before OSINT or citation material enters prompts or public evidence. Runtime enforcement is still future work. |
 | Quota/fallback weirdness | Partially covered | Session parsing, quota guardrails, cooldown markers, fallback limits, and stale-evidence obligations make quota and fallback state visible. Provider state can be stale or incomplete, so degraded or blocked outcomes remain possible. |
 
 Future work should reduce the partially covered rows by replacing broad
@@ -131,10 +135,16 @@ Normal startup and dry-run paths can read:
 - `$CODEX_HOME/sessions` JSONL files for quota and session diagnostics
 - prior `Upkeeper.log` lines for previous-run anomaly detection
 - runtime state under `runtime/` and configured state directories
+- source-rights metadata for OSINT and citation material when a workflow records
+  whether material is prompt-safe, export-safe, or public-evidence-safe
 
 During a real backend cycle, Codex may read additional repository files while
 reviewing the selected target. Upkeeper's preselection narrows the intended
 scope, but Codex is still a local agent with the configured sandbox permissions.
+Source material labeled `prompt-unsafe`, `credential-bearing`,
+`secret-adjacent`, unreviewed `PII-bearing`, or otherwise restricted by
+`docs/source-rights-metadata.md` should be represented to Codex only through
+allowed metadata, hashes, ids, or operator-written summaries.
 
 ## What Upkeeper Can Write
 

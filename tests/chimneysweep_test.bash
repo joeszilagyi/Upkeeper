@@ -11,6 +11,7 @@ fail() {
 }
 
 mkdir -p "$TEST_TMP_ROOT/bin"
+DEFAULT_CHIMNEYSWEEP_OBLIGATION_DIR="$TEST_TMP_ROOT/empty-obligations"
 
 cat >"$TEST_TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -77,9 +78,11 @@ EOF
 chmod +x "$TEST_TMP_ROOT/bin/upkeeper"
 
 run_chimneysweep() {
+  local obligation_dir="${CHIMNEYSWEEP_TEST_OBLIGATION_DIR:-$DEFAULT_CHIMNEYSWEEP_OBLIGATION_DIR}"
+
   PATH="$TEST_TMP_ROOT/bin:$PATH" \
     UPKEEPER_CMD="$TEST_TMP_ROOT/bin/upkeeper" \
-    UPKEEPER_OBLIGATION_DIR="${UPKEEPER_OBLIGATION_DIR:-$TEST_TMP_ROOT/empty-obligations}" \
+    UPKEEPER_OBLIGATION_DIR="$obligation_dir" \
     CHIMNEYSWEEP_CAPTURE="$TEST_TMP_ROOT/capture.txt" \
     GH_SCENARIO="${GH_SCENARIO:-clean}" \
     "$ROOT_DIR/ChimneySweep" "$@"
@@ -180,6 +183,20 @@ test_chimneysweep_clean_queue_exits_25() {
   grep -Fq "high five yay" <<<"$output" || fail "clean queue did not print high-five text"
 }
 
+test_chimneysweep_clean_queue_ignores_inherited_obligation_env() {
+  local inherited_obligation_dir output rc
+
+  inherited_obligation_dir="$TEST_TMP_ROOT/inherited-live-obligations"
+  write_open_obligation "$inherited_obligation_dir"
+
+  set +e
+  output="$(UPKEEPER_OBLIGATION_DIR="$inherited_obligation_dir" GH_SCENARIO=clean run_chimneysweep --dry-run 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 25 ]] || fail "clean queue inherited live obligations and exited $rc, expected 25"
+  grep -Fq "high five yay" <<<"$output" || fail "clean queue with inherited obligation env did not print high-five text"
+}
+
 test_chimneysweep_skipped_queue_counts_clean() {
   local output rc
 
@@ -230,7 +247,7 @@ test_chimneysweep_reconciles_obligations_before_github_queue() {
 
   obligation_dir="$TEST_TMP_ROOT/chimneysweep-obligations"
   write_open_obligation "$obligation_dir"
-  output="$(UPKEEPER_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run 2>&1)"
+  output="$(CHIMNEYSWEEP_TEST_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run 2>&1)"
   grep -Fq "selected automation obligation obligation-fixture" <<<"$output" || fail "ChimneySweep did not select open automation obligation first"
   grep -Fq "UPKEEPER_AUTOMATION_WORKFLOW=obligation-repair" <<<"$output" || fail "ChimneySweep obligation run missing obligation workflow"
   grep -Fq "UPKEEPER_AUTOMATION_OBLIGATION_ID=obligation-fixture" <<<"$output" || fail "ChimneySweep obligation run missing obligation id"
@@ -246,7 +263,7 @@ test_chimneysweep_remaps_runtime_fixture_obligation_targets() {
 
   obligation_dir="$TEST_TMP_ROOT/chimneysweep-runtime-target-obligations"
   write_runtime_fixture_obligation "$obligation_dir"
-  output="$(UPKEEPER_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run 2>&1)"
+  output="$(CHIMNEYSWEEP_TEST_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run 2>&1)"
   grep -Fq "selected automation obligation runtime-fixture-obligation" <<<"$output" || fail "runtime fixture obligation was not selected"
   grep -Fq -- "--target-file=ChimneySweep" <<<"$output" || fail "runtime fixture obligation was not remapped to ChimneySweep"
   grep -Fq "obligation target remapped from runtime/upkeeper-explicit-target-fixture.txt to ChimneySweep" <<<"$output" || fail "runtime fixture obligation remap was not reported"
@@ -262,7 +279,7 @@ test_chimneysweep_stops_on_operator_action_required_obligation() {
   write_machine_fixture_obligation "$obligation_dir"
 
   set +e
-  output="$(UPKEEPER_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run --json 2>&1)"
+  output="$(CHIMNEYSWEEP_TEST_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run --json 2>&1)"
   rc=$?
   set -e
 
@@ -348,6 +365,7 @@ test_chimneysweep_completion_loads() {
 
 test_chimneysweep_help_documents_fix_contract
 test_chimneysweep_clean_queue_exits_25
+test_chimneysweep_clean_queue_ignores_inherited_obligation_env
 test_chimneysweep_skipped_queue_counts_clean
 test_chimneysweep_security_class_wins
 test_chimneysweep_model_override_supports_spark

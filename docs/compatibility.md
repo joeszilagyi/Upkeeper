@@ -172,6 +172,24 @@ Future changes should preserve this operator-visible surface as far as possible:
   output tail, stable fingerprint, likely owner path, and required proof command
   before the launcher exits. The next backlog invocation must select that
   obligation before retrying the merge or selecting fresh issue work.
+- Backlog child wrapper failures are also machine-health obligations. If
+  `./Upkeeper` exits non-zero before the child run reaches a clean launcher
+  outcome, the backlog launcher writes or updates a `wrapper_execution_failure`
+  obligation with a private bounded child-output tail and likely wrapper owner
+  path before exiting, except for the already-modeled blocked and quota lanes.
+  If the child run already opened a durable automation obligation for the same
+  failure, the backlog launcher preserves that native owner instead of filing a
+  duplicate outer wrapper-failure record.
+  Backend context-window overflows are a specialized child-failure obligation
+  kind, `backend_context_overflow`, and must point at bounded-evidence handling
+  instead of filing as generic missing-status residue. Empty-transcript Codex
+  exits are a specialized child-failure obligation kind,
+  `codex_exec_empty_transcript`, and repeated empty-transcript records for the
+  same repair target must collapse even when issue-report numbers differ. Later
+  prior-run anomaly scans may coalesce `run.finish`, `cycle.exit`,
+  transcript-capture, live-output-filter, and missing-status companion PAGE
+  lines into the owning terminal-failure obligation; they must not fan out one
+  failed cycle into multiple unrelated obligations.
 - Backlog PR check and merge decisions are made against the current backlog
   branch head. If the local backlog branch is clean and ahead of
   `origin/<branch>`, the launcher pushes it before PR checks or merge. Dirty,
@@ -203,6 +221,12 @@ Future changes should preserve this operator-visible surface as far as possible:
   artifacts, obligation evidence, redaction defaults, compression, pruning, or
   public evidence promotion should update that policy and validation coverage
   in the same patch.
+- The source-rights metadata model in `docs/source-rights-metadata.md` is part
+  of the stable evidence and public-citation contract. Changes to source
+  sensitivity labels, rights fields, prompt-safe/export-safe decisions,
+  paid-access or license-restricted handling, Wikipedia citation use, public
+  evidence packets, archiving, or robots/terms restrictions should update that
+  model and validation coverage in the same patch.
 - Policy decision schema-v1 field names and types are stable. Future policy
   decision records may add optional fields, but removing, renaming, or changing
   the meaning of existing fields requires a new schema version and validation
@@ -304,6 +328,26 @@ Future changes should preserve this operator-visible surface as far as possible:
   current-root automation obligations before normal issue selection. The local
   reports are runtime evidence, not source, and GitHub issue creation remains a
   wrapper-side opt-in through `BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=1`.
+  Before a new issue is created, the bridge enumerates open GitHub issues and
+  links the obligation to an exact title match when one exists. If open-issue
+  lookup fails, the bridge fails closed instead of creating a possible
+  duplicate. System-level obligations such as child exits, missing status
+  markers, backend context overflow, and empty transcripts reconcile by failure
+  class, reason, target, and repair target rather than by volatile per-cycle
+  fingerprints. Obligations already linked to the same specific GitHub issue
+  title and number also reconcile as one local owner even when their evidence
+  fingerprints differ. Batch validation unit tests run with isolated
+  obligation and automation-ledger roots, so local test fixtures cannot consume
+  the live backlog obligation queue.
+- The parallel-worker lease registry is a local no-backend compatibility
+  surface for future isolated backlog workers. `tools/backlog_parallel_leases.py`
+  stores leases under the selected backlog state root, rejects active duplicate
+  issue claims, rejects active predicted-target overlap, rejects worker leases
+  that point at the main checkout or a nested worktree, supports TTL expiry and
+  explicit release, and prints a stable tabular status header:
+  `worker_id status issue model effort branch worktree target expires_in next_action`.
+  It does not create worktrees, branches, PRs, GitHub labels, comments, or
+  backend Codex work by itself.
 - Upkeeper Lattice is additive local runtime evidence at
   `runtime/upkeeper-lattice/lattice.sqlite3`. Runtime artifacts under
   `runtime/upkeeper-lattice/`, including SQLite side files, backups, exports,

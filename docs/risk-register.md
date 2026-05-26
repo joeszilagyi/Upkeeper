@@ -15,6 +15,7 @@ operator trust. GitHub issues remain the detailed work tracker.
 | Parallel worker collisions | Multiple automation workers could contend for a checkout or PR | Active-lock and backlog ownership checks serialize one checkout; parallel work needs isolated worktrees | Open |
 | Threat/degraded-mode doctrine drift | Operators could misunderstand whether a safety block is covered, degraded, overridable, or out of scope | `docs/security.md` now tracks threat coverage, degraded-mode behavior, and override rules; quick validation checks the required doctrine terms | Mitigated |
 | Evidence preservation drift | Logs, transcripts, backups, Lattice rows, exports, and recovery artifacts could be kept, pruned, or published with inconsistent privacy assumptions | `docs/preservation-policy.md` defines evidence temperature, artifact privacy classes, and promotion rules; quick validation checks the required policy terms | Mitigated |
+| Source rights drift | OSINT or citation material could be prompted, exported, archived, quoted, uploaded, or used in public evidence without a consistent rights review | `docs/source-rights-metadata.md` defines source sensitivity labels and rights fields; quick validation checks the required policy terms | Mitigated |
 
 ## Maintenance
 

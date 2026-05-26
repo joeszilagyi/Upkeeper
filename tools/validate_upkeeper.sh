@@ -655,6 +655,62 @@ check_preservation_policy_contract() {
     fail "change notes missing preservation policy entry"
 }
 
+check_source_rights_metadata_contract() {
+  local term
+  local -a required_terms
+
+  log "checking source rights metadata contract"
+  [[ -s docs/source-rights-metadata.md ]] ||
+    fail "source rights metadata policy is missing or empty"
+
+  required_terms=(
+    "## Source Sensitivity Labels"
+    "public"
+    "local-private"
+    "secret-adjacent"
+    "credential-bearing"
+    "PII-bearing"
+    "paid-access"
+    "license-restricted"
+    "prompt-safe"
+    "prompt-unsafe"
+    "export-safe"
+    "export-unsafe"
+    "## Rights And Reuse Fields"
+    "may_store_metadata"
+    "may_store_full_text"
+    "may_quote"
+    "may_upload"
+    "may_export"
+    "may_summarize"
+    "may_use_for_wikipedia_citation"
+    "may_include_in_public_evidence_packet"
+    "may_archive"
+    "robots_or_terms_restriction"
+    "## Default Deny Rules"
+    "## OSINT And Citation Workflow"
+    "## Relationship To Preservation Policy"
+    "upkeeper.source_rights.v1"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq "$term" docs/source-rights-metadata.md ||
+      fail "source rights metadata missing required term: $term"
+  done
+
+  grep -Fq "docs/source-rights-metadata.md" README.md ||
+    fail "README missing source rights metadata pointer"
+  grep -Fq "docs/source-rights-metadata.md" docs/preservation-policy.md ||
+    fail "preservation docs missing source rights metadata pointer"
+  grep -Fq "docs/source-rights-metadata.md" docs/security.md ||
+    fail "security docs missing source rights metadata pointer"
+  grep -Fq "docs/source-rights-metadata.md" docs/compatibility.md ||
+    fail "compatibility docs missing source rights metadata contract"
+  grep -Fq "Source rights drift" docs/risk-register.md ||
+    fail "risk register missing source rights drift risk"
+  grep -Fq "source rights metadata model" change_notes_2026.md ||
+    fail "change notes missing source rights metadata entry"
+}
+
 check_syntax() {
   local module
 
@@ -1203,7 +1259,7 @@ PY
 }
 
 check_prior_run_anomaly_custody_contract() {
-  local temp_dir obligation_count selected_json prompt_file second_count
+  local temp_dir obligation_count selected_json prompt_file second_count incident_count
 
   log "checking prior-run anomaly custody contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-anomaly-custody.XXXXXX)"
@@ -1261,6 +1317,45 @@ LOG
   [[ "$(jq -r '.updated_obligations' "$temp_dir/custody/latest.json")" == "$obligation_count" ]] ||
     fail "prior-run anomaly custody did not update existing coalesced obligations"
 
+  cat >"$temp_dir/incident.log" <<'LOG'
+2026-05-24T20:52:30 █ PAGE    [ERROR] cycle=incident-cycle run_hash=incident123 Upkeeper: primary failure transcript tail
+2026-05-24T20:52:31 █ INFO    cycle=incident-cycle run_hash=incident123 cycle.exit exit_code=3 reason=MISSING_STATUS_MARKER
+2026-05-24T20:52:32 █ --FYI-- [WARN] cycle=incident-cycle run_hash=incident123 startup_anomaly.gate_unresolved reason=missing_status_marker
+2026-05-24T20:52:33 █ INFO    cycle=incident-cycle run_hash=incident123 backlog: PR #500 checks failed; stopping before selecting another issue
+LOG
+  tools/upkeeper_anomaly_custody.py \
+    --root "$ROOT_DIR" \
+    --loop-log "$temp_dir/incident.log" \
+    --state-root "$temp_dir/incident-custody" \
+    --obligation-root "$temp_dir/incident-obligations" \
+    --recent-lines 100 \
+    --max-findings 10 \
+    --write-obligations >"$temp_dir/incident-audit.out"
+  [[ "$(jq -r '.actionable_findings' "$temp_dir/incident-custody/latest.json")" == "1" ]] ||
+    fail "prior-run anomaly custody did not collapse same-cycle hard anomalies to one incident rollup"
+  [[ "$(jq -r '.incident_rollup_findings' "$temp_dir/incident-custody/latest.json")" == "1" ]] ||
+    fail "prior-run anomaly custody did not record the incident rollup count"
+  [[ "$(jq -r '.incident_signal_findings' "$temp_dir/incident-custody/latest.json")" == "4" ]] ||
+    fail "prior-run anomaly custody did not preserve all incident signals inside the rollup"
+  incident_count="$(find "$temp_dir/incident-obligations/open" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$incident_count" == "1" ]] ||
+    fail "prior-run anomaly custody opened sibling obligations for one source-cycle incident"
+  jq -e 'select(.anomaly_kind == "incident_rollup") | select(.incident_signal_count == 4) | select(.evidence.incident_signals | length == 4) | select(.issue_title == "High priority bug: prior-run incident rollup needs repair for Upkeeper") | select(.required_resolution[] | contains("inspect every signal inside the incident rollup"))' \
+    "$temp_dir"/incident-obligations/open/*.json >/dev/null ||
+    fail "prior-run anomaly custody incident rollup obligation did not preserve signal evidence and title"
+  tools/upkeeper_anomaly_custody.py \
+    --root "$ROOT_DIR" \
+    --loop-log "$temp_dir/incident.log" \
+    --state-root "$temp_dir/incident-custody" \
+    --obligation-root "$temp_dir/incident-obligations" \
+    --recent-lines 100 \
+    --max-findings 10 \
+    --write-obligations >"$temp_dir/incident-audit-second.out"
+  [[ "$(jq -r '.created_obligations' "$temp_dir/incident-custody/latest.json")" == "0" ]] ||
+    fail "prior-run anomaly custody recreated an existing incident rollup obligation"
+  [[ "$(jq -r '.updated_obligations' "$temp_dir/incident-custody/latest.json")" == "1" ]] ||
+    fail "prior-run anomaly custody did not update the existing incident rollup obligation"
+
   selected_json="$(
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
       bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
@@ -1296,6 +1391,7 @@ LOG
   cat >"$temp_dir/model-fixture.log" <<'LOG'
 2026-05-23T07:07:51 █ INFO    [ERROR] Upkeeper: primary: printf '"'%s [WARN] cycle=prior-cycle run_hash=abc startup_anomaly.gate_unresolved reason=changed_path_violation reasons=previous_run_anomaly boot_id=boot-current\n' "$stamp_old" >>"$log_file"
 2026-05-23T07:07:52 █ INFO    [ERROR] Upkeeper: primary: echo "2026-05-23T07:00:00 █ PAGE [ERROR] cycle=quoted run_hash=abc runner.output"
+2026-05-23T07:07:53 █ PAGE    [ERROR] Upkeeper: primary: log_line_parts "WARN" "cycle=$cycle run_hash=abc previous_run.anomaly_summary listed_total=1"
 2026-05-23T07:21:59 █ PAGE    [ERROR] Upkeeper: primary: *'"'[ERROR]'*|*'[WARN]'*|*'█'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*)
 2026-05-23T07:02:16 █ PAGE    [ERROR] Upkeeper: primary: grep -Fq 'previous_cycle=prior-normal' "$tmp_dir/out" && echo 'normal_cycle=passed' || { echo 'normal_cycle=failed'; exit 1; }
 2026-05-23T07:29:58 █ PAGE    [ERROR] Upkeeper: primary: warn='[''WARN'']'
@@ -1312,12 +1408,104 @@ LOG
     --write-obligations >"$temp_dir/model-fixture-audit.out"
   [[ "$(jq -r '.actionable_findings' "$temp_dir/model-fixture-custody/latest.json")" == "0" ]] ||
     fail "prior-run anomaly custody treated quoted backend fixture text as actionable"
-  if grep -R -Fq 'run_record_read=fail' "$temp_dir/model-fixture-obligations" 2>/dev/null; then
-    fail "prior-run anomaly custody opened an obligation for quoted Python fixture text"
-  fi
+	  if grep -R -Fq 'run_record_read=fail' "$temp_dir/model-fixture-obligations" 2>/dev/null; then
+	    fail "prior-run anomaly custody opened an obligation for quoted Python fixture text"
+	  fi
 
-  grep -Fq 'run_backlog_anomaly_custody_audit' orchestration/backlog.sh ||
-    fail "backlog launcher does not invoke prior-run anomaly custody before issue selection"
+	  mkdir -p "$temp_dir/cascade-obligations/open"
+	  python3 - "$ROOT_DIR" "$temp_dir/cascade-obligations/open/owner.json" <<'PY'
+import json
+import sys
+
+root, path = sys.argv[1:3]
+record = {
+    "schema": 1,
+    "record_type": "automation_obligation",
+    "status": "open",
+    "id": "owner",
+    "kind": "missing_status_marker",
+    "reason": "MISSING_STATUS_MARKER",
+    "root": root,
+    "source_cycle_id": "cycle-fail",
+    "source_run_hash": "hashfail",
+    "target_file": "Upkeeper",
+    "repair_target_file": "Upkeeper",
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(record, handle)
+    handle.write("\n")
+PY
+	  cat >"$temp_dir/failure-cascade.log" <<'LOG'
+2026-05-25T09:21:24 █ PAGE    [ERROR] Upkeeper: primary failure transcript tail (last 120 lines):
+2026-05-25T09:21:24 █ INFO    2800:2026-05-22T16:28:54-0700 [WARN] cycle=old-cycle run_hash=oldhash central_wrapper.health status=quarantine
+2026-05-25T09:21:24 █ PAGE    [ERROR] cycle=cycle-fail run_hash=hashfail run.finish execution_origin=primary codex_exit=1 session_end_state=no_agent_message
+2026-05-25T09:21:28 █ PAGE    [ERROR] cycle=cycle-fail run_hash=hashfail codex exited non-zero without an UPKEEPER_STATUS marker
+2026-05-25T09:21:30 █ PAGE    [ERROR] cycle=cycle-fail run_hash=hashfail cycle.exit exit_code=3 reason=MISSING_STATUS_MARKER codex_exit=1 status_marker_source=missing
+LOG
+	  tools/upkeeper_anomaly_custody.py \
+	    --root "$ROOT_DIR" \
+	    --loop-log "$temp_dir/failure-cascade.log" \
+	    --state-root "$temp_dir/cascade-custody" \
+	    --obligation-root "$temp_dir/cascade-obligations" \
+	    --recent-lines 100 \
+	    --max-findings 10 \
+	    --write-obligations >"$temp_dir/cascade-audit.out"
+	  [[ "$(jq -r '.actionable_findings' "$temp_dir/cascade-custody/latest.json")" == "0" ]] ||
+	    fail "prior-run anomaly custody opened secondary obligations for an owned terminal-failure cascade"
+	  [[ "$(jq -r '.coalesced_findings' "$temp_dir/cascade-custody/latest.json")" -ge 3 ]] ||
+	    fail "prior-run anomaly custody did not coalesce owned terminal-failure companion lines"
+	  [[ "$(find "$temp_dir/cascade-obligations/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')" == "1" ]] ||
+	    fail "prior-run anomaly custody wrote extra obligations for owned terminal-failure companion lines"
+	  [[ "$(jq -r '.coalesced_failure_evidence_count' "$temp_dir/cascade-obligations/open/owner.json")" -ge 3 ]] ||
+	    fail "terminal-failure owner did not record coalesced companion evidence"
+
+	  mkdir -p "$temp_dir/empty-cascade-obligations/open"
+	  python3 - "$ROOT_DIR" "$temp_dir/empty-cascade-obligations/open/owner.json" <<'PY'
+import json
+import sys
+
+root, path = sys.argv[1:3]
+record = {
+    "schema": 1,
+    "record_type": "automation_obligation",
+    "status": "open",
+    "id": "owner",
+    "kind": "codex_exec_empty_transcript",
+    "reason": "CODEX_EXEC_EMPTY_TRANSCRIPT",
+    "root": root,
+    "source_cycle_id": "cycle-empty",
+    "source_run_hash": "hashempty",
+    "target_file": "lib/upkeeper/transcript_output.bash",
+    "repair_target_file": "lib/upkeeper/transcript_output.bash",
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(record, handle)
+    handle.write("\n")
+PY
+	  cat >"$temp_dir/empty-failure-cascade.log" <<'LOG'
+2026-05-25T10:26:02 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hashempty codex.transcript_capture_failed label=primary tee_exit=141 codex_exit=101
+2026-05-25T10:26:02 █ INFO    [WARN] cycle=cycle-empty run_hash=hashempty codex.live_output_filter_failed label=primary filter_exit=1 codex_exit=101
+2026-05-25T10:26:02 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hashempty run.finish codex_exit=101 transcript_bytes=0 transcript_lines=0
+2026-05-25T10:26:05 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hashempty codex exited non-zero without transcript output
+2026-05-25T10:26:07 █ PAGE    [ERROR] cycle=cycle-empty run_hash=hashempty cycle.exit exit_code=3 reason=CODEX_EXEC_EMPTY_TRANSCRIPT codex_exit=101 transcript_bytes=0 transcript_lines=0
+LOG
+	  tools/upkeeper_anomaly_custody.py \
+	    --root "$ROOT_DIR" \
+	    --loop-log "$temp_dir/empty-failure-cascade.log" \
+	    --state-root "$temp_dir/empty-cascade-custody" \
+	    --obligation-root "$temp_dir/empty-cascade-obligations" \
+	    --recent-lines 100 \
+	    --max-findings 10 \
+	    --write-obligations >"$temp_dir/empty-cascade-audit.out"
+	  [[ "$(jq -r '.actionable_findings' "$temp_dir/empty-cascade-custody/latest.json")" == "0" ]] ||
+	    fail "prior-run anomaly custody opened secondary obligations for an owned empty-transcript cascade"
+	  [[ "$(jq -r '.coalesced_findings' "$temp_dir/empty-cascade-custody/latest.json")" -ge 4 ]] ||
+	    fail "prior-run anomaly custody did not coalesce owned empty-transcript companion lines"
+	  [[ "$(find "$temp_dir/empty-cascade-obligations/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')" == "1" ]] ||
+	    fail "prior-run anomaly custody wrote extra obligations for owned empty-transcript companion lines"
+
+	  grep -Fq 'run_backlog_anomaly_custody_audit' orchestration/backlog.sh ||
+	    fail "backlog launcher does not invoke prior-run anomaly custody before issue selection"
   grep -Fq 'run_upkeeper_for_obligation' orchestration/backlog.sh ||
     fail "backlog launcher does not route selected obligations to Upkeeper"
 
@@ -1537,6 +1725,40 @@ records = [
         "schema": 1,
         "record_type": "automation_obligation",
         "status": "open",
+        "id": "empty-owner",
+        "created_at": "2026-05-22T02:10:00-0700",
+        "kind": "codex_exec_empty_transcript",
+        "severity": "high",
+        "summary": "empty transcript owner",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "lib/upkeeper/transcript_output.bash",
+        "repair_target_file": "lib/upkeeper/transcript_output.bash",
+        "issue_number": "590",
+        "reason": "CODEX_EXEC_EMPTY_TRANSCRIPT",
+        "fingerprint": "empty-transcript:first-cycle",
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "empty-duplicate-with-different-issue",
+        "created_at": "2026-05-22T02:11:00-0700",
+        "kind": "codex_exec_empty_transcript",
+        "severity": "high",
+        "summary": "empty transcript duplicate",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "lib/upkeeper/transcript_output.bash",
+        "repair_target_file": "",
+        "issue_number": "592",
+        "reason": "CODEX_EXEC_EMPTY_TRANSCRIPT",
+        "fingerprint": "empty-transcript:second-cycle",
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
         "id": "duplicate-current",
         "created_at": "2026-05-22T02:00:00-0700",
         "kind": "missing_status_marker",
@@ -1549,6 +1771,42 @@ records = [
         "issue_number": "146",
         "reason": "MISSING_STATUS_MARKER",
         "fingerprint": "missing-status:lattice:146",
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "issue-linked-owner",
+        "created_at": "2026-05-22T02:20:00-0700",
+        "kind": "prior_run_anomaly",
+        "severity": "high",
+        "summary": "issue-linked owner",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "Upkeeper",
+        "repair_target_file": "Upkeeper",
+        "issue_number": "701",
+        "issue_report_title": "High priority bug: prior-run PAGE error needs repair for Upkeeper",
+        "reason": "PRIOR_RUN_ANOMALY",
+        "fingerprint": "prior-page:first-cycle",
+    },
+    {
+        "schema": 1,
+        "record_type": "automation_obligation",
+        "status": "open",
+        "id": "issue-linked-duplicate",
+        "created_at": "2026-05-22T02:21:00-0700",
+        "kind": "prior_run_anomaly",
+        "severity": "high",
+        "summary": "issue-linked duplicate",
+        "root": root,
+        "target_scope": "target",
+        "target_file": "Upkeeper",
+        "repair_target_file": "Upkeeper",
+        "issue_number": "701",
+        "issue_report_title": "High priority bug: prior-run PAGE error needs repair for Upkeeper",
+        "reason": "PRIOR_RUN_ANOMALY",
+        "fingerprint": "prior-page:second-cycle",
     },
     {
         "schema": 1,
@@ -1593,19 +1851,19 @@ PY
   )"
   [[ "$(jq -r '.status' <<<"$reconciliation_json")" == "reconciled" ]] ||
     fail "automation obligation reconciliation did not report reconciled status"
-  [[ "$(jq -r '.current_root_open_before' <<<"$reconciliation_json")" == "3" ]] ||
+  [[ "$(jq -r '.current_root_open_before' <<<"$reconciliation_json")" == "7" ]] ||
     fail "automation obligation reconciliation counted the wrong current-root input"
-  [[ "$(jq -r '.current_root_open_after' <<<"$reconciliation_json")" == "2" ]] ||
+  [[ "$(jq -r '.current_root_open_after' <<<"$reconciliation_json")" == "4" ]] ||
     fail "automation obligation reconciliation left the wrong current-root output"
   [[ "$(jq -r '.deferred_foreign_root_count' <<<"$reconciliation_json")" == "1" ]] ||
     fail "automation obligation reconciliation lost foreign-root evidence count"
-  [[ "$(jq -r '.duplicates_resolved' <<<"$reconciliation_json")" == "1" ]] ||
-    fail "automation obligation reconciliation did not resolve one duplicate"
+  [[ "$(jq -r '.duplicates_resolved' <<<"$reconciliation_json")" == "3" ]] ||
+    fail "automation obligation reconciliation did not resolve all duplicate groups"
 
   open_count="$(find "$temp_dir/obligations/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
   resolved_count="$(find "$temp_dir/obligations/resolved" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
-  [[ "$open_count" == "3" ]] || fail "automation obligation reconciliation removed wrong open count"
-  [[ "$resolved_count" == "1" ]] || fail "automation obligation reconciliation did not preserve one resolved duplicate"
+  [[ "$open_count" == "5" ]] || fail "automation obligation reconciliation removed wrong open count"
+  [[ "$resolved_count" == "3" ]] || fail "automation obligation reconciliation did not preserve three resolved duplicates"
   owner_file="$temp_dir/obligations/open/owner-current.json"
   duplicate_file="$temp_dir/obligations/resolved/duplicate-current.json"
   [[ "$(jq -r '.occurrence_count' "$owner_file")" == "2" ]] ||
@@ -1616,6 +1874,14 @@ PY
     fail "automation obligation reconciliation did not mark duplicate resolved"
   [[ "$(jq -r '.duplicate_of' "$duplicate_file")" == "owner-current" ]] ||
     fail "automation obligation reconciliation did not point duplicate at owner"
+  [[ "$(jq -r '.occurrence_count' "$temp_dir/obligations/open/empty-owner.json")" == "2" ]] ||
+    fail "automation obligation reconciliation did not collapse empty-transcript duplicates across issue numbers and volatile fingerprints"
+  [[ "$(jq -r '.duplicate_of' "$temp_dir/obligations/resolved/empty-duplicate-with-different-issue.json")" == "empty-owner" ]] ||
+    fail "automation obligation reconciliation did not point empty-transcript duplicate at owner"
+  [[ "$(jq -r '.occurrence_count' "$temp_dir/obligations/open/issue-linked-owner.json")" == "2" ]] ||
+    fail "automation obligation reconciliation did not collapse same-issue volatile-fingerprint duplicates"
+  [[ "$(jq -r '.duplicate_of' "$temp_dir/obligations/resolved/issue-linked-duplicate.json")" == "issue-linked-owner" ]] ||
+    fail "automation obligation reconciliation did not point same-issue duplicate at owner"
   ! jq -e 'has("_path") or has("_foreign_root")' "$owner_file" >/dev/null ||
     fail "automation obligation reconciliation leaked private helper fields onto owner"
   ! jq -e 'has("_path") or has("_foreign_root")' "$duplicate_file" >/dev/null ||
@@ -1625,8 +1891,8 @@ PY
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
       bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.id' <<<"$selected_json")" == "owner-current" ]] ||
-    fail "automation obligation selection did not select reconciled owner"
+  [[ "$(jq -r '.id' <<<"$selected_json")" == "empty-owner" ]] ||
+    fail "automation obligation selection did not prioritize reconciled empty-transcript owner"
   [[ "$(jq -r '.deferred_foreign_root_count' <<<"$selected_json")" == "1" ]] ||
     fail "automation obligation selection lost foreign count after reconciliation"
 
@@ -1801,7 +2067,7 @@ JSON
 }
 
 check_automation_obligation_issue_report_contract() {
-  local temp_dir sync_json fake_bin record_file umbrella_file closed_file open_file report_file gh_args
+  local temp_dir sync_json fake_bin record_file duplicate_title_file umbrella_file closed_file open_file report_file gh_args
 
   log "checking automation obligation issue-report bridge contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-obligation-issue-report.XXXXXX)"
@@ -1809,6 +2075,10 @@ check_automation_obligation_issue_report_contract() {
   record_file="$temp_dir/obligations/open/report-me.json"
   cat >"$record_file" <<JSON
 {"schema":1,"record_type":"automation_obligation","status":"open","id":"report-me","created_at":"2026-05-23T02:00:00-0700","kind":"prior_run_anomaly","severity":"high","summary":"PAGE error was observed during unattended loop","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","source_cycle_id":"cycle-a","source_run_hash":"hash-a","occurrence_count":4,"evidence":{"source":"backlog_loop_log","excerpt":"$ROOT_DIR/Upkeeper PAGE [ERROR] example","normalized_excerpt":"Upkeeper PAGE [ERROR] example"},"required_resolution":["patch the wrapper","add deterministic validation"]}
+JSON
+  duplicate_title_file="$temp_dir/obligations/open/z-report-me-too.json"
+  cat >"$duplicate_title_file" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"report-me-too","created_at":"2026-05-23T02:00:05-0700","kind":"prior_run_anomaly","severity":"high","summary":"same PAGE error title should reuse existing GitHub issue","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","source_cycle_id":"cycle-b","source_run_hash":"hash-b","occurrence_count":1,"evidence":{"source":"backlog_loop_log","excerpt":"$ROOT_DIR/Upkeeper PAGE [ERROR] another example","normalized_excerpt":"Upkeeper PAGE [ERROR] another example"}}
 JSON
   guide_file="$temp_dir/obligations/open/operator-guide-stale.json"
   cat >"$guide_file" <<JSON
@@ -1834,9 +2104,9 @@ JSON
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="$temp_dir/reports" \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "5" ]] ||
+  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "6" ]] ||
     fail "automation obligation issue-report bridge did not scope to current root"
-  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "5" ]] ||
+  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "6" ]] ||
     fail "automation obligation issue-report bridge did not draft the current obligation"
   [[ "$(jq -r '.umbrella_unlinked' <<<"$sync_json")" == "1" ]] ||
     fail "automation obligation issue-report bridge did not unlink stale umbrella issues"
@@ -1880,6 +2150,8 @@ if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
       printf '{"state":"OPEN","title":"existing fixture","url":"https://github.com/example/upkeeper/issues/%s"}\n' "${3:-0}"
       ;;
   esac
+elif [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
+  printf '[]\n'
 else
   printf 'https://github.com/example/upkeeper/issues/987\n'
 fi
@@ -1892,18 +2164,24 @@ SH
     UPKEEPER_OBLIGATION_GITHUB_ISSUE_WRITE=1 UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS=bug \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "4" ]] ||
+  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "3" ]] ||
     fail "automation obligation issue-report bridge did not create opted-in GitHub issue"
   [[ "$(jq -r '.github_existing' <<<"$sync_json")" == "1" ]] ||
     fail "automation obligation issue-report bridge did not preserve verified open GitHub issue links"
+  [[ "$(jq -r '.github_reused' <<<"$sync_json")" == "2" ]] ||
+    fail "automation obligation issue-report bridge did not reuse existing open title matches"
   [[ "$(jq -r '.closed_issue_unlinked' <<<"$sync_json")" == "1" ]] ||
     fail "automation obligation issue-report bridge did not unlink closed GitHub issue custody"
   [[ "$(jq -r '.github_issue_number' "$record_file")" == "987" ]] ||
     fail "automation obligation record did not store created GitHub issue number"
   [[ "$(jq -r '.issue_number' "$record_file")" == "987" ]] ||
     fail "automation obligation record did not store created issue number for selection"
+  [[ "$(jq -r '.issue_report_state' "$duplicate_title_file")" == "github_reused_existing_title" ]] ||
+    fail "automation obligation duplicate-title record did not reuse the existing GitHub issue"
+  [[ "$(jq -r '.issue_number' "$duplicate_title_file")" == "987" ]] ||
+    fail "automation obligation duplicate-title record did not link to reused issue number"
   [[ "$(jq -r '.github_issue_number' "$umbrella_file")" == "987" ]] ||
-    fail "automation obligation record did not create a specific GitHub issue after unlinking umbrella"
+    fail "automation obligation record did not link a specific GitHub issue after unlinking umbrella"
   [[ "$(jq -r '.issue_number' "$umbrella_file")" == "987" ]] ||
     fail "automation obligation record did not store a specific issue number after unlinking umbrella"
   [[ "$(jq -r '.stale_github_issue_number' "$closed_file")" == "111" ]] ||
@@ -1916,6 +2194,7 @@ SH
     fail "automation obligation record did not preserve verified open issue link"
   [[ "$(jq -r '.issue_report_state' "$open_file")" == "github_existing" ]] ||
     fail "automation obligation record did not mark verified open issue link as existing"
+  grep -Fq "issue list" "$gh_args" || fail "automation obligation GitHub issue title lookup was not invoked"
   grep -Fq "issue create" "$gh_args" || fail "automation obligation GitHub issue command was not invoked"
   grep -Fq "issue view 111" "$gh_args" || fail "automation obligation GitHub issue state was not checked for closed fixture"
   grep -Fq "issue view 222" "$gh_args" || fail "automation obligation GitHub issue state was not checked for open fixture"
@@ -1931,11 +2210,30 @@ check_backlog_batch_validation_obligation_contract() {
     fail "backlog launcher cannot open obligations for local batch-validation failures"
   grep -Fq 'backlog_batch_validation_repeated_failure' orchestration/backlog.sh ||
     fail "backlog launcher cannot short-circuit repeated batch-validation failures"
+  grep -Fq 'upkeeper-backlog-batch-validation' orchestration/backlog.sh ||
+    fail "backlog batch validation does not isolate unit-test runtime state"
+  grep -Fq 'export UPKEEPER_OBLIGATION_DIR="$validation_root/automation-obligations"' orchestration/backlog.sh ||
+    fail "backlog batch validation can inherit live obligation state into tests"
   grep -Fq 'local_validation_failure' tests/backlog_batch_validation_obligation_test.bash ||
     fail "batch-validation obligation test does not assert local validation failure kind"
+  grep -Fq 'test_chimneysweep_clean_queue_ignores_inherited_obligation_env' tests/chimneysweep_test.bash ||
+    fail "ChimneySweep test does not guard against inherited live obligation state"
   grep -Fq 'second identical validation failure reran command' tests/backlog_batch_validation_obligation_test.bash ||
     fail "batch-validation obligation test does not prove retry guard avoids rerunning the failed command"
   bash tests/backlog_batch_validation_obligation_test.bash
+}
+
+check_backlog_wrapper_failure_obligation_contract() {
+  log "checking backlog wrapper failure obligation contract"
+  grep -Fq 'backlog_run_upkeeper_capture ./Upkeeper' orchestration/backlog.sh ||
+    fail "backlog launcher does not capture child Upkeeper output"
+  grep -Fq 'backlog_open_wrapper_failure_obligation' orchestration/backlog.sh ||
+    fail "backlog launcher cannot open obligations for child Upkeeper failures"
+  grep -Fq 'wrapper_execution_failure' tests/backlog_wrapper_failure_obligation_test.bash ||
+    fail "wrapper failure obligation test does not assert wrapper execution failure kind"
+  grep -Fq 'lib/upkeeper/report_analysis.bash' tests/backlog_wrapper_failure_obligation_test.bash ||
+    fail "wrapper failure obligation test does not prove crash-tail target mapping"
+  bash tests/backlog_wrapper_failure_obligation_test.bash
 }
 
 check_backlog_local_ahead_guard_contract() {
@@ -1998,6 +2296,24 @@ check_backlog_triage_contract() {
   grep -Fq "tools/backlog_triage.py" docs/scripts/upkeeper.md || fail "operator guide missing backlog triage command"
   grep -Fq "safe_to_restart=yes|no|wait" docs/compatibility.md || fail "compatibility docs missing backlog triage output contract"
   bash tests/backlog_triage_test.bash
+}
+
+check_backlog_parallel_leases_contract() {
+  log "checking backlog parallel-worker lease contract"
+
+  [[ -x tools/backlog_parallel_leases.py ]] || fail "parallel backlog lease helper is missing or not executable"
+  [[ -s tests/backlog_parallel_leases_test.bash ]] || fail "parallel backlog lease tests are missing or empty"
+  grep -Fq "worker_worktree_is_main_checkout" tools/backlog_parallel_leases.py ||
+    fail "parallel backlog lease helper does not block the main checkout as a worker"
+  grep -Fq "conflict_reason" tools/backlog_parallel_leases.py ||
+    fail "parallel backlog lease helper does not expose deterministic conflict reasons"
+  grep -Fq "target_file" tools/backlog_parallel_leases.py ||
+    fail "parallel backlog lease helper does not lease predicted target files"
+  grep -Fq "tools/backlog_parallel_leases.py" docs/scripts/upkeeper.md ||
+    fail "operator guide missing parallel backlog lease helper"
+  grep -Fq "parallel-worker lease registry" docs/compatibility.md ||
+    fail "compatibility docs missing parallel worker lease registry contract"
+  bash tests/backlog_parallel_leases_test.bash
 }
 
 check_backlog_quota_hibernation_contract() {
@@ -7017,6 +7333,7 @@ run_check policy_decisions_contract check_policy_decisions_contract
 run_check schema_compatibility_contract check_schema_compatibility_contract
 run_check threat_model_doctrine_contract check_threat_model_doctrine_contract
 run_check preservation_policy_contract check_preservation_policy_contract
+run_check source_rights_metadata_contract check_source_rights_metadata_contract
 run_check default_prompt_target_isolation_contract check_default_prompt_target_isolation_contract
 run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
@@ -7054,10 +7371,12 @@ run_check automation_obligation_churn_contract check_automation_obligation_churn
 run_check automation_obligation_issue_report_contract check_automation_obligation_issue_report_contract
 run_check backlog_launcher_contract check_backlog_launcher_contract
 run_check backlog_batch_validation_obligation_contract check_backlog_batch_validation_obligation_contract
+run_check backlog_wrapper_failure_obligation_contract check_backlog_wrapper_failure_obligation_contract
 run_check backlog_local_ahead_guard_contract check_backlog_local_ahead_guard_contract
 run_check backlog_merge_steward_contract check_backlog_merge_steward_contract
 run_check backlog_pr_watch_contract check_backlog_pr_watch_contract
 run_check backlog_triage_contract check_backlog_triage_contract
+run_check backlog_parallel_leases_contract check_backlog_parallel_leases_contract
 run_check backlog_quota_hibernation_contract check_backlog_quota_hibernation_contract
 run_check backlog_autoshelve_contract check_backlog_autoshelve_contract
 run_bounded_check backend_usage_limit_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_backend_usage_limit_contract

@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--audit-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.33
+Version: v1.2.36
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -223,15 +223,23 @@ Important:
     prompt packet containing the bounded evidence excerpt. Repeated instances
     of the same anomaly class update the existing obligation with occurrence
     counts and last-seen evidence instead of opening a new obligation for each
-    cycle id or run hash. Quoted backend shell/test fixture snippets that contain
-    embedded `[WARN]`, `[ERROR]`, `PAGE`, control-plane log text, or quoted
-    source-code fixture lines are treated as transcript content, not as new
-    wrapper failures. Immediately after the
+    cycle id or run hash. When one source cycle emits multiple hard
+    control-plane signals, anomaly custody opens one incident-rollup obligation
+    that preserves the individual signal excerpts instead of filing sibling
+    obligations for the same blowup. Quoted backend shell/test fixture snippets that contain
+    embedded `[WARN]`, `[ERROR]`, `PAGE`, diagnostic search commands,
+    control-plane log text, or quoted source-code fixture lines are treated as
+    transcript content, not as new wrapper failures. Immediately after the
     backlog branch is checked out, before PR, merge, quota, or issue-selection
     gates, backlog also reconciles open current-root obligations deterministically: records
     with matching root, kind, reason, target, issue, and stable fingerprint are
-    condensed to one active owner, and duplicates are moved to resolved evidence
-    with `duplicate_of` metadata. Deterministically obsolete findings, such as a
+    condensed to one active owner. System-level wrapper failures such as empty
+    transcripts and child exits are instead grouped by failure class, reason,
+    target, and repair target so per-cycle output fingerprints cannot create a
+    public issue cascade. Records already linked to the same specific issue
+    title and issue number also reconcile as one local owner even when their
+    evidence fingerprints differ. Duplicates are moved to resolved evidence with
+    `duplicate_of` metadata. Deterministically obsolete findings, such as a
     stale operator-guide warning after the guide matches the wrapper version, are
     moved to resolved evidence with an explicit reason. If the same obligation
     reports `BLOCKED` repeatedly, backlog records repair-attempt metadata and
@@ -250,7 +258,9 @@ Important:
     backlog stops before normal issue selection. Existing GitHub issue links are
     accepted only after the bridge verifies the issue is still open; closed
     links are preserved as stale evidence and replaced with a fresh issue for
-    the still-open obligation. Set
+    the still-open obligation. Before creating any new issue, the bridge lists
+    open GitHub issues and reuses an exact title match; if that lookup fails, it
+    fails closed instead of risking duplicate public bugs. Set
     `BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=0` only for a deliberate local-only
     dry run.
     Local batch-merge validation failures use the same obligation lane: if a
@@ -259,7 +269,29 @@ Important:
     required proof command under `runtime/upkeeper-obligations/open` before it
     exits. Repeating the same failure updates the existing obligation instead
     of creating duplicates, and the next invocation repairs that obligation
-    before retrying the merge or selecting another GitHub issue.
+    before retrying the merge or selecting another GitHub issue. Batch
+    validation runs unit tests with isolated obligation and automation-ledger
+    roots so fixture launchers cannot see the live backlog obligation queue.
+    Child wrapper failures use the same catchment: when the backlog launcher
+    observes `./Upkeeper` exit non-zero outside the known blocked/quota lanes,
+    it records a `wrapper_execution_failure` obligation from a private bounded
+    child-output capture before the launcher exits. If the child already opened
+    a durable automation obligation for that failure, backlog preserves that
+    native owner instead of filing a second outer wrapper-failure record.
+    Backend context-window overflows are classified as
+    `backend_context_overflow` obligations so the next run repairs bounded
+    evidence handling instead of treating the failure as generic missing-status
+    noise. Empty-transcript Codex exits are classified as
+    `codex_exec_empty_transcript` obligations and repeated empty-transcript
+    records for the same repair target reconcile to one owner even if issue
+    reports were already filed for earlier duplicates. Related
+    terminal-failure companion lines in the next anomaly scan are coalesced into
+    the owning obligation instead of opening several separate prior-run bugs for
+    the same failed cycle. Failure transcript tails shown in live output are
+    bounded by
+    `CODEX_TRANSCRIPT_ERROR_TAIL_LINES` and
+    `CODEX_TRANSCRIPT_ERROR_TAIL_MAX_BYTES`; the full transcript remains in the
+    private transcript artifact for inspection.
     Set `BACKLOG_OBLIGATION_RECONCILE=0` for a
     deliberate one-cycle bypass. Set
     `BACKLOG_ANOMALY_CUSTODY=0` for a deliberate one-cycle bypass, or adjust
@@ -267,6 +299,13 @@ Important:
     for local scan bounds. The default finding cap is `0`, meaning all new
     findings inside the recent-line scan window are placed under custody instead
     of letting already-known obligations starve later PAGE alerts.
+    `tools/backlog_parallel_leases.py` is the local no-backend lease primitive
+    for future isolated parallel backlog workers. It records worker issue and
+    predicted-target ownership under the backlog state root, rejects duplicate
+    issue or target claims, rejects using the main checkout as a worker worktree,
+    supports TTL expiry/release, and prints a compact worker status table. It
+    does not launch Codex or create PRs; live parallel worker supervision remains
+    opt-in future behavior built on this lease contract.
     For broader local evidence sweeps outside the backlog loop,
     `tools/audit_upkeeper_breadcrumbs.py` scans selected logs, transcripts, and
     open marker roots into `runtime/upkeeper-breadcrumbs/{open,resolved,suppressed}`.

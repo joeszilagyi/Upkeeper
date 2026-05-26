@@ -34,6 +34,9 @@ The evidence preservation contract is tracked in
 `docs/preservation-policy.md`. It defines evidence temperature, artifact privacy
 classes, and promotion rules for logs, transcripts, backups, Lattice rows,
 exports, recovery records, obligations, postmortems, and public evidence.
+The source-rights contract in `docs/source-rights-metadata.md` defines the
+sensitivity labels and rights fields that decide whether OSINT and citation
+sources may enter prompts, exports, archives, or public evidence packets.
 
 The compatibility surface is tracked in `docs/compatibility.md`. Public
 schemas, prompt markers, docs/help examples, and Lattice JSONL output are
@@ -989,6 +992,8 @@ test loop does not spend cycles on known low-value or generated material.
   public-by-default documentation, comment, release-note, and help-text policy
 - [docs/security.md](docs/security.md): local trust boundaries, safety model,
   secret handling, and what not to commit
+- [docs/source-rights-metadata.md](docs/source-rights-metadata.md): source
+  sensitivity, rights, and reuse metadata for OSINT and citation artifacts
 - [docs/negative-space-testing.md](docs/negative-space-testing.md):
   deterministic "must not happen" validation contracts for safety boundaries
 - [docs/stress-corpus.md](docs/stress-corpus.md): local sample-repo
@@ -1012,6 +1017,9 @@ test loop does not spend cycles on known low-value or generated material.
   no-backend guard for green backlog PR merge and clean-sheet cleanup
 - [tools/backlog_triage.py](tools/backlog_triage.py): local no-backend
   stopped-loop restart triage for backlog runs
+- [tools/backlog_parallel_leases.py](tools/backlog_parallel_leases.py): local
+  no-backend issue/target lease registry for future isolated parallel backlog
+  workers
 - [tools/check_public_docs.sh](tools/check_public_docs.sh): deterministic
   public documentation policy checks
 - [launcher_examples/README.md](launcher_examples/README.md): tracked shell

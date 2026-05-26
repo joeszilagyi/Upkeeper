@@ -28,6 +28,7 @@ Version numbering note:
 	1. Prior-run anomaly custody now treats `quoted_backend_source_fixture` lines as already-classified quote output, so old diagnostic snippets containing `[ERROR]`, `[WARN]`, or `PAGE` cannot reopen fresh repair obligations after the live-output filter has sanitized them.
 	2. Backlog-temp transcript and pre-contact negative-test lines are recognized as expected fixture output when their matching local tests pass, preventing successful validation from creating new prior-run bugs.
 	3. Source-cycle evidence is now coalesced under an existing open or resolved owner obligation for the same cycle/run hash, so already-fixed blocked cycles do not reappear as new incident rollups.
+	4. Startup-anomaly changed-path enforcement now ignores the volatile `status_lines` status-output byte count; allowed Upkeeper-suite edits still pass through the path allowlist without keeping the gate unresolved, while disallowed path changes remain actionable.
 
 2026-05-24: source rights metadata model:
 	1. Added `docs/source-rights-metadata.md` as the tracked source sensitivity, rights, and reuse metadata model for OSINT and citation artifacts.

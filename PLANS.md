@@ -40,6 +40,32 @@ Result:
 - current loop-log replay produced no actionable findings from the interrupted
   fixture/quote residue
 
+## Startup Gate Status Metadata Drift
+
+Status: completed locally
+
+Goal:
+- prevent startup-anomaly self-repair from keeping the gate unresolved merely
+  because allowed Upkeeper-suite edits changed the volatile porcelain status
+  byte count
+
+Constraints:
+- preserve path-level changed-file enforcement for disallowed paths
+- keep branch, head, and index-tree control-state checks intact
+
+Files touched:
+- `lib/upkeeper/worktree_state.bash`
+- `tests/wrapper_contract_test.bash`
+- release notes
+
+Validation:
+- focused wrapper-contract regression
+- full quick validation before merge
+
+Result:
+- allowed central wrapper edits no longer emit
+  `startup_anomaly.gate_violation control_state_changed key='status_lines'`
+
 ## Batch Validation State Isolation
 
 Status: completed locally

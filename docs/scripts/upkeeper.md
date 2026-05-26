@@ -1175,6 +1175,10 @@ prompts, backup log lines, or Lattice preselect evidence.
 - The gated self-repair surface is intentionally narrow: the root `Upkeeper`
   entrypoint, `lib/upkeeper` modules, central operator docs and release notes,
   prompts/templates, launcher examples, and the validation harness.
+- The gate checks changed paths, branch, head, and index-tree state. The
+  volatile status-output byte count is not a control boundary, so allowed
+  Upkeeper-suite edits do not keep the gate unresolved solely because the dirty
+  status text length changed.
 
 ## Repo-Local Living Notes
 

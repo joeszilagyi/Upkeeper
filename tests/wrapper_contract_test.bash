@@ -328,6 +328,62 @@ JSON
   fi
 }
 
+test_startup_anomaly_gate_ignores_allowed_status_line_drift() {
+  local before_file after_file output
+
+  before_file="$TEST_TMP_ROOT/startup-status-before.json"
+  after_file="$TEST_TMP_ROOT/startup-status-after.json"
+  cat >"$before_file" <<'JSON'
+{
+  "__meta__": {
+    "branch": "backlog/example",
+    "head": "same-head",
+    "index_tree": "same-tree",
+    "status_lines": "12"
+  },
+  "__paths__": {
+    "path-hmac-sha256:allowed": {
+      "allowed": 1,
+      "extension": ".bash",
+      "hash": "old",
+      "path_class": "script",
+      "path_hmac": "path-hmac-sha256:allowed",
+      "status": "clean"
+    }
+  }
+}
+JSON
+  cat >"$after_file" <<'JSON'
+{
+  "__meta__": {
+    "branch": "backlog/example",
+    "head": "same-head",
+    "index_tree": "same-tree",
+    "status_lines": "73"
+  },
+  "__paths__": {
+    "path-hmac-sha256:allowed": {
+      "allowed": 1,
+      "extension": ".bash",
+      "hash": "new",
+      "path_class": "script",
+      "path_hmac": "path-hmac-sha256:allowed",
+      "status": "modified"
+    }
+  }
+}
+JSON
+
+  output="$(
+    cd "$ROOT_DIR"
+    UPKEEPER_REDACTION_KEY=wrapper-contract-test \
+      bash -c 'source lib/upkeeper/worktree_state.bash; startup_anomaly_gate_changed_path_violations "$1" "$2"' \
+      bash "$before_file" "$after_file"
+  )"
+  [[ -z "$output" ]] ||
+    fail "startup anomaly gate treated allowed status_lines drift as a violation: $output"
+}
+
 test_operator_status_commands_are_local_and_structured() {
   local status_root status_log json_output output command
 
@@ -396,5 +452,6 @@ test_shell_assignment_helpers_quote_and_reject_bad_input
 test_parent_stop_guard_refuses_unsafe_shells_and_pids
 test_status_marker_rejects_decorated_or_ambiguous_candidates
 test_startup_anomaly_allowlist_reports_only_unallowed_redacted_paths
+test_startup_anomaly_gate_ignores_allowed_status_line_drift
 test_operator_status_commands_are_local_and_structured
 printf 'ok - wrapper_contract\n'

@@ -74,7 +74,7 @@ except OSError:
 lines = text.splitlines()
 has_runtime_output = bool(lines)
 
-def strip_initial_prompt_echo(raw_lines: list[str]) -> tuple[list[str], bool]:
+def strip_initial_prompt_echo(raw_lines):
     filtered = []
     in_user_echo = False
     saw_codex_marker = False
@@ -115,7 +115,7 @@ def digest(namespace: str, value: str) -> str:
     return hashlib.sha256(material).hexdigest()
 
 
-def redact_path(match: re.Match[str]) -> str:
+def redact_path(match) -> str:
     raw = match.group(0).rstrip('.,;:)]}\'"')
     suffix = match.group(0)[len(raw):]
     if raw == '/dev/null' or raw.startswith(('/bin/', '/usr/bin/', '/usr/local/bin/', '/opt/homebrew/bin/')):
@@ -162,7 +162,7 @@ def short(value: str, limit: int = 300) -> str:
         return value[: limit - 15].rstrip() + '...<truncated>'
     return value
 
-def bounded_tail(raw_lines: list[str], line_limit: int, byte_limit: int) -> tuple[list[str], int]:
+def bounded_tail(raw_lines, line_limit: int, byte_limit: int):
     if line_limit <= 0:
         return [], 0
     selected = raw_lines[-line_limit:]
@@ -270,7 +270,7 @@ def command_kind(line: str) -> str:
 def is_interesting_command(line: str) -> bool:
     return command_kind(line) in {'tests', 'validation', 'check', 'build'}
 
-def collect_signals(raw_lines: list[str]) -> list[str]:
+def collect_signals(raw_lines):
     collected = []
     expecting_command = False
     current_command_interesting = False
@@ -340,7 +340,7 @@ def collect_signals(raw_lines: list[str]) -> list[str]:
 
     return collected
 
-def dedupe_signals(raw_signals: list[str]) -> list[str]:
+def dedupe_signals(raw_signals):
     seen = set()
     deduped = []
     for item in raw_signals:
@@ -373,7 +373,7 @@ if exit_raw and exit_raw != "0":
 for item in signals[-signal_limit:]:
     log_lines.append(f'{ts_log()} [INFO] cycle={cycle_id} run_hash={run_hash} codex.transcript.signal label={label} text={field_value(item)}')
 
-def append_log_lines_secure(path: Path, items: list[str]) -> None:
+def append_log_lines_secure(path: Path, items):
     path_raw = os.fspath(path)
     parent = os.path.dirname(path_raw) or "."
     name = os.path.basename(path_raw)
@@ -469,8 +469,11 @@ PY
 
 codex_live_output_filter() {
   local label="$1"
+  local filter_script
+  local filter_rc=0
 
-  python3 /dev/fd/3 "$label" 3<<'PY'
+  filter_script="$(mktemp "${TMPDIR:-/tmp}/upkeeper.codex_live_output_filter.XXXXXX.py")" || return 1
+  cat >"$filter_script" <<'PY'
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -539,7 +542,7 @@ def digest(namespace: str, value: str) -> str:
     return hashlib.sha256(material).hexdigest()
 
 
-def redact_path(match: re.Match[str]) -> str:
+def redact_path(match) -> str:
     raw = match.group(0).rstrip(".,;:)]}'\"")
     suffix = match.group(0)[len(raw):]
     if raw == "/dev/null" or raw.startswith(("/bin/", "/usr/bin/", "/usr/local/bin/", "/opt/homebrew/bin/")):
@@ -845,4 +848,8 @@ try:
 except KeyboardInterrupt:
     raise SystemExit(130)
 PY
+  python3 "$filter_script" "$label"
+  filter_rc=$?
+  rm -f -- "$filter_script"
+  return "$filter_rc"
 }

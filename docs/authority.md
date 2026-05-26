@@ -72,7 +72,9 @@ eligibility without a documented control.
 Validation entrypoints are deterministic and no-quota by default. They may run
 dry-runs, parser checks, fake Codex fixtures, and local stress corpus paths, but
 they must not launch real backend Codex unless an operator explicitly requests a
-backend-specific run.
+backend-specific run. Validation-owned child Upkeeper dry-runs isolate
+themselves from live operator quota cooldown markers; quota guardrail behavior is
+covered only by explicit quota fixtures.
 
 ## Reading Map
 

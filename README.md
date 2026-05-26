@@ -338,8 +338,10 @@ non-dependency validation mode to print per-check timings and find the next
 local bottleneck without changing coverage.
 The full validation mode remains the broad deterministic local integration gate
 without real backend Codex work. It runs bounded Upkeeper dry-run startup
-checks, then uses a local fake `codex` binary to exercise launch/capture
-failure classification without spending quota.
+checks under validator-owned quota/cooldown bypasses, then uses a local fake
+`codex` binary to exercise launch/capture failure classification without
+spending quota. Quota-specific contract tests still exercise guardrail behavior
+with their own explicit fixtures.
 
 GitHub Actions runs the no-quota CI path in
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on pull requests and on

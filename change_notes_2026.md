@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-26: full validator quota-state isolation:
+	1. Validation-owned Upkeeper dry-runs now run with explicit quota guardrail and cooldown bypasses so `tools/validate_upkeeper.sh --full` stays deterministic on machines with live quota markers.
+	2. File-manifest full validation includes a future quota cooldown marker fixture and proves the audit-only dry-run still completes through the validator-owned no-quota path.
+	3. Explicit quota/fallback contract tests remain responsible for exercising real guardrail behavior with their own fixtures.
+
 2026-05-26: backlog quota hibernation retired-branch exit:
 	1. Backlog quota hibernation now checks the current branch's local upstream ref before and during long sleeps.
 	2. If another worktree merges or deletes the active backlog PR branch while a launcher is hibernating, the launcher exits cleanly with `action=exit_for_merged_or_deleted_branch` instead of holding the retired branch until quota reset.

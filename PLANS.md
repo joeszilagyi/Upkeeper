@@ -3,9 +3,47 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Quota Hibernation Retired-Branch Exit
+## Full Validator Quota-State Isolation
 
 Status: completed locally; pending PR/CI
+
+Goal:
+- keep `tools/validate_upkeeper.sh --full` deterministic on machines with live
+  quota cooldown markers or stop-level quota state
+- preserve explicit quota/fallback contract tests that intentionally exercise
+  quota guardrails
+- prevent validation-owned child Upkeeper dry-runs from sleeping or stopping on
+  operator-local quota state
+
+Constraints:
+- no backend Codex validation
+- do not change normal Upkeeper dry-run quota behavior outside the validator
+- keep full validation bounded and local
+
+Files likely touched:
+- `tools/validate_upkeeper.sh`
+- README/operator validation docs
+- release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full --profile`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+Result:
+- validator-owned Upkeeper dry-runs now use explicit quota guardrail and
+  cooldown bypasses
+- file-manifest full validation includes a future quota marker fixture and the
+  audit-only dry-run still completes through the no-quota validation path
+- explicit quota/fallback tests still exercise real guardrail behavior with
+  their own fixtures
+
+## Quota Hibernation Retired-Branch Exit
+
+Status: merged in PR #629
 
 Goal:
 - stop backlog quota hibernation from holding a local branch after its upstream

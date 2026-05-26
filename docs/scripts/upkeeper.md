@@ -347,7 +347,11 @@ Important:
     stop-level quota state or an active primary quota block marker. It prints
     the blocked bucket, reset time, wake time, branch, and recent activity when
     available, sleeps locally without backend model work until the reset grace
-    passes, then lets the next backlog cycle retry. Set
+    passes, then lets the next backlog cycle retry. During that sleep it also
+    checks the current branch's local upstream ref; if the upstream disappears
+    because another worktree merged or deleted the backlog PR branch, hibernation
+    exits cleanly with an explicit branch-retired reason instead of holding the
+    deleted branch until quota reset. Set
     `BACKLOG_QUOTA_HIBERNATE=0` to restore one-cycle deferral instead.
   - If the backend exits before any agent message and says the selected model hit
     a usage limit, Upkeeper records that reset time as a hard local quota marker

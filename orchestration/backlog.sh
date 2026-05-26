@@ -833,6 +833,23 @@ backlog_marker_field() {
   ' "$path" 2>/dev/null || return 0
 }
 
+backlog_hibernation_branch_upstream_missing() {
+  local branch upstream
+
+  branch="$(git symbolic-ref --short -q HEAD 2>/dev/null || true)"
+  [[ -n "$branch" ]] || return 1
+
+  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+  [[ -n "$upstream" ]] || return 1
+
+  if git rev-parse --verify --quiet "${upstream}^{commit}" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  log "quota preflight: quota hibernation stopped because upstream branch disappeared branch=$branch upstream=$upstream action=exit_for_merged_or_deleted_branch"
+  return 0
+}
+
 backlog_hibernate_until_epoch() {
   local blocked_until_epoch="$1"
   local blocked_bucket="$2"
@@ -866,6 +883,9 @@ backlog_hibernate_until_epoch() {
     log "quota preflight: quota block already expired bucket=$blocked_bucket wake=$(backlog_format_epoch "$wake_epoch"); retrying this cycle"
     return 0
   fi
+  if backlog_hibernation_branch_upstream_missing; then
+    return 3
+  fi
 
   wait_seconds=$((wake_epoch - now_epoch))
   if [[ "$max_sleep" -gt 0 && "$wait_seconds" -gt "$max_sleep" ]]; then
@@ -890,6 +910,9 @@ backlog_hibernate_until_epoch() {
   while true; do
     now_epoch="$(backlog_now_epoch)" || return 4
     [[ "$now_epoch" -lt "$wake_epoch" ]] || break
+    if backlog_hibernation_branch_upstream_missing; then
+      return 3
+    fi
     chunk=$((wake_epoch - now_epoch))
     if [[ "$chunk" -gt "$poll" ]]; then
       chunk="$poll"

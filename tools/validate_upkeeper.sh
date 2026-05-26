@@ -846,6 +846,7 @@ check_backlog_launcher_contract() {
   grep -Fq 'BACKLOG_QUOTA_HIBERNATE="${BACKLOG_QUOTA_HIBERNATE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default quota hibernation on"
   grep -Fq 'backlog_hibernate_until_epoch' orchestration/backlog.sh || fail "backlog launcher is missing quota hibernation helper"
   grep -Fq 'quota preflight: quota blocked bucket=' orchestration/backlog.sh || fail "backlog launcher does not explain quota hibernation"
+  grep -Fq 'backlog_hibernation_branch_upstream_missing' orchestration/backlog.sh || fail "backlog quota hibernation does not detect retired upstream branches"
   grep -Fq 'latest_active_primary_quota_block_marker' orchestration/backlog.sh || fail "backlog launcher does not honor active quota block markers"
   grep -Fq 'BACKLOG_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota guardrail bypass on"
   grep -Fq 'BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default burn quota cooldown bypass on"
@@ -2405,6 +2406,55 @@ check_backlog_quota_hibernation_contract() {
     fail "backlog quota hibernation did not report the wake time"
   grep -Fq "quota hibernation complete" "$temp_dir/hibernate.err" ||
     fail "backlog quota hibernation did not report completion"
+
+  if ! BACKLOG_SOURCE_ONLY=1 \
+    BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS=60 \
+    BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS=600 \
+    BACKLOG_TEST_NOW_EPOCH=1000 \
+    BACKLOG_TEST_FAKE_SLEEP=1 \
+    BACKLOG_TEST_SLEEP_LOG="$temp_dir/retired-sleeps.log" \
+    BACKLOG_STATE_ROOT="$temp_dir/retired-state" \
+    BACKLOG_LOOP_LOG_FILE="$temp_dir/retired-loop.log" \
+    bash -lc '
+      set -euo pipefail
+      root="$1"
+      temp_dir="$2"
+      repo="$temp_dir/retired-repo"
+      mkdir -p "$repo"
+      git init -q "$repo"
+      cd "$repo"
+      git config user.email "hibernate-branch-test@example.invalid"
+      git config user.name "Hibernate Branch Test"
+      printf "fixture\n" >README.md
+      git add README.md
+      git commit -q -m "fixture"
+      git checkout -q -b backlog/retired
+      git remote add origin "$repo"
+      git update-ref refs/remotes/origin/backlog/retired HEAD
+      git branch --set-upstream-to=origin/backlog/retired >/dev/null
+      git update-ref -d refs/remotes/origin/backlog/retired
+
+      cd "$root"
+      source ./orchestration/backlog.sh
+      cd "$repo"
+      status=0
+      backlog_hibernate_until_epoch 1300 primary "projected 5-hour left 0.0 <= 0" quota_snapshot || status="$?"
+      [[ "$status" == "3" ]] || {
+        printf "unexpected retired-branch hibernation status: %s\n" "$status" >&2
+        exit 1
+      }
+      [[ ! -s "$temp_dir/retired-sleeps.log" ]] || {
+        printf "retired branch hibernation slept unexpectedly: %s\n" "$(cat "$temp_dir/retired-sleeps.log")" >&2
+        exit 1
+      }
+    ' bash "$ROOT_DIR" "$temp_dir" >"$temp_dir/retired.out" 2>"$temp_dir/retired.err"; then
+    cat "$temp_dir/retired.err" >&2
+    fail "backlog quota hibernation retired-branch check failed"
+  fi
+  grep -Fq "upstream branch disappeared" "$temp_dir/retired.err" ||
+    fail "backlog quota hibernation did not report a retired upstream branch"
+  grep -Fq "action=exit_for_merged_or_deleted_branch" "$temp_dir/retired.err" ||
+    fail "backlog quota hibernation retired-branch output lacks operator action"
 
   set +e
   output="$(BACKLOG_SOURCE_ONLY=1 BACKLOG_TEST_NOW_EPOCH=1000 bash -lc '

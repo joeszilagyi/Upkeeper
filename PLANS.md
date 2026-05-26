@@ -3,6 +3,45 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Docs-Only Fast Path
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #330 by making the common docs-only edit path locally
+  scriptable without backend Codex, GitHub CLI, GitHub polling, or extra fetches
+- keep docs-only validation narrow: public-doc checks, smoke validation, and
+  diff whitespace only
+- give CI and operators one shared docs-only classifier instead of separate
+  hand-maintained allowlists
+
+Constraints:
+- no backend Codex validation
+- no `gh`, `curl`, `wget`, or `git fetch` inside the docs-only helper
+- fail closed to the broader path when changed-file scope cannot be proven
+  locally
+
+Files likely touched:
+- `tools/docs_only_fast_path.sh`
+- `.github/workflows/ci.yml`
+- `tools/validate_upkeeper.sh`
+- README, dependency/release docs, operator guide, and release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/docs_only_fast_path.sh --classify-only --paths-from <fixture>`
+- `tools/docs_only_fast_path.sh --validate --paths-from <fixture>`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Result:
+- docs-only classifier accepts README/docs/prompt paths and rejects mixed
+  source/tool paths
+- implementation branch still fails closed to broad validation because it
+  changes workflow and tool code
+
 ## Anomaly Custody Fixture Suppression
 
 Status: completed locally
@@ -250,6 +289,44 @@ Validation:
 - `tools/validate_upkeeper.sh --quick`
 - `tools/check_public_docs.sh --quick`
 - `git diff --check`
+
+## Previous-Run Startup Residue Custody
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #429 by preventing already-custodied previous-run/startup
+  anomaly residue from reappearing as fresh startup-gate warning noise
+- keep genuinely new previous-run anomaly evidence mandatory until it has local
+  custody
+- make operator output distinguish known local custody from new active residue
+
+Constraints:
+- no backend Codex calls
+- keep the clean/no-op path deterministic and local
+- do not hide new anomalies that do not have a matching local obligation or
+  custody acknowledgment
+
+Files likely touched:
+- `lib/upkeeper/previous_run_anomalies.bash`
+- `lib/upkeeper/help_selection.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --source-contracts`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+Result:
+- known current-root previous-run and startup-gate residue now logs as
+  `previous_run.known_anomaly_residue`
+- source-cycle matching keeps new uncustodied prior-run evidence on the
+  startup-gate path
 
 ## Status Marker Parser Crash Hardening
 

@@ -3714,6 +3714,63 @@ check_release_readiness_docs_contract() {
     fail "issue taxonomy labels for release gate are undocumented"
 }
 
+check_docs_only_fast_path_contract() {
+  local temp_dir docs_paths mixed_paths classify_out
+
+  log "checking docs-only fast path contract"
+  temp_dir="$(mktemp -d /tmp/upkeeper-docs-only-fast-path.XXXXXX)"
+  docs_paths="$temp_dir/docs.paths"
+  mixed_paths="$temp_dir/mixed.paths"
+
+  cat >"$docs_paths" <<'EOF'
+README.md
+docs/scripts/upkeeper.md
+prompts/p26-public-documentation-review.md
+.github/pull_request_template.md
+EOF
+  classify_out="$(tools/docs_only_fast_path.sh --classify-only --paths-from "$docs_paths")"
+  grep -Fq "docs_only=1" <<<"$classify_out" ||
+    fail "docs-only fast path did not classify public docs paths as docs-only"
+  grep -Fq "non_docs_count=0" <<<"$classify_out" ||
+    fail "docs-only fast path reported non-docs for docs-only paths"
+
+  cat >"$mixed_paths" <<'EOF'
+README.md
+Upkeeper
+tools/validate_upkeeper.sh
+EOF
+  classify_out="$(tools/docs_only_fast_path.sh --classify-only --paths-from "$mixed_paths")"
+  grep -Fq "docs_only=0" <<<"$classify_out" ||
+    fail "docs-only fast path accepted mixed source changes"
+  grep -Fq "non_doc_path=Upkeeper" <<<"$classify_out" ||
+    fail "docs-only fast path did not report the source path that forced the broader path"
+
+  grep -Fq "tools/check_public_docs.sh --quick" tools/docs_only_fast_path.sh ||
+    fail "docs-only fast path does not run public docs validation"
+  grep -Fq "tools/validate_upkeeper.sh --smoke" tools/docs_only_fast_path.sh ||
+    fail "docs-only fast path does not run smoke validation"
+  grep -Fq "git diff --check" tools/docs_only_fast_path.sh ||
+    fail "docs-only fast path does not run diff whitespace validation"
+  grep -Fq 'git diff --check "$base_ref" "$head_ref"' tools/docs_only_fast_path.sh ||
+    fail "docs-only fast path does not check committed ref-to-ref whitespace"
+  if grep -Eq '(^|[[:space:]])(gh|curl|wget)[[:space:]]|git fetch|codex exec|[.]/Upkeeper' tools/docs_only_fast_path.sh; then
+    fail "docs-only fast path contains network, GitHub CLI, backend, or wrapper launch commands"
+  fi
+  grep -Fq "tools/docs_only_fast_path.sh" .github/workflows/ci.yml ||
+    fail "CI docs-only path does not use the shared docs-only helper"
+  grep -Fq "fetch-depth: 2" .github/workflows/ci.yml ||
+    fail "CI checkout does not fetch enough local history for no-extra-fetch docs classification"
+  grep -Fq "scope_args+=(--base HEAD^1 --head HEAD)" .github/workflows/ci.yml ||
+    fail "CI pull-request docs-only path does not use local merge-parent refs"
+  if grep -Fq "git fetch --no-tags" .github/workflows/ci.yml; then
+    fail "CI docs-only classifier still performs an explicit fetch"
+  fi
+  grep -Fq "tools/docs_only_fast_path.sh --validate" README.md docs/scripts/upkeeper.md docs/dependencies.md docs/release-checklist.md ||
+    fail "docs-only fast path command is not documented in public operator docs"
+
+  rm -r "$temp_dir"
+}
+
 check_governance_docs_contract() {
   log "checking governance docs contract"
 
@@ -6035,13 +6092,14 @@ PY
 }
 
 check_previous_run_anomaly_summary_contract() {
-  local temp_dir state_dir log_file stamp basic_output debug_output
+  local temp_dir state_dir log_file stamp basic_output debug_output known_output mixed_output
+  local obligation_dir
 
   log "checking previous-run anomaly summary contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-previous-run-summary.XXXXXX)"
   state_dir="$temp_dir/states"
   log_file="$temp_dir/Upkeeper.log"
-  mkdir -p "$state_dir"
+  mkdir -p "$state_dir" "$temp_dir/no-obligations"
   stamp="$(date '+%Y-%m-%dT%H:%M:%S%z')"
   cat >"$log_file" <<EOF
 $stamp [INFO] cycle=prior-missing run_hash=aaa111 cycle.start selected_file=Upkeeper boot_id=boot-prior
@@ -6080,10 +6138,12 @@ PY
 
   run_summary_fixture() {
     local mode="$1"
+    local obligation_root="${2:-$temp_dir/no-obligations}"
     cd "$ROOT_DIR"
     CODEX_TERMINAL_VERBOSITY="$mode" \
       CODEX_PREVIOUS_RUN_SCAN_MINUTES=240 \
       CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$state_dir" \
+      UPKEEPER_OBLIGATION_DIR="$obligation_root" \
       LOG_FILE="$log_file" \
       CYCLE_ID=current-cycle \
       bash <<'BASH'
@@ -6129,6 +6189,93 @@ BASH
 
   debug_output="$(run_summary_fixture debug1)"
   grep -Fq 'WARN previous_run.anomaly_detail previous_cycle=prior-missing' <<<"$debug_output" || fail "debug previous-run anomaly detail missing"
+
+  obligation_dir="$temp_dir/obligations/open"
+  mkdir -p "$obligation_dir"
+  cat >"$obligation_dir/previous-summary.json" <<JSON
+{
+  "schema": 1,
+  "record_type": "automation_obligation",
+  "status": "open",
+  "id": "previous-summary-owner",
+  "kind": "prior_run_anomaly",
+  "severity": "medium",
+  "root": "$ROOT_DIR",
+  "target_file": "lib/upkeeper/previous_run_anomalies.bash",
+  "repair_target_file": "lib/upkeeper/previous_run_anomalies.bash",
+  "fingerprint": "previous_run.anomaly_summary",
+  "source_cycle_id": "prior-missing",
+  "source_run_hash": "aaa111",
+  "github_issue_number": "429",
+  "issue_number": "429"
+}
+JSON
+  cat >"$obligation_dir/startup-gate-log.json" <<JSON
+{
+  "schema": 1,
+  "record_type": "automation_obligation",
+  "status": "open",
+  "id": "startup-gate-log-owner",
+  "kind": "prior_run_anomaly",
+  "severity": "high",
+  "root": "$ROOT_DIR",
+  "target_file": "lib/upkeeper/startup_anomaly_state.bash",
+  "repair_target_file": "lib/upkeeper/startup_anomaly_state.bash",
+  "fingerprint": "startup_anomaly.gate_unresolved reason=missing_log_review",
+  "source_cycle_id": "prior-gate",
+  "source_run_hash": "bbb222",
+  "github_issue_number": "429",
+  "issue_number": "429"
+}
+JSON
+  cat >"$obligation_dir/startup-gate-state.json" <<JSON
+{
+  "schema": 1,
+  "record_type": "automation_obligation",
+  "status": "open",
+  "id": "startup-gate-state-owner",
+  "kind": "prior_run_anomaly",
+  "severity": "high",
+  "root": "$ROOT_DIR",
+  "target_file": "lib/upkeeper/startup_anomaly_state.bash",
+  "repair_target_file": "lib/upkeeper/startup_anomaly_state.bash",
+  "fingerprint": "startup_anomaly.gate_unresolved reason=changed_path_violation",
+  "github_issue_number": "429",
+  "issue_number": "429"
+}
+JSON
+
+  known_output="$(run_summary_fixture basic "$temp_dir/obligations")"
+  grep -Fq 'INFO previous_run.known_anomaly_residue owner_obligation=previous-summary-owner' <<<"$known_output" ||
+    fail "known previous-run residue was not attributed to its owner obligation"
+  grep -Fq 'INFO previous_run.known_anomaly_residue owner_obligation=startup-gate-log-owner' <<<"$known_output" ||
+    fail "known startup gate log residue was not attributed to its owner obligation"
+  grep -Fq 'INFO previous_run.known_anomaly_residue owner_obligation=startup-gate-state-owner' <<<"$known_output" ||
+    fail "known startup gate state residue was not attributed to its owner obligation"
+  grep -Fq 'INFO previous_run.scan status=known_residue scan_minutes=240 known_count=3 action=use_existing_custody' <<<"$known_output" ||
+    fail "known previous-run residue did not produce the expected non-gating scan status"
+  if grep -Fq 'WARN previous_run.anomaly_summary ' <<<"$known_output"; then
+    fail "known previous-run residue still emitted a fresh warning summary"
+  fi
+  if grep -Fq 'previous_run.anomaly_detail previous_cycle=' <<<"$known_output"; then
+    fail "known previous-run residue still entered the prompt detail path"
+  fi
+  grep -Fxq 'GATE=' <<<"$known_output" || fail "known previous-run residue still activated the startup anomaly gate"
+  grep -Fxq 'REASONS=' <<<"$known_output" || fail "known previous-run residue still appended a startup anomaly reason"
+  grep -Fxq 'PROMPT_DETAILS<<>>' <<<"$known_output" || fail "known previous-run residue still reached prompt details"
+
+  printf '%s [INFO] cycle=uncustodied run_hash=ccc333 cycle.start selected_file=Upkeeper boot_id=boot-current\n' "$stamp" >>"$log_file"
+  mixed_output="$(run_summary_fixture basic "$temp_dir/obligations")"
+  grep -Fq 'INFO previous_run.known_anomaly_residue owner_obligation=previous-summary-owner' <<<"$mixed_output" ||
+    fail "known previous-run residue was not retained alongside new residue"
+  grep -Fq 'WARN previous_run.anomaly_summary ' <<<"$mixed_output" ||
+    fail "new uncustodied previous-run residue was incorrectly suppressed"
+  grep -Fq 'previous_cycle=uncustodied previous_run_hash=ccc333' <<<"$mixed_output" ||
+    fail "new uncustodied previous-run residue detail missing"
+  grep -Fq 'GATE=1' <<<"$mixed_output" ||
+    fail "new uncustodied previous-run residue did not activate the startup gate"
+  grep -Fq 'REASONS=previous_run_anomaly' <<<"$mixed_output" ||
+    fail "new uncustodied previous-run residue did not append a startup anomaly reason"
 
   rm -r "$temp_dir"
 }
@@ -7387,6 +7534,7 @@ run_check validation_environment_isolation check_validation_environment_isolatio
 run_check validation_quota_session_fixture_contract check_validation_quota_session_fixture_contract
 run_check dependency_guidance_contract check_dependency_guidance_contract
 run_check release_readiness_docs_contract check_release_readiness_docs_contract
+run_check docs_only_fast_path_contract check_docs_only_fast_path_contract
 run_check governance_docs_contract check_governance_docs_contract
 run_check negative_space_testing_contract check_negative_space_testing_contract
 run_check serious_finding_repro_contract check_serious_finding_repro_contract

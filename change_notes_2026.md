@@ -6,6 +6,16 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-26: docs-only fast path:
+	1. Added `tools/docs_only_fast_path.sh --validate`, a local README/docs/prompt-only classifier and validation path that rejects mixed source changes before running public-docs, smoke, and diff checks.
+	2. The helper deliberately contains no backend Codex launch, GitHub CLI call, PR polling, `curl`, `wget`, or `git fetch`, so small docs edits can be proved locally before any PR/network bookkeeping.
+	3. CI now reuses the shared docs-only helper and fetches enough checkout history up front to avoid a separate classifier fetch when the changed-file scope is locally available.
+
+2026-05-26: previous-run startup residue custody:
+	1. Startup previous-run scans now consult current-root prior-run anomaly obligations before treating repeated residue as fresh machine-health evidence.
+	2. Already-custodied previous-run and startup-gate residue now logs `previous_run.known_anomaly_residue` and `previous_run.scan status=known_residue` at INFO instead of reopening the startup anomaly gate.
+	3. New uncustodied residue still emits `previous_run.anomaly_summary`, enters prompt details, and forces the startup anomaly gate until backlog custody or a later resolved gate records ownership.
+
 2026-05-25: v1.2.36 changes:
 	1. Backlog child-failure catchment now classifies backend context-window exhaustion as `backend_context_overflow` with a specific repair target and source cycle/run hash, instead of leaving it as generic missing-status noise.
 	2. Prior-run anomaly custody now coalesces terminal-failure companion lines such as failed `run.finish`, missing-status PAGE output, and nonzero `cycle.exit` evidence into the existing terminal-failure obligation for the same cycle or run hash.
@@ -44,7 +54,6 @@ Version numbering note:
 	1. Prior-run anomaly custody now collapses same-source-cycle hard control-plane cascades into one `incident_rollup` obligation instead of opening sibling PAGE, nonzero-exit, startup-gate, and PR-gate obligations for the same blowup.
 	2. The rollup preserves each individual signal excerpt, fingerprint, target, cycle id, and run hash inside the obligation evidence so repair still has the full local context.
 	3. Deterministic validation covers rollup creation, repeat updates, descriptive issue titles, and sibling-obligation suppression.
-
 2026-05-24: per-bug source contract gate:
 	1. `tools/validate_upkeeper.sh --source-contracts` now runs the cheapest source-only validation contracts used by backlog per-bug commit gates.
 	2. Backlog per-bug validation now runs that source-contract gate when Upkeeper source, tools, or tests changed, catching oversized structured log call sites before commit and push.

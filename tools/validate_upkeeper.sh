@@ -1356,6 +1356,47 @@ LOG
   [[ "$(jq -r '.updated_obligations' "$temp_dir/incident-custody/latest.json")" == "1" ]] ||
     fail "prior-run anomaly custody did not update the existing incident rollup obligation"
 
+  mkdir -p "$temp_dir/resolved-cycle-obligations/resolved"
+  python3 - "$ROOT_DIR" "$temp_dir/resolved-cycle-obligations/resolved/blocked-owner.json" <<'PY'
+import json
+import sys
+
+root, path = sys.argv[1:3]
+record = {
+    "schema": 1,
+    "record_type": "automation_obligation",
+    "status": "resolved",
+    "id": "blocked-owner",
+    "kind": "blocked",
+    "reason": "BLOCKED",
+    "root": root,
+    "source_cycle_id": "cycle-resolved",
+    "source_run_hash": "hash-resolved",
+    "target_file": "Upkeeper",
+    "repair_target_file": "Upkeeper",
+    "resolved_reason": "fixture_resolved",
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(record, handle)
+    handle.write("\n")
+PY
+  cat >"$temp_dir/resolved-cycle.log" <<'LOG'
+2026-05-25T17:16:04 █ INFO    [WARN] cycle=cycle-resolved run_hash=hash-resolved lattice.unavailable reason=record_cycle_finish_failed
+2026-05-25T17:16:05 █ ACTION  [WARN] cycle=cycle-resolved run_hash=hash-resolved cycle.exit exit_code=2 reason=BLOCKED codex_exit=0
+LOG
+  tools/upkeeper_anomaly_custody.py \
+    --root "$ROOT_DIR" \
+    --loop-log "$temp_dir/resolved-cycle.log" \
+    --state-root "$temp_dir/resolved-cycle-custody" \
+    --obligation-root "$temp_dir/resolved-cycle-obligations" \
+    --recent-lines 100 \
+    --max-findings 10 \
+    --write-obligations >"$temp_dir/resolved-cycle-audit.out"
+  [[ "$(jq -r '.actionable_findings' "$temp_dir/resolved-cycle-custody/latest.json")" == "0" ]] ||
+    fail "prior-run anomaly custody reopened already-resolved source-cycle companion evidence"
+  [[ "$(jq -r '.resolved_fingerprint_findings' "$temp_dir/resolved-cycle-custody/latest.json")" -ge 2 ]] ||
+    fail "prior-run anomaly custody did not recognize resolved source-cycle ownership"
+
   selected_json="$(
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" \
       bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
@@ -1373,7 +1414,10 @@ LOG
 
   cat >"$temp_dir/fixture.log" <<'LOG'
 2026-05-21T12:03:28 █ PAGE    [ERROR] cycle=fixture run_hash=hash transcript directory is not private /tmp/upkeeper-transcripts-test.PDBM8W/transcripts-link
+2026-05-21T12:03:28 █ PAGE    [ERROR] cycle=fixture run_hash=hash transcript directory is not private /home/joe/.local/state/upkeeper/backlog/tmp/upkeeper-transcripts-test.PDBM8W/transcripts-file
+2026-05-21T12:03:28 █ --FYI-- Upkeeper: machine health blocked live cycle before issue selection: pre-contact backup prerequisite missing (recipient_missing)
 2026-05-21T12:03:29 █ INFO    transcript_artifacts_test: ok
+2026-05-21T12:03:30 █ INFO    precontact_backup_test: ok
 LOG
   tools/upkeeper_anomaly_custody.py \
     --root "$ROOT_DIR" \
@@ -1385,7 +1429,7 @@ LOG
     --write-obligations >"$temp_dir/fixture-audit.out"
   [[ "$(jq -r '.actionable_findings' "$temp_dir/fixture-custody/latest.json")" == "0" ]] ||
     fail "prior-run anomaly custody treated a proved negative-test fixture as actionable"
-  [[ "$(jq -r '.expected_fixture_findings' "$temp_dir/fixture-custody/latest.json")" == "1" ]] ||
+  [[ "$(jq -r '.expected_fixture_findings' "$temp_dir/fixture-custody/latest.json")" == "3" ]] ||
     fail "prior-run anomaly custody did not count the expected negative-test fixture"
 
   cat >"$temp_dir/model-fixture.log" <<'LOG'
@@ -1397,6 +1441,9 @@ LOG
 2026-05-23T07:29:58 █ PAGE    [ERROR] Upkeeper: primary: warn='[''WARN'']'
 2026-05-23T17:30:22 █ PAGE    [ERROR] Upkeeper: primary: except Exception as exc:
 2026-05-23T23:22:04 █ PAGE    [ERROR] Upkeeper: primary: print(f'run_record_read=fail error={type(exc).__name__}:{exc}')
+2026-05-25T18:53:31 █ PAGE [INFO] Upkeeper: live_output.false_positive_error_echo classification=quoted_backend_source_fixture primary: payload='2026-05-25T18:40:10 [ERROR] Upkeeper: primary: rg -n "batch_validation|unit_tests|clean queue|expected 25|for test_script in\\ tests/*.bash|tests failed|local_valid|batch_validation" Upkeeper'
+2026-05-25T18:53:31 █ PAGE [ERROR] Upkeeper: primary: if [[ "$payload" == *"rg -n "*batch_validation*unit_tests*"expected 25"*"for test_script in"*"tests/*.bash"*"tests failed"*local_valid*batch_validation*Upkeeper" ]]; then
+2026-05-25T18:54:36 █ PAGE [INFO] Upkeeper: live_output.false_positive_error_echo classification=quoted_backend_source_fixture primary: *'[WARN]'*|*'[ERROR]'*|*'[INFO]'*|*'PAGE'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*)
 LOG
   tools/upkeeper_anomaly_custody.py \
     --root "$ROOT_DIR" \

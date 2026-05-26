@@ -229,7 +229,12 @@ Important:
     obligations for the same blowup. Quoted backend shell/test fixture snippets that contain
     embedded `[WARN]`, `[ERROR]`, `PAGE`, diagnostic search commands,
     control-plane log text, or quoted source-code fixture lines are treated as
-    transcript content, not as new wrapper failures. Immediately after the
+    transcript content, not as new wrapper failures; lines already classified as
+    `quoted_backend_source_fixture` are also treated as settled quote evidence.
+    Backlog-temp negative-test lines from transcript and pre-contact fixtures
+    are accepted only when the matching test-success context appears nearby.
+    Source-cycle signals with an existing open or resolved owner obligation are
+    coalesced under that owner instead of becoming a new incident rollup. Immediately after the
     backlog branch is checked out, before PR, merge, quota, or issue-selection
     gates, backlog also reconciles open current-root obligations deterministically: records
     with matching root, kind, reason, target, issue, and stable fingerprint are
@@ -1170,6 +1175,10 @@ prompts, backup log lines, or Lattice preselect evidence.
 - The gated self-repair surface is intentionally narrow: the root `Upkeeper`
   entrypoint, `lib/upkeeper` modules, central operator docs and release notes,
   prompts/templates, launcher examples, and the validation harness.
+- The gate checks changed paths, branch, head, and index-tree state. The
+  volatile status-output byte count is not a control boundary, so allowed
+  Upkeeper-suite edits do not keep the gate unresolved solely because the dirty
+  status text length changed.
 
 ## Repo-Local Living Notes
 

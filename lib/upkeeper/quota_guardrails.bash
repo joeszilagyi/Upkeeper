@@ -88,9 +88,13 @@ quota_identity_status_for_model() {
   local target_model="$1"
   local limit_id="${2:-unknown}"
   local limit_name="${3:-unknown}"
+  local limit_id_lower
+  local limit_name_lower
 
   [[ -n "$limit_id" && "$limit_id" != "null" ]] || limit_id="unknown"
   [[ -n "$limit_name" && "$limit_name" != "null" ]] || limit_name="unknown"
+  limit_id_lower="${limit_id,,}"
+  limit_name_lower="${limit_name,,}"
 
   if is_spark_model "$target_model"; then
     if [[ "$limit_id" == codex_* || "$limit_name" == *spark* || "$limit_name" == *Spark* || "$limit_name" == *SPARK* ]]; then
@@ -104,6 +108,8 @@ quota_identity_status_for_model() {
     fi
   elif [[ "$limit_id" == "unknown" && "$limit_name" == "unknown" ]]; then
     printf 'unknown'
+  elif [[ "$limit_id_lower" == *spark* || "$limit_name_lower" == *spark* ]]; then
+    printf 'conflicting_generic'
   elif [[ "$limit_name" == "unknown" ]]; then
     printf 'generic_unknown'
   else
@@ -215,9 +221,10 @@ quota_identity_changed_flag() {
 
   if [[ "$before_id" != "unknown" && "$after_id" != "unknown" ]]; then
     comparable=1
-    [[ "$before_id" == "$after_id" ]] || changed=1
-  fi
-  if [[ "$before_name" != "unknown" && "$after_name" != "unknown" ]]; then
+    if [[ "$before_id" != "$after_id" ]]; then
+      changed=1
+    fi
+  elif [[ "$before_name" != "unknown" && "$after_name" != "unknown" ]]; then
     comparable=1
     [[ "$before_name" == "$after_name" ]] || changed=1
   fi

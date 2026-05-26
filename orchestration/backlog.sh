@@ -219,7 +219,7 @@ backlog_attention_marker_for_line() {
   local payload="$1"
 
   case "$payload" in
-    *"transcript directory is not private /tmp/upkeeper-transcripts-test"*)
+    *"transcript directory is not private "*"upkeeper-transcripts-test."*)
       printf '--FYI--\n'
       return 0
       ;;

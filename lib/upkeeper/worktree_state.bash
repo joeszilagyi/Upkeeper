@@ -514,6 +514,10 @@ def emit_path_change(path_key, before_state, after_state):
 before_meta, before_paths = normalize_snapshot(before)
 after_meta, after_paths = normalize_snapshot(after)
 for key in sorted(set(before_meta) | set(after_meta)):
+    if key == "status_lines":
+        # This is a volatile byte count of porcelain status output. Path-level
+        # records below decide whether dirty paths are allowed or actionable.
+        continue
     if before_meta.get(key) == after_meta.get(key):
         continue
     emit_control_change(key, before_meta.get(key, "missing"), after_meta.get(key, "missing"))

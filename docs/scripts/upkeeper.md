@@ -273,6 +273,14 @@ Important:
     fails closed instead of risking duplicate public bugs. Set
     `BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=0` only for a deliberate local-only
     dry run.
+    Use `tools/upkeeper_control_plane_audit.py` for a local no-backend inventory
+    of unexpected control-plane state. It reports stable JSON or concise
+    terminal text for tracked local-evidence artifacts such as root `$db`,
+    `runtime/`, `Upkeeper.log`, transcripts, manifests, locks, postmortems,
+    active owner locks, open automation obligations, deferred issue records
+    when a state root is provided, and recent hard loop markers. The helper
+    does not contact GitHub, fetch, or launch backend Codex; it is a report-only
+    screen for the first Kirk Protocol inventory layer.
     Local batch-merge validation failures use the same obligation lane: if a
     batch validation phase fails, backlog records the failed phase, command,
     exit code, bounded output tail, stable fingerprint, likely owner path, and

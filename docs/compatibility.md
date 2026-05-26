@@ -424,6 +424,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   command `tools/backlog_triage.py` emits `safe_to_restart=yes|no|wait` plus a
   reason and next action, using local evidence and optional GitHub PR/check
   metadata.
+- Control-plane inventory remains local and no-backend. The focused command
+  `tools/upkeeper_control_plane_audit.py` emits stable JSON or concise terminal
+  text for observed repo/runtime state, including tracked local-evidence
+  artifacts, root scratch files such as `$db`, active locks, open obligations,
+  optional deferred issue records, and recent hard loop markers.
 - Negative-space validation remains part of the tracked safety surface.
   `docs/negative-space-testing.md` names deterministic local proofs for
   behavior that must not happen, and those proofs should stay no-backend unless

@@ -3,6 +3,36 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Control-Plane Audit Inventory
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #398 by adding a deterministic no-backend control-plane inventory
+  that counts observed repo/runtime state before model work
+- detect tracked local-evidence artifacts such as literal root `$db`,
+  `runtime/`, logs, transcripts, manifests, locks, and postmortem evidence
+- emit stable JSON plus concise operator text and cover clean/dirty fixtures in
+  quick validation
+
+Constraints:
+- no backend Codex validation and no network/GitHub calls
+- report/inventory first; do not auto-remediate in this slice
+- keep the clean path fast enough for no-op health checks
+
+Files likely touched:
+- `tools/upkeeper_control_plane_audit.py`
+- `tests/control_plane_audit_test.bash`
+- `tools/validate_upkeeper.sh`
+- README/operator docs and release notes
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_control_plane_audit.py`
+- `bash tests/control_plane_audit_test.bash`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
 ## Quota Guardrail Telemetry Custody
 
 Status: completed locally; pending PR/CI

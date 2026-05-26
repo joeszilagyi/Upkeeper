@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-26: control-plane audit inventory:
+	1. Added `tools/upkeeper_control_plane_audit.py`, a local no-backend inventory for unexpected control-plane state before model work.
+	2. The audit emits stable JSON or concise operator text for tracked local-evidence artifacts, root scratch files such as `$db`, active locks, open obligations, optional deferred issue records, and recent hard loop markers.
+	3. Quick validation now covers clean inventory, tracked `$db`, tracked runtime/log/transcript/postmortem/manifest artifacts, untracked root scratch, open obligation state, and recent nonzero/PAGE log markers.
+
 2026-05-26: quota guardrail telemetry custody:
 	1. Prior-run anomaly custody now treats managed `quota.guardrails` deferred and partial-decision advisory lines as quota-health telemetry rather than opening duplicate `prior_run_anomaly` bug obligations.
 	2. Hard failures, PAGE errors, nonzero exits, identity guardrail stops, and stale-quota obligations remain the durable custody paths for quota-related problems.

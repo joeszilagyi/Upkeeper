@@ -1694,6 +1694,25 @@ JSON
   rm -r "$temp_dir"
 }
 
+check_control_plane_audit_contract() {
+  log "checking control-plane audit inventory contract"
+
+  [[ -x tools/upkeeper_control_plane_audit.py ]] || fail "control-plane audit command is missing or not executable"
+  [[ -s tests/control_plane_audit_test.bash ]] || fail "control-plane audit tests are missing or empty"
+  grep -Fq "upkeeper_control_plane_audit" tools/upkeeper_control_plane_audit.py ||
+    fail "control-plane audit output record type is missing"
+  grep -Fq "tracked_root_scratch_artifact" tools/upkeeper_control_plane_audit.py ||
+    fail "control-plane audit does not classify tracked root scratch artifacts"
+  grep -Fq "tracked_runtime_artifact" tools/upkeeper_control_plane_audit.py ||
+    fail "control-plane audit does not classify tracked runtime artifacts"
+  grep -Fq "recent_nonzero_cycle_exit" tools/upkeeper_control_plane_audit.py ||
+    fail "control-plane audit does not inventory recent loop outcome markers"
+  grep -Fq "tools/upkeeper_control_plane_audit.py" README.md docs/scripts/upkeeper.md docs/negative-space-testing.md ||
+    fail "public docs missing control-plane audit command"
+  python3 -m py_compile tools/upkeeper_control_plane_audit.py
+  bash tests/control_plane_audit_test.bash
+}
+
 check_lattice_custody_policy_contract() {
   log "checking Lattice custody authority policy"
 
@@ -7683,6 +7702,7 @@ run_check status_session_jsonl_contract check_status_session_jsonl_contract
 run_check process_control_guards check_process_control_guards
 run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_contract
 run_check breadcrumb_audit_contract check_breadcrumb_audit_contract
+run_check control_plane_audit_contract check_control_plane_audit_contract
 run_check lattice_custody_policy_contract check_lattice_custody_policy_contract
 run_check automation_obligation_root_boundary_contract check_automation_obligation_root_boundary_contract
 run_check automation_obligation_reconciliation_contract check_automation_obligation_reconciliation_contract

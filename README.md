@@ -1026,6 +1026,10 @@ test loop does not spend cycles on known low-value or generated material.
   no-backend guard for green backlog PR merge and clean-sheet cleanup
 - [tools/backlog_triage.py](tools/backlog_triage.py): local no-backend
   stopped-loop restart triage for backlog runs
+- [tools/upkeeper_control_plane_audit.py](tools/upkeeper_control_plane_audit.py):
+  local no-backend inventory for unexpected control-plane state such as tracked
+  runtime evidence, root scratch artifacts, active locks, open obligations, and
+  recent hard loop markers
 - [tools/backlog_parallel_leases.py](tools/backlog_parallel_leases.py): local
   no-backend issue/target lease registry for future isolated parallel backlog
   workers

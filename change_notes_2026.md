@@ -6,6 +6,10 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-26: nonzero launcher footer custody:
+	1. Prior-run anomaly custody now coalesces backlog job-summary footer lines such as `outcome/results: Upkeeper exited with status 3` and `final disposition: launcher exiting with status 3` into a nearby owned terminal-failure obligation instead of opening a duplicate prior-run anomaly.
+	2. Standalone nonzero launcher footer lines remain actionable when no nearby terminal-failure owner exists, preserving fail-closed custody for launcher failures without structured cycle evidence.
+
 2026-05-26: expected fixture page context:
 	1. Backlog watch output now demotes transcript-artifact negative-test
 	   `PAGE [ERROR]` fixture lines to `--FYI--` and appends

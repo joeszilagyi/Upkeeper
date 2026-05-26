@@ -30,6 +30,7 @@ DEFAULT_UMBRELLA_TITLE = (
 INCIDENT_ROLLUP_FAILURE_LIMIT = 3
 INCIDENT_ROLLUP_WINDOW_SECONDS = 15 * 60
 INCIDENT_ROLLUP_COOLDOWN_SECONDS = 6 * 60 * 60
+NONZERO_LAUNCHER_FOOTER_OWNER_WINDOW_LINES = 16
 ENV_INCIDENT_ROLLUP_LIMIT = "UPKEEPER_INCIDENT_ROLLUP_FAILURE_LIMIT"
 ENV_INCIDENT_ROLLUP_WINDOW_SECONDS = "UPKEEPER_INCIDENT_ROLLUP_WINDOW_SECONDS"
 ENV_INCIDENT_ROLLUP_COOLDOWN_SECONDS = "UPKEEPER_INCIDENT_ROLLUP_COOLDOWN_SECONDS"
@@ -293,6 +294,8 @@ def failure_transcript_tail_echo(lines: list[tuple[int, str]], index: int, norma
         "checks failed",
         "stopping before selecting another issue",
         "automation.obligation.open",
+        "upkeeper exited with status",
+        "launcher exiting with status",
     )
     if "failure transcript tail" in lower:
         return not (CYCLE_RE.search(normalized) or RUN_HASH_RE.search(normalized))
@@ -1080,6 +1083,35 @@ def terminal_failure_owner_record(
     return None
 
 
+def nonzero_launcher_footer_companion(finding: Finding) -> bool:
+    if finding.kind != "nonzero_launcher_exit":
+        return False
+    if finding.cycle_id or finding.run_hash:
+        return False
+    lower = finding.normalized.lower()
+    return (
+        "outcome/results: upkeeper exited with status" in lower
+        or "final disposition: launcher exiting with status" in lower
+        or "launcher exiting with status" in lower
+    )
+
+
+def recent_terminal_failure_owner_record(
+    finding: Finding,
+    recent_owner: tuple[dict, int] | None,
+) -> dict | None:
+    if not nonzero_launcher_footer_companion(finding):
+        return None
+    if recent_owner is None:
+        return None
+    record, line_number = recent_owner
+    if finding.line_number < line_number:
+        return None
+    if finding.line_number - line_number > NONZERO_LAUNCHER_FOOTER_OWNER_WINDOW_LINES:
+        return None
+    return record
+
+
 def update_terminal_failure_owner(path: pathlib.Path, finding: Finding, loop_log: pathlib.Path) -> None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -1129,6 +1161,7 @@ def audit(args: argparse.Namespace) -> int:
     created_obligations = 0
     updated_obligations = 0
     obligation_records = existing_obligation_records(obligation_root)
+    recent_terminal_owner: tuple[dict, int] | None = None
     for index, (line_number, raw_line) in enumerate(lines):
         classified = classify(lines, index, raw_line)
         if classified is None:
@@ -1140,6 +1173,8 @@ def audit(args: argparse.Namespace) -> int:
         terminal_owner = source_cycle_owner_record(finding, obligation_records, root)
         if terminal_owner is None:
             terminal_owner = terminal_failure_owner_record(finding, obligation_records, root)
+        if terminal_owner is None:
+            terminal_owner = recent_terminal_failure_owner_record(finding, recent_terminal_owner)
         if terminal_owner is not None:
             if args.write_obligations and terminal_owner.get("state") == "open":
                 update_terminal_failure_owner(pathlib.Path(terminal_owner["path"]), finding, loop_log)
@@ -1147,6 +1182,8 @@ def audit(args: argparse.Namespace) -> int:
             elif terminal_owner.get("state") == "resolved":
                 resolved_count += 1
             coalesced_count += 1
+            if finding.cycle_id or finding.run_hash or terminal_failure_companion(finding):
+                recent_terminal_owner = (terminal_owner, finding.line_number)
             continue
         if finding.ident in seen_ids:
             coalesced_count += 1

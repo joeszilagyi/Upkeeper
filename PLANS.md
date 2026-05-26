@@ -3,6 +3,34 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Nonzero Launcher Footer Custody
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- stop backlog job-summary footer lines such as `outcome/results: Upkeeper
+  exited with status 3` from reopening duplicate prior-run anomaly obligations
+  after the structured `cycle.exit`/`run.finish` evidence has already been
+  coalesced under a terminal-failure owner
+- keep standalone nonzero launcher exits actionable when there is no nearby
+  owned terminal failure
+- close issue #505 once deterministic validation proves the footer is owned
+
+Constraints:
+- no backend Codex validation
+- do not hide standalone launcher failures that lack nearby owner evidence
+- preserve owner obligation evidence by recording the coalesced footer excerpt
+
+Files likely touched:
+- `tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Expected Fixture Page Context
 
 Status: completed locally; pending PR/CI

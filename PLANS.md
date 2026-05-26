@@ -3,6 +3,33 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Quota Guardrail Telemetry Custody
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- stop anomaly custody from opening prior-run bug obligations for managed
+  `quota.guardrails` deferred/partial-decision telemetry
+- preserve real quota-related hard failures, PAGE errors, nonzero exits, and
+  stale-quota obligations as the durable owners for quota health problems
+- close issue #486 with deterministic validation for the exact warning shape
+
+Constraints:
+- no backend Codex validation
+- do not demote `quota.identity_guardrail decision=stop` or unrelated quota
+  errors
+- keep the change inside anomaly custody classification and validation
+
+Files likely touched:
+- `tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_anomaly_custody.py`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Quoted Prior-Run Fixture Custody
 
 Status: completed locally; pending PR/CI

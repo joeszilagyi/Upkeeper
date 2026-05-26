@@ -217,6 +217,14 @@ def is_expected_negative_fixture(line: str) -> bool:
         and re.search(r'/upkeeper-transcripts-test\.[^/\s]+/transcripts-link\b', line)
     )
 
+
+def is_terminal_capture_fail_fixture(line: str) -> bool:
+    return (
+        'codex.transcript_capture_failed' in line
+        and 'tee_exit=141' in line
+        and 'codex_exit=101' in line
+    )
+
 def is_custodied_command_failure_notice(line: str) -> bool:
     return bool(
         re.search(
@@ -229,6 +237,8 @@ def is_custodied_command_failure_notice(line: str) -> bool:
 
 def is_signal(line: str) -> bool:
     if is_expected_negative_fixture(line):
+        return False
+    if is_terminal_capture_fail_fixture(line):
         return False
     if is_custodied_command_failure_notice(line):
         return False
@@ -598,6 +608,14 @@ def is_expected_negative_fixture(line: str) -> bool:
     )
 
 
+def is_terminal_capture_fail_fixture(line: str) -> bool:
+    return (
+        "codex.transcript_capture_failed" in line
+        and "tee_exit=141" in line
+        and "codex_exit=101" in line
+    )
+
+
 def is_custodied_command_failure_notice(line: str) -> bool:
     return bool(
         re.search(
@@ -611,6 +629,8 @@ def is_custodied_command_failure_notice(line: str) -> bool:
 
 def is_error_line(line: str) -> bool:
     if is_expected_negative_fixture(line):
+        return False
+    if is_terminal_capture_fail_fixture(line):
         return False
     if is_custodied_command_failure_notice(line):
         return False

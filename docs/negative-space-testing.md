@@ -69,6 +69,7 @@ metadata debt.
 | NS-006 | Local validation must not spend real backend quota or require live Codex sessions. | `tools/validate_upkeeper.sh` mode contract, fake backend fixtures, `.github/workflows/ci.yml` no-quota CI path |
 | NS-007 | Shell-sourced config must not be treated as safe when the selected config path is missing, symlinked, wrong-owner, or group/world writable. | root `Upkeeper` config preflight and `tools/validate_upkeeper.sh` config-file support checks |
 | NS-008 | Unsupported backend sandbox modes must not be accepted as active protection. | `tests/wrapper_contract_test.bash` CODEX mode rejection and allowlist fixtures |
+| NS-009 | Control-plane inventory must count observed local state, not only expected launcher state, and must flag tracked local-evidence artifacts such as root `$db`, `runtime/`, logs, transcripts, manifests, locks, and postmortems. | `tools/upkeeper_control_plane_audit.py`, `tests/control_plane_audit_test.bash`, `tools/validate_upkeeper.sh --quick` |
 
 ## Updating The Catalog
 

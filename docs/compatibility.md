@@ -336,7 +336,9 @@ Future changes should preserve this operator-visible surface as far as possible:
   class, reason, target, and repair target rather than by volatile per-cycle
   fingerprints. Obligations already linked to the same specific GitHub issue
   title and number also reconcile as one local owner even when their evidence
-  fingerprints differ.
+  fingerprints differ. Batch validation unit tests run with isolated
+  obligation and automation-ledger roots, so local test fixtures cannot consume
+  the live backlog obligation queue.
 - The parallel-worker lease registry is a local no-backend compatibility
   surface for future isolated backlog workers. `tools/backlog_parallel_leases.py`
   stores leases under the selected backlog state root, rejects active duplicate

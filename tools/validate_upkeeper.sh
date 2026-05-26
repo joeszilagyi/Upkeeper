@@ -2210,8 +2210,14 @@ check_backlog_batch_validation_obligation_contract() {
     fail "backlog launcher cannot open obligations for local batch-validation failures"
   grep -Fq 'backlog_batch_validation_repeated_failure' orchestration/backlog.sh ||
     fail "backlog launcher cannot short-circuit repeated batch-validation failures"
+  grep -Fq 'upkeeper-backlog-batch-validation' orchestration/backlog.sh ||
+    fail "backlog batch validation does not isolate unit-test runtime state"
+  grep -Fq 'export UPKEEPER_OBLIGATION_DIR="$validation_root/automation-obligations"' orchestration/backlog.sh ||
+    fail "backlog batch validation can inherit live obligation state into tests"
   grep -Fq 'local_validation_failure' tests/backlog_batch_validation_obligation_test.bash ||
     fail "batch-validation obligation test does not assert local validation failure kind"
+  grep -Fq 'test_chimneysweep_clean_queue_ignores_inherited_obligation_env' tests/chimneysweep_test.bash ||
+    fail "ChimneySweep test does not guard against inherited live obligation state"
   grep -Fq 'second identical validation failure reran command' tests/backlog_batch_validation_obligation_test.bash ||
     fail "batch-validation obligation test does not prove retry guard avoids rerunning the failed command"
   bash tests/backlog_batch_validation_obligation_test.bash

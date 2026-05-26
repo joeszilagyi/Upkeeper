@@ -3,6 +3,49 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Batch Validation State Isolation
+
+Status: completed locally
+
+Goal:
+- stop backlog batch validation from inheriting live automation-obligation state
+  into unit-test fixtures
+- make ChimneySweep clean-queue tests ignore ambient `UPKEEPER_OBLIGATION_DIR`
+  unless a fixture explicitly opts into an obligation root
+- prevent quoted diagnostic command text containing `[ERROR]` or `PAGE` from
+  becoming new anomaly custody while repair prompts inspect prior failures
+- reconcile duplicate blocked obligations created by the failed self-repair loop
+
+Constraints:
+- no backend Codex validation
+- preserve the existing live obligation evidence until deterministic
+  reconciliation can resolve it
+- keep validation isolation local to harnesses and batch validation, not normal
+  production launcher state
+
+Files likely touched:
+- `Upkeeper`
+- `orchestration/backlog.sh`
+- `tests/chimneysweep_test.bash`
+- `tools/validate_upkeeper.sh`
+- operator docs and release notes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `UPKEEPER_OBLIGATION_DIR=runtime/upkeeper-obligations bash tests/chimneysweep_test.bash`
+- isolated backlog batch-validation unit-test replay with live
+  `UPKEEPER_OBLIGATION_DIR` exported
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+
+Result:
+- local validation passed
+- duplicate blocked obligations from the interrupted loop were reconciled
+- the proven-fixed batch-validation, BLOCKED, and quoted diagnostic PAGE
+  obligations were moved to resolved local state
+
 ## Duplicate Obligation Issue Filing Circuit Breaker
 
 Status: completed locally

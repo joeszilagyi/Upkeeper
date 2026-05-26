@@ -19,6 +19,11 @@ Version numbering note:
 	3. Obligations already linked to the same specific issue title and issue number now reconcile as one local owner even when their evidence fingerprints differ, so catch-up syncs can retire duplicate local custody records after exact-title GitHub reuse.
 	4. Backlog logs now report `github_reused` counts during obligation issue sync, making duplicate-prevention behavior visible in operator output.
 
+2026-05-25: batch validation state isolation:
+	1. Backlog batch validation now runs unit tests with isolated obligation and automation-ledger roots, so launcher fixtures cannot inherit the live backlog obligation queue and turn a clean-queue assertion into obligation repair.
+	2. ChimneySweep tests ignore ambient `UPKEEPER_OBLIGATION_DIR` by default and use an explicit fixture override when a test intentionally exercises obligation repair.
+	3. Live output custody now sanitizes quoted diagnostic search/source snippets after reclassifying them, preventing embedded `[ERROR]` or `PAGE` text from creating fresh anomaly obligations while a repair prompt inspects prior failures.
+
 2026-05-24: source rights metadata model:
 	1. Added `docs/source-rights-metadata.md` as the tracked source sensitivity, rights, and reuse metadata model for OSINT and citation artifacts.
 	2. Defined public, local-private, secret-adjacent, credential-bearing, PII-bearing, paid-access, license-restricted, prompt-safe, prompt-unsafe, export-safe, and export-unsafe labels.

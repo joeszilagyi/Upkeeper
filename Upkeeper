@@ -879,7 +879,7 @@ upkeeper_live_output_false_positive_error_echo() {
     *'cycle.exit'*|*'run.finish'*|*'cycle.summary'*|*'cycle.start'*|*'run.start'*)
       return 0
       ;;
-    *'rg -n '*' || true'*|*'grep -Fq '*|*'grep -Eq '*|*'if grep '*|*'printf '*|*'echo '*|*'case '*|*'warn='*|*'err='*|*'payload='*|*'<<<'*|*'|| {'*|*'&&'*|*';;'*|*'*)'*|*"*'|"*|*"|'*"*)
+    *'rg -n '*|*'rg --'*|*'grep -Fq '*|*'grep -Eq '*|*'if grep '*|*'printf '*|*'echo '*|*'case '*|*'warn='*|*'err='*|*'payload='*|*'<<<'*|*'|| {'*|*'&&'*|*';;'*|*'*)'*|*"*'|"*|*"|'*"*)
       ;;
     *)
       return 1
@@ -887,7 +887,7 @@ upkeeper_live_output_false_positive_error_echo() {
   esac
 
   case "$payload" in
-    'grep '*|'printf '*|'echo '*|'if grep '*|'case '*)
+    'rg -n '*|'rg --'*|'grep '*|'printf '*|'echo '*|'if grep '*|'if [['*|'case '*|'sample='*|'payload='*)
       return 0
       ;;
     *'[WARN]'*|*'[ERROR]'*|*'[INFO]'*|*$'\342\226\210'*|*'PAGE'*|*'startup_anomaly.gate_unresolved'*|*'previous_run.anomaly_summary'*|*'cycle.exit'*|*'run.finish'*)
@@ -914,6 +914,9 @@ upkeeper_live_output_custody_filter() {
       # paging it as operator ERROR output.
       rewritten="${line/ \[ERROR\] / [INFO] }"
       rewritten="${rewritten/ Upkeeper: / Upkeeper: live_output.false_positive_error_echo classification=quoted_backend_source_fixture }"
+      rewritten="${rewritten//\[ERROR\]/[quoted-error]}"
+      rewritten="${rewritten//\[WARN\]/[quoted-warn]}"
+      rewritten="${rewritten//PAGE/quoted-page}"
       printf '%s\n' "$rewritten"
       continue
     fi
@@ -969,6 +972,21 @@ upkeeper_internal_live_output_custody_filter_self_test() {
       ;;
   esac
 
+  sample='2026-05-25T18:40:10 [ERROR] Upkeeper: primary: rg -n "batch_validation|unit_tests|clean queue|expected 25|for test_script in\\ tests/\\*\\.bash|tests failed|local_valid|batch_validation" Upkeeper'
+  output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
+  case "$output" in
+    *' [ERROR] '*|*' PAGE '*)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_page_search_still_error output=%s\n' "$output" >&2
+      return 1
+      ;;
+    *'classification=quoted_backend_source_fixture'*)
+      ;;
+    *)
+      printf 'live_output_custody_filter_self_test=fail reason=prior_run_page_search_not_classified output=%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+
   sample='2026-05-22T12:04:06 [ERROR] Upkeeper: primary: Traceback (most recent call last)'
   output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
   case "$output" in
@@ -983,7 +1001,7 @@ upkeeper_internal_live_output_custody_filter_self_test() {
   sample=$'2026-05-23T07:21:59 \342\226\210 PAGE [ERROR] Upkeeper: primary: *\'"\'[ERROR]\'*|*\'[WARN]\'*|*\'\342\226\210\'*|*\'startup_anomaly.gate_unresolved\'*|*\'previous_run.anomaly_summary\'*|*\'cycle.exit\'*|*\'run.finish\'*)'
   output="$(printf '%s\n' "$sample" | upkeeper_live_output_custody_filter)"
   case "$output" in
-    *' [ERROR] '*)
+    *' [ERROR] '*|*' PAGE '*)
       printf 'live_output_custody_filter_self_test=fail reason=case_glob_fixture_still_error output=%s\n' "$output" >&2
       return 1
       ;;

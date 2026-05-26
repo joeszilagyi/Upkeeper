@@ -227,9 +227,9 @@ Important:
     control-plane signals, anomaly custody opens one incident-rollup obligation
     that preserves the individual signal excerpts instead of filing sibling
     obligations for the same blowup. Quoted backend shell/test fixture snippets that contain
-    embedded `[WARN]`, `[ERROR]`, `PAGE`, control-plane log text, or quoted
-    source-code fixture lines are treated as transcript content, not as new
-    wrapper failures. Immediately after the
+    embedded `[WARN]`, `[ERROR]`, `PAGE`, diagnostic search commands,
+    control-plane log text, or quoted source-code fixture lines are treated as
+    transcript content, not as new wrapper failures. Immediately after the
     backlog branch is checked out, before PR, merge, quota, or issue-selection
     gates, backlog also reconciles open current-root obligations deterministically: records
     with matching root, kind, reason, target, issue, and stable fingerprint are
@@ -269,7 +269,9 @@ Important:
     required proof command under `runtime/upkeeper-obligations/open` before it
     exits. Repeating the same failure updates the existing obligation instead
     of creating duplicates, and the next invocation repairs that obligation
-    before retrying the merge or selecting another GitHub issue.
+    before retrying the merge or selecting another GitHub issue. Batch
+    validation runs unit tests with isolated obligation and automation-ledger
+    roots so fixture launchers cannot see the live backlog obligation queue.
     Child wrapper failures use the same catchment: when the backlog launcher
     observes `./Upkeeper` exit non-zero outside the known blocked/quota lanes,
     it records a `wrapper_execution_failure` obligation from a private bounded

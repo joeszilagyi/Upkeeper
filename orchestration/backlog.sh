@@ -3339,7 +3339,12 @@ run_batch_validation() {
   run_batch_validation_phase "batch_validation.bash_syntax" "bash syntax" \
     bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || return $?
   run_batch_validation_phase "batch_validation.unit_tests" "unit tests" \
-    bash -c 'set -euo pipefail; for test_script in tests/*.bash; do bash "$test_script"; done' || return $?
+    bash -c 'set -euo pipefail
+validation_root="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-backlog-batch-validation.XXXXXX")"
+trap '\''rm -r "$validation_root" 2>/dev/null || true'\'' EXIT
+export UPKEEPER_OBLIGATION_DIR="$validation_root/automation-obligations"
+export UPKEEPER_AUTOMATION_LEDGER_DIR="$validation_root/automation-ledger"
+for test_script in tests/*.bash; do bash "$test_script"; done' || return $?
   run_batch_validation_phase "batch_validation.docs_quick" "docs quick checks" \
     tools/check_public_docs.sh --quick || return $?
   run_batch_validation_phase "batch_validation.diff_whitespace" "diff whitespace" \

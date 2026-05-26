@@ -223,8 +223,8 @@ Important:
     opens one incident-rollup obligation that preserves the individual signal
     excerpts instead of filing sibling obligations for the same blowup. Quoted
     backend shell/test fixture snippets that contain embedded [WARN], [ERROR],
-    PAGE, or control-plane log text are treated as transcript content, not as new
-    wrapper failures.
+    PAGE, diagnostic search commands, or control-plane log text are treated as
+    transcript content, not as new wrapper failures.
     Immediately after the backlog branch is checked out, before PR, merge,
     quota, or issue-selection gates, backlog also reconciles open current-root
     obligations deterministically: records with matching root, kind, reason,
@@ -256,7 +256,9 @@ Important:
     open GitHub issues and reuses an exact title match; if that lookup fails, it
     fails closed instead of risking duplicate public bugs. Set
     BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE=0 only for a deliberate local-only dry
-    run. Set
+    run. Batch validation runs unit tests with isolated obligation and
+    automation-ledger roots so fixture launchers cannot see the live backlog
+    obligation queue. Set
     BACKLOG_OBLIGATION_RECONCILE=0 for a deliberate one-cycle bypass. Set
     BACKLOG_ANOMALY_CUSTODY=0 for a deliberate one-cycle bypass, or adjust
     BACKLOG_ANOMALY_CUSTODY_LINES and

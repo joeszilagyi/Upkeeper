@@ -1653,9 +1653,9 @@ record_startup_anomaly_gate_review() {
     if ! write_startup_anomaly_gate_state "unresolved" "changed_path_violation"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
-  elif [[ "$codex_exit_value" != "0" ]]; then
-    startup_anomaly_log_gate_unresolved "nonzero_codex_exit" "$status_marker_value" "$codex_exit_value"
-    if ! write_startup_anomaly_gate_state "unresolved" "nonzero_codex_exit"; then
+  elif startup_anomaly_gate_has_unresolved_state "$STARTUP_ANOMALY_REASONS"; then
+    startup_anomaly_log_gate_unresolved "unresolved_startup_anomaly_state" "$status_marker_value" "$codex_exit_value"
+    if ! write_startup_anomaly_gate_state "unresolved" "unresolved_startup_anomaly_state"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
   elif current_cycle_log_review_present "$last_message_file" "$CYCLE_ID" "$LOG_FILE" "$STARTUP_ANOMALY_REASONS"; then
@@ -1665,11 +1665,6 @@ record_startup_anomaly_gate_review() {
     fi
     mark_startup_anomaly_gate_states_resolved
     log_line "INFO" "startup_anomaly.gate_resolved status=checked reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") status_marker=${status_marker_value:-missing} codex_exit=$codex_exit_value"
-  elif startup_anomaly_gate_has_unresolved_state "$STARTUP_ANOMALY_REASONS"; then
-    startup_anomaly_log_gate_unresolved "unresolved_startup_anomaly_state" "$status_marker_value" "$codex_exit_value"
-    if ! write_startup_anomaly_gate_state "unresolved" "unresolved_startup_anomaly_state"; then
-      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
-    fi
   else
     startup_anomaly_log_gate_unresolved \
       "missing_current_cycle_log_review_evidence" \

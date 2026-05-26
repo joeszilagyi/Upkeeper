@@ -18,6 +18,7 @@ import os
 import pathlib
 import re
 import sys
+import time
 from dataclasses import dataclass
 
 
@@ -26,6 +27,12 @@ DEFAULT_UMBRELLA_TITLE = (
     "High priority bug: non-perfect automated runs need mandatory local "
     "remediation custody"
 )
+INCIDENT_ROLLUP_FAILURE_LIMIT = 3
+INCIDENT_ROLLUP_WINDOW_SECONDS = 15 * 60
+INCIDENT_ROLLUP_COOLDOWN_SECONDS = 6 * 60 * 60
+ENV_INCIDENT_ROLLUP_LIMIT = "UPKEEPER_INCIDENT_ROLLUP_FAILURE_LIMIT"
+ENV_INCIDENT_ROLLUP_WINDOW_SECONDS = "UPKEEPER_INCIDENT_ROLLUP_WINDOW_SECONDS"
+ENV_INCIDENT_ROLLUP_COOLDOWN_SECONDS = "UPKEEPER_INCIDENT_ROLLUP_COOLDOWN_SECONDS"
 
 TIMESTAMP_PREFIX = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{4})?\s+"
@@ -104,6 +111,7 @@ DYNAMIC_FINGERPRINT_PATTERNS = (
     (re.compile(r"/tmp/upkeeper-[^ \t]+"), "/tmp/upkeeper-<path>"),
     (re.compile(r"/home/[^ \t]*/upkeeper-[^ \t]+"), "/home/<user>/upkeeper-<path>"),
 )
+ROLLUP_FAMILY_RE = re.compile(r"\bcycle=[^ \t]+\s*")
 
 
 @dataclass(frozen=True)
@@ -134,6 +142,24 @@ class Finding:
 
 def now_local() -> str:
     return _dt.datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def now_epoch() -> int:
+    return int(time.time())
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _read_int_env(name: str, default: int) -> int:
+    value = os.getenv(name, "")
+    if not value:
+        return default
+    return _safe_int(value, default)
 
 
 def private_dir(path: pathlib.Path) -> None:
@@ -512,6 +538,9 @@ def normalize_fingerprint_text(text: str) -> str:
 
 
 def stable_fingerprint(kind: str, normalized: str) -> str:
+    if kind == "incident_rollup":
+        normalized = ROLLUP_FAMILY_RE.sub("cycle=<cycle> ", normalize_fingerprint_text(normalized))
+        return normalized.strip()
     lower = normalized.lower()
     if kind == "previous_run_anomaly_summary":
         return "previous_run.anomaly_summary"
@@ -630,7 +659,7 @@ def roll_up_incident_findings(findings: list[Finding]) -> tuple[list[Finding], i
                 cycle_id=cycle_id,
                 run_hash=representative.run_hash,
                 status="actionable",
-                incident_key=f"cycle:{cycle_id}",
+                incident_key=f"incident:{fingerprint}",
                 incident_signals=tuple(incident_signal_payload(finding) for finding in ordered),
             )
         )
@@ -642,7 +671,12 @@ def roll_up_incident_findings(findings: list[Finding]) -> tuple[list[Finding], i
     for finding in findings:
         if finding.ident not in consumed_ids:
             result.append(finding)
-    result.extend(rolled)
+    rolled_by_id: dict[str, Finding] = {}
+    for finding in rolled:
+        prior = rolled_by_id.get(finding.ident)
+        if prior is None or finding.line_number > prior.line_number:
+            rolled_by_id[finding.ident] = finding
+    result.extend(sorted(rolled_by_id.values(), key=lambda item: item.line_number))
     result.sort(key=lambda item: item.line_number)
     return result, rollup_count, rolled_signal_count
 
@@ -715,6 +749,97 @@ def finding_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.Path
     return payload
 
 
+def incident_rollup_history_payload(data: dict, finding: Finding) -> None:
+    cycles = data.get("incident_source_cycle_ids")
+    if not isinstance(cycles, list):
+        cycles = []
+    if finding.cycle_id and finding.cycle_id not in cycles:
+        cycles.append(finding.cycle_id)
+    if cycles:
+        data["incident_source_cycle_ids"] = cycles[-50:]
+    signal_ids = data.get("incident_signal_ids")
+    if not isinstance(signal_ids, list):
+        signal_ids = []
+    seen = {str(item).strip() for item in signal_ids if str(item).strip()}
+    for signal in finding.incident_signals:
+        signal_id = str(signal.get("id") or "").strip()
+        if signal_id and signal_id not in seen:
+            signal_ids.append(signal_id)
+            seen.add(signal_id)
+    if signal_ids:
+        data["incident_signal_ids"] = signal_ids
+        data["incident_signal_count"] = len(signal_ids)
+
+
+def apply_incident_rollup_circuit_breaker(data: dict, finding: Finding) -> None:
+    if finding.kind != "incident_rollup":
+        return
+    limit = max(1, _read_int_env(ENV_INCIDENT_ROLLUP_LIMIT, INCIDENT_ROLLUP_FAILURE_LIMIT))
+    window_seconds = max(0, _read_int_env(ENV_INCIDENT_ROLLUP_WINDOW_SECONDS, INCIDENT_ROLLUP_WINDOW_SECONDS))
+    cooldown_seconds = max(0, _read_int_env(ENV_INCIDENT_ROLLUP_COOLDOWN_SECONDS, INCIDENT_ROLLUP_COOLDOWN_SECONDS))
+    if limit <= 1:
+        return
+
+    now = now_epoch()
+    prior_seen = _safe_int(data.get("incident_rollup_last_seen_epoch"), 0)
+    prior_cycle = str(data.get("incident_rollup_last_cycle_id", ""))
+
+    if (
+        prior_seen
+        and finding.cycle_id
+        and finding.cycle_id != prior_cycle
+        and (now - prior_seen) <= window_seconds
+    ):
+        immediate_failures = _safe_int(data.get("incident_rollup_immediate_failure_count"), 0) + 1
+    else:
+        immediate_failures = 1
+
+    data["incident_rollup_last_seen_epoch"] = now
+    data["incident_rollup_last_seen_at"] = now_local()
+    data["incident_rollup_last_cycle_id"] = finding.cycle_id
+    data["incident_rollup_immediate_failure_count"] = immediate_failures
+    data["incident_rollup_failure_limit"] = limit
+    data["incident_rollup_immediate_window_seconds"] = window_seconds
+    incident_rollup_history_payload(data, finding)
+
+    if immediate_failures < limit:
+        data.pop("selection_state", None)
+        data.pop("next_retry_epoch", None)
+        data.pop("next_retry_at", None)
+        data.pop("cooldown_reason", None)
+        data.pop("cooldown_attempt_limit", None)
+        data.pop("incident_rollup_cooldown_seconds", None)
+        data.pop("incident_rollup_circuit_breaker", None)
+        return
+
+    data["selection_state"] = "incident_circuit_breaker"
+    data["incident_rollup_circuit_breaker"] = "active"
+    data["cooldown_reason"] = "incident_rollup_immediate_failure_burst"
+    data["cooldown_attempt_limit"] = limit
+    data["incident_rollup_cooldown_seconds"] = cooldown_seconds
+    if cooldown_seconds > 0:
+        existing_retry = _safe_int(data.get("next_retry_epoch"), 0)
+        retry_until = now + cooldown_seconds
+        if retry_until > existing_retry:
+            data["next_retry_epoch"] = retry_until
+            data["next_retry_at"] = now_local_from_epoch(retry_until)
+
+    required = data.get("required_resolution")
+    if isinstance(required, list):
+        note = "incident rollup repeated immediate failures are blocked; run local recovery steps and explicit validation before retrying this obligation"
+        if note not in [str(item) for item in required]:
+            required.append(note)
+            data["required_resolution"] = required
+    else:
+        data["required_resolution"] = [
+            "incident rollup repeated immediate failures are blocked; run local recovery steps and explicit validation before retrying this obligation"
+        ]
+
+
+def now_local_from_epoch(epoch: int) -> str:
+    return _dt.datetime.fromtimestamp(epoch, _dt.timezone.utc).astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
 def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.Path) -> dict:
     title_label = anomaly_title_label(finding.kind, finding.normalized)
     signal = anomaly_signal(finding.kind, finding.normalized)
@@ -783,6 +908,15 @@ def obligation_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.P
         payload["evidence"]["incident_key"] = finding.incident_key
         payload["evidence"]["incident_signal_count"] = len(finding.incident_signals)
         payload["evidence"]["incident_signals"] = list(finding.incident_signals)
+        payload["incident_source_cycle_ids"] = [finding.cycle_id] if finding.cycle_id else []
+        payload["incident_signal_ids"] = [signal.get("id") for signal in finding.incident_signals if signal.get("id")]
+        payload["incident_rollup_immediate_failure_count"] = 1
+        payload["incident_rollup_failure_limit"] = INCIDENT_ROLLUP_FAILURE_LIMIT
+        payload["incident_rollup_immediate_window_seconds"] = INCIDENT_ROLLUP_WINDOW_SECONDS
+        payload["incident_rollup_last_seen_epoch"] = now_epoch()
+        payload["incident_rollup_last_seen_at"] = now_local()
+        payload["incident_rollup_last_cycle_id"] = finding.cycle_id
+        payload["selection_state"] = "incident_rollup_active"
         payload["required_resolution"] = [
             "inspect every signal inside the incident rollup before normal backlog issue work",
             "identify the single underlying source-cycle failure or explicitly split unrelated signals with deterministic evidence",
@@ -828,6 +962,9 @@ def update_open_obligation(path: pathlib.Path, finding: Finding, loop_log: pathl
         data["last_evidence"]["incident_key"] = finding.incident_key
         data["last_evidence"]["incident_signal_count"] = len(finding.incident_signals)
         data["last_evidence"]["incident_signals"] = list(finding.incident_signals)
+    if finding.kind == "incident_rollup":
+        incident_rollup_history_payload(data, finding)
+        apply_incident_rollup_circuit_breaker(data, finding)
     if not data.get("fingerprint"):
         data["fingerprint"] = finding.fingerprint
     if first_summary := anomaly_summary(finding):
@@ -1013,6 +1150,12 @@ def audit(args: argparse.Namespace) -> int:
             continue
         if finding.ident in seen_ids:
             coalesced_count += 1
+            if finding.kind == "incident_rollup":
+                for replace_index in range(len(candidate_findings) - 1, -1, -1):
+                    prior = candidate_findings[replace_index]
+                    if prior.ident == finding.ident:
+                        candidate_findings[replace_index] = finding
+                        break
             continue
         seen_ids.add(finding.ident)
         candidate_findings.append(finding)

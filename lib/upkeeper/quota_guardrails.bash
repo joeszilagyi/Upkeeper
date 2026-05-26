@@ -215,9 +215,10 @@ quota_identity_changed_flag() {
 
   if [[ "$before_id" != "unknown" && "$after_id" != "unknown" ]]; then
     comparable=1
-    [[ "$before_id" == "$after_id" ]] || changed=1
-  fi
-  if [[ "$before_name" != "unknown" && "$after_name" != "unknown" ]]; then
+    if [[ "$before_id" != "$after_id" ]]; then
+      changed=1
+    fi
+  elif [[ "$before_name" != "unknown" && "$after_name" != "unknown" ]]; then
     comparable=1
     [[ "$before_name" == "$after_name" ]] || changed=1
   fi

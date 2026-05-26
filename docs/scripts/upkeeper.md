@@ -1075,6 +1075,11 @@ prompts, backup log lines, or Lattice preselect evidence.
   `./orchestration/watch-pr.sh [PR_NUMBER]`. It prints timestamped
   pass/pending/fail counts, per-check names, conclusions, and URLs when present;
   `--once` exits immediately and `--interval SECONDS` controls polling.
+  README/docs/prompt-only edits can use
+  `tools/docs_only_fast_path.sh --validate`; it classifies changed paths
+  locally, rejects mixed source changes, and runs only public-docs, smoke, and
+  diff whitespace checks without backend Codex, GitHub CLI, PR polling, or
+  network fetches.
   Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
   heavier config, manifest, Lattice, and review-module dry-run fixtures stay in
   full mode. Add `--profile` to validation runs to print per-check elapsed
@@ -1083,9 +1088,8 @@ prompts, backup log lines, or Lattice preselect evidence.
   GitHub Actions runs the no-quota CI path in `.github/workflows/ci.yml` on
   pull requests and on pushes to `main`. It installs required tools including
   `jq` and `age`, classifies the change scope, and then runs either the
-  docs-only path (`tools/check_public_docs.sh --quick` plus
-  `tools/validate_upkeeper.sh --smoke`) or the broader shell/tests/docs/full
-  validation path.
+  docs-only fast path (`tools/docs_only_fast_path.sh --validate`) or the broader
+  shell/tests/docs/full validation path.
   Sample-repo stress coverage is available without backend quota with
   `tools/stress_upkeeper_corpus.sh --local`; full validation runs that local
   corpus after the central wrapper checks.

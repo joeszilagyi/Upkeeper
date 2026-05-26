@@ -18,6 +18,7 @@ Upkeeper's real dependency surface here and validate it locally with:
 ```sh
 tools/validate_upkeeper.sh --deps
 tools/validate_upkeeper.sh --source-contracts
+tools/docs_only_fast_path.sh --validate
 tools/validate_upkeeper.sh --smoke
 tools/validate_upkeeper.sh --quick
 tools/validate_upkeeper.sh --full
@@ -25,9 +26,13 @@ tools/validate_upkeeper.sh --full
 
 `--deps` reports command availability. `--source-contracts` runs the cheapest
 source-only contracts used by backlog per-bug commit gates, including log-line
-source length. `--smoke` runs the fast local edit-loop checks without backend
-work. `--quick` adds bounded static/fixture checks while staying out of wrapper
-dry-run integration paths. `--full` runs the release guardrails with
+source length. `tools/docs_only_fast_path.sh --validate` is the local
+README/docs/prompt-only path; it classifies changed paths without `gh`, `curl`,
+`wget`, `git fetch`, or backend Codex, rejects mixed source changes, and then
+runs the public-docs, smoke, and diff checks. `--smoke` runs the fast local
+edit-loop checks without backend work. `--quick` adds bounded static/fixture
+checks while staying out of wrapper dry-run integration paths. `--full` runs the
+release guardrails with
 `UPKEEPER_DRY_RUN=1` for startup checks and a local fake `codex` binary for
 launch/capture failure classification, including central startup,
 symlinked-client startup, missing-module failure, missing prompt-template
@@ -48,12 +53,13 @@ tools/validate_upkeeper.sh --full
 For docs-only changes, the workflow takes the cheaper path:
 
 ```sh
-tools/check_public_docs.sh --quick
-tools/validate_upkeeper.sh --smoke
+tools/docs_only_fast_path.sh --validate
 ```
 
-The CI workflow does not run real Codex backend work and does not upload runtime
-artifacts by default.
+That helper runs `tools/check_public_docs.sh --quick`,
+`tools/validate_upkeeper.sh --smoke`, and `git diff --check`. The CI workflow
+does not run real Codex backend work and does not upload runtime artifacts by
+default.
 
 ## Supported Platforms And Portability
 

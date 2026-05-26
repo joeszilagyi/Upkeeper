@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-26: docs-only fast path:
+	1. Added `tools/docs_only_fast_path.sh --validate`, a local README/docs/prompt-only classifier and validation path that rejects mixed source changes before running public-docs, smoke, and diff checks.
+	2. The helper deliberately contains no backend Codex launch, GitHub CLI call, PR polling, `curl`, `wget`, or `git fetch`, so small docs edits can be proved locally before any PR/network bookkeeping.
+	3. CI now reuses the shared docs-only helper and fetches enough checkout history up front to avoid a separate classifier fetch when the changed-file scope is locally available.
+
 2026-05-26: previous-run startup residue custody:
 	1. Startup previous-run scans now consult current-root prior-run anomaly obligations before treating repeated residue as fresh machine-health evidence.
 	2. Already-custodied previous-run and startup-gate residue now logs `previous_run.known_anomaly_residue` and `previous_run.scan status=known_residue` at INFO instead of reopening the startup anomaly gate.

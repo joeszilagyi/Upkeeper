@@ -240,6 +240,14 @@ validation_active_lock_dir() {
   printf '%s/%s.lock\n' "$lock_root" "$safe_name"
 }
 
+validation_quota_free_upkeeper_env() {
+  env \
+    CODEX_QUOTA_GUARDRAIL_BYPASS=1 \
+    CODEX_QUOTA_COOLDOWN_BYPASS=1 \
+    CODEX_LOOP_STOP_GRACE_SECONDS=1 \
+    "$@"
+}
+
 run_upkeeper_validation_cycle() {
   local checkout_root="$1"
   local name="$2"
@@ -307,7 +315,7 @@ run_upkeeper_validation_cycle() {
 
   (
     cd "$checkout_root"
-    env "${env_args[@]}" ./Upkeeper "$@"
+    validation_quota_free_upkeeper_env "${env_args[@]}" ./Upkeeper "$@"
   ) >"$out_file" 2>"$err_file"
 }
 
@@ -3616,6 +3624,12 @@ check_validation_environment_isolation() {
     fail "validation dry-run helper does not set isolated CODEX_HOME"
   grep -Fq '"UPKEEPER_DRY_RUN=$dry_run"' tools/validate_upkeeper.sh ||
     fail "validation dry-run helper does not force dry-run mode by default"
+  grep -Fq 'validation_quota_free_upkeeper_env()' tools/validate_upkeeper.sh ||
+    fail "validation quota-free Upkeeper env helper is missing"
+  grep -Fq 'CODEX_QUOTA_GUARDRAIL_BYPASS=1' tools/validate_upkeeper.sh ||
+    fail "validation dry-run helpers do not bypass live quota guardrails"
+  grep -Fq 'CODEX_QUOTA_COOLDOWN_BYPASS=1' tools/validate_upkeeper.sh ||
+    fail "validation dry-run helpers do not bypass live quota cooldown markers"
   helper_call_count="$(grep -Fc "run_upkeeper_validation_cycle" tools/validate_upkeeper.sh)"
   [[ "$helper_call_count" -ge 10 ]] ||
     fail "validation dry-run helper is not used by enough dry-run fixtures"
@@ -5092,6 +5106,16 @@ check_file_manifest_selection() {
   untracked_name="upkeeper-untracked-select-${temp_dir##*/}.bash"
   untracked_candidate="lib/upkeeper/$untracked_name"
   write_validation_quota_snapshot "$temp_dir/codex-home/sessions/2026/05/07/fake-session.jsonl" "gpt-5.5"
+  mkdir -p "$temp_dir/codex-home/upkeeper/quota-primary-block-markers/validation-live-marker"
+  cat >"$temp_dir/codex-home/upkeeper/quota-primary-block-markers/validation-live-marker/primary-quota-blocked-until.txt" <<'EOF'
+primary_model: gpt-5.5
+blocked_until_epoch: 4102444800
+blocked_until: 2100-01-01T00:00:00Z
+blocked_bucket: backend_usage_limit
+reason: validation live quota marker fixture
+incident_cycle_id: validation-live-marker
+recommended_operator_action: validation_must_remain_quota_free
+EOF
   mkdir -p runtime/upkeeper-lattice
   printf '#!/usr/bin/env bash\nprintf "untracked selection fixture\\n"\n' >"$untracked_candidate"
   touch -d '2001-01-01T00:00:00Z' "$untracked_candidate"
@@ -5099,7 +5123,8 @@ check_file_manifest_selection() {
   run_manifest_dry_run() {
     local log_file="$1"
     shift
-    CODEX_HOME="$temp_dir/codex-home" \
+    validation_quota_free_upkeeper_env \
+      CODEX_HOME="$temp_dir/codex-home" \
       CODEX_LOG_FILE="$log_file" \
       CODEX_TRANSCRIPT_DIR="$temp_dir/transcripts" \
       CODEX_ACTIVE_LOCK_DIR="$(validation_active_lock_dir "$ROOT_DIR" "file-manifest")" \
@@ -5345,6 +5370,8 @@ PY
     --audit-only
   grep -Fq "bug_report_only=1" "$temp_dir/audit-only.log" || fail "audit-only did not enable the no-fix report contract"
   grep -Fq "audit_only=1" "$temp_dir/audit-only.log" || fail "audit-only was not recorded in cycle.start"
+  grep -Fq "quota.cooldown bypassed target_model=gpt-5.5 reason=quota_cooldown_bypass" "$temp_dir/audit-only.log" ||
+    fail "audit-only validation dry-run did not bypass fixture quota cooldown marker"
   grep -Fq "bug_report_only.draft.destination mode=audit_only" "$temp_dir/audit-only.log" || fail "audit-only did not use the audit report destination"
   grep -Fq "bug_report_only.prompt appended" "$temp_dir/audit-only.log" || fail "audit-only prompt addendum was not appended"
   bash tests/bug_report_only_test.bash

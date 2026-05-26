@@ -1087,8 +1087,10 @@ prompts, backup log lines, or Lattice preselect evidence.
   Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
   heavier config, manifest, Lattice, and review-module dry-run fixtures stay in
   full mode. Add `--profile` to validation runs to print per-check elapsed
-  timings without changing coverage. Full validation uses bounded dry-runs plus
-  a local fake `codex` binary; it does not launch real backend work.
+  timings without changing coverage. Full validation uses bounded dry-runs under
+  validator-owned quota/cooldown bypasses plus a local fake `codex` binary; it
+  does not launch real backend work, and quota-specific contract tests use their
+  own explicit fixtures.
   GitHub Actions runs the no-quota CI path in `.github/workflows/ci.yml` on
   pull requests and on pushes to `main`. It installs required tools including
   `jq` and `age`, classifies the change scope, and then runs either the

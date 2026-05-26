@@ -486,10 +486,12 @@ Important:
     continuity can be detected even when both the primary process and a future
     watchdog fail.
   - Startup scans the recent live log for prior cycles that started but never
-    wrote cycle.exit/run.finish, logs one `previous_run.anomaly_summary` for
-    ordinary operator output, preserves `previous_run.anomaly_detail` records in
-    local evidence, and injects those findings into the prompt for the next
-    healthy run.
+    wrote cycle.exit/run.finish. New uncustodied evidence logs one
+    `previous_run.anomaly_summary`, preserves `previous_run.anomaly_detail`
+    records in local evidence, and injects those findings into the prompt for
+    the next healthy run. Evidence already covered by a current-root
+    prior-run/startup anomaly obligation logs `previous_run.known_anomaly_residue`
+    at INFO and does not reopen the startup gate.
   - Startup also logs disk.preflight lines for repo, log, Codex home/session,
     temp, bwrap, arg0, and runtime paths. Path and mount fields are hashed in
     normal logs and switch to raw shell-quoted values only in `debug1` or
@@ -1106,9 +1108,11 @@ prompts, backup log lines, or Lattice preselect evidence.
   those checks default to no real backend Codex work and keep model-backed
   sample runs behind explicit future opt-in commands.
 - Startup-anomaly scans suppress older log-only `previous_run.anomaly_detail`
-  entries
-  after a later `startup_anomaly.gate_resolved` has acknowledged
-  `previous_run_anomaly`; unresolved gate state files still trigger the gate.
+  entries after a later `startup_anomaly.gate_resolved` has acknowledged
+  `previous_run_anomaly`. They also treat matching current-root prior-run
+  anomaly obligations as known custody, so stale residue prints
+  `previous_run.known_anomaly_residue` instead of forcing another gate;
+  unresolved gate state files without matching custody still trigger the gate.
 - Startup-anomaly self-review gates require a repo-local regular Upkeeper file
   for this pre-contact backup slice. Symlinked clients still invoke the central
   wrapper through `Upkeeper.sh`, but that symlink is not selected as a backed-up

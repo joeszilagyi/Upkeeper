@@ -79,10 +79,12 @@ chmod +x "$TEST_TMP_ROOT/bin/upkeeper"
 
 run_chimneysweep() {
   local obligation_dir="${CHIMNEYSWEEP_TEST_OBLIGATION_DIR:-$DEFAULT_CHIMNEYSWEEP_OBLIGATION_DIR}"
+  local control_plane_guard="${CHIMNEYSWEEP_TEST_CONTROL_PLANE_GUARD:-0}"
 
   PATH="$TEST_TMP_ROOT/bin:$PATH" \
     UPKEEPER_CMD="$TEST_TMP_ROOT/bin/upkeeper" \
     UPKEEPER_OBLIGATION_DIR="$obligation_dir" \
+    UPKEEPER_LAUNCHER_CONTROL_PLANE_GUARD="$control_plane_guard" \
     CHIMNEYSWEEP_CAPTURE="$TEST_TMP_ROOT/capture.txt" \
     GH_SCENARIO="${GH_SCENARIO:-clean}" \
     "$ROOT_DIR/ChimneySweep" "$@"
@@ -301,7 +303,7 @@ test_chimneysweep_control_plane_guard_blocks_unknown_root_artifact() {
   obligation_dir="$TEST_TMP_ROOT/chimneysweep-control-plane-obligations"
   printf 'unexpected local evidence\n' >"$artifact"
   set +e
-  output="$(CHIMNEYSWEEP_TEST_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run 2>&1)"
+  output="$(CHIMNEYSWEEP_TEST_CONTROL_PLANE_GUARD=1 CHIMNEYSWEEP_TEST_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run 2>&1)"
   rc=$?
   set -e
   rm -f -- "$artifact"

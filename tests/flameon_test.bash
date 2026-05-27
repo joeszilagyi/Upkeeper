@@ -27,7 +27,7 @@ test_flameon_help_documents_burn_contract() {
 test_flameon_dry_run_resolves_upkeeper_args() {
   local output
 
-  output="$(UPKEEPER_OBLIGATION_DIR="$TEST_TMP_ROOT/empty-obligations" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --silent -backup_queue)"
+  output="$(UPKEEPER_LAUNCHER_CONTROL_PLANE_GUARD=0 UPKEEPER_OBLIGATION_DIR="$TEST_TMP_ROOT/empty-obligations" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --silent -backup_queue)"
   grep -Fq "CODEX_TERMINAL_VERBOSITY=silent" <<<"$output" || fail "dry-run missing silent verbosity"
   grep -Fq "$ROOT_DIR/Upkeeper" <<<"$output" || fail "dry-run missing central Upkeeper path"
   grep -Fq -- "--model-override=5.5_xhigh" <<<"$output" || fail "dry-run missing 5.5 xhigh override"
@@ -49,10 +49,10 @@ test_flameon_dry_run_resolves_upkeeper_args() {
 test_flameon_model_shortcut_resolves_spark_override() {
   local output
 
-  output="$(UPKEEPER_OBLIGATION_DIR="$TEST_TMP_ROOT/empty-obligations" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --model gpt-5.3-codex-spark --reasoning-effort xhigh)"
+  output="$(UPKEEPER_LAUNCHER_CONTROL_PLANE_GUARD=0 UPKEEPER_OBLIGATION_DIR="$TEST_TMP_ROOT/empty-obligations" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --model gpt-5.3-codex-spark --reasoning-effort xhigh)"
   grep -Fq -- "--model-override=5.3-codex-spark_xhigh" <<<"$output" || fail "FlameOn model shortcut did not resolve Spark override"
 
-  output="$(UPKEEPER_OBLIGATION_DIR="$TEST_TMP_ROOT/empty-obligations" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --model-override=5.3-codex-spark_xhigh)"
+  output="$(UPKEEPER_LAUNCHER_CONTROL_PLANE_GUARD=0 UPKEEPER_OBLIGATION_DIR="$TEST_TMP_ROOT/empty-obligations" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --model-override=5.3-codex-spark_xhigh)"
   grep -Fq -- "--model-override=5.3-codex-spark_xhigh" <<<"$output" || fail "FlameOn explicit Spark override was not preserved"
 }
 
@@ -104,7 +104,7 @@ test_flameon_dry_run_reconciles_obligations_first() {
 
   obligation_dir="$TEST_TMP_ROOT/flameon-obligations"
   write_open_obligation "$obligation_dir"
-  output="$(UPKEEPER_OBLIGATION_DIR="$obligation_dir" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --silent 2>&1)"
+  output="$(UPKEEPER_LAUNCHER_CONTROL_PLANE_GUARD=0 UPKEEPER_OBLIGATION_DIR="$obligation_dir" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --silent 2>&1)"
   grep -Fq "selected automation obligation obligation-fixture" <<<"$output" || fail "FlameOn did not select open automation obligation first"
   grep -Fq "UPKEEPER_AUTOMATION_WORKFLOW=obligation-repair" <<<"$output" || fail "FlameOn obligation run missing obligation workflow"
   grep -Fq "UPKEEPER_AUTOMATION_OBLIGATION_ID=obligation-fixture" <<<"$output" || fail "FlameOn obligation run missing obligation id"
@@ -122,7 +122,7 @@ test_flameon_stops_on_operator_action_required_obligation() {
   write_machine_obligation "$obligation_dir"
 
   set +e
-  output="$(UPKEEPER_OBLIGATION_DIR="$obligation_dir" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --silent 2>&1)"
+  output="$(UPKEEPER_LAUNCHER_CONTROL_PLANE_GUARD=0 UPKEEPER_OBLIGATION_DIR="$obligation_dir" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --silent 2>&1)"
   rc=$?
   set -e
 

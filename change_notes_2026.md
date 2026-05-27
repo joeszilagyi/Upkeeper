@@ -28,7 +28,8 @@ Version numbering note:
 
 2026-05-26: quota guardrail telemetry custody:
 	1. Prior-run anomaly custody now treats managed `quota.guardrails` deferred and partial-decision advisory lines as quota-health telemetry rather than opening duplicate `prior_run_anomaly` bug obligations.
-	2. Hard failures, PAGE errors, nonzero exits, identity guardrail stops, and stale-quota obligations remain the durable custody paths for quota-related problems.
+	2. Managed `quota.current ... using snapshot_selection=...` fallback notices are also classified as quota-health telemetry instead of prior-run bugs.
+	3. Hard failures, PAGE errors, nonzero exits, identity guardrail stops, and stale-quota obligations remain the durable custody paths for quota-related problems.
 
 2026-05-26: nonzero launcher footer custody:
 	1. Prior-run anomaly custody now coalesces backlog job-summary footer lines such as `outcome/results: Upkeeper exited with status 3` and `final disposition: launcher exiting with status 3` into a nearby owned terminal-failure obligation instead of opening a duplicate prior-run anomaly.

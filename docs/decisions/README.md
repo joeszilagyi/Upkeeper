@@ -22,3 +22,6 @@ Each decision should include:
 - [0002 Parallel backlog workers](0002-parallel-backlog-workers.md):
   proposed local lease registry for isolated backlog workers before any live
   parallel backend launcher exists.
+- [0003 Schema-gated typed-signal airlocks](0003-schema-gated-airlocks.md):
+  accepted vocabulary and implementation sequence for turning raw evidence
+  into validated records before it can drive wrapper authority.

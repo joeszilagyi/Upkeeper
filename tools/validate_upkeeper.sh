@@ -2228,7 +2228,7 @@ JSON
 }
 
 check_automation_obligation_issue_report_contract() {
-  local temp_dir sync_json fake_bin record_file duplicate_title_file umbrella_file closed_file open_file report_file gh_args
+  local temp_dir sync_json fake_bin record_file duplicate_title_file guide_file incident_file umbrella_file closed_file open_file report_file incident_report_file gh_args
 
   log "checking automation obligation issue-report bridge contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-obligation-issue-report.XXXXXX)"
@@ -2244,6 +2244,10 @@ JSON
   guide_file="$temp_dir/obligations/open/operator-guide-stale.json"
   cat >"$guide_file" <<JSON
 {"schema":1,"record_type":"automation_obligation","status":"open","id":"operator-guide-stale","created_at":"2026-05-23T02:00:15-0700","kind":"prior_run_anomaly","severity":"medium","summary":"Prior backlog log anomaly needs repair or explicit custody: warning_line","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","source_cycle_id":"cycle-guide","source_run_hash":"hash-guide","occurrence_count":8,"evidence":{"source":"backlog_loop_log","kind":"warning_line","excerpt":"2026-05-23T23:33:26 █ INFO [WARN] cycle=cycle-guide run_hash=hash-guide operator_guide.stale path=$ROOT_DIR/docs/scripts/upkeeper.md guide_version=v1.2.33 current_version=v1.2.34 action=manual_refresh_preserve_local_notes","normalized_excerpt":"[WARN] cycle=cycle-guide run_hash=hash-guide operator_guide.stale path=$ROOT_DIR/docs/scripts/upkeeper.md guide_version=v1.2.33 current_version=v1.2.34 action=manual_refresh_preserve_local_notes"}}
+JSON
+  incident_file="$temp_dir/obligations/open/incident-rollup.json"
+  cat >"$incident_file" <<JSON
+{"schema":1,"record_type":"automation_obligation","status":"open","id":"incident-rollup","created_at":"2026-05-23T02:00:20-0700","kind":"prior_run_anomaly","severity":"high","summary":"Prior backlog log anomaly needs repair or explicit custody: incident rollup","root":"$ROOT_DIR","target_scope":"target","target_file":"Upkeeper","repair_target_file":"Upkeeper","reason":"PRIOR_RUN_ANOMALY","source_cycle_id":"c2","source_run_hash":"run2","occurrence_count":5,"anomaly_kind":"incident_rollup","incident_signal_count":2,"evidence":{"source":"backlog_loop_log","kind":"incident_rollup","excerpt":"incident_rollup cycle=c2 hard_signals=2 signals=page_error,nonzero_cycle_exit targets=Upkeeper","normalized_excerpt":"incident_rollup cycle=c2 hard_signals=2 signals=page_error,nonzero_cycle_exit targets=Upkeeper","incident_signal_count":2,"incident_signals":[{"id":"page-signal","kind":"page_error","severity":"high","target_file":"Upkeeper","reason":"pageable error output is not part of a healthy run","line_number":10,"fingerprint":"PAGE fixture","excerpt":"2026-05-23T02:00:10 █ PAGE [ERROR] cycle=c2 run_hash=run2 Upkeeper: primary failure transcript tail","normalized_excerpt":"PAGE [ERROR] cycle=c2 run_hash=run2 Upkeeper: primary failure transcript tail","cycle_id":"c2","run_hash":"run2"},{"id":"exit-signal","kind":"nonzero_cycle_exit","severity":"high","target_file":"Upkeeper","reason":"cycle exited non-zero","line_number":11,"fingerprint":"cycle.exit exit_code=3","excerpt":"2026-05-23T02:00:11 █ INFO cycle=c2 run_hash=run2 cycle.exit exit_code=3 reason=MISSING_STATUS_MARKER","normalized_excerpt":"cycle=c2 run_hash=run2 cycle.exit exit_code=3 reason=MISSING_STATUS_MARKER","cycle_id":"c2","run_hash":"run2"}]},"required_resolution":["inspect every signal inside the incident rollup","preserve individual signal evidence inside the rollup"]}
 JSON
   umbrella_file="$temp_dir/obligations/open/umbrella-linked.json"
   cat >"$umbrella_file" <<JSON
@@ -2265,9 +2269,9 @@ JSON
     ROOT_DIR="$ROOT_DIR" UPKEEPER_OBLIGATION_DIR="$temp_dir/obligations" UPKEEPER_OBLIGATION_ISSUE_REPORT_DIR="$temp_dir/reports" \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "6" ]] ||
+  [[ "$(jq -r '.current_root_open' <<<"$sync_json")" == "7" ]] ||
     fail "automation obligation issue-report bridge did not scope to current root"
-  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "6" ]] ||
+  [[ "$(jq -r '.drafted' <<<"$sync_json")" == "7" ]] ||
     fail "automation obligation issue-report bridge did not draft the current obligation"
   [[ "$(jq -r '.umbrella_unlinked' <<<"$sync_json")" == "1" ]] ||
     fail "automation obligation issue-report bridge did not unlink stale umbrella issues"
@@ -2287,6 +2291,13 @@ JSON
     fail "automation obligation issue-report bridge did not derive a descriptive operator-guide warning title"
   [[ "$(jq -r '.issue_title' "$guide_file")" == "High priority bug: prior-run operator_guide.stale warning needs repair for Upkeeper" ]] ||
     fail "automation obligation issue-report bridge did not persist the derived operator-guide warning title"
+  incident_report_file="$(jq -r '.issue_report_path' "$incident_file")"
+  [[ -f "$incident_report_file" ]] || fail "automation obligation issue-report bridge did not write incident rollup report file"
+  grep -Fq "Incident signals:" "$incident_report_file" || fail "automation obligation incident report did not include child signal heading"
+  grep -Fq "kind=page_error target=Upkeeper line=10" "$incident_report_file" || fail "automation obligation incident report did not include page-error child signal"
+  grep -Fq "cycle=c2 run_hash=run2 Upkeeper: primary failure transcript tail" "$incident_report_file" || fail "automation obligation incident report did not preserve page-error child evidence"
+  grep -Fq "kind=nonzero_cycle_exit target=Upkeeper line=11" "$incident_report_file" || fail "automation obligation incident report did not include nonzero-exit child signal"
+  grep -Fq "cycle=c2 run_hash=run2 cycle.exit exit_code=3" "$incident_report_file" || fail "automation obligation incident report did not preserve nonzero-exit child evidence"
   [[ "$(jq -r '.issue_number' "$umbrella_file")" == "" ]] ||
     fail "automation obligation issue-report bridge kept the stale umbrella issue number"
   [[ "$(jq -r '.github_issue_number' "$umbrella_file")" == "" ]] ||
@@ -2325,7 +2336,7 @@ SH
     UPKEEPER_OBLIGATION_GITHUB_ISSUE_WRITE=1 UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS=bug \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )"
-  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "3" ]] ||
+  [[ "$(jq -r '.github_created' <<<"$sync_json")" == "4" ]] ||
     fail "automation obligation issue-report bridge did not create opted-in GitHub issue"
   [[ "$(jq -r '.github_existing' <<<"$sync_json")" == "1" ]] ||
     fail "automation obligation issue-report bridge did not preserve verified open GitHub issue links"

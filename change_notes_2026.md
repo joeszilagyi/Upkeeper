@@ -6,6 +6,10 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-27: incident rollup issue evidence:
+	1. Automation obligation issue reports for incident rollups now include a compact child-signal section with each signal kind, target, line number, excerpt, and normalized signal text.
+	2. Future incident-rollup GitHub issues preserve the underlying PAGE/nonzero/startup/Lattice evidence instead of showing only the aggregate rollup summary.
+
 2026-05-26: control-plane audit inventory:
 	1. Added `tools/upkeeper_control_plane_audit.py`, a local no-backend inventory for unexpected control-plane state before model work.
 	2. The audit emits stable JSON or concise operator text for tracked local-evidence artifacts, root scratch files such as `$db`, active locks, open obligations, optional deferred issue records, and recent hard loop markers.

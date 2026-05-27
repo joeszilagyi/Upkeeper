@@ -3,6 +3,40 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Kirk Protocol Invariant Registry
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #400 by turning the control-plane audit policy layer into stable
+  `KP-###` invariants with operator-readable failure explanations
+- capture before/after audit snapshots for staging, validation, and merge
+  stewardship without backend work
+- keep historical May 2026 anomaly classes represented as deterministic quick
+  fixtures
+
+Constraints:
+- no backend Codex validation and no live issue work
+- keep clean no-op snapshots local, private, and pre-model
+- do not broaden auto-clean behavior beyond the explicit safe cleanup table
+
+Files likely touched:
+- `tools/upkeeper_control_plane_audit.py`
+- `tests/control_plane_audit_test.bash`
+- `orchestration/backlog.sh`
+- `docs/kirk-invariants.md`
+- `tools/validate_upkeeper.sh`
+- README/operator docs and release notes
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_control_plane_audit.py`
+- `bash tests/control_plane_audit_test.bash`
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
 ## Control-Plane Audit Remediation
 
 Status: completed locally; pending PR/CI

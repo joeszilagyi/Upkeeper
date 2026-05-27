@@ -60,6 +60,7 @@ test_clean_repo_is_clean() {
   assert_json_value '.status == "clean"'
   assert_json_value '.counts.finding_count == 0'
   assert_json_value '.counts.tracked_change_count == 0'
+  assert_json_value '.invariant_registry | map(select(.ident == "KP-001" and .remediation_policy != "")) | length == 1'
 
   run_audit "$repo"
   [[ "$AUDIT_RC" -eq 0 ]] || fail "clean text audit exited $AUDIT_RC"
@@ -80,11 +81,14 @@ test_tracked_root_db_is_anomaly() {
   assert_json_value '.status == "blocked"'
   assert_json_value '.counts.blocker_count == 1'
   assert_json_value '.findings | map(select(.klass == "tracked_root_scratch_artifact" and .path == "$db")) | length == 1'
-  assert_json_value '.policy_decisions | map(select(.klass == "tracked_root_scratch_artifact" and .policy_class == "data_integrity_blocker" and .action == "block_before_staging" and .blocks_stage == true)) | length == 1'
+  assert_json_value '.policy_decisions | map(select(.klass == "tracked_root_scratch_artifact" and .policy_class == "data_integrity_blocker" and .action == "block_before_staging" and .blocks_stage == true and .invariant_id == "KP-001")) | length == 1'
+  assert_json_value '.invariant_failures | map(select(.invariant_id == "KP-001" and .message != "")) | length == 1'
 
   run_audit "$repo"
   [[ "$AUDIT_RC" -eq 2 ]] || fail "tracked db text audit exited $AUDIT_RC"
   assert_text_contains "policy="
+  assert_text_contains "invariant=KP-001"
+  assert_text_contains "control_plane_audit: invariant id=KP-001"
   assert_text_contains "blocks_stage=true"
   assert_text_contains "class=tracked_root_scratch_artifact"
   assert_text_contains 'path=$db'
@@ -146,7 +150,36 @@ test_remediate_safe_cleans_only_safe_artifacts() {
   assert_json_value '.status == "clean"'
   assert_json_value '.counts.finding_count == 0'
   assert_json_value '.counts.cleaned_count == 2'
-  assert_json_value '.policy_decisions | map(select(.policy_class == "known_safe_cleanup" and .status == "cleaned")) | length == 2'
+  assert_json_value '.policy_decisions | map(select(.policy_class == "known_safe_cleanup" and .status == "cleaned" and .invariant_id == "KP-002")) | length == 2'
+  assert_json_value '.invariant_failures | length == 0'
+}
+
+test_before_after_snapshot_delta_resolves_safe_cleanup() {
+  local repo="$TEST_TMP_ROOT/snapshot-delta"
+  local before_snapshot="$TEST_TMP_ROOT/before.json"
+  local after_snapshot="$TEST_TMP_ROOT/after.json"
+  make_repo "$repo"
+  (
+    cd "$repo"
+    printf 'scratch\n' >'$db'
+  )
+  run_audit "$repo" --json --no-runtime --snapshot-label before --snapshot-out "$before_snapshot" --fail-on never
+  [[ "$AUDIT_RC" -eq 0 ]] || fail "before snapshot audit exited $AUDIT_RC"
+  [[ -s "$before_snapshot" ]] || fail "before snapshot was not written"
+  jq -e '.invariant_failures | map(select(.invariant_id == "KP-002")) | length == 1' "$before_snapshot" >/dev/null ||
+    fail "before snapshot did not preserve safe-cleanup invariant failure"
+
+  run_audit "$repo" --json --no-runtime --remediate-safe --before-snapshot "$before_snapshot" --snapshot-label after --snapshot-out "$after_snapshot"
+  [[ "$AUDIT_RC" -eq 0 ]] || fail "after snapshot audit exited $AUDIT_RC output=$AUDIT_OUT stderr=$AUDIT_ERR"
+  [[ -s "$after_snapshot" ]] || fail "after snapshot was not written"
+  [[ ! -e "$repo/\$db" ]] || fail "after snapshot remediation did not remove scratch db"
+  assert_json_value '.snapshot.invariant_id == "KP-007"'
+  assert_json_value '.snapshot_delta.invariant_id == "KP-007"'
+  assert_json_value '.snapshot_delta.before_finding_count == 1'
+  assert_json_value '.snapshot_delta.after_finding_count == 0'
+  assert_json_value '.snapshot_delta.resolved_invariants | index("KP-002")'
+  jq -e '.snapshot_delta.resolved_invariants | index("KP-002")' "$after_snapshot" >/dev/null ||
+    fail "after snapshot file did not preserve resolved invariant delta"
 }
 
 test_blocker_writes_obligation_before_stage() {
@@ -164,7 +197,7 @@ test_blocker_writes_obligation_before_stage() {
   [[ "$AUDIT_RC" -eq 2 ]] || fail "blocker obligation audit exited $AUDIT_RC"
   assert_json_value '.counts.blocker_count == 1'
   assert_json_value '.counts.obligation_written_count == 1'
-  assert_json_value '.policy_decisions | map(select(.status == "obligation_written" and .blocks_stage == true)) | length == 1'
+  assert_json_value '.policy_decisions | map(select(.status == "obligation_written" and .blocks_stage == true and .invariant_id == "KP-001")) | length == 1'
   record_count="$(find "$obligation_root/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
   [[ "$record_count" == "1" ]] || fail "control-plane audit wrote $record_count obligations, expected 1"
   record_file="$(find "$obligation_root/open" -maxdepth 1 -type f -name '*.json' | sort | head -n 1)"
@@ -172,6 +205,8 @@ test_blocker_writes_obligation_before_stage() {
     fail "control-plane obligation kind was not specific"
   [[ "$(jq -r '.policy_class' "$record_file")" == "data_integrity_blocker" ]] ||
     fail "control-plane obligation did not preserve policy class"
+  [[ "$(jq -r '.invariant_id' "$record_file")" == "KP-001" ]] ||
+    fail "control-plane obligation did not preserve invariant id"
   [[ "$(jq -r '.repair_target_file' "$record_file")" == "orchestration/backlog.sh" ]] ||
     fail "control-plane obligation did not preserve repair target"
 }
@@ -187,7 +222,7 @@ test_unknown_root_artifact_is_unsafe_unknown() {
   [[ "$AUDIT_RC" -eq 2 ]] || fail "unknown root audit exited $AUDIT_RC"
   assert_json_value '.status == "blocked"'
   assert_json_value '.findings | map(select(.klass == "unsafe_unknown_root_artifact" and .path == "debug.log")) | length == 1'
-  assert_json_value '.policy_decisions | map(select(.policy_class == "unsafe_unknown" and .action == "create_automation_obligation" and .blocks_stage == true)) | length == 1'
+  assert_json_value '.policy_decisions | map(select(.policy_class == "unsafe_unknown" and .action == "create_automation_obligation" and .blocks_stage == true and .invariant_id == "KP-003")) | length == 1'
 }
 
 test_existing_obligations_do_not_block_pre_staging_policy() {
@@ -202,7 +237,7 @@ test_existing_obligations_do_not_block_pre_staging_policy() {
   [[ "$AUDIT_RC" -eq 0 ]] || fail "open-obligation report-only audit exited $AUDIT_RC"
   assert_json_value '.findings | map(select(.klass == "open_automation_obligations")) | length == 1'
   assert_json_value '.counts.blocker_count == 0'
-  assert_json_value '.policy_decisions | map(select(.klass == "open_automation_obligations" and .policy_class == "known_expected" and .blocks_stage == false)) | length == 1'
+  assert_json_value '.policy_decisions | map(select(.klass == "open_automation_obligations" and .policy_class == "known_expected" and .blocks_stage == false and .invariant_id == "KP-004")) | length == 1'
 }
 
 test_recent_log_nonzero_and_page_errors_are_anomalies() {
@@ -219,6 +254,7 @@ LOG
   assert_json_value '.recent_log.page_error_count == 1'
   assert_json_value '.findings | map(select(.klass == "recent_nonzero_cycle_exit")) | length == 1'
   assert_json_value '.findings | map(select(.klass == "recent_page_error")) | length == 1'
+  assert_json_value '.policy_decisions | map(select(.invariant_id == "KP-005")) | length == 2'
 }
 
 test_clean_repo_is_clean
@@ -226,6 +262,7 @@ test_tracked_root_db_is_anomaly
 test_tracked_local_evidence_is_anomaly
 test_untracked_root_scratch_and_runtime_inventory
 test_remediate_safe_cleans_only_safe_artifacts
+test_before_after_snapshot_delta_resolves_safe_cleanup
 test_blocker_writes_obligation_before_stage
 test_unknown_root_artifact_is_unsafe_unknown
 test_existing_obligations_do_not_block_pre_staging_policy

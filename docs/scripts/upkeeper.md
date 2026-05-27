@@ -285,7 +285,10 @@ Important:
     sidecars and Python bytecode caches, while `--write-obligations` records
     blocker/actionable findings under automation obligation custody. Backlog
     runs this policy before staging so known local-evidence artifact classes
-    cannot be committed as source.
+    cannot be committed as source. Audit records include `KP-###` invariant
+    ids from `docs/kirk-invariants.md`; `--snapshot-out` and
+    `--before-snapshot` preserve before/after deltas for staging, validation,
+    and merge custody.
     Local batch-merge validation failures use the same obligation lane: if a
     batch validation phase fails, backlog records the failed phase, command,
     exit code, bounded output tail, stable fingerprint, likely owner path, and

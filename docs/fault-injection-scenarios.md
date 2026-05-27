@@ -91,6 +91,22 @@ recovery oracle before they can be promoted out of `deferred`.
 
 ## Initial Matrix
 
+Kirk Protocol invariant fixtures are executable in
+`tests/control_plane_audit_test.bash` and map historical May 2026 control-plane
+escapes to stable `KP-###` ids:
+
+- `KP-001`: tracked root `$db` and tracked runtime/log/transcript/postmortem
+  evidence
+- `KP-002`: untracked root scratch files and Python bytecode cache cleanup
+- `KP-003`: unsafe root evidence-like files such as `debug.log`
+- `KP-004`: open automation obligations remaining visible before normal work
+- `KP-005`: nonzero `cycle.exit` and `PAGE [ERROR]` contradictions
+- `KP-006`: active owner lock visibility
+- `KP-007`: before/after audit snapshot delta preservation
+
+These fixtures are quick-mode coverage, not deferred P31 scenarios, because
+they are part of the local control-plane audit contract.
+
 | scenario_id | module_or_file | fault_surface | injected_fault | expected_reason | expected_exit | expected_log_event | cleanup_required | recovery_run_required | validation_command | quick_or_full | lattice_ready_tags | severity | likelihood | detectability | fixture_cost | priority |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FI-001 | `lib/upkeeper/help_selection.bash` | Review module wiring | unknown review module id such as `p99` | `review_module_unknown` | `2` | `review_module.invalid` | no | no | `tools/validate_upkeeper.sh --quick` | quick | `surface:review-module,status:deferred,oracle:exit,oracle:stderr` | medium | medium | high | low | deferred |

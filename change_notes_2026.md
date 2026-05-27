@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-27: schema-gated typed-signal airlock decision:
+	1. Accepted `docs/decisions/0003-schema-gated-airlocks.md` as the design closure for issue #365.
+	2. The decision defines the airlock parser, validated normalized record, limited downstream actuator, always-on authority boundaries, diagnostic-only boundaries, implementation sequence, and negative-fixture strategy for future typed-signal work.
+	3. README, authority, security, roadmap, and quick validation now preserve the design contract so raw evidence, diagnostic parsing, and accepted authority records remain distinct in tracked source.
+
 2026-05-27: incident rollup issue evidence:
 	1. Automation obligation issue reports for incident rollups now include a compact child-signal section with each signal kind, target, line number, excerpt, and normalized signal text.
 	2. Future incident-rollup GitHub issues preserve the underlying PAGE/nonzero/startup/Lattice evidence instead of showing only the aggregate rollup summary.

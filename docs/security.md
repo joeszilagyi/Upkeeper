@@ -35,6 +35,9 @@ The paired authority docs make the control surface explicit:
   and evidence artifacts.
 - `docs/policy-decisions.md` defines the JSON schema for local policy
   decisions that should survive prompt wording changes.
+- `docs/decisions/0003-schema-gated-airlocks.md` defines the
+  schema-gated typed-signal boundary pattern for raw evidence that may affect
+  wrapper authority.
 - `docs/negative-space-testing.md` lists deterministic "must not happen"
   validation contracts for safety boundaries.
 - `docs/preservation-policy.md` defines evidence temperature, artifact privacy

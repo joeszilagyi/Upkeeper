@@ -523,6 +523,51 @@ check_policy_decisions_contract() {
   bash tests/policy_decisions_test.bash
 }
 
+check_schema_gated_airlock_docs_contract() {
+  local term
+  local doc_path="docs/decisions/0003-schema-gated-airlocks.md"
+  local -a required_terms
+
+  log "checking schema-gated typed-signal airlock docs contract"
+  [[ -s "$doc_path" ]] || fail "schema-gated airlock decision doc is missing"
+
+  required_terms=(
+    "schema-gated typed-signal boundary"
+    "untrusted or semi-trusted producer"
+    "airlock parser"
+    "validated normalized record"
+    "limited downstream actuator"
+    "Issue #365"
+    "LLM final text to wrapper status/action"
+    "Issue body/comment text to prompt evidence and workflow state"
+    "Bug-report draft blocks to GitHub issue creation"
+    "Transcript/log imports to Lattice rows"
+    "Runtime obligations to launcher decisions"
+    "Config/env files to shell behavior"
+    "Target selection and target substitution evidence"
+    "Generated commands/scripts before execution"
+    "Always-On Vs Diagnostic-Only Policy"
+    "tools/validate_upkeeper.sh --quick"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq "$term" "$doc_path" ||
+      fail "schema-gated airlock docs missing required term: $term"
+  done
+
+  grep -Fq "$doc_path" README.md ||
+    fail "README does not point to the schema-gated airlock decision"
+  grep -Fq "$doc_path" docs/authority.md ||
+    fail "authority docs do not point to the schema-gated airlock decision"
+  grep -Fq "$doc_path" docs/security.md ||
+    fail "security docs do not point to the schema-gated airlock decision"
+  grep -Fq "0003-schema-gated-airlocks.md" docs/decisions/README.md ||
+    fail "decision log index does not list the schema-gated airlock decision"
+  grep -Fq "schema-gated typed-signal fixtures" docs/roadmap.md ||
+    fail "roadmap does not preserve the first implementation sequence"
+  grep -Fq "schema-gated typed-signal airlock decision" change_notes_2026.md ||
+    fail "change notes do not record the schema-gated airlock decision"
+}
+
 check_schema_compatibility_contract() {
   local term
   local -a required_terms
@@ -7728,6 +7773,7 @@ run_check fault_injection_registry_contract check_fault_injection_registry_contr
 run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contract
 run_check authority_control_docs_contract check_authority_control_docs_contract
 run_check policy_decisions_contract check_policy_decisions_contract
+run_check schema_gated_airlock_docs_contract check_schema_gated_airlock_docs_contract
 run_check schema_compatibility_contract check_schema_compatibility_contract
 run_check threat_model_doctrine_contract check_threat_model_doctrine_contract
 run_check preservation_policy_contract check_preservation_policy_contract

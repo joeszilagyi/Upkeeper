@@ -19,9 +19,12 @@ that standard.
 
 The tracked authority surface is split across `docs/authority.md`,
 `docs/capability-profiles.md`, `docs/control-ledger.md`, and
-`docs/policy-decisions.md`. Those files define who may select targets, write
-source, run shell, spend quota, touch evidence, affect GitHub, modify Lattice,
-and record local policy decisions as structured data.
+`docs/policy-decisions.md`, with the schema-gated typed-signal boundary
+decision in `docs/decisions/0003-schema-gated-airlocks.md`. Those files define
+who may select targets, write source, run shell, spend quota, touch evidence,
+affect GitHub, modify Lattice, record local policy decisions as structured data,
+and turn raw evidence into validated records before it can drive wrapper
+authority.
 
 The security contract in `docs/security.md` defines the explicit threat model,
 degraded-mode doctrine, and override doctrine for malicious or confused model
@@ -75,6 +78,11 @@ tracked schema in `docs/policy-decisions.md` and helper functions in
 `lib/upkeeper/policy_decisions.bash`. The initial schema records whether a
 cycle may contact backend Codex, write source, retarget, restore backup, use
 network tools, file issues, and which action ids were denied.
+
+Schema-gated typed-signal boundaries are the companion rule for producer input:
+untrusted or semi-trusted text can be retained as evidence, but side effects and
+wrapper authority should consume validated normalized records. The design
+contract is tracked in `docs/decisions/0003-schema-gated-airlocks.md`.
 
 In Upkeeper terms, the airlock is the middleware boundary between the local
 control plane and the backend LLM: only selected context, allowed commands,

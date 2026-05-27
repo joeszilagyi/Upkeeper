@@ -21,6 +21,9 @@ Use it to keep release direction visible without relying on chat history.
   authority.
 - Improve release-readiness reporting so the repo can explain what changed,
   what remains risky, and what validation proved.
+- Add focused schema-gated typed-signal fixtures for the highest-risk existing
+  boundaries: LLM status/action parsing, runtime obligations, and bug-report
+  draft blocks.
 - Build a live parallel backlog-worker supervisor on the accepted local lease
   primitive, including isolated worktree creation, independent PRs, remote
   visibility, quota sharing, and cleanup.
@@ -32,7 +35,7 @@ Use it to keep release direction visible without relying on chat history.
 - Define plugin or adapter boundaries for tools that should integrate with
   Upkeeper without becoming part of the core wrapper.
 - Add broader cross-platform proof only after the Linux contract is stable.
-- Consider structured policy/config schemas after current Bash config behavior
+- Consider a typed non-shell config profile after current Bash config behavior
   is fully documented and compatibility-safe.
 
 ## Defer Until Explicitly Planned

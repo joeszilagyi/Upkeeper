@@ -1882,6 +1882,28 @@ def evidence_block(data):
         lines.extend(["Excerpt:", "```", redact(excerpt), "```"])
     if normalized and normalized != excerpt:
         lines.extend(["Normalized fingerprint:", "```", redact(normalized), "```"])
+    incident_signals = evidence.get("incident_signals")
+    if isinstance(incident_signals, list) and incident_signals:
+        lines.extend(["", "Incident signals:"])
+        for index, signal in enumerate(incident_signals[:10], start=1):
+            if not isinstance(signal, dict):
+                continue
+            signal_kind = first_nonempty(signal.get("kind"), "unknown")
+            signal_target = first_nonempty(signal.get("target_file"), "unknown")
+            signal_line = first_nonempty(signal.get("line_number"), "unknown")
+            lines.append(f"{index}. kind={redact(signal_kind)} target={redact(signal_target)} line={redact(signal_line)}")
+            signal_excerpt = first_nonempty(
+                signal.get("excerpt"),
+                signal.get("normalized_excerpt"),
+                signal.get("fingerprint"),
+            )
+            signal_normalized = first_nonempty(signal.get("normalized_excerpt"), signal.get("fingerprint"))
+            if signal_excerpt:
+                lines.extend(["```", redact(signal_excerpt), "```"])
+            if signal_normalized and signal_normalized != signal_excerpt:
+                lines.extend(["Normalized signal:", "```", redact(signal_normalized), "```"])
+        if len(incident_signals) > 10:
+            lines.append(f"... {len(incident_signals) - 10} additional incident signal(s) omitted from this issue body; inspect the obligation JSON for the complete set.")
     if not lines:
         lines.append("No inline evidence excerpt was recorded; inspect the obligation JSON and linked runtime artifacts.")
     return "\n".join(lines)

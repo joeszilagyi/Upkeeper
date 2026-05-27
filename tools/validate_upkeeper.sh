@@ -1481,6 +1481,7 @@ LOG
   cat >"$temp_dir/quota-guardrail.log" <<'LOG'
 2026-05-24T17:13:59 █ INFO [WARN] cycle=20260524T171329-0700-3262200 run_hash=a2db6f11b8a2c14c quota.guardrails target_model=gpt-5.3-codex-spark partial_decision primary_decision=defer secondary_decision=allow primary_bucket_current=false secondary_bucket_current=true primary_reset_expired=true secondary_reset_expired=false
 2026-05-24T17:14:00 █ INFO [WARN] cycle=20260524T171329-0700-3262200 run_hash=a2db6f11b8a2c14c quota.guardrails phase=after_run target_model=gpt-5.3-codex-spark action=defer_to_backend_usage_limit primary_decision=defer secondary_decision=allow codex_exit=1 status_marker=missing
+2026-05-26T17:05:47 █ INFO [WARN] cycle=20260526T170530-0700-1691222 run_hash=16b6e241450908ba quota.current target_model=gpt-5.4 using snapshot_selection=overall_fallback
 LOG
   mkdir -p "$temp_dir/quota-guardrail-obligations/open"
   tools/upkeeper_anomaly_custody.py \
@@ -1492,10 +1493,10 @@ LOG
     --max-findings 10 \
     --write-obligations >"$temp_dir/quota-guardrail-audit.out"
   [[ "$(jq -r '.actionable_findings' "$temp_dir/quota-guardrail-custody/latest.json")" == "0" ]] ||
-    fail "prior-run anomaly custody treated managed quota guardrail telemetry as actionable"
+    fail "prior-run anomaly custody treated managed quota telemetry as actionable"
   quota_guardrail_count="$(find "$temp_dir/quota-guardrail-obligations/open" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
   [[ "$quota_guardrail_count" == "0" ]] ||
-    fail "prior-run anomaly custody opened an obligation for managed quota guardrail telemetry"
+    fail "prior-run anomaly custody opened an obligation for managed quota telemetry"
 
 	  mkdir -p "$temp_dir/cascade-obligations/open"
 	  python3 - "$ROOT_DIR" "$temp_dir/cascade-obligations/open/owner.json" <<'PY'
@@ -3471,7 +3472,7 @@ check_help_and_diff() {
   grep -Fq -- "UPKEEPER_PRECONTACT_BACKUP_ENABLED" <<<"$help" || fail "help missing UPKEEPER_PRECONTACT_BACKUP_ENABLED"
   grep -Fq -- "pre-contact backup" <<<"$help" || fail "help missing pre-contact backup summary"
   local flameon_cmd
-  flameon_cmd="$(FLAMEON_DRY_RUN=1 ./FlameOn)"
+  flameon_cmd="$(UPKEEPER_LAUNCHER_CONTROL_PLANE_GUARD=0 FLAMEON_DRY_RUN=1 ./FlameOn)"
   grep -Fq -- "--max-cover" <<<"$flameon_cmd" || fail "FlameOn dry-run missing --max-cover"
   grep -Fq -- "--bug-report-only" <<<"$flameon_cmd" || fail "FlameOn dry-run missing --bug-report-only"
   grep -Fq -- "UPKEEPER_LATTICE_REQUIRED=1" <<<"$flameon_cmd" || fail "FlameOn dry-run missing required Lattice full-burn default"
@@ -3480,7 +3481,7 @@ check_help_and_diff() {
   grep -Fq -- "CODEX_WEEK_STOP_PERCENT=0" <<<"$flameon_cmd" || fail "FlameOn dry-run missing spend-to-zero quota full-burn default"
   grep -Fq -- "CODEX_QUOTA_GUARDRAIL_BYPASS=1" <<<"$flameon_cmd" || fail "FlameOn dry-run missing quota guardrail bypass"
   grep -Fq -- "CODEX_QUOTA_COOLDOWN_BYPASS=1" <<<"$flameon_cmd" || fail "FlameOn dry-run missing quota cooldown bypass"
-  flameon_cmd="$(FLAMEON_DRY_RUN=1 ./FlameOn --model gpt-5.3-codex-spark --reasoning-effort xhigh)"
+  flameon_cmd="$(UPKEEPER_LAUNCHER_CONTROL_PLANE_GUARD=0 FLAMEON_DRY_RUN=1 ./FlameOn --model gpt-5.3-codex-spark --reasoning-effort xhigh)"
   grep -Fq -- "--model-override=5.3-codex-spark_xhigh" <<<"$flameon_cmd" || fail "FlameOn dry-run missing Spark shortcut override"
   git diff --check
   git diff --cached --check

@@ -53,6 +53,7 @@ KNOWN_EVENT_SIGNALS = (
     "lattice.unavailable",
     "transcript.prune_blocked",
     "log.rotate_blocked",
+    "quota.current",
     "quota.guardrails",
     "quota.cooldown",
     "automation.obligation.open",
@@ -492,6 +493,13 @@ def managed_quota_guardrail_telemetry(normalized: str) -> bool:
     )
 
 
+def managed_quota_current_telemetry(normalized: str) -> bool:
+    lower = normalized.lower()
+    if "quota.current" not in lower:
+        return False
+    return " using snapshot_selection=" in lower
+
+
 def classify(lines: list[tuple[int, str]], index: int, raw_line: str) -> Classification | None:
     if "anomaly custody:" in raw_line:
         return None
@@ -543,6 +551,7 @@ def classify(lines: list[tuple[int, str]], index: int, raw_line: str) -> Classif
             or "quota.cooldown bypassed" in lower
             or "quota.guardrails bypassed=1" in lower
             or managed_quota_guardrail_telemetry(normalized)
+            or managed_quota_current_telemetry(normalized)
         )
         if not ignored_waits:
             return Classification("warning_line", "medium", target, "warning/advisory output needs custody")

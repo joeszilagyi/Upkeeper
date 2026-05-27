@@ -19,6 +19,7 @@ when the operator action or evidence source is materially different.
 | `KP-005` | Pageable error and nonzero terminal evidence must map to actionable custody. | high | recent loop log `cycle.exit` and `PAGE [ERROR]` markers | Create an obligation or require explicit expected-fixture classification. | fake nonzero cycle exit; fake `PAGE [ERROR]` contradiction |
 | `KP-006` | Active owner lock evidence must be visible before concurrent writers run. | medium | runtime active-lock inventory | Report active lock and require owner verification. | active lock fixture |
 | `KP-007` | Before/after audit snapshots must preserve resolved and remaining invariant state. | medium | audit snapshot delta | Write snapshot evidence around staging, validation, and merge phases. | before/after safe-cleanup snapshot fixture |
+| `KP-008` | Unknown control-plane finding classes must become permanent classifiers before they can resolve. | high | policy dispatch and lineage records | Block, create an obligation, and require classifier/invariant/fixture promotion. | injected future finding class fixture |
 
 ## Snapshot Boundaries
 
@@ -31,6 +32,16 @@ The backlog launcher records local no-backend control-plane snapshots around:
 
 Snapshot files live under the local backlog state root and are machine-local
 evidence. They must not be committed.
+
+## Closed-Loop Lineage
+
+The audit can write local lineage records under
+`runtime/upkeeper-control-plane-lineage` or a caller-provided lineage root. Each
+record preserves first seen, last seen, source cycle, classifier version,
+invariant id, remediation decision, and resolution state. Known findings can be
+resolved when they disappear from a later audit. Unknown finding classes remain
+`promotion_required` until source adds the classifier, invariant registry entry,
+and deterministic fixture that make the class permanent.
 
 ## Historical Escaped Classes
 

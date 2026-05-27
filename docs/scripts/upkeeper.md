@@ -288,7 +288,13 @@ Important:
     cannot be committed as source. Audit records include `KP-###` invariant
     ids from `docs/kirk-invariants.md`; `--snapshot-out` and
     `--before-snapshot` preserve before/after deltas for staging, validation,
-    and merge custody.
+    and merge custody. `--write-lineage` records first seen, last seen,
+    classifier version, invariant id, remediation decision, and resolution
+    state under local runtime custody. Unknown classes remain
+    `promotion_required` until a classifier, invariant, and deterministic
+    fixture are added. Backlog, FlameOn, and ChimneySweep use this no-backend
+    guard before staging, queue selection, or backend launch so unexpected
+    control-plane state cannot disappear as clean absence.
     Local batch-merge validation failures use the same obligation lane: if a
     batch validation phase fails, backlog records the failed phase, command,
     exit code, bounded output tail, stable fingerprint, likely owner path, and

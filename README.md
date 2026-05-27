@@ -1037,7 +1037,11 @@ test loop does not spend cycles on known low-value or generated material.
   and Python bytecode caches. With `--write-obligations`, blocker and
   actionable findings are preserved under automation obligation custody before
   staging or model work continues. Audit output includes `KP-###` invariant ids
-  and can write before/after snapshots with `--snapshot-out`.
+  and can write before/after snapshots with `--snapshot-out`. With
+  `--write-lineage`, findings also leave local closed-loop lineage records that
+  preserve first/last seen, classifier version, invariant id, remediation
+  decision, and whether an unknown class still needs classifier/invariant/fixture
+  promotion.
 - [tools/backlog_parallel_leases.py](tools/backlog_parallel_leases.py): local
   no-backend issue/target lease registry for future isolated parallel backlog
   workers

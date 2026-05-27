@@ -21,6 +21,7 @@ usage() {
 Usage: ${0##*/} [--silent|--basic|--debug1] [--model-override=SPEC] [--model MODEL] [--reasoning-effort EFFORT] [-backup_queue|--backup-queue] [--help]
 
 Run one quota-respecting Upkeeper max-cover cycle:
+  - run a no-backend control-plane audit guard before normal burn work
   - reconcile open Upkeeper automation obligations before normal burn selection
   - gpt-5.5 xhigh via Upkeeper's model override
   - all P1-P23 passes plus P24-P30 review modules
@@ -155,6 +156,8 @@ if [[ ! -x "$UPKEEPER_CMD" ]]; then
   printf 'FlameOn: Upkeeper command is not executable: %s\n' "$UPKEEPER_CMD" >&2
   exit 127
 fi
+
+upkeeper_launcher_control_plane_guard "FlameOn" "flameon-preflight"
 
 obligation_json="$(automation_select_open_obligation_json)"
 obligation_status="$(automation_json_field "$obligation_json" status)"

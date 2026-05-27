@@ -161,6 +161,7 @@ test_chimneysweep_help_documents_fix_contract() {
 
   help="$("$ROOT_DIR/ChimneySweep" --help)"
   grep -Fq "Usage: ChimneySweep" <<<"$help" || fail "help missing usage"
+  grep -Fq "no-backend control-plane audit guard" <<<"$help" || fail "help missing control-plane guard"
   grep -Fq "security-class issues, then data-integrity-class issues" <<<"$help" || fail "help missing class priority"
   grep -Fq "exit 25" <<<"$help" || fail "help missing clean exit code"
   grep -Fq -- "--dry-run" <<<"$help" || fail "help missing dry-run flag"
@@ -292,6 +293,27 @@ test_chimneysweep_stops_on_operator_action_required_obligation() {
   fi
 }
 
+test_chimneysweep_control_plane_guard_blocks_unknown_root_artifact() {
+  local output rc obligation_dir artifact
+
+  artifact="$ROOT_DIR/control-plane-guard-fixture.log"
+  [[ ! -e "$artifact" ]] || fail "guard fixture already exists: $artifact"
+  obligation_dir="$TEST_TMP_ROOT/chimneysweep-control-plane-obligations"
+  printf 'unexpected local evidence\n' >"$artifact"
+  set +e
+  output="$(CHIMNEYSWEEP_TEST_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run 2>&1)"
+  rc=$?
+  set -e
+  rm -f -- "$artifact"
+
+  [[ "$rc" -eq 2 ]] || fail "ChimneySweep control-plane guard exited $rc, expected 2"
+  grep -Fq "control-plane audit blocked launcher work" <<<"$output" || fail "ChimneySweep guard did not explain block"
+  grep -Fq "unsafe_unknown_root_artifact" <<<"$output" || fail "ChimneySweep guard did not report unsafe root artifact"
+  if grep -Fq -- "--fix-issue=50" <<<"$output"; then
+    fail "ChimneySweep ranked issues after control-plane guard blocked"
+  fi
+}
+
 test_chimneysweep_data_integrity_after_security_clear() {
   local output
 
@@ -372,6 +394,7 @@ test_chimneysweep_model_override_supports_spark
 test_chimneysweep_reconciles_obligations_before_github_queue
 test_chimneysweep_remaps_runtime_fixture_obligation_targets
 test_chimneysweep_stops_on_operator_action_required_obligation
+test_chimneysweep_control_plane_guard_blocks_unknown_root_artifact
 test_chimneysweep_data_integrity_after_security_clear
 test_chimneysweep_general_queue_prefers_containment_signal
 test_chimneysweep_exec_hands_locked_issue_to_upkeeper

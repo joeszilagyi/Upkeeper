@@ -15,6 +15,7 @@ test_flameon_help_documents_burn_contract() {
 
   help="$("$ROOT_DIR/FlameOn" --help)"
   grep -Fq "Usage: FlameOn" <<<"$help" || fail "FlameOn help missing usage"
+  grep -Fq "no-backend control-plane audit guard" <<<"$help" || fail "FlameOn help missing control-plane guard"
   grep -Fq "gpt-5.5 xhigh" <<<"$help" || fail "FlameOn help missing model/effort contract"
   grep -Fq -- "--model-override=SPEC" <<<"$help" || fail "FlameOn help missing model override flag"
   grep -Fq -- "--model MODEL" <<<"$help" || fail "FlameOn help missing model shortcut flag"
@@ -133,6 +134,27 @@ test_flameon_stops_on_operator_action_required_obligation() {
   fi
 }
 
+test_flameon_control_plane_guard_blocks_unknown_root_artifact() {
+  local output rc obligation_dir artifact
+
+  artifact="$ROOT_DIR/control-plane-guard-fixture.log"
+  [[ ! -e "$artifact" ]] || fail "guard fixture already exists: $artifact"
+  obligation_dir="$TEST_TMP_ROOT/flameon-control-plane-obligations"
+  printf 'unexpected local evidence\n' >"$artifact"
+  set +e
+  output="$(UPKEEPER_OBLIGATION_DIR="$obligation_dir" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --silent 2>&1)"
+  rc=$?
+  set -e
+  rm -f -- "$artifact"
+
+  [[ "$rc" -eq 2 ]] || fail "FlameOn control-plane guard exited $rc, expected 2"
+  grep -Fq "control-plane audit blocked launcher work" <<<"$output" || fail "FlameOn guard did not explain block"
+  grep -Fq "unsafe_unknown_root_artifact" <<<"$output" || fail "FlameOn guard did not report unsafe root artifact"
+  if grep -Fq -- "--max-cover" <<<"$output"; then
+    fail "FlameOn continued into normal burn after control-plane guard blocked"
+  fi
+}
+
 test_flameon_rejects_unsupported_inputs() {
   local output rc
 
@@ -213,6 +235,7 @@ test_flameon_dry_run_resolves_upkeeper_args
 test_flameon_model_shortcut_resolves_spark_override
 test_flameon_dry_run_reconciles_obligations_first
 test_flameon_stops_on_operator_action_required_obligation
+test_flameon_control_plane_guard_blocks_unknown_root_artifact
 test_flameon_rejects_unsupported_inputs
 test_upkeeper_max_cover_flags_parse_before_version
 test_completion_script_loads_flameon_and_upkeeper

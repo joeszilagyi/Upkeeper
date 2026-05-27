@@ -32,6 +32,12 @@ work over time:
 - operator annotations
 - namespaced extension facts
 
+When Lattice rows or exports need to connect cycles, runs, targets, prompts,
+backups, artifacts, validation, or config evidence across records, they should
+use the stable `upk:` identifier namespace defined in
+`docs/run-bom-identifiers.md`. Those ids are evidence links, not a promotion of
+Lattice to sole custody authority.
+
 The database is append-friendly and normalized. Future P* passes are represented
 as rows in `review_passes` and `file_pass_runs`, not as schema columns. Pass
 attributes are rows in `pass_run_attributes` or namespaced extension facts.

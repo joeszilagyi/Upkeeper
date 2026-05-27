@@ -568,6 +568,57 @@ check_schema_gated_airlock_docs_contract() {
     fail "change notes do not record the schema-gated airlock decision"
 }
 
+check_run_bom_identifier_contract() {
+  local term
+  local doc_path="docs/run-bom-identifiers.md"
+  local -a required_terms
+
+  log "checking run BOM and identifier namespace contract"
+  [[ -s "$doc_path" ]] || fail "run BOM identifier contract doc is missing"
+
+  required_terms=(
+    "upk:<kind>:<segment>[:<segment>...]"
+    "upk:cycle:<cycle_id>"
+    "upk:run:<cycle_run_hash>"
+    "upk:repo:<repo_hash>"
+    "upk:target:<repo_hash>:<path_hash>:<content_hash>"
+    "upk:backup:<backup_id>"
+    "upk:prompt:<sha256>"
+    "upk:artifact:<sha256>"
+    "upk:validation:<validation_id>"
+    "upk:config:<config_hash>"
+    "Run BOM Schema V1"
+    "schema_version"
+    "wrapper"
+    "config"
+    "prompts"
+    "selected_target"
+    "backend"
+    "capability"
+    "validation"
+    "outputs"
+    "privacy"
+    "issue #218"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq "$term" "$doc_path" ||
+      fail "run BOM identifier docs missing required term: $term"
+  done
+
+  grep -Fq "$doc_path" README.md ||
+    fail "README does not point to the run BOM identifier contract"
+  grep -Fq "$doc_path" docs/compatibility.md ||
+    fail "compatibility docs do not preserve the run BOM identifier contract"
+  grep -Fq "$doc_path" docs/lattice.md ||
+    fail "Lattice docs do not point to the run BOM identifier contract"
+  grep -Fq "Run BOM records" docs/preservation-policy.md ||
+    fail "preservation policy does not classify run BOM records"
+  grep -Fq "run BOM exporter" docs/roadmap.md ||
+    fail "roadmap does not preserve run BOM implementation follow-up"
+  grep -Fq "run BOM and identifier namespace contract" change_notes_2026.md ||
+    fail "change notes do not record the run BOM identifier contract"
+}
+
 check_schema_compatibility_contract() {
   local term
   local -a required_terms
@@ -7774,6 +7825,7 @@ run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contr
 run_check authority_control_docs_contract check_authority_control_docs_contract
 run_check policy_decisions_contract check_policy_decisions_contract
 run_check schema_gated_airlock_docs_contract check_schema_gated_airlock_docs_contract
+run_check run_bom_identifier_contract check_run_bom_identifier_contract
 run_check schema_compatibility_contract check_schema_compatibility_contract
 run_check threat_model_doctrine_contract check_threat_model_doctrine_contract
 run_check preservation_policy_contract check_preservation_policy_contract

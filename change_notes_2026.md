@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-05-27: run BOM and identifier namespace contract:
+	1. Added `docs/run-bom-identifiers.md` as the schema-v1 design contract for future run bill-of-materials records.
+	2. Defined stable `upk:` identifiers for cycles, runs, repos, targets, backups, prompts, artifacts, validation, and config records, with path/privacy-safe segment rules.
+	3. README, compatibility, Lattice, preservation, roadmap, and quick validation now preserve the contract while leaving runtime BOM emission as a follow-up implementation slice.
+
 2026-05-27: schema-gated typed-signal airlock decision:
 	1. Accepted `docs/decisions/0003-schema-gated-airlocks.md` as the design closure for issue #365.
 	2. The decision defines the airlock parser, validated normalized record, limited downstream actuator, always-on authority boundaries, diagnostic-only boundaries, implementation sequence, and negative-fixture strategy for future typed-signal work.

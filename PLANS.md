@@ -3,6 +3,37 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Run BOM And Stable Identifier Namespace
+
+Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #218 by defining a public run bill-of-materials contract and
+  stable local Upkeeper identifier namespace
+- make the namespace privacy-safe by default so future tools can reference
+  cycles, runs, targets, prompts, backups, artifacts, and validations without
+  scraping raw logs or exposing local paths
+- add validation so the docs and compatibility surfaces do not drift silently
+
+Constraints:
+- no backend Codex validation
+- define the schema and namespace first; do not build a runtime exporter in
+  this slice
+- keep Lattice and local runtime evidence supporting rather than authoritative
+
+Files likely touched:
+- `docs/run-bom-identifiers.md`
+- README, compatibility, Lattice, preservation, roadmap, release notes
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
 ## Kirk Protocol Closed-Loop Auditor
 
 Status: completed locally; pending PR/CI

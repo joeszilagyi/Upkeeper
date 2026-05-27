@@ -68,6 +68,7 @@ source-rights review before any use beyond metadata.
 | Lattice SQLite database rows | warm | private-operator | Keep local as supporting evidence; do not treat as public or sole custody authority. |
 | Lattice JSONL exports | cold | private-operator by default | Export with redaction by default; `--include-raw` remains local and sensitive. |
 | Lattice recovery records | warm | private-operator | Keep until the DB or export conflict has explicit repair or custody. |
+| Run BOM records | cold | private-operator by default | Prefer `upk:` ids, hashes, HMACs, and schema refs; publish only when all referenced evidence is public-safe. |
 | Automation obligations | hot | private-operator | Keep open until repaired, resolved, or filed to GitHub with sanitized issue text. |
 | Breadcrumb custody records | warm | private-operator | Keep until resolved or suppressed with a named rationale. |
 | Postmortem reports | warm | private-operator | Keep local by default; promote only concise public-safe lessons. |

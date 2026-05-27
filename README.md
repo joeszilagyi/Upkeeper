@@ -37,6 +37,10 @@ The evidence preservation contract is tracked in
 `docs/preservation-policy.md`. It defines evidence temperature, artifact privacy
 classes, and promotion rules for logs, transcripts, backups, Lattice rows,
 exports, recovery records, obligations, postmortems, and public evidence.
+The run bill-of-materials and stable local identifier namespace in
+`docs/run-bom-identifiers.md` defines `upk:` references for cycles, runs,
+targets, prompts, backups, artifacts, validation, and config records so future
+tools can link evidence without scraping raw logs or exposing local paths.
 The source-rights contract in `docs/source-rights-metadata.md` defines the
 sensitivity labels and rights fields that decide whether OSINT and citation
 sources may enter prompts, exports, archives, or public evidence packets.

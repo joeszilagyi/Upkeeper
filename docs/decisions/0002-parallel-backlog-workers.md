@@ -1,6 +1,6 @@
 # 0002 Parallel Backlog Workers
 
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -31,6 +31,35 @@ backend launch. The first accepted primitive is local-only:
 This does not yet launch multiple workers. A future supervisor can layer worktree
 creation, branch/PR creation, GitHub-visible lease publication, quota sharing,
 and cleanup on this primitive.
+
+## Research Answers
+
+- Lease authority starts locally. `tools/backlog_parallel_leases.py` is the
+  accepted first boundary because it is deterministic, private by default, and
+  can be validated without backend Codex or GitHub writes. Remote visibility is
+  still required before distributed or unattended multi-machine use.
+- The minimum safe conflict model is issue plus predicted target file. That is
+  stricter than issue-only leasing and still cheap enough to run before any
+  backend launch. Changed-path and PR-branch conflict checks are later
+  supervisor responsibilities.
+- Quota/backoff remains outside this primitive. A supervisor must account for
+  shared quota before starting worker processes; the lease helper only records
+  ownership and expiry state.
+- Safe defaults remain single-worker. Parallelism is opt-in, and this primitive
+  blocks use of the main checkout or a nested checkout as a worker worktree.
+- Worker PR merge-forward, branch cleanup, and stale partial-work preservation
+  remain supervisor responsibilities. The lease record deliberately preserves
+  worker id, issue, model, effort, branch, worktree, target, expiry, and next
+  action so those later tools have a stable local handoff.
+
+## Closure Boundary
+
+This decision closes the research/design slice from issue #367 by accepting the
+lease registry and its deterministic validation as the safe base layer for
+parallel backlog workers. It does not claim that live multi-worker launch is
+implemented. Worktree creation, branch/PR creation, remote lease publication,
+quota sharing, and live supervisor orchestration remain future work under the
+broader scheduler and launcher-localization issues.
 
 ## Consequences
 

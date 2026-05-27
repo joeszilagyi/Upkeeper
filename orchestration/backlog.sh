@@ -1703,6 +1703,13 @@ control_plane_snapshot_root() {
   printf '%s/control-plane-snapshots\n' "$state_root"
 }
 
+control_plane_lineage_root() {
+  local state_root
+
+  state_root="$(backlog_state_root)"
+  printf '%s/control-plane-lineage\n' "$state_root"
+}
+
 control_plane_snapshot_path() {
   local stage="$1"
   local snapshot_dir safe_stage
@@ -1727,6 +1734,9 @@ record_control_plane_snapshot() {
     --stage "$stage" \
     --snapshot-label "$stage" \
     --snapshot-out "$snapshot_path" \
+    --write-lineage \
+    --lineage-root "$(control_plane_lineage_root)" \
+    --resolve-missing-lineage \
     --fail-on never >/dev/null 2>&1 || true
 }
 
@@ -1746,6 +1756,8 @@ run_control_plane_pre_staging_audit() {
       --stage pre-staging-before \
       --snapshot-label pre-staging-before \
       --snapshot-out "$before_snapshot" \
+      --write-lineage \
+      --lineage-root "$(control_plane_lineage_root)" \
       --fail-on never >/dev/null 2>&1 || true
     [[ -s "$before_snapshot" ]] && before_args=(--before-snapshot "$before_snapshot")
   fi
@@ -1761,6 +1773,9 @@ run_control_plane_pre_staging_audit() {
     --obligation-root "$obligation_root" \
     --stage pre-staging \
     --snapshot-label pre-staging-after \
+    --write-lineage \
+    --lineage-root "$(control_plane_lineage_root)" \
+    --resolve-missing-lineage \
     "${before_args[@]}" \
     "${after_args[@]}" \
     --fail-on blockers || return $?

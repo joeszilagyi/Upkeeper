@@ -128,3 +128,46 @@ upkeeper_launcher_report_full_burn() {
       "$launcher_name" >&2
   fi
 }
+
+upkeeper_launcher_control_plane_guard() {
+  local launcher_name="$1"
+  local stage="${2:-launcher-preflight}"
+  local audit_cmd report_file rc obligation_root lineage_root lineage_parent
+
+  [[ "${UPKEEPER_LAUNCHER_CONTROL_PLANE_GUARD:-1}" == "1" ]] || return 0
+  audit_cmd="$ROOT_DIR/tools/upkeeper_control_plane_audit.py"
+  [[ -x "$audit_cmd" ]] || return 0
+
+  obligation_root="${UPKEEPER_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
+  if [[ -n "${UPKEEPER_CONTROL_PLANE_LINEAGE_ROOT:-}" ]]; then
+    lineage_root="$UPKEEPER_CONTROL_PLANE_LINEAGE_ROOT"
+  elif [[ -n "${UPKEEPER_OBLIGATION_DIR:-}" ]]; then
+    lineage_parent="$(cd -- "$(dirname -- "$UPKEEPER_OBLIGATION_DIR")" && pwd -P 2>/dev/null || dirname -- "$UPKEEPER_OBLIGATION_DIR")"
+    lineage_root="$lineage_parent/control-plane-lineage"
+  else
+    lineage_root="$ROOT_DIR/runtime/upkeeper-control-plane-lineage"
+  fi
+
+  report_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-control-plane-guard.XXXXXX")" || return 1
+  if "$audit_cmd" \
+    --root "$ROOT_DIR" \
+    --remediate-safe \
+    --write-obligations \
+    --obligation-root "$obligation_root" \
+    --write-lineage \
+    --lineage-root "$lineage_root" \
+    --resolve-missing-lineage \
+    --stage "$stage" \
+    --snapshot-label "$stage" \
+    --fail-on blockers >"$report_file" 2>&1; then
+    rm -f -- "$report_file"
+    return 0
+  else
+    rc="$?"
+  fi
+
+  printf '%s: control-plane audit blocked launcher work before backend or queue selection\n' "$launcher_name" >&2
+  sed 's/^/'"$launcher_name"': /' "$report_file" >&2 || true
+  rm -f -- "$report_file"
+  return "$rc"
+}

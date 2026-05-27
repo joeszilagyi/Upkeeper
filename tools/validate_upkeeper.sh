@@ -1697,6 +1697,8 @@ JSON
 }
 
 check_control_plane_audit_contract() {
+  local guard_path
+
   log "checking control-plane audit inventory contract"
 
   [[ -x tools/upkeeper_control_plane_audit.py ]] || fail "control-plane audit command is missing or not executable"
@@ -1721,8 +1723,20 @@ check_control_plane_audit_contract() {
     fail "control-plane audit does not define invariant registry"
   grep -Fq "KP-007" tools/upkeeper_control_plane_audit.py docs/kirk-invariants.md ||
     fail "control-plane audit does not define before/after snapshot invariant"
+  grep -Fq "KP-008" tools/upkeeper_control_plane_audit.py docs/kirk-invariants.md docs/negative-space-testing.md docs/fault-injection-scenarios.md ||
+    fail "control-plane audit does not define unknown-class promotion invariant"
   grep -Fq -- "--snapshot-out" tools/upkeeper_control_plane_audit.py ||
     fail "control-plane audit does not write before/after snapshots"
+  grep -Fq -- "--write-lineage" tools/upkeeper_control_plane_audit.py ||
+    fail "control-plane audit does not write closed-loop lineage records"
+  grep -Fq -- "--finding-json" tools/upkeeper_control_plane_audit.py tests/control_plane_audit_test.bash ||
+    fail "control-plane audit does not support deterministic external finding fixtures"
+  grep -Fq "closed_loop" tools/upkeeper_control_plane_audit.py tests/control_plane_audit_test.bash ||
+    fail "control-plane audit does not emit closed-loop operator summaries"
+  for guard_path in lib/upkeeper/launcher_full_burn.bash FlameOn ChimneySweep; do
+    grep -Fq "upkeeper_launcher_control_plane_guard" "$guard_path" ||
+      fail "automation launcher control-plane guard missing from $guard_path"
+  done
   grep -Fq "snapshot_delta" tools/upkeeper_control_plane_audit.py tests/control_plane_audit_test.bash ||
     fail "control-plane audit does not expose snapshot deltas"
   grep -Fq -- "--write-obligations" tools/upkeeper_control_plane_audit.py ||
@@ -3976,7 +3990,7 @@ check_negative_space_testing_contract() {
     grep -Fq "$doc_path" "$linked_path" || fail "$linked_path does not link the negative-space testing contract"
   done
 
-  for invariant_id in NS-001 NS-002 NS-003 NS-004 NS-005 NS-006 NS-007 NS-008; do
+  for invariant_id in NS-001 NS-002 NS-003 NS-004 NS-005 NS-006 NS-007 NS-008 NS-009 NS-010; do
     grep -Fq "$invariant_id" "$doc_path" || fail "negative-space catalog missing $invariant_id"
   done
   for phrase in \
@@ -3987,7 +4001,8 @@ check_negative_space_testing_contract() {
     "must not be accepted as clean absence or successful work" \
     "must not spend real backend quota" \
     "must not be treated as safe" \
-    "must not be accepted as active protection"; do
+    "must not be accepted as active protection" \
+    "must not disappear as clean absence"; do
     grep -Fq "$phrase" "$doc_path" || fail "negative-space catalog missing phrase: $phrase"
   done
 
@@ -4009,6 +4024,8 @@ check_negative_space_testing_contract() {
     fail "negative-space proof missing unsafe config preflight"
   grep -Fq "Genie Protocol requires sandboxed backend Codex execution" tests/wrapper_contract_test.bash ||
     fail "negative-space proof missing unsafe backend mode fixture"
+  grep -Fq "test_unknown_finding_requires_promotion_and_persistent_lineage" tests/control_plane_audit_test.bash ||
+    fail "negative-space proof missing closed-loop unknown promotion fixture"
 }
 
 check_serious_finding_repro_contract() {

@@ -3,9 +3,47 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Kirk Protocol Invariant Registry
+## Kirk Protocol Closed-Loop Auditor
 
 Status: completed locally; pending PR/CI
+
+Goal:
+- close issue #401 by making control-plane audit findings persistent lineage
+  records rather than one-cycle observations
+- classify unknown audit finding classes as promotion-required until a stable
+  classifier, `KP-###` invariant, and fixture exist
+- give backlog, FlameOn, ChimneySweep, and merge stewardship the same fast
+  pre-model control-plane guard without forcing backend Codex work
+
+Constraints:
+- no backend Codex validation
+- keep clean no-op fast and local; lineage writes must be optional and ignored
+  runtime state
+- reuse the existing audit and launcher rails instead of adding a parallel
+  control-plane tool
+
+Files likely touched:
+- `tools/upkeeper_control_plane_audit.py`
+- `lib/upkeeper/launcher_full_burn.bash`
+- `FlameOn`
+- `ChimneySweep`
+- `orchestration/backlog.sh`
+- focused tests, docs, validator contracts, and release notes
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_control_plane_audit.py`
+- `bash tests/control_plane_audit_test.bash`
+- `bash tests/flameon_test.bash`
+- `bash tests/chimneysweep_test.bash`
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
+## Kirk Protocol Invariant Registry
+
+Status: merged in PR #638
 
 Goal:
 - close issue #400 by turning the control-plane audit policy layer into stable

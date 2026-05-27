@@ -103,6 +103,8 @@ escapes to stable `KP-###` ids:
 - `KP-005`: nonzero `cycle.exit` and `PAGE [ERROR]` contradictions
 - `KP-006`: active owner lock visibility
 - `KP-007`: before/after audit snapshot delta preservation
+- `KP-008`: injected future finding class remains `promotion_required` until
+  classifier, invariant, and fixture promotion
 
 These fixtures are quick-mode coverage, not deferred P31 scenarios, because
 they are part of the local control-plane audit contract.

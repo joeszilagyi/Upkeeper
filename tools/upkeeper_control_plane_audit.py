@@ -45,6 +45,7 @@ UNKNOWN_ROOT_EVIDENCE_SUFFIXES = (
     ".pid",
     ".trace",
 )
+CLASSIFIER_VERSION = "control-plane-audit-2026-05-27.kp-closed-loop"
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,7 @@ class PolicyDecision:
     invariant_id: str
     invariant_severity: str
     invariant_message: str
+    unknown_class: bool
     obligation_id: str = ""
     obligation_path: str = ""
 
@@ -234,6 +236,15 @@ POLICY_TABLE = {
     ),
 }
 
+UNKNOWN_CLASS_POLICY = PolicyRule(
+    "unknown_control_plane_class",
+    "require_classifier_promotion",
+    True,
+    "KP-008",
+    creates_obligation=True,
+    repair_target_file="tools/upkeeper_control_plane_audit.py",
+)
+
 INVARIANT_REGISTRY = {
     "KP-001": Invariant(
         "KP-001",
@@ -305,6 +316,15 @@ INVARIANT_REGISTRY = {
         "control-plane audit snapshot delta",
         "write snapshot evidence around staging, validation, and merge phases",
         "snapshot delta records what was cleaned, blocked, resolved, or still present",
+        (),
+    ),
+    "KP-008": Invariant(
+        "KP-008",
+        "Unknown control-plane finding classes must become permanent classifiers before they can resolve.",
+        "high",
+        "control-plane audit policy dispatch and lineage records",
+        "block, create obligation, and require classifier/invariant/fixture promotion",
+        "unknown control-plane state needs a classifier, invariant, and deterministic fixture before it can be treated as resolved",
         (),
     ),
 }
@@ -652,6 +672,39 @@ def recent_log_inventory(path: pathlib.Path | None, max_lines: int, findings: li
     }
 
 
+def normalize_external_finding(item: object, source_path: pathlib.Path) -> Finding | None:
+    if not isinstance(item, dict):
+        return None
+    klass = str(item.get("klass") or item.get("class") or "unknown_control_plane_finding").strip()
+    if not klass:
+        klass = "unknown_control_plane_finding"
+    severity = str(item.get("severity") or "high").strip() or "high"
+    path = str(item.get("path") or "")
+    source = str(item.get("source") or f"finding_json:{source_path.name}")
+    summary = str(item.get("summary") or "external control-plane finding").strip()
+    remediation = str(item.get("remediation") or "promote this finding into a classifier, invariant, and deterministic fixture").strip()
+    ident = str(item.get("ident") or item.get("id") or "").strip()
+    if not ident:
+        ident = f"{klass}-{stable_hash(klass, path, summary)}"
+    return Finding(ident, klass, severity, path, source, summary, remediation)
+
+
+def load_external_findings(paths: list[str]) -> list[Finding]:
+    findings: list[Finding] = []
+    for raw_path in paths:
+        path = pathlib.Path(raw_path).resolve()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"control-plane audit: cannot read finding JSON {path}: {exc}") from exc
+        items = data if isinstance(data, list) else [data]
+        for item in items:
+            finding = normalize_external_finding(item, path)
+            if finding is not None:
+                findings.append(finding)
+    return findings
+
+
 def private_dir(path: pathlib.Path, *, force_chmod: bool = True) -> None:
     existed = path.exists()
     path.mkdir(parents=True, exist_ok=True)
@@ -689,21 +742,20 @@ def now_local() -> str:
 
 def policy_for_finding(finding: dict[str, object]) -> PolicyRule:
     klass = str(finding.get("klass") or "")
-    return POLICY_TABLE.get(
-        klass,
-        PolicyRule(
-            "unsafe_unknown",
-            "block_before_staging",
-            True,
-            "KP-003",
-            creates_obligation=True,
-            repair_target_file="Upkeeper",
-        ),
-    )
+    return POLICY_TABLE.get(klass, UNKNOWN_CLASS_POLICY)
+
+
+def finding_class_known(finding: dict[str, object]) -> bool:
+    klass = str(finding.get("klass") or "")
+    return klass in POLICY_TABLE
 
 
 def decision_id(stage: str, finding: dict[str, object], rule: PolicyRule) -> str:
     return f"policy-{stable_hash(stage, str(finding.get('ident')), rule.policy_class, rule.action)}"
+
+
+def lineage_id_for_finding(finding: dict[str, object]) -> str:
+    return f"lineage-{stable_hash(str(finding.get('ident')), str(finding.get('klass')), str(finding.get('path')))}"
 
 
 def invariant_record(rule: PolicyRule) -> Invariant:
@@ -774,6 +826,20 @@ def obligation_id_for_decision(finding: dict[str, object], rule: PolicyRule) -> 
     return f"control-plane-{stable_hash(str(finding.get('ident')), rule.policy_class, rule.action)}"
 
 
+def resolution_state_for_decision(decision: PolicyDecision) -> str:
+    if decision.unknown_class:
+        return "promotion_required"
+    if decision.status in {"cleaned", "already_clean"}:
+        return "resolved"
+    if decision.status.startswith("cleanup_failed"):
+        return "blocked"
+    if decision.status in {"obligation_written", "obligation_updated", "obligation_required"}:
+        return "open_obligation"
+    if decision.blocks_stage:
+        return "open_blocker"
+    return "reported"
+
+
 def obligation_payload(
     root: pathlib.Path,
     branch: str,
@@ -807,6 +873,8 @@ def obligation_payload(
         "policy_decision_id": decision.ident,
         "invariant_id": decision.invariant_id,
         "invariant_message": decision.invariant_message,
+        "unknown_class": decision.unknown_class,
+        "classifier_version": CLASSIFIER_VERSION,
         "specific_issue_required": True,
         "evidence": {
             "finding_id": str(finding.get("ident") or ""),
@@ -817,11 +885,13 @@ def obligation_payload(
             "remediation": str(finding.get("remediation") or ""),
             "blocks_stage": decision.blocks_stage,
             "invariant_id": decision.invariant_id,
+            "classifier_version": CLASSIFIER_VERSION,
         },
         "required_resolution": [
             "inspect the control-plane audit finding before staging or model work",
             "delete only explicitly safe untracked scratch artifacts; do not auto-delete tracked source",
             "move local evidence under ignored runtime state or remove it from source with a reviewed patch",
+            "if unknown_class is true, add a classifier, invariant registry entry, and deterministic fixture before closing",
             "rerun tests/control_plane_audit_test.bash",
             "rerun tools/validate_upkeeper.sh --quick",
         ],
@@ -872,6 +942,7 @@ def apply_policies(payload: dict[str, object], args: argparse.Namespace) -> tupl
             continue
         rule = policy_for_finding(finding)
         invariant = invariant_record(rule)
+        unknown_class = not finding_class_known(finding)
         decision = PolicyDecision(
             ident=decision_id(stage, finding, rule),
             finding_id=str(finding.get("ident") or ""),
@@ -885,6 +956,7 @@ def apply_policies(payload: dict[str, object], args: argparse.Namespace) -> tupl
             invariant_id=invariant.ident,
             invariant_severity=invariant.severity,
             invariant_message=invariant.operator_message,
+            unknown_class=unknown_class,
         )
         if rule.auto_clean:
             if args.remediate_safe:
@@ -923,6 +995,8 @@ def decorate_payload(payload: dict[str, object], decisions: list[PolicyDecision]
     counts["cleaned_count"] = sum(1 for item in decisions if item.status == "cleaned")
     counts["blocker_count"] = blocker_count
     counts["obligation_written_count"] = sum(1 for item in decisions if item.status in {"obligation_written", "obligation_updated"})
+    counts["unknown_class_count"] = sum(1 for item in decisions if item.unknown_class)
+    counts["known_class_count"] = sum(1 for item in decisions if not item.unknown_class)
     payload["policy_decisions"] = [asdict(item) for item in decisions]
     payload["invariant_registry"] = [asdict(item) for item in INVARIANT_REGISTRY.values()]
     payload["invariant_failures"] = [
@@ -935,10 +1009,12 @@ def decorate_payload(payload: dict[str, object], decisions: list[PolicyDecision]
             "status": item.status,
             "path": item.path,
             "message": item.invariant_message,
+            "unknown_class": item.unknown_class,
         }
         for item in decisions
         if item.status not in {"cleaned", "already_clean"}
     ]
+    payload["closed_loop"] = closed_loop_summary(payload, decisions)
     if counts.get("finding_count", 0) == 0:
         payload["status"] = "clean"
     elif blocker_count:
@@ -946,6 +1022,50 @@ def decorate_payload(payload: dict[str, object], decisions: list[PolicyDecision]
     else:
         payload["status"] = "findings"
     return payload
+
+
+def closed_loop_summary(payload: dict[str, object], decisions: list[PolicyDecision]) -> dict[str, object]:
+    counts = payload.get("counts", {}) if isinstance(payload.get("counts"), dict) else {}
+    observed = max(int(counts.get("finding_count", 0) or 0), len(decisions))
+    blocked = sum(1 for item in decisions if item.blocks_stage and item.status not in {"cleaned", "already_clean"})
+    cleaned = sum(1 for item in decisions if item.status == "cleaned")
+    obligations = sum(1 for item in decisions if item.status in {"obligation_written", "obligation_updated", "obligation_required"})
+    unknown = sum(1 for item in decisions if item.unknown_class)
+    remaining = sum(1 for item in decisions if item.status not in {"cleaned", "already_clean"})
+    if unknown:
+        next_action = "add_classifier_invariant_and_fixture"
+        restart_safe = False
+    elif blocked:
+        next_action = "inspect_control_plane_obligations"
+        restart_safe = False
+    elif cleaned:
+        next_action = "rerun_launcher_after_safe_cleanup"
+        restart_safe = True
+    elif observed:
+        next_action = "continue_after_reviewing_reported_custody"
+        restart_safe = True
+    else:
+        next_action = "safe_to_restart_or_exit_clean"
+        restart_safe = True
+    return {
+        "classifier_version": CLASSIFIER_VERSION,
+        "observed_anomaly_count": observed,
+        "known_class_count": sum(1 for item in decisions if not item.unknown_class),
+        "unknown_class_count": unknown,
+        "auto_remediated_count": cleaned,
+        "blocked_count": blocked,
+        "obligation_count": obligations,
+        "remaining_count": remaining,
+        "next_recommended_action": next_action,
+        "restart_safe": restart_safe,
+        "operator_summary": {
+            "observed": f"{observed} control-plane anomaly finding(s) observed",
+            "weird": f"{unknown} unknown class(es), {blocked} blocking known issue(s)",
+            "done": f"{cleaned} safe cleanup action(s), {obligations} obligation action(s)",
+            "remains": f"{remaining} unresolved or report-only finding(s)",
+            "safe": "yes" if restart_safe else "no",
+        },
+    }
 
 
 def payload_invariant_ids(payload: dict[str, object]) -> set[str]:
@@ -996,6 +1116,111 @@ def add_snapshot_delta(payload: dict[str, object], before: dict[str, object] | N
     }
 
 
+def lineage_root_from_args(root: pathlib.Path, args: argparse.Namespace) -> pathlib.Path:
+    if args.lineage_root:
+        return pathlib.Path(args.lineage_root).resolve()
+    return root / "runtime/upkeeper-control-plane-lineage"
+
+
+def read_json_object(path: pathlib.Path) -> dict[str, object]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_lineage_records(payload: dict[str, object], decisions: list[PolicyDecision], args: argparse.Namespace) -> dict[str, object]:
+    root = pathlib.Path(str(payload.get("root") or args.root)).resolve()
+    lineage_root = lineage_root_from_args(root, args)
+    records_dir = lineage_root / "records"
+    private_dir(records_dir)
+    now = now_local()
+    stage = str(args.stage or "manual")
+    source_cycle = str(args.snapshot_label or stage)
+    written: list[str] = []
+    current_ids: set[str] = set()
+    findings_by_id = {
+        str(item.get("ident") or ""): item
+        for item in payload.get("findings", [])
+        if isinstance(item, dict)
+    }
+    for decision in decisions:
+        finding = findings_by_id.get(decision.finding_id, {})
+        lineage_id = lineage_id_for_finding(finding or {"ident": decision.finding_id, "klass": decision.klass, "path": decision.path})
+        current_ids.add(lineage_id)
+        path = records_dir / f"{lineage_id}.json"
+        existing = read_json_object(path) if path.exists() else {}
+        record = {
+            "schema": 1,
+            "record_type": "upkeeper_control_plane_lineage",
+            "id": lineage_id,
+            "finding_id": decision.finding_id,
+            "class": decision.klass,
+            "unknown_class": decision.unknown_class,
+            "classifier_version": CLASSIFIER_VERSION,
+            "first_seen": existing.get("first_seen") or now,
+            "last_seen": now,
+            "source_cycle": existing.get("source_cycle") or source_cycle,
+            "last_source_cycle": source_cycle,
+            "stage": stage,
+            "root": str(root),
+            "branch": str(payload.get("branch") or "unknown"),
+            "path": decision.path,
+            "summary": decision.summary,
+            "invariant_id": decision.invariant_id,
+            "invariant_message": decision.invariant_message,
+            "policy_class": decision.policy_class,
+            "policy_action": decision.action,
+            "remediation_decision": {
+                "status": decision.status,
+                "action": decision.action,
+                "blocks_stage": decision.blocks_stage,
+            },
+            "resolution_state": resolution_state_for_decision(decision),
+            "seen_count": int(existing.get("seen_count") or 0) + 1,
+        }
+        if decision.unknown_class:
+            record["promotion_required"] = {
+                "classifier": "add an explicit control-plane classifier and policy table entry",
+                "invariant": "add or attach a stable KP invariant",
+                "fixture": "add a deterministic quick fixture before resolving",
+            }
+        write_private_json(path, record)
+        written.append(lineage_id)
+    resolved_missing = 0
+    if args.resolve_missing_lineage and records_dir.exists():
+        for path in sorted(records_dir.glob("*.json")):
+            existing = read_json_object(path)
+            lineage_id = str(existing.get("id") or path.stem)
+            if lineage_id in current_ids:
+                continue
+            state = str(existing.get("resolution_state") or "")
+            if state in {"resolved", "resolved_missing"}:
+                continue
+            if (
+                bool(existing.get("unknown_class"))
+                and state == "promotion_required"
+                and str(existing.get("class") or "") not in POLICY_TABLE
+            ):
+                continue
+            existing["resolution_state"] = "resolved_missing"
+            existing["resolved_at"] = now
+            existing["last_source_cycle"] = source_cycle
+            existing["classifier_version"] = existing.get("classifier_version") or CLASSIFIER_VERSION
+            if bool(existing.get("unknown_class")) and str(existing.get("class") or "") in POLICY_TABLE:
+                existing["promoted_at_resolution"] = True
+            write_private_json(path, existing)
+            resolved_missing += 1
+    return {
+        "root": str(lineage_root),
+        "record_count": len(written),
+        "records": written,
+        "resolved_missing_count": resolved_missing,
+        "classifier_version": CLASSIFIER_VERSION,
+    }
+
+
 def build_payload(args: argparse.Namespace) -> dict[str, object]:
     root = pathlib.Path(args.root).resolve()
     if not (root / ".git").exists():
@@ -1014,6 +1239,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, object]:
     runtime = {"runtime_inventory_skipped": True} if args.no_runtime else runtime_inventory(root, findings)
     external_state = state_root_inventory(state_root, findings)
     recent_log = recent_log_inventory(log_path, args.max_log_lines, findings)
+    findings.extend(load_external_findings(args.finding_json))
     findings = sorted(findings, key=lambda item: (item.severity, item.klass, item.path, item.ident))
     return {
         "schema": 1,
@@ -1054,6 +1280,19 @@ def print_text(payload: dict[str, object]) -> None:
         f"untracked={counts.get('untracked_path_count', 0)} "
         f"branch={payload.get('branch', 'unknown')}"
     )
+    closed_loop = payload.get("closed_loop")
+    if isinstance(closed_loop, dict):
+        print(
+            "control_plane_audit: closed_loop "
+            f"observed={closed_loop.get('observed_anomaly_count', 0)} "
+            f"known={closed_loop.get('known_class_count', 0)} "
+            f"unknown={closed_loop.get('unknown_class_count', 0)} "
+            f"auto_remediated={closed_loop.get('auto_remediated_count', 0)} "
+            f"blocked={closed_loop.get('blocked_count', 0)} "
+            f"obligations={closed_loop.get('obligation_count', 0)} "
+            f"restart_safe={str(closed_loop.get('restart_safe')).lower()} "
+            f"next={closed_loop.get('next_recommended_action')}"
+        )
     decisions = payload.get("policy_decisions", [])
     if isinstance(decisions, list):
         for item in decisions[:10]:
@@ -1128,6 +1367,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--snapshot-label", default="", help="optional label stored in the audit snapshot")
     parser.add_argument("--before-snapshot", default="", help="prior audit snapshot used to compute a before/after delta")
     parser.add_argument("--snapshot-out", default="", help="write the final decorated audit payload to this JSON file")
+    parser.add_argument("--finding-json", action="append", default=[], help="append external finding object/list JSON for deterministic fixtures")
+    parser.add_argument("--write-lineage", action="store_true", help="write persistent closed-loop lineage records for current findings")
+    parser.add_argument("--lineage-root", default="", help="lineage root; defaults to ROOT/runtime/upkeeper-control-plane-lineage")
+    parser.add_argument("--resolve-missing-lineage", action="store_true", help="mark previously open lineage records resolved when absent from this audit")
     parser.add_argument("--remediate-safe", action="store_true", help="clean only policy-listed safe untracked artifacts")
     parser.add_argument("--write-obligations", action="store_true", help="write blocker/actionable findings to the obligation root")
     parser.add_argument("--obligation-root", default="", help="automation obligation root; defaults to ROOT/runtime/upkeeper-obligations")
@@ -1159,6 +1402,10 @@ def main(argv: list[str]) -> int:
         "invariant_id": "KP-007",
     }
     add_snapshot_delta(payload, before_snapshot)
+    if args.write_lineage:
+        payload["lineage"] = write_lineage_records(payload, decisions, args)
+        payload["closed_loop"]["lineage_record_count"] = payload["lineage"]["record_count"]
+        payload["closed_loop"]["lineage_resolved_missing_count"] = payload["lineage"]["resolved_missing_count"]
     if args.snapshot_out:
         write_private_json(pathlib.Path(args.snapshot_out).resolve(), payload, force_private_parent=False)
     if args.json:

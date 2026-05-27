@@ -61,10 +61,13 @@ test_clean_repo_is_clean() {
   assert_json_value '.counts.finding_count == 0'
   assert_json_value '.counts.tracked_change_count == 0'
   assert_json_value '.invariant_registry | map(select(.ident == "KP-001" and .remediation_policy != "")) | length == 1'
+  assert_json_value '.closed_loop.observed_anomaly_count == 0'
+  assert_json_value '.closed_loop.next_recommended_action == "safe_to_restart_or_exit_clean"'
 
   run_audit "$repo"
   [[ "$AUDIT_RC" -eq 0 ]] || fail "clean text audit exited $AUDIT_RC"
   assert_text_contains "control_plane_audit: status=clean findings=0"
+  assert_text_contains "control_plane_audit: closed_loop observed=0"
 }
 
 test_tracked_root_db_is_anomaly() {
@@ -150,6 +153,8 @@ test_remediate_safe_cleans_only_safe_artifacts() {
   assert_json_value '.status == "clean"'
   assert_json_value '.counts.finding_count == 0'
   assert_json_value '.counts.cleaned_count == 2'
+  assert_json_value '.closed_loop.observed_anomaly_count == 2'
+  assert_json_value '.closed_loop.auto_remediated_count == 2'
   assert_json_value '.policy_decisions | map(select(.policy_class == "known_safe_cleanup" and .status == "cleaned" and .invariant_id == "KP-002")) | length == 2'
   assert_json_value '.invariant_failures | length == 0'
 }
@@ -257,6 +262,53 @@ LOG
   assert_json_value '.policy_decisions | map(select(.invariant_id == "KP-005")) | length == 2'
 }
 
+test_unknown_finding_requires_promotion_and_persistent_lineage() {
+  local repo="$TEST_TMP_ROOT/unknown-finding"
+  local finding_json="$TEST_TMP_ROOT/unknown-finding.json"
+  local lineage_root="$TEST_TMP_ROOT/unknown-lineage"
+  local obligation_root="$TEST_TMP_ROOT/unknown-obligations"
+  local record_file obligation_file
+  make_repo "$repo"
+  cat >"$finding_json" <<'JSON'
+{
+  "ident": "future-signal-fixture",
+  "klass": "future_control_plane_signal",
+  "severity": "high",
+  "path": "runtime/future-signal.json",
+  "source": "fixture",
+  "summary": "future control-plane signal appeared without a classifier",
+  "remediation": "add a classifier, invariant, and deterministic fixture"
+}
+JSON
+  run_audit "$repo" --json --no-runtime --finding-json "$finding_json" \
+    --write-lineage --lineage-root "$lineage_root" \
+    --write-obligations --obligation-root "$obligation_root" --fail-on blockers
+  [[ "$AUDIT_RC" -eq 2 ]] || fail "unknown finding audit exited $AUDIT_RC"
+  assert_json_value '.closed_loop.unknown_class_count == 1'
+  assert_json_value '.closed_loop.next_recommended_action == "add_classifier_invariant_and_fixture"'
+  assert_json_value '.policy_decisions | map(select(.klass == "future_control_plane_signal" and .unknown_class == true and .invariant_id == "KP-008" and .status == "obligation_written")) | length == 1'
+  assert_json_value '.lineage.record_count == 1'
+
+  record_file="$(find "$lineage_root/records" -maxdepth 1 -type f -name '*.json' | sort | head -n 1)"
+  [[ -n "$record_file" ]] || fail "unknown finding did not write lineage record"
+  jq -e '
+    .unknown_class == true
+    and .classifier_version != ""
+    and .invariant_id == "KP-008"
+    and .resolution_state == "promotion_required"
+    and .promotion_required.fixture != ""
+  ' "$record_file" >/dev/null || fail "unknown lineage record did not require promotion"
+  obligation_file="$(find "$obligation_root/open" -maxdepth 1 -type f -name '*.json' | sort | head -n 1)"
+  [[ -n "$obligation_file" ]] || fail "unknown finding did not write an obligation"
+  jq -e '.unknown_class == true and .invariant_id == "KP-008" and .classifier_version != ""' "$obligation_file" >/dev/null ||
+    fail "unknown obligation did not preserve promotion metadata"
+
+  run_audit "$repo" --json --no-runtime --write-lineage --lineage-root "$lineage_root" --resolve-missing-lineage --fail-on never
+  [[ "$AUDIT_RC" -eq 0 ]] || fail "clean resolve-missing audit exited $AUDIT_RC"
+  jq -e '.resolution_state == "promotion_required"' "$record_file" >/dev/null ||
+    fail "unknown lineage was resolved without classifier promotion"
+}
+
 test_clean_repo_is_clean
 test_tracked_root_db_is_anomaly
 test_tracked_local_evidence_is_anomaly
@@ -267,4 +319,5 @@ test_blocker_writes_obligation_before_stage
 test_unknown_root_artifact_is_unsafe_unknown
 test_existing_obligations_do_not_block_pre_staging_policy
 test_recent_log_nonzero_and_page_errors_are_anomalies
+test_unknown_finding_requires_promotion_and_persistent_lineage
 printf 'control_plane_audit_test: ok\n'

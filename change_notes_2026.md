@@ -21,6 +21,11 @@ Version numbering note:
 	2. Audit policy decisions now identify the failed invariant and emit operator-readable invariant failure lines.
 	3. `--snapshot-out` and `--before-snapshot` preserve local before/after audit deltas, and backlog records snapshots around branch sync, pre-staging, batch validation, and merge stewardship.
 
+2026-05-26: Kirk Protocol closed-loop auditor:
+	1. Control-plane audits can now write local lineage records with first seen, last seen, classifier version, invariant id, remediation decision, and resolution state.
+	2. Unknown control-plane finding classes map to `KP-008`, create obligation custody when requested, and remain `promotion_required` until a classifier, invariant, and deterministic fixture are added.
+	3. FlameOn, ChimneySweep, and backlog now share a no-backend control-plane guard before queue selection, staging, or backend launch.
+
 2026-05-26: quota guardrail telemetry custody:
 	1. Prior-run anomaly custody now treats managed `quota.guardrails` deferred and partial-decision advisory lines as quota-health telemetry rather than opening duplicate `prior_run_anomaly` bug obligations.
 	2. Hard failures, PAGE errors, nonzero exits, identity guardrail stops, and stale-quota obligations remain the durable custody paths for quota-related problems.

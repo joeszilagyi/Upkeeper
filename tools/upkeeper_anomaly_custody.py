@@ -512,7 +512,7 @@ def classify(lines: list[tuple[int, str]], index: int, raw_line: str) -> Classif
 
     if model_emitted_fixture_output(normalized):
         return None
-    if "upkeeper: what was wrong:" in lower:
+    if "upkeeper: what was wrong:" in lower or "upkeeper: what changed:" in lower:
         return None
     if failure_transcript_tail_echo(lines, index, normalized):
         return None

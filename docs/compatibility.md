@@ -53,6 +53,13 @@ Schema and contract versions are compatibility boundaries, not decoration:
 - Lattice SQLite schema changes must advance or explicitly preserve the
   tracked schema/user-version contract, and JSONL exports must remain readable
   by same-version importers.
+- Run BOM schema-v1 records and `upk:` identifier kinds are governed by
+  `docs/run-bom-identifiers.md`. Once emitted by runtime tooling, the section
+  names, field meanings, identifier kind names, and identifier segment order are
+  stable within schema version 1.
+- Runtime BOM exports must preserve the `upk:` namespace grammar and avoid raw
+  path, secret, issue-body, prompt, transcript, or command text in identifier
+  segments.
 - Control-plane audit remediation must stay conservative: safe cleanup may
   delete only explicitly policy-listed untracked local artifacts, while tracked
   source-boundary violations and unsafe unknown root artifacts must block or

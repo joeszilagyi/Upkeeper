@@ -24,6 +24,8 @@ Use it to keep release direction visible without relying on chat history.
 - Add focused schema-gated typed-signal fixtures for the highest-risk existing
   boundaries: LLM status/action parsing, runtime obligations, and bug-report
   draft blocks.
+- Add a private local run BOM exporter that emits the schema-v1 shape from
+  `docs/run-bom-identifiers.md` without exposing raw paths or transcripts.
 - Build a live parallel backlog-worker supervisor on the accepted local lease
   primitive, including isolated worktree creation, independent PRs, remote
   visibility, quota sharing, and cleanup.

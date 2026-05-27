@@ -13,6 +13,10 @@ Version numbering note:
 2026-05-27: review-summary anomaly custody:
 	1. Prior-run anomaly custody now treats `Upkeeper: what changed:` review-summary lines like `what was wrong:` lines, so quoted tokens such as `[error]` in explanatory prose do not reopen PAGE-error obligations.
 
+2026-05-27: parallel backlog worker decision closure:
+	1. Accepted the local no-backend parallel-worker lease registry as the completed research/design base layer for issue #367.
+	2. Documented that live multi-worker supervision, remote lease publication, branch/PR creation, quota sharing, and merge-forward cleanup remain future work on top of the tested lease primitive.
+
 2026-05-26: control-plane audit inventory:
 	1. Added `tools/upkeeper_control_plane_audit.py`, a local no-backend inventory for unexpected control-plane state before model work.
 	2. The audit emits stable JSON or concise operator text for tracked local-evidence artifacts, root scratch files such as `$db`, active locks, open obligations, optional deferred issue records, and recent hard loop markers.

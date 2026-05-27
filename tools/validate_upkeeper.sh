@@ -2482,6 +2482,13 @@ check_backlog_parallel_leases_contract() {
     fail "parallel backlog lease helper does not expose deterministic conflict reasons"
   grep -Fq "target_file" tools/backlog_parallel_leases.py ||
     fail "parallel backlog lease helper does not lease predicted target files"
+  grep -Fq "Status: accepted" docs/decisions/0002-parallel-backlog-workers.md ||
+    fail "parallel backlog worker decision is not accepted"
+  grep -Fq "This decision closes the research/design slice from issue #367" docs/decisions/0002-parallel-backlog-workers.md ||
+    fail "parallel backlog worker decision does not record issue #367 closure boundary"
+  grep -Fq "Remote visibility is" docs/decisions/0002-parallel-backlog-workers.md &&
+    grep -Fq "multi-machine use" docs/decisions/0002-parallel-backlog-workers.md ||
+    fail "parallel backlog worker decision does not preserve the remote-visibility limit"
   grep -Fq "tools/backlog_parallel_leases.py" docs/scripts/upkeeper.md ||
     fail "operator guide missing parallel backlog lease helper"
   grep -Fq "parallel-worker lease registry" docs/compatibility.md ||

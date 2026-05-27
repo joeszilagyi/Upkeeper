@@ -1043,8 +1043,8 @@ test loop does not spend cycles on known low-value or generated material.
   decision, and whether an unknown class still needs classifier/invariant/fixture
   promotion.
 - [tools/backlog_parallel_leases.py](tools/backlog_parallel_leases.py): local
-  no-backend issue/target lease registry for future isolated parallel backlog
-  workers
+  no-backend issue/target lease registry and accepted base primitive for future
+  isolated parallel backlog workers
 - [tools/check_public_docs.sh](tools/check_public_docs.sh): deterministic
   public documentation policy checks
 - [tools/docs_only_fast_path.sh](tools/docs_only_fast_path.sh): local

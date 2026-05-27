@@ -21,7 +21,9 @@ Use it to keep release direction visible without relying on chat history.
   authority.
 - Improve release-readiness reporting so the repo can explain what changed,
   what remains risky, and what validation proved.
-- Explore parallel backlog workers using isolated worktrees and independent PRs.
+- Build a live parallel backlog-worker supervisor on the accepted local lease
+  primitive, including isolated worktree creation, independent PRs, remote
+  visibility, quota sharing, and cleanup.
 
 ## Later
 

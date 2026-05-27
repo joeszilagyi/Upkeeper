@@ -10,6 +10,9 @@ Version numbering note:
 	1. Automation obligation issue reports for incident rollups now include a compact child-signal section with each signal kind, target, line number, excerpt, and normalized signal text.
 	2. Future incident-rollup GitHub issues preserve the underlying PAGE/nonzero/startup/Lattice evidence instead of showing only the aggregate rollup summary.
 
+2026-05-27: review-summary anomaly custody:
+	1. Prior-run anomaly custody now treats `Upkeeper: what changed:` review-summary lines like `what was wrong:` lines, so quoted tokens such as `[error]` in explanatory prose do not reopen PAGE-error obligations.
+
 2026-05-26: control-plane audit inventory:
 	1. Added `tools/upkeeper_control_plane_audit.py`, a local no-backend inventory for unexpected control-plane state before model work.
 	2. The audit emits stable JSON or concise operator text for tracked local-evidence artifacts, root scratch files such as `$db`, active locks, open obligations, optional deferred issue records, and recent hard loop markers.

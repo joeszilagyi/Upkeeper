@@ -351,6 +351,7 @@ UPKEEPER_LOG_LATTICE_UNAVAILABLE_SAFE_KEYS = UPKEEPER_LOG_SOURCE_SAFE_KEYS | {
     "reason",
     "detail_status",
     "first_failed_check",
+    "owner_issue_number",
     "owner_issue",
     "owner_contract",
     "replacement_evidence",
@@ -1728,6 +1729,8 @@ def source_record_storage_uri(root: Path, source_kind: str, value: str) -> str:
 
 def sanitize_lattice_unavailable_log_fields(root: Path | None, fields: dict[str, Any]) -> dict[str, Any]:
     sanitized = filter_upkeeper_log_fields(fields, UPKEEPER_LOG_LATTICE_UNAVAILABLE_SAFE_KEYS)
+    if has_meaningful_value(fields.get("owner_issue")) and not has_meaningful_value(sanitized.get("owner_issue_number")):
+        sanitized["owner_issue_number"] = str(fields.get("owner_issue"))
     if root is not None and has_meaningful_value(fields.get("db")):
         sanitized["db_hmac"] = artifact_path_hmac(root, str(fields["db"]))
     return sanitized
@@ -1965,6 +1968,7 @@ def summarize_lattice_unavailable_payload(payload: dict[str, Any], raw_line: str
         "detail_status",
         "first_failed_check",
         "reason",
+        "owner_issue_number",
         "owner_issue",
         "owner_contract",
         "replacement_evidence",
@@ -1973,6 +1977,8 @@ def summarize_lattice_unavailable_payload(payload: dict[str, Any], raw_line: str
         value = payload.get(key)
         if has_meaningful_value(value):
             summary[key] = value
+    if not has_meaningful_value(summary.get("owner_issue_number")) and has_meaningful_value(payload.get("owner_issue")):
+        summary["owner_issue_number"] = str(payload.get("owner_issue"))
     return summary
 
 

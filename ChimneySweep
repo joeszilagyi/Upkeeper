@@ -253,6 +253,10 @@ if [[ ! -x "$UPKEEPER_CMD" ]]; then
   printf 'ChimneySweep: Upkeeper command is not executable: %s\n' "$UPKEEPER_CMD" >&2
   exit 127
 fi
+if ! command -v python3 >/dev/null 2>&1; then
+  printf 'ChimneySweep: required command missing: python3\n' >&2
+  exit 127
+fi
 
 upkeeper_launcher_control_plane_guard "ChimneySweep" "chimneysweep-preflight"
 
@@ -345,7 +349,11 @@ skip_labels = {item.strip().lower() for item in sys.argv[1].split(",") if item.s
 
 
 def gh_json(args):
-    cp = subprocess.run(["gh", *args], text=True, capture_output=True, check=False)
+    try:
+        cp = subprocess.run(["gh", *args], text=True, capture_output=True, check=False, timeout=30)
+    except subprocess.TimeoutExpired:
+        print(json.dumps({"status": "gh_timeout_error", "error": "gh command timed out"}))
+        raise SystemExit(0)
     if cp.returncode != 0:
         print(json.dumps({"status": "gh_error", "stderr": cp.stderr.strip()}))
         raise SystemExit(0)

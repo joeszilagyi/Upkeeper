@@ -6,6 +6,13 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-06-01: validator architecture and contract batch:
+	1. Quick/full validation now uses sourceable focused issue-fix and Lattice contract helpers instead of launching whole standalone test scripts as nested black boxes.
+	2. Tool-failure queue secure-directory prep, marker validation/signing/backfill, custody log classification, and finalization orchestration now live in `lib/upkeeper/tool_failure_queue.bash`; root no longer function-copies `log_line` or queue finalization.
+	3. Architecture lint documentation now defines the inline-Python policy and keeps long heredocs, looped process launches, and looped SQL visible through `--architecture-report`.
+	4. `tools/profile_lattice_selection.py` adds a deterministic report-only Lattice selection-candidate performance profile with candidate, wall-clock, and subprocess counts.
+	5. `tools/check_contract_manifest.py` and `contracts/public_docs.tsv` start migrating simple public documentation required-text checks out of hard-coded grep walls and into a machine-readable manifest.
+
 2026-06-01: high-priority time-savings batch:
 	1. `orchestration/backlog_loop.sh` now reads a per-cycle disposition file and uses a short busy sleep after productive work, while preserving the longer idle sleep for no-op, blocked, and quota-wait cycles.
 	2. Backlog PR-check waits now default to a bounded timeout and write local timeout evidence before returning a pending-check status.

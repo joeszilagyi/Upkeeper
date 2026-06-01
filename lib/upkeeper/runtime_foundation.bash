@@ -647,6 +647,15 @@ log_line() {
   local level="$1"
   shift
   local ts line
+
+  if declare -F tool_failure_queue_open_custody_log >/dev/null 2>&1 &&
+    tool_failure_queue_open_custody_log "$level" "$*"; then
+    # An open tool-failure marker is the durable custody record for a failed
+    # local check. Keep it visible without making the custody row a new WARN.
+    level="INFO"
+    set -- "tool_failure_queue.open_custody custody=tool_failure_queue $*"
+  fi
+
   ts="$(timestamp_now)"
   line="$(printf '%s [%s] cycle=%s run_hash=%s %s' "$ts" "$level" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$*")"
   append_log_line_secure "$line" "log_line"

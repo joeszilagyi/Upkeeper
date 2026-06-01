@@ -1,0 +1,10 @@
+id	file	contains	error
+license.file_mit	LICENSE	MIT License	LICENSE is not MIT
+license.readme_summary	README.md	released under the `MIT` license	README license summary is not MIT
+p26.prompt_title	prompts/p26-public-documentation-review.md	P26 - Public Documentation And Readability Review	P26 prompt title missing
+p26.applicability	prompts/p26-public-documentation-review.md	P26: not applicable	P26 applicability line missing
+p27.prompt_title	prompts/p27-educational-debrief-review.md	P27 - After-Action Review	P27 prompt title missing
+p28.prompt_title	prompts/p28-unit-test-harvesting-review.md	P28 - Unit Test Harvesting Review	P28 prompt title missing
+ci.full_validator	.github/workflows/ci.yml	tools/validate_upkeeper.sh --full	CI workflow does not run full validation for broader changes
+ci.parallel_phase_runner	.github/workflows/ci.yml	tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace	CI workflow does not run parallel local validation gates
+docs.fast_path_smoke	tools/docs_only_fast_path.sh	tools/validate_upkeeper.sh --smoke	docs-only helper does not run smoke validation

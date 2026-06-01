@@ -3,6 +3,47 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issues #739-#735: Validator Architecture And Contract Batch
+
+Status: completed locally; pending PR/CI on `backlog/20260601-validator-architecture-contracts`
+
+Goal:
+- close the next five high-priority time-savings bugs by removing nested
+  full-test execution from validator checks, moving tool-failure queue custody
+  into its owning module, making inline Python debt measurable with an
+  extracted importable helper surface, adding Lattice selection performance
+  telemetry, and replacing representative grep walls with manifest-backed
+  contract checks
+- keep all changes deterministic and local; do not launch backend Codex
+- preserve standalone tests and existing operator-visible queue behavior
+
+Constraints:
+- no live backend Codex validation
+- keep queue marker privacy, signing, and target validation fail-closed
+- keep new architecture/performance checks report-oriented where existing debt
+  is still being ratcheted down
+- migrate contracts incrementally without weakening current public-doc checks
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/runtime_foundation.bash`
+- `lib/upkeeper/tool_failure_queue.bash`
+- `tools/upkeeper_lib/`
+- `tools/validate_upkeeper.sh`
+- `tools/check_public_docs.sh`
+- new contract/performance tooling and focused tests
+- docs, release notes, and architecture allowlists as needed
+
+Validation:
+- focused helper tests for issue-fix private packet, Lattice contract,
+  architecture lint, contract manifests, queue custody, and Lattice profile
+- `python3 -m py_compile tools/*.py tools/upkeeper_lib/*.py`
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/backlog_loop.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/run_tests.sh`
+- `git diff --check`
+
 ## Issues #744-#740: Prompt Scope And Architecture Guard Batch
 
 Status: completed locally; pending PR/CI on `backlog/20260601-prompt-scope-architecture`

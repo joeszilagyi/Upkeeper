@@ -34,117 +34,7 @@ run_mktemp() {
   mktemp "$RUN_TMP_DIR/${label}.XXXXXX"
 }
 
-test_issue_body_fence_delimiters_are_sanitized() {
-  local compiled="$TEST_TMP_ROOT/issue-fence.prompt"
-  local attack_body='prelude
-```SENSITIVE_SECRET
-payload
-```'
-
-  : >"$compiled"
-  RUN_TMP_DIR="$TEST_TMP_ROOT/run tmp"
-  CODEX_ISSUE_FIX_NUMBER="123"
-  CODEX_ISSUE_FIX_URL="https://example.test/issue/123"
-  CODEX_ISSUE_FIX_SELECTED_LABEL="explicit"
-  CODEX_ISSUE_FIX_LABELS="bug"
-  CODEX_ISSUE_FIX_TITLE="Issue body escapes"
-  CODEX_ISSUE_FIX_CREATED_AT="2026-05-01T00:00:00Z"
-  CODEX_ISSUE_FIX_TARGET_FILE="targets/app.sh"
-  CODEX_ISSUE_FIX_BODY="$attack_body"
-  CODEX_ISSUE_FIX_COMMENTS_JSON="[]"
-  UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="1"
-
-  upkeeper_issue_fix_next_enabled() {
-    return 0
-  }
-
-  source "$PROJECT_ROOT/lib/upkeeper/prompt_compile.bash"
-
-  append_issue_fix_prompt "$compiled"
-
-  grep -Fq 'Issue body excerpt as a JSON string literal:' "$compiled" || fail "issue prompt did not describe JSON issue-body wrapper"
-  grep -Fq 'issue_body_excerpt_json=' "$compiled" || fail "issue prompt did not include JSON issue-body wrapper"
-  python3 - "$compiled" "$attack_body" <<'PY' || fail "issue prompt JSON wrapper did not preserve the issue body safely"
-import json
-import sys
-
-compiled_path, expected = sys.argv[1:3]
-for line in open(compiled_path, encoding="utf-8"):
-    if line.startswith("issue_body_excerpt_json="):
-        got = json.loads(line.split("=", 1)[1])
-        if got != expected:
-            raise SystemExit(1)
-        break
-else:
-    raise SystemExit(1)
-PY
-  ! grep -Fxq '```SENSITIVE_SECRET' "$compiled" || fail "issue body fence delimiter was emitted as a standalone prompt fence"
-  unset UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL
-}
-
-test_issue_fix_prompt_withholds_private_issue_packet_by_default() {
-  local compiled="$TEST_TMP_ROOT/issue-private-default.prompt"
-
-  : >"$compiled"
-  RUN_TMP_DIR="$TEST_TMP_ROOT/run tmp"
-  CODEX_ISSUE_FIX_NUMBER="321"
-  CODEX_ISSUE_FIX_URL="https://example.test/private/321"
-  CODEX_ISSUE_FIX_SELECTED_LABEL="security"
-  CODEX_ISSUE_FIX_LABELS="security,bug"
-  CODEX_ISSUE_FIX_TITLE="Leaked title SECRET_TITLE"
-  CODEX_ISSUE_FIX_CREATED_AT="2026-05-02T00:00:00Z"
-  CODEX_ISSUE_FIX_TARGET_FILE="lib/upkeeper/codex_io.bash"
-  CODEX_ISSUE_FIX_BODY="private body SECRET_BODY"
-  CODEX_ISSUE_FIX_COMMENTS_JSON='[{"author":{"login":"alice"},"createdAt":"2026-05-02T00:01:00Z","body":"comment SECRET_COMMENT"}]'
-  unset UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL || true
-
-  upkeeper_issue_fix_next_enabled() {
-    return 0
-  }
-
-  source "$PROJECT_ROOT/lib/upkeeper/prompt_compile.bash"
-
-  append_issue_fix_prompt "$compiled"
-
-  grep -Fq 'issue_url=withheld' "$compiled" || fail "default issue-fix prompt did not withhold the issue URL"
-  grep -Fq 'issue_title=withheld' "$compiled" || fail "default issue-fix prompt did not withhold the issue title"
-  grep -Fq 'private_issue_packet_to_model=0' "$compiled" || fail "default issue-fix prompt did not declare the private packet withheld"
-  grep -Fq 'UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL=1' "$compiled" || fail "default issue-fix prompt did not describe the explicit opt-in"
-  ! grep -Fq 'SECRET_TITLE' "$compiled" || fail "default issue-fix prompt leaked the issue title"
-  ! grep -Fq 'SECRET_BODY' "$compiled" || fail "default issue-fix prompt leaked the issue body"
-  ! grep -Fq 'SECRET_COMMENT' "$compiled" || fail "default issue-fix prompt leaked issue comments"
-}
-
-test_issue_fix_prompt_allows_private_issue_packet_when_enabled() {
-  local compiled="$TEST_TMP_ROOT/issue-private-optin.prompt"
-
-  : >"$compiled"
-  RUN_TMP_DIR="$TEST_TMP_ROOT/run tmp"
-  CODEX_ISSUE_FIX_NUMBER="322"
-  CODEX_ISSUE_FIX_URL="https://example.test/private/322"
-  CODEX_ISSUE_FIX_SELECTED_LABEL="explicit"
-  CODEX_ISSUE_FIX_LABELS="bug"
-  CODEX_ISSUE_FIX_TITLE="Private title SECRET_TITLE_2"
-  CODEX_ISSUE_FIX_CREATED_AT="2026-05-02T00:00:00Z"
-  CODEX_ISSUE_FIX_TARGET_FILE="targets/app.sh"
-  CODEX_ISSUE_FIX_BODY="private body SECRET_BODY_2"
-  CODEX_ISSUE_FIX_COMMENTS_JSON='[{"author":{"login":"bob"},"createdAt":"2026-05-02T00:01:00Z","body":"comment SECRET_COMMENT_2"}]'
-  UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="1"
-
-  upkeeper_issue_fix_next_enabled() {
-    return 0
-  }
-
-  source "$PROJECT_ROOT/lib/upkeeper/prompt_compile.bash"
-
-  append_issue_fix_prompt "$compiled"
-
-  grep -Fq 'issue_url=https://example.test/private/322' "$compiled" || fail "opt-in issue-fix prompt did not include the issue URL"
-  grep -Fq 'issue_title=Private title SECRET_TITLE_2' "$compiled" || fail "opt-in issue-fix prompt did not include the issue title"
-  grep -Fq 'SECRET_BODY_2' "$compiled" || fail "opt-in issue-fix prompt did not include the issue body"
-  grep -Fq 'SECRET_COMMENT_2' "$compiled" || fail "opt-in issue-fix prompt did not include issue comments"
-  unset UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL
-}
+source "$PROJECT_ROOT/tests/lib/issue_fix_private_packet_contract.bash"
 
 test_postmortem_marker_parser_is_exact_only() {
   local plain_marker_file="$TEST_TMP_ROOT/plain.marker"
@@ -243,9 +133,7 @@ SH
   [[ "$selected_arg" == "$explicit_target" ]] || fail "fallback did not preserve explicit target-file override"
 }
 
-test_issue_body_fence_delimiters_are_sanitized
-test_issue_fix_prompt_withholds_private_issue_packet_by_default
-test_issue_fix_prompt_allows_private_issue_packet_when_enabled
+run_issue_fix_private_packet_contract_tests
 test_postmortem_marker_parser_is_exact_only
 test_fallback_inherits_selected_target_file
 

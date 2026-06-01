@@ -5264,6 +5264,9 @@ check_operator_guide_bootstrap_race() {
     CODEX_WRAPPER_HEALTH_STATE_DIR="$temp_dir/health"
     CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$temp_dir/startup-gates"
     source "$ROOT_DIR/Upkeeper"
+    # Exercise the bootstrap race under a repo-local root so the guard against
+    # writing guides outside the checkout remains intact.
+    ROOT_DIR="$temp_dir"
 
     mktemp() {
       local created

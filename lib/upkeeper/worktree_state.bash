@@ -328,10 +328,11 @@ startup_anomaly_gate_changed_path_violations() {
   local before_file="$1"
   local after_file="$2"
   local diagnostics_file="${3:-}"
+  local selected_expected_path="${4:-}"
   local hmac_key
 
   hmac_key="$(worktree_redaction_key_material)"
-  python3 - "$before_file" "$after_file" "$diagnostics_file" "$hmac_key" <<'PY'
+  python3 - "$before_file" "$after_file" "$diagnostics_file" "$selected_expected_path" "$hmac_key" <<'PY'
 import hashlib
 import hmac
 import json
@@ -339,7 +340,7 @@ from pathlib import Path
 import re
 import sys
 
-before_path, after_path, diagnostics_path, hmac_key_text = sys.argv[1:5]
+before_path, after_path, diagnostics_path, selected_expected_path, hmac_key_text = sys.argv[1:6]
 hmac_key = hmac_key_text.encode("utf-8", "surrogateescape")
 
 allowed_exact = {
@@ -513,6 +514,11 @@ def emit_path_change(path_key, before_state, after_state):
 
 before_meta, before_paths = normalize_snapshot(before)
 after_meta, after_paths = normalize_snapshot(after)
+expected_selected_path_hmac = (
+    path_hmac(selected_expected_path) if selected_expected_path else ""
+)
+expected_target_changed = False
+expected_target_change = {}
 for key in sorted(set(before_meta) | set(after_meta)):
     if key == "status_lines":
         # This is a volatile byte count of porcelain status output. Path-level
@@ -526,11 +532,40 @@ for key in sorted(set(before_meta) | set(after_meta)):
 for path_key in sorted(set(before_paths) | set(after_paths)):
     before_state = before_paths.get(path_key, {"status": "clean", "hash": "clean"})
     after_state = after_paths.get(path_key, {"status": "clean", "hash": "clean"})
+    if path_key == expected_selected_path_hmac:
+        expected_target_changed = before_state != after_state
+        expected_target_change = {
+            "before_status": before_state.get("status", "unknown"),
+            "before_hash": before_state.get("hash", "unknown"),
+            "after_status": after_state.get("status", "unknown"),
+            "after_hash": after_state.get("hash", "unknown"),
+            "path_class": before_state.get("path_class") or after_state.get("path_class") or "unknown",
+            "extension": before_state.get("extension") or after_state.get("extension") or "unknown",
+        }
+        continue
     if before_state == after_state:
         continue
     if before_state.get("allowed") == 1 or after_state.get("allowed") == 1:
         continue
     emit_path_change(path_key, before_state, after_state)
+
+if expected_target_changed:
+    record_diagnostic(
+        "expected_selected_target_change_accepted",
+        {
+            **expected_target_change,
+            "path_hmac": expected_selected_path_hmac,
+            "content_changed": 1 if expected_target_change.get("before_hash") != expected_target_change.get("after_hash") else 0,
+        },
+    )
+    print(
+        f"selected_target_change path_hmac={expected_selected_path_hmac} "
+        f"accepted=1 path_class={expected_target_change.get('path_class', 'unknown')} "
+        f"extension={expected_target_change.get('extension', 'unknown')} "
+        f"before_status={expected_target_change.get('before_status', 'unknown')} "
+        f"after_status={expected_target_change.get('after_status', 'unknown')} "
+        f"content_changed={1 if expected_target_change.get('before_hash') != expected_target_change.get('after_hash') else 0}"
+    )
 
 if diagnostics_path and diagnostics:
     try:
@@ -668,8 +703,13 @@ enforce_selected_target_scope() {
 
 enforce_startup_anomaly_changed_paths() {
   local after_file diagnostics_file violation_count=0 violation
+  local selected_expected_path=""
   [[ "$STARTUP_ANOMALY_GATE" == "1" ]] || return 0
   [[ -n "${STARTUP_ANOMALY_GATE_BASELINE_FILE:-}" && -f "$STARTUP_ANOMALY_GATE_BASELINE_FILE" ]] || return 0
+
+  if [[ "${CODEX_ISSUE_FIX_SELECTED_LABEL:-}" == "explicit" ]]; then
+    selected_expected_path="${CODEX_ISSUE_FIX_TARGET_FILE:-${CODEX_TARGET_FILE:-}}"
+  fi
 
   after_file="$(run_mktemp startup-gate-after)"
   write_git_status_snapshot_json "$after_file"
@@ -680,9 +720,20 @@ enforce_startup_anomaly_changed_paths() {
   [[ -n "$diagnostics_file" ]] && chmod 600 "$diagnostics_file" 2>/dev/null || true
   while IFS= read -r violation; do
     [[ -n "$violation" ]] || continue
-    violation_count=$((violation_count + 1))
-    log_line "WARN" "startup_anomaly.gate_violation $violation"
-  done < <(startup_anomaly_gate_changed_path_violations "$STARTUP_ANOMALY_GATE_BASELINE_FILE" "$after_file" "$diagnostics_file")
+    case "$violation" in
+      selected_target_change\ *)
+        log_line "INFO" "startup_anomaly.expected_target_change accepted=1 selected_path_hmac=$(worktree_path_hmac "$selected_expected_path") $violation"
+        ;;
+      changed_path\ *)
+        violation_count=$((violation_count + 1))
+        log_line "WARN" "startup_anomaly.gate_violation $violation"
+        ;;
+      *)
+        violation_count=$((violation_count + 1))
+        log_line "WARN" "startup_anomaly.gate_violation $violation"
+        ;;
+    esac
+  done < <(startup_anomaly_gate_changed_path_violations "$STARTUP_ANOMALY_GATE_BASELINE_FILE" "$after_file" "$diagnostics_file" "$selected_expected_path")
 
   if [[ "$violation_count" -gt 0 ]]; then
     log_line "WARN" "startup_anomaly.gate_violation_summary count=$violation_count diagnostics=protected_local diagnostics_path_hmac=$(worktree_path_hmac "$diagnostics_file")"

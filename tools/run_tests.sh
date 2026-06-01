@@ -72,6 +72,7 @@ RUNNER_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-test-runner.XXXXXX")"
 test_is_serial_only() {
   local test_path="$1"
   local item
+  local -a serial_items=()
 
   if grep -Eq 'UPKEEPER_TEST_SERIAL_ONLY=1|upkeeper-test-serial-only' "$test_path"; then
     return 0
@@ -166,7 +167,8 @@ for index in "${serial_indices[@]}"; do
 done
 
 overall_rc=0
-for index in $(seq 1 "${#TESTS[@]}"); do
+index=1
+while [[ "$index" -le "${#TESTS[@]}" ]]; do
   result_file="$RUNNER_TMP_ROOT/$index.result"
   [[ -f "$result_file" ]] || {
     printf 'TEST %s status=missing rc=127 elapsed=0.000s\n' "$(<"$RUNNER_TMP_ROOT/$index.path")" >&2
@@ -186,6 +188,7 @@ for index in $(seq 1 "${#TESTS[@]}"); do
   if [[ "$rc" -ne 0 && "$overall_rc" -eq 0 ]]; then
     overall_rc="$rc"
   fi
+  index=$((index + 1))
 done
 
 if [[ "$overall_rc" -eq 0 ]]; then

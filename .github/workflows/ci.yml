@@ -69,31 +69,9 @@ jobs:
             printf 'scope_known=0\n' >>"$GITHUB_OUTPUT"
           fi
 
-      - name: Shell syntax
+      - name: Parallel local gates
         if: steps.scope.outputs.docs_only != '1'
-        run: |
-          bash -n Upkeeper
-          bash -n FlameOn
-          bash -n ChimneySweep
-          bash -n Upkeeper.conf
-          bash -n configurations/default.conf
-          bash -n completions/*.bash
-          bash -n lib/upkeeper/*.bash
-          bash -n tools/*.sh
-          bash -n tests/*.bash
-          bash -n testruns/*.sh
-
-      - name: Unit tests
-        if: steps.scope.outputs.docs_only != '1'
-        run: |
-          set -euo pipefail
-          for test_script in tests/*.bash; do
-            bash "$test_script"
-          done
-
-      - name: Public docs
-        if: steps.scope.outputs.docs_only != '1'
-        run: tools/check_public_docs.sh --quick
+        run: tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace
 
       - name: Docs-only fast path
         if: steps.scope.outputs.docs_only == '1'

@@ -314,7 +314,7 @@ test_chimneysweep_stops_on_operator_action_required_obligation() {
 test_chimneysweep_control_plane_guard_blocks_unknown_root_artifact() {
   local output rc obligation_dir artifact
 
-  artifact="$ROOT_DIR/control-plane-guard-fixture.log"
+  artifact="$ROOT_DIR/chimneysweep-control-plane-guard-fixture.log"
   [[ ! -e "$artifact" ]] || fail "guard fixture already exists: $artifact"
   obligation_dir="$TEST_TMP_ROOT/chimneysweep-control-plane-obligations"
   printf 'unexpected local evidence\n' >"$artifact"

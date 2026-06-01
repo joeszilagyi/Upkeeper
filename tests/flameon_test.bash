@@ -145,7 +145,7 @@ test_flameon_stops_on_operator_action_required_obligation() {
 test_flameon_control_plane_guard_blocks_unknown_root_artifact() {
   local output rc obligation_dir artifact
 
-  artifact="$ROOT_DIR/control-plane-guard-fixture.log"
+  artifact="$ROOT_DIR/flameon-control-plane-guard-fixture.log"
   [[ ! -e "$artifact" ]] || fail "guard fixture already exists: $artifact"
   obligation_dir="$TEST_TMP_ROOT/flameon-control-plane-obligations"
   printf 'unexpected local evidence\n' >"$artifact"

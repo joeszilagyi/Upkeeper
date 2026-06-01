@@ -14,7 +14,7 @@ Version numbering note:
 	5. Lattice can run as a warm per-cycle local service process, reducing repeated cold Python startup across init, doctor, selection, pass-result, and finish hooks.
 
 2026-06-01: task budget and parallel validation batch:
-	1. Upkeeper now emits a deterministic task profile before model contact and can scale routine selected targets down from default maximum effort while preserving high-risk and explicit-override behavior.
+	1. Upkeeper now emits a deterministic task profile before model contact and can scale routine selected targets down from default maximum effort, assign validation/prompt-scope grades, and prune config-sourced review modules for lean low-risk runs while preserving high-risk and explicit-override behavior.
 	2. Codex executions are wrapped by `CODEX_EXEC_TIMEOUT_SECONDS` and record model-contact JSONL evidence with phase, model, effort, exit status, elapsed time, timeout state, work key, and budget class.
 	3. Model-contact budgets can block runaway retry/fallback chains before launch unless explicitly bypassed for a manual escalation.
 	4. `tools/run_tests.sh` adds bounded parallel unit-test execution, serial fallback, per-test timeouts, and per-test timing output.

@@ -230,7 +230,9 @@ Future changes should preserve this operator-visible surface as far as possible:
   or compatibility investigations.
 - Before backend contact, Upkeeper can classify the selected task into a
   deterministic task profile. The default profile layer may lower effort for
-  routine low-risk targets, but explicit model overrides and high-risk
+  routine low-risk targets, records validation and prompt-scope grades, and may
+  prune config-sourced review modules for lean low-risk runs. Explicit model
+  overrides, explicit review-module CLI flags, and high-risk
   control-plane/security/data-integrity targets keep the stronger profile.
 - Codex execution has a local timeout surface, `CODEX_EXEC_TIMEOUT_SECONDS`,
   and a model-contact ledger/budget surface. A budget breach blocks before

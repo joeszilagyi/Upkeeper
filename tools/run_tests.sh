@@ -173,6 +173,7 @@ while [[ "$index" -le "${#TESTS[@]}" ]]; do
   [[ -f "$result_file" ]] || {
     printf 'TEST %s status=missing rc=127 elapsed=0.000s\n' "$(<"$RUNNER_TMP_ROOT/$index.path")" >&2
     overall_rc=127
+    index=$((index + 1))
     continue
   }
   IFS=$'\t' read -r _ test_path status rc elapsed_us out_file <"$result_file"

@@ -3241,6 +3241,9 @@ PY
     batch_validation.quick_validator)
       printf '%s\n' "tools/validate_upkeeper.sh"
       ;;
+    batch_validation.parallel_local_gates)
+      printf '%s\n' "tools/run_validation_phases.sh"
+      ;;
     *)
       printf '%s\n' "orchestration/backlog.sh"
       ;;
@@ -3638,21 +3641,29 @@ run_per_bug_validation() {
 }
 
 run_batch_validation() {
-  local validation_start rc
+  local validation_start rc validation_root
 
   [[ "${BACKLOG_SKIP_LOCAL_VALIDATION:-0}" == "1" ]] && return 0
 
   validation_start="$SECONDS"
+  validation_root="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-backlog-batch-validation.XXXXXX")"
   record_control_plane_snapshot "batch-validation-before"
   backlog_update_active_owner_heartbeat "validating" \
     "$(backlog_wait_detail local_validation batch_validation "expected=syntax_tests_docs_diff_quick_validator")" \
     "" "owner_pid_start_cwd_verified"
-  run_batch_validation_phase "batch_validation.parallel_local_gates" "parallel local gates" \
-    tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace,quick_validator || {
+  (
+    export UPKEEPER_OBLIGATION_DIR="$validation_root/automation-obligations"
+    export CODEX_TOOL_FAILURE_QUEUE_DIR="$validation_root/tool-failure-queue"
+    export CODEX_TRANSCRIPT_DIR="$validation_root/transcripts"
+    run_batch_validation_phase "batch_validation.parallel_local_gates" "parallel local gates" \
+      tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace,quick_validator
+  ) || {
       rc="$?"
+      rm -rf -- "$validation_root"
       record_control_plane_snapshot "batch-validation-failed"
       return "$rc"
     }
+  rm -rf -- "$validation_root"
   record_control_plane_snapshot "batch-validation-after"
   log "batch validation: complete in $((SECONDS - validation_start))s"
 }

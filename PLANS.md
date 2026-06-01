@@ -5,7 +5,7 @@ Upkeeper changes. Keep entries brief and update their status before merge.
 
 ## Issues #749-#745: Task Budget And Parallel Validation Batch
 
-Status: in progress on `backlog/20260601-time-budget-batch`
+Status: completed locally; pending PR/CI on `backlog/20260531-222954`
 
 Goal:
 - close the next five high-priority time-savings bugs by adding a deterministic

@@ -441,8 +441,11 @@ CODEX_MODEL_CONTACT_BUDGET_MAXIMUM="${CODEX_MODEL_CONTACT_BUDGET_MAXIMUM:-8}"
 CODEX_MODEL_CONTACT_BUDGET_BYPASS="${CODEX_MODEL_CONTACT_BUDGET_BYPASS:-0}"
 UPKEEPER_TASK_PROFILE_ENABLED="${UPKEEPER_TASK_PROFILE_ENABLED:-1}"
 UPKEEPER_TASK_PROFILE_AUTO_EFFORT="${UPKEEPER_TASK_PROFILE_AUTO_EFFORT:-1}"
+UPKEEPER_TASK_PROFILE_AUTO_MODULES="${UPKEEPER_TASK_PROFILE_AUTO_MODULES:-1}"
 UPKEEPER_TASK_PROFILE_GRADE="${UPKEEPER_TASK_PROFILE_GRADE:-}"
 UPKEEPER_TASK_PROFILE_VALIDATION_GRADE="${UPKEEPER_TASK_PROFILE_VALIDATION_GRADE:-}"
+UPKEEPER_TASK_PROFILE_PROMPT_SCOPE="${UPKEEPER_TASK_PROFILE_PROMPT_SCOPE:-}"
+UPKEEPER_TASK_PROFILE_PROMPT_PASS="${UPKEEPER_TASK_PROFILE_PROMPT_PASS:-}"
 CODEX_FALLBACK_ENABLED="${CODEX_FALLBACK_ENABLED:-1}"
 CODEX_FALLBACK_MODEL="${CODEX_FALLBACK_MODEL:-gpt-5.5}"
 CODEX_FALLBACK_REASONING_EFFORT="${CODEX_FALLBACK_REASONING_EFFORT:-xhigh}"
@@ -1310,9 +1313,7 @@ run_codex_exec_capture() {
   )
 
   IFS=$'\t' read -r contact_model contact_effort < <(upkeeper_model_contact_extract_model_effort "${command_args[@]}")
-  if ! contact_budget_info="$(upkeeper_model_contact_preflight "$label" "$contact_model" "$contact_effort" "$transcript_file")"; then
-    return $?
-  fi
+  contact_budget_info="$(upkeeper_model_contact_preflight "$label" "$contact_model" "$contact_effort" "$transcript_file")" || return $?
   IFS=$'\t' read -r contact_budget_class contact_budget_limit contact_budget_before <<<"$contact_budget_info"
 
   timeout_seconds="$(upkeeper_codex_exec_timeout_seconds)"
@@ -3846,6 +3847,7 @@ launch_screen_fallback_loop() {
   upkeeper_append_command_env_line runner_env_lines CODEX_MODEL_CONTACT_BUDGET_BYPASS "${CODEX_MODEL_CONTACT_BUDGET_BYPASS:-0}"
   upkeeper_append_command_env_line runner_env_lines UPKEEPER_TASK_PROFILE_ENABLED "${UPKEEPER_TASK_PROFILE_ENABLED:-1}"
   upkeeper_append_command_env_line runner_env_lines UPKEEPER_TASK_PROFILE_AUTO_EFFORT "${UPKEEPER_TASK_PROFILE_AUTO_EFFORT:-1}"
+  upkeeper_append_command_env_line runner_env_lines UPKEEPER_TASK_PROFILE_AUTO_MODULES "${UPKEEPER_TASK_PROFILE_AUTO_MODULES:-1}"
   upkeeper_append_command_env_line runner_env_lines CODEX_TOOL_FAILURE_QUEUE_DIR "${CODEX_TOOL_FAILURE_QUEUE_DIR:-}"
   upkeeper_append_command_env_line runner_env_lines CODEX_TOOL_FAILURE_QUEUE_BYPASS "${CODEX_TOOL_FAILURE_QUEUE_BYPASS:-0}"
   upkeeper_append_command_env_line runner_env_lines RUN_SELECTED_REVIEW_PATH "${RUN_SELECTED_REVIEW_PATH:-}"

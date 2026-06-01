@@ -855,6 +855,7 @@ Environment overrides:
   CODEX_MODEL_CONTACT_BUDGET_BYPASS Default: 0
   UPKEEPER_TASK_PROFILE_ENABLED Default: 1
   UPKEEPER_TASK_PROFILE_AUTO_EFFORT Default: 1
+  UPKEEPER_TASK_PROFILE_AUTO_MODULES Default: 1
   CODEX_FALLBACK_ENABLED        Default: 1
   CODEX_FALLBACK_MODEL          Default: gpt-5.5
   CODEX_FALLBACK_REASONING_EFFORT Default: xhigh
@@ -1143,10 +1144,12 @@ prompts, backup log lines, or Lattice preselect evidence.
   keeps serial mode available with `--serial`, but the default path runs
   independent tests with bounded fan-out and prints per-test timings.
   Before model contact, Upkeeper emits a deterministic `task.profile` log line
-  with the task grade, validation grade, reason, and final effort. Routine
-  low-risk targets can use a cheaper effort profile; high-risk control-plane,
-  security, data-integrity, explicit model overrides, and recovery contexts keep
-  the stronger profile.
+  with the task grade, validation grade, prompt scope, prompt pass, review-module
+  action, selected-path evidence, and final effort. Routine low-risk targets can
+  use a cheaper effort profile and lean prompt scope; config-sourced review
+  modules can be pruned for that lean profile. High-risk control-plane,
+  security, data-integrity, explicit model overrides, explicit review-module CLI
+  flags, and recovery contexts keep the stronger profile.
   Primary, fallback-child, and auxiliary Codex executions are bounded by
   `CODEX_EXEC_TIMEOUT_SECONDS`. Each model contact is appended to the local
   model-contact ledger with phase, model, effort, exit status, elapsed time,

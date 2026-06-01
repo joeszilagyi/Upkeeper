@@ -307,6 +307,9 @@ upkeeper_model_contact_record() {
     "$budget_limit" \
     "$budget_before" \
     "${UPKEEPER_TASK_PROFILE_GRADE:-unknown}" \
+    "${UPKEEPER_TASK_PROFILE_VALIDATION_GRADE:-unknown}" \
+    "${UPKEEPER_TASK_PROFILE_PROMPT_SCOPE:-unknown}" \
+    "${UPKEEPER_TASK_PROFILE_PROMPT_PASS:-${CODEX_PROMPT_PASS:-default}}" \
     "${CODEX_FALLBACK_TRIGGER:-}" \
     "$reason" <<'PY' || return 0
 import json
@@ -329,9 +332,12 @@ from datetime import datetime, timezone
     budget_limit,
     budget_before,
     task_grade,
+    validation_grade,
+    prompt_scope,
+    prompt_pass,
     fallback_trigger,
     reason,
-) = sys.argv[1:17]
+) = sys.argv[1:20]
 
 record = {
     "schema": "upkeeper.model_contact.v1",
@@ -349,6 +355,9 @@ record = {
     "budget_limit": int(budget_limit) if budget_limit.isdigit() else budget_limit,
     "budget_contacts_before": int(budget_before) if budget_before.isdigit() else budget_before,
     "task_grade": task_grade,
+    "validation_grade": validation_grade,
+    "prompt_scope": prompt_scope,
+    "prompt_pass": prompt_pass,
     "fallback_trigger": fallback_trigger,
     "reason": reason,
 }
@@ -420,6 +429,175 @@ upkeeper_model_contact_preflight() {
   printf '%s\t%s\t%s\n' "$budget_class" "$budget_limit" "$contact_count"
 }
 
+upkeeper_task_profile_truthy() {
+  case "${1:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+upkeeper_task_profile_normalized_path() {
+  local path="${1:-}"
+
+  path="${path#./}"
+  printf '%s' "$path"
+}
+
+upkeeper_task_profile_path_grade() {
+  local path
+  local lowered
+
+  path="$(upkeeper_task_profile_normalized_path "${1:-}")"
+  lowered="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
+
+  if [[ "${CODEX_ATTEMPT_ROLE:-primary}" != "primary" || -n "${CODEX_FALLBACK_TRIGGER:-}" ]]; then
+    printf 'recovery\n'
+    return 0
+  fi
+
+  case "$lowered" in
+    ""|unknown)
+      printf 'normal-code\n'
+      return 0
+      ;;
+    readme.md|agents.md|change_notes_*.md|docs/*|prompts/*.md|*.md)
+      printf 'docs-only\n'
+      return 0
+      ;;
+    upkeeper|chimneysweep|flameon|orchestration/backlog.sh|orchestration/backlog_loop.sh|*.conf)
+      printf 'contract-security\n'
+      return 0
+      ;;
+    lib/upkeeper/codex_io.bash|lib/upkeeper/prompt_compile.bash|lib/upkeeper/report_analysis.bash|lib/upkeeper/status_session.bash)
+      printf 'contract-security\n'
+      return 0
+      ;;
+    lib/upkeeper/*fallback*|lib/upkeeper/*postmortem*|lib/upkeeper/*quota*|lib/upkeeper/*backup*|lib/upkeeper/*restore*|lib/upkeeper/*lock*|lib/upkeeper/tool_failure_queue.bash)
+      printf 'contract-security\n'
+      return 0
+      ;;
+    tools/upkeeper_lattice.py|tools/upkeeper_lattice/*|lib/upkeeper/lattice.bash)
+      printf 'data-integrity\n'
+      return 0
+      ;;
+    tests/*|tools/run_tests.sh|tools/run_validation_phases.sh|tools/check_public_docs.sh|tools/docs_only_fast_path.sh)
+      printf 'trivial-code\n'
+      return 0
+      ;;
+    tools/*.py|tools/*.sh|testruns/*.sh|completions/*.bash)
+      printf 'normal-code\n'
+      return 0
+      ;;
+    *)
+      printf 'normal-code\n'
+      return 0
+      ;;
+  esac
+}
+
+upkeeper_task_profile_effort_for_grade() {
+  case "${1:-normal-code}" in
+    docs-only)
+      printf 'low\n'
+      ;;
+    trivial-code|recovery)
+      printf 'medium\n'
+      ;;
+    contract-security|data-integrity|maximum)
+      printf 'xhigh\n'
+      ;;
+    *)
+      printf 'high\n'
+      ;;
+  esac
+}
+
+upkeeper_task_profile_validation_for_grade() {
+  case "${1:-normal-code}" in
+    docs-only)
+      printf 'docs-only\n'
+      ;;
+    trivial-code|recovery)
+      printf 'focused\n'
+      ;;
+    contract-security|data-integrity|maximum)
+      printf 'full\n'
+      ;;
+    *)
+      printf 'standard\n'
+      ;;
+  esac
+}
+
+upkeeper_task_profile_prompt_scope_for_grade() {
+  case "${1:-normal-code}" in
+    docs-only|trivial-code|recovery)
+      printf 'lean\n'
+      ;;
+    contract-security|data-integrity|maximum)
+      printf 'full\n'
+      ;;
+    *)
+      printf 'standard\n'
+      ;;
+  esac
+}
+
+upkeeper_apply_task_profile() {
+  local selected_path="${1:-}"
+  local grade source validation prompt_scope prompt_pass effort_before effort_after modules_before modules_after modules_action evidence
+  local log_message
+
+  upkeeper_task_profile_truthy "${UPKEEPER_TASK_PROFILE_ENABLED:-1}" || return 0
+
+  if [[ -n "${UPKEEPER_TASK_PROFILE_GRADE:-}" ]]; then
+    grade="$UPKEEPER_TASK_PROFILE_GRADE"
+    source="operator"
+  else
+    grade="$(upkeeper_task_profile_path_grade "$selected_path")"
+    source="classifier"
+    UPKEEPER_TASK_PROFILE_GRADE="$grade"
+  fi
+
+  validation="${UPKEEPER_TASK_PROFILE_VALIDATION_GRADE:-$(upkeeper_task_profile_validation_for_grade "$grade")}"
+  prompt_scope="${UPKEEPER_TASK_PROFILE_PROMPT_SCOPE:-$(upkeeper_task_profile_prompt_scope_for_grade "$grade")}"
+  prompt_pass="${CODEX_PROMPT_PASS:-default}"
+  effort_before="${CODEX_REASONING_EFFORT:-unknown}"
+  effort_after="$effort_before"
+  modules_before="$(review_modules_csv)"
+  modules_action="kept"
+
+  UPKEEPER_TASK_PROFILE_VALIDATION_GRADE="$validation"
+  UPKEEPER_TASK_PROFILE_PROMPT_SCOPE="$prompt_scope"
+  UPKEEPER_TASK_PROFILE_PROMPT_PASS="$prompt_pass"
+
+  if upkeeper_task_profile_truthy "${UPKEEPER_TASK_PROFILE_AUTO_EFFORT:-1}" && [[ "${CODEX_MODEL_OVERRIDE_APPLIED:-0}" != "1" ]]; then
+    effort_after="$(upkeeper_task_profile_effort_for_grade "$grade")"
+    CODEX_REASONING_EFFORT="$effort_after"
+  fi
+
+  if upkeeper_task_profile_truthy "${UPKEEPER_TASK_PROFILE_AUTO_MODULES:-1}" &&
+    [[ "$prompt_scope" == "lean" ]] &&
+    [[ "${CODEX_REVIEW_MODULES_FROM_CONFIG:-0}" == "1" ]] &&
+    [[ "${CODEX_REVIEW_MODULES_CLI_OVERRIDE:-0}" != "1" ]] &&
+    [[ "${#CODEX_REVIEW_MODULES[@]}" -gt 0 ]]; then
+    CODEX_REVIEW_MODULES=()
+    modules_action="pruned_config_modules_for_lean_profile"
+  fi
+  modules_after="$(review_modules_csv)"
+
+  evidence="selected_path=$(shell_quote "$(upkeeper_task_profile_normalized_path "$selected_path")")"
+  log_message="task.profile grade=$grade source=$source validation=$validation"
+  log_message+=" prompt_scope=$prompt_scope prompt_pass=$prompt_pass"
+  log_message+=" effort_before=$effort_before effort_after=$CODEX_REASONING_EFFORT"
+  log_message+=" modules_before=$(shell_quote "$modules_before")"
+  log_message+=" modules_after=$(shell_quote "$modules_after")"
+  log_message+=" modules_action=$modules_action $evidence"
+  log_line "INFO" "$log_message"
+}
+
 run_codex_exec_capture() {
   local label="$1"
   local transcript_file="$2"
@@ -454,9 +632,7 @@ run_codex_exec_capture() {
   )
 
   IFS=$'\t' read -r contact_model contact_effort < <(upkeeper_model_contact_extract_model_effort "${command_args[@]}")
-  if ! contact_budget_info="$(upkeeper_model_contact_preflight "$label" "$contact_model" "$contact_effort" "$transcript_file")"; then
-    return $?
-  fi
+  contact_budget_info="$(upkeeper_model_contact_preflight "$label" "$contact_model" "$contact_effort" "$transcript_file")" || return $?
   IFS=$'\t' read -r contact_budget_class contact_budget_limit contact_budget_before <<<"$contact_budget_info"
 
   timeout_seconds="$(upkeeper_codex_exec_timeout_seconds)"

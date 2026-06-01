@@ -3097,7 +3097,14 @@ run_upkeeper_for_obligation() {
   obligation_summary="$(jq -r '.summary // "automation obligation"' <<<"$obligation_json")"
   target_hint="$(jq -r '.repair_target_file // .target_file // "Upkeeper"' <<<"$obligation_json")"
   [[ -n "$target_hint" && "$target_hint" != "null" ]] || target_hint="Upkeeper"
-  prompt_file="$(backlog_prepare_obligation_prompt_file "$obligation_json")"
+  if ! prompt_file="$(backlog_prepare_obligation_prompt_file "$obligation_json")"; then
+    log "automation obligation $obligation_id could not prepare prompt file; skipping obligation repair"
+    return 1
+  fi
+  if [[ -z "$prompt_file" || ! -f "$prompt_file" ]]; then
+    log "automation obligation $obligation_id has missing prompt file: path=$prompt_file; skipping obligation repair"
+    return 1
+  fi
   prompt_root="$(dirname -- "$prompt_file")"
 
   log "running Upkeeper for automation obligation $obligation_id kind=$obligation_kind target=$target_hint"

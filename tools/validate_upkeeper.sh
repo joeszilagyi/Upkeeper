@@ -63,7 +63,7 @@ WRAPPER_OPTIONAL_COMMANDS=(
 
 usage() {
   cat <<'USAGE'
-Usage: tools/validate_upkeeper.sh [--source-contracts|--smoke|--quick|--full|--deps] [--profile]
+Usage: tools/validate_upkeeper.sh [--source-contracts|--smoke|--quick|--full|--deps|--architecture-report] [--profile]
 
 Validate the central Upkeeper checkout.
 
@@ -72,6 +72,9 @@ Modes:
             Run the cheapest source-only contracts needed by per-bug commit
             gates, currently including log-line source length.
   --deps    Report runtime/tool dependency status.
+  --architecture-report
+            Report architecture ownership and hot-loop risks. This mode fails
+            only for unallowlisted duplicate Bash function ownership.
   --smoke   Run the fast local edit-loop checks: syntax, version, module map,
             prompt templates, help/docs/diff, parser helpers, and launcher
             argument contracts.
@@ -184,6 +187,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --deps)
       MODE="deps"
+      ;;
+    --architecture-report)
+      MODE="architecture-report"
       ;;
     --profile)
       VALIDATION_PROFILE="1"
@@ -916,8 +922,45 @@ check_time_budget_contract() {
     fail "task profile does not emit operator log evidence"
   grep -Fq 'WRAPPER_TASK_PROFILE' lib/upkeeper/prompt_compile.bash ||
     fail "compiled prompt does not include task profile context"
+  grep -Fq 'prompt_pass_scope=' lib/upkeeper/prompt_compile.bash ||
+    fail "compiled prompt does not include prompt pass scope"
+  grep -Fq 'review.prompt_payload final_bytes=' lib/upkeeper/prompt_compile.bash ||
+    fail "prompt compilation no longer logs payload metrics"
+  grep -Fq 'CODEX_FALLBACK_REASONING_EFFORT="${CODEX_FALLBACK_REASONING_EFFORT:-high}"' Upkeeper ||
+    fail "fallback reasoning effort default is no longer downshifted"
+  grep -Fq 'CODEX_POSTMORTEM_REASONING_EFFORT="${CODEX_POSTMORTEM_REASONING_EFFORT:-medium}"' Upkeeper ||
+    fail "postmortem reasoning effort default is no longer local-first/downshifted"
+  grep -Fq 'upkeeper_fallback_prompt_pass_for_child' lib/upkeeper/fallback_orchestration.bash ||
+    fail "direct fallback no longer uses prompt-pass inheritance gate"
+  grep -Fq 'upkeeper_fallback_prompt_pass_for_child' Upkeeper ||
+    fail "screen fallback no longer uses prompt-pass inheritance gate"
   bash tests/codex_exec_contact_budget_test.bash
   bash tests/task_profile_test.bash
+  bash tests/prompt_compile_profile_test.bash
+}
+
+check_architecture_lint_contract() {
+  local report_file
+
+  log "checking architecture lint contract"
+  [[ -x tools/check_architecture.py ]] || fail "architecture lint tool is missing or not executable"
+  [[ -r config/architecture_lint_allowlist.tsv ]] || fail "architecture lint allowlist is missing"
+  grep -Fq 'function-shadow' tools/check_architecture.py ||
+    fail "architecture lint no longer reports duplicate Bash function ownership"
+  grep -Fq 'declare-f-sed-eval' tools/check_architecture.py ||
+    fail "architecture lint no longer reports function text rewriting"
+  grep -Fq 'python-loop-subprocess' tools/check_architecture.py ||
+    fail "architecture lint no longer reports Python loop subprocess risks"
+  if grep -Eq '^compile_prompt[[:space:]]*\(\)' Upkeeper; then
+    fail "Upkeeper still defines compile_prompt instead of using the prompt_compile module"
+  fi
+
+  report_file="$(mktemp "$VALIDATION_TMP_ROOT/architecture-report.XXXXXX")"
+  tools/check_architecture.py --report --allowlist config/architecture_lint_allowlist.tsv Upkeeper lib/upkeeper/*.bash tools/*.py >"$report_file"
+  grep -Fq 'SUMMARY architecture_findings=' "$report_file" ||
+    fail "architecture lint report missing summary"
+  ! grep -Fq 'ERROR function-shadow' "$report_file" ||
+    fail "architecture lint has unallowlisted duplicate Bash function ownership"
 }
 
 check_backlog_launcher_contract() {
@@ -3685,6 +3728,7 @@ check_help_and_diff() {
   grep -Fq -- "5.3-codex-spark_xhigh" <<<"$help" || fail "help missing Spark model override"
   grep -Fq -- "--smoke" <<<"$validation_help" || fail "validator help missing --smoke"
   grep -Fq -- "--source-contracts" <<<"$validation_help" || fail "validator help missing --source-contracts"
+  grep -Fq -- "--architecture-report" <<<"$validation_help" || fail "validator help missing --architecture-report"
   grep -Fq -- "--profile" <<<"$validation_help" || fail "validator help missing --profile"
   grep -Fq -- "UPKEEPER_MAX_COVER" <<<"$help" || fail "help missing UPKEEPER_MAX_COVER"
   grep -Fq -- "UPKEEPER_BUG_REPORT_ONLY" <<<"$help" || fail "help missing UPKEEPER_BUG_REPORT_ONLY"
@@ -7919,6 +7963,12 @@ if [[ "$MODE" == "deps" ]]; then
   exit 0
 fi
 
+if [[ "$MODE" == "architecture-report" ]]; then
+  tools/check_architecture.py --report --allowlist config/architecture_lint_allowlist.tsv Upkeeper lib/upkeeper/*.bash tools/*.py
+  log "$MODE validation passed"
+  exit 0
+fi
+
 if [[ "$MODE" == "source-contracts" ]]; then
   run_check log_line_source_length_contract check_log_line_source_length_contract
   log "$MODE validation passed"
@@ -7958,6 +8008,7 @@ run_check client_link_tools_contract check_client_link_tools_contract
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
 run_check test_invocation_mode_contract check_test_invocation_mode_contract
 run_check time_budget_contract check_time_budget_contract
+run_check architecture_lint_contract check_architecture_lint_contract
 run_check wrapper_contract_tests check_wrapper_contract_tests
 run_check public_docs_policy check_public_docs_policy
 run_check private_artifact_umask_contract check_private_artifact_umask_contract

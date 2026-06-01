@@ -3,6 +3,48 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issues #744-#740: Prompt Scope And Architecture Guard Batch
+
+Status: completed locally; pending PR/CI on `backlog/20260601-prompt-scope-architecture`
+
+Goal:
+- close the next five high-priority time-savings bugs by making prompt-pass
+  work proportional to task risk, measuring and slimming prompt payloads,
+  downshifting recovery model fan-out defaults, retiring the `compile_prompt`
+  wrapper override, and adding architecture lint coverage for ownership and
+  hot-loop regressions
+- preserve full-strength all-pass/full-doctrine behavior for explicit
+  operator requests and high-risk files
+- keep all fixes deterministic and local; do not launch backend Codex
+
+Constraints:
+- no live backend Codex validation
+- preserve selected-target and log-review safety contracts while moving prompt
+  behavior into module-owned code
+- make compatibility knobs visible in config, help/docs, release notes, and
+  quick validation
+
+Files likely touched:
+- `Upkeeper`
+- `Upkeeper.conf`
+- `configurations/default.conf`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `lib/upkeeper/fallback_orchestration.bash`
+- `lib/upkeeper/fallback_screen.bash`
+- `tools/validate_upkeeper.sh`
+- new architecture lint tooling and focused tests
+- docs, help mirror, README/release notes as needed
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/backlog_loop.sh`
+- focused task profile, fallback prompt-pass, prompt payload, and architecture
+  lint tests
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/run_tests.sh`
+- `git diff --check`
+
 ## Issues #749-#745: Task Budget And Parallel Validation Batch
 
 Status: completed locally; pending PR/CI on `backlog/20260531-222954`

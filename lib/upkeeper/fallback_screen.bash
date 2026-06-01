@@ -66,7 +66,7 @@ launch_screen_fallback_loop() {
 
   local screen_root session_name runner_script transcript_file exit_file done_file last_cycle_exit_file
   local child_id_file child_started_file child_status_file heartbeat_file completed_count_file stop_reason_file
-  local prompt_arg_snippet=""
+  local prompt_arg_snippet="" child_prompt_pass=""
   local self_q model_q effort_q mode_q root_q screen_root_q transcript_q poll_q trigger_q
   local loop_parent_pid_q loop_parent_comm_q loop_parent_args_q primary_model_q prompt_file_q inline_prompt_q
   local continuous_q max_children_q max_seconds_q
@@ -130,11 +130,14 @@ launch_screen_fallback_loop() {
     printf -v target_file_q '%q' "$CODEX_TARGET_FILE"
     prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--target-file=$target_file_q"
   fi
-  if [[ -n "$CODEX_PROMPT_PASS" ]]; then
+  if child_prompt_pass="$(upkeeper_fallback_prompt_pass_for_child)"; then
     local prompt_pass_q
-    printf -v prompt_pass_q '%q' "$CODEX_PROMPT_PASS"
+    printf -v prompt_pass_q '%q' "$child_prompt_pass"
     prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--prompt-pass=$prompt_pass_q"
+  else
+    child_prompt_pass="default"
   fi
+  upkeeper_log_fallback_prompt_pass_policy "$child_prompt_pass"
   if upkeeper_bug_report_only_enabled; then
     prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--bug-report-only"
   fi

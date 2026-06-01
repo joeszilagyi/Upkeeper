@@ -3,6 +3,47 @@
 # A fallback child is still one cycle, just with stronger defaults and extra
 # context. The parent owns the postmortem sequence because incident evidence is
 # about the failed handoff as a whole, not only the child run.
+upkeeper_fallback_truthy() {
+  case "${1:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+upkeeper_fallback_truthy_int() {
+  if upkeeper_fallback_truthy "${1:-0}"; then
+    printf '1'
+  else
+    printf '0'
+  fi
+}
+
+upkeeper_fallback_prompt_pass_for_child() {
+  local prompt_pass="${CODEX_PROMPT_PASS:-}"
+
+  [[ -n "$prompt_pass" ]] || return 1
+  if [[ "$prompt_pass" == "all" ]] &&
+    ! upkeeper_fallback_truthy "${CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL:-0}"; then
+    return 1
+  fi
+  printf '%s\n' "$prompt_pass"
+}
+
+upkeeper_log_fallback_prompt_pass_policy() {
+  local child_prompt_pass="${1:-default}"
+  local action="forwarded"
+
+  if [[ "${CODEX_PROMPT_PASS:-}" == "all" && "$child_prompt_pass" == "default" ]]; then
+    action="downshifted_all_to_default"
+  elif [[ -z "${CODEX_PROMPT_PASS:-}" ]]; then
+    action="default"
+  fi
+
+  log_line "INFO" "fallback.prompt_pass_policy action=$action parent_prompt_pass=${CODEX_PROMPT_PASS:-default} child_prompt_pass=$child_prompt_pass inherit_all=$(upkeeper_fallback_truthy_int "${CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL:-0}")"
+}
+
 run_fallback_cycle() {
   local trigger="$1"
   shift
@@ -95,6 +136,7 @@ EOF
       child_exit=0
     else
       local -a child_args=()
+      local child_prompt_pass=""
       if [[ -n "$PROMPT_FILE" ]]; then
         child_args+=(--prompt-file "$PROMPT_FILE")
       elif [[ -n "$INLINE_PROMPT" ]]; then
@@ -109,9 +151,12 @@ EOF
       elif [[ -n "$RUN_SELECTED_REVIEW_PATH" ]]; then
         child_args+=("--target-file=$RUN_SELECTED_REVIEW_PATH")
       fi
-      if [[ -n "$CODEX_PROMPT_PASS" ]]; then
-        child_args+=("--prompt-pass=$CODEX_PROMPT_PASS")
+      if child_prompt_pass="$(upkeeper_fallback_prompt_pass_for_child)"; then
+        child_args+=("--prompt-pass=$child_prompt_pass")
+      else
+        child_prompt_pass="default"
       fi
+      upkeeper_log_fallback_prompt_pass_policy "$child_prompt_pass"
       if upkeeper_bug_report_only_enabled; then
         child_args+=("--bug-report-only")
       fi
@@ -119,6 +164,9 @@ EOF
       CODEX_MODEL="$CODEX_FALLBACK_MODEL" \
       CODEX_REASONING_EFFORT="$CODEX_FALLBACK_REASONING_EFFORT" \
       CODEX_MODE="$CODEX_FALLBACK_MODE" \
+      UPKEEPER_PROMPT_PAYLOAD_METRICS="${UPKEEPER_PROMPT_PAYLOAD_METRICS:-1}" \
+      UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES="${UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES:-12000}" \
+      CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL="${CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL:-0}" \
       CODEX_FALLBACK_ENABLED=0 \
       CODEX_FALLBACK_CHAIN_ACTIVE=1 \
       CODEX_FALLBACK_PARENT_PID="$$" \

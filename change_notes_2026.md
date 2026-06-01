@@ -13,6 +13,13 @@ Version numbering note:
 	4. FlameOn batches automation-obligation JSON field extraction so one selected obligation does not spawn one parser per field before Upkeeper repeats startup.
 	5. Lattice can run as a warm per-cycle local service process, reducing repeated cold Python startup across init, doctor, selection, pass-result, and finish hooks.
 
+2026-06-01: prompt scope and architecture guard batch:
+	1. Prompt compilation now places static prompt material before dynamic cycle context, emits lean static guidance for low-risk task profiles, and logs per-section payload byte/token estimates plus a prompt bundle hash before backend contact.
+	2. Task profiles now include a prompt-pass scope so routine/docs/recovery cycles can use targeted pass evidence while explicit `--prompt-pass=all` remains available for deliberate all-pass primary runs.
+	3. Fallback children no longer inherit parent `--prompt-pass=all` by default, fallback reasoning defaults to `high`, and postmortem report/hardening effort defaults to `medium` unless the operator overrides them.
+	4. The sanitized current-cycle log-review prompt contract is now owned directly by `lib/upkeeper/prompt_compile.bash`; the root `compile_prompt` wrapper and function-copying `eval` layer were removed.
+	5. `tools/check_architecture.py` and `tools/validate_upkeeper.sh --architecture-report` now report duplicate Bash ownership, long functions, long inline Python heredocs, and obvious hot-loop side effects, with duplicate function ownership controlled by an explicit allowlist.
+
 2026-06-01: task budget and parallel validation batch:
 	1. Upkeeper now emits a deterministic task profile before model contact and can scale routine selected targets down from default maximum effort, assign validation/prompt-scope grades, and prune config-sourced review modules for lean low-risk runs while preserving high-risk and explicit-override behavior.
 	2. Codex executions are wrapped by `CODEX_EXEC_TIMEOUT_SECONDS` and record model-contact JSONL evidence with phase, model, effort, exit status, elapsed time, timeout state, work key, and budget class.

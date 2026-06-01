@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-06-01: ChimneySweep combined issue-fix default:
+	1. `ChimneySweep` now defaults GitHub issue repair to one combined single-issue-fix Upkeeper invocation for the locked issue.
+	2. `--cycle-mode=separate` and explicit `--workflow=...` preserve the legacy `comment`, `review`, then `apply` staged workflow for runs that need read-only comment/review stages.
+	3. Help text, Bash completion, tests, README, compatibility, security, and operator-guide docs now distinguish the combined default from the explicit staged workflow.
+
 2026-06-01: validator architecture and contract batch:
 	1. Quick/full validation now uses sourceable focused issue-fix and Lattice contract helpers instead of launching whole standalone test scripts as nested black boxes.
 	2. Tool-failure queue secure-directory prep, marker validation/signing/backfill, custody log classification, and finalization orchestration now live in `lib/upkeeper/tool_failure_queue.bash`; root no longer function-copies `log_line` or queue finalization.

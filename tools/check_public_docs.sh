@@ -205,6 +205,8 @@ grep -Fq -- "--fix-next-issue" <<<"$help_text" || fail "help missing --fix-next-
 grep -Fq -- "--issue-workflow-stage=comment|review|apply" <<<"$help_text" || fail "help missing issue workflow stage"
 grep -Fq "FlameOn" README.md || fail "README does not document FlameOn"
 grep -Fq "ChimneySweep" README.md || fail "README does not document ChimneySweep"
+grep -Fq "combined single-issue-fix" README.md || fail "README does not document ChimneySweep combined default"
+grep -Fq -- "--cycle-mode=separate" README.md || fail "README does not document ChimneySweep separate cycle mode"
 grep -Fq 'comment`, `review`, then `apply`' README.md || fail "README does not document ChimneySweep staged workflow"
 grep -Fq "bug-report-only" README.md || fail "README does not document bug-report-only mode"
 grep -Fq "fix-next-issue" README.md || fail "README does not document issue-fix mode"

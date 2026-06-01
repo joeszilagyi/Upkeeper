@@ -270,22 +270,26 @@ ahead of data-integrity issues, keeps working that class until it is clear, and
 then ranks the remaining queue by containment title/tag signals, severity, and
 least-recently-touched age. The selected issue is passed to Upkeeper as
 `--fix-issue=NUMBER`, with `--prompt-pass=all` and all P24-P30 review modules.
-By default, `ChimneySweep` runs three separate backend instantiations:
-`comment`, `review`, then `apply`. The comment stage leaves an
-`Upkeeper ChimneySweep proposal:` comment on the selected issue without
-changing tracked source, the review stage independently reviews that proposal
-and leaves an `Upkeeper ChimneySweep review:` decision comment, and the apply
-stage works the bug. This keeps issue selection scripted while still
-exercising the full repair side end to end.
+By default, `ChimneySweep` runs one combined single-issue-fix Upkeeper
+invocation for the selected issue. Use `--cycle-mode=separate`, or an explicit
+`--workflow=...`, when the repair should use the legacy `comment`, `review`, then `apply` workflow
+across separate backend instantiations. In that staged mode, the comment stage
+leaves an `Upkeeper ChimneySweep proposal:` comment on the selected issue
+without changing tracked source, the review stage independently reviews that
+proposal and leaves an `Upkeeper ChimneySweep review:` decision comment, and the
+apply stage works the bug. This keeps issue selection scripted while preserving
+the read-only staged path for runs that need it.
 
-Upkeeper runs those backend instantiations under the Genie Protocol: the wrapper
-fetches issue bodies/comments before launch, Codex receives only that issue
-packet, and GitHub side effects stay wrapper-owned. The comment and review
-stages also force backend Codex into a read-only repo sandbox and require the
-proposed issue comment to be emitted in a final-message draft block that the
-wrapper extracts after validation. Backend Codex launches do not inherit GitHub
-token variables, use an empty per-run `gh` config directory, and have direct
-`gh`, `curl`, `wget`, and `hub` commands shadowed by blocker stubs.
+Issue-fix launches run under the Genie Protocol: the wrapper fetches issue
+bodies/comments before launch, Codex receives only that issue packet, and GitHub
+side effects stay wrapper-owned. In staged mode, the comment and review stages
+also force backend Codex into a read-only repo sandbox and require the proposed
+issue comment to be emitted in a final-message draft block that the wrapper
+extracts after validation. Backend Codex launches do not inherit GitHub token
+variables, use an empty per-run `gh` config directory, and have direct `gh`,
+`curl`, `wget`, and `hub` commands shadowed by blocker stubs. The combined
+default and the apply stage may edit source, but still do not contact GitHub
+directly.
 
 Live `FlameOn` and `ChimneySweep` runs require an encrypted pre-contact backup
 configuration. Set `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` and install
@@ -294,7 +298,7 @@ configuration. Set `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT` and install
 Both launchers accept `--model-override=5.5_xhigh` and
 `--model-override=5.3-codex-spark_xhigh`. They also accept the explicit
 shortcut form `--model gpt-5.3-codex-spark --reasoning-effort xhigh` and pass
-the equivalent Upkeeper model override to every staged backend invocation.
+the equivalent Upkeeper model override to every backend invocation.
 
 One-time local setup:
 
@@ -1106,7 +1110,7 @@ test loop does not spend cycles on known low-value or generated material.
 - [launcher_examples/README.md](launcher_examples/README.md): tracked shell
   launcher examples for common Upkeeper loops
 - [completions/upkeeper.bash](completions/upkeeper.bash): optional Bash
-  completion for `Upkeeper`, `Upkeeper.sh`, and `FlameOn`
+  completion for `Upkeeper`, `Upkeeper.sh`, `FlameOn`, and `ChimneySweep`
 - `testruns/*.sh`: tracked local launchers for repeatable Upkeeper test cycles
 - [PLANS.md](PLANS.md): brief implementation plans for complex Upkeeper changes
 - [prompts/default-review.md](prompts/default-review.md): runtime default review

@@ -220,20 +220,22 @@ start. Upkeeper now resolves that prerequisite before issue selection on live
 apply-stage or normal repair cycles, and records the missing-recipient path as
 machine-local operator setup rather than as a target-file bug.
 
-ChimneySweep's default issue workflow is staged across separate backend
-instantiations: comment, review, then apply. The comment and review stages are
-tracked-source read-only; the wrapper fingerprints tracked source before launch
-and fails the stage if tracked source changes. Those stages also force backend
-Codex into a read-only repository sandbox. The proposed issue comment is carried
-back in a final-message draft block that the wrapper extracts only after the
-source guard passes. GitHub I/O is wrapper-brokered: the wrapper fetches issue
-bodies/comments before launch, backend Codex receives only that issue packet,
-and the wrapper posts comments or later issue updates after validation. Backend
-Codex launches do not inherit GitHub token variables, use an empty per-run `gh`
-config directory, and shadow direct `gh`, `curl`, `wget`, and `hub` commands
-with blocker stubs. The apply stage is the stage that may edit source, but it
-still does not contact GitHub
-directly.
+ChimneySweep's default issue workflow is a combined single-issue-fix Upkeeper
+invocation. Use `--cycle-mode=separate`, or an explicit `--workflow=...`, when
+the repair needs the legacy staged workflow: `comment`, `review`, then `apply`
+across separate backend instantiations. In that staged mode, the comment and
+review stages are tracked-source read-only; the wrapper fingerprints tracked
+source before launch and fails the stage if tracked source changes. Those
+stages also force backend Codex into a read-only repository sandbox. The
+proposed issue comment is carried back in a final-message draft block that the
+wrapper extracts only after the source guard passes. GitHub I/O is
+wrapper-brokered: the wrapper fetches issue bodies/comments before launch,
+backend Codex receives only that issue packet, and the wrapper posts comments
+or later issue updates after validation. Backend Codex launches do not inherit
+GitHub token variables, use an empty per-run `gh` config directory, and shadow
+direct `gh`, `curl`, `wget`, and `hub` commands with blocker stubs. The
+combined default and the apply stage may edit source, but still do not contact
+GitHub directly.
 
 Install `age`, then bootstrap the public recipient outside the repository:
 

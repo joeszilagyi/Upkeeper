@@ -157,7 +157,7 @@ _chimneysweep_complete() {
   if (( COMP_CWORD > 0 )); then
     prev="${COMP_WORDS[COMP_CWORD-1]}"
   fi
-  opts="--help -h --silent --basic --debug1 --model-override= --model --reasoning-effort --workflow= --dry-run --json"
+  opts="--help -h --silent --basic --debug1 --model-override= --model --reasoning-effort --workflow= --cycle-mode= --dry-run --json"
   case "$prev" in
     --model)
       mapfile -t COMPREPLY < <(compgen -W "gpt-5.5 gpt-5.3-codex-spark" -- "$cur")
@@ -175,6 +175,10 @@ _chimneysweep_complete() {
       ;;
     --workflow=*)
       _upkeeper_complete_csv_value "$cur" "comment-review-apply comment-review comment review apply staged"
+      return 0
+      ;;
+    --cycle-mode=*)
+      _upkeeper_complete_csv_value "$cur" "auto combined separate"
       return 0
       ;;
   esac

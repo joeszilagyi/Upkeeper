@@ -25,7 +25,7 @@ CHIMNEYSWEEP_JSON="0"
 
 usage() {
   cat <<EOF
-Usage: ${0##*/} [--silent|--basic|--debug1] [--model-override=SPEC] [--model MODEL] [--reasoning-effort EFFORT] [--workflow=comment-review-apply|comment-review|comment|review|apply] [--cycle-mode=combined|separate] [--dry-run] [--json] [--help]
+Usage: ${0##*/} [--silent|--basic|--debug1] [--model-override=SPEC] [--model MODEL] [--reasoning-effort EFFORT] [--workflow=comment-review-apply|comment-review|comment|review|apply] [--cycle-mode=auto|combined|separate] [--dry-run] [--json] [--help]
 
 Script one issue-fix Upkeeper cycle:
   - run a no-backend control-plane audit guard before GitHub issue ranking
@@ -39,6 +39,7 @@ Script one issue-fix Upkeeper cycle:
   - default to a combined single-issue-fix Upkeeper invocation
   - support legacy separate-stage mode for read-only comment/review split via
     --workflow or --cycle-mode=separate
+  - run the legacy staged workflow as comment -> review -> apply
   - hand the selected issue to every stage as --fix-issue=NUMBER
   - request full pass/module coverage against the locked issue target
   - make comment/review stages source read-only and make apply work the bug
@@ -57,8 +58,8 @@ Flags:
                   Reasoning effort for --model (default: xhigh)
   --workflow=...  Legacy stage workflow: comment-review-apply (default when used),
                   comment-review, comment, review, or apply
-  --cycle-mode=...  Issue-fix cycle mode: combined (single invocation),
-                  separate (legacy per-stage invocation)
+  --cycle-mode=...  Issue-fix cycle mode: auto (default), combined
+                  (single invocation), or separate (legacy per-stage invocation)
   --dry-run       Print the selected issue and resolved Upkeeper command
   --json          Print the scripted selection JSON before launching
   --help          Show this help

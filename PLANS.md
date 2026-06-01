@@ -3,6 +3,39 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## ChimneySweep Combined Default Alignment
+
+Status: completed locally; pending PR CI after push
+
+Goal:
+- align ChimneySweep tests, help, docs, completion, and release notes with the
+  current combined single-invocation issue-fix default on PR #801
+- preserve explicit staged `comment -> review -> apply` coverage through
+  `--cycle-mode=separate` and legacy `--workflow=...`
+- clear the PR #801 local-validation blocker without launching backend Codex
+
+Constraints:
+- no live backend Codex validation
+- keep comment/review source-read-only and Genie Protocol documentation clear
+  for explicit staged runs
+- keep default combined behavior and legacy staged behavior both deterministic
+  in local tests
+
+Files likely touched:
+- `ChimneySweep`
+- `completions/upkeeper.bash`
+- `tests/chimneysweep_test.bash`
+- README and operator docs covering ChimneySweep
+- `tools/check_public_docs.sh`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/backlog_loop.sh`
+- `bash tests/chimneysweep_test.bash`
+- `tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Issues #739-#735: Validator Architecture And Contract Batch
 
 Status: completed locally; pending PR/CI on `backlog/20260601-validator-architecture-contracts`

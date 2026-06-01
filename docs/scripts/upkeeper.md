@@ -974,27 +974,33 @@ and exits 25. Otherwise it prefers security-class issues, then data-integrity
 issues, then the remaining queue ranked by containment title/tag signals,
 severity, and least-recently-touched age. The selected issue is handed to
 Upkeeper as `--fix-issue=NUMBER`, with `--prompt-pass=all` and all P24-P30
-review modules enabled. Its default workflow runs separate comment, review, and
-apply stages with `--issue-workflow-stage=comment|review|apply`, so the first
-two stages are source read-only and run backend Codex in a read-only repository
-sandbox, while the final stage owns implementation.
+review modules enabled. Its default workflow runs one combined
+single-issue-fix invocation. Use `--cycle-mode=separate`, or an explicit
+`--workflow=...`, to run the legacy `comment`, `review`, then `apply` workflow
+with `--issue-workflow-stage=comment|review|apply`; in that staged mode the
+first two stages are source read-only and run backend Codex in a read-only
+repository sandbox, while the final stage owns implementation.
 Before ranking GitHub issues, ChimneySweep reconciles unresolved Upkeeper
 automation obligations. If an obligation exists, ChimneySweep is repairing the
 automation system first, not skipping the issue queue accidentally. It should
 make that plain in terminal output by naming the prior automation failure and
 the mapped repair target file.
-Those stages use the Genie Protocol boundary: the wrapper fetches issue
-evidence before launch, backend Codex receives that packet only, direct
-`gh`/GitHub command access is blocked in the backend environment, comment/review
-issue text returns through a final-message draft block, and the wrapper performs
-issue comments or other GitHub side effects after validation. Wrapper-posted
-stage comments are visibly prefixed as `Upkeeper ChimneySweep proposal:` and
-`Upkeeper ChimneySweep review:` so they are distinguishable from human comments.
+Issue-fix launches use the Genie Protocol boundary: the wrapper fetches issue
+evidence before launch, backend Codex receives that packet only, and direct
+`gh`/GitHub command access is blocked in the backend environment. In staged
+mode, comment/review issue text returns through a final-message draft block,
+and the wrapper performs issue comments or other GitHub side effects after
+validation. Wrapper-posted stage comments are visibly prefixed as `Upkeeper
+ChimneySweep proposal:` and `Upkeeper ChimneySweep review:` so they are
+distinguishable from human comments.
 
 Use `CHIMNEYSWEEP_DRY_RUN=1 ./ChimneySweep` or `./ChimneySweep --dry-run` to
 print the resolved command without launching Codex. Its terminal verbosity flags
-match FlameOn: `--silent`, `--basic`, and `--debug1`; `--workflow=...` selects
-`comment-review-apply`, `comment-review`, `comment`, `review`, or `apply`.
+match FlameOn: `--silent`, `--basic`, and `--debug1`; `--cycle-mode=combined`
+forces the default single invocation, `--cycle-mode=separate` forces staged
+invocations, and `--workflow=...` selects `comment-review-apply`,
+`comment-review`, `comment`, `review`, or `apply` while also entering separate
+mode for compatibility.
 Both FlameOn and ChimneySweep accept `--model-override=5.5_xhigh`,
 `--model-override=5.3-codex-spark_xhigh`, or the shortcut form
 `--model gpt-5.3-codex-spark --reasoning-effort xhigh`; the selected override

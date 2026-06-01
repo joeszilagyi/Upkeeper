@@ -178,6 +178,248 @@ EOF
     " commands=$(IFS=,; printf '%s' "${GENIE_PROTOCOL_BLOCKED_COMMANDS[*]}")" >/dev/null
 }
 
+upkeeper_codex_positive_integer_or_zero() {
+  local value="${1:-0}"
+
+  [[ "$value" =~ ^[0-9]+$ ]] || {
+    printf '0\n'
+    return 0
+  }
+  printf '%s\n' "$value"
+}
+
+upkeeper_codex_exec_timeout_seconds() {
+  upkeeper_codex_positive_integer_or_zero "${CODEX_EXEC_TIMEOUT_SECONDS:-0}"
+}
+
+upkeeper_model_contact_ledger_path() {
+  printf '%s\n' "${CODEX_MODEL_CONTACT_LEDGER:-${ROOT_DIR:-$PWD}/runtime/upkeeper-model-contacts.jsonl}"
+}
+
+upkeeper_model_contact_work_key() {
+  if [[ -n "${CODEX_ISSUE_FIX_NUMBER:-}" ]]; then
+    printf 'issue:%s\n' "$CODEX_ISSUE_FIX_NUMBER"
+    return 0
+  fi
+  if [[ -n "${UPKEEPER_AUTOMATION_OBLIGATION_ID:-}" ]]; then
+    printf 'obligation:%s\n' "$UPKEEPER_AUTOMATION_OBLIGATION_ID"
+    return 0
+  fi
+  if [[ -n "${CODEX_PARENT_CYCLE_ID:-}" ]]; then
+    printf 'cycle:%s\n' "$CODEX_PARENT_CYCLE_ID"
+    return 0
+  fi
+  printf 'cycle:%s\n' "${CYCLE_ID:-unknown}"
+}
+
+upkeeper_model_contact_budget_class() {
+  local label="${1:-}"
+
+  case "$label:${CODEX_ATTEMPT_ROLE:-primary}:${UPKEEPER_TASK_PROFILE_GRADE:-}" in
+    postmortem.*:*|*:fallback:*|*:*:recovery)
+      printf 'recovery\n'
+      ;;
+    *:*:contract-security|*:*:data-integrity|*:*:maximum)
+      printf 'maximum\n'
+      ;;
+    *)
+      printf 'normal\n'
+      ;;
+  esac
+}
+
+upkeeper_model_contact_budget_for_class() {
+  case "${1:-normal}" in
+    recovery)
+      upkeeper_codex_positive_integer_or_zero "${CODEX_MODEL_CONTACT_BUDGET_RECOVERY:-3}"
+      ;;
+    maximum)
+      upkeeper_codex_positive_integer_or_zero "${CODEX_MODEL_CONTACT_BUDGET_MAXIMUM:-8}"
+      ;;
+    *)
+      upkeeper_codex_positive_integer_or_zero "${CODEX_MODEL_CONTACT_BUDGET_NORMAL:-4}"
+      ;;
+  esac
+}
+
+upkeeper_model_contact_count() {
+  local ledger_path="$1"
+  local work_key="$2"
+
+  [[ -f "$ledger_path" ]] || {
+    printf '0\n'
+    return 0
+  }
+  python3 - "$ledger_path" "$work_key" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+work_key = sys.argv[2]
+count = 0
+try:
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("work_key") == work_key and record.get("contact_executed") is True:
+            count += 1
+except OSError:
+    count = 0
+print(count)
+PY
+}
+
+upkeeper_model_contact_record() {
+  local label="$1"
+  local model="$2"
+  local effort="$3"
+  local exit_status="$4"
+  local elapsed_seconds="$5"
+  local timeout_flag="$6"
+  local contact_executed="$7"
+  local budget_class="$8"
+  local budget_limit="$9"
+  local budget_before="${10}"
+  local reason="${11:-}"
+  local ledger_path parent
+
+  ledger_path="$(upkeeper_model_contact_ledger_path)"
+  parent="$(dirname -- "$ledger_path")"
+  mkdir -p -- "$parent" || return 0
+  chmod 700 "$parent" 2>/dev/null || true
+  python3 - \
+    "$ledger_path" \
+    "${CYCLE_ID:-unknown}" \
+    "$(upkeeper_model_contact_work_key)" \
+    "$label" \
+    "$model" \
+    "$effort" \
+    "$exit_status" \
+    "$elapsed_seconds" \
+    "$timeout_flag" \
+    "$contact_executed" \
+    "$budget_class" \
+    "$budget_limit" \
+    "$budget_before" \
+    "${UPKEEPER_TASK_PROFILE_GRADE:-unknown}" \
+    "${CODEX_FALLBACK_TRIGGER:-}" \
+    "$reason" <<'PY' || return 0
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+(
+    path,
+    cycle_id,
+    work_key,
+    label,
+    model,
+    effort,
+    exit_status,
+    elapsed_seconds,
+    timeout_flag,
+    contact_executed,
+    budget_class,
+    budget_limit,
+    budget_before,
+    task_grade,
+    fallback_trigger,
+    reason,
+) = sys.argv[1:17]
+
+record = {
+    "schema": "upkeeper.model_contact.v1",
+    "created_at": datetime.now(timezone.utc).isoformat(),
+    "cycle_id": cycle_id,
+    "work_key": work_key,
+    "phase": label,
+    "model": model,
+    "effort": effort,
+    "exit_status": int(exit_status) if exit_status.isdigit() else exit_status,
+    "elapsed_seconds": int(elapsed_seconds) if elapsed_seconds.isdigit() else elapsed_seconds,
+    "timeout": timeout_flag == "1",
+    "contact_executed": contact_executed == "1",
+    "budget_class": budget_class,
+    "budget_limit": int(budget_limit) if budget_limit.isdigit() else budget_limit,
+    "budget_contacts_before": int(budget_before) if budget_before.isdigit() else budget_before,
+    "task_grade": task_grade,
+    "fallback_trigger": fallback_trigger,
+    "reason": reason,
+}
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+try:
+    os.chmod(path, 0o600)
+except OSError:
+    pass
+PY
+}
+
+upkeeper_model_contact_extract_model_effort() {
+  local default_model="${CODEX_MODEL:-unknown}"
+  local default_effort="${CODEX_REASONING_EFFORT:-unknown}"
+  local arg next
+  local -a args=("$@")
+
+  local idx=0
+  while [[ "$idx" -lt "${#args[@]}" ]]; do
+    arg="${args[$idx]}"
+    next="${args[$((idx + 1))]:-}"
+    case "$arg" in
+      -m|--model)
+        [[ -n "$next" ]] && default_model="$next"
+        idx=$((idx + 2))
+        continue
+        ;;
+      -c)
+        if [[ "$next" == model_reasoning_effort=* ]]; then
+          default_effort="${next#model_reasoning_effort=}"
+        fi
+        idx=$((idx + 2))
+        continue
+        ;;
+      -cmodel_reasoning_effort=*)
+        default_effort="${arg#-cmodel_reasoning_effort=}"
+        ;;
+    esac
+    idx=$((idx + 1))
+  done
+  printf '%s\t%s\n' "$default_model" "$default_effort"
+}
+
+upkeeper_model_contact_preflight() {
+  local label="$1"
+  local model="$2"
+  local effort="$3"
+  local transcript_file="$4"
+  local budget_class budget_limit ledger_path work_key contact_count
+
+  budget_class="$(upkeeper_model_contact_budget_class "$label")"
+  budget_limit="$(upkeeper_model_contact_budget_for_class "$budget_class")"
+  ledger_path="$(upkeeper_model_contact_ledger_path)"
+  work_key="$(upkeeper_model_contact_work_key)"
+  contact_count="$(upkeeper_model_contact_count "$ledger_path" "$work_key")"
+
+  if [[ "${CODEX_MODEL_CONTACT_BUDGET_BYPASS:-0}" != "1" && "$budget_limit" -gt 0 && "$contact_count" -ge "$budget_limit" ]]; then
+    {
+      printf 'Codex execution skipped before launch: model contact budget exceeded.\n'
+      printf 'phase: %s\nmodel: %s\neffort: %s\nwork_key: %s\nbudget_class: %s\nbudget_limit: %s\ncontacts_before: %s\n' \
+        "$label" "$model" "$effort" "$work_key" "$budget_class" "$budget_limit" "$contact_count"
+    } >"$transcript_file"
+    log_line "ERROR" "codex.contact_budget.exceeded label=$label model=$model effort=$effort work_key=$(shell_quote "$work_key") budget_class=$budget_class limit=$budget_limit contacts_before=$contact_count action=blocked"
+    upkeeper_model_contact_record "$label" "$model" "$effort" 88 0 0 0 "$budget_class" "$budget_limit" "$contact_count" "budget_exceeded"
+    return 88
+  fi
+
+  printf '%s\t%s\t%s\n' "$budget_class" "$budget_limit" "$contact_count"
+}
+
 run_codex_exec_capture() {
   local label="$1"
   local transcript_file="$2"
@@ -185,9 +427,14 @@ run_codex_exec_capture() {
   local codex_rc
   local tee_rc=0
   local filter_rc=0
+  local timeout_seconds timeout_kill_after timeout_flag=0 start_epoch end_epoch elapsed_seconds
+  local contact_model contact_effort contact_budget_info contact_budget_class contact_budget_limit contact_budget_before
   local -a pipe_status
   local -a genie_env
+  local -a command_args
+  local -a run_command
   shift 3
+  command_args=("$@")
 
   prepare_genie_protocol_env
   genie_env=(
@@ -206,19 +453,41 @@ run_codex_exec_capture() {
     GIT_TERMINAL_PROMPT=0
   )
 
+  IFS=$'\t' read -r contact_model contact_effort < <(upkeeper_model_contact_extract_model_effort "${command_args[@]}")
+  if ! contact_budget_info="$(upkeeper_model_contact_preflight "$label" "$contact_model" "$contact_effort" "$transcript_file")"; then
+    return $?
+  fi
+  IFS=$'\t' read -r contact_budget_class contact_budget_limit contact_budget_before <<<"$contact_budget_info"
+
+  timeout_seconds="$(upkeeper_codex_exec_timeout_seconds)"
+  timeout_kill_after="$(upkeeper_codex_positive_integer_or_zero "${CODEX_EXEC_TIMEOUT_KILL_AFTER_SECONDS:-10}")"
+  run_command=("${genie_env[@]}" "${command_args[@]}")
+  if [[ "$timeout_seconds" -gt 0 ]]; then
+    run_command=(timeout --kill-after="${timeout_kill_after}s" "$timeout_seconds" "${run_command[@]}")
+  fi
+  start_epoch="${EPOCHSECONDS:-$(date '+%s')}"
+
   if terminal_wants_full_output; then
-    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 | tee "$transcript_file"
+    "${run_command[@]}" <"$stdin_file" 2>&1 | tee "$transcript_file"
     pipe_status=("${PIPESTATUS[@]}")
     codex_rc="${pipe_status[0]}"
     tee_rc="${pipe_status[1]}"
   else
-    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 | tee "$transcript_file" | codex_live_output_filter "$label"
+    "${run_command[@]}" <"$stdin_file" 2>&1 | tee "$transcript_file" | codex_live_output_filter "$label"
     pipe_status=("${PIPESTATUS[@]}")
     codex_rc="${pipe_status[0]}"
     tee_rc="${pipe_status[1]}"
     filter_rc="${pipe_status[2]}"
     emit_codex_transcript_summary "$label" "$transcript_file" "$codex_rc"
   fi
+  end_epoch="${EPOCHSECONDS:-$(date '+%s')}"
+  elapsed_seconds="$((end_epoch - start_epoch))"
+  [[ "$elapsed_seconds" -ge 0 ]] || elapsed_seconds=0
+  if [[ "$timeout_seconds" -gt 0 && "$codex_rc" -eq 124 ]]; then
+    timeout_flag=1
+    log_line "ERROR" "codex.exec_timeout label=$label timeout_seconds=$timeout_seconds model=$contact_model effort=$contact_effort transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1"
+  fi
+  upkeeper_model_contact_record "$label" "$contact_model" "$contact_effort" "$codex_rc" "$elapsed_seconds" "$timeout_flag" 1 "$contact_budget_class" "$contact_budget_limit" "$contact_budget_before" ""
 
   if [[ "$tee_rc" -ne 0 ]]; then
     log_line "ERROR" "codex.transcript_capture_failed label=$label transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1 tee_exit=$tee_rc codex_exit=$codex_rc" || true
@@ -1630,7 +1899,7 @@ parse_args() {
 require_commands() {
   local missing=0
   local cmd
-  for cmd in awk cat chmod cut date df env find git grep jq ln mkdir mktemp mv ps python3 rm rmdir sed sort tail tee tr wc; do
+  for cmd in awk cat chmod cut date df env find git grep jq ln mkdir mktemp mv ps python3 rm rmdir sed sort tail tee timeout tr wc; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       log_line "ERROR" "required command missing: $cmd docs=docs/dependencies.md action=install_dependency"
       missing=1

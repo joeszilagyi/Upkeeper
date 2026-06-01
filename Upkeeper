@@ -432,6 +432,17 @@ CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
 CODEX_MODEL="${CODEX_MODEL:-gpt-5.3-codex-spark}"
 CODEX_REASONING_EFFORT="${CODEX_REASONING_EFFORT:-xhigh}"
 CODEX_MODE_STRING="${CODEX_MODE:---sandbox workspace-write}"
+CODEX_EXEC_TIMEOUT_SECONDS="${CODEX_EXEC_TIMEOUT_SECONDS:-7200}"
+CODEX_EXEC_TIMEOUT_KILL_AFTER_SECONDS="${CODEX_EXEC_TIMEOUT_KILL_AFTER_SECONDS:-10}"
+CODEX_MODEL_CONTACT_LEDGER="${CODEX_MODEL_CONTACT_LEDGER:-$ROOT_DIR/runtime/upkeeper-model-contacts.jsonl}"
+CODEX_MODEL_CONTACT_BUDGET_NORMAL="${CODEX_MODEL_CONTACT_BUDGET_NORMAL:-4}"
+CODEX_MODEL_CONTACT_BUDGET_RECOVERY="${CODEX_MODEL_CONTACT_BUDGET_RECOVERY:-3}"
+CODEX_MODEL_CONTACT_BUDGET_MAXIMUM="${CODEX_MODEL_CONTACT_BUDGET_MAXIMUM:-8}"
+CODEX_MODEL_CONTACT_BUDGET_BYPASS="${CODEX_MODEL_CONTACT_BUDGET_BYPASS:-0}"
+UPKEEPER_TASK_PROFILE_ENABLED="${UPKEEPER_TASK_PROFILE_ENABLED:-1}"
+UPKEEPER_TASK_PROFILE_AUTO_EFFORT="${UPKEEPER_TASK_PROFILE_AUTO_EFFORT:-1}"
+UPKEEPER_TASK_PROFILE_GRADE="${UPKEEPER_TASK_PROFILE_GRADE:-}"
+UPKEEPER_TASK_PROFILE_VALIDATION_GRADE="${UPKEEPER_TASK_PROFILE_VALIDATION_GRADE:-}"
 CODEX_FALLBACK_ENABLED="${CODEX_FALLBACK_ENABLED:-1}"
 CODEX_FALLBACK_MODEL="${CODEX_FALLBACK_MODEL:-gpt-5.5}"
 CODEX_FALLBACK_REASONING_EFFORT="${CODEX_FALLBACK_REASONING_EFFORT:-xhigh}"
@@ -1272,9 +1283,14 @@ run_codex_exec_capture() {
   local codex_rc
   local tee_rc=0
   local filter_rc=0
+  local timeout_seconds timeout_kill_after timeout_flag=0 start_epoch end_epoch elapsed_seconds
+  local contact_model contact_effort contact_budget_info contact_budget_class contact_budget_limit contact_budget_before
   local -a pipe_status
   local -a genie_env
+  local -a command_args
+  local -a run_command
   shift 3
+  command_args=("$@")
 
   prepare_genie_protocol_env
   genie_env=(
@@ -1293,8 +1309,22 @@ run_codex_exec_capture() {
     GIT_TERMINAL_PROMPT=0
   )
 
+  IFS=$'\t' read -r contact_model contact_effort < <(upkeeper_model_contact_extract_model_effort "${command_args[@]}")
+  if ! contact_budget_info="$(upkeeper_model_contact_preflight "$label" "$contact_model" "$contact_effort" "$transcript_file")"; then
+    return $?
+  fi
+  IFS=$'\t' read -r contact_budget_class contact_budget_limit contact_budget_before <<<"$contact_budget_info"
+
+  timeout_seconds="$(upkeeper_codex_exec_timeout_seconds)"
+  timeout_kill_after="$(upkeeper_codex_positive_integer_or_zero "${CODEX_EXEC_TIMEOUT_KILL_AFTER_SECONDS:-10}")"
+  run_command=("${genie_env[@]}" "${command_args[@]}")
+  if [[ "$timeout_seconds" -gt 0 ]]; then
+    run_command=(timeout --kill-after="${timeout_kill_after}s" "$timeout_seconds" "${run_command[@]}")
+  fi
+  start_epoch="${EPOCHSECONDS:-$(date '+%s')}"
+
   if terminal_wants_full_output; then
-    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 |
+    "${run_command[@]}" <"$stdin_file" 2>&1 |
       tee "$transcript_file" |
       upkeeper_live_output_custody_filter
     pipe_status=("${PIPESTATUS[@]}")
@@ -1302,7 +1332,7 @@ run_codex_exec_capture() {
     tee_rc="${pipe_status[1]}"
     filter_rc="${pipe_status[2]}"
   else
-    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 |
+    "${run_command[@]}" <"$stdin_file" 2>&1 |
       tee "$transcript_file" |
       codex_live_output_filter "$label" 2> >(upkeeper_live_output_custody_filter >&2)
     pipe_status=("${PIPESTATUS[@]}")
@@ -1311,6 +1341,14 @@ run_codex_exec_capture() {
     filter_rc="${pipe_status[2]}"
     emit_codex_transcript_summary "$label" "$transcript_file" "$codex_rc"
   fi
+  end_epoch="${EPOCHSECONDS:-$(date '+%s')}"
+  elapsed_seconds="$((end_epoch - start_epoch))"
+  [[ "$elapsed_seconds" -ge 0 ]] || elapsed_seconds=0
+  if [[ "$timeout_seconds" -gt 0 && "$codex_rc" -eq 124 ]]; then
+    timeout_flag=1
+    log_line "ERROR" "codex.exec_timeout label=$label timeout_seconds=$timeout_seconds model=$contact_model effort=$contact_effort transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1"
+  fi
+  upkeeper_model_contact_record "$label" "$contact_model" "$contact_effort" "$codex_rc" "$elapsed_seconds" "$timeout_flag" 1 "$contact_budget_class" "$contact_budget_limit" "$contact_budget_before" ""
 
   if [[ "$tee_rc" -ne 0 ]]; then
     log_line "ERROR" "codex.transcript_capture_failed label=$label transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1 tee_exit=$tee_rc codex_exit=$codex_rc" || true
@@ -3799,6 +3837,15 @@ launch_screen_fallback_loop() {
   upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_CREATED_AT "${CODEX_ISSUE_FIX_CREATED_AT:-}"
   upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_BODY "${CODEX_ISSUE_FIX_BODY:-}"
   upkeeper_append_command_env_line runner_env_lines CODEX_ISSUE_FIX_COMMENTS_JSON "${CODEX_ISSUE_FIX_COMMENTS_JSON:-[]}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_EXEC_TIMEOUT_SECONDS "${CODEX_EXEC_TIMEOUT_SECONDS:-0}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_EXEC_TIMEOUT_KILL_AFTER_SECONDS "${CODEX_EXEC_TIMEOUT_KILL_AFTER_SECONDS:-10}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_MODEL_CONTACT_LEDGER "${CODEX_MODEL_CONTACT_LEDGER:-}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_MODEL_CONTACT_BUDGET_NORMAL "${CODEX_MODEL_CONTACT_BUDGET_NORMAL:-4}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_MODEL_CONTACT_BUDGET_RECOVERY "${CODEX_MODEL_CONTACT_BUDGET_RECOVERY:-3}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_MODEL_CONTACT_BUDGET_MAXIMUM "${CODEX_MODEL_CONTACT_BUDGET_MAXIMUM:-8}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_MODEL_CONTACT_BUDGET_BYPASS "${CODEX_MODEL_CONTACT_BUDGET_BYPASS:-0}"
+  upkeeper_append_command_env_line runner_env_lines UPKEEPER_TASK_PROFILE_ENABLED "${UPKEEPER_TASK_PROFILE_ENABLED:-1}"
+  upkeeper_append_command_env_line runner_env_lines UPKEEPER_TASK_PROFILE_AUTO_EFFORT "${UPKEEPER_TASK_PROFILE_AUTO_EFFORT:-1}"
   upkeeper_append_command_env_line runner_env_lines CODEX_TOOL_FAILURE_QUEUE_DIR "${CODEX_TOOL_FAILURE_QUEUE_DIR:-}"
   upkeeper_append_command_env_line runner_env_lines CODEX_TOOL_FAILURE_QUEUE_BYPASS "${CODEX_TOOL_FAILURE_QUEUE_BYPASS:-0}"
   upkeeper_append_command_env_line runner_env_lines RUN_SELECTED_REVIEW_PATH "${RUN_SELECTED_REVIEW_PATH:-}"

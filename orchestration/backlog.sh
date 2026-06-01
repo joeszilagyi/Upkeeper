@@ -1118,7 +1118,6 @@ PY
 
 backlog_resolve_stale_quota_obligations() {
   local model="$1"
-  local target_file="$2"
   local obligation_root open_dir resolved_dir output count
 
   obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
@@ -1128,7 +1127,7 @@ backlog_resolve_stale_quota_obligations() {
   mkdir -p -- "$resolved_dir" || return 0
   chmod 700 "$obligation_root" "$open_dir" "$resolved_dir" 2>/dev/null || true
   output="$(
-    python3 - "$open_dir" "$resolved_dir" "$model" "$target_file" <<'PY'
+    python3 - "$open_dir" "$resolved_dir" "$model" <<'PY'
 import json
 import os
 import pathlib
@@ -1138,7 +1137,6 @@ from datetime import datetime
 open_dir = pathlib.Path(sys.argv[1])
 resolved_dir = pathlib.Path(sys.argv[2])
 model = sys.argv[3]
-expected_target_file = (sys.argv[4] if len(sys.argv) > 4 else "").strip()
 
 
 def now_local():
@@ -1173,15 +1171,7 @@ for path in sorted(open_dir.glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         continue
-    if data.get("kind") != "stale_quota_evidence":
-        continue
-    evidence_target_model = data.get("target_model")
-    target_file_value = (data.get("target_file") or data.get("repair_target_file") or data.get("target") or "").strip()
-    if evidence_target_model:
-        if evidence_target_model != model:
-            continue
-    elif expected_target_file and target_file_value and \
-            os.path.normpath(target_file_value) != os.path.normpath(expected_target_file):
+    if data.get("kind") != "stale_quota_evidence" or data.get("target_model") != model:
         continue
     data["status"] = "resolved"
     data["resolved_at"] = now_local()
@@ -2765,7 +2755,7 @@ quota_preflight_allows_backlog_run() {
       return 4
     fi
   else
-    backlog_resolve_stale_quota_obligations "$CODEX_MODEL" "${SCRIPT_PATH#"$ROOT_DIR"/}"
+    backlog_resolve_stale_quota_obligations "$CODEX_MODEL"
   fi
 
   if [[ "$primary_decision" == "stop" || "$secondary_decision" == "stop" ]]; then

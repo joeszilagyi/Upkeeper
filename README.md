@@ -371,6 +371,9 @@ It does not launch real Codex backend work and does not upload runtime
 artifacts by default.
 `tools/run_tests.sh` is the shared unit-test entrypoint for local and CI use;
 pass `--serial` when debugging a single ordered suite locally.
+`tools/validate_upkeeper.sh --architecture-report` prints the report-only
+ownership, hot-loop, and inline-Python architecture lint described in
+[`docs/architecture-lint.md`](docs/architecture-lint.md).
 
 Runtime/tool dependencies are tracked in [`docs/dependencies.md`](docs/dependencies.md).
 GitHub's dependency graph should stay enabled, but it is expected to show no

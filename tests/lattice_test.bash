@@ -6,6 +6,8 @@ LATTICE_TOOL="$ROOT_DIR/tools/upkeeper_lattice.py"
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-lattice-test.XXXXXX")"
 trap 'rm -r "$TEST_TMP_ROOT" 2>/dev/null || true' EXIT
 
+source "$ROOT_DIR/tests/lib/lattice_validator_contract.bash"
+
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
@@ -2612,6 +2614,7 @@ if int(row[0]) != 0:
 PY
 }
 
+test_lattice_validator_contract
 test_lattice_cli_contracts
 test_repository_identity_survives_origin_url_change
 test_git_status_xy_preserves_index_worktree_columns

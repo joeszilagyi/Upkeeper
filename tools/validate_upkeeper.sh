@@ -462,6 +462,8 @@ PY
 }
 
 check_issue_fix_private_packet_contract() {
+  local temp_dir
+
   log "checking issue-fix private packet contract"
   grep -Fq 'UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL' "$ROOT_DIR/Upkeeper.conf" || fail "Upkeeper.conf does not expose the private issue packet gate"
   grep -Fq 'UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL' "$ROOT_DIR/configurations/default.conf" || fail "default config does not expose the private issue packet gate"
@@ -474,7 +476,15 @@ check_issue_fix_private_packet_contract() {
   if grep -Fq 'url=$(shell_quote "$CODEX_ISSUE_FIX_URL") title=$(shell_quote "$CODEX_ISSUE_FIX_TITLE")' "$ROOT_DIR/lib/upkeeper/codex_io.bash"; then
     fail "issue-fix selection log still emits raw issue URL/title text"
   fi
-  bash tests/bug_fix_batch_271_266_265_test.bash
+
+  temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-issue-private-contract.XXXXXX")"
+  (
+    PROJECT_ROOT="$ROOT_DIR"
+    TEST_TMP_ROOT="$temp_dir"
+    source "$ROOT_DIR/tests/lib/issue_fix_private_packet_contract.bash"
+    run_issue_fix_private_packet_contract_tests
+  )
+  rm -rf -- "$temp_dir"
 }
 
 check_authority_control_docs_contract() {
@@ -951,6 +961,12 @@ check_architecture_lint_contract() {
     fail "architecture lint no longer reports function text rewriting"
   grep -Fq 'python-loop-subprocess' tools/check_architecture.py ||
     fail "architecture lint no longer reports Python loop subprocess risks"
+  grep -Fq "Inline Python Policy" docs/architecture-lint.md ||
+    fail "architecture lint docs missing inline Python policy"
+  [[ -r tools/upkeeper_lib/contract_manifest.py ]] ||
+    fail "importable Upkeeper Python helper package is missing the contract manifest module"
+  grep -Fq "tools/validate_upkeeper.sh --architecture-report" README.md ||
+    fail "README missing architecture report command"
   if grep -Eq '^compile_prompt[[:space:]]*\(\)' Upkeeper; then
     fail "Upkeeper still defines compile_prompt instead of using the prompt_compile module"
   fi
@@ -961,6 +977,41 @@ check_architecture_lint_contract() {
     fail "architecture lint report missing summary"
   ! grep -Fq 'ERROR function-shadow' "$report_file" ||
     fail "architecture lint has unallowlisted duplicate Bash function ownership"
+}
+
+check_contract_manifest_contract() {
+  log "checking manifest-backed contract checker"
+  [[ -x tools/check_contract_manifest.py ]] || fail "contract manifest checker is missing or not executable"
+  [[ -r contracts/public_docs.tsv ]] || fail "public docs contract manifest is missing"
+  grep -Fq 'tools/check_contract_manifest.py --root "$ROOT_DIR" contracts/public_docs.tsv' tools/check_public_docs.sh ||
+    fail "public docs checker does not consume the public docs contract manifest"
+  tools/check_contract_manifest.py --root "$ROOT_DIR" contracts/public_docs.tsv >/dev/null ||
+    fail "public docs contract manifest does not pass"
+  bash tests/contract_manifest_test.bash
+}
+
+check_lattice_selection_profile_contract() {
+  local profile_file
+
+  log "checking Lattice selection profile contract"
+  [[ -x tools/profile_lattice_selection.py ]] || fail "Lattice selection profile tool is missing or not executable"
+  profile_file="$(mktemp "$VALIDATION_TMP_ROOT/lattice-selection-profile.XXXXXX")"
+  tools/profile_lattice_selection.py --mode max-cover >"$profile_file"
+  python3 - "$profile_file" <<'PY' || fail "Lattice selection profile output is not valid budget JSON"
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["operation"] == "selection-candidates", data
+assert data["status"] == "ok", data
+assert data["candidate_count"] > 0, data
+assert data["eligible_count"] > 0, data
+assert isinstance(data["subprocess_run_count"], int), data
+assert isinstance(data["subprocess_check_output_count"], int), data
+assert isinstance(data["wall_ms"], int), data
+assert data["budget"]["enforced"] is False, data
+PY
+  bash tests/lattice_selection_profile_test.bash
 }
 
 check_backlog_launcher_contract() {
@@ -5915,6 +5966,19 @@ check_tool_failure_queue() {
   local temp_dir transcript addressed_transcript clean_transcript marker_path open_count resolved_count marker_id tool_failure_queue_signing_key
 
   log "checking tool failure queue"
+  grep -Fq 'tool_failure_queue_finalize_run_core' lib/upkeeper/tool_failure_queue.bash ||
+    fail "tool failure queue module no longer owns finalize core"
+  grep -Fq 'upkeeper_tool_failure_queue_prepare_secure_dirs' lib/upkeeper/tool_failure_queue.bash ||
+    fail "tool failure queue module no longer owns secure-dir preparation"
+  grep -Fq 'tool_failure_queue_open_custody_log' lib/upkeeper/runtime_foundation.bash ||
+    fail "runtime logging no longer delegates queue custody classification to the queue module"
+  if grep -Fq 'declare -f tool_failure_queue_finalize_run' Upkeeper; then
+    fail "root Upkeeper still function-copies tool_failure_queue_finalize_run"
+  fi
+  if grep -Fq 'declare -f log_line' Upkeeper; then
+    fail "root Upkeeper still function-copies log_line for queue custody"
+  fi
+
   temp_dir="$(mktemp -d /tmp/upkeeper-tool-failure-queue.XXXXXX)"
   transcript="$temp_dir/failure-transcript.log"
   clean_transcript="$temp_dir/clean-transcript.log"
@@ -6384,6 +6448,8 @@ EOF
 }
 
 check_lattice_contract() {
+  local temp_dir
+
   log "checking Upkeeper Lattice"
   grep -Fq "lattice_unavailable_detail_summary" lib/upkeeper/lattice.bash ||
     fail "Lattice wrapper no longer summarizes unavailable details before logging"
@@ -6395,7 +6461,17 @@ check_lattice_contract() {
     fail "operator docs no longer identify Lattice replacement evidence"
   ! grep -Fq 'detail=$(shell_quote "$detail")' lib/upkeeper/lattice.bash ||
     fail "Lattice wrapper still logs raw unavailable detail payloads"
-  bash tests/lattice_test.bash
+
+  temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-lattice-contract.XXXXXX")"
+  (
+    ROOT_DIR="$ROOT_DIR"
+    PROJECT_ROOT="$ROOT_DIR"
+    TEST_TMP_ROOT="$temp_dir"
+    source "$ROOT_DIR/tests/lib/lattice_validator_contract.bash"
+    test_lattice_validator_contract
+  )
+  rm -rf -- "$temp_dir"
+
   if rg -n '\b(curl|gh|requests|urllib3|urllib\.request|urllib\.error|http\.client|GITHUB_TOKEN)\b' tools/upkeeper_lattice.py lib/upkeeper/lattice.bash >/dev/null; then
     fail "Lattice implementation contains a default network/token surface"
   fi
@@ -8009,6 +8085,8 @@ run_check validation_mode_boundary_contract check_validation_mode_boundary_contr
 run_check test_invocation_mode_contract check_test_invocation_mode_contract
 run_check time_budget_contract check_time_budget_contract
 run_check architecture_lint_contract check_architecture_lint_contract
+run_check contract_manifest_contract check_contract_manifest_contract
+run_check lattice_selection_profile_contract check_lattice_selection_profile_contract
 run_check wrapper_contract_tests check_wrapper_contract_tests
 run_check public_docs_policy check_public_docs_policy
 run_check private_artifact_umask_contract check_private_artifact_umask_contract

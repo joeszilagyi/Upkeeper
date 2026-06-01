@@ -277,6 +277,10 @@ backlog_attention_marker_for_line() {
   fi
 
   case "$payload" in
+    *"working tree is not clean; finish or stash local changes before running backlog.sh"*)
+      printf 'ACTION\n'
+      return 0
+      ;;
     *"backlog: ERROR:"*|*"[ERROR]"*)
       printf 'PAGE\n'
       return 0

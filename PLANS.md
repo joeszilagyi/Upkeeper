@@ -5,7 +5,7 @@ Upkeeper changes. Keep entries brief and update their status before merge.
 
 ## Issues #754-#750: High-Priority Time-Savings Batch
 
-Status: in progress
+Status: completed locally; pending PR/CI
 
 Goal:
 - close the next five high-priority time-savings bugs by reducing idle waits,

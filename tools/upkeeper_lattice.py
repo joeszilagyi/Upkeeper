@@ -14692,7 +14692,10 @@ def command_service(args: argparse.Namespace) -> int:
         stdout = io.StringIO()
         stderr = io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            rc = main([*base, *command_args])
+            try:
+                rc = main([*base, *command_args])
+            except SystemExit as exc:
+                rc = int(exc.code or EXIT_SUCCESS)
         output = stdout.getvalue()
         error = stderr.getvalue()
         if error:

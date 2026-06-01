@@ -933,9 +933,17 @@ check_backlog_launcher_contract() {
   grep -Fq 'waiting_on_pr_checks' orchestration/backlog.sh || fail "backlog launcher does not keep PR-check waits under the owner lease"
   grep -Fq 'gh pr checks "$pr_number" --watch=false' orchestration/backlog.sh || fail "backlog launcher PR check watcher is not local polling"
   grep -Fq 'BACKLOG_PR_CHECK_PROGRESS="${BACKLOG_PR_CHECK_PROGRESS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default PR-check progress on"
+  grep -Fq 'BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-1800}"' orchestration/backlog.sh || fail "backlog launcher does not default PR-check waiting to a bounded timeout"
   grep -Fq 'BACKLOG_PR_CHECKS_PROGRESS_SUMMARY' orchestration/backlog.sh || fail "backlog launcher does not preserve PR-check progress details for pending polls"
   grep -Fq 'gh run view "$run_id" --json jobs' orchestration/backlog.sh || fail "backlog launcher does not use local GitHub Actions job metadata for PR-check progress"
+  grep -Fq 'backlog_record_pr_check_timeout' orchestration/backlog.sh || fail "backlog launcher does not record PR-check timeout evidence"
   grep -Fq 'BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE="${BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default PR-check gating before next issue"
+  grep -Fq 'BACKLOG_VALIDATION_AUTHORITY_LOW_RISK="${BACKLOG_VALIDATION_AUTHORITY_LOW_RISK:-local-green-async-ci}"' orchestration/backlog.sh ||
+    fail "backlog launcher does not define local-green async CI validation authority"
+  grep -Fq 'backlog_record_validation_authority_for_head' orchestration/backlog.sh ||
+    fail "backlog launcher does not persist validation-authority decisions after local green commits"
+  grep -Fq 'local-green async CI' orchestration/backlog.sh ||
+    fail "backlog launcher does not explain async-CI validation authority skips"
   grep -Fq 'backlog_ensure_pr_checks_allow_next_issue' orchestration/backlog.sh || fail "backlog launcher does not gate issue selection on current PR checks"
   grep -Fq 'per-bug validation: python compile' orchestration/backlog.sh || fail "backlog launcher per-bug validation does not compile changed Python files"
   grep -Fq 'per-bug validation: lattice focused coverage (tests/lattice_test.bash)' orchestration/backlog.sh || fail "backlog launcher per-bug validation does not run focused Lattice coverage"
@@ -1045,6 +1053,21 @@ PY
   [[ -x orchestration/backlog_loop.sh ]] || fail "backlog safe loop wrapper is not executable"
   grep -Fq 'CODEX_TERMINAL_VERBOSITY="${BACKLOG_CODEX_TERMINAL_VERBOSITY:-${CODEX_TERMINAL_VERBOSITY:-quiet}}"' orchestration/backlog.sh || fail "backlog launcher does not default to quiet terminal output"
   grep -Fq 'backlog_loop_timestamp_stream >>"$log_file"' orchestration/backlog_loop.sh || fail "backlog loop wrapper does not detach stdin and record timestamped output"
+  grep -Fq 'BACKLOG_LOOP_BUSY_SLEEP_SECONDS' orchestration/backlog_loop.sh || fail "backlog loop wrapper does not expose adaptive busy sleep"
+  grep -Fq 'BACKLOG_LOOP_DISPOSITION_FILE' orchestration/backlog_loop.sh || fail "backlog loop wrapper does not read per-cycle disposition"
+  grep -Fq 'backlog_write_loop_disposition "work_done"' orchestration/backlog.sh ||
+    fail "backlog launcher does not write productive cycle disposition for the outer loop"
+  BACKLOG_LOOP_SOURCE_ONLY=1 bash -lc '
+    set -euo pipefail
+    cd "$1"
+    source ./orchestration/backlog_loop.sh
+    printf "disposition\twork_done\nreason\tfixture\n" >"$2/work.tsv"
+    BACKLOG_LOOP_SLEEP_SECONDS=60
+    BACKLOG_LOOP_BUSY_SLEEP_SECONDS=0
+    export BACKLOG_LOOP_SLEEP_SECONDS BACKLOG_LOOP_BUSY_SLEEP_SECONDS
+    [[ "$(backlog_loop_sleep_plan "$2/work.tsv")" == $'"'"'0\twork_done\tfixture'"'"' ]]
+    [[ "$(backlog_loop_sleep_plan "$2/missing.tsv")" == $'"'"'60\tno_disposition\tmissing_disposition'"'"' ]]
+  ' bash "$ROOT_DIR" "$VALIDATION_TMP_ROOT" || fail "backlog loop wrapper does not adapt sleep to productive cycle disposition"
   grep -Fq 'ineligible_explicit_issue_target' lib/upkeeper/codex_io.bash || fail "issue target handoff does not reject ineligible explicit targets before preselection"
   if command -v script >/dev/null 2>&1; then
     temp_dir="$VALIDATION_TMP_ROOT/backlog-stdio"
@@ -1344,6 +1367,34 @@ PY
   grep -Fq "checks were not reported after 120s" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check empty-timeout did not explain bounded grace expiry"
 
+  temp_dir="$VALIDATION_TMP_ROOT/backlog-pr-check-pending-timeout"
+  mkdir -p "$temp_dir"
+  if BACKLOG_SOURCE_ONLY=1 \
+    BACKLOG_STATE_ROOT="$temp_dir/state" \
+    BACKLOG_TEST_OWNER_MATCH=1 \
+    BACKLOG_TEST_NOW_EPOCH=1000 \
+    BACKLOG_TEST_FAKE_SLEEP=1 \
+    BACKLOG_TEST_SLEEP_LOG="$temp_dir/sleeps.log" \
+    BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE=pending \
+    BACKLOG_PR_CHECK_INTERVAL_SECONDS=60 \
+    BACKLOG_PR_CHECK_TIMEOUT_SECONDS=120 \
+    bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./orchestration/backlog.sh
+      write_backlog_active_owner
+      wait_for_pr_checks 400
+    ' bash "$ROOT_DIR" >"$temp_dir/pr.out" 2>"$temp_dir/pr.err"; then
+    cat "$temp_dir/pr.err" >&2
+    fail "backlog launcher PR check pending timeout unexpectedly passed"
+  fi
+  [[ "$(cat "$temp_dir/sleeps.log")" == $'60\n60' ]] ||
+    fail "backlog launcher PR check pending-timeout did not use bounded timeout sleeps"
+  grep -Fq "checks still pending after 120s" "$temp_dir/pr.err" ||
+    fail "backlog launcher PR check pending-timeout did not explain configured timeout"
+  find "$temp_dir/state/pr-check-timeouts" -type f -name 'pr-400-*.txt' -print -quit | grep -q . ||
+    fail "backlog launcher PR check pending-timeout did not write timeout evidence"
+
   temp_dir="$VALIDATION_TMP_ROOT/backlog-pr-check-next-issue-gate"
   mkdir -p "$temp_dir"
   if ! BACKLOG_SOURCE_ONLY=1 \
@@ -1369,6 +1420,24 @@ PY
   fi
   grep -Fq "checks failed; stopping before selecting another issue" "$temp_dir/gate.err" ||
     fail "backlog launcher did not explain PR-check gate failure before next issue"
+
+  temp_dir="$VALIDATION_TMP_ROOT/backlog-validation-authority"
+  mkdir -p "$temp_dir"
+  BACKLOG_SOURCE_ONLY=1 \
+    BACKLOG_STATE_ROOT="$temp_dir/state" \
+    bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./orchestration/backlog.sh
+      log() { printf "%s\n" "$*" >&2; }
+      wait_for_pr_checks() { printf "wait_for_pr_checks should not run for async authority\n" >&2; return 99; }
+      authority_file="$(backlog_validation_authority_file 401)"
+      printf "policy\tlocal-green-async-ci\nreason\tdocs-or-markdown-only\n" >"$authority_file"
+      backlog_ensure_pr_checks_allow_next_issue 401 1
+    ' bash "$ROOT_DIR" >"$temp_dir/authority.out" 2>"$temp_dir/authority.err" ||
+    fail "backlog launcher validation-authority async-CI gate check failed"
+  grep -Fq "validation authority is local-green async CI" "$temp_dir/authority.err" ||
+    fail "backlog launcher did not explain validation-authority async-CI skip"
 }
 
 check_prior_run_anomaly_custody_contract() {
@@ -1861,6 +1930,16 @@ check_lattice_custody_policy_contract() {
 
   grep -Fq "issues #112, #113, #115, #116, #117, and #118" docs/lattice.md ||
     fail "Lattice docs do not name the integrity blocker issue set"
+  grep -Fq 'UPKEEPER_LATTICE_SERVICE_ENABLED=1' docs/lattice.md ||
+    fail "Lattice docs missing per-cycle service default"
+  grep -Fq 'UPKEEPER_LATTICE_SERVICE_ENABLED:=1' Upkeeper.conf ||
+    fail "root config missing Lattice per-cycle service default"
+  grep -Fq 'service", help="serve multiple Lattice CLI commands in one warm process"' tools/upkeeper_lattice.py ||
+    fail "Lattice CLI missing warm service subcommand"
+  grep -Fq 'lattice.service.started' lib/upkeeper/lattice.bash ||
+    fail "Lattice wrapper does not start a per-cycle warm service"
+  grep -Fq 'lattice_stop_service' lib/upkeeper/cycle_cleanup_signals.bash ||
+    fail "cycle cleanup does not stop the Lattice service"
   for evidence_flag in --log --transcript-dir --obligation-root --failure-queue-root; do
     grep -Fq -- "$evidence_flag" tools/audit_upkeeper_breadcrumbs.py ||
       fail "breadcrumb audit tool missing fallback evidence option $evidence_flag"

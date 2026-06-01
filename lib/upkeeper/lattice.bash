@@ -307,9 +307,9 @@ lattice_run_service() {
   IFS= read -r output_line <&"$out_fd" || return 1
   IFS= read -r end_line <&"$out_fd" || return 1
   [[ "$rc_line" =~ ^RC[[:space:]]+([0-9]+)$ ]] || return 1
+  rc="${BASH_REMATCH[1]}"
   [[ "$output_line" == OUTPUT_B64\ * ]] || return 1
   [[ "$end_line" == "END" ]] || return 1
-  rc="${BASH_REMATCH[1]}"
   response_b64="${output_line#OUTPUT_B64 }"
   LATTICE_LAST_OUTPUT="$(printf '%s' "$response_b64" | base64 --decode 2>/dev/null || true)"
   UPKEEPER_LATTICE_SERVICE_COMMAND_COUNT="$(( ${UPKEEPER_LATTICE_SERVICE_COMMAND_COUNT:-0} + 1 ))"
@@ -318,14 +318,24 @@ lattice_run_service() {
 }
 
 lattice_run() {
-  local output rc
+  local output rc had_errexit=0
   local -a common_args=()
 
   if lattice_service_enabled; then
-    if lattice_run_service "$@"; then
+    case "$-" in
+      *e*) had_errexit=1 ;;
+    esac
+    set +e
+    lattice_run_service "$@"
+    rc="$?"
+    if [[ "$had_errexit" == "1" ]]; then
+      set -e
+    else
+      set +e
+    fi
+    if [[ "$rc" -eq 0 ]]; then
       return 0
     fi
-    rc="$?"
     if [[ "${LATTICE_SERVICE_PROTOCOL_OK:-0}" == "1" ]]; then
       return "$rc"
     fi

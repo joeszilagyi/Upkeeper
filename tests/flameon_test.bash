@@ -115,6 +115,14 @@ test_flameon_dry_run_reconciles_obligations_first() {
   fi
 }
 
+test_flameon_batches_obligation_field_extraction() {
+  grep -Fq "automation_json_fields_nul" "$ROOT_DIR/FlameOn" ||
+    fail "FlameOn does not batch obligation JSON field extraction"
+  if [[ "$(grep -Fc 'automation_json_field "$obligation_json"' "$ROOT_DIR/FlameOn")" -ne 0 ]]; then
+    fail "FlameOn still reparses the same obligation JSON one field at a time"
+  fi
+}
+
 test_flameon_stops_on_operator_action_required_obligation() {
   local output obligation_dir rc
 
@@ -234,6 +242,7 @@ test_flameon_help_documents_burn_contract
 test_flameon_dry_run_resolves_upkeeper_args
 test_flameon_model_shortcut_resolves_spark_override
 test_flameon_dry_run_reconciles_obligations_first
+test_flameon_batches_obligation_field_extraction
 test_flameon_stops_on_operator_action_required_obligation
 test_flameon_control_plane_guard_blocks_unknown_root_artifact
 test_flameon_rejects_unsupported_inputs

@@ -6,6 +6,13 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-06-01: high-priority time-savings batch:
+	1. `orchestration/backlog_loop.sh` now reads a per-cycle disposition file and uses a short busy sleep after productive work, while preserving the longer idle sleep for no-op, blocked, and quota-wait cycles.
+	2. Backlog PR-check waits now default to a bounded timeout and write local timeout evidence before returning a pending-check status.
+	3. Backlog records validation authority for each successful commit; low-risk docs/Markdown-only local-green commits can continue to the next issue while CI runs asynchronously, while source/control-plane work still blocks on PR checks.
+	4. FlameOn batches automation-obligation JSON field extraction so one selected obligation does not spawn one parser per field before Upkeeper repeats startup.
+	5. Lattice can run as a warm per-cycle local service process, reducing repeated cold Python startup across init, doctor, selection, pass-result, and finish hooks.
+
 2026-05-27: run BOM and identifier namespace contract:
 	1. Added `docs/run-bom-identifiers.md` as the schema-v1 design contract for future run bill-of-materials records.
 	2. Defined stable `upk:` identifiers for cycles, runs, repos, targets, backups, prompts, artifacts, validation, and config records, with path/privacy-safe segment rules.

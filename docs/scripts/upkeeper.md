@@ -188,13 +188,19 @@ Important:
     returning to the outer loop. This keeps a no-op or already-addressed issue
     from being selected repeatedly while preserving the open issue for a later
     branch or manual close.
-  - Once a backlog PR has recorded fixes, the next invocation waits for that
-    PR's checks before selecting another issue. Passing checks allow the next
-    issue, pending checks keep the local owner lease alive, and failed checks
-    stop the launcher before more work stacks on a red branch. While checks are
+  - Once a backlog PR has recorded fixes, the next invocation usually waits for
+    that PR's checks before selecting another issue. Passing checks allow the
+    next issue, pending checks keep the local owner lease alive, and failed
+    checks stop the launcher before more work stacks on a red branch. For
+    low-risk docs/Markdown-only commits, backlog records
+    `local-green-async-ci` validation authority after local validation and lets
+    the next issue start while CI continues asynchronously; source and
+    control-plane changes keep the blocking PR-check gate. While checks are
     pending, the wait line includes local `gh`/`jq` progress details such as
     pass/pending/fail counts, the active check name, state, elapsed check time,
-    Actions step when available, and the check URL. Set
+    Actions step when available, and the check URL. PR-check waits are bounded
+    by `BACKLOG_PR_CHECK_TIMEOUT_SECONDS` (default 1800 seconds), and timeout
+    evidence is written under the local backlog state root. Set
     `BACKLOG_PR_CHECK_PROGRESS=0` to return to the terse pending line, or
     `BACKLOG_PR_CHECK_PROGRESS_STEPS=0` to keep the summary without the extra
     Actions job lookup. A just-created PR with no reported checks yet is treated
@@ -825,6 +831,7 @@ Environment overrides:
   UPKEEPER_LATTICE_SELECTION_MODE Default: oldest-mtime
   UPKEEPER_LATTICE_RAW_STORAGE Default: limited
   UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE Default: delete
+  UPKEEPER_LATTICE_SERVICE_ENABLED Default: 1
   UPKEEPER_LOCAL_ENV_FILE      Default: ${XDG_CONFIG_HOME:-$HOME/.config}/upkeeper/local.env
   UPKEEPER_LOCAL_ENV_DISABLE   Default: 0
   UPKEEPER_PRECONTACT_BACKUP_ENABLED Default: 1

@@ -258,6 +258,8 @@ def is_signal(line: str) -> bool:
         return True
     if re.search(r'\bRate limit\b|\brate limit reached\b', line):
         return True
+    if re.search(r'(?i)\bcontext_length_exceeded\b|\bBACKEND_CONTEXT_LENGTH_EXCEEDED\b|\bbackend context (?:length|window) exceeded\b', line):
+        return True
     return False
 
 def command_kind(line: str) -> str:
@@ -653,6 +655,9 @@ def is_error_line(line: str) -> bool:
         r"exited [1-9][0-9]* in ",
         r"KeyboardInterrupt",
         r"interrupted",
+        r"(?i)context_length_exceeded",
+        r"BACKEND_CONTEXT_LENGTH_EXCEEDED",
+        r"backend context (?:length|window) exceeded",
     )
     if any(re.search(pattern, line) for pattern in patterns):
         if re.search(r"\b(add_error|JSON_PARSE_ERROR|INPUT_DECODE_ERROR|EXPORT_JSON_PARSE_ERROR)\b", line):

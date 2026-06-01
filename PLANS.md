@@ -3,6 +3,48 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issues #749-#745: Task Budget And Parallel Validation Batch
+
+Status: in progress on `backlog/20260601-time-budget-batch`
+
+Goal:
+- close the next five high-priority time-savings bugs by adding a deterministic
+  task-size profile, model-contact budgets, Codex execution timeouts, and
+  parallel validation/test execution
+- keep full-strength behavior available for high-risk or explicitly overridden
+  runs while giving routine work cheaper defaults
+- make validation phase timing and test timing visible enough to catch future
+  wall-clock regressions
+
+Constraints:
+- no backend Codex validation
+- preserve serial test execution as a debugging fallback
+- keep model-contact budget enforcement configurable and evidence-producing
+- keep docs/help/release notes aligned for operator-visible knobs
+
+Files likely touched:
+- `Upkeeper`
+- `Upkeeper.conf`
+- `configurations/default.conf`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- `orchestration/backlog.sh`
+- `.github/workflows/ci.yml`
+- `tools/run_tests.sh`
+- `tools/run_validation_phases.sh`
+- `tools/validate_upkeeper.sh`
+- `tests/`
+- docs, release notes, and focused validator contracts
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/backlog_loop.sh`
+- focused model timeout/contact-budget tests
+- `tools/run_tests.sh`
+- `tools/run_validation_phases.sh`
+- `tools/check_public_docs.sh --quick`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
 ## Issues #754-#750: High-Priority Time-Savings Batch
 
 Status: completed locally; pending PR/CI

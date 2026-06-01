@@ -1888,6 +1888,11 @@ record_startup_anomaly_gate_review() {
     if ! write_startup_anomaly_gate_state "unresolved" "unresolved_startup_anomaly_state"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
+  elif [[ "$codex_exit_value" != "0" ]]; then
+    startup_anomaly_log_gate_unresolved "nonzero_codex_exit" "$status_marker_value" "$codex_exit_value"
+    if ! write_startup_anomaly_gate_state "unresolved" "nonzero_codex_exit"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
   elif current_cycle_log_review_present "$last_message_file" "$CYCLE_ID" "$LOG_FILE" "$STARTUP_ANOMALY_REASONS"; then
     STARTUP_ANOMALY_GATE_RESOLVED="1"
     if ! write_startup_anomaly_gate_state "resolved" "log_review_ack_checked"; then

@@ -8,6 +8,9 @@ ensure_operator_guide() {
 
   local guide_path guide_dir tmp_file
   guide_path="$(resolved_operator_guide_path)"
+  if [[ -z "$guide_path" ]]; then
+    die "resolved_operator_guide_path returned an empty path"
+  fi
   if [[ -e "$guide_path" || -L "$guide_path" ]]; then
     check_existing_operator_guide "$guide_path"
     return 0
@@ -18,8 +21,7 @@ ensure_operator_guide() {
     return 0
   fi
 
-  guide_dir="${guide_path%/*}"
-  [[ -n "$guide_dir" ]] || guide_dir="/"
+  guide_dir="$(dirname -- "$guide_path")"
   if ! mkdir -p "$guide_dir"; then
     die "failed to create operator guide directory $guide_dir"
   fi

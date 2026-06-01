@@ -33,6 +33,7 @@ SCHEMA_VERSION = 1
 SCHEMA_ROW_VERSION = 1
 TEXT_SAMPLE_SIZE = 4096
 CANDIDATE_STATE_PRIORITY = {"selected": 3, "eligible": 2, "excluded": 1}
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 
 EXIT_SUCCESS = 0
 EXIT_NO_MATCH = 1
@@ -6332,6 +6333,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         decorated_marker_probe = probe_cycle_finish_rejects_decorated_status_marker()
         result["checks"]["cycle_finish_report_only_outcome"] = report_only_cycle_probe
         result["checks"]["cycle_finish_rejects_decorated_status_marker"] = decorated_marker_probe
+        missing_empty_transcript_probe = probe_cycle_finish_missing_empty_transcript_is_tolerated()
+        result["checks"]["cycle_finish_missing_empty_transcript_is_tolerated"] = missing_empty_transcript_probe
         p29_reuse_debt_probe = probe_p29_reuse_debt_persistence()
         result["checks"]["p29_reuse_debt_persistence"] = p29_reuse_debt_probe
         change_note_ref_probe = probe_change_note_file_identity_validation()
@@ -6387,6 +6390,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(decorated_marker_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(missing_empty_transcript_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(p29_reuse_debt_probe.get("ok")):
@@ -7656,6 +7662,103 @@ def probe_cycle_finish_transient_artifact_scope() -> dict[str, Any]:
         "last_message_path": last_message["path"] if last_message else None,
         "compiled_prompt_retained": int(compiled["retained"]) if compiled else None,
         "last_message_retained": int(last_message["retained"]) if last_message else None,
+        "ok": ok,
+    }
+
+
+def probe_cycle_finish_missing_empty_transcript_is_tolerated() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-empty-transcript-") as tmpdir:
+        root = Path(tmpdir)
+        selected_path = "tools/empty-transcript.py"
+        try:
+            subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        (root / "tools").mkdir(parents=True, exist_ok=True)
+        (root / "runtime").mkdir(parents=True, exist_ok=True)
+        (root / selected_path).write_text("print('empty transcript check')\n", encoding="utf-8")
+        review_path = root / "runtime" / "last-message.txt"
+        review_path.write_text(
+            "Selected file: `tools/empty-transcript.py`\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_AND_REPORTED\n",
+            encoding="utf-8",
+        )
+        db_path = root / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True, create_parent=True, create_if_missing=True)
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+        finally:
+            conn.close()
+        missing_transcript_path = root / "runtime" / "missing-transcript.log"
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="wal",
+            allow_unsafe_db=True,
+            raw_storage_mode="minimal",
+            cycle_id="cycle-empty-transcript",
+            run_hash="run-empty-transcript",
+            status_marker="WORK_DONE",
+            review_outcome=None,
+            review_selected_path=None,
+            codex_exit=0,
+            wrapper_exit=0,
+            finish_reason="work_done",
+            finish_level="info",
+            codex_exec_started=1,
+            dry_run="1",
+            selected_path=selected_path,
+            last_message_file=str(review_path),
+            transcript_path=str(missing_transcript_path),
+            transcript_sha256=EMPTY_SHA256,
+            compiled_prompt_path=None,
+            last_message_sha256=None,
+            log_path=None,
+            snapshot_kind="after_codex",
+            end_epoch=1234567890,
+            log_sha256=None,
+        )
+        code = 0
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                command_record_cycle_finish(args)
+        except LatticeCommandError as exc:
+            code = exc.code
+        cycle_pk = None
+        artifact_ref = None
+        if code == EXIT_SUCCESS:
+            conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True)
+            try:
+                cycle_pk = conn.execute(
+                    "select cycle_pk from cycles where cycle_id=? and run_hash=?",
+                    ("cycle-empty-transcript", "run-empty-transcript"),
+                ).fetchone()
+                if cycle_pk is not None:
+                    artifact_ref = conn.execute(
+                        """
+                        select path, exists_at_record_time, sha256
+                          from artifact_refs
+                         where artifact_kind='transcript' and cycle_pk=?
+                         order by artifact_id desc
+                         limit 1
+                        """,
+                        (cycle_pk["cycle_pk"],),
+                    ).fetchone()
+            finally:
+                conn.close()
+        artifact_digest = artifact_ref["sha256"] if artifact_ref else None
+        artifact_exists = int(artifact_ref["exists_at_record_time"]) if artifact_ref else None
+        stored_path = artifact_ref["path"] if artifact_ref else None
+    ok = code == 0
+    if artifact_ref:
+        ok = ok and artifact_exists == 0
+    return {
+        "cycle_id": "cycle-empty-transcript",
+        "run_hash": "run-empty-transcript",
+        "code": code,
+        "cycle_pk": int(cycle_pk["cycle_pk"]) if cycle_pk else None,
+        "artifact_sha256": artifact_digest,
+        "artifact_exists_at_record_time": artifact_exists,
+        "artifact_path": stored_path,
         "ok": ok,
     }
 
@@ -9785,7 +9888,13 @@ def create_artifact_ref(
         fail(f"artifact path is a symlink and cannot be hashed: {p}", EXIT_USAGE)
     exists = entry is not None and stat.S_ISREG(entry.st_mode)
     if expected_digest is not None and not exists:
-        fail(f"expected artifact missing for {artifact_kind}: {p}", EXIT_INTEGRITY)
+        if artifact_kind == "transcript" and expected_digest == EMPTY_SHA256:
+            # An empty transcript is a valid terminal state for some codex exit codes.
+            # Avoid turning a missing transcript path into an integrity failure in that
+            # case while preserving strictness for non-empty transcript expectations.
+            pass
+        else:
+            fail(f"expected artifact missing for {artifact_kind}: {p}", EXIT_INTEGRITY)
     size = None
     digest = None
     digest_hmac = None

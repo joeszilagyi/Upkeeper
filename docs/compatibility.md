@@ -223,6 +223,19 @@ Future changes should preserve this operator-visible surface as far as possible:
   low-risk docs/Markdown-only commits by default and skips only the
   between-issues PR-check wait; batch merge still runs local batch validation
   and blocks on current PR checks before integration.
+- Local batch validation can run independent read-only gates through
+  `tools/run_validation_phases.sh`, and unit tests can run through
+  `tools/run_tests.sh` with bounded fan-out and per-test timing. The serial
+  test path remains available with `tools/run_tests.sh --serial` for debugging
+  or compatibility investigations.
+- Before backend contact, Upkeeper can classify the selected task into a
+  deterministic task profile. The default profile layer may lower effort for
+  routine low-risk targets, but explicit model overrides and high-risk
+  control-plane/security/data-integrity targets keep the stronger profile.
+- Codex execution has a local timeout surface, `CODEX_EXEC_TIMEOUT_SECONDS`,
+  and a model-contact ledger/budget surface. A budget breach blocks before
+  launch unless the operator explicitly sets
+  `CODEX_MODEL_CONTACT_BUDGET_BYPASS=1`.
 - `./orchestration/watch-pr.sh [PR_NUMBER]` is the stable local PR-check watch
   command for backlog/manual boundaries. With no PR number it infers the
   current branch PR. It emits timestamped `status=pass|pending|fail` summaries

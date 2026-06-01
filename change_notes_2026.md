@@ -13,6 +13,13 @@ Version numbering note:
 	4. FlameOn batches automation-obligation JSON field extraction so one selected obligation does not spawn one parser per field before Upkeeper repeats startup.
 	5. Lattice can run as a warm per-cycle local service process, reducing repeated cold Python startup across init, doctor, selection, pass-result, and finish hooks.
 
+2026-06-01: task budget and parallel validation batch:
+	1. Upkeeper now emits a deterministic task profile before model contact and can scale routine selected targets down from default maximum effort while preserving high-risk and explicit-override behavior.
+	2. Codex executions are wrapped by `CODEX_EXEC_TIMEOUT_SECONDS` and record model-contact JSONL evidence with phase, model, effort, exit status, elapsed time, timeout state, work key, and budget class.
+	3. Model-contact budgets can block runaway retry/fallback chains before launch unless explicitly bypassed for a manual escalation.
+	4. `tools/run_tests.sh` adds bounded parallel unit-test execution, serial fallback, per-test timeouts, and per-test timing output.
+	5. `tools/run_validation_phases.sh` lets CI and backlog batch validation run independent shell/test/docs/diff/quick-validator gates with bounded parallelism and phase timing.
+
 2026-05-27: run BOM and identifier namespace contract:
 	1. Added `docs/run-bom-identifiers.md` as the schema-v1 design contract for future run bill-of-materials records.
 	2. Defined stable `upk:` identifiers for cycles, runs, repos, targets, backups, prompts, artifacts, validation, and config records, with path/privacy-safe segment rules.

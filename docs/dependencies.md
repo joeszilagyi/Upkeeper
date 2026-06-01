@@ -45,7 +45,7 @@ broader changes runs:
 
 ```sh
 bash -n Upkeeper Upkeeper.conf configurations/default.conf lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh
-set -e; for test_script in tests/*.bash; do bash "$test_script"; done
+tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace
 tools/check_public_docs.sh --quick
 tools/validate_upkeeper.sh --full
 ```
@@ -151,6 +151,7 @@ These commands are required by normal Upkeeper startup/runtime paths:
 - `sort`
 - `tail`
 - `tee`
+- `timeout`
 - `tr`
 - `wc`
 

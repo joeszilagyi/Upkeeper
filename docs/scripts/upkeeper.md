@@ -847,6 +847,14 @@ Environment overrides:
   CODEX_MODEL                   Default: gpt-5.3-codex-spark
   CODEX_REASONING_EFFORT        Default: xhigh
   CODEX_MODE                    Default: --sandbox workspace-write
+  CODEX_EXEC_TIMEOUT_SECONDS    Default: 7200
+  CODEX_EXEC_TIMEOUT_KILL_AFTER_SECONDS Default: 10
+  CODEX_MODEL_CONTACT_BUDGET_NORMAL Default: 4
+  CODEX_MODEL_CONTACT_BUDGET_RECOVERY Default: 3
+  CODEX_MODEL_CONTACT_BUDGET_MAXIMUM Default: 8
+  CODEX_MODEL_CONTACT_BUDGET_BYPASS Default: 0
+  UPKEEPER_TASK_PROFILE_ENABLED Default: 1
+  UPKEEPER_TASK_PROFILE_AUTO_EFFORT Default: 1
   CODEX_FALLBACK_ENABLED        Default: 1
   CODEX_FALLBACK_MODEL          Default: gpt-5.5
   CODEX_FALLBACK_REASONING_EFFORT Default: xhigh
@@ -1129,7 +1137,22 @@ prompts, backup log lines, or Lattice preselect evidence.
   pull requests and on pushes to `main`. It installs required tools including
   `jq` and `age`, classifies the change scope, and then runs either the
   docs-only fast path (`tools/docs_only_fast_path.sh --validate`) or the broader
-  shell/tests/docs/full validation path.
+  parallel local gate (`tools/run_validation_phases.sh`) followed by full
+  validation.
+  `tools/run_tests.sh` is the unit-test entrypoint for local and CI use. It
+  keeps serial mode available with `--serial`, but the default path runs
+  independent tests with bounded fan-out and prints per-test timings.
+  Before model contact, Upkeeper emits a deterministic `task.profile` log line
+  with the task grade, validation grade, reason, and final effort. Routine
+  low-risk targets can use a cheaper effort profile; high-risk control-plane,
+  security, data-integrity, explicit model overrides, and recovery contexts keep
+  the stronger profile.
+  Primary, fallback-child, and auxiliary Codex executions are bounded by
+  `CODEX_EXEC_TIMEOUT_SECONDS`. Each model contact is appended to the local
+  model-contact ledger with phase, model, effort, exit status, elapsed time,
+  timeout flag, work key, and contact-budget class. Contact-budget breaches
+  block before launch unless `CODEX_MODEL_CONTACT_BUDGET_BYPASS=1` is set for a
+  deliberate manual escalation.
   Sample-repo stress coverage is available without backend quota with
   `tools/stress_upkeeper_corpus.sh --local`; full validation runs that local
   corpus after the central wrapper checks.

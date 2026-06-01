@@ -701,6 +701,14 @@ Environment overrides:
   CODEX_MODEL                   Default: gpt-5.3-codex-spark
   CODEX_REASONING_EFFORT        Default: xhigh
   CODEX_MODE                    Default: --sandbox workspace-write
+  CODEX_EXEC_TIMEOUT_SECONDS    Default: 7200
+  CODEX_EXEC_TIMEOUT_KILL_AFTER_SECONDS Default: 10
+  CODEX_MODEL_CONTACT_BUDGET_NORMAL Default: 4
+  CODEX_MODEL_CONTACT_BUDGET_RECOVERY Default: 3
+  CODEX_MODEL_CONTACT_BUDGET_MAXIMUM Default: 8
+  CODEX_MODEL_CONTACT_BUDGET_BYPASS Default: 0
+  UPKEEPER_TASK_PROFILE_ENABLED Default: 1
+  UPKEEPER_TASK_PROFILE_AUTO_EFFORT Default: 1
   CODEX_FALLBACK_ENABLED        Default: 1
   CODEX_FALLBACK_MODEL          Default: gpt-5.5
   CODEX_FALLBACK_REASONING_EFFORT Default: xhigh

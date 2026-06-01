@@ -41,7 +41,7 @@ For shell/runtime changes in `Upkeeper`, `lib/upkeeper`, `tools`, `tests`,
 
 ```sh
 bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf
-set -e; for test_script in tests/*.bash; do bash "$test_script"; done
+tools/run_tests.sh
 git diff --check
 tools/validate_upkeeper.sh --quick
 ```

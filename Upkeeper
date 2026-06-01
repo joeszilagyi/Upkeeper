@@ -446,14 +446,18 @@ UPKEEPER_TASK_PROFILE_GRADE="${UPKEEPER_TASK_PROFILE_GRADE:-}"
 UPKEEPER_TASK_PROFILE_VALIDATION_GRADE="${UPKEEPER_TASK_PROFILE_VALIDATION_GRADE:-}"
 UPKEEPER_TASK_PROFILE_PROMPT_SCOPE="${UPKEEPER_TASK_PROFILE_PROMPT_SCOPE:-}"
 UPKEEPER_TASK_PROFILE_PROMPT_PASS="${UPKEEPER_TASK_PROFILE_PROMPT_PASS:-}"
+UPKEEPER_TASK_PROFILE_PROMPT_PASS_SCOPE="${UPKEEPER_TASK_PROFILE_PROMPT_PASS_SCOPE:-}"
+UPKEEPER_PROMPT_PAYLOAD_METRICS="${UPKEEPER_PROMPT_PAYLOAD_METRICS:-1}"
+UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES="${UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES:-12000}"
 CODEX_FALLBACK_ENABLED="${CODEX_FALLBACK_ENABLED:-1}"
 CODEX_FALLBACK_MODEL="${CODEX_FALLBACK_MODEL:-gpt-5.5}"
-CODEX_FALLBACK_REASONING_EFFORT="${CODEX_FALLBACK_REASONING_EFFORT:-xhigh}"
+CODEX_FALLBACK_REASONING_EFFORT="${CODEX_FALLBACK_REASONING_EFFORT:-high}"
 CODEX_FALLBACK_MODE="${CODEX_FALLBACK_MODE:-$CODEX_MODE_STRING}"
 CODEX_FALLBACK_ON_PRIMARY_QUOTA="${CODEX_FALLBACK_ON_PRIMARY_QUOTA:-1}"
 CODEX_FALLBACK_ON_FAILURE="${CODEX_FALLBACK_ON_FAILURE:-1}"
 CODEX_FALLBACK_ON_BLOCKED="${CODEX_FALLBACK_ON_BLOCKED:-1}"
 CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK="${CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK:-1}"
+CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL="${CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL:-0}"
 CODEX_FALLBACK_SCREEN_ENABLED="${CODEX_FALLBACK_SCREEN_ENABLED:-1}"
 CODEX_FALLBACK_SCREEN_POLL_SECONDS="${CODEX_FALLBACK_SCREEN_POLL_SECONDS:-60}"
 CODEX_FALLBACK_SCREEN_CONTINUOUS="${CODEX_FALLBACK_SCREEN_CONTINUOUS:-0}"
@@ -462,7 +466,7 @@ CODEX_FALLBACK_SCREEN_MAX_SECONDS="${CODEX_FALLBACK_SCREEN_MAX_SECONDS:-0}"
 CODEX_FALLBACK_SCREEN_STAGE_ROOT="${CODEX_FALLBACK_SCREEN_STAGE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/tmp/fallback-screen}"
 CODEX_POSTMORTEM_ENABLED="${CODEX_POSTMORTEM_ENABLED:-1}"
 CODEX_POSTMORTEM_MODEL="${CODEX_POSTMORTEM_MODEL:-$CODEX_FALLBACK_MODEL}"
-CODEX_POSTMORTEM_REASONING_EFFORT="${CODEX_POSTMORTEM_REASONING_EFFORT:-$CODEX_FALLBACK_REASONING_EFFORT}"
+CODEX_POSTMORTEM_REASONING_EFFORT="${CODEX_POSTMORTEM_REASONING_EFFORT:-medium}"
 CODEX_POSTMORTEM_MODE="${CODEX_POSTMORTEM_MODE:-$CODEX_FALLBACK_MODE}"
 CODEX_POSTMORTEM_HARDENING_OPT_IN="${CODEX_POSTMORTEM_HARDENING_OPT_IN:-0}"
 CODEX_POSTMORTEM_DIR="${CODEX_POSTMORTEM_DIR:-$ROOT_DIR/runtime/journals/upkeeper-postmortems}"
@@ -3391,62 +3395,6 @@ print("sanitized_log_end")
 PY
 }
 
-upkeeper_rewrite_compiled_prompt_log_review_block() {
-  local compiled_file="$1"
-  local helper_command="./$SCRIPT_NAME"
-
-  python3 - "$compiled_file" "$CYCLE_ID" "$helper_command" <<'PY'
-import sys
-from pathlib import Path
-
-compiled_path = Path(sys.argv[1])
-cycle_id = sys.argv[2]
-helper_command = sys.argv[3]
-text = compiled_path.read_text(encoding="utf-8")
-start_marker = "\nCurrent-cycle log self-review -- required final task before your final response:\n"
-end_marker = "\nWrapper control marker compatibility:\n"
-start = text.find(start_marker)
-end = text.find(end_marker, start + len(start_marker))
-if start == -1 or end == -1:
-    raise SystemExit("missing_log_review_prompt_block")
-
-replacement = f"""
-Current-cycle log self-review -- required final task before your final response:
-- After all selected-file review work, edits, touches, and verification are complete, inspect this cycle's wrapper state through the wrapper-provided sanitized helper instead of the raw log file.
-- Raw wrapper logs, raw log paths, prompt paths, transcript paths, and runtime control paths are withheld from the model by default.
-- Current cycle id: `{cycle_id}`
-- Preferred command: `UPKEEPER_INTERNAL_CURRENT_CYCLE_LOG_REVIEW=1 UPKEEPER_INTERNAL_CURRENT_CYCLE_ID={cycle_id} {helper_command}`
-- Review only the helper output for the current cycle. Do not inspect raw wrapper log files directly unless the operator explicitly changes this contract.
-- Check the helper output for wrapper/prompt/logging defects, unexpected ERROR/WARN lines, parser misses, environment preflight surprises, previous_run.anomaly lines, disk.preflight warnings, missing or irregular --MARK-- continuity, and any command failure from your own tool output that still needs explanation or correction.
-- If `startup_anomaly.gate` or `WRAPPER_STARTUP_ANOMALIES` is active, do not touch unrelated non-Upkeeper-suite files; the gate must be checked or remediated first.
-- If the helper output exposes a concrete Upkeeper wrapper/prompt/logging defect for the preselected file path, report it as a complete finding in your final response.
-- If the helper output exposes a concrete Upkeeper wrapper/prompt/logging defect outside the selected target path, leave that file unchanged in this cycle and report BLOCKED with the affected repo-relative path plus enough detail for a follow-up wrapper-selected run.
-- Do not apply any unselected-file or unrequested file edits during log-review self-verification.
-- Do not repair or edit any unselected Upkeeper control-plane file during log-review self-verification, even when the defect appears local and obvious.
-- If this is a symlinked client repo and the defect belongs to central Upkeeper behavior, do not patch a copied client wrapper; report the central fix needed unless the central Upkeeper checkout is the current repo.
-- If a suspicious line was expected negative-test output, say so briefly. If a one-off shell command failed, rerun the corrected check or state why it is irrelevant before final status.
-- Include exactly one machine-readable acknowledgment line before the final UPKEEPER_STATUS marker.
-- The helper prints `anomalies=<none|listed>` and `log_sha256=<64-hex>` for the sanitized current-cycle review view. Reuse those exact values when emitting `UPKEEPER_LOG_REVIEW`.
-- If the helper fails, report that failure in the human-readable log review summary and use `anomalies=listed`.
-- If no anomalies were found, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle={cycle_id} anomalies=none log_sha256=<64 hex digest>`
-- If anomalies were found or expected anomaly signals were present, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle={cycle_id} anomalies=listed log_sha256=<64 hex digest>`
-- Do not write the placeholder text `anomalies=none|listed`; choose one concrete value.
-- Put the machine-readable acknowledgment on its own raw line with no Markdown, punctuation, or trailing text. The wrapper parses that line directly.
-- You may also include a short human-readable current-cycle log review summary on separate lines.
-"""
-compiled_path.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
-PY
-}
-
-if declare -f compile_prompt >/dev/null 2>&1; then
-  eval "$(declare -f compile_prompt | sed '1s/^compile_prompt ()/upkeeper_compile_prompt_original ()/')"
-fi
-
-compile_prompt() {
-  upkeeper_compile_prompt_original "$@"
-  upkeeper_rewrite_compiled_prompt_log_review_block "$1"
-}
-
 direct_parent_details() {
   local ppid_now parent_comm parent_summary
 
@@ -3746,7 +3694,7 @@ launch_screen_fallback_loop() {
 
   local screen_root visible_screen_root session_name runner_script transcript_file exit_file done_file last_cycle_exit_file
   local child_id_file child_started_file child_status_file heartbeat_file completed_count_file stop_reason_file
-  local prompt_arg_snippet="" runner_env_lines=""
+  local prompt_arg_snippet="" runner_env_lines="" child_prompt_pass=""
   local self_q model_q effort_q mode_q root_q screen_root_q visible_screen_root_q transcript_q poll_q trigger_q
   local loop_parent_pid_q loop_parent_comm_q primary_model_q
   local continuous_q max_children_q max_seconds_q
@@ -3848,6 +3796,9 @@ launch_screen_fallback_loop() {
   upkeeper_append_command_env_line runner_env_lines UPKEEPER_TASK_PROFILE_ENABLED "${UPKEEPER_TASK_PROFILE_ENABLED:-1}"
   upkeeper_append_command_env_line runner_env_lines UPKEEPER_TASK_PROFILE_AUTO_EFFORT "${UPKEEPER_TASK_PROFILE_AUTO_EFFORT:-1}"
   upkeeper_append_command_env_line runner_env_lines UPKEEPER_TASK_PROFILE_AUTO_MODULES "${UPKEEPER_TASK_PROFILE_AUTO_MODULES:-1}"
+  upkeeper_append_command_env_line runner_env_lines UPKEEPER_PROMPT_PAYLOAD_METRICS "${UPKEEPER_PROMPT_PAYLOAD_METRICS:-1}"
+  upkeeper_append_command_env_line runner_env_lines UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES "${UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES:-12000}"
+  upkeeper_append_command_env_line runner_env_lines CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL "${CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL:-0}"
   upkeeper_append_command_env_line runner_env_lines CODEX_TOOL_FAILURE_QUEUE_DIR "${CODEX_TOOL_FAILURE_QUEUE_DIR:-}"
   upkeeper_append_command_env_line runner_env_lines CODEX_TOOL_FAILURE_QUEUE_BYPASS "${CODEX_TOOL_FAILURE_QUEUE_BYPASS:-0}"
   upkeeper_append_command_env_line runner_env_lines RUN_SELECTED_REVIEW_PATH "${RUN_SELECTED_REVIEW_PATH:-}"
@@ -3876,11 +3827,14 @@ launch_screen_fallback_loop() {
     printf -v target_file_q '%q' "$CODEX_TARGET_FILE"
     prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--target-file=$target_file_q"
   fi
-  if [[ -n "$CODEX_PROMPT_PASS" ]]; then
+  if child_prompt_pass="$(upkeeper_fallback_prompt_pass_for_child)"; then
     local prompt_pass_q
-    printf -v prompt_pass_q '%q' "$CODEX_PROMPT_PASS"
+    printf -v prompt_pass_q '%q' "$child_prompt_pass"
     prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--prompt-pass=$prompt_pass_q"
+  else
+    child_prompt_pass="default"
   fi
+  upkeeper_log_fallback_prompt_pass_policy "$child_prompt_pass"
   if upkeeper_bug_report_only_enabled; then
     prompt_arg_snippet="${prompt_arg_snippet:+$prompt_arg_snippet }--bug-report-only"
   fi

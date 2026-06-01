@@ -446,6 +446,11 @@ CODEX_EXEC_TIMEOUT_SECONDS="7200"
 CODEX_MODEL_CONTACT_BUDGET_NORMAL="4"
 UPKEEPER_TASK_PROFILE_AUTO_EFFORT="1"
 UPKEEPER_TASK_PROFILE_AUTO_MODULES="1"
+UPKEEPER_PROMPT_PAYLOAD_METRICS="1"
+UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES="12000"
+CODEX_FALLBACK_REASONING_EFFORT="high"
+CODEX_POSTMORTEM_REASONING_EFFORT="medium"
+CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL="0"
 UPKEEPER_TARGET_FILE="docs/scripts/upkeeper.md"
 UPKEEPER_REVIEW_MODULES="p26,p28"
 UPKEEPER_PROMPT_PASS="all"
@@ -457,12 +462,18 @@ UPKEEPER_FIX_NEXT_ISSUE="0"
 Before backend contact, Upkeeper derives a deterministic task profile from the
 selected path and recovery context. The profile is logged as `task.profile`,
 can lower routine docs/test/tool work from the default maximum effort, records a
-validation grade and prompt scope, and can prune config-sourced review modules
-for lean low-risk runs. Explicit model overrides, explicit review-module CLI
-flags, and high-risk contract/security/data-integrity targets keep the stronger
-profile. `CODEX_EXEC_TIMEOUT_SECONDS` bounds each model contact locally, and
-the model-contact budget knobs cap runaway primary/fallback/postmortem chains
-unless `CODEX_MODEL_CONTACT_BUDGET_BYPASS=1` is set for a deliberate manual
+validation grade, prompt scope, and prompt-pass scope, and can prune
+config-sourced review modules for lean low-risk runs. Prompt compilation logs
+per-section payload metrics so doctrine, module, target, issue, and control
+blocks have visible byte/token estimates before backend contact. Explicit model
+overrides, explicit review-module CLI flags, and high-risk
+contract/security/data-integrity targets keep the stronger profile. Fallback
+children no longer inherit a parent `--prompt-pass=all` request by default; set
+`CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL=1` only when recovery must repeat the
+full all-pass prompt. `CODEX_EXEC_TIMEOUT_SECONDS` bounds each model contact
+locally, and the model-contact budget knobs cap runaway
+primary/fallback/postmortem chains unless
+`CODEX_MODEL_CONTACT_BUDGET_BYPASS=1` is set for a deliberate manual
 escalation.
 
 Selection is also configurable. The default is a local manifest-backed oldest

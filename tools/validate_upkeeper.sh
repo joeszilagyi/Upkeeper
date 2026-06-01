@@ -38,6 +38,7 @@ WRAPPER_REQUIRED_COMMANDS=(
   sort
   tail
   tee
+  timeout
   tr
   wc
 )
@@ -873,21 +874,50 @@ check_test_invocation_mode_contract() {
   [[ -z "$bad_modes" ]] ||
     fail "tests/*.bash must be non-executable and invoked with bash: $bad_modes"
 
-  grep -Fq 'bash "$test_script"' .github/workflows/ci.yml ||
-    fail "CI no longer invokes tests through bash"
-  python3 - <<'PY' || fail "CI unit-test step does not fail fast explicitly"
-from pathlib import Path
+  [[ -x tools/run_tests.sh ]] ||
+    fail "parallel test runner is missing or not executable"
+  [[ -x tools/run_validation_phases.sh ]] ||
+    fail "validation phase runner is missing or not executable"
+  grep -Fq 'tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace' .github/workflows/ci.yml ||
+    fail "CI no longer invokes parallel local validation gates"
+  grep -Fq 'tools/run_tests.sh' tools/run_validation_phases.sh ||
+    fail "validation phase runner no longer delegates unit tests to tools/run_tests.sh"
+  grep -Fq 'timeout --kill-after=5s "$TEST_TIMEOUT_SECONDS" bash "$test_path"' tools/run_tests.sh ||
+    fail "test runner no longer bounds each test with timeout"
+  grep -Fq 'TEST %s status=%s rc=%s elapsed=' tools/run_tests.sh ||
+    fail "test runner no longer emits per-test timing"
+  grep -Fq 'tools/run_tests.sh' README.md ||
+    fail "README no longer documents the shared test runner"
+  grep -Fq 'tools/run_tests.sh' docs/dependencies.md ||
+    fail "dependencies docs no longer show the shared test runner"
+  grep -Fq 'tools/run_tests.sh' AGENTS.md ||
+    fail "agent contract no longer shows the shared test runner"
+}
 
-text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-unit_block = text.split("- name: Unit tests", 1)[1].split("- name: Public docs", 1)[0]
-raise SystemExit(0 if "set -euo pipefail" in unit_block else 1)
-PY
-  grep -Fq 'unit tests invoked with Bash from' README.md ||
-    fail "README no longer documents Bash-invoked tests"
-  grep -Fq 'set -e; for test_script in tests/*.bash; do bash "$test_script"; done' docs/dependencies.md ||
-    fail "dependencies docs no longer show Bash-invoked tests"
-  grep -Fq 'set -e; for test_script in tests/*.bash; do bash "$test_script"; done' AGENTS.md ||
-    fail "agent contract no longer shows Bash-invoked tests"
+check_time_budget_contract() {
+  log "checking time budget contract"
+  grep -Fq 'CODEX_EXEC_TIMEOUT_SECONDS="${CODEX_EXEC_TIMEOUT_SECONDS:-7200}"' Upkeeper ||
+    fail "Upkeeper missing default Codex exec timeout"
+  grep -Fq ': "${CODEX_EXEC_TIMEOUT_SECONDS:=7200}"' Upkeeper.conf ||
+    fail "default config missing Codex exec timeout"
+  grep -Fq 'timeout --kill-after="${timeout_kill_after}s" "$timeout_seconds"' lib/upkeeper/codex_io.bash ||
+    fail "module Codex execution is not wrapped by timeout"
+  grep -Fq 'upkeeper_model_contact_record' lib/upkeeper/codex_io.bash ||
+    fail "Codex I/O module missing model contact ledger writer"
+  grep -Fq '"prompt_scope": prompt_scope' lib/upkeeper/codex_io.bash ||
+    fail "model contact ledger does not include prompt profile"
+  grep -Fq 'CODEX_MODEL_CONTACT_BUDGET_NORMAL:=4' Upkeeper.conf ||
+    fail "default config missing normal model-contact budget"
+  grep -Fq 'upkeeper_apply_task_profile' lib/upkeeper/codex_io.bash ||
+    fail "Codex I/O module missing task profile classifier"
+  grep -Fq 'upkeeper_apply_task_profile' lib/upkeeper/prompt_compile.bash ||
+    fail "prompt compilation does not apply task profile before backend contact"
+  grep -Fq 'task.profile grade=' lib/upkeeper/codex_io.bash ||
+    fail "task profile does not emit operator log evidence"
+  grep -Fq 'WRAPPER_TASK_PROFILE' lib/upkeeper/prompt_compile.bash ||
+    fail "compiled prompt does not include task profile context"
+  bash tests/codex_exec_contact_budget_test.bash
+  bash tests/task_profile_test.bash
 }
 
 check_backlog_launcher_contract() {
@@ -2552,8 +2582,12 @@ SH
 
 check_backlog_batch_validation_obligation_contract() {
   log "checking backlog batch-validation obligation contract"
-  grep -Fq 'run_batch_validation_phase "batch_validation.quick_validator"' orchestration/backlog.sh ||
-    fail "backlog batch validation does not route quick-validator failures through the obligation wrapper"
+  grep -Fq 'run_batch_validation_phase "batch_validation.parallel_local_gates"' orchestration/backlog.sh ||
+    fail "backlog batch validation does not route parallel local gate failures through the obligation wrapper"
+  grep -Fq 'tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace,quick_validator' orchestration/backlog.sh ||
+    fail "backlog batch validation does not include the quick validator in the parallel local gate"
+  grep -Fq 'batch_validation.parallel_local_gates)' orchestration/backlog.sh ||
+    fail "backlog batch validation owner hint does not classify the parallel local gate"
   grep -Fq 'backlog_open_batch_validation_obligation' orchestration/backlog.sh ||
     fail "backlog launcher cannot open obligations for local batch-validation failures"
   grep -Fq 'backlog_batch_validation_repeated_failure' orchestration/backlog.sh ||
@@ -7923,6 +7957,7 @@ run_check after_action_review_contract check_after_action_review_contract
 run_check client_link_tools_contract check_client_link_tools_contract
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
 run_check test_invocation_mode_contract check_test_invocation_mode_contract
+run_check time_budget_contract check_time_budget_contract
 run_check wrapper_contract_tests check_wrapper_contract_tests
 run_check public_docs_policy check_public_docs_policy
 run_check private_artifact_umask_contract check_private_artifact_umask_contract

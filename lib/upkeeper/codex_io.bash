@@ -178,6 +178,426 @@ EOF
     " commands=$(IFS=,; printf '%s' "${GENIE_PROTOCOL_BLOCKED_COMMANDS[*]}")" >/dev/null
 }
 
+upkeeper_codex_positive_integer_or_zero() {
+  local value="${1:-0}"
+
+  [[ "$value" =~ ^[0-9]+$ ]] || {
+    printf '0\n'
+    return 0
+  }
+  printf '%s\n' "$value"
+}
+
+upkeeper_codex_exec_timeout_seconds() {
+  upkeeper_codex_positive_integer_or_zero "${CODEX_EXEC_TIMEOUT_SECONDS:-0}"
+}
+
+upkeeper_model_contact_ledger_path() {
+  printf '%s\n' "${CODEX_MODEL_CONTACT_LEDGER:-${ROOT_DIR:-$PWD}/runtime/upkeeper-model-contacts.jsonl}"
+}
+
+upkeeper_model_contact_work_key() {
+  if [[ -n "${CODEX_ISSUE_FIX_NUMBER:-}" ]]; then
+    printf 'issue:%s\n' "$CODEX_ISSUE_FIX_NUMBER"
+    return 0
+  fi
+  if [[ -n "${UPKEEPER_AUTOMATION_OBLIGATION_ID:-}" ]]; then
+    printf 'obligation:%s\n' "$UPKEEPER_AUTOMATION_OBLIGATION_ID"
+    return 0
+  fi
+  if [[ -n "${CODEX_PARENT_CYCLE_ID:-}" ]]; then
+    printf 'cycle:%s\n' "$CODEX_PARENT_CYCLE_ID"
+    return 0
+  fi
+  printf 'cycle:%s\n' "${CYCLE_ID:-unknown}"
+}
+
+upkeeper_model_contact_budget_class() {
+  local label="${1:-}"
+
+  case "$label:${CODEX_ATTEMPT_ROLE:-primary}:${UPKEEPER_TASK_PROFILE_GRADE:-}" in
+    postmortem.*:*|*:fallback:*|*:*:recovery)
+      printf 'recovery\n'
+      ;;
+    *:*:contract-security|*:*:data-integrity|*:*:maximum)
+      printf 'maximum\n'
+      ;;
+    *)
+      printf 'normal\n'
+      ;;
+  esac
+}
+
+upkeeper_model_contact_budget_for_class() {
+  case "${1:-normal}" in
+    recovery)
+      upkeeper_codex_positive_integer_or_zero "${CODEX_MODEL_CONTACT_BUDGET_RECOVERY:-3}"
+      ;;
+    maximum)
+      upkeeper_codex_positive_integer_or_zero "${CODEX_MODEL_CONTACT_BUDGET_MAXIMUM:-8}"
+      ;;
+    *)
+      upkeeper_codex_positive_integer_or_zero "${CODEX_MODEL_CONTACT_BUDGET_NORMAL:-4}"
+      ;;
+  esac
+}
+
+upkeeper_model_contact_count() {
+  local ledger_path="$1"
+  local work_key="$2"
+
+  [[ -f "$ledger_path" ]] || {
+    printf '0\n'
+    return 0
+  }
+  python3 - "$ledger_path" "$work_key" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+work_key = sys.argv[2]
+count = 0
+try:
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("work_key") == work_key and record.get("contact_executed") is True:
+            count += 1
+except OSError:
+    count = 0
+print(count)
+PY
+}
+
+upkeeper_model_contact_record() {
+  local label="$1"
+  local model="$2"
+  local effort="$3"
+  local exit_status="$4"
+  local elapsed_seconds="$5"
+  local timeout_flag="$6"
+  local contact_executed="$7"
+  local budget_class="$8"
+  local budget_limit="$9"
+  local budget_before="${10}"
+  local reason="${11:-}"
+  local ledger_path parent
+
+  ledger_path="$(upkeeper_model_contact_ledger_path)"
+  parent="$(dirname -- "$ledger_path")"
+  mkdir -p -- "$parent" || return 0
+  chmod 700 "$parent" 2>/dev/null || true
+  python3 - \
+    "$ledger_path" \
+    "${CYCLE_ID:-unknown}" \
+    "$(upkeeper_model_contact_work_key)" \
+    "$label" \
+    "$model" \
+    "$effort" \
+    "$exit_status" \
+    "$elapsed_seconds" \
+    "$timeout_flag" \
+    "$contact_executed" \
+    "$budget_class" \
+    "$budget_limit" \
+    "$budget_before" \
+    "${UPKEEPER_TASK_PROFILE_GRADE:-unknown}" \
+    "${UPKEEPER_TASK_PROFILE_VALIDATION_GRADE:-unknown}" \
+    "${UPKEEPER_TASK_PROFILE_PROMPT_SCOPE:-unknown}" \
+    "${UPKEEPER_TASK_PROFILE_PROMPT_PASS:-${CODEX_PROMPT_PASS:-default}}" \
+    "${CODEX_FALLBACK_TRIGGER:-}" \
+    "$reason" <<'PY' || return 0
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+(
+    path,
+    cycle_id,
+    work_key,
+    label,
+    model,
+    effort,
+    exit_status,
+    elapsed_seconds,
+    timeout_flag,
+    contact_executed,
+    budget_class,
+    budget_limit,
+    budget_before,
+    task_grade,
+    validation_grade,
+    prompt_scope,
+    prompt_pass,
+    fallback_trigger,
+    reason,
+) = sys.argv[1:20]
+
+record = {
+    "schema": "upkeeper.model_contact.v1",
+    "created_at": datetime.now(timezone.utc).isoformat(),
+    "cycle_id": cycle_id,
+    "work_key": work_key,
+    "phase": label,
+    "model": model,
+    "effort": effort,
+    "exit_status": int(exit_status) if exit_status.isdigit() else exit_status,
+    "elapsed_seconds": int(elapsed_seconds) if elapsed_seconds.isdigit() else elapsed_seconds,
+    "timeout": timeout_flag == "1",
+    "contact_executed": contact_executed == "1",
+    "budget_class": budget_class,
+    "budget_limit": int(budget_limit) if budget_limit.isdigit() else budget_limit,
+    "budget_contacts_before": int(budget_before) if budget_before.isdigit() else budget_before,
+    "task_grade": task_grade,
+    "validation_grade": validation_grade,
+    "prompt_scope": prompt_scope,
+    "prompt_pass": prompt_pass,
+    "fallback_trigger": fallback_trigger,
+    "reason": reason,
+}
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+try:
+    os.chmod(path, 0o600)
+except OSError:
+    pass
+PY
+}
+
+upkeeper_model_contact_extract_model_effort() {
+  local default_model="${CODEX_MODEL:-unknown}"
+  local default_effort="${CODEX_REASONING_EFFORT:-unknown}"
+  local arg next
+  local -a args=("$@")
+
+  local idx=0
+  while [[ "$idx" -lt "${#args[@]}" ]]; do
+    arg="${args[$idx]}"
+    next="${args[$((idx + 1))]:-}"
+    case "$arg" in
+      -m|--model)
+        [[ -n "$next" ]] && default_model="$next"
+        idx=$((idx + 2))
+        continue
+        ;;
+      -c)
+        if [[ "$next" == model_reasoning_effort=* ]]; then
+          default_effort="${next#model_reasoning_effort=}"
+        fi
+        idx=$((idx + 2))
+        continue
+        ;;
+      -cmodel_reasoning_effort=*)
+        default_effort="${arg#-cmodel_reasoning_effort=}"
+        ;;
+    esac
+    idx=$((idx + 1))
+  done
+  printf '%s\t%s\n' "$default_model" "$default_effort"
+}
+
+upkeeper_model_contact_preflight() {
+  local label="$1"
+  local model="$2"
+  local effort="$3"
+  local transcript_file="$4"
+  local budget_class budget_limit ledger_path work_key contact_count
+
+  budget_class="$(upkeeper_model_contact_budget_class "$label")"
+  budget_limit="$(upkeeper_model_contact_budget_for_class "$budget_class")"
+  ledger_path="$(upkeeper_model_contact_ledger_path)"
+  work_key="$(upkeeper_model_contact_work_key)"
+  contact_count="$(upkeeper_model_contact_count "$ledger_path" "$work_key")"
+
+  if [[ "${CODEX_MODEL_CONTACT_BUDGET_BYPASS:-0}" != "1" && "$budget_limit" -gt 0 && "$contact_count" -ge "$budget_limit" ]]; then
+    {
+      printf 'Codex execution skipped before launch: model contact budget exceeded.\n'
+      printf 'phase: %s\nmodel: %s\neffort: %s\nwork_key: %s\nbudget_class: %s\nbudget_limit: %s\ncontacts_before: %s\n' \
+        "$label" "$model" "$effort" "$work_key" "$budget_class" "$budget_limit" "$contact_count"
+    } >"$transcript_file"
+    log_line "ERROR" "codex.contact_budget.exceeded label=$label model=$model effort=$effort work_key=$(shell_quote "$work_key") budget_class=$budget_class limit=$budget_limit contacts_before=$contact_count action=blocked"
+    upkeeper_model_contact_record "$label" "$model" "$effort" 88 0 0 0 "$budget_class" "$budget_limit" "$contact_count" "budget_exceeded"
+    return 88
+  fi
+
+  printf '%s\t%s\t%s\n' "$budget_class" "$budget_limit" "$contact_count"
+}
+
+upkeeper_task_profile_truthy() {
+  case "${1:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+upkeeper_task_profile_normalized_path() {
+  local path="${1:-}"
+
+  path="${path#./}"
+  printf '%s' "$path"
+}
+
+upkeeper_task_profile_path_grade() {
+  local path
+  local lowered
+
+  path="$(upkeeper_task_profile_normalized_path "${1:-}")"
+  lowered="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
+
+  if [[ "${CODEX_ATTEMPT_ROLE:-primary}" != "primary" || -n "${CODEX_FALLBACK_TRIGGER:-}" ]]; then
+    printf 'recovery\n'
+    return 0
+  fi
+
+  case "$lowered" in
+    ""|unknown)
+      printf 'normal-code\n'
+      return 0
+      ;;
+    readme.md|agents.md|change_notes_*.md|docs/*|prompts/*.md|*.md)
+      printf 'docs-only\n'
+      return 0
+      ;;
+    upkeeper|chimneysweep|flameon|orchestration/backlog.sh|orchestration/backlog_loop.sh|*.conf)
+      printf 'contract-security\n'
+      return 0
+      ;;
+    lib/upkeeper/codex_io.bash|lib/upkeeper/prompt_compile.bash|lib/upkeeper/report_analysis.bash|lib/upkeeper/status_session.bash)
+      printf 'contract-security\n'
+      return 0
+      ;;
+    lib/upkeeper/*fallback*|lib/upkeeper/*postmortem*|lib/upkeeper/*quota*|lib/upkeeper/*backup*|lib/upkeeper/*restore*|lib/upkeeper/*lock*|lib/upkeeper/tool_failure_queue.bash)
+      printf 'contract-security\n'
+      return 0
+      ;;
+    tools/upkeeper_lattice.py|tools/upkeeper_lattice/*|lib/upkeeper/lattice.bash)
+      printf 'data-integrity\n'
+      return 0
+      ;;
+    tests/*|tools/run_tests.sh|tools/run_validation_phases.sh|tools/check_public_docs.sh|tools/docs_only_fast_path.sh)
+      printf 'trivial-code\n'
+      return 0
+      ;;
+    tools/*.py|tools/*.sh|testruns/*.sh|completions/*.bash)
+      printf 'normal-code\n'
+      return 0
+      ;;
+    *)
+      printf 'normal-code\n'
+      return 0
+      ;;
+  esac
+}
+
+upkeeper_task_profile_effort_for_grade() {
+  case "${1:-normal-code}" in
+    docs-only)
+      printf 'low\n'
+      ;;
+    trivial-code|recovery)
+      printf 'medium\n'
+      ;;
+    contract-security|data-integrity|maximum)
+      printf 'xhigh\n'
+      ;;
+    *)
+      printf 'high\n'
+      ;;
+  esac
+}
+
+upkeeper_task_profile_validation_for_grade() {
+  case "${1:-normal-code}" in
+    docs-only)
+      printf 'docs-only\n'
+      ;;
+    trivial-code|recovery)
+      printf 'focused\n'
+      ;;
+    contract-security|data-integrity|maximum)
+      printf 'full\n'
+      ;;
+    *)
+      printf 'standard\n'
+      ;;
+  esac
+}
+
+upkeeper_task_profile_prompt_scope_for_grade() {
+  case "${1:-normal-code}" in
+    docs-only|trivial-code|recovery)
+      printf 'lean\n'
+      ;;
+    contract-security|data-integrity|maximum)
+      printf 'full\n'
+      ;;
+    *)
+      printf 'standard\n'
+      ;;
+  esac
+}
+
+upkeeper_apply_task_profile() {
+  local selected_path="${1:-}"
+  local grade source validation prompt_scope prompt_pass effort_before effort_after modules_before modules_after modules_action evidence
+  local log_message
+
+  upkeeper_task_profile_truthy "${UPKEEPER_TASK_PROFILE_ENABLED:-1}" || return 0
+
+  if [[ -n "${UPKEEPER_TASK_PROFILE_GRADE:-}" ]]; then
+    grade="$UPKEEPER_TASK_PROFILE_GRADE"
+    source="operator"
+  else
+    grade="$(upkeeper_task_profile_path_grade "$selected_path")"
+    source="classifier"
+    UPKEEPER_TASK_PROFILE_GRADE="$grade"
+  fi
+
+  validation="${UPKEEPER_TASK_PROFILE_VALIDATION_GRADE:-$(upkeeper_task_profile_validation_for_grade "$grade")}"
+  prompt_scope="${UPKEEPER_TASK_PROFILE_PROMPT_SCOPE:-$(upkeeper_task_profile_prompt_scope_for_grade "$grade")}"
+  prompt_pass="${CODEX_PROMPT_PASS:-default}"
+  effort_before="${CODEX_REASONING_EFFORT:-unknown}"
+  effort_after="$effort_before"
+  modules_before="$(review_modules_csv)"
+  modules_action="kept"
+
+  UPKEEPER_TASK_PROFILE_VALIDATION_GRADE="$validation"
+  UPKEEPER_TASK_PROFILE_PROMPT_SCOPE="$prompt_scope"
+  UPKEEPER_TASK_PROFILE_PROMPT_PASS="$prompt_pass"
+
+  if upkeeper_task_profile_truthy "${UPKEEPER_TASK_PROFILE_AUTO_EFFORT:-1}" && [[ "${CODEX_MODEL_OVERRIDE_APPLIED:-0}" != "1" ]]; then
+    effort_after="$(upkeeper_task_profile_effort_for_grade "$grade")"
+    CODEX_REASONING_EFFORT="$effort_after"
+  fi
+
+  if upkeeper_task_profile_truthy "${UPKEEPER_TASK_PROFILE_AUTO_MODULES:-1}" &&
+    [[ "$prompt_scope" == "lean" ]] &&
+    [[ "${CODEX_REVIEW_MODULES_FROM_CONFIG:-0}" == "1" ]] &&
+    [[ "${CODEX_REVIEW_MODULES_CLI_OVERRIDE:-0}" != "1" ]] &&
+    [[ "${#CODEX_REVIEW_MODULES[@]}" -gt 0 ]]; then
+    CODEX_REVIEW_MODULES=()
+    modules_action="pruned_config_modules_for_lean_profile"
+  fi
+  modules_after="$(review_modules_csv)"
+
+  evidence="selected_path=$(shell_quote "$(upkeeper_task_profile_normalized_path "$selected_path")")"
+  log_message="task.profile grade=$grade source=$source validation=$validation"
+  log_message+=" prompt_scope=$prompt_scope prompt_pass=$prompt_pass"
+  log_message+=" effort_before=$effort_before effort_after=$CODEX_REASONING_EFFORT"
+  log_message+=" modules_before=$(shell_quote "$modules_before")"
+  log_message+=" modules_after=$(shell_quote "$modules_after")"
+  log_message+=" modules_action=$modules_action $evidence"
+  log_line "INFO" "$log_message"
+}
+
 run_codex_exec_capture() {
   local label="$1"
   local transcript_file="$2"
@@ -185,9 +605,14 @@ run_codex_exec_capture() {
   local codex_rc
   local tee_rc=0
   local filter_rc=0
+  local timeout_seconds timeout_kill_after timeout_flag=0 start_epoch end_epoch elapsed_seconds
+  local contact_model contact_effort contact_budget_info contact_budget_class contact_budget_limit contact_budget_before
   local -a pipe_status
   local -a genie_env
+  local -a command_args
+  local -a run_command
   shift 3
+  command_args=("$@")
 
   prepare_genie_protocol_env
   genie_env=(
@@ -206,19 +631,39 @@ run_codex_exec_capture() {
     GIT_TERMINAL_PROMPT=0
   )
 
+  IFS=$'\t' read -r contact_model contact_effort < <(upkeeper_model_contact_extract_model_effort "${command_args[@]}")
+  contact_budget_info="$(upkeeper_model_contact_preflight "$label" "$contact_model" "$contact_effort" "$transcript_file")" || return $?
+  IFS=$'\t' read -r contact_budget_class contact_budget_limit contact_budget_before <<<"$contact_budget_info"
+
+  timeout_seconds="$(upkeeper_codex_exec_timeout_seconds)"
+  timeout_kill_after="$(upkeeper_codex_positive_integer_or_zero "${CODEX_EXEC_TIMEOUT_KILL_AFTER_SECONDS:-10}")"
+  run_command=("${genie_env[@]}" "${command_args[@]}")
+  if [[ "$timeout_seconds" -gt 0 ]]; then
+    run_command=(timeout --kill-after="${timeout_kill_after}s" "$timeout_seconds" "${run_command[@]}")
+  fi
+  start_epoch="${EPOCHSECONDS:-$(date '+%s')}"
+
   if terminal_wants_full_output; then
-    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 | tee "$transcript_file"
+    "${run_command[@]}" <"$stdin_file" 2>&1 | tee "$transcript_file"
     pipe_status=("${PIPESTATUS[@]}")
     codex_rc="${pipe_status[0]}"
     tee_rc="${pipe_status[1]}"
   else
-    "${genie_env[@]}" "$@" <"$stdin_file" 2>&1 | tee "$transcript_file" | codex_live_output_filter "$label"
+    "${run_command[@]}" <"$stdin_file" 2>&1 | tee "$transcript_file" | codex_live_output_filter "$label"
     pipe_status=("${PIPESTATUS[@]}")
     codex_rc="${pipe_status[0]}"
     tee_rc="${pipe_status[1]}"
     filter_rc="${pipe_status[2]}"
     emit_codex_transcript_summary "$label" "$transcript_file" "$codex_rc"
   fi
+  end_epoch="${EPOCHSECONDS:-$(date '+%s')}"
+  elapsed_seconds="$((end_epoch - start_epoch))"
+  [[ "$elapsed_seconds" -ge 0 ]] || elapsed_seconds=0
+  if [[ "$timeout_seconds" -gt 0 && "$codex_rc" -eq 124 ]]; then
+    timeout_flag=1
+    log_line "ERROR" "codex.exec_timeout label=$label timeout_seconds=$timeout_seconds model=$contact_model effort=$contact_effort transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1"
+  fi
+  upkeeper_model_contact_record "$label" "$contact_model" "$contact_effort" "$codex_rc" "$elapsed_seconds" "$timeout_flag" 1 "$contact_budget_class" "$contact_budget_limit" "$contact_budget_before" ""
 
   if [[ "$tee_rc" -ne 0 ]]; then
     log_line "ERROR" "codex.transcript_capture_failed label=$label transcript=$(shell_quote "$(upkeeper_path_hmac "$transcript_file")") path_redacted=1 tee_exit=$tee_rc codex_exit=$codex_rc" || true
@@ -1630,7 +2075,7 @@ parse_args() {
 require_commands() {
   local missing=0
   local cmd
-  for cmd in awk cat chmod cut date df env find git grep jq ln mkdir mktemp mv ps python3 rm rmdir sed sort tail tee tr wc; do
+  for cmd in awk cat chmod cut date df env find git grep jq ln mkdir mktemp mv ps python3 rm rmdir sed sort tail tee timeout tr wc; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       log_line "ERROR" "required command missing: $cmd docs=docs/dependencies.md action=install_dependency"
       missing=1

@@ -98,6 +98,25 @@ append_review_module_prompts_or_exit() {
   done
 }
 
+append_task_profile_context() {
+  local compiled_file="$1"
+
+  [[ -n "${UPKEEPER_TASK_PROFILE_GRADE:-}" ]] || return 0
+
+  {
+    printf '\nWRAPPER_TASK_PROFILE\n'
+    printf 'task_grade=%s\n' "${UPKEEPER_TASK_PROFILE_GRADE:-unknown}"
+    printf 'validation_grade=%s\n' "${UPKEEPER_TASK_PROFILE_VALIDATION_GRADE:-unknown}"
+    printf 'prompt_scope=%s\n' "${UPKEEPER_TASK_PROFILE_PROMPT_SCOPE:-standard}"
+    printf 'prompt_pass=%s\n' "${UPKEEPER_TASK_PROFILE_PROMPT_PASS:-${CODEX_PROMPT_PASS:-default}}"
+    printf '\nRules for this task profile:\n'
+    printf -- '- This profile was derived before model contact from deterministic wrapper state such as selected path, recovery role, and explicit operator overrides.\n'
+    printf -- '- Treat prompt_scope=lean as an instruction to avoid optional ceremony and keep verification/output focused on the selected target.\n'
+    printf -- '- Explicit operator prompt-pass, review-module, and model-override flags take precedence over this automatic profile.\n'
+    printf -- '- High-risk contract, security, data-integrity, and recovery profiles remain fail-closed and may require broader validation.\n'
+  } >>"$compiled_file"
+}
+
 append_issue_fix_prompt() {
   local compiled_file="$1"
   local body_excerpt=""
@@ -291,6 +310,8 @@ compile_prompt() {
 
   ensure_run_tmp_dir
   : >"$compiled_file"
+  upkeeper_apply_task_profile "${RUN_SELECTED_REVIEW_PATH:-${CODEX_TARGET_FILE:-}}"
+  append_task_profile_context "$compiled_file"
   append_preselected_review_target "$compiled_file"
   if [[ "$CODEX_PROMPT_PASS" == "all" ]]; then
     {

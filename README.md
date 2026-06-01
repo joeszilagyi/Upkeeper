@@ -363,12 +363,14 @@ pushes to `main`. The workflow installs required tools including `jq` and
 - docs-only changes: `tools/check_public_docs.sh --quick` plus
   `tools/validate_upkeeper.sh --smoke`, via
   `tools/docs_only_fast_path.sh --validate`
-- broader changes: shell syntax checks, unit tests invoked with Bash from
-  `tests/*.bash`, `tools/check_public_docs.sh --quick`, and
-  `tools/validate_upkeeper.sh --full`
+- broader changes: a bounded parallel local gate through
+  `tools/run_validation_phases.sh` for syntax, unit tests, public docs, and
+  whitespace, followed by `tools/validate_upkeeper.sh --full`
 
 It does not launch real Codex backend work and does not upload runtime
 artifacts by default.
+`tools/run_tests.sh` is the shared unit-test entrypoint for local and CI use;
+pass `--serial` when debugging a single ordered suite locally.
 
 Runtime/tool dependencies are tracked in [`docs/dependencies.md`](docs/dependencies.md).
 GitHub's dependency graph should stay enabled, but it is expected to show no
@@ -440,6 +442,10 @@ flag-like behavior:
 ```sh
 CODEX_MODEL="gpt-5.5"
 CODEX_REASONING_EFFORT="xhigh"
+CODEX_EXEC_TIMEOUT_SECONDS="7200"
+CODEX_MODEL_CONTACT_BUDGET_NORMAL="4"
+UPKEEPER_TASK_PROFILE_AUTO_EFFORT="1"
+UPKEEPER_TASK_PROFILE_AUTO_MODULES="1"
 UPKEEPER_TARGET_FILE="docs/scripts/upkeeper.md"
 UPKEEPER_REVIEW_MODULES="p26,p28"
 UPKEEPER_PROMPT_PASS="all"
@@ -447,6 +453,17 @@ UPKEEPER_MAX_COVER="0"
 UPKEEPER_BUG_REPORT_ONLY="0"
 UPKEEPER_FIX_NEXT_ISSUE="0"
 ```
+
+Before backend contact, Upkeeper derives a deterministic task profile from the
+selected path and recovery context. The profile is logged as `task.profile`,
+can lower routine docs/test/tool work from the default maximum effort, records a
+validation grade and prompt scope, and can prune config-sourced review modules
+for lean low-risk runs. Explicit model overrides, explicit review-module CLI
+flags, and high-risk contract/security/data-integrity targets keep the stronger
+profile. `CODEX_EXEC_TIMEOUT_SECONDS` bounds each model contact locally, and
+the model-contact budget knobs cap runaway primary/fallback/postmortem chains
+unless `CODEX_MODEL_CONTACT_BUDGET_BYPASS=1` is set for a deliberate manual
+escalation.
 
 Selection is also configurable. The default is a local manifest-backed oldest
 eligible file rotation; scheduled profiles can narrow that rotation without

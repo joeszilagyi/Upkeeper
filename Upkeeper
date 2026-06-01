@@ -833,6 +833,7 @@ upkeeper_operator_status_process_inventory() {
   local proc_target="unknown"
   local proc_repo_root
   local proc_exec_origin="unknown"
+  local proc_upkeeper_child="unknown"
 
   lock_pid="$(active_lock_field pid || true)"
   lock_cycle="$(active_lock_field cycle_id || true)"
@@ -867,15 +868,19 @@ upkeeper_operator_status_process_inventory() {
     elif [[ "$proc_comm" == "node" && "$proc_args" == *"codex"* ]]; then
       is_codex_child=1
       category="codex-backend-child"
-      proc_cycle="$(upkeeper_proc_env_value "$proc_pid" CODEX_PARENT_CYCLE_ID || upkeeper_proc_env_value "$proc_pid" CYCLE_ID || printf 'unknown')"
+      proc_cycle="$(upkeeper_proc_env_value "$proc_pid" CODEX_PARENT_CYCLE_ID || printf 'unknown')"
       proc_target="$(upkeeper_proc_env_value "$proc_pid" CODEX_TARGET_ROOT || printf 'unknown')"
       proc_exec_origin="$(upkeeper_proc_env_value "$proc_pid" CODEX_EXECUTION_ORIGIN || printf 'unknown')"
+      # Marker set by run_codex_exec_capture for wrapper-owned backend processes.
+      proc_upkeeper_child="$(upkeeper_proc_env_value "$proc_pid" UPKEEPER_CONTROLLED_BACKEND_CHILD || printf 'unknown')"
     else
       continue
     fi
 
     owner_match=0
-    if upkeeper_process_is_descendant "$proc_pid" "$$"; then
+    if [[ "$proc_upkeeper_child" == "1" || "$proc_upkeeper_child" == "true" || "$proc_upkeeper_child" == "yes" ]]; then
+      owner_match=1
+    elif upkeeper_process_is_descendant "$proc_pid" "$$"; then
       owner_match=1
     elif [[ -n "$lock_pid" ]] && upkeeper_process_is_descendant "$proc_pid" "$lock_pid"; then
       owner_match=1
@@ -1468,6 +1473,8 @@ run_codex_exec_capture() {
     -u CODEX_GITHUB_PERSONAL_ACCESS_TOKEN
     -u GITHUB_API_URL
     -u GITHUB_GRAPHQL_URL
+    # Distinguish wrapper-owned backend workers from unrelated codex sessions in process audits.
+    UPKEEPER_CONTROLLED_BACKEND_CHILD=1
     PATH="$RUN_GENIE_BIN_DIR:$PATH"
     UPKEEPER_REAL_GH_BIN="$RUN_GENIE_REAL_GH_BIN"
     GH_CONFIG_DIR="$RUN_GENIE_GH_CONFIG_DIR"

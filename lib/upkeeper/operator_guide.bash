@@ -8,6 +8,14 @@ ensure_operator_guide() {
 
   local guide_path guide_dir tmp_file
   guide_path="$(resolved_operator_guide_path)"
+  if [[ -z "$guide_path" ]]; then
+    log_line "WARN" "operator_guide.bootstrap_skip reason=empty_path"
+    return 0
+  fi
+  if [[ "$guide_path" != "$ROOT_DIR/"* || "$guide_path" == "$ROOT_DIR" || "$guide_path" == "$ROOT_DIR/" ]]; then
+    log_line "WARN" "operator_guide.bootstrap_skip reason=non_repo_path path=$guide_path"
+    return 0
+  fi
   if [[ -e "$guide_path" || -L "$guide_path" ]]; then
     check_existing_operator_guide "$guide_path"
     return 0
@@ -18,13 +26,14 @@ ensure_operator_guide() {
     return 0
   fi
 
-  guide_dir="${guide_path%/*}"
-  [[ -n "$guide_dir" ]] || guide_dir="/"
+  guide_dir="$(dirname -- "$guide_path")"
   if ! mkdir -p "$guide_dir"; then
-    die "failed to create operator guide directory $guide_dir"
+    log_line "WARN" "operator_guide.bootstrap_skip reason=directory_create_failed path=$guide_dir"
+    return 0
   fi
   if ! tmp_file="$(mktemp "$guide_dir/.upkeeper-guide.XXXXXX")"; then
-    die "failed to create temporary operator guide under $guide_dir"
+    log_line "WARN" "operator_guide.bootstrap_skip reason=temp_create_failed path=$guide_dir"
+    return 0
   fi
   if ! {
     printf '# %s\n\n' "$SCRIPT_NAME"
@@ -39,7 +48,8 @@ ensure_operator_guide() {
     printf -- '- Keep transient run logs and generated postmortems under `runtime/`; promote only durable operating rules into this guide.\n'
   } >"$tmp_file"; then
     rm -f "$tmp_file"
-    die "failed to write temporary operator guide under $guide_dir"
+    log_line "WARN" "operator_guide.bootstrap_skip reason=temp_write_failed path=$guide_dir"
+    return 0
   fi
 
   # Install by hard link so a guide created after the initial existence check is
@@ -50,7 +60,8 @@ ensure_operator_guide() {
       check_existing_operator_guide "$guide_path"
       return 0
     fi
-    die "failed to install operator guide $guide_path"
+    log_line "WARN" "operator_guide.bootstrap_skip reason=install_failed path=$guide_path"
+    return 0
   fi
   rm -f "$tmp_file" || log_line "WARN" "operator_guide.temp_cleanup_failed path=$tmp_file"
   log_line "INFO" "operator_guide.bootstrap path=$guide_path source=show_help"

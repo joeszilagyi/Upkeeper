@@ -18,12 +18,14 @@ CHIMNEYSWEEP_REQUESTED_REASONING_EFFORT=""
 CHIMNEYSWEEP_SKIP_LABELS="${CHIMNEYSWEEP_SKIP_LABELS:-in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr}"
 CHIMNEYSWEEP_CLEAN_EXIT_CODE="${CHIMNEYSWEEP_CLEAN_EXIT_CODE:-25}"
 CHIMNEYSWEEP_WORKFLOW="${CHIMNEYSWEEP_WORKFLOW:-comment-review-apply}"
+CHIMNEYSWEEP_WORKFLOW_EXPLICIT="0"
+CHIMNEYSWEEP_CYCLE_MODE="${CHIMNEYSWEEP_CYCLE_MODE:-auto}"
 CHIMNEYSWEEP_DRY_RUN="${CHIMNEYSWEEP_DRY_RUN:-0}"
 CHIMNEYSWEEP_JSON="0"
 
 usage() {
   cat <<EOF
-Usage: ${0##*/} [--silent|--basic|--debug1] [--model-override=SPEC] [--model MODEL] [--reasoning-effort EFFORT] [--workflow=comment-review-apply|comment-review|comment|review|apply] [--dry-run] [--json] [--help]
+Usage: ${0##*/} [--silent|--basic|--debug1] [--model-override=SPEC] [--model MODEL] [--reasoning-effort EFFORT] [--workflow=comment-review-apply|comment-review|comment|review|apply] [--cycle-mode=auto|combined|separate] [--dry-run] [--json] [--help]
 
 Script one issue-fix Upkeeper cycle:
   - run a no-backend control-plane audit guard before GitHub issue ranking
@@ -34,8 +36,10 @@ Script one issue-fix Upkeeper cycle:
   - within security/data-integrity, choose the least recently touched issue
   - after those classes are clear, rank the remaining queue by containment
     title/tag signals, severity words, then longest untouched
-  - default to a comment -> review -> apply workflow using separate Upkeeper
-    backend instantiations for each stage
+  - default to a combined single-issue-fix Upkeeper invocation
+  - support legacy separate-stage mode for read-only comment/review split via
+    --workflow or --cycle-mode=separate
+  - run the legacy staged workflow as comment -> review -> apply
   - hand the selected issue to every stage as --fix-issue=NUMBER
   - request full pass/module coverage against the locked issue target
   - make comment/review stages source read-only and make apply work the bug
@@ -52,8 +56,10 @@ Flags:
   --model MODEL   Model shortcut converted to a model override
   --reasoning-effort EFFORT
                   Reasoning effort for --model (default: xhigh)
-  --workflow=...  Stage workflow: comment-review-apply (default), comment-review,
-                  comment, review, or apply
+  --workflow=...  Legacy stage workflow: comment-review-apply (default when used),
+                  comment-review, comment, review, or apply
+  --cycle-mode=...  Issue-fix cycle mode: auto (default), combined
+                  (single invocation), or separate (legacy per-stage invocation)
   --dry-run       Print the selected issue and resolved Upkeeper command
   --json          Print the scripted selection JSON before launching
   --help          Show this help
@@ -64,6 +70,7 @@ Environment:
   CHIMNEYSWEEP_VERBOSITY        Default verbosity when no flag is given
   CHIMNEYSWEEP_SKIP_LABELS      Comma-separated labels to skip
   CHIMNEYSWEEP_CLEAN_EXIT_CODE  Clean queue exit code (default: 25)
+  CHIMNEYSWEEP_CYCLE_MODE       Default issue-fix mode (auto|combined|separate)
   CHIMNEYSWEEP_WORKFLOW         Default workflow (default: comment-review-apply)
   CHIMNEYSWEEP_DRY_RUN          Set to 1 to print the resolved command
   UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT
@@ -143,10 +150,23 @@ while [[ $# -gt 0 ]]; do
       ;;
     --workflow=*)
       CHIMNEYSWEEP_WORKFLOW="${1#--workflow=}"
+      CHIMNEYSWEEP_WORKFLOW_EXPLICIT="1"
       shift
       ;;
     --workflow)
       printf 'ChimneySweep: use --workflow=comment-review-apply, --workflow=comment-review, --workflow=comment, --workflow=review, or --workflow=apply\n' >&2
+      exit 64
+      ;;
+    --cycle-mode=*)
+      CHIMNEYSWEEP_CYCLE_MODE="${1#--cycle-mode=}"
+      [[ -n "$CHIMNEYSWEEP_CYCLE_MODE" ]] || {
+        printf 'ChimneySweep: --cycle-mode requires a value\n' >&2
+        exit 64
+      }
+      shift
+      ;;
+    --cycle-mode)
+      printf 'ChimneySweep: --cycle-mode requires a value\n' >&2
       exit 64
       ;;
     --json)
@@ -188,6 +208,34 @@ case "$CHIMNEYSWEEP_WORKFLOW" in
     exit 64
     ;;
 esac
+
+case "$CHIMNEYSWEEP_CYCLE_MODE" in
+  auto|combined|separate)
+    ;;
+  *)
+    printf 'ChimneySweep: unsupported cycle mode: %s\n' "$CHIMNEYSWEEP_CYCLE_MODE" >&2
+    printf 'ChimneySweep: supported cycle modes: auto, combined, separate\n' >&2
+    exit 64
+    ;;
+esac
+
+if [[ "$CHIMNEYSWEEP_CYCLE_MODE" == "auto" ]]; then
+  if [[ "$CHIMNEYSWEEP_WORKFLOW_EXPLICIT" == "1" ]]; then
+    CHIMNEYSWEEP_CYCLE_MODE="separate"
+    CHIMNEYSWEEP_CYCLE_MODE_BASIS="legacy-workflow-flag"
+  else
+    CHIMNEYSWEEP_CYCLE_MODE="combined"
+    CHIMNEYSWEEP_CYCLE_MODE_BASIS="default"
+  fi
+else
+  CHIMNEYSWEEP_CYCLE_MODE_BASIS="cli"
+fi
+
+if [[ "$CHIMNEYSWEEP_CYCLE_MODE" == "combined" && "$CHIMNEYSWEEP_WORKFLOW" != "comment-review-apply" ]]; then
+  printf 'ChimneySweep: combined cycle mode ignores legacy workflow override %q\n' "$CHIMNEYSWEEP_WORKFLOW" >&2
+  CHIMNEYSWEEP_WORKFLOW="comment-review-apply"
+fi
+
 UPKEEPER_AUTOMATION_WORKFLOW="$CHIMNEYSWEEP_WORKFLOW"
 export UPKEEPER_AUTOMATION_WORKFLOW
 
@@ -204,6 +252,10 @@ fi
 
 if [[ ! -x "$UPKEEPER_CMD" ]]; then
   printf 'ChimneySweep: Upkeeper command is not executable: %s\n' "$UPKEEPER_CMD" >&2
+  exit 127
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+  printf 'ChimneySweep: required command missing: python3\n' >&2
   exit 127
 fi
 
@@ -298,7 +350,11 @@ skip_labels = {item.strip().lower() for item in sys.argv[1].split(",") if item.s
 
 
 def gh_json(args):
-    cp = subprocess.run(["gh", *args], text=True, capture_output=True, check=False)
+    try:
+        cp = subprocess.run(["gh", *args], text=True, capture_output=True, check=False, timeout=30)
+    except subprocess.TimeoutExpired:
+        print(json.dumps({"status": "gh_timeout_error", "error": "gh command timed out"}))
+        raise SystemExit(0)
     if cp.returncode != 0:
         print(json.dumps({"status": "gh_error", "stderr": cp.stderr.strip()}))
         raise SystemExit(0)
@@ -513,23 +569,33 @@ args=(
   "--fix-issue=$issue_number"
 )
 
-case "$CHIMNEYSWEEP_WORKFLOW" in
-  comment-review-apply)
-    workflow_stages=(comment review apply)
+case "$CHIMNEYSWEEP_CYCLE_MODE" in
+  combined)
+    workflow_stages=()
+    cycle_stage_count=1
     ;;
-  comment-review)
-    workflow_stages=(comment review)
-    ;;
-  comment)
-    workflow_stages=(comment)
-    ;;
-  review)
-    workflow_stages=(review)
-    ;;
-  apply)
-    workflow_stages=(apply)
+  separate)
+    case "$CHIMNEYSWEEP_WORKFLOW" in
+      comment-review-apply)
+        workflow_stages=(comment review apply)
+        ;;
+      comment-review)
+        workflow_stages=(comment review)
+        ;;
+      comment)
+        workflow_stages=(comment)
+        ;;
+      review)
+        workflow_stages=(review)
+        ;;
+      apply)
+        workflow_stages=(apply)
+        ;;
+    esac
+    cycle_stage_count="${#workflow_stages[@]}"
     ;;
 esac
+cycle_count="$cycle_stage_count"
 
 printf 'ChimneySweep: selected issue #%s for repair\n' "$issue_number" >&2
 python3 - "$selection_json" <<'PY' >&2
@@ -539,9 +605,20 @@ data = json.loads(sys.argv[1])
 print(f"ChimneySweep: class={data.get('class', 'unknown')} updated_at={data.get('updated_at', 'unknown')} basis={data.get('selection_basis', 'unknown')}")
 print(f"ChimneySweep: title={data.get('title', '')}")
 PY
-printf 'ChimneySweep: workflow=%s stages=%s\n' "$CHIMNEYSWEEP_WORKFLOW" "$(IFS=,; printf '%s' "${workflow_stages[*]}")" >&2
+printf 'ChimneySweep: cycle_mode=%s workflow=%s stage_count=%s cycle_count=%s reason=%s\n' \
+  "$CHIMNEYSWEEP_CYCLE_MODE" "$CHIMNEYSWEEP_WORKFLOW" "$cycle_stage_count" "$cycle_count" "$CHIMNEYSWEEP_CYCLE_MODE_BASIS" >&2
+printf 'ChimneySweep: stages=%s\n' "$(IFS=,; printf '%s' "${workflow_stages[*]}")" >&2
 
 if [[ "$CHIMNEYSWEEP_DRY_RUN" == "1" ]]; then
+  if [[ "$CHIMNEYSWEEP_CYCLE_MODE" == "combined" ]]; then
+    upkeeper_launcher_print_full_burn_env_prefix
+    printf 'CODEX_TERMINAL_VERBOSITY=%q ' "$CHIMNEYSWEEP_VERBOSITY"
+    printf '%q' "$UPKEEPER_CMD"
+    printf ' %q' "${args[@]}"
+    printf '\n'
+    exit 0
+  fi
+
   for workflow_stage in "${workflow_stages[@]}"; do
     upkeeper_launcher_print_full_burn_env_prefix
     printf 'CODEX_TERMINAL_VERBOSITY=%q ' "$CHIMNEYSWEEP_VERBOSITY"
@@ -553,6 +630,12 @@ if [[ "$CHIMNEYSWEEP_DRY_RUN" == "1" ]]; then
 fi
 
 upkeeper_launcher_report_full_burn "ChimneySweep"
+if [[ "$CHIMNEYSWEEP_CYCLE_MODE" == "combined" ]]; then
+  printf 'ChimneySweep: starting workflow stage=combined issue=%s\n' "$issue_number" >&2
+  CODEX_TERMINAL_VERBOSITY="$CHIMNEYSWEEP_VERBOSITY" "$UPKEEPER_CMD" "${args[@]}"
+  exit "$?"
+fi
+
 for workflow_stage in "${workflow_stages[@]}"; do
   printf 'ChimneySweep: starting workflow stage=%s issue=%s\n' "$workflow_stage" "$issue_number" >&2
   CODEX_TERMINAL_VERBOSITY="$CHIMNEYSWEEP_VERBOSITY" "$UPKEEPER_CMD" "${args[@]}" "--issue-workflow-stage=$workflow_stage"

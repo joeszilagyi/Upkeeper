@@ -33,6 +33,7 @@ SCHEMA_VERSION = 1
 SCHEMA_ROW_VERSION = 1
 TEXT_SAMPLE_SIZE = 4096
 CANDIDATE_STATE_PRIORITY = {"selected": 3, "eligible": 2, "excluded": 1}
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 
 EXIT_SUCCESS = 0
 EXIT_NO_MATCH = 1
@@ -168,6 +169,7 @@ WORKTREE_SNAPSHOT_UNTRACKED_FILES_ENV = "UPKEEPER_LATTICE_WORKTREE_UNTRACKED_FIL
 TOOL_FAILURE_MARKER_ID_HEX_LENGTH = 24
 UPKEEPER_VERBOSE_METADATA_ENV = "UPKEEPER_VERBOSE_METADATA"
 UPKEEPER_RAW_REPO_IDENTITY_ENV = "UPKEEPER_LATTICE_RAW_REPO_IDENTITY"
+UPKEEPER_LATTICE_ALLOW_FOREIGN_LATTICE_UNAVAILABLE = "UPKEEPER_LATTICE_ALLOW_FOREIGN_LATTICE_UNAVAILABLE"
 SENSITIVE_WORKTREE_PATH_SUFFIXES = {".pem", ".p12", ".pfx", ".key", ".der", ".cer", ".crt", ".asc", ".gpg", ".jks", ".keystore"}
 SENSITIVE_WORKTREE_PATH_PARTS = {
     ".env",
@@ -350,6 +352,7 @@ UPKEEPER_LOG_LATTICE_UNAVAILABLE_SAFE_KEYS = UPKEEPER_LOG_SOURCE_SAFE_KEYS | {
     "reason",
     "detail_status",
     "first_failed_check",
+    "owner_issue_number",
     "owner_issue",
     "owner_contract",
     "replacement_evidence",
@@ -1727,6 +1730,8 @@ def source_record_storage_uri(root: Path, source_kind: str, value: str) -> str:
 
 def sanitize_lattice_unavailable_log_fields(root: Path | None, fields: dict[str, Any]) -> dict[str, Any]:
     sanitized = filter_upkeeper_log_fields(fields, UPKEEPER_LOG_LATTICE_UNAVAILABLE_SAFE_KEYS)
+    if has_meaningful_value(fields.get("owner_issue")) and not has_meaningful_value(sanitized.get("owner_issue_number")):
+        sanitized["owner_issue_number"] = str(fields.get("owner_issue"))
     if root is not None and has_meaningful_value(fields.get("db")):
         sanitized["db_hmac"] = artifact_path_hmac(root, str(fields["db"]))
     return sanitized
@@ -1964,6 +1969,7 @@ def summarize_lattice_unavailable_payload(payload: dict[str, Any], raw_line: str
         "detail_status",
         "first_failed_check",
         "reason",
+        "owner_issue_number",
         "owner_issue",
         "owner_contract",
         "replacement_evidence",
@@ -1972,6 +1978,8 @@ def summarize_lattice_unavailable_payload(payload: dict[str, Any], raw_line: str
         value = payload.get(key)
         if has_meaningful_value(value):
             summary[key] = value
+    if not has_meaningful_value(summary.get("owner_issue_number")) and has_meaningful_value(payload.get("owner_issue")):
+        summary["owner_issue_number"] = str(payload.get("owner_issue"))
     return summary
 
 
@@ -6325,6 +6333,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         decorated_marker_probe = probe_cycle_finish_rejects_decorated_status_marker()
         result["checks"]["cycle_finish_report_only_outcome"] = report_only_cycle_probe
         result["checks"]["cycle_finish_rejects_decorated_status_marker"] = decorated_marker_probe
+        missing_empty_transcript_probe = probe_cycle_finish_missing_empty_transcript_is_tolerated()
+        result["checks"]["cycle_finish_missing_empty_transcript_is_tolerated"] = missing_empty_transcript_probe
         p29_reuse_debt_probe = probe_p29_reuse_debt_persistence()
         result["checks"]["p29_reuse_debt_persistence"] = p29_reuse_debt_probe
         change_note_ref_probe = probe_change_note_file_identity_validation()
@@ -6357,6 +6367,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["import_upkeeper_log_idempotent_rows_written"] = import_log_idempotent_probe
         import_log_unavailable_probe = probe_import_upkeeper_log_decorated_lattice_unavailable()
         result["checks"]["import_upkeeper_log_decorated_lattice_unavailable"] = import_log_unavailable_probe
+        import_log_foreign_unavailable_probe = probe_import_upkeeper_log_ignores_foreign_lattice_unavailable_without_override()
+        result["checks"]["import_log_ignores_foreign_lattice_unavailable"] = import_log_foreign_unavailable_probe
         recover_import_conflicts_probe = probe_recover_propagates_import_conflicts()
         result["checks"]["recover_propagates_import_conflicts"] = recover_import_conflicts_probe
         import_repo_mismatch_probe = probe_import_jsonl_rejects_repo_identity_mismatch()
@@ -6378,6 +6390,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(decorated_marker_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(missing_empty_transcript_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(p29_reuse_debt_probe.get("ok")):
@@ -7651,6 +7666,103 @@ def probe_cycle_finish_transient_artifact_scope() -> dict[str, Any]:
     }
 
 
+def probe_cycle_finish_missing_empty_transcript_is_tolerated() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-empty-transcript-") as tmpdir:
+        root = Path(tmpdir)
+        selected_path = "tools/empty-transcript.py"
+        try:
+            subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        (root / "tools").mkdir(parents=True, exist_ok=True)
+        (root / "runtime").mkdir(parents=True, exist_ok=True)
+        (root / selected_path).write_text("print('empty transcript check')\n", encoding="utf-8")
+        review_path = root / "runtime" / "last-message.txt"
+        review_path.write_text(
+            "Selected file: `tools/empty-transcript.py`\nUPKEEPER_REVIEW_OUTCOME=REVIEWED_AND_REPORTED\n",
+            encoding="utf-8",
+        )
+        db_path = root / "lattice.sqlite3"
+        conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True, create_parent=True, create_if_missing=True)
+        try:
+            init_schema(conn, root, raw_storage_mode="minimal")
+        finally:
+            conn.close()
+        missing_transcript_path = root / "runtime" / "missing-transcript.log"
+        args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="wal",
+            allow_unsafe_db=True,
+            raw_storage_mode="minimal",
+            cycle_id="cycle-empty-transcript",
+            run_hash="run-empty-transcript",
+            status_marker="WORK_DONE",
+            review_outcome=None,
+            review_selected_path=None,
+            codex_exit=0,
+            wrapper_exit=0,
+            finish_reason="work_done",
+            finish_level="info",
+            codex_exec_started=1,
+            dry_run="1",
+            selected_path=selected_path,
+            last_message_file=str(review_path),
+            transcript_path=str(missing_transcript_path),
+            transcript_sha256=EMPTY_SHA256,
+            compiled_prompt_path=None,
+            last_message_sha256=None,
+            log_path=None,
+            snapshot_kind="after_codex",
+            end_epoch=1234567890,
+            log_sha256=None,
+        )
+        code = 0
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                command_record_cycle_finish(args)
+        except LatticeCommandError as exc:
+            code = exc.code
+        cycle_pk = None
+        artifact_ref = None
+        if code == EXIT_SUCCESS:
+            conn = connect_checked(root, db_path, "wal", allow_unsafe_db=True)
+            try:
+                cycle_pk = conn.execute(
+                    "select cycle_pk from cycles where cycle_id=? and run_hash=?",
+                    ("cycle-empty-transcript", "run-empty-transcript"),
+                ).fetchone()
+                if cycle_pk is not None:
+                    artifact_ref = conn.execute(
+                        """
+                        select path, exists_at_record_time, sha256
+                          from artifact_refs
+                         where artifact_kind='transcript' and cycle_pk=?
+                         order by artifact_id desc
+                         limit 1
+                        """,
+                        (cycle_pk["cycle_pk"],),
+                    ).fetchone()
+            finally:
+                conn.close()
+        artifact_digest = artifact_ref["sha256"] if artifact_ref else None
+        artifact_exists = int(artifact_ref["exists_at_record_time"]) if artifact_ref else None
+        stored_path = artifact_ref["path"] if artifact_ref else None
+    ok = code == 0
+    if artifact_ref:
+        ok = ok and artifact_exists == 0
+    return {
+        "cycle_id": "cycle-empty-transcript",
+        "run_hash": "run-empty-transcript",
+        "code": code,
+        "cycle_pk": int(cycle_pk["cycle_pk"]) if cycle_pk else None,
+        "artifact_sha256": artifact_digest,
+        "artifact_exists_at_record_time": artifact_exists,
+        "artifact_path": stored_path,
+        "ok": ok,
+    }
+
+
 def probe_cycle_finish_report_only_outcome() -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-cycle-finish-report-only-") as tmpdir:
         root = Path(tmpdir)
@@ -8855,6 +8967,120 @@ def probe_import_upkeeper_log_decorated_lattice_unavailable() -> dict[str, Any]:
     }
 
 
+def probe_import_upkeeper_log_ignores_foreign_lattice_unavailable_without_override() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-log-foreign-unavailable-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        log_path = root / "Upkeeper.log"
+        foreign_db_path = root / "space name" / "runtime" / "upkeeper-backlog-lattice" / "lattice.sqlite3"
+        quoted_db = shlex.quote(str(foreign_db_path))
+        log_path.write_text(
+            "2026-06-01T07:00:00-0700 [WARN] "
+            f"cycle=cycle-foreign run_hash=run-foreign lattice.unavailable required=1 "
+            f"db={quoted_db} action=continue_without_lattice\\n",
+            encoding="utf-8",
+        )
+        init_args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="full",
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            command_init(init_args)
+        import_args = argparse.Namespace(
+            root=str(root),
+            db=str(db_path),
+            journal_mode="delete",
+            allow_unsafe_db=False,
+            raw_storage_mode="full",
+            path=str(log_path),
+            raw=True,
+            allow_foreign_lattice_unavailable=False,
+        )
+        default_stdout = io.StringIO()
+        with contextlib.redirect_stdout(default_stdout):
+            default_exit = command_import_upkeeper_log(import_args)
+        default_payload = load_single_json_document(default_stdout.getvalue()) if default_stdout.getvalue().strip() else {}
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            default_rows = conn.execute(
+                "select count(*) as count from file_events where event_kind='lattice_unavailable'"
+            ).fetchone()
+        finally:
+            conn.close()
+        default_event_count = int(default_rows["count"]) if default_rows else 0
+
+        import_args.allow_foreign_lattice_unavailable = True
+        override_stdout = io.StringIO()
+        with contextlib.redirect_stdout(override_stdout):
+            override_exit = command_import_upkeeper_log(import_args)
+        override_payload = load_single_json_document(override_stdout.getvalue()) if override_stdout.getvalue().strip() else {}
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            source_row = conn.execute(
+                """
+                select source_id
+                from source_records
+                where source_kind='upkeeper_log' and raw_ref='lattice.unavailable'
+                order by source_id desc
+                limit 1
+                """
+            ).fetchone()
+            rows_written = conn.execute(
+                "select count(*) as count from file_events where event_kind='lattice_unavailable'"
+            ).fetchone()
+            event_row = conn.execute(
+                """
+                select details_json
+                from file_events
+                where event_kind='lattice_unavailable'
+                order by event_id desc
+                limit 1
+                """
+            ).fetchone()
+        finally:
+            conn.close()
+    event_payload = json.loads(event_row["details_json"]) if event_row and event_row["details_json"] else {}
+    event_count = int(rows_written["count"]) if rows_written else 0
+    override_event_safe = event_payload.get("db_hmac", "").startswith(PASS_RESULT_PATH_HMAC_PREFIX) and "db" not in event_payload
+    return {
+        "default_exit": default_exit,
+        "override_exit": override_exit,
+        "source_event_source_present": bool(source_row),
+        "default_event_count": default_event_count,
+        "override_event_count": event_count,
+        "event_logged_by_override": bool(event_row),
+        "override_event_safe": override_event_safe,
+        "foreign_db_path": str(foreign_db_path),
+        "default_payload_rows_seen": default_payload.get("rows_seen"),
+        "default_payload_rows_written": default_payload.get("rows_written"),
+        "override_payload_rows_seen": override_payload.get("rows_seen"),
+        "override_payload_rows_written": override_payload.get("rows_written"),
+        "ok": all(
+            (
+                default_exit == EXIT_SUCCESS,
+                override_exit == EXIT_SUCCESS,
+                bool(source_row),
+                default_payload.get("rows_seen") == 1,
+                default_payload.get("rows_written") == 1,
+                default_event_count == 0,
+                override_payload.get("rows_seen") == 1,
+                override_payload.get("rows_written") == 0,
+                event_count == 1,
+                bool(event_row),
+                override_event_safe,
+            )
+        ),
+    }
+
+
 def seed_recovery_duplicate_git_change_db(root: Path, db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     chmod_private(db_path.parent, is_dir=True, created_by_invocation=True)
@@ -9662,7 +9888,13 @@ def create_artifact_ref(
         fail(f"artifact path is a symlink and cannot be hashed: {p}", EXIT_USAGE)
     exists = entry is not None and stat.S_ISREG(entry.st_mode)
     if expected_digest is not None and not exists:
-        fail(f"expected artifact missing for {artifact_kind}: {p}", EXIT_INTEGRITY)
+        if artifact_kind == "transcript" and expected_digest == EMPTY_SHA256:
+            # An empty transcript is a valid terminal state for some codex exit codes.
+            # Avoid turning a missing transcript path into an integrity failure in that
+            # case while preserving strictness for non-empty transcript expectations.
+            pass
+        else:
+            fail(f"expected artifact missing for {artifact_kind}: {p}", EXIT_INTEGRITY)
     size = None
     digest = None
     digest_hmac = None
@@ -11604,10 +11836,30 @@ def filter_upkeeper_log_fields(parsed: dict[str, Any], allowed_keys: set[str]) -
     return {key: parsed[key] for key in allowed_keys if key in parsed}
 
 
+def lattice_unavailable_belongs_to_root(root: Path, parsed: dict[str, Any], *, allow_foreign: bool = False) -> bool:
+    if allow_foreign:
+        return True
+    if str(parsed.get("event", "")).strip() != "lattice.unavailable":
+        return True
+    raw_db = parsed.get("db")
+    if not has_meaningful_value(raw_db):
+        return True
+    try:
+        db_path = Path(str(raw_db))
+        resolved_db = db_path.resolve() if db_path.is_absolute() else (root / db_path).resolve()
+    except (OSError, ValueError):
+        return False
+    return path_under(resolved_db, root)
+
+
 def command_import_upkeeper_log(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     raw_storage_mode = getattr(args, "raw_storage_mode", None) or current_lattice_raw_storage()
     log_path = Path(args.path or root / "Upkeeper.log")
+    allow_foreign_lattice_unavailable = bool(
+        getattr(args, "allow_foreign_lattice_unavailable", False)
+        or os.environ.get(UPKEEPER_LATTICE_ALLOW_FOREIGN_LATTICE_UNAVAILABLE, "") == "1"
+    )
     log_details = {}
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
@@ -11701,7 +11953,11 @@ def command_import_upkeeper_log(args: argparse.Namespace) -> int:
             event = str(parsed.get("event", ""))
             if cycle_id and run_hash:
                 cycle_pk = ensure_cycle(conn, repo_id, cycle_id, run_hash, source_id=source_id)
-                if event == "lattice.unavailable":
+                if event == "lattice.unavailable" and lattice_unavailable_belongs_to_root(
+                    root,
+                    parsed,
+                    allow_foreign=allow_foreign_lattice_unavailable,
+                ):
                     # Lattice degraded mode is not a perfect unattended run; keep
                     # a cycle-local custody event in addition to the raw log source.
                     record_file_event(
@@ -14831,6 +15087,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("import-upkeeper-log")
     p.add_argument("--path", default="")
     p.add_argument("--raw", action="store_true")
+    p.add_argument(
+        "--allow-foreign-lattice-unavailable",
+        action="store_true",
+        default=os.environ.get(UPKEEPER_LATTICE_ALLOW_FOREIGN_LATTICE_UNAVAILABLE) == "1",
+        help=(
+            "opt in to importing lattice.unavailable events when the logged db path does not"
+            " belong to --root (for cross-root custody workflows)"
+        ),
+    )
     p.set_defaults(func=command_import_upkeeper_log)
 
     p = sub.add_parser("import-change-notes")

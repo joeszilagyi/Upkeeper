@@ -724,6 +724,203 @@ for upkeeper_module in "${UPKEEPER_MODULES[@]}"; do
 done
  unset upkeeper_module
 
+upkeeper_proc_env_value() {
+  local pid="$1"
+  local key="$2"
+
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+  [[ -r "/proc/$pid/environ" ]] || return 1
+
+  tr '\0' '\n' <"/proc/$pid/environ" \
+  | awk -F= -v key="$key" '$1 == key {sub("^" key "=","", $0); print; exit}'
+}
+
+upkeeper_process_is_descendant() {
+  local pid="$1"
+  local target_pid="$2"
+  local current_pid
+  local parent_pid
+  local iterations=0
+
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  [[ "$target_pid" =~ ^[0-9]+$ ]] || return 1
+
+  current_pid="$pid"
+  while [[ "$iterations" -lt 64 ]]; do
+    if [[ "$current_pid" == "$target_pid" ]]; then
+      return 0
+    fi
+    parent_pid="$(ps -o ppid= -p "$current_pid" 2>/dev/null | tr -d '[:space:]')"
+    [[ "$parent_pid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$parent_pid" == "0" ]] && return 1
+    current_pid="$parent_pid"
+    iterations=$((iterations + 1))
+  done
+  return 1
+}
+
+upkeeper_process_arg_value() {
+  local args="$1"
+  local flag="$2"
+  local next_is_value="0"
+  local token
+
+  while IFS=' ' read -r token; do
+    if [[ "$next_is_value" == "1" ]]; then
+      printf '%s' "$token"
+      return 0
+    fi
+
+    if [[ "$token" == "$flag="* ]]; then
+      token="${token#*=}"
+      if [[ -n "$token" ]]; then
+        printf '%s' "$token"
+      else
+        printf '%s' "unknown"
+      fi
+      return 0
+    fi
+    if [[ "$token" == "$flag" ]]; then
+      next_is_value="1"
+    fi
+  done < <(printf '%s' "$args")
+
+  if [[ "$next_is_value" == "1" ]]; then
+    printf '%s' "unknown"
+    return 0
+  fi
+  printf '%s' "unknown"
+}
+
+upkeeper_process_repo_root_from_args() {
+  local pid="$1"
+  local args="$2"
+  local root
+  local root_flag_value
+
+  root_flag_value="$(upkeeper_process_arg_value "$args" "-C")"
+  if [[ "$root_flag_value" != "unknown" ]]; then
+    root="$root_flag_value"
+  else
+    root="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || printf 'unknown')"
+  fi
+
+  if [[ "$root" == "unknown" ]]; then
+    printf '%s' "unknown"
+    return 0
+  fi
+
+  if [[ "$root" == "." || "$root" == ".." || "$root" == "./"* || "$root" == "../"* || "$root" != /* ]]; then
+    root="$ROOT_DIR/$root"
+  fi
+
+  root="$(cd "$root" 2>/dev/null && pwd -P || printf '%s' "$root")"
+  printf '%s' "$root"
+}
+
+upkeeper_operator_status_process_inventory() {
+  local lock_pid=""
+  local lock_cycle="unknown"
+  local lock_root="unknown"
+  local proc_pid proc_ppid proc_pgid proc_elapsed proc_comm proc_args
+  local is_backlog_loop=0 is_pr_waiter=0 is_codex_child=0
+  local category="unmatched"
+  local action="unknown"
+  local owner_match=0
+  local has_rows=0
+  local proc_cycle="unknown"
+  local proc_target="unknown"
+  local proc_repo_root
+  local proc_exec_origin="unknown"
+  local proc_upkeeper_child="unknown"
+
+  lock_pid="$(active_lock_field pid || true)"
+  lock_cycle="$(active_lock_field cycle_id || true)"
+  lock_root="$(active_lock_field root_dir || true)"
+  [[ -z "$lock_cycle" ]] && lock_cycle="unknown"
+  [[ -z "$lock_root" ]] && lock_root="unknown"
+
+  printf '\nProcess classification (upkeeper-owned vs unrelated automation)\n'
+  printf '  - active lock: pid=%s cycle=%s root=%s\n' "${lock_pid:-unknown}" "$lock_cycle" "$lock_root"
+
+  while IFS=' ' read -r proc_pid proc_ppid proc_pgid proc_elapsed proc_comm proc_args; do
+    [[ "$proc_pid" =~ ^[0-9]+$ ]] || continue
+    is_backlog_loop=0
+    is_pr_waiter=0
+    is_codex_child=0
+    category="unmatched"
+    action="inspect"
+    proc_cycle="unknown"
+    proc_target="unknown"
+    proc_exec_origin="unknown"
+
+    if [[ "$proc_comm" == "bash" && "$proc_args" == *"orchestration/backlog.sh"* ]]; then
+      is_backlog_loop=1
+      category="upkeeper-backlog-loop"
+      proc_cycle="$(upkeeper_proc_env_value "$proc_pid" CODEX_PARENT_CYCLE_ID || printf 'unknown')"
+      proc_target="$(upkeeper_proc_env_value "$proc_pid" CODEX_TARGET_FILE || printf 'unknown')"
+    elif [[ "$proc_comm" == "bash" && "$proc_args" == *"orchestration/watch-pr.sh"* ]]; then
+      is_pr_waiter=1
+      category="upkeeper-pr-check-waiter"
+      proc_cycle="$(upkeeper_proc_env_value "$proc_pid" CODEX_PARENT_CYCLE_ID || printf 'unknown')"
+      proc_target="$(upkeeper_proc_env_value "$proc_pid" CODEX_TARGET_FILE || printf 'unknown')"
+    elif [[ "$proc_comm" == "node" && "$proc_args" == *"codex"* ]]; then
+      is_codex_child=1
+      category="codex-backend-child"
+      proc_cycle="$(upkeeper_proc_env_value "$proc_pid" CODEX_PARENT_CYCLE_ID || printf 'unknown')"
+      proc_target="$(upkeeper_proc_env_value "$proc_pid" CODEX_TARGET_ROOT || printf 'unknown')"
+      proc_exec_origin="$(upkeeper_proc_env_value "$proc_pid" CODEX_EXECUTION_ORIGIN || printf 'unknown')"
+      # Marker set by run_codex_exec_capture for wrapper-owned backend processes.
+      proc_upkeeper_child="$(upkeeper_proc_env_value "$proc_pid" UPKEEPER_CONTROLLED_BACKEND_CHILD || printf 'unknown')"
+    else
+      continue
+    fi
+
+    owner_match=0
+    if [[ "$proc_upkeeper_child" == "1" || "$proc_upkeeper_child" == "true" || "$proc_upkeeper_child" == "yes" ]]; then
+      owner_match=1
+    elif upkeeper_process_is_descendant "$proc_pid" "$$"; then
+      owner_match=1
+    elif [[ -n "$lock_pid" ]] && upkeeper_process_is_descendant "$proc_pid" "$lock_pid"; then
+      owner_match=1
+    elif [[ "$proc_cycle" != "unknown" && "$proc_cycle" == "$lock_cycle" && "$lock_cycle" != "unknown" ]]; then
+      owner_match=1
+    fi
+
+    if (( owner_match == 1 )); then
+      if (( is_backlog_loop == 1 )); then
+        action="Keep running; if stale, stop parent backlog loop."
+      elif (( is_pr_waiter == 1 )); then
+        action="Keep running; this waits on PR checks."
+      else
+        action="Keep running; backend/model worker tied to active cycle."
+      fi
+    elif (( is_codex_child == 1 )); then
+      category="unrelated-codex-session"
+      action="Do not stop; looks like interactive Codex session."
+    else
+      category="stale-upkeeper-candidate"
+      action="Inspect lock and ancestry evidence before manual intervention."
+    fi
+
+    proc_repo_root="$(upkeeper_process_repo_root_from_args "$proc_pid" "$proc_args")"
+    proc_cycle="$(printf '%s' "$proc_cycle")"
+
+    printf '  - PID %s\n' "$proc_pid"
+    printf '    PPID=%s PGID=%s ELAPSED=%s\n' "$proc_ppid" "$proc_pgid" "$proc_elapsed"
+    printf '    category=%s owner=%s cycle=%s origin=%s target=%s repo=%s action=%s\n' \
+      "$category" "$(printf '%s' "$owner_match")" "$proc_cycle" \
+      "$(shell_quote "$proc_exec_origin")" "$(shell_quote "$proc_target")" \
+      "$(shell_quote "$proc_repo_root")" "$(shell_quote "$action")"
+    has_rows=1
+  done < <(ps -eo pid=,ppid=,pgid=,etime=,comm=,args= 2>/dev/null)
+
+  if [[ "$has_rows" == "0" ]]; then
+    printf '  No matching automation-related running processes found.\n'
+  fi
+}
+
 # Keep status-marker recovery deterministic for this selected-target repair cycle.
 # Paired modules intentionally remain unchanged for focused regression repair.
 resolved_status_marker_from_analysis() {
@@ -1276,6 +1473,8 @@ run_codex_exec_capture() {
     -u CODEX_GITHUB_PERSONAL_ACCESS_TOKEN
     -u GITHUB_API_URL
     -u GITHUB_GRAPHQL_URL
+    # Distinguish wrapper-owned backend workers from unrelated codex sessions in process audits.
+    UPKEEPER_CONTROLLED_BACKEND_CHILD=1
     PATH="$RUN_GENIE_BIN_DIR:$PATH"
     UPKEEPER_REAL_GH_BIN="$RUN_GENIE_REAL_GH_BIN"
     GH_CONFIG_DIR="$RUN_GENIE_GH_CONFIG_DIR"
@@ -1687,6 +1886,11 @@ record_startup_anomaly_gate_review() {
   elif startup_anomaly_gate_has_unresolved_state "$STARTUP_ANOMALY_REASONS"; then
     startup_anomaly_log_gate_unresolved "unresolved_startup_anomaly_state" "$status_marker_value" "$codex_exit_value"
     if ! write_startup_anomaly_gate_state "unresolved" "unresolved_startup_anomaly_state"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
+    fi
+  elif [[ "$codex_exit_value" != "0" ]]; then
+    startup_anomaly_log_gate_unresolved "nonzero_codex_exit" "$status_marker_value" "$codex_exit_value"
+    if ! write_startup_anomaly_gate_state "unresolved" "nonzero_codex_exit"; then
       finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=1"
     fi
   elif current_cycle_log_review_present "$last_message_file" "$CYCLE_ID" "$LOG_FILE" "$STARTUP_ANOMALY_REASONS"; then
@@ -6026,8 +6230,13 @@ main() {
   apply_configured_cli_defaults
   parse_args "$@"
   if [[ -n "${UPKEEPER_OPERATOR_STATUS_COMMAND:-}" ]]; then
-    upkeeper_operator_status_dispatch "$UPKEEPER_OPERATOR_STATUS_COMMAND"
-    return $?
+    if ! upkeeper_operator_status_dispatch "$UPKEEPER_OPERATOR_STATUS_COMMAND"; then
+      return $?
+    fi
+    if [[ "$UPKEEPER_OPERATOR_STATUS_COMMAND" != "json-status" ]]; then
+      upkeeper_operator_status_process_inventory
+    fi
+    return 0
   fi
   validate_codex_mode_args_or_exit
   if upkeeper_internal_current_cycle_log_review_requested; then

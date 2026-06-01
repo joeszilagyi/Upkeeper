@@ -165,12 +165,15 @@ Future changes should preserve this operator-visible surface as far as possible:
 - `ChimneySweep` owns pre-model issue ranking for repair automation: clean
   actionable queues exit 25, security issues outrank data-integrity issues,
   data-integrity issues outrank the general queue, and the selected issue is
-  handed to Upkeeper with `--fix-issue=NUMBER`. Its default workflow is
-  comment, review, then apply across separate Upkeeper instantiations. The
-  comment/review stages are source read-only and leave issue comments; the apply
-  stage works the bug. Each stage requests all prompt passes and all P24-P30
-  review modules for the locked issue target, and uses the same full-burn
-  launcher protections and quota-bypass behavior as FlameOn.
+  handed to Upkeeper with `--fix-issue=NUMBER`. Its default workflow is one
+  combined single-issue-fix Upkeeper invocation. `--cycle-mode=separate`, or an
+  explicit `--workflow=...`, preserves the legacy `comment`, `review`, then
+  `apply` workflow across separate Upkeeper instantiations. In that staged
+  mode, comment/review stages are source read-only and leave issue comments;
+  the apply stage works the bug. Combined and staged repair invocations request
+  all prompt passes and all P24-P30 review modules for the locked issue target,
+  and use the same full-burn launcher protections and quota-bypass behavior as
+  FlameOn.
 - Canonical issue taxonomy for local release-gate planning is:
   `p0-release-blocker`, `p1-trust`, `p1-validation`, `p1-safety`, `p1-docs`,
   `p2-ux`, `p2-portability`, `p2-prompt`, `p3-polish`; Upkeeper currently

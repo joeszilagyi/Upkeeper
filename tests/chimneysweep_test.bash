@@ -168,8 +168,10 @@ test_chimneysweep_help_documents_fix_contract() {
   grep -Fq "exit 25" <<<"$help" || fail "help missing clean exit code"
   grep -Fq -- "--dry-run" <<<"$help" || fail "help missing dry-run flag"
   grep -Fq -- "--workflow=" <<<"$help" || fail "help missing workflow flag"
+  grep -Fq -- "--cycle-mode=" <<<"$help" || fail "help missing cycle mode flag"
   grep -Fq -- "--model-override=SPEC" <<<"$help" || fail "help missing model override flag"
   grep -Fq -- "--model MODEL" <<<"$help" || fail "help missing model shortcut flag"
+  grep -Fq "combined single-issue-fix" <<<"$help" || fail "help missing combined default"
   grep -Fq "comment -> review -> apply" <<<"$help" || fail "help missing staged workflow"
   grep -Fq "full pass/module coverage" <<<"$help" || fail "help missing full burn contract"
   grep -Fq "Lattice required" <<<"$help" || fail "help missing required Lattice contract"
@@ -219,9 +221,11 @@ test_chimneysweep_security_class_wins() {
   grep -Fq "class=security" <<<"$output" || fail "security scenario did not report class"
   grep -Fq -- "--prompt-pass=all" <<<"$output" || fail "security scenario did not request all prompt passes"
   grep -Fq -- "--review-modules=p24\\,p25\\,p26\\,p27\\,p28\\,p29\\,p30" <<<"$output" || fail "security scenario did not request all review modules"
-  grep -Fq -- "--issue-workflow-stage=comment" <<<"$output" || fail "security scenario did not request comment stage"
-  grep -Fq -- "--issue-workflow-stage=review" <<<"$output" || fail "security scenario did not request review stage"
-  grep -Fq -- "--issue-workflow-stage=apply" <<<"$output" || fail "security scenario did not request apply stage"
+  grep -Fq "cycle_mode=combined" <<<"$output" || fail "security scenario did not use combined cycle mode"
+  grep -Fq "stage_count=1" <<<"$output" || fail "security scenario did not report one combined stage"
+  if grep -Fq -- "--issue-workflow-stage=" <<<"$output"; then
+    fail "default security scenario unexpectedly requested staged workflow"
+  fi
   grep -Fq "UPKEEPER_LATTICE_REQUIRED=1" <<<"$output" || fail "security scenario missing required Lattice burn default"
   grep -Fq "UPKEEPER_PRECONTACT_BACKUP_MODE=age" <<<"$output" || fail "security scenario missing age backup burn default"
   grep -Fq "UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=1" <<<"$output" || fail "security scenario missing encrypted backup requirement"
@@ -233,6 +237,18 @@ test_chimneysweep_security_class_wins() {
   grep -Fq "UPKEEPER_AUTOMATION_VARIANT=issue-repair" <<<"$output" || fail "security scenario missing ChimneySweep automation variant"
   grep -Fq "UPKEEPER_AUTOMATION_POLICY=own-bug-queue" <<<"$output" || fail "security scenario missing ChimneySweep automation policy"
   grep -Fq "UPKEEPER_AUTOMATION_WORKFLOW=comment-review-apply" <<<"$output" || fail "security scenario missing ChimneySweep automation workflow"
+}
+
+test_chimneysweep_separate_workflow_stages_issue() {
+  local output
+
+  output="$(GH_SCENARIO=security run_chimneysweep --dry-run --cycle-mode=separate 2>&1)"
+  grep -Fq -- "--fix-issue=50" <<<"$output" || fail "separate workflow did not lock oldest security issue"
+  grep -Fq "cycle_mode=separate" <<<"$output" || fail "separate workflow did not report separate cycle mode"
+  grep -Fq "stage_count=3" <<<"$output" || fail "separate workflow did not report three stages"
+  grep -Fq -- "--issue-workflow-stage=comment" <<<"$output" || fail "separate workflow did not request comment stage"
+  grep -Fq -- "--issue-workflow-stage=review" <<<"$output" || fail "separate workflow did not request review stage"
+  grep -Fq -- "--issue-workflow-stage=apply" <<<"$output" || fail "separate workflow did not request apply stage"
 }
 
 test_chimneysweep_model_override_supports_spark() {
@@ -298,7 +314,7 @@ test_chimneysweep_stops_on_operator_action_required_obligation() {
 test_chimneysweep_control_plane_guard_blocks_unknown_root_artifact() {
   local output rc obligation_dir artifact
 
-  artifact="$ROOT_DIR/control-plane-guard-fixture.log"
+  artifact="$ROOT_DIR/chimneysweep-control-plane-guard-fixture.log"
   [[ ! -e "$artifact" ]] || fail "guard fixture already exists: $artifact"
   obligation_dir="$TEST_TMP_ROOT/chimneysweep-control-plane-obligations"
   printf 'unexpected local evidence\n' >"$artifact"
@@ -335,11 +351,24 @@ test_chimneysweep_general_queue_prefers_containment_signal() {
 test_chimneysweep_exec_hands_locked_issue_to_upkeeper() {
   rm -f "$TEST_TMP_ROOT/capture.txt"
   GH_SCENARIO=security run_chimneysweep >/dev/null 2>&1
-  [[ "$(grep -c '^BEGIN$' "$TEST_TMP_ROOT/capture.txt")" -eq 3 ]] || fail "exec did not run three workflow stages"
+  [[ "$(grep -c '^BEGIN$' "$TEST_TMP_ROOT/capture.txt")" -eq 1 ]] || fail "exec did not run one combined workflow"
   grep -Fxq -- "--model-override=5.5_xhigh" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not pass model override"
   grep -Fxq -- "--prompt-pass=all" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not pass all prompt pass"
   grep -Fxq -- "--review-modules=p24,p25,p26,p27,p28,p29,p30" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not pass all review modules"
   grep -Fxq -- "--fix-issue=50" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not pass locked issue"
+  if grep -Fxq -- "--issue-workflow-stage=comment" "$TEST_TMP_ROOT/capture.txt"; then
+    fail "combined exec unexpectedly ran comment stage"
+  fi
+}
+
+test_chimneysweep_separate_exec_hands_locked_issue_to_each_stage() {
+  rm -f "$TEST_TMP_ROOT/capture.txt"
+  GH_SCENARIO=security run_chimneysweep --cycle-mode=separate >/dev/null 2>&1
+  [[ "$(grep -c '^BEGIN$' "$TEST_TMP_ROOT/capture.txt")" -eq 3 ]] || fail "separate exec did not run three workflow stages"
+  grep -Fxq -- "--model-override=5.5_xhigh" "$TEST_TMP_ROOT/capture.txt" || fail "separate exec did not pass model override"
+  grep -Fxq -- "--prompt-pass=all" "$TEST_TMP_ROOT/capture.txt" || fail "separate exec did not pass all prompt pass"
+  grep -Fxq -- "--review-modules=p24,p25,p26,p27,p28,p29,p30" "$TEST_TMP_ROOT/capture.txt" || fail "separate exec did not pass all review modules"
+  grep -Fxq -- "--fix-issue=50" "$TEST_TMP_ROOT/capture.txt" || fail "separate exec did not pass locked issue"
   grep -Fxq -- "--issue-workflow-stage=comment" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not run comment stage"
   grep -Fxq -- "--issue-workflow-stage=review" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not run review stage"
   grep -Fxq -- "--issue-workflow-stage=apply" "$TEST_TMP_ROOT/capture.txt" || fail "exec did not run apply stage"
@@ -353,7 +382,7 @@ test_chimneysweep_apply_workflow_runs_one_stage() {
 }
 
 test_chimneysweep_completion_loads() {
-  local debug_output workflow_output
+  local cycle_output debug_output workflow_output
 
   debug_output="$(
     source "$ROOT_DIR/completions/upkeeper.bash"
@@ -376,6 +405,27 @@ test_chimneysweep_completion_loads() {
   )"
   grep -Fxq -- "--workflow=" <<<"$workflow_output" || fail "ChimneySweep completion did not suggest --workflow"
 
+  cycle_output="$(
+    source "$ROOT_DIR/completions/upkeeper.bash"
+    complete -p ./ChimneySweep >/dev/null
+    COMP_WORDS=(./ChimneySweep --c)
+    COMP_CWORD=1
+    _chimneysweep_complete
+    printf '%s\n' "${COMPREPLY[@]}"
+  )"
+  grep -Fxq -- "--cycle-mode=" <<<"$cycle_output" || fail "ChimneySweep completion did not suggest --cycle-mode"
+
+  cycle_output="$(
+    source "$ROOT_DIR/completions/upkeeper.bash"
+    complete -p ./ChimneySweep >/dev/null
+    COMP_WORDS=(./ChimneySweep --cycle-mode=)
+    COMP_CWORD=1
+    _chimneysweep_complete
+    printf '%s\n' "${COMPREPLY[@]}"
+  )"
+  grep -Fxq -- "--cycle-mode=combined" <<<"$cycle_output" || fail "ChimneySweep completion did not suggest combined cycle mode"
+  grep -Fxq -- "--cycle-mode=separate" <<<"$cycle_output" || fail "ChimneySweep completion did not suggest separate cycle mode"
+
   workflow_output="$(
     source "$ROOT_DIR/completions/upkeeper.bash"
     complete -p ./ChimneySweep >/dev/null
@@ -392,6 +442,7 @@ test_chimneysweep_clean_queue_exits_25
 test_chimneysweep_clean_queue_ignores_inherited_obligation_env
 test_chimneysweep_skipped_queue_counts_clean
 test_chimneysweep_security_class_wins
+test_chimneysweep_separate_workflow_stages_issue
 test_chimneysweep_model_override_supports_spark
 test_chimneysweep_reconciles_obligations_before_github_queue
 test_chimneysweep_remaps_runtime_fixture_obligation_targets
@@ -400,6 +451,7 @@ test_chimneysweep_control_plane_guard_blocks_unknown_root_artifact
 test_chimneysweep_data_integrity_after_security_clear
 test_chimneysweep_general_queue_prefers_containment_signal
 test_chimneysweep_exec_hands_locked_issue_to_upkeeper
+test_chimneysweep_separate_exec_hands_locked_issue_to_each_stage
 test_chimneysweep_apply_workflow_runs_one_stage
 test_chimneysweep_completion_loads
 printf 'ok - chimneysweep\n'

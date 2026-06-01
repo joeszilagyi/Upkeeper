@@ -1300,6 +1300,26 @@ else:
 PY
 }
 
+automation_json_fields_nul() {
+  local json="$1"
+  shift
+
+  python3 - "$json" "$@" <<'PY'
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+for key in sys.argv[2:]:
+    value = data.get(key, "")
+    if isinstance(value, (list, dict)):
+        text = json.dumps(value, separators=(",", ":"))
+    else:
+        text = "" if value is None else str(value)
+    sys.stdout.write(text)
+    sys.stdout.write("\0")
+PY
+}
+
 automation_prepare_obligation_prompt_file() {
   local obligation_json="$1"
   local work_dir obligation_id prompt_path

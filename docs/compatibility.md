@@ -214,6 +214,15 @@ Future changes should preserve this operator-visible surface as far as possible:
   `origin/<branch>`, the launcher pushes it before PR checks or merge. Dirty,
   missing-remote, or diverged local-ahead states fail closed with an explicit
   branch-state reason.
+- Backlog PR-check waits have a bounded default timeout
+  (`BACKLOG_PR_CHECK_TIMEOUT_SECONDS=1800`). Timeout exits preserve the owner
+  lease state, return the pending-check status used by the backlog loop, and
+  write local timeout evidence under the selected backlog state root.
+- Backlog records validation authority for the current branch head after a
+  successful local commit/push. `local-green-async-ci` authority is limited to
+  low-risk docs/Markdown-only commits by default and skips only the
+  between-issues PR-check wait; batch merge still runs local batch validation
+  and blocks on current PR checks before integration.
 - `./orchestration/watch-pr.sh [PR_NUMBER]` is the stable local PR-check watch
   command for backlog/manual boundaries. With no PR number it infers the
   current branch PR. It emits timestamped `status=pass|pending|fail` summaries

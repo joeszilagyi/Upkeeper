@@ -15,12 +15,16 @@ BACKLOG_EXCLUDED_LABELS="${BACKLOG_EXCLUDED_LABELS:-feature,features,enhancement
 BACKLOG_CODEX_MODEL="${BACKLOG_CODEX_MODEL:-gpt-5.3-codex-spark}"
 BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-xhigh}"
 BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
-BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-0}"
+BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-1800}"
 BACKLOG_PR_CHECK_INTERVAL_SECONDS="${BACKLOG_PR_CHECK_INTERVAL_SECONDS:-60}"
 BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS="${BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS:-300}"
 BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE="${BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE:-1}"
 BACKLOG_PR_CHECK_PROGRESS="${BACKLOG_PR_CHECK_PROGRESS:-1}"
 BACKLOG_PR_CHECK_PROGRESS_STEPS="${BACKLOG_PR_CHECK_PROGRESS_STEPS:-1}"
+BACKLOG_VALIDATION_AUTHORITY_POLICY="${BACKLOG_VALIDATION_AUTHORITY_POLICY:-auto}"
+BACKLOG_VALIDATION_AUTHORITY_LOW_RISK="${BACKLOG_VALIDATION_AUTHORITY_LOW_RISK:-local-green-async-ci}"
+BACKLOG_VALIDATION_AUTHORITY_NORMAL="${BACKLOG_VALIDATION_AUTHORITY_NORMAL:-blocking-ci}"
+BACKLOG_VALIDATION_AUTHORITY_HIGH_RISK="${BACKLOG_VALIDATION_AUTHORITY_HIGH_RISK:-blocking-ci}"
 BACKLOG_PER_BUG_VALIDATION_MODE="${BACKLOG_PER_BUG_VALIDATION_MODE:-light}"
 BACKLOG_AUTOSHELVE_DIRTY_WORKTREE="${BACKLOG_AUTOSHELVE_DIRTY_WORKTREE:-1}"
 BACKLOG_AUTOSHELVE_BRANCH_PREFIX="${BACKLOG_AUTOSHELVE_BRANCH_PREFIX:-wip/backlog-autoshelve/}"
@@ -277,6 +281,10 @@ backlog_attention_marker_for_line() {
   fi
 
   case "$payload" in
+    *"working tree is not clean; finish or stash local changes before running backlog.sh"*)
+      printf 'ACTION\n'
+      return 0
+      ;;
     *"backlog: ERROR:"*|*"[ERROR]"*)
       printf 'PAGE\n'
       return 0
@@ -1197,6 +1205,153 @@ dirty_worktree_status() {
 
 backlog_state_root() {
   printf '%s\n' "${BACKLOG_STATE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog}"
+}
+
+backlog_disposition_sanitize() {
+  local value="${1:-}"
+
+  value="${value//$'\t'/ }"
+  value="${value//$'\r'/ }"
+  value="${value//$'\n'/ }"
+  printf '%s' "$value"
+}
+
+backlog_write_loop_disposition() {
+  local disposition="$1"
+  local reason="${2:-}"
+  local path="${BACKLOG_LOOP_DISPOSITION_FILE:-}"
+  local parent tmp
+
+  [[ -n "$path" ]] || return 0
+  parent="$(dirname -- "$path")"
+  mkdir -p -- "$parent" || return 0
+  chmod 700 "$parent" 2>/dev/null || true
+  tmp="$(mktemp "$parent/.last-cycle-disposition.XXXXXX")" || return 0
+  {
+    printf 'disposition\t%s\n' "$(backlog_disposition_sanitize "$disposition")"
+    printf 'reason\t%s\n' "$(backlog_disposition_sanitize "$reason")"
+    printf 'updated_at\t%s\n' "$(backlog_timestamp)"
+  } >"$tmp"
+  chmod 600 "$tmp" 2>/dev/null || true
+  mv -- "$tmp" "$path" 2>/dev/null || {
+    rm -f -- "$tmp"
+    return 0
+  }
+}
+
+backlog_validation_authority_dir() {
+  local state_root
+
+  state_root="$(backlog_state_root)"
+  mkdir -p "$state_root/validation-authority"
+  chmod 700 "$state_root" "$state_root/validation-authority" 2>/dev/null || true
+  printf '%s/validation-authority\n' "$state_root"
+}
+
+backlog_validation_authority_file() {
+  local pr_number="$1"
+
+  printf '%s/pr-%s.tsv\n' "$(backlog_validation_authority_dir)" "$pr_number"
+}
+
+backlog_changed_paths_for_head() {
+  git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null || true
+}
+
+backlog_path_low_risk_for_async_ci() {
+  local path="$1"
+
+  case "$path" in
+    README.md|CHANGELOG.md|AGENTS.md|PLANS.md|change_notes_*.md|docs/*|*.md)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+backlog_path_high_risk_for_blocking_ci() {
+  local path="$1"
+
+  case "$path" in
+    Upkeeper|ChimneySweep|FlameOn|lib/upkeeper/*|orchestration/*|tools/upkeeper_lattice.py|tools/validate_upkeeper.sh|.github/workflows/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+backlog_validation_authority_for_head() {
+  local configured="${BACKLOG_VALIDATION_AUTHORITY_POLICY:-auto}"
+  local paths path saw_path=0 all_low_risk=1 high_risk=0
+
+  case "$configured" in
+    local-green-async-ci|blocking-ci|full-local-blocking-ci)
+      printf 'configured\t%s\tBACKLOG_VALIDATION_AUTHORITY_POLICY\n' "$configured"
+      return 0
+      ;;
+    auto)
+      ;;
+    *)
+      printf 'configured\t%s\tunsupported-policy-fallback\n' "$BACKLOG_VALIDATION_AUTHORITY_NORMAL"
+      return 0
+      ;;
+  esac
+
+  paths="$(backlog_changed_paths_for_head)"
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    saw_path=1
+    if ! backlog_path_low_risk_for_async_ci "$path"; then
+      all_low_risk=0
+    fi
+    if backlog_path_high_risk_for_blocking_ci "$path"; then
+      high_risk=1
+    fi
+  done <<<"$paths"
+
+  if [[ "$saw_path" == "1" && "$all_low_risk" == "1" ]]; then
+    printf 'low-risk\t%s\tdocs-or-markdown-only\n' "$BACKLOG_VALIDATION_AUTHORITY_LOW_RISK"
+  elif [[ "$high_risk" == "1" ]]; then
+    printf 'high-risk\t%s\tcontrol-plane-or-validation-change\n' "$BACKLOG_VALIDATION_AUTHORITY_HIGH_RISK"
+  else
+    printf 'normal\t%s\tsource-or-mixed-change\n' "$BACKLOG_VALIDATION_AUTHORITY_NORMAL"
+  fi
+}
+
+backlog_record_validation_authority_for_head() {
+  local pr_number="$1"
+  local risk policy reason path tmp
+
+  IFS=$'\t' read -r risk policy reason < <(backlog_validation_authority_for_head)
+  path="$(backlog_validation_authority_file "$pr_number")"
+  tmp="$(mktemp "$(dirname -- "$path")/.validation-authority.XXXXXX")" || return 0
+  {
+    printf 'risk\t%s\n' "$(backlog_disposition_sanitize "$risk")"
+    printf 'policy\t%s\n' "$(backlog_disposition_sanitize "$policy")"
+    printf 'reason\t%s\n' "$(backlog_disposition_sanitize "$reason")"
+    printf 'head\t%s\n' "$(git rev-parse --verify HEAD 2>/dev/null || printf unknown)"
+    printf 'updated_at\t%s\n' "$(backlog_timestamp)"
+  } >"$tmp"
+  chmod 600 "$tmp" 2>/dev/null || true
+  mv -- "$tmp" "$path" 2>/dev/null || {
+    rm -f -- "$tmp"
+    return 0
+  }
+  log "validation authority for PR #$pr_number: risk=$risk policy=$policy reason=$reason"
+}
+
+backlog_last_validation_authority_field() {
+  local pr_number="$1"
+  local field="$2"
+  local path
+
+  path="$(backlog_validation_authority_file "$pr_number")"
+  [[ -f "$path" ]] || return 1
+  awk -F '\t' -v field="$field" '$1 == field { print $2; found = 1; exit } END { exit !found }' "$path"
 }
 
 backlog_repo_key() {
@@ -3720,14 +3875,52 @@ backlog_pr_checks_progress_summary() {
   printf '%s\n' "$summary"
 }
 
+backlog_pr_check_timeout_dir() {
+  local state_root
+
+  state_root="$(backlog_state_root)"
+  mkdir -p "$state_root/pr-check-timeouts"
+  chmod 700 "$state_root" "$state_root/pr-check-timeouts" 2>/dev/null || true
+  printf '%s/pr-check-timeouts\n' "$state_root"
+}
+
+backlog_record_pr_check_timeout() {
+  local pr_number="$1"
+  local elapsed="$2"
+  local timeout_seconds="$3"
+  local output="$4"
+  local progress="$5"
+  local dir path tmp epoch
+
+  dir="$(backlog_pr_check_timeout_dir)"
+  epoch="$(backlog_now_epoch 2>/dev/null || date '+%s')"
+  path="$dir/pr-${pr_number}-${epoch}.txt"
+  tmp="$(mktemp "$dir/.pr-check-timeout.XXXXXX")" || return 0
+  {
+    printf 'pr_number=%s\n' "$pr_number"
+    printf 'elapsed_seconds=%s\n' "$elapsed"
+    printf 'timeout_seconds=%s\n' "$timeout_seconds"
+    printf 'observed_at=%s\n' "$(backlog_timestamp)"
+    printf 'progress=%s\n' "$(backlog_disposition_sanitize "$progress")"
+    printf '\nlast_output:\n'
+    printf '%s\n' "$output"
+  } >"$tmp"
+  chmod 600 "$tmp" 2>/dev/null || true
+  mv -- "$tmp" "$path" 2>/dev/null || {
+    rm -f -- "$tmp"
+    return 0
+  }
+  log "PR #$pr_number check wait timed out; evidence=$path"
+}
+
 wait_for_pr_checks() {
   local pr_number="$1"
   local interval timeout_seconds empty_grace_seconds start_epoch now_epoch elapsed status output status_rc progress
 
   log "waiting for PR #$pr_number checks"
   interval="$(backlog_positive_integer_or_default "$BACKLOG_PR_CHECK_INTERVAL_SECONDS" 60)"
-  timeout_seconds="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-0}"
-  backlog_nonnegative_integer "$timeout_seconds" || timeout_seconds=0
+  timeout_seconds="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-1800}"
+  backlog_nonnegative_integer "$timeout_seconds" || timeout_seconds=1800
   empty_grace_seconds="${BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS:-300}"
   backlog_nonnegative_integer "$empty_grace_seconds" || empty_grace_seconds=300
   start_epoch="$(backlog_now_epoch)" || start_epoch=0
@@ -3756,6 +3949,8 @@ wait_for_pr_checks() {
         elapsed=$((now_epoch - start_epoch))
         [[ "$elapsed" -ge 0 ]] || elapsed=0
         if [[ "$timeout_seconds" -gt 0 && "$elapsed" -ge "$timeout_seconds" ]]; then
+          progress="$BACKLOG_PR_CHECKS_PROGRESS_SUMMARY"
+          backlog_record_pr_check_timeout "$pr_number" "$elapsed" "$timeout_seconds" "$output" "$progress"
           log "PR #$pr_number checks still pending after ${elapsed}s; owner remains healthy but configured timeout is ${timeout_seconds}s"
           return 2
         fi
@@ -3774,6 +3969,13 @@ wait_for_pr_checks() {
         now_epoch="$(backlog_now_epoch)" || now_epoch="$start_epoch"
         elapsed=$((now_epoch - start_epoch))
         [[ "$elapsed" -ge 0 ]] || elapsed=0
+        if [[ "$timeout_seconds" -gt 0 && "$elapsed" -ge "$timeout_seconds" ]]; then
+          progress="$BACKLOG_PR_CHECKS_PROGRESS_SUMMARY"
+          backlog_record_pr_check_timeout "$pr_number" "$elapsed" "$timeout_seconds" "$output" "$progress"
+          log "PR #$pr_number checks were not reported after ${elapsed}s; configured timeout is ${timeout_seconds}s"
+          printf '%s\n' "$output" >&2
+          return 2
+        fi
         if [[ "$empty_grace_seconds" -le 0 || "$elapsed" -ge "$empty_grace_seconds" ]]; then
           backlog_update_active_owner_heartbeat "waiting_on_pr_checks" \
             "$(backlog_wait_detail_since github pr_checks "$start_epoch" "pr=$pr_number" "phase=checks_absent_timeout" "elapsed=${elapsed}s")" \
@@ -3885,10 +4087,17 @@ backlog_pr_checks_once() {
 backlog_ensure_pr_checks_allow_next_issue() {
   local pr_number="$1"
   local count="$2"
-  local status
+  local status policy reason
 
   [[ "$BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE" == "1" ]] || return 0
   [[ "$count" -gt 0 ]] || return 0
+
+  policy="$(backlog_last_validation_authority_field "$pr_number" policy 2>/dev/null || printf '')"
+  reason="$(backlog_last_validation_authority_field "$pr_number" reason 2>/dev/null || printf '')"
+  if [[ "$policy" == "local-green-async-ci" ]]; then
+    log "skipping blocking PR-check wait before next issue because validation authority is local-green async CI reason=${reason:-unknown}"
+    return 0
+  fi
 
   log "checking PR #$pr_number checks before selecting another issue"
   if wait_for_pr_checks "$pr_number"; then
@@ -3941,6 +4150,7 @@ main() {
   local quota_status
   commit_result="uninitialized backlog outcome"
   obligation_selected=0
+  backlog_write_loop_disposition "no_work" "started"
 
   redirect_interactive_stdio "$@"
   claim_backlog_active_owner_or_exit
@@ -3990,10 +4200,12 @@ main() {
     obligation_id="$(jq -r '.id // "unknown"' <<<"$obligation_json")"
     obligation_summary="$(jq -r '.summary // "machine-local automation obligation"' <<<"$obligation_json")"
     log "automation obligation $obligation_id requires operator action before normal issue work: $obligation_summary"
+    backlog_write_loop_disposition "blocked_external" "automation_obligation_operator_action_required"
     exit 0
   fi
   if [[ "$obligation_status" == "cooldown_deferred" ]]; then
     log "automation obligations are cooling down after repeated blocked repair attempts: count=$(jq -r '.cooldown_deferred_count // 0' <<<"$obligation_json") next_retry_epoch=$(jq -r '.next_retry_epoch // 0' <<<"$obligation_json")"
+    backlog_write_loop_disposition "blocked_external" "automation_obligation_cooldown_deferred"
     exit 0
   fi
 
@@ -4019,12 +4231,16 @@ main() {
         backlog_emit_job_finish_summary \
           "batch validation, PR checks, and merge completed" \
           "merged PR #$pr_number and returned to clean main"
+        backlog_write_loop_disposition "work_done" "batch_merge_completed"
       else
         status="$?"
         backlog_emit_job_finish_summary \
           "batch merge path stopped with status $status" \
           "launcher exiting with status $status"
-        [[ "$status" -eq 2 ]] && exit 0
+        if [[ "$status" -eq 2 ]]; then
+          backlog_write_loop_disposition "blocked_external" "batch_merge_pr_checks_pending"
+          exit 0
+        fi
         exit "$status"
       fi
       exit 0
@@ -4034,7 +4250,10 @@ main() {
       :
     else
       status="$?"
-      [[ "$status" -eq 2 ]] && exit 0
+      if [[ "$status" -eq 2 ]]; then
+        backlog_write_loop_disposition "blocked_external" "pr_checks_pending_before_next_issue"
+        exit 0
+      fi
       exit "$status"
     fi
 
@@ -4050,7 +4269,10 @@ main() {
     quota_status="$?"
   fi
   if [[ "$quota_status" -ne 0 ]]; then
-    [[ "$quota_status" -eq 3 ]] && exit 0
+    if [[ "$quota_status" -eq 3 ]]; then
+      backlog_write_loop_disposition "quota_wait" "quota_preflight_deferred"
+      exit 0
+    fi
     exit "$quota_status"
   fi
 
@@ -4109,9 +4331,15 @@ main() {
       log "deferred blocked issue #$issue_number for this backlog branch"
       backlog_emit_job_finish_summary "$commit_result" "deferred issue #$issue_number for this backlog branch"
     fi
+    if [[ "$commit_result" == *"committed and pushed"* ]]; then
+      backlog_write_loop_disposition "work_done" "blocked_partial_work_committed"
+    else
+      backlog_write_loop_disposition "blocked_external" "blocked_issue_or_obligation"
+    fi
     exit 0
   elif [[ "$run_status" -eq 7 ]]; then
     backlog_emit_job_finish_summary "Upkeeper deferred on quota or backend usage limit" "quota cooldown marker recorded; outer loop may sleep before the next preflight"
+    backlog_write_loop_disposition "quota_wait" "upkeeper_quota_or_backend_usage_deferred"
     exit 0
   elif [[ "$run_status" -ne 0 ]]; then
     if [[ "$BACKLOG_FAILURE_OBLIGATION_RECORDED" != "1" ]]; then
@@ -4136,6 +4364,7 @@ main() {
     if [[ -n "$issue_number" ]]; then
       append_pr_fix_line "$pr_number" "$issue_number"
     fi
+    backlog_record_validation_authority_for_head "$pr_number"
   else
     log "Upkeeper produced no tracked changes"
     commit_result="no tracked changes produced"
@@ -4156,12 +4385,16 @@ main() {
       backlog_emit_job_finish_summary \
         "$commit_result; batch validation, PR checks, and merge completed" \
         "merged PR #$pr_number and returned to clean main"
+      backlog_write_loop_disposition "work_done" "batch_merge_completed"
     else
       status="$?"
       backlog_emit_job_finish_summary \
         "$commit_result; merge path stopped with status $status" \
         "launcher exiting with status $status"
-      [[ "$status" -eq 2 ]] && exit 0
+      if [[ "$status" -eq 2 ]]; then
+        backlog_write_loop_disposition "blocked_external" "batch_merge_pr_checks_pending"
+        exit 0
+      fi
       exit "$status"
     fi
   else
@@ -4172,6 +4405,11 @@ main() {
       final_disposition="PR #$pr_number has $count/$BACKLOG_BATCH_LIMIT recorded fixes; outer loop may sleep before next invocation"
     fi
     backlog_emit_job_finish_summary "$commit_result" "$final_disposition"
+    if [[ "$commit_result" == "tracked changes committed and pushed" ]]; then
+      backlog_write_loop_disposition "work_done" "fix_committed_and_pushed"
+    else
+      backlog_write_loop_disposition "no_work" "no_tracked_changes"
+    fi
   fi
 }
 

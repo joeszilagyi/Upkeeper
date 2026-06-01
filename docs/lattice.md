@@ -46,9 +46,12 @@ and `extension_facts`; they are not arbitrary columns on core tables.
 
 ## What Lattice Is Not
 
-Lattice is not a daemon, service, ORM, hosted database, CI replacement, GitHub
-sync engine, or shared enterprise multi-writer SQLite server. It does not make
-network calls by default and does not store GitHub tokens.
+Lattice is not an external daemon, ORM, hosted database, CI replacement, GitHub
+sync engine, or shared enterprise multi-writer SQLite server. It can run as a
+short-lived per-cycle local service process when
+`UPKEEPER_LATTICE_SERVICE_ENABLED=1`, but that service is owned by the current
+wrapper process, uses stdin/stdout IPC, exits during cycle cleanup, and does not
+make network calls or store GitHub tokens.
 
 Lattice does not replace Git or tracked source. Git and the working tree remain
 canonical for code. Lattice records evidence about what Upkeeper observed and
@@ -85,6 +88,7 @@ UPKEEPER_LATTICE_DB="$ROOT_DIR/runtime/upkeeper-lattice/lattice.sqlite3"
 UPKEEPER_LATTICE_SELECTION_MODE=oldest-mtime
 UPKEEPER_LATTICE_RAW_STORAGE=limited
 UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE=delete
+UPKEEPER_LATTICE_SERVICE_ENABLED=1
 ```
 
 `UPKEEPER_LATTICE_ENABLED=1` means every wrapper cycle attempts to initialize,
@@ -97,6 +101,10 @@ not anonymous: the `lattice.unavailable` log line includes a reason class,
 the same ownership fields plus the bounded `detail_summary`; raw failure detail
 stays in private local recovery evidence. Set `UPKEEPER_LATTICE_REQUIRED=1`
 when a run must fail before Codex launch if Lattice is unavailable.
+`UPKEEPER_LATTICE_SERVICE_ENABLED=1` means those cycle hooks share a warm local
+Python process instead of launching a cold `tools/upkeeper_lattice.py` process
+for every Lattice event. Set it to `0` to force the legacy one-command-per-spawn
+CLI path for diagnosis.
 
 The default SQLite journal mode is rollback journal (`delete`). WAL is opt-in
 with `UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE=wal`; when WAL is enabled,

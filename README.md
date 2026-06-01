@@ -480,6 +480,7 @@ UPKEEPER_LATTICE_DB="$ROOT_DIR/runtime/upkeeper-lattice/lattice.sqlite3"
 UPKEEPER_LATTICE_SELECTION_MODE="oldest-mtime"
 UPKEEPER_LATTICE_RAW_STORAGE="limited"
 UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE="delete"
+UPKEEPER_LATTICE_SERVICE_ENABLED="1"
 ```
 
 If the local DB is unavailable and `UPKEEPER_LATTICE_REQUIRED=0`, Upkeeper logs
@@ -488,6 +489,9 @@ existing cycle behavior. That warning is owned instead of anonymous: it includes
 the failure reason, `owner_issue=430`, the `advisory_lattice_degraded` contract,
 and the fallback evidence class. Set `UPKEEPER_LATTICE_REQUIRED=1` only when a
 run must fail before Codex launch unless Lattice is writable and healthy.
+`UPKEEPER_LATTICE_SERVICE_ENABLED=1` keeps one warm local Lattice subprocess
+open for the wrapper cycle, so init, doctor, selection, pass-result, and finish
+records do not each pay a separate Python startup.
 
 Selected-target pre-contact backups are enabled and required by default. The
 default vault is outside the repository, and Upkeeper logs only an opaque
@@ -761,6 +765,13 @@ the active backlog branch is clean and locally ahead of `origin/<branch>`, the
 launcher pushes those commits before waiting on PR checks or merging. Dirty,
 missing-remote, or diverged local-ahead branch states stop with a clear reason
 instead of treating older remote checks as current.
+PR-check waits now have a bounded default timeout
+(`BACKLOG_PR_CHECK_TIMEOUT_SECONDS=1800`) and write local timeout evidence under
+the backlog state root before returning a pending status. Between issue fixes,
+the launcher records a validation-authority decision for the just-pushed commit:
+low-risk docs/Markdown-only changes can continue to the next issue on local
+green validation while CI runs asynchronously, while source/control-plane
+changes still block on PR checks before more work stacks on the branch.
 
 For an explicit one-cycle Upkeeper self-review with all built-in P1-P23 passes,
 use equals-form operator flags:

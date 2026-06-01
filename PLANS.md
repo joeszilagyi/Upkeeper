@@ -3,6 +3,43 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issues #754-#750: High-Priority Time-Savings Batch
+
+Status: in progress
+
+Goal:
+- close the next five high-priority time-savings bugs by reducing idle waits,
+  duplicate CI blocking, FlameOn preamble parsing, and repeated Lattice process
+  startup
+- keep the fixes deterministic and local; do not launch backend Codex
+- preserve fail-closed validation and merge behavior for high-risk paths
+
+Constraints:
+- no backend Codex validation
+- keep compatibility defaults visible and documented
+- avoid broad refactors beyond the five targeted bugs
+
+Files likely touched:
+- `orchestration/backlog_loop.sh`
+- `orchestration/backlog.sh`
+- `FlameOn`
+- `lib/upkeeper/automation_obligations.bash`
+- `lib/upkeeper/launcher_full_burn.bash`
+- `lib/upkeeper/lattice.bash`
+- `lib/upkeeper/cycle_cleanup_signals.bash`
+- `tools/upkeeper_lattice.py`
+- docs, release notes, focused tests, and validator contracts
+
+Validation:
+- `python3 -m py_compile tools/upkeeper_lattice.py`
+- `bash tests/flameon_test.bash`
+- focused backlog/Lattice service tests through `tools/validate_upkeeper.sh --quick`
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/backlog_loop.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
 ## Run BOM And Stable Identifier Namespace
 
 Status: completed locally; pending PR/CI

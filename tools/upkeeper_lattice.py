@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import errno
 import ast
@@ -14613,6 +14614,94 @@ def command_prune(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def service_base_argv(args: argparse.Namespace) -> list[str]:
+    base = ["--root", str(args.root)]
+    if args.db is not None:
+        base.extend(["--db", str(args.db)])
+    base.extend(["--journal-mode", str(args.journal_mode)])
+    if getattr(args, "allow_unsafe_db", False):
+        base.append("--allow-unsafe-db")
+    if getattr(args, "raw_repo_identity", False):
+        base.append("--raw-repo-identity")
+    if getattr(args, "upkeeper_ignore_file", None):
+        base.extend(["--upkeeper-ignore-file", str(args.upkeeper_ignore_file)])
+    return base
+
+
+def service_read_arg(reader: Any) -> str:
+    buf = bytearray()
+    while True:
+        byte = reader.read(1)
+        if byte == b"":
+            raise EOFError("unexpected EOF while reading service argument")
+        if byte == b"\0":
+            return buf.decode("utf-8", errors="surrogateescape")
+        buf.extend(byte)
+
+
+def service_emit_response(writer: Any, rc: int, output: str) -> None:
+    encoded = base64.b64encode(output.encode("utf-8", errors="surrogateescape")).decode("ascii")
+    writer.write(f"RC {int(rc)}\n".encode("ascii"))
+    writer.write(f"OUTPUT_B64 {encoded}\n".encode("ascii"))
+    writer.write(b"END\n")
+    writer.flush()
+
+
+def command_service(args: argparse.Namespace) -> int:
+    """Run multiple Lattice commands in one warm Python process.
+
+    Protocol:
+      CMD <argc>\n
+      <arg0>\0<arg1>\0...
+
+    Responses are line-oriented so the Bash wrapper can read them without JSON
+    tooling. The payload is the command's combined stdout/stderr, base64-encoded.
+    """
+
+    reader = sys.stdin.buffer
+    writer = sys.stdout.buffer
+    base = service_base_argv(args)
+
+    while True:
+        header = reader.readline()
+        if header == b"":
+            break
+        header_text = header.decode("ascii", errors="replace").strip()
+        if header_text == "SHUTDOWN":
+            service_emit_response(writer, EXIT_SUCCESS, "")
+            break
+        if not header_text.startswith("CMD "):
+            service_emit_response(writer, EXIT_USAGE, f"upkeeper_lattice: invalid service header: {header_text}")
+            continue
+        try:
+            argc = int(header_text.split(" ", 1)[1])
+            if argc < 1:
+                raise ValueError
+        except ValueError:
+            service_emit_response(writer, EXIT_USAGE, f"upkeeper_lattice: invalid service argc: {header_text}")
+            continue
+        try:
+            command_args = [service_read_arg(reader) for _ in range(argc)]
+        except EOFError as exc:
+            service_emit_response(writer, EXIT_USAGE, f"upkeeper_lattice: {exc}")
+            return EXIT_USAGE
+        if command_args and command_args[0] == "service":
+            service_emit_response(writer, EXIT_USAGE, "upkeeper_lattice: service command cannot recurse")
+            continue
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            rc = main([*base, *command_args])
+        output = stdout.getvalue()
+        error = stderr.getvalue()
+        if error:
+            output = f"{output}{error}"
+        service_emit_response(writer, int(rc), output)
+
+    return EXIT_SUCCESS
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Upkeeper Lattice local SQLite ledger")
     parser.add_argument("--root", default=str(default_root()), help="repository root")
@@ -14627,6 +14716,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--upkeeper-ignore-file", default=os.environ.get("CODEX_UPKEEPER_IGNORE_FILE", os.environ.get("UPKEEPER_IGNORE_FILE", ".upkeeperignore")), help="Upkeeper target-selection ignore file")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("service", help="serve multiple Lattice CLI commands in one warm process")
+    p.set_defaults(func=command_service)
 
     p = sub.add_parser("init")
     p.set_defaults(func=command_init)

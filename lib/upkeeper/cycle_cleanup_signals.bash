@@ -34,6 +34,9 @@ finish_cycle() {
   fi
   automation_record_cycle_finish "$exit_code" "$reason" "$level" "$status_marker" "$codex_exit" "$codex_exec_started" "${RUN_SELECTED_REVIEW_PATH:-}" || true
   lattice_record_cycle_finish "$exit_code" "$reason" "$level" "$status_marker" "$codex_exit" "$codex_exec_started" "${RUN_SELECTED_REVIEW_PATH:-}" || true
+  if declare -F lattice_stop_service >/dev/null 2>&1; then
+    lattice_stop_service || true
+  fi
   log_line "$level" "$message"
   finalize_wrapper_health_state "exited"
   release_active_lock
@@ -43,6 +46,9 @@ finish_cycle() {
 cleanup_run_temp_files() {
   stop_terminal_progress_heartbeat "cleanup"
   stop_run_mark_heartbeat "cleanup"
+  if declare -F lattice_stop_service >/dev/null 2>&1; then
+    lattice_stop_service || true
+  fi
   finalize_wrapper_health_state "aborted"
   release_active_lock
   if [[ -n "${RUN_COMPILED_PROMPT_FILE:-}" ]]; then

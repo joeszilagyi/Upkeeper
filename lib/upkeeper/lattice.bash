@@ -235,9 +235,107 @@ lattice_common_args() {
     "--journal-mode" "$UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE"
 }
 
+lattice_service_enabled() {
+  [[ "${UPKEEPER_LATTICE_SERVICE_ENABLED:-1}" == "1" ]]
+}
+
+lattice_service_close_fd() {
+  local fd="${1:-}"
+
+  [[ "$fd" =~ ^[0-9]+$ ]] || return 0
+  eval "exec ${fd}>&-" 2>/dev/null || eval "exec ${fd}<&-" 2>/dev/null || true
+}
+
+lattice_start_service() {
+  local -a common_args=()
+
+  lattice_service_enabled || return 1
+  [[ "${UPKEEPER_LATTICE_SERVICE_ACTIVE:-0}" == "1" ]] && return 0
+  mapfile -d '' -t common_args < <(lattice_common_args)
+
+  coproc UPKEEPER_LATTICE_SERVICE {
+    python3 "$(lattice_tool_path)" "${common_args[@]}" service
+  }
+  UPKEEPER_LATTICE_SERVICE_PID="$!"
+  UPKEEPER_LATTICE_SERVICE_OUT_FD="${UPKEEPER_LATTICE_SERVICE[0]}"
+  UPKEEPER_LATTICE_SERVICE_IN_FD="${UPKEEPER_LATTICE_SERVICE[1]}"
+  UPKEEPER_LATTICE_SERVICE_ACTIVE="1"
+  UPKEEPER_LATTICE_SERVICE_COMMAND_COUNT="0"
+  log_line_parts "INFO" \
+    "lattice.service.started pid=${UPKEEPER_LATTICE_SERVICE_PID:-unknown}" \
+    " db=$(shell_quote "$UPKEEPER_LATTICE_DB")"
+}
+
+lattice_stop_service() {
+  local rc_line output_line end_line command_count
+
+  [[ "${UPKEEPER_LATTICE_SERVICE_ACTIVE:-0}" == "1" ]] || return 0
+  command_count="${UPKEEPER_LATTICE_SERVICE_COMMAND_COUNT:-0}"
+  if [[ -n "${UPKEEPER_LATTICE_SERVICE_IN_FD:-}" && -n "${UPKEEPER_LATTICE_SERVICE_OUT_FD:-}" ]]; then
+    printf 'SHUTDOWN\n' >&"${UPKEEPER_LATTICE_SERVICE_IN_FD}" 2>/dev/null || true
+    IFS= read -r rc_line <&"${UPKEEPER_LATTICE_SERVICE_OUT_FD}" 2>/dev/null || true
+    IFS= read -r output_line <&"${UPKEEPER_LATTICE_SERVICE_OUT_FD}" 2>/dev/null || true
+    IFS= read -r end_line <&"${UPKEEPER_LATTICE_SERVICE_OUT_FD}" 2>/dev/null || true
+  fi
+  lattice_service_close_fd "${UPKEEPER_LATTICE_SERVICE_IN_FD:-}"
+  lattice_service_close_fd "${UPKEEPER_LATTICE_SERVICE_OUT_FD:-}"
+  if [[ -n "${UPKEEPER_LATTICE_SERVICE_PID:-}" ]]; then
+    wait "$UPKEEPER_LATTICE_SERVICE_PID" 2>/dev/null || true
+  fi
+  UPKEEPER_LATTICE_SERVICE_ACTIVE="0"
+  log_line_parts "INFO" \
+    "lattice.service.stopped commands=$command_count" \
+    " db=$(shell_quote "$UPKEEPER_LATTICE_DB")"
+}
+
+lattice_run_service() {
+  local rc_line output_line end_line response_b64 rc
+  local in_fd out_fd
+
+  LATTICE_SERVICE_PROTOCOL_OK="0"
+  lattice_start_service || return 1
+  in_fd="${UPKEEPER_LATTICE_SERVICE_IN_FD:-}"
+  out_fd="${UPKEEPER_LATTICE_SERVICE_OUT_FD:-}"
+  [[ "$in_fd" =~ ^[0-9]+$ && "$out_fd" =~ ^[0-9]+$ ]] || return 1
+
+  printf 'CMD %d\n' "$#" >&"$in_fd" || return 1
+  for arg in "$@"; do
+    printf '%s\0' "$arg" >&"$in_fd" || return 1
+  done
+
+  IFS= read -r rc_line <&"$out_fd" || return 1
+  IFS= read -r output_line <&"$out_fd" || return 1
+  IFS= read -r end_line <&"$out_fd" || return 1
+  [[ "$rc_line" =~ ^RC[[:space:]]+([0-9]+)$ ]] || return 1
+  [[ "$output_line" == OUTPUT_B64\ * ]] || return 1
+  [[ "$end_line" == "END" ]] || return 1
+  rc="${BASH_REMATCH[1]}"
+  response_b64="${output_line#OUTPUT_B64 }"
+  LATTICE_LAST_OUTPUT="$(printf '%s' "$response_b64" | base64 --decode 2>/dev/null || true)"
+  UPKEEPER_LATTICE_SERVICE_COMMAND_COUNT="$(( ${UPKEEPER_LATTICE_SERVICE_COMMAND_COUNT:-0} + 1 ))"
+  LATTICE_SERVICE_PROTOCOL_OK="1"
+  return "$rc"
+}
+
 lattice_run() {
   local output rc
   local -a common_args=()
+
+  if lattice_service_enabled; then
+    if lattice_run_service "$@"; then
+      return 0
+    fi
+    rc="$?"
+    if [[ "${LATTICE_SERVICE_PROTOCOL_OK:-0}" == "1" ]]; then
+      return "$rc"
+    fi
+    output="${LATTICE_LAST_OUTPUT:-lattice_service_failed}"
+    UPKEEPER_LATTICE_SERVICE_ENABLED="0"
+    lattice_stop_service || true
+    log_line "WARN" "lattice.service.fallback_to_cli rc=$rc detail=$(shell_quote "$output")"
+    LATTICE_LAST_OUTPUT="$output"
+  fi
+
   mapfile -d '' -t common_args < <(lattice_common_args)
 
   set +e

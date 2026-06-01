@@ -160,13 +160,26 @@ fi
 upkeeper_launcher_control_plane_guard "FlameOn" "flameon-preflight"
 
 obligation_json="$(automation_select_open_obligation_json)"
-obligation_status="$(automation_json_field "$obligation_json" status)"
+obligation_fields=()
+mapfile -d '' -t obligation_fields < <(
+  automation_json_fields_nul \
+    "$obligation_json" \
+    status \
+    id \
+    path \
+    target_file \
+    kind \
+    summary \
+    repair_target_file \
+    reason
+)
+obligation_status="${obligation_fields[0]:-}"
 if [[ "$obligation_status" == "ok" ]]; then
-  obligation_id="$(automation_json_field "$obligation_json" id)"
-  obligation_path="$(automation_json_field "$obligation_json" path)"
-  obligation_target="$(automation_json_field "$obligation_json" target_file)"
-  obligation_kind="$(automation_json_field "$obligation_json" kind)"
-  obligation_summary="$(automation_json_field "$obligation_json" summary)"
+  obligation_id="${obligation_fields[1]:-}"
+  obligation_path="${obligation_fields[2]:-}"
+  obligation_target="${obligation_fields[3]:-}"
+  obligation_kind="${obligation_fields[4]:-}"
+  obligation_summary="${obligation_fields[5]:-}"
   obligation_prompt_file="$(automation_prepare_obligation_prompt_file "$obligation_json")" || {
     printf 'FlameOn: failed to prepare automation obligation prompt\n' >&2
     exit 3
@@ -207,11 +220,11 @@ if [[ "$obligation_status" == "ok" ]]; then
   CODEX_TERMINAL_VERBOSITY="$FLAMEON_VERBOSITY" exec "$UPKEEPER_CMD" "${args[@]}"
 fi
 if [[ "$obligation_status" == "operator_action_required" ]]; then
-  obligation_id="$(automation_json_field "$obligation_json" id)"
-  obligation_kind="$(automation_json_field "$obligation_json" kind)"
-  obligation_summary="$(automation_json_field "$obligation_json" summary)"
-  obligation_repair_target="$(automation_json_field "$obligation_json" repair_target_file)"
-  obligation_reason="$(automation_json_field "$obligation_json" reason)"
+  obligation_id="${obligation_fields[1]:-}"
+  obligation_kind="${obligation_fields[4]:-}"
+  obligation_summary="${obligation_fields[5]:-}"
+  obligation_repair_target="${obligation_fields[6]:-}"
+  obligation_reason="${obligation_fields[7]:-}"
   printf 'FlameOn: operator action required before normal burn work can continue\n' >&2
   printf 'FlameOn: obligation id=%s kind=%s reason=%s\n' "$obligation_id" "$obligation_kind" "$obligation_reason" >&2
   printf 'FlameOn: %s\n' "$obligation_summary" >&2

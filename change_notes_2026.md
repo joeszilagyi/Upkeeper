@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-06-05: log rotation early-return cleanup:
+	1. `rotate_wrapper_log_if_needed()` now returns cleanly from its blocked, snapshot-failure, empty-log, and zero-hour fast paths instead of falling through into archive or truncation work.
+	2. The rotation cleanup path now preserves the wrapper's existing INT/TERM/HUP handlers after a normal return, instead of leaving those traps unset for the rest of the run.
+	3. A regression test now checks that the zero-hour rotation path leaves the log unchanged, restores the signal traps, and leaves no rotation archives behind.
+
 2026-06-05: bug-report-only stale quota custody before triage:
 	1. Direct `--bug-report-only` and `--audit-only` runs now treat exact-model stale-after-reset quota stops before target triage as quota/control-plane custody rather than a generic fallback-chain exit.
 	2. Those runs skip the normal fallback chain, write a local issue-ready draft under the report root, and exit with `QUOTA_STALE_SNAPSHOT_BEFORE_TRIAGE` so `--last-run` and open obligations name the block directly.

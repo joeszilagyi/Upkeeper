@@ -684,6 +684,7 @@ Version numbering note:
 	5. Documented the binding unattended-run trust contract: machine health outranks workload, no prior automation failure should escape oversight, and a healthy empty queue should exit quickly without backend work.
 	6. Cut docs-only iteration cost by limiting CI push runs to `main` and routing docs-only CI validation through `tools/validate_upkeeper.sh --smoke` instead of `--quick`.
 	7. Prefixed wrapper-posted ChimneySweep staged issue comments as `Upkeeper ChimneySweep proposal:` and `Upkeeper ChimneySweep review:` so public GitHub actions are visibly distinguishable from human comments.
+	8. Replaced CI's blanket eleven-package `apt-get install` step with a shared dependency probe that fails clearly on missing stock `ubuntu-latest` tools, installs only missing nonstandard dependencies such as `age`, and leaves deterministic local test/validator coverage for that setup contract.
 
 2026-05-10: v1.2.10 changes:
 		1. Hardened target selection so paths matching Git ignore rules are rejected even when they have been force-added to Git.

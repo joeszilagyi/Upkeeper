@@ -4174,6 +4174,24 @@ check_dependency_guidance_contract() {
     fail "README missing explicit jq dependency decision"
   grep -Fq 'jq` remains required' docs/security.md ||
     fail "security docs missing jq dependency decision"
+  grep -Fq "tools/setup_ci_dependencies.sh" docs/dependencies.md ||
+    fail "dependency docs missing shared CI dependency helper"
+  grep -Fq "expected stock commands" docs/dependencies.md ||
+    fail "dependency docs missing CI expected-runner command probe description"
+  grep -Fq 'installs only missing nonstandard tools such as `age`' docs/dependencies.md ||
+    fail "dependency docs missing targeted CI install policy"
+}
+
+check_ci_dependency_setup_contract() {
+  log "checking CI dependency setup contract"
+
+  [[ -x tools/setup_ci_dependencies.sh ]] || fail "CI dependency helper is missing or not executable"
+  grep -Fq "tools/setup_ci_dependencies.sh" .github/workflows/ci.yml ||
+    fail "CI workflow does not use the shared CI dependency helper"
+  if grep -Fq "sudo apt-get install -y --no-install-recommends \\" .github/workflows/ci.yml; then
+    fail "CI workflow still contains the blanket apt-get install block"
+  fi
+  bash tests/ci_dependency_setup_test.bash
 }
 
 check_release_readiness_docs_contract() {
@@ -8077,6 +8095,7 @@ run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
 run_check validation_quota_session_fixture_contract check_validation_quota_session_fixture_contract
 run_check dependency_guidance_contract check_dependency_guidance_contract
+run_check ci_dependency_setup_contract check_ci_dependency_setup_contract
 run_check release_readiness_docs_contract check_release_readiness_docs_contract
 run_check docs_only_fast_path_contract check_docs_only_fast_path_contract
 run_check governance_docs_contract check_governance_docs_contract

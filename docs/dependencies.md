@@ -40,8 +40,11 @@ failure, and empty-transcript failure.
 
 GitHub Actions runs the no-quota CI path from `.github/workflows/ci.yml` on
 pull requests and on pushes to `main`. That workflow starts on
-`ubuntu-latest`, installs required tools including `jq` and `age`, and for
-broader changes runs:
+`ubuntu-latest`, runs `tools/setup_ci_dependencies.sh` to probe the runner for
+expected stock commands, fails clearly if runner-provided tools disappear, and
+installs only missing nonstandard tools such as `age`. The helper also prints
+dependency-setup timing so CI latency stays visible. For broader changes the
+workflow then runs:
 
 ```sh
 bash -n Upkeeper Upkeeper.conf configurations/default.conf lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh

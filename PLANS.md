@@ -267,6 +267,39 @@ Validation:
 - `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
 - `git diff --check`
 
+## Issue #722: CI Dependency Probe Instead Of Blanket Apt Install
+
+Status: completed locally; pending PR/CI after push
+
+Goal:
+- replace the unconditional CI `apt-get install` of stock runner packages with a
+  shared dependency probe that installs only missing nonstandard tools
+- fail clearly when an expected `ubuntu-latest` runner command is absent rather
+  than silently broad-installing around runner-image drift
+- make the dependency setup contract visible in local tests, validator checks,
+  and dependency docs
+
+Constraints:
+- keep CI deterministic and no-quota
+- preserve age coverage for full-burn launcher dependency validation
+- avoid requiring privileged package installs during local validation
+
+Files likely touched:
+- `.github/workflows/ci.yml`
+- `tools/` helper and focused test coverage
+- `tools/check_public_docs.sh`
+- `tools/validate_upkeeper.sh`
+- `docs/dependencies.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/ci_dependency_setup_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/run_tests.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Kirk Protocol Invariant Registry
 
 Status: merged in PR #638

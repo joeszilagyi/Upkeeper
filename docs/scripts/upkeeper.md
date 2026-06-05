@@ -1144,11 +1144,12 @@ prompts, backup log lines, or Lattice preselect evidence.
   does not launch real backend work, and quota-specific contract tests use their
   own explicit fixtures.
   GitHub Actions runs the no-quota CI path in `.github/workflows/ci.yml` on
-  pull requests and on pushes to `main`. It installs required tools including
-  `jq` and `age`, classifies the change scope, and then runs either the
-  docs-only fast path (`tools/docs_only_fast_path.sh --validate`) or the broader
-  parallel local gate (`tools/run_validation_phases.sh`) followed by full
-  validation.
+  pull requests and on pushes to `main`. It runs
+  `tools/setup_ci_dependencies.sh` to probe expected stock runner commands and
+  install only missing nonstandard tools such as `age`, classifies the change
+  scope, and then runs either the docs-only fast path
+  (`tools/docs_only_fast_path.sh --validate`) or the broader parallel local
+  gate (`tools/run_validation_phases.sh`) followed by full validation.
   `tools/run_tests.sh` is the unit-test entrypoint for local and CI use. It
   keeps serial mode available with `--serial`, but the default path runs
   independent tests with bounded fan-out and prints per-test timings.

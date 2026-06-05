@@ -514,19 +514,41 @@ rotate_wrapper_log_if_needed() {
   local live_log_hash archive_path_hash
   local rotation_safety_error live_log_snapshot
 
+  _log_rotate_wrapper_cleanup() {
+    if [[ -n "${live_log_snapshot:-}" && -f "$live_log_snapshot" ]]; then
+      rm -f -- "$live_log_snapshot"
+    fi
+    if [[ -n "${archive_temp_path:-}" && -f "$archive_temp_path" ]]; then
+      rm -f -- "$archive_temp_path"
+    fi
+  }
+
+  _log_rotate_wrapper_exit() {
+    local status=${1:-0}
+    trap - EXIT
+    trap - INT
+    trap - TERM
+    trap - HUP
+    _log_rotate_wrapper_cleanup
+    return "$status"
+  }
+
+  trap '_log_rotate_wrapper_cleanup' EXIT
+  trap '_log_rotate_wrapper_cleanup; exit 1' INT TERM HUP
+
   rotation_safety_error="$(log_rotation_target_is_safe || true)"
   if [[ -n "$rotation_safety_error" ]]; then
     rotation_line="$(printf '%s [WARN] cycle=%s run_hash=%s log.rotate_blocked reason=%s path_redacted=1' \
       "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$rotation_safety_error")"
     append_log_line_secure "$rotation_line" "log_rotate_blocked"
     printf '%s\n' "$rotation_line"
-    return 0
+    _log_rotate_wrapper_exit 0
   fi
 
   prune_wrapper_log_archives
 
   if [[ ! -s "$LOG_FILE" ]]; then
-    return 0
+    _log_rotate_wrapper_exit 0
   fi
 
   live_log_snapshot="$(mktemp "${LOG_FILE}.rotation.XXXXXX")" || {
@@ -534,7 +556,7 @@ rotate_wrapper_log_if_needed() {
       "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH")"
     append_log_line_secure "$rotation_line" "log_rotate_blocked"
     printf '%s\n' "$rotation_line"
-    return 0
+    _log_rotate_wrapper_exit 0
   }
   chmod 600 "$live_log_snapshot" 2>/dev/null || true
 
@@ -545,7 +567,7 @@ rotate_wrapper_log_if_needed() {
       "$(timestamp_now)" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$rotation_safety_error")"
     append_log_line_secure "$rotation_line" "log_rotate_blocked"
     printf '%s\n' "$rotation_line"
-    return 0
+    _log_rotate_wrapper_exit 0
   fi
 
   rotate_after_hours="$(sanitize_nonnegative_integer "$CODEX_LOG_ROTATE_AFTER_HOURS" "72")"
@@ -553,20 +575,20 @@ rotate_wrapper_log_if_needed() {
 
   if [[ "$rotate_after_hours" -eq 0 ]]; then
     rm -f -- "$live_log_snapshot"
-    return 0
+    _log_rotate_wrapper_exit 0
   fi
 
   oldest_epoch="$(oldest_wrapper_log_epoch "$live_log_snapshot" || true)"
   if [[ -z "$oldest_epoch" || ! "$oldest_epoch" =~ ^[0-9]+$ ]]; then
     rm -f -- "$live_log_snapshot"
-    return 0
+    _log_rotate_wrapper_exit 0
   fi
 
   rotate_after_seconds=$((rotate_after_hours * 3600))
   now_epoch="$(date '+%s')"
   if (( now_epoch - oldest_epoch < rotate_after_seconds )); then
     rm -f -- "$live_log_snapshot"
-    return 0
+    _log_rotate_wrapper_exit 0
   fi
 
   archive_timestamp="$(date '+%Y%m%dT%H%M%S%z')"
@@ -618,4 +640,5 @@ rotate_wrapper_log_if_needed() {
   fi
 
   prune_wrapper_log_archives
+  _log_rotate_wrapper_exit 0
 }

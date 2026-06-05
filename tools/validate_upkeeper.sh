@@ -1365,8 +1365,8 @@ PY
   ' bash "$ROOT_DIR" >"$temp_dir/defaults.out"
   grep -Fxq 'model=gpt-5.3-codex-spark' "$temp_dir/defaults.out" ||
     fail "backlog launcher did not default to Spark model"
-  grep -Fxq 'effort=xhigh' "$temp_dir/defaults.out" ||
-    fail "backlog launcher did not default to xhigh reasoning"
+  grep -Fxq 'effort=high' "$temp_dir/defaults.out" ||
+    fail "backlog launcher did not auto-size newest-file review to high reasoning"
   grep -Fxq 'week=0' "$temp_dir/defaults.out" ||
     fail "backlog launcher did not default to spend-to-zero weekly floor"
   grep -Fxq 'bypass=1' "$temp_dir/defaults.out" ||

@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-06-05: backlog reasoning-effort auto-sizing:
+	1. Backlog now auto-sizes `CODEX_REASONING_EFFORT` per selected issue or target instead of always exporting `xhigh`.
+	2. Docs-only targets can use `low`, small mechanical/config targets can use `medium`, high-risk wrapper/control-plane targets stay `xhigh`, and newest-file review defaults to `high`.
+	3. Operators can force one tier for one cycle with `BACKLOG_REASONING_EFFORT_OVERRIDE` or keep the legacy `BACKLOG_CODEX_REASONING_EFFORT` fallback by setting `BACKLOG_REASONING_EFFORT_AUTOSIZE=0`.
+
 2026-06-05: log rotation early-return cleanup:
 	1. `rotate_wrapper_log_if_needed()` now returns cleanly from its blocked, snapshot-failure, empty-log, and zero-hour fast paths instead of falling through into archive or truncation work.
 	2. The rotation cleanup path now preserves the wrapper's existing INT/TERM/HUP handlers after a normal return, instead of leaving those traps unset for the rest of the run.

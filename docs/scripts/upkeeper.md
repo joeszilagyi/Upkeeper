@@ -363,14 +363,19 @@ Important:
     cherry-picking. If that local transplant cannot apply cleanly, the launcher
     stops before stale automation can run and leaves the autoshelve branch as
     evidence.
-  - Backlog batches default to `gpt-5.3-codex-spark` with `xhigh` reasoning and
-    a zero weekly stop floor for reset-window burn-down runs. Backlog burn mode
-    also bypasses stale local quota snapshots and ordinary active
-    quota-cooldown markers by default so a provider-side reset can be used
-    immediately. Hard backend usage-limit markers are still honored even in
-    burn mode. Override with `BACKLOG_CODEX_MODEL`,
-    `BACKLOG_CODEX_REASONING_EFFORT`, `BACKLOG_WEEK_STOP_PERCENT`,
-    `BACKLOG_QUOTA_GUARDRAIL_BYPASS=0`, or
+  - Backlog batches default to `gpt-5.3-codex-spark` and auto-size reasoning
+    effort per selected issue or target instead of always exporting `xhigh`.
+    Docs-only work can use `low`, small mechanical/config work can use
+    `medium`, high-risk wrapper/control-plane work stays `xhigh`, and
+    newest-file review defaults to `high`. Set
+    `BACKLOG_REASONING_EFFORT_OVERRIDE` to force a one-cycle tier or
+    `BACKLOG_REASONING_EFFORT_AUTOSIZE=0` to keep the legacy
+    `BACKLOG_CODEX_REASONING_EFFORT` fallback.
+  - Backlog burn mode also bypasses stale local quota snapshots and ordinary
+    active quota-cooldown markers by default so a provider-side reset can be
+    used immediately. Hard backend usage-limit markers are still honored even
+    in burn mode. Override with `BACKLOG_CODEX_MODEL`,
+    `BACKLOG_WEEK_STOP_PERCENT`, `BACKLOG_QUOTA_GUARDRAIL_BYPASS=0`, or
     `BACKLOG_QUOTA_COOLDOWN_BYPASS=0` when a guarded or non-Spark run is wanted.
     If that burn bypass sees quota evidence whose reset window has already
     passed, the launcher records a structured `stale_quota_evidence`

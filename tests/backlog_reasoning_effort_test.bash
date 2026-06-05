@@ -10,6 +10,7 @@ fail() {
   exit 1
 }
 
+BACKLOG_SOURCE_ONLY=1
 source "$PROJECT_ROOT/orchestration/backlog.sh" >/dev/null 2>&1
 
 assert_selection() {

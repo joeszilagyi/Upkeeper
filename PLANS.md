@@ -3,6 +3,44 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issues #732-#786: Prompt Compilation And Selection Batch
+
+Status: in progress
+
+Goal:
+- fix the current lowest open bug queue starting with #732, then continue in
+  order for the next four lowest open bugs that remain actionable
+- collapse prompt compilation's tiny Python subprocess chain into a more
+  efficient emitter path without changing the emitted issue-fix packet contract
+- remove duplicate candidate-selection logic where help text and Lattice keep
+  the same policy in separate places
+- keep ownership boundaries visible if the oversized main/phase functions need
+  to be split for maintainability
+
+Constraints:
+- no live backend Codex validation
+- preserve existing prompt packet shape, candidate selection semantics, and
+  operator-visible help text
+- keep each bug fix focused enough to validate and push before moving to the
+  next open issue
+
+Files likely touched:
+- `lib/upkeeper/prompt_compile.bash`
+- `lib/upkeeper/help_selection.bash`
+- `tools/upkeeper_lib/*`
+- `tests/*.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- focused prompt-compilation tests and candidate-selection tests
+- `tools/run_tests.sh`
+- `tools/check_public_docs.sh --quick` when docs/help change
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## Issues #720-#726: Backlog Effort Sizing And Hot-Path Batch
 
 Status: in progress

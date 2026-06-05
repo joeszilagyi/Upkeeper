@@ -28,6 +28,12 @@ from urllib.parse import urlsplit
 from pathlib import Path
 from typing import Any, Iterable
 
+TOOLS_DIR = Path(__file__).resolve().parent
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+from upkeeper_lib import candidates as candidate_selection
+
 
 SCHEMA_VERSION = 1
 SCHEMA_ROW_VERSION = 1
@@ -5874,86 +5880,15 @@ def is_test_path(path: str) -> bool:
 
 
 def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper_ignore_file: str | None = None) -> list[dict[str, Any]]:
-    upkeeperignore_patterns = load_upkeeperignore_patterns(root, upkeeper_ignore_file)
-    inside_git = inside_git_repo(root)
-    git_status_map: dict[str, str] = {}
-    head_blob_map: dict[str, str] = {}
-    if inside_git:
-        if candidate_scope == "current-tracked":
-            raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"])
-        else:
-            raw = subprocess.check_output(["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "-z"])
-        paths = [p for p in decode_git_output(raw).split("\0") if p]
-        if paths:
-            git_status_map = git_porcelain_status_map(root)
-            head_blob_map = git_head_blob_map(root, paths)
-    else:
-        paths = []
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [name for name in dirnames if name not in {".git", "runtime"}]
-            for filename in filenames:
-                rel = repo_rel_path(root, Path(dirpath) / filename)
-                if rel:
-                    paths.append(rel)
-    git_ignored = git_ignored_paths(root, paths) if inside_git else set()
-    text_reason_cache: dict[str, str] = {}
-    stat_cache: dict[str, tuple[os.stat_result | None, str]] = {}
-    rows = []
-    for rel in paths:
-        reason = ""
-        state = "eligible"
-        p = root / rel
-        if rel not in stat_cache:
-            stat_cache[rel] = source_safe_file_stat(root, rel)
-        st, reason = stat_cache[rel]
-        if rel == "Upkeeper.log":
-            reason = "excluded_exact"
-        elif rel.startswith(".git/") or rel.startswith("runtime/"):
-            reason = "excluded_prefix"
-        elif upkeeper_path_ignored(rel, upkeeperignore_patterns):
-            reason = "upkeeperignore"
-        elif rel in git_ignored:
-            reason = "gitignore"
-        else:
-            if not reason and st is not None:
-                if candidate_scope == "current-tracked":
-                    _, reason = text_reason_cache.setdefault(rel, source_safe_file_stat(root, rel, require_text=True))
-                else:
-                    if is_test_path(rel):
-                        reason = "test_path"
-                    name = p.name
-                    ext = p.suffix.lower()
-                    candidate = name in BUILD_NAMES or ext in SCRIPT_EXTS
-                    if not candidate and st.st_mode & 0o111:
-                        _, text_reason = text_reason_cache.setdefault(rel, source_safe_file_stat(root, rel, require_text=True))
-                        candidate = not text_reason
-                        if text_reason:
-                            reason = "executable_not_text"
-                    if candidate and not reason:
-                        _, reason = text_reason_cache.setdefault(rel, source_safe_file_stat(root, rel, require_text=True))
-                    if not candidate and not reason:
-                        reason = "unsupported_extension"
-        if reason:
-            state = "excluded"
-        meta = live_file_metadata(
-            root,
-            rel,
-            git_status=git_status_map.get(rel, ""),
-            head_blob=head_blob_map.get(rel),
-            include_worktree_hash=(state == "eligible"),
-        )
-        rows.append(
-            {
-                "path": stored_rel_path(rel),
-                "candidate_state": state,
-                "exclusion_reason": reason,
-                "mtime_epoch": meta.get("mtime_epoch"),
-                "git_status": meta.get("git_status"),
-                "content_state": meta.get("content_state"),
-                "head_blob": meta.get("head_blob"),
-                "worktree_hash": meta.get("worktree_hash"),
-            }
-        )
+    candidate_selection.read_fd_sample = read_fd_sample
+    rows = candidate_selection.live_candidate_rows(root, candidate_scope=candidate_scope, upkeeper_ignore_file=upkeeper_ignore_file)
+    for row in rows:
+        head_blob = row.get("head_blob")
+        if isinstance(head_blob, str) and head_blob not in {"", "none", "unavailable"}:
+            row["head_blob"] = content_value_hmac(root, head_blob)
+        worktree_hash = row.get("worktree_hash")
+        if isinstance(worktree_hash, str) and worktree_hash not in {"", "missing", "unavailable"}:
+            row["worktree_hash"] = content_value_hmac(root, worktree_hash)
     return rows
 
 
@@ -11849,7 +11784,8 @@ def lattice_unavailable_belongs_to_root(root: Path, parsed: dict[str, Any], *, a
         resolved_db = db_path.resolve() if db_path.is_absolute() else (root / db_path).resolve()
     except (OSError, ValueError):
         return False
-    return path_under(resolved_db, root)
+    runtime_root = (root / "runtime").resolve()
+    return path_under(resolved_db, runtime_root)
 
 
 def command_import_upkeeper_log(args: argparse.Namespace) -> int:

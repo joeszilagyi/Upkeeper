@@ -361,8 +361,9 @@ with their own explicit fixtures.
 
 GitHub Actions runs the no-quota CI path in
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on pull requests and on
-pushes to `main`. The workflow installs required tools including `jq` and
-`age`, classifies the change scope, and then takes one of two paths:
+pushes to `main`. The workflow runs `tools/setup_ci_dependencies.sh` to probe
+for expected stock runner commands and install only missing nonstandard tools
+such as `age`, classifies the change scope, and then takes one of two paths:
 
 - docs-only changes: `tools/check_public_docs.sh --quick` plus
   `tools/validate_upkeeper.sh --smoke`, via

@@ -156,6 +156,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   records expired-reset stale quota evidence as a local `stale_quota_evidence`
   automation obligation before continuing, and resolves that obligation when
   current non-stale quota evidence appears.
+- Direct `--bug-report-only` and `--audit-only` Upkeeper runs that hit an
+  exact-model stale-after-reset quota stop before target triage now skip the
+  normal fallback chain, write a local issue-ready draft under the report root,
+  and exit with `QUOTA_STALE_SNAPSHOT_BEFORE_TRIAGE` so the last-run summary
+  and open automation obligation name the quota/control-plane block directly.
 - Backlog quota hibernation is local and pre-model. While sleeping for a quota
   reset, it checks only local git branch/upstream refs; if the checked-out
   backlog branch's upstream ref disappears after another worktree merges or
@@ -287,7 +292,9 @@ Future changes should preserve this operator-visible surface as far as possible:
   draft block that the wrapper extracts and posts after validation. Those
   wrapper-posted staged comments are prefixed `Upkeeper ChimneySweep proposal:`
   and `Upkeeper ChimneySweep review:` so operators can distinguish wrapper
-  actions from human comments.
+  actions from human comments. Review and apply stages consume the latest
+  wrapper-fetched staged comments as prompt context, and review fails closed
+  before backend launch if the latest proposal comment is missing.
 - `CODEX_MODE` remains configurable for supported Codex sandbox modes, but
   Upkeeper rejects `danger-full-access` and
   `--dangerously-bypass-approvals-and-sandbox` because those modes bypass the

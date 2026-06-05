@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "$SCRIPT_SOURCE")"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
+source "$ROOT_DIR/lib/upkeeper/runtime_format_json.bash"
 
 BACKLOG_BRANCH_PREFIX="${BACKLOG_BRANCH_PREFIX:-backlog/}"
 BACKLOG_PR_TITLE="${BACKLOG_PR_TITLE:-[backlog] Upkeeper issue batch}"
@@ -2640,12 +2641,23 @@ backlog_reconcile_open_obligations() {
       UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
       bash -c 'source "$1"; automation_reconcile_open_obligations_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )" || return $?
-  status="$(jq -r '.status // "unknown"' <<<"$output")"
-  duplicate_count="$(jq -r '.duplicates_resolved // 0' <<<"$output")"
-  current_before="$(jq -r '.current_root_open_before // 0' <<<"$output")"
-  current_after="$(jq -r '.current_root_open_after // 0' <<<"$output")"
-  foreign_count="$(jq -r '.deferred_foreign_root_count // 0' <<<"$output")"
-  groups="$(jq -r '.duplicate_groups // 0' <<<"$output")"
+  local -a reconcile_fields=()
+  mapfile -d '' -t reconcile_fields < <(
+    json_fields_nul \
+      "$output" \
+      '.status // "unknown"' \
+      '.duplicates_resolved // 0' \
+      '.current_root_open_before // 0' \
+      '.current_root_open_after // 0' \
+      '.deferred_foreign_root_count // 0' \
+      '.duplicate_groups // 0'
+  )
+  status="${reconcile_fields[0]:-unknown}"
+  duplicate_count="${reconcile_fields[1]:-0}"
+  current_before="${reconcile_fields[2]:-0}"
+  current_after="${reconcile_fields[3]:-0}"
+  foreign_count="${reconcile_fields[4]:-0}"
+  groups="${reconcile_fields[5]:-0}"
   if [[ "$status" == "reconciled" || "$foreign_count" != "0" ]]; then
     log "automation obligation reconciliation: status=$status current_open_before=$current_before current_open_after=$current_after duplicate_groups=$groups duplicates_resolved=$duplicate_count foreign_deferred=$foreign_count"
   fi
@@ -2665,16 +2677,31 @@ backlog_sync_obligation_issue_reports() {
       UPKEEPER_OBLIGATION_GITHUB_ISSUE_LABELS="$BACKLOG_OBLIGATION_GITHUB_ISSUE_LABELS" \
       bash -c 'source "$1"; automation_sync_obligation_issue_reports_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
   )" || return $?
-  status="$(jq -r '.status // "unknown"' <<<"$output")"
-  current_open="$(jq -r '.current_root_open // 0' <<<"$output")"
-  drafted="$(jq -r '.drafted // 0' <<<"$output")"
-  updated="$(jq -r '.updated_records // 0' <<<"$output")"
-  github_created="$(jq -r '.github_created // 0' <<<"$output")"
-  github_existing="$(jq -r '.github_existing // 0' <<<"$output")"
-  github_reused="$(jq -r '.github_reused // 0' <<<"$output")"
-  github_failed="$(jq -r '.github_failed // 0' <<<"$output")"
-  umbrella_unlinked="$(jq -r '.umbrella_unlinked // 0' <<<"$output")"
-  report_dir="$(jq -r '.report_dir // ""' <<<"$output")"
+  local -a report_sync_fields=()
+  mapfile -d '' -t report_sync_fields < <(
+    json_fields_nul \
+      "$output" \
+      '.status // "unknown"' \
+      '.current_root_open // 0' \
+      '.drafted // 0' \
+      '.updated_records // 0' \
+      '.github_created // 0' \
+      '.github_existing // 0' \
+      '.github_reused // 0' \
+      '.github_failed // 0' \
+      '.umbrella_unlinked // 0' \
+      '.report_dir // ""'
+  )
+  status="${report_sync_fields[0]:-unknown}"
+  current_open="${report_sync_fields[1]:-0}"
+  drafted="${report_sync_fields[2]:-0}"
+  updated="${report_sync_fields[3]:-0}"
+  github_created="${report_sync_fields[4]:-0}"
+  github_existing="${report_sync_fields[5]:-0}"
+  github_reused="${report_sync_fields[6]:-0}"
+  github_failed="${report_sync_fields[7]:-0}"
+  umbrella_unlinked="${report_sync_fields[8]:-0}"
+  report_dir="${report_sync_fields[9]:-}"
   if [[ "$current_open" != "0" || "$github_failed" != "0" ]]; then
     log "automation obligation issue reports: status=$status current_open=$current_open drafted=$drafted records_updated=$updated github_created=$github_created github_existing=$github_existing github_reused=$github_reused github_failed=$github_failed umbrella_unlinked=$umbrella_unlinked report_dir=$report_dir"
   fi
@@ -2739,13 +2766,27 @@ quota_preflight_allows_backlog_run() {
     return 0
   fi
 
-  primary_bucket_current="$(jq -r '.snapshot.primary_bucket_current // "false"' <<<"$quota_json")"
-  secondary_bucket_current="$(jq -r '.snapshot.secondary_bucket_current // "false"' <<<"$quota_json")"
-  snapshot_stale_after_reset="$(jq -r '.snapshot.snapshot_stale_after_reset // "false"' <<<"$quota_json")"
-  primary_reset_expired="$(jq -r '.snapshot.primary_reset_expired // "false"' <<<"$quota_json")"
-  secondary_reset_expired="$(jq -r '.snapshot.secondary_reset_expired // "false"' <<<"$quota_json")"
-  primary_projected_left="$(jq -r '100 - ((.snapshot.primary_used_percent // 0) + (.projection.primary_delta // 0))' <<<"$quota_json")"
-  secondary_projected_left="$(jq -r '100 - ((.snapshot.secondary_used_percent // 0) + (.projection.secondary_delta // 0))' <<<"$quota_json")"
+  local -a quota_fields=()
+  mapfile -d '' -t quota_fields < <(
+    json_fields_nul \
+      "$quota_json" \
+      '.snapshot.primary_bucket_current // "false"' \
+      '.snapshot.secondary_bucket_current // "false"' \
+      '.snapshot.snapshot_stale_after_reset // "false"' \
+      '.snapshot.primary_reset_expired // "false"' \
+      '.snapshot.secondary_reset_expired // "false"' \
+      '100 - ((.snapshot.primary_used_percent // 0) + (.projection.primary_delta // 0))' \
+      '100 - ((.snapshot.secondary_used_percent // 0) + (.projection.secondary_delta // 0))' \
+      '.snapshot.primary_resets_at // 0' \
+      '.snapshot.secondary_resets_at // 0'
+  )
+  primary_bucket_current="${quota_fields[0]:-false}"
+  secondary_bucket_current="${quota_fields[1]:-false}"
+  snapshot_stale_after_reset="${quota_fields[2]:-false}"
+  primary_reset_expired="${quota_fields[3]:-false}"
+  secondary_reset_expired="${quota_fields[4]:-false}"
+  primary_projected_left="${quota_fields[5]:-0}"
+  secondary_projected_left="${quota_fields[6]:-0}"
   primary_decision="$(quota_bucket_decision "$primary_bucket_current" "$primary_projected_left" "$(quota_5h_stop_percent_for_model "$CODEX_MODEL")")"
   secondary_decision="$(quota_bucket_decision "$secondary_bucket_current" "$secondary_projected_left" "$(quota_week_stop_percent_for_model "$CODEX_MODEL")")"
 
@@ -2767,14 +2808,14 @@ quota_preflight_allows_backlog_run() {
     blocked_until_epoch=0
     if [[ "$primary_decision" == "stop" ]]; then
       blocked_bucket="${blocked_bucket:+$blocked_bucket,}primary"
-      primary_reset="$(jq -r '.snapshot.primary_resets_at // 0' <<<"$quota_json")"
+      primary_reset="${quota_fields[7]:-0}"
       if backlog_nonnegative_integer "$primary_reset" && [[ "$primary_reset" -gt "$blocked_until_epoch" ]]; then
         blocked_until_epoch="$primary_reset"
       fi
     fi
     if [[ "$secondary_decision" == "stop" ]]; then
       blocked_bucket="${blocked_bucket:+$blocked_bucket,}secondary"
-      secondary_reset="$(jq -r '.snapshot.secondary_resets_at // 0' <<<"$quota_json")"
+      secondary_reset="${quota_fields[8]:-0}"
       if backlog_nonnegative_integer "$secondary_reset" && [[ "$secondary_reset" -gt "$blocked_until_epoch" ]]; then
         blocked_until_epoch="$secondary_reset"
       fi
@@ -3091,11 +3132,21 @@ run_upkeeper_for_obligation() {
   local upkeeper_status=0
 
   prepare_backlog_runtime_env
-  obligation_id="$(jq -r '.id // ""' <<<"$obligation_json")"
-  obligation_path="$(jq -r '.path // ""' <<<"$obligation_json")"
-  obligation_kind="$(jq -r '.kind // "prior_run_anomaly"' <<<"$obligation_json")"
-  obligation_summary="$(jq -r '.summary // "automation obligation"' <<<"$obligation_json")"
-  target_hint="$(jq -r '.repair_target_file // .target_file // "Upkeeper"' <<<"$obligation_json")"
+  local -a obligation_fields=()
+  mapfile -d '' -t obligation_fields < <(
+    json_fields_nul \
+      "$obligation_json" \
+      '.id // ""' \
+      '.path // ""' \
+      '.kind // "prior_run_anomaly"' \
+      '.summary // "automation obligation"' \
+      '.repair_target_file // .target_file // "Upkeeper"'
+  )
+  obligation_id="${obligation_fields[0]:-}"
+  obligation_path="${obligation_fields[1]:-}"
+  obligation_kind="${obligation_fields[2]:-prior_run_anomaly}"
+  obligation_summary="${obligation_fields[3]:-automation obligation}"
+  target_hint="${obligation_fields[4]:-Upkeeper}"
   [[ -n "$target_hint" && "$target_hint" != "null" ]] || target_hint="Upkeeper"
   if ! prompt_file="$(backlog_prepare_obligation_prompt_file "$obligation_json")"; then
     log "automation obligation $obligation_id could not prepare prompt file; skipping obligation repair"
@@ -3547,29 +3598,41 @@ PY
 backlog_batch_validation_repeated_failure() {
   local phase="$1"
   local command_text="$2"
-  local marker_path branch_name head marker_branch marker_head marker_command exit_code fingerprint obligation_path head_short
+  local marker_path marker_json branch_name head marker_branch marker_head marker_command exit_code fingerprint obligation_path head_short
+  local -a marker_fields=()
 
   BACKLOG_BATCH_VALIDATION_REPEAT_EXIT_CODE=""
   marker_path="$(backlog_batch_validation_retry_path "$phase")"
   [[ -f "$marker_path" ]] || return 1
+  marker_json="$(<"$marker_path")"
   branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
   head="$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' unknown)"
-  marker_branch="$(jq -r '.branch // ""' "$marker_path" 2>/dev/null || printf '\n')"
-  marker_head="$(jq -r '.head // ""' "$marker_path" 2>/dev/null || printf '\n')"
-  marker_command="$(jq -r '.command_text // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  mapfile -d '' -t marker_fields < <(
+    json_fields_nul \
+      "$marker_json" \
+      '.branch // ""' \
+      '.head // ""' \
+      '.command_text // ""' \
+      '.exit_code // "1"' \
+      '.fingerprint // ""' \
+      '.obligation_path // ""'
+  )
+  marker_branch="${marker_fields[0]:-}"
+  marker_head="${marker_fields[1]:-}"
+  marker_command="${marker_fields[2]:-}"
   if [[ "$marker_branch" != "$branch_name" || "$marker_head" != "$head" || "$marker_command" != "$command_text" ]]; then
     rm -f -- "$marker_path"
     return 1
   fi
-  exit_code="$(jq -r '.exit_code // "1"' "$marker_path" 2>/dev/null || printf '1')"
+  exit_code="${marker_fields[3]:-1}"
   if [[ ! "$exit_code" =~ ^[0-9]+$ || "$exit_code" -lt 1 || "$exit_code" -gt 255 ]]; then
     exit_code=1
   fi
-  fingerprint="$(jq -r '.fingerprint // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  fingerprint="${marker_fields[4]:-}"
   if [[ -z "$fingerprint" ]]; then
     fingerprint="backlog-batch-validation-retry:$(backlog_batch_validation_retry_fingerprint "$phase" "$command_text" "$branch_name" "$head")"
   fi
-  obligation_path="$(jq -r '.obligation_path // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  obligation_path="${marker_fields[5]:-}"
   backlog_touch_batch_validation_obligation_retry "$obligation_path"
   head_short="${head:0:12}"
   log "batch validation retry guard repeated_failure fingerprint=$fingerprint phase=$phase branch=$branch_name head=$head_short exit_code=$exit_code action=skip_validation_route_to_obligation"
@@ -3580,15 +3643,24 @@ backlog_batch_validation_repeated_failure() {
 backlog_clear_batch_validation_retry_marker() {
   local phase="$1"
   local command_text="$2"
-  local marker_path branch_name head marker_branch marker_head marker_command
+  local marker_path marker_json branch_name head marker_branch marker_head marker_command
+  local -a marker_fields=()
 
   marker_path="$(backlog_batch_validation_retry_path "$phase")"
   [[ -f "$marker_path" ]] || return 0
+  marker_json="$(<"$marker_path")"
   branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
   head="$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' unknown)"
-  marker_branch="$(jq -r '.branch // ""' "$marker_path" 2>/dev/null || printf '\n')"
-  marker_head="$(jq -r '.head // ""' "$marker_path" 2>/dev/null || printf '\n')"
-  marker_command="$(jq -r '.command_text // ""' "$marker_path" 2>/dev/null || printf '\n')"
+  mapfile -d '' -t marker_fields < <(
+    json_fields_nul \
+      "$marker_json" \
+      '.branch // ""' \
+      '.head // ""' \
+      '.command_text // ""'
+  )
+  marker_branch="${marker_fields[0]:-}"
+  marker_head="${marker_fields[1]:-}"
+  marker_command="${marker_fields[2]:-}"
   if [[ "$marker_branch" != "$branch_name" || "$marker_head" != "$head" || "$marker_command" != "$command_text" ]]; then
     rm -f -- "$marker_path"
   fi
@@ -4181,30 +4253,44 @@ main() {
   fi
 
   obligation_json="$(backlog_select_open_obligation_json)"
-  obligation_status="$(jq -r '.status // "clean"' <<<"$obligation_json")"
+  local -a selected_obligation_fields=()
+  mapfile -d '' -t selected_obligation_fields < <(
+    json_fields_nul \
+      "$obligation_json" \
+      '.status // "clean"' \
+      '.deferred_foreign_root_count // 0' \
+      '.id // "unknown"' \
+      '.summary // "machine-local automation obligation"' \
+      '.cooldown_deferred_count // 0' \
+      '.next_retry_epoch // 0' \
+      '.repair_target_file // .target_file // "Upkeeper"' \
+      '.issue_number // ""' \
+      '.issue_title // ""'
+  )
+  obligation_status="${selected_obligation_fields[0]:-clean}"
   if [[ "$obligation_status" == "foreign_root_deferred" ]]; then
-    log "automation obligations from other roots are deferred for their owning checkout: count=$(jq -r '.deferred_foreign_root_count // 0' <<<"$obligation_json")"
+    log "automation obligations from other roots are deferred for their owning checkout: count=${selected_obligation_fields[1]:-0}"
   fi
   if [[ "$obligation_status" == "operator_action_required" ]]; then
-    obligation_id="$(jq -r '.id // "unknown"' <<<"$obligation_json")"
-    obligation_summary="$(jq -r '.summary // "machine-local automation obligation"' <<<"$obligation_json")"
+    obligation_id="${selected_obligation_fields[2]:-unknown}"
+    obligation_summary="${selected_obligation_fields[3]:-machine-local automation obligation}"
     log "automation obligation $obligation_id requires operator action before normal issue work: $obligation_summary"
     backlog_write_loop_disposition "blocked_external" "automation_obligation_operator_action_required"
     exit 0
   fi
   if [[ "$obligation_status" == "cooldown_deferred" ]]; then
-    log "automation obligations are cooling down after repeated blocked repair attempts: count=$(jq -r '.cooldown_deferred_count // 0' <<<"$obligation_json") next_retry_epoch=$(jq -r '.next_retry_epoch // 0' <<<"$obligation_json")"
+    log "automation obligations are cooling down after repeated blocked repair attempts: count=${selected_obligation_fields[4]:-0} next_retry_epoch=${selected_obligation_fields[5]:-0}"
     backlog_write_loop_disposition "blocked_external" "automation_obligation_cooldown_deferred"
     exit 0
   fi
 
   if [[ "$obligation_status" == "ok" ]]; then
     obligation_selected=1
-    obligation_id="$(jq -r '.id // "unknown"' <<<"$obligation_json")"
-    obligation_summary="$(jq -r '.summary // "automation obligation"' <<<"$obligation_json")"
-    obligation_target="$(jq -r '.repair_target_file // .target_file // "Upkeeper"' <<<"$obligation_json")"
-    obligation_issue_number="$(jq -r '.issue_number // ""' <<<"$obligation_json")"
-    obligation_issue_title="$(jq -r '.issue_title // ""' <<<"$obligation_json")"
+    obligation_id="${selected_obligation_fields[2]:-unknown}"
+    obligation_summary="${selected_obligation_fields[3]:-automation obligation}"
+    obligation_target="${selected_obligation_fields[6]:-Upkeeper}"
+    obligation_issue_number="${selected_obligation_fields[7]:-}"
+    obligation_issue_title="${selected_obligation_fields[8]:-}"
     issue_number="$obligation_issue_number"
     issue_title="$obligation_issue_title"
     target_hint="$obligation_target"
@@ -4309,9 +4395,18 @@ main() {
       fi
     fi
     if [[ "$obligation_selected" == "1" ]]; then
+      local -a attempt_fields=()
       attempt_json="$(backlog_record_obligation_attempt "$obligation_json" "blocked" "$run_status" "$commit_result" || true)"
-      if [[ -n "${attempt_json:-}" && "$(jq -r '.cooldown_applied // false' <<<"$attempt_json" 2>/dev/null || printf false)" == "true" ]]; then
-        log "automation obligation $obligation_id reached repeated-blocked retry limit; next retry epoch=$(jq -r '.next_retry_epoch // 0' <<<"$attempt_json")"
+      if [[ -n "${attempt_json:-}" ]]; then
+        mapfile -d '' -t attempt_fields < <(
+          json_fields_nul \
+            "$attempt_json" \
+            '.cooldown_applied // false' \
+            '.next_retry_epoch // 0'
+        )
+      fi
+      if [[ -n "${attempt_json:-}" && "${attempt_fields[0]:-false}" == "true" ]]; then
+        log "automation obligation $obligation_id reached repeated-blocked retry limit; next retry epoch=${attempt_fields[1]:-0}"
       fi
       log "automation obligation $obligation_id blocked and remains open"
       backlog_emit_job_finish_summary "$commit_result" "automation obligation $obligation_id remains open"

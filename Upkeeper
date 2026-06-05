@@ -6098,8 +6098,10 @@ PY
     return 0
   fi
 
-  matched_id="$(jq -r '.id // ""' <<<"$raw_match")"
-  matched_path="$(jq -r '.path // ""' <<<"$raw_match")"
+  local -a raw_match_fields=()
+  mapfile -d '' -t raw_match_fields < <(json_fields_nul "$raw_match" '.id // ""' '.path // ""')
+  matched_id="${raw_match_fields[0]:-}"
+  matched_path="${raw_match_fields[1]:-}"
   if [[ -z "$matched_id" || -z "$matched_path" ]]; then
     return 0
   fi
@@ -6524,6 +6526,39 @@ main() {
   fi
 
   if [[ "$should_stop" -eq 1 ]]; then
+    if upkeeper_bug_report_only_enabled &&
+      [[ "$before_selection" == "exact_model" ]] &&
+      [[ "$primary_guardrail_decision" == "defer" ]] &&
+      [[ "$secondary_guardrail_decision" == "defer" ]]; then
+      local quota_guardrail_stop_exit_code quota_guardrail_stop_reason
+      prepare_bug_report_draft_artifact || finish_cycle 70 BUG_REPORT_DRAFT_PREP_FAILED ERROR "codex_exec_started=0"
+      if ! upkeeper_bug_report_write_quota_pretriage_draft "${RUN_BUG_REPORT_DRAFT_FILE:-}"; then
+        finish_cycle 71 QUOTA_STALE_SNAPSHOT_CUSTODY_WRITE_FAILED ERROR "codex_exec_started=0"
+      fi
+      log_line_parts "WARN" \
+        "quota.pretriage_custody action=local_issue_ready_draft" \
+        " mode=$(upkeeper_source_mutation_guard_mode)" \
+        " reason=stale_snapshot_after_reset" \
+        " snapshot_selection=$before_selection" \
+        " snapshot_current=$before_snapshot_is_current" \
+        " matching_snapshot_count=$before_matching_snapshot_count" \
+        " primary_bucket_current=$before_primary_bucket_current" \
+        " secondary_bucket_current=$before_secondary_bucket_current" \
+        " primary_reset_expired=$before_primary_reset_expired" \
+        " secondary_reset_expired=$before_secondary_reset_expired" \
+        " draft_path=$(shell_quote "$(upkeeper_path_hmac "${RUN_BUG_REPORT_DRAFT_FILE:-unknown}")")" \
+        " path_redacted=1"
+      if stop_parent_loop; then
+        quota_guardrail_stop_exit_code="$CODEX_GUARDRAIL_STOP_EXIT_CODE"
+        quota_guardrail_stop_reason="QUOTA_STALE_SNAPSHOT_BEFORE_TRIAGE"
+        if [[ "${PARENT_LOOP_STOP_OUTCOME:-}" == skipped_* && "$CODEX_GUARDRAIL_STOP_EXIT_CODE" == "0" ]]; then
+          quota_guardrail_stop_exit_code="$CODEX_PARENT_STOP_SKIPPED_EXIT_CODE"
+        fi
+        finish_cycle "$quota_guardrail_stop_exit_code" "$quota_guardrail_stop_reason" WARN "codex_exec_started=0 execution_origin=$CODEX_EXECUTION_ORIGIN parent_stop_outcome=${PARENT_LOOP_STOP_OUTCOME:-unknown} quota_stop_class=stale_snapshot_after_reset bug_report_draft=$(shell_quote "$(upkeeper_path_hmac "${RUN_BUG_REPORT_DRAFT_FILE:-unknown}")") path_redacted=1"
+      fi
+      log_line "ERROR" "cycle.stop failed to confirm parent loop termination"
+      finish_cycle 4 QUOTA_STALE_SNAPSHOT_STOP_FAILED ERROR "codex_exec_started=0"
+    fi
     write_primary_quota_blocked_marker "$stop_reason"
     if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
       local fallback_exit=0
@@ -6990,9 +7025,30 @@ PY
 
   if upkeeper_issue_workflow_comment_stage_enabled; then
     if upkeeper_issue_workflow_post_comment; then
+      if [[ "${CODEX_ISSUE_WORKFLOW_STAGE:-}" == "review" ]]; then
+        local issue_workflow_review_decision=""
+        local issue_workflow_status_override=""
+        if IFS=$'\t' read -r issue_workflow_review_decision issue_workflow_status_override < <(
+          upkeeper_issue_workflow_status_marker_override "${CODEX_ISSUE_WORKFLOW_STAGE:-}" "${RUN_ISSUE_WORKFLOW_COMMENT_FILE:-}" 2>/dev/null || true
+        ); then
+          :
+        fi
+        if [[ -n "$issue_workflow_review_decision" ]]; then
+          log_line "INFO" "issue.workflow_comment.review_decision stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") decision=$issue_workflow_review_decision number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
+        fi
+        if [[ "$issue_workflow_status_override" == "BLOCKED" ]]; then
+          status_marker="$issue_workflow_status_override"
+          status_marker_source="issue_workflow_review_decision"
+          log_line "WARN" "issue.workflow_comment.review_blocked stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}") action=map_cycle_to_blocked"
+        fi
+      fi
       if [[ "${status_marker:-}" == "BLOCKED" ]]; then
-        status_marker_source="issue_workflow_comment_relay"
-        log_line "INFO" "issue.workflow_comment.status_preserved marker=$status_marker stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") reason=comment_stage_did_not_mutate_source"
+        if [[ "$status_marker_source" == "issue_workflow_review_decision" ]]; then
+          log_line "INFO" "issue.workflow_comment.status_preserved marker=$status_marker stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") reason=review_comment_declared_blocked"
+        else
+          status_marker_source="issue_workflow_comment_relay"
+          log_line "INFO" "issue.workflow_comment.status_preserved marker=$status_marker stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") reason=comment_stage_did_not_mutate_source"
+        fi
       fi
     else
       status_marker="BLOCKED"

@@ -54,6 +54,9 @@ prepare_bug_report_draft_artifact() {
   local mode="bug_report_only"
 
   upkeeper_bug_report_only_enabled || return 0
+  if [[ -n "${RUN_BUG_REPORT_DRAFT_FILE:-}" ]]; then
+    return 0
+  fi
   if upkeeper_audit_only_enabled; then
     draft_root="${UPKEEPER_AUDIT_REPORT_DIR:-${ROOT_DIR:-$PWD}/runtime/upkeeper-audits}"
     mode="audit_only"
@@ -62,6 +65,140 @@ prepare_bug_report_draft_artifact() {
   chmod 700 "$draft_root" 2>/dev/null || true
   RUN_BUG_REPORT_DRAFT_FILE="$draft_root/${CYCLE_ID}-${CYCLE_RUN_HASH}.md"
   log_line "INFO" "bug_report_only.draft.destination mode=$mode path=$(shell_quote "$RUN_BUG_REPORT_DRAFT_FILE") issue_write_allowed=$(truthy_as_int "${UPKEEPER_ALLOW_GH_ISSUE_WRITE:-0}")"
+}
+
+upkeeper_bug_report_write_draft_body() {
+  local draft_file="$1"
+  local body="$2"
+
+  [[ -n "$draft_file" ]] || return 1
+
+  python3 - "$draft_file" "$body" <<'PY'
+import os
+import pathlib
+import sys
+
+draft_path = pathlib.Path(sys.argv[1])
+body = sys.argv[2]
+
+if not body.strip():
+    raise SystemExit(1)
+if "\0" in body:
+    raise SystemExit(1)
+if len(body.encode("utf-8", errors="replace")) > 131072:
+    raise SystemExit(1)
+
+try:
+    draft_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(draft_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(body)
+    os.chmod(str(draft_path), 0o600)
+except OSError:
+    raise SystemExit(1)
+PY
+}
+
+upkeeper_bug_report_write_quota_pretriage_draft() {
+  local draft_file="${1:-${RUN_BUG_REPORT_DRAFT_FILE:-}}"
+  local mode="bug_report_only"
+  local title_prefix draft_body
+
+  [[ -n "$draft_file" ]] || return 1
+  if upkeeper_audit_only_enabled; then
+    mode="audit_only"
+    title_prefix="Audit-only"
+  else
+    title_prefix="Bug-report-only"
+  fi
+
+  draft_body="$(
+    python3 - \
+      "$title_prefix" \
+      "$mode" \
+      "$CODEX_MODEL" \
+      "${before_selection:-unknown}" \
+      "${before_snapshot_is_current:-unknown}" \
+      "${before_snapshot_stale_after_reset:-unknown}" \
+      "${before_matching_snapshot_count:-unknown}" \
+      "${primary_guardrail_decision:-unknown}" \
+      "${secondary_guardrail_decision:-unknown}" \
+      "${before_primary_bucket_current:-unknown}" \
+      "${before_secondary_bucket_current:-unknown}" \
+      "${before_primary_reset_expired:-unknown}" \
+      "${before_secondary_reset_expired:-unknown}" \
+      "${CODEX_EXECUTION_ORIGIN:-unknown}" \
+      "${CYCLE_ID:-unknown}" \
+      "${CYCLE_RUN_HASH:-unknown}" <<'PY'
+import sys
+
+(
+    title_prefix,
+    mode,
+    model,
+    snapshot_selection,
+    snapshot_current,
+    snapshot_stale_after_reset,
+    matching_snapshot_count,
+    primary_decision,
+    secondary_decision,
+    primary_bucket_current,
+    secondary_bucket_current,
+    primary_reset_expired,
+    secondary_reset_expired,
+    execution_origin,
+    cycle_id,
+    run_hash,
+) = sys.argv[1:17]
+
+report_mode = "audit-only" if mode == "audit_only" else "bug-report-only"
+body = f"""Title: {title_prefix} quota preflight stopped before target triage on stale snapshot evidence
+Labels: bug,time-savings
+
+## Summary
+A direct Upkeeper {report_mode} cycle stopped before target triage because the exact-model quota snapshot was stale after reset.
+
+## Impact
+No target file was selected or reviewed. The wrapper left local quota-control-plane custody instead of implying that a target review completed.
+
+## Reproduction
+1. Prepare an exact-model quota snapshot whose reset window has already expired and is no longer current.
+2. Run `./Upkeeper --max-cover --bug-report-only`.
+3. Observe that the wrapper stops before any target review starts.
+
+## Expected Behavior
+When a report-only run hits stale-after-reset quota evidence before review starts, Upkeeper should leave quota-specific local custody without falling through to a generic fallback-chain result.
+
+## Actual Behavior
+The wrapper stopped before target triage because quota evidence was not current enough to continue safely.
+
+## Evidence
+- wrapper reason: QUOTA_STALE_SNAPSHOT_BEFORE_TRIAGE
+- mode: {mode}
+- execution origin: {execution_origin}
+- target model: {model}
+- cycle id: {cycle_id}
+- run hash: {run_hash}
+- snapshot selection: {snapshot_selection}
+- snapshot current: {snapshot_current}
+- snapshot stale after reset: {snapshot_stale_after_reset}
+- matching snapshot count: {matching_snapshot_count}
+- primary decision: {primary_decision}
+- secondary decision: {secondary_decision}
+- primary bucket current: {primary_bucket_current}
+- secondary bucket current: {secondary_bucket_current}
+- primary reset expired: {primary_reset_expired}
+- secondary reset expired: {secondary_reset_expired}
+
+## Suggested Fix
+Refresh or reclassify stale-after-reset quota evidence before report-only target triage, or preserve this quota-specific local custody path until a current exact-model snapshot appears.
+"""
+
+print(body)
+PY
+  )" || return 1
+
+  upkeeper_bug_report_write_draft_body "$draft_file" "$draft_body"
 }
 
 prepare_genie_protocol_env() {
@@ -1064,6 +1201,130 @@ upkeeper_issue_workflow_comment_prefix() {
   esac
 }
 
+upkeeper_issue_workflow_comment_kind_prefix() {
+  case "${1:-}" in
+    proposal)
+      printf 'Upkeeper ChimneySweep proposal:'
+      ;;
+    review)
+      printf 'Upkeeper ChimneySweep review:'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+upkeeper_issue_workflow_latest_comment_body() {
+  local comment_kind="$1"
+  local prefix
+
+  prefix="$(upkeeper_issue_workflow_comment_kind_prefix "$comment_kind")" || return 1
+
+  python3 - "$prefix" "${CODEX_ISSUE_FIX_COMMENTS_JSON:-[]}" <<'PY'
+import json
+import sys
+
+prefix = sys.argv[1]
+
+try:
+    comments = json.loads(sys.argv[2] or "[]")
+except json.JSONDecodeError:
+    comments = []
+
+if not isinstance(comments, list):
+    comments = []
+
+for item in reversed(comments):
+    if not isinstance(item, dict):
+        continue
+    body = str(item.get("body", "") or "")
+    if not body.strip():
+        continue
+    lines = body.splitlines()
+    first_nonempty = ""
+    for line in lines:
+        if line.strip():
+            first_nonempty = line.strip()
+            break
+    if first_nonempty != prefix and not first_nonempty.startswith(prefix + " "):
+        continue
+    if len(body) > 8000:
+        body = body[:8000].rstrip() + "\n...[truncated by Upkeeper]..."
+    print(body)
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+upkeeper_issue_workflow_review_decision_from_comment_file() {
+  local comment_file="$1"
+
+  [[ -r "$comment_file" ]] || return 1
+
+  python3 - "$comment_file" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+
+try:
+    text = path.read_text(encoding="utf-8", errors="replace")
+except OSError:
+    raise SystemExit(1)
+
+if not text.strip():
+    raise SystemExit(1)
+
+decision_patterns = (
+    re.compile(r"^\s*Upkeeper ChimneySweep review:\s*(approved|revise|blocked)\b", re.IGNORECASE),
+    re.compile(r"^\s*decision\s*:\s*(approved|revise|blocked)\b", re.IGNORECASE),
+    re.compile(r"^\s*review decision\s*:\s*(approved|revise|blocked)\b", re.IGNORECASE),
+)
+
+for raw_line in text.splitlines():
+    line = raw_line.strip()
+    if not line:
+        continue
+    for pattern in decision_patterns:
+        match = pattern.search(line)
+        if match:
+            print(match.group(1).lower())
+            raise SystemExit(0)
+
+fallback = re.search(r"\b(decision|review decision)\s*[:=-]?\s*(approved|revise|blocked)\b", text, re.IGNORECASE)
+if fallback:
+    print(fallback.group(2).lower())
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+upkeeper_issue_workflow_status_marker_override() {
+  local stage="${1:-${CODEX_ISSUE_WORKFLOW_STAGE:-}}"
+  local comment_file="${2:-${RUN_ISSUE_WORKFLOW_COMMENT_FILE:-}}"
+  local decision=""
+
+  [[ "$stage" == "review" ]] || return 1
+  decision="$(upkeeper_issue_workflow_review_decision_from_comment_file "$comment_file" 2>/dev/null || true)"
+  [[ -n "$decision" ]] || return 1
+
+  case "$decision" in
+    blocked)
+      printf 'blocked\tBLOCKED\n'
+      ;;
+    approved|revise)
+      printf '%s\t\n' "$decision"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 upkeeper_issue_workflow_extract_comment_from_last_message() {
   local last_message_file="$1"
   local draft_file="$2"
@@ -1749,7 +2010,22 @@ PY
     finish_cycle 3 ISSUE_FIX_SELECTION_FAILED ERROR "codex_exec_started=0"
   fi
 
-  status="$(jq -r '.status // "unknown"' <<<"$issue_json")"
+  local -a issue_fields=()
+  mapfile -d '' -t issue_fields < <(
+    json_fields_nul \
+      "$issue_json" \
+      '.status // "unknown"' \
+      '.number // ""' \
+      '.title // ""' \
+      '.url // ""' \
+      '.labels // ""' \
+      '.selected_label // ""' \
+      '.created_at // ""' \
+      '.target_file // ""' \
+      '.body // ""' \
+      '.comments // []'
+  )
+  status="${issue_fields[0]:-unknown}"
   case "$status" in
     ok)
       ;;
@@ -1767,15 +2043,15 @@ PY
       ;;
   esac
 
-  CODEX_ISSUE_FIX_NUMBER="$(jq -r '.number // ""' <<<"$issue_json")"
-  CODEX_ISSUE_FIX_TITLE="$(jq -r '.title // ""' <<<"$issue_json")"
-  CODEX_ISSUE_FIX_URL="$(jq -r '.url // ""' <<<"$issue_json")"
-  CODEX_ISSUE_FIX_LABELS="$(jq -r '.labels // ""' <<<"$issue_json")"
-  CODEX_ISSUE_FIX_SELECTED_LABEL="$(jq -r '.selected_label // ""' <<<"$issue_json")"
-  CODEX_ISSUE_FIX_CREATED_AT="$(jq -r '.created_at // ""' <<<"$issue_json")"
-  CODEX_ISSUE_FIX_TARGET_FILE="$(jq -r '.target_file // ""' <<<"$issue_json")"
-  CODEX_ISSUE_FIX_BODY="$(jq -r '.body // ""' <<<"$issue_json")"
-  CODEX_ISSUE_FIX_COMMENTS_JSON="$(jq -c '.comments // []' <<<"$issue_json")"
+  CODEX_ISSUE_FIX_NUMBER="${issue_fields[1]:-}"
+  CODEX_ISSUE_FIX_TITLE="${issue_fields[2]:-}"
+  CODEX_ISSUE_FIX_URL="${issue_fields[3]:-}"
+  CODEX_ISSUE_FIX_LABELS="${issue_fields[4]:-}"
+  CODEX_ISSUE_FIX_SELECTED_LABEL="${issue_fields[5]:-}"
+  CODEX_ISSUE_FIX_CREATED_AT="${issue_fields[6]:-}"
+  CODEX_ISSUE_FIX_TARGET_FILE="${issue_fields[7]:-}"
+  CODEX_ISSUE_FIX_BODY="${issue_fields[8]:-}"
+  CODEX_ISSUE_FIX_COMMENTS_JSON="${issue_fields[9]:-[]}"
   title_hash="$(issue_fix_log_hash "${CODEX_ISSUE_FIX_TITLE:-}")"
   url_hash="$(issue_fix_log_hash "${CODEX_ISSUE_FIX_URL:-}")"
 

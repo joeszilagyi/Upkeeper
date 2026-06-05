@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-06-05: bug-report-only stale quota custody before triage:
+	1. Direct `--bug-report-only` and `--audit-only` runs now treat exact-model stale-after-reset quota stops before target triage as quota/control-plane custody rather than a generic fallback-chain exit.
+	2. Those runs skip the normal fallback chain, write a local issue-ready draft under the report root, and exit with `QUOTA_STALE_SNAPSHOT_BEFORE_TRIAGE` so `--last-run` and open obligations name the block directly.
+	3. Quick validation now includes a focused end-to-end stale-quota fixture for the report-only pre-triage path.
+
 2026-06-01: ChimneySweep combined issue-fix default:
 	1. `ChimneySweep` now defaults GitHub issue repair to one combined single-issue-fix Upkeeper invocation for the locked issue.
 	2. `--cycle-mode=separate` and explicit `--workflow=...` preserve the legacy `comment`, `review`, then `apply` staged workflow for runs that need read-only comment/review stages.
@@ -682,8 +687,11 @@ Version numbering note:
 	3. Added local quick validation for decorated pass-result parsing and all-pass coverage blocking.
 	4. Fixed fallback postmortem completion so successful `run_postmortem_sequence` paths return the fallback child exit code instead of forcing `7`, preventing synthetic `FALLBACK_CHAIN_EXIT` outcomes during normal recovery.
 	5. Documented the binding unattended-run trust contract: machine health outranks workload, no prior automation failure should escape oversight, and a healthy empty queue should exit quickly without backend work.
-	6. Cut docs-only iteration cost by limiting CI push runs to `main` and routing docs-only CI validation through `tools/validate_upkeeper.sh --smoke` instead of `--quick`.
-	7. Prefixed wrapper-posted ChimneySweep staged issue comments as `Upkeeper ChimneySweep proposal:` and `Upkeeper ChimneySweep review:` so public GitHub actions are visibly distinguishable from human comments.
+		6. Cut docs-only iteration cost by limiting CI push runs to `main` and routing docs-only CI validation through `tools/validate_upkeeper.sh --smoke` instead of `--quick`.
+		7. Prefixed wrapper-posted ChimneySweep staged issue comments as `Upkeeper ChimneySweep proposal:` and `Upkeeper ChimneySweep review:` so public GitHub actions are visibly distinguishable from human comments.
+		8. Made staged ChimneySweep review fail closed before backend launch when the latest wrapper-fetched proposal comment is missing, injected the latest staged proposal/review comments into later-stage prompts, and mapped staged review comments that declare `blocked` to a blocked wrapper cycle instead of generic `WORK_DONE`.
+		9. Replaced CI's blanket eleven-package `apt-get install` step with a shared dependency probe that fails clearly on missing stock `ubuntu-latest` tools, installs only missing nonstandard dependencies such as `age`, and leaves deterministic local test/validator coverage for that setup contract.
+		10. Added a reusable multi-field JSON extraction helper for wrapper-owned JSON and used it to collapse repeated same-object parses in issue selection, obligation reconciliation/report sync, quota preflight, and obligation selection hot paths.
 
 2026-05-10: v1.2.10 changes:
 		1. Hardened target selection so paths matching Git ignore rules are rejected even when they have been force-added to Git.

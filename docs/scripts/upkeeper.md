@@ -474,6 +474,11 @@ Important:
   - For pre-run quota stops on an already-dirty worktree, the wrapper skips the
     normal backend fallback child and records the incident instead of spending a
     stronger model run on a predictable dirty-worktree block.
+  - For `--bug-report-only` and `--audit-only` runs, an exact-model stale-after-reset
+    quota stop before target triage now skips the normal fallback chain, writes
+    a local issue-ready draft under the report root, and exits with
+    `QUOTA_STALE_SNAPSHOT_BEFORE_TRIAGE` so `--last-run` and automation
+    obligations name the quota/control-plane block directly.
   - Quota logs always print both used and left explicitly as named fields
     (primary_used=... primary_left=... secondary_used=... secondary_left=...)
     so operator checks do not depend on positional interpretation.
@@ -992,7 +997,9 @@ mode, comment/review issue text returns through a final-message draft block,
 and the wrapper performs issue comments or other GitHub side effects after
 validation. Wrapper-posted stage comments are visibly prefixed as `Upkeeper
 ChimneySweep proposal:` and `Upkeeper ChimneySweep review:` so they are
-distinguishable from human comments.
+distinguishable from human comments. Review and apply stages use the latest
+wrapper-fetched staged comments as prompt context, and review fails closed
+before backend launch if the latest proposal comment is missing.
 
 Use `CHIMNEYSWEEP_DRY_RUN=1 ./ChimneySweep` or `./ChimneySweep --dry-run` to
 print the resolved command without launching Codex. Its terminal verbosity flags
@@ -1144,11 +1151,12 @@ prompts, backup log lines, or Lattice preselect evidence.
   does not launch real backend work, and quota-specific contract tests use their
   own explicit fixtures.
   GitHub Actions runs the no-quota CI path in `.github/workflows/ci.yml` on
-  pull requests and on pushes to `main`. It installs required tools including
-  `jq` and `age`, classifies the change scope, and then runs either the
-  docs-only fast path (`tools/docs_only_fast_path.sh --validate`) or the broader
-  parallel local gate (`tools/run_validation_phases.sh`) followed by full
-  validation.
+  pull requests and on pushes to `main`. It runs
+  `tools/setup_ci_dependencies.sh` to probe expected stock runner commands and
+  install only missing nonstandard tools such as `age`, classifies the change
+  scope, and then runs either the docs-only fast path
+  (`tools/docs_only_fast_path.sh --validate`) or the broader parallel local
+  gate (`tools/run_validation_phases.sh`) followed by full validation.
   `tools/run_tests.sh` is the unit-test entrypoint for local and CI use. It
   keeps serial mode available with `--serial`, but the default path runs
   independent tests with bounded fan-out and prints per-test timings.

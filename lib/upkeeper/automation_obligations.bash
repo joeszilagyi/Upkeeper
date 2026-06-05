@@ -242,6 +242,9 @@ automation_obligation_summary() {
     PRECONTACT_BACKUP_PREREQ_MISSING)
       printf 'Upkeeper machine-health preflight blocked a live cycle before issue selection (exit %s)' "$exit_code"
       ;;
+    QUOTA_STALE_SNAPSHOT_BEFORE_TRIAGE)
+      printf 'Upkeeper report-only quota preflight stopped before target triage on stale snapshot evidence (exit %s)' "$exit_code"
+      ;;
     *)
       printf 'Upkeeper automation cycle exited with %s (exit %s)' "$reason" "$exit_code"
       ;;
@@ -260,6 +263,17 @@ print(json.dumps([
     "run tools/upkeeper_precontact_bootstrap.sh after installing age when needed",
     "store only the public recipient in the trusted machine-local env file",
     "rerun the affected launcher only after the pre-contact backup preflight exits cleanly",
+], separators=(",", ":")))
+PY
+      ;;
+    QUOTA_STALE_SNAPSHOT_BEFORE_TRIAGE)
+      python3 - <<'PY'
+import json
+print(json.dumps([
+    "inspect the stale-after-reset quota evidence that blocked report-only preflight before target triage",
+    "refresh or reclassify the local exact-model quota snapshot only when a current snapshot is actually available",
+    "preserve quota-specific local custody until a later run can prove current non-stale quota evidence",
+    "rerun the focused bug-report-only stale-quota validation and tools/validate_upkeeper.sh --quick after the repair",
 ], separators=(",", ":")))
 PY
       ;;

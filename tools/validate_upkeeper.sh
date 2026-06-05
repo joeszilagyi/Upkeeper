@@ -2950,8 +2950,9 @@ check_backlog_autoshelve_contract() {
 
   log "checking backlog dirty-worktree autoshelve contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-backlog-autoshelve.XXXXXX)"
-  mkdir -p "$temp_dir/orchestration"
+  mkdir -p "$temp_dir/orchestration" "$temp_dir/lib/upkeeper"
   cp orchestration/backlog.sh "$temp_dir/orchestration/backlog.sh"
+  cp lib/upkeeper/runtime_format_json.bash "$temp_dir/lib/upkeeper/runtime_format_json.bash"
   chmod +x "$temp_dir/orchestration/backlog.sh"
 
   (
@@ -4174,6 +4175,24 @@ check_dependency_guidance_contract() {
     fail "README missing explicit jq dependency decision"
   grep -Fq 'jq` remains required' docs/security.md ||
     fail "security docs missing jq dependency decision"
+  grep -Fq "tools/setup_ci_dependencies.sh" docs/dependencies.md ||
+    fail "dependency docs missing shared CI dependency helper"
+  grep -Fq "expected stock commands" docs/dependencies.md ||
+    fail "dependency docs missing CI expected-runner command probe description"
+  grep -Fq 'installs only missing nonstandard tools such as `age`' docs/dependencies.md ||
+    fail "dependency docs missing targeted CI install policy"
+}
+
+check_ci_dependency_setup_contract() {
+  log "checking CI dependency setup contract"
+
+  [[ -x tools/setup_ci_dependencies.sh ]] || fail "CI dependency helper is missing or not executable"
+  grep -Fq "tools/setup_ci_dependencies.sh" .github/workflows/ci.yml ||
+    fail "CI workflow does not use the shared CI dependency helper"
+  if grep -Fq "sudo apt-get install -y --no-install-recommends \\" .github/workflows/ci.yml; then
+    fail "CI workflow still contains the blanket apt-get install block"
+  fi
+  bash tests/ci_dependency_setup_test.bash
 }
 
 check_release_readiness_docs_contract() {
@@ -4514,6 +4533,7 @@ PY
 check_wrapper_contract_tests() {
   log "checking focused wrapper contract tests"
   bash tests/wrapper_contract_test.bash
+  bash tests/json_fields_test.bash
 }
 
 prepare_validation_session_file() {
@@ -5809,6 +5829,7 @@ PY
   grep -Fq "bug_report_only.draft.destination mode=audit_only" "$temp_dir/audit-only.log" || fail "audit-only did not use the audit report destination"
   grep -Fq "bug_report_only.prompt appended" "$temp_dir/audit-only.log" || fail "audit-only prompt addendum was not appended"
   bash tests/bug_report_only_test.bash
+  bash tests/bug_report_only_stale_quota_pretriage_test.bash
 
   mkdir -p "$temp_dir/bin"
   cat >"$temp_dir/bin/gh" <<'EOF'
@@ -5856,7 +5877,7 @@ JSON
       ;;
     912)
       cat <<'JSON'
-{"number":912,"title":"Explicit issue points at `lib/upkeeper/help_selection.bash`","url":"https://example.invalid/issues/912","createdAt":"2026-05-03T00:00:00Z","state":"OPEN","labels":[{"name":"bug"}],"body":"Fix `lib/upkeeper/help_selection.bash:1` for the explicit handoff."}
+{"number":912,"title":"Explicit issue points at `lib/upkeeper/help_selection.bash`","url":"https://example.invalid/issues/912","createdAt":"2026-05-03T00:00:00Z","state":"OPEN","labels":[{"name":"bug"}],"body":"Fix `lib/upkeeper/help_selection.bash:1` for the explicit handoff.","comments":[{"author":{"login":"upkeeper-bot"},"createdAt":"2026-05-24T18:59:00Z","body":"Upkeeper ChimneySweep proposal:\nReview `lib/upkeeper/help_selection.bash` and keep the staged launcher contract intact."}]}
 JSON
       ;;
     913)
@@ -5917,12 +5938,21 @@ JSON
   grep -Fq "issue.workflow_prompt appended stage=comment number=912" "$temp_dir/fix-comment-stage.log" || fail "issue comment stage prompt addendum was not appended"
   grep -Fq "issue.workflow_comment.destination stage=comment number=912" "$temp_dir/fix-comment-stage.log" || fail "issue comment stage wrapper destination was not prepared"
   grep -Fq "issue_workflow_stage=comment" "$temp_dir/fix-comment-stage.log" || fail "issue workflow stage was not logged at cycle start"
+
+  PATH="$temp_dir/bin:$PATH" UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL=1 run_manifest_dry_run "$temp_dir/fix-review-stage.log" \
+    --fix-issue=912 \
+    --issue-workflow-stage=review
+  grep -Fq "issue.workflow_prompt appended stage=review number=912" "$temp_dir/fix-review-stage.log" || fail "issue review stage prompt addendum was not appended"
+  grep -Fq "issue.workflow_comment.destination stage=review number=912" "$temp_dir/fix-review-stage.log" || fail "issue review stage wrapper destination was not prepared"
+  grep -Fq "issue_workflow_stage=review" "$temp_dir/fix-review-stage.log" || fail "issue review workflow stage was not logged at cycle start"
+
   if grep -Fq 'gh issue comment "$CODEX_ISSUE_FIX_NUMBER"' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash"; then
     fail "issue comment stage prompt still relies on an unexported issue-number environment variable"
   fi
   if grep -Fq 'Post the comment with `gh issue comment' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash"; then
     fail "issue workflow stage prompt still asks Codex to post GitHub comments directly"
   fi
+  bash tests/issue_workflow_review_contract_test.bash
   grep -Fq 'issue_workflow_comment_transport=final_message_block' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash" || fail "issue workflow stage prompt does not declare final-message comment transport"
   grep -Fq 'UPKEEPER_ISSUE_COMMENT_DRAFT_START' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash" || fail "issue workflow stage prompt does not require a final-message draft block"
   if grep -Fq 'issue_workflow_comment_file=%s' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash"; then
@@ -8077,6 +8107,7 @@ run_check help_and_diff check_help_and_diff
 run_check validation_environment_isolation check_validation_environment_isolation
 run_check validation_quota_session_fixture_contract check_validation_quota_session_fixture_contract
 run_check dependency_guidance_contract check_dependency_guidance_contract
+run_check ci_dependency_setup_contract check_ci_dependency_setup_contract
 run_check release_readiness_docs_contract check_release_readiness_docs_contract
 run_check docs_only_fast_path_contract check_docs_only_fast_path_contract
 run_check governance_docs_contract check_governance_docs_contract

@@ -33,3 +33,22 @@ json_field() {
     return 1
   fi
 }
+
+json_fields_nul() {
+  local json="$1"
+  shift
+  local path filter="" separator=""
+
+  [[ $# -gt 0 ]] || return 0
+
+  for path in "$@"; do
+    filter+="${separator}((${path}) as \$value | if \$value == null then \"\" elif ((\$value | type) == \"array\" or (\$value | type) == \"object\") then (\$value | tojson) else (\$value | tostring) end)"
+    separator=', "\u0000", '
+  done
+  filter+=', "\u0000"'
+
+  if ! jq -j "$filter" <<<"$json"; then
+    printf 'Upkeeper: ERROR: json_fields_nul failed for %s jq path(s)\n' "$#" >&2
+    return 1
+  fi
+}

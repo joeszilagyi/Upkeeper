@@ -238,8 +238,137 @@ Goal:
   records rather than one-cycle observations
 - classify unknown audit finding classes as promotion-required until a stable
   classifier, `KP-###` invariant, and fixture exist
+
+## Issue #650: Bug-Report-Only Stale Quota Custody Before Triage
+
+Status: completed locally; pending PR/CI after push
+
+Goal:
+- stop direct `--max-cover --bug-report-only` stale-after-reset quota blocks
+  from collapsing into a generic fallback-chain exit before target triage
+- make the last-run/operator-facing reason quota-specific and leave durable
+  local bug-report custody without launching backend Codex
+- cover the path with deterministic local validation only
+
+Constraints:
+- no backend Codex validation
+- preserve normal fallback behavior for non-reporting mutation paths unless the
+  quota stop is the specific no-triage stale-snapshot case
+- keep bug-report-only and audit-only source-mutation guarantees intact
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/operator_status.bash`
+- focused tests and validator coverage
+- public docs/help/release notes if operator-visible text changes
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- focused bug-report/quota tests
+- `tools/run_tests.sh`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
+
+## Issue #651: ChimneySweep Review Proposal Context And Result Mapping
+
+Status: completed locally; pending PR/CI after push
+
+Goal:
+- make ChimneySweep `--workflow=review` consume the latest wrapper-owned
+  proposal comment or fail closed before backend launch
+- stop review-stage `blocked` comments from surfacing as an ambiguous clean
+  `WORK_DONE` cycle result
+- keep comment/review stages source-read-only while making the prompt contract
+  explicit about read-only validation limits
+
+Constraints:
+- preserve the staged comment/review/apply workflow and existing issue comment
+  transport through wrapper-owned draft extraction/posting
+- avoid broad GitHub/private-issue exposure changes outside the wrapper-owned
+  staged comment artifact
+- no live backend Codex validation
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/codex_io.bash`
+- `lib/upkeeper/prompt_compile.bash`
+- focused tests and quick-validator coverage
+- operator docs and release notes if the fail-closed/result-mapping behavior is
+  operator-visible
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- focused ChimneySweep issue-workflow contract tests
+- `tools/run_tests.sh`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`
 - give backlog, FlameOn, ChimneySweep, and merge stewardship the same fast
   pre-model control-plane guard without forcing backend Codex work
+
+## Issue #722: CI Dependency Probe Instead Of Blanket Apt Install
+
+Status: completed locally; pending PR/CI after push
+
+Goal:
+- replace the unconditional CI `apt-get install` of stock runner packages with a
+  shared dependency probe that installs only missing nonstandard tools
+- fail clearly when an expected `ubuntu-latest` runner command is absent rather
+  than silently broad-installing around runner-image drift
+- make the dependency setup contract visible in local tests, validator checks,
+  and dependency docs
+
+Constraints:
+- keep CI deterministic and no-quota
+- preserve age coverage for full-burn launcher dependency validation
+- avoid requiring privileged package installs during local validation
+
+Files likely touched:
+- `.github/workflows/ci.yml`
+- `tools/` helper and focused test coverage
+- `tools/check_public_docs.sh`
+- `tools/validate_upkeeper.sh`
+- `docs/dependencies.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/ci_dependency_setup_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/run_tests.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Issue #723: Multi-Field JSON Extraction On Hot Paths
+
+Status: completed locally; pending PR/CI after push
+
+Goal:
+- add a safe helper that extracts multiple fields from one wrapper-owned JSON
+  value in one parse instead of repeated same-object `jq` calls
+- replace the repeated extraction clusters called out in `Upkeeper`,
+  `lib/upkeeper/codex_io.bash`, and `orchestration/backlog.sh`
+- keep existing null/boolean behavior while preserving tabs/newlines safely
+
+Constraints:
+- no backend Codex validation
+- avoid `eval` for assignment
+- keep malformed JSON visibly fail-closed because the inputs are wrapper-owned
+
+Files likely touched:
+- `lib/upkeeper/runtime_format_json.bash`
+- `Upkeeper`
+- `lib/upkeeper/codex_io.bash`
+- `orchestration/backlog.sh`
+- focused tests and validator coverage if needed
+- release notes if the helper changes hot-path behavior materially
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- focused JSON helper and hot-path regression tests
+- `tools/run_tests.sh`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
 
 Constraints:
 - no backend Codex validation

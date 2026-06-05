@@ -410,6 +410,11 @@ Important:
   - For pre-run quota stops on an already-dirty worktree, the wrapper skips the
     normal backend fallback child and records the incident instead of spending a
     stronger model run on a predictable dirty-worktree block.
+  - For --bug-report-only and --audit-only runs, an exact-model stale-after-reset
+    quota stop before target triage now skips the normal fallback chain, writes
+    a local issue-ready draft under the report root, and exits with
+    QUOTA_STALE_SNAPSHOT_BEFORE_TRIAGE so --last-run and automation
+    obligations name the quota/control-plane block directly.
   - Quota logs always print both used and left explicitly as named fields
     (primary_used=... primary_left=... secondary_used=... secondary_left=...)
     so operator checks do not depend on positional interpretation.
@@ -628,7 +633,10 @@ $(review_module_flag_help_lines)
     stages that leave issue comments; apply is the implementation stage.
     The read-only stages force backend Codex into a read-only repository
     sandbox and carry issue-comment text back in a final-message draft block
-    that the wrapper extracts and posts after validation.
+    that the wrapper extracts and posts after validation. review and apply use
+    the latest wrapper-fetched staged comments as prompt context, and review
+    fails closed before backend launch if the latest proposal comment is
+    missing.
 
 Environment overrides:
   UPKEEPER_CONFIG_FILE          Default: $UPKEEPER_CONFIG_DEFAULT_FILE

@@ -6,6 +6,11 @@ Version numbering note:
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
 
+2026-06-05: deferred backlog PR publication:
+	1. Backlog branches now stay local-only until a real tracked fix is ready to publish, so the launcher no longer opens or pushes an empty GitHub PR for the initial batch setup.
+	2. The first publish-worthy commit now pushes the backlog branch and opens the PR at commit time, preserving PR-check and batch-merge gating after a real change exists.
+	3. Operator docs and the README now describe the local-only pending branch until publication.
+
 2026-06-05: backlog reasoning-effort auto-sizing:
 	1. Backlog now auto-sizes `CODEX_REASONING_EFFORT` per selected issue or target instead of always exporting `xhigh`.
 	2. Docs-only targets can use `low`, small mechanical/config targets can use `medium`, high-risk wrapper/control-plane targets stay `xhigh`, and newest-file review defaults to `high`.

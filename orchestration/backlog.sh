@@ -296,7 +296,7 @@ backlog_attention_marker_for_line() {
       printf '%s\n' '--FYI--'
       return 0
       ;;
-    *"backlog: running Upkeeper"*|*"selected file "*|*"starting Codex review"*|*"opening new backlog PR"*|*"running normal newest-file Upkeeper pass"*)
+    *"backlog: running Upkeeper"*|*"selected file "*|*"starting Codex review"*|*"opening new backlog batch"*|*"opening new backlog PR"*|*"creating backlog PR"*|*"running normal newest-file Upkeeper pass"*)
       printf 'RUN\n'
       return 0
       ;;
@@ -3015,9 +3015,23 @@ quota_preflight_allows_backlog_run() {
 }
 
 current_backlog_pr() {
-  gh pr list --state open --json number,title,headRefName \
-    --jq '.[] | select(.headRefName | startswith("'"$BACKLOG_BRANCH_PREFIX"'")) | [.number, .headRefName] | @tsv' \
-    | sed -n '1p'
+  local current_branch open_pr_info
+
+  open_pr_info="$(
+    gh pr list --state open --json number,title,headRefName \
+      --jq '.[] | select(.headRefName | startswith("'"$BACKLOG_BRANCH_PREFIX"'")) | [.number, .headRefName] | @tsv' \
+      | sed -n '1p'
+  )"
+  if [[ -n "$open_pr_info" ]]; then
+    printf '%s\n' "$open_pr_info"
+    return 0
+  fi
+
+  current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ "$current_branch" == "$BACKLOG_BRANCH_PREFIX"* ]]; then
+    printf '\t%s\n' "$current_branch"
+  fi
+  return 0
 }
 
 backlog_log_pr_watch_hint() {
@@ -3033,10 +3047,19 @@ checkout_backlog_branch() {
   log "branch sync: plane=git waiting_for=checkout_or_fetch branch=$branch"
   if git show-ref --verify --quiet "refs/heads/$branch"; then
     git checkout "$branch" >/dev/null
-    git pull --ff-only origin "$branch"
+    if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+      git pull --ff-only origin "$branch"
+    else
+      log "branch sync: plane=git waiting_for=checkout_or_fetch branch=$branch action=local_only_until_first_publish"
+    fi
   else
-    git fetch origin "$branch"
-    git checkout -b "$branch" "origin/$branch" >/dev/null
+    if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+      git fetch origin "$branch"
+      git checkout -b "$branch" "origin/$branch" >/dev/null
+    else
+      git checkout -b "$branch" >/dev/null
+      log "branch sync: plane=git waiting_for=create_branch branch=$branch action=local_only_until_first_publish"
+    fi
   fi
 }
 
@@ -3101,32 +3124,27 @@ backlog_ensure_local_branch_pushed() {
 }
 
 open_backlog_pr() {
-  local branch pr_number
+  local branch
 
-  log "new backlog PR setup: plane=git waiting_for=sync_main"
+  log "opening new backlog batch plane=git waiting_for=sync_main"
   git checkout main >/dev/null
   git pull --ff-only origin main >/dev/null
 
   branch="${BACKLOG_BRANCH_PREFIX}$(date +%Y%m%d-%H%M%S)"
-  log "new backlog PR setup: plane=git waiting_for=create_branch branch=$branch"
+  log "opening new backlog batch plane=git waiting_for=create_branch branch=$branch"
   git checkout -b "$branch" >/dev/null
-  git commit --allow-empty -m "Start backlog issue batch" >/dev/null
-  log "new backlog PR setup: plane=git waiting_for=push_branch branch=$branch"
-  git push -u origin "$branch" >/dev/null
-  log "new backlog PR setup: plane=github waiting_for=create_pull_request branch=$branch"
-  gh pr create \
-    --base main \
-    --head "$branch" \
-    --title "$BACKLOG_PR_TITLE" \
-    --body "Backlog wrench batch.
+  log "opening new backlog batch branch=$branch stays local until the first real tracked fix"
+  printf '\t%s\n' "$branch"
+}
+
+backlog_batch_pr_body() {
+  cat <<EOF
+Backlog wrench batch.
 
 Target: up to ${BACKLOG_BATCH_LIMIT} bug or data-protection fixes, newest non-feature/non-research issue first.
 
-Validation: script-local quick validation plus required PR checks before merge." >/dev/null
-
-  pr_number="$(gh pr view --json number --jq '.number')"
-  backlog_log_pr_watch_hint "$pr_number"
-  printf '%s\t%s\n' "$pr_number" "$branch"
+Validation: script-local quick validation plus required PR checks before merge.
+EOF
 }
 
 pr_body() {
@@ -3167,6 +3185,11 @@ clear_deferred_issues() {
 
 fix_count() {
   local pr_number="$1"
+
+  [[ -n "$pr_number" ]] || {
+    printf '0\n'
+    return 0
+  }
   fixed_issue_numbers "$pr_number" | sed '/^$/d' | wc -l | tr -d ' '
 }
 
@@ -3175,6 +3198,7 @@ append_pr_fix_line() {
   local issue_number="$2"
   local body_file
 
+  [[ -n "$pr_number" && -n "$issue_number" ]] || return 0
   pr_body "$pr_number" | grep -Fq "Fixes #$issue_number" && return 0
   body_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-backlog-pr-body.XXXXXX")"
   {
@@ -3190,7 +3214,11 @@ selected_issue() {
   local fixed_csv
   local deferred_csv
 
-  fixed_csv="$(fixed_issue_numbers "$pr_number" | paste -sd, -)"
+  if [[ -n "$pr_number" ]]; then
+    fixed_csv="$(fixed_issue_numbers "$pr_number" | paste -sd, -)"
+  else
+    fixed_csv=""
+  fi
   deferred_csv="$(deferred_issue_numbers | paste -sd, -)"
   gh issue list --state open --limit "$BACKLOG_ISSUE_LIMIT" --json number,title,createdAt,labels \
     | jq -r \
@@ -3919,7 +3947,12 @@ commit_and_push_changes() {
   local issue_number="${1:-}"
   local commit_message="${2:-}"
   local target_hint="${3:-}"
+  local pr_number="${4:-}"
+  local publish_pr_after_push="${5:-0}"
   local message
+  local branch published_pr_number body_file status
+
+  BACKLOG_LAST_PUBLISHED_PR_INFO=""
 
   cleanup_ephemeral_artifacts || return $?
   has_worktree_changes || return 1
@@ -3951,9 +3984,36 @@ commit_and_push_changes() {
   fi
   log "committing: $message plane=git waiting_for=commit"
   git commit -m "$message" || return $?
-  log "pushing branch updates plane=git waiting_for=push"
-  git push || return $?
-  backlog_log_pr_watch_hint "${pr_number:-}"
+  branch="$(git rev-parse --abbrev-ref HEAD)"
+  if [[ -n "$pr_number" ]]; then
+    log "pushing branch updates plane=git waiting_for=push branch=$branch pr=$pr_number"
+    backlog_ensure_local_branch_pushed "$pr_number" "$branch" "post_commit_publish" || return $?
+    BACKLOG_LAST_PUBLISHED_PR_INFO="$pr_number"$'\t'"$branch"
+    return 0
+  fi
+
+  [[ "$publish_pr_after_push" == "1" ]] || return 0
+
+  log "pushing branch updates plane=git waiting_for=push branch=$branch"
+  git push -u origin "HEAD:$branch" || return $?
+  log "creating backlog PR plane=github waiting_for=create_pull_request branch=$branch"
+  body_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-backlog-pr-body.XXXXXX")"
+  backlog_batch_pr_body >"$body_file"
+  if gh pr create \
+    --base main \
+    --head "$branch" \
+    --title "$BACKLOG_PR_TITLE" \
+    --body-file "$body_file" >/dev/null; then
+    :
+  else
+    status="$?"
+    rm -f "$body_file"
+    return "$status"
+  fi
+  rm -f "$body_file"
+  published_pr_number="$(gh pr view --json number --jq '.number')"
+  BACKLOG_LAST_PUBLISHED_PR_INFO="$published_pr_number"$'\t'"$branch"
+  backlog_log_pr_watch_hint "$published_pr_number"
   return 0
 }
 
@@ -4318,6 +4378,7 @@ backlog_ensure_pr_checks_allow_next_issue() {
   local count="$2"
   local status policy reason
 
+  [[ -n "$pr_number" ]] || return 0
   [[ "$BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE" == "1" ]] || return 0
   [[ "$count" -gt 0 ]] || return 0
 
@@ -4395,14 +4456,16 @@ main() {
 
   pr_info="$(current_backlog_pr)"
   if [[ -z "$pr_info" ]]; then
-    log "opening new backlog PR plane=github waiting_for=create_pull_request"
+    log "opening new backlog batch plane=git waiting_for=create_branch"
     pr_info="$(open_backlog_pr)"
   fi
 
   pr_number="$(awk -F '\t' '{print $1}' <<<"$pr_info")"
   branch="$(awk -F '\t' '{print $2}' <<<"$pr_info")"
   checkout_backlog_branch "$branch"
-  backlog_ensure_local_branch_pushed "$pr_number" "$branch" "post_branch_sync" || exit $?
+  if [[ -n "$pr_number" ]]; then
+    backlog_ensure_local_branch_pushed "$pr_number" "$branch" "post_branch_sync" || exit $?
+  fi
   record_control_plane_snapshot "backlog-cycle-after-branch-sync"
 
   if ! run_backlog_anomaly_custody_audit; then
@@ -4463,41 +4526,45 @@ main() {
     issue_title="$obligation_issue_title"
     target_hint="$obligation_target"
   else
-    count="$(fix_count "$pr_number")"
-    if [[ "$count" -ge "$BACKLOG_BATCH_LIMIT" ]]; then
-      log "PR #$pr_number has $count recorded fixes; merging batch"
-      backlog_emit_job_start_summary \
-        "PR #$pr_number batch merge" \
-        "batch limit reached with $count recorded fixes on $branch" \
-        "run local batch validation, wait for PR checks, merge, and clean local main"
-      if merge_and_clean "$pr_number" "$branch"; then
-        backlog_emit_job_finish_summary \
-          "batch validation, PR checks, and merge completed" \
-          "merged PR #$pr_number and returned to clean main"
-        backlog_write_loop_disposition "work_done" "batch_merge_completed"
+    if [[ -n "$pr_number" ]]; then
+      count="$(fix_count "$pr_number")"
+      if [[ "$count" -ge "$BACKLOG_BATCH_LIMIT" ]]; then
+        log "PR #$pr_number has $count recorded fixes; merging batch"
+        backlog_emit_job_start_summary \
+          "PR #$pr_number batch merge" \
+          "batch limit reached with $count recorded fixes on $branch" \
+          "run local batch validation, wait for PR checks, merge, and clean local main"
+        if merge_and_clean "$pr_number" "$branch"; then
+          backlog_emit_job_finish_summary \
+            "batch validation, PR checks, and merge completed" \
+            "merged PR #$pr_number and returned to clean main"
+          backlog_write_loop_disposition "work_done" "batch_merge_completed"
+        else
+          status="$?"
+          backlog_emit_job_finish_summary \
+            "batch merge path stopped with status $status" \
+            "launcher exiting with status $status"
+          if [[ "$status" -eq 2 ]]; then
+            backlog_write_loop_disposition "blocked_external" "batch_merge_pr_checks_pending"
+            exit 0
+          fi
+          exit "$status"
+        fi
+        exit 0
+      fi
+
+      if backlog_ensure_pr_checks_allow_next_issue "$pr_number" "$count"; then
+        :
       else
         status="$?"
-        backlog_emit_job_finish_summary \
-          "batch merge path stopped with status $status" \
-          "launcher exiting with status $status"
         if [[ "$status" -eq 2 ]]; then
-          backlog_write_loop_disposition "blocked_external" "batch_merge_pr_checks_pending"
+          backlog_write_loop_disposition "blocked_external" "pr_checks_pending_before_next_issue"
           exit 0
         fi
         exit "$status"
       fi
-      exit 0
-    fi
-
-    if backlog_ensure_pr_checks_allow_next_issue "$pr_number" "$count"; then
-      :
     else
-      status="$?"
-      if [[ "$status" -eq 2 ]]; then
-        backlog_write_loop_disposition "blocked_external" "pr_checks_pending_before_next_issue"
-        exit 0
-      fi
-      exit "$status"
+      count=0
     fi
 
     issue_info="$(selected_issue "$pr_number")"
@@ -4551,13 +4618,17 @@ main() {
     commit_result="blocked with no partial tracked changes"
     if has_worktree_changes; then
       partial_commit_message="$(backlog_partial_commit_message "$obligation_selected" "$obligation_id" "$issue_number")"
-      if commit_and_push_changes "" "$partial_commit_message" "$target_hint"; then
+      if commit_and_push_changes "" "$partial_commit_message" "$target_hint" "$pr_number" 0; then
+        if [[ -n "$BACKLOG_LAST_PUBLISHED_PR_INFO" ]]; then
+          commit_result="blocked; partial work committed and pushed"
+        else
+          commit_result="blocked; partial work committed locally"
+        fi
         if [[ "$obligation_selected" == "1" ]]; then
           log "preserved partial work for automation obligation $obligation_id"
         else
           log "preserved partial work for blocked issue #$issue_number"
         fi
-        commit_result="blocked; partial work committed and pushed"
       else
         commit_result="blocked; partial work present but no commit was produced"
       fi
@@ -4611,7 +4682,16 @@ main() {
   fi
 
   commit_result="no tracked changes produced"
-  if commit_and_push_changes "$issue_number" "" "$target_hint"; then
+  if commit_and_push_changes "$issue_number" "" "$target_hint" "$pr_number" 1; then
+    if [[ -n "$BACKLOG_LAST_PUBLISHED_PR_INFO" ]]; then
+      pr_info="$BACKLOG_LAST_PUBLISHED_PR_INFO"
+      pr_number="$(awk -F '\t' '{print $1}' <<<"$pr_info")"
+      branch="$(awk -F '\t' '{print $2}' <<<"$pr_info")"
+    fi
+    if [[ -z "$pr_number" ]]; then
+      log "tracked changes committed but no backlog PR number was published; stopping"
+      exit 1
+    fi
     commit_result="tracked changes committed and pushed"
     if [[ -n "$issue_number" ]]; then
       append_pr_fix_line "$pr_number" "$issue_number"

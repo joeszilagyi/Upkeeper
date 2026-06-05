@@ -3,6 +3,40 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #799: Deferred Backlog PR Publication
+
+Status: in progress
+
+Goal:
+- stop backlog runs from opening or publishing an empty GitHub PR before any
+  real tracked fix exists on the branch
+- keep the backlog branch local until the first publish-worthy commit is ready,
+  then create the PR from that real change
+- preserve branch reuse, PR-check gating after publication, and the existing
+  batch merge workflow
+
+Constraints:
+- no live backend Codex validation
+- keep the fix narrow to the backlog launcher and its local regression tests
+- preserve the current batch-merging and issue-selection contract once a PR has
+  been published
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tests/*.bash`
+- `docs/scripts/upkeeper.md`
+- `README.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- focused backlog launcher regression test(s)
+- `tools/run_tests.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `git diff --check`
+
 ## Issues #732-#786: Prompt Compilation And Selection Batch
 
 Status: in progress

@@ -188,7 +188,10 @@ Important:
     returning to the outer loop. This keeps a no-op or already-addressed issue
     from being selected repeatedly while preserving the open issue for a later
     branch or manual close.
-  - Once a backlog PR has recorded fixes, the next invocation usually waits for
+  - Backlog branches stay local-only until the first real tracked fix is ready.
+    The launcher does not open or publish a GitHub PR for the initial empty
+    batch; it publishes the branch only when there is a real commit to share.
+    Once a backlog PR has recorded fixes, the next invocation usually waits for
     that PR's checks before selecting another issue. Passing checks allow the
     next issue, pending checks keep the local owner lease alive, and failed
     checks stop the launcher before more work stacks on a red branch. For
@@ -214,8 +217,8 @@ Important:
     while `--interval SECONDS` controls polling while checks are pending. The
     watcher exits `0` when checks pass, `1` on failed/unreadable checks, and
     `2` for pending checks in `--once` mode. Backlog prints the same command as
-    a helper after it creates or pushes an active backlog PR branch.
-  - After syncing the active backlog PR branch, and again before batch merge,
+    a helper after it publishes an active backlog PR branch.
+  - After the backlog branch has been published, and again before batch merge,
     the launcher checks whether the local branch contains commits not yet on
     `origin/<branch>`. A clean local-ahead branch is pushed before PR checks or
     merge decisions so GitHub validation covers the current head. Dirty,

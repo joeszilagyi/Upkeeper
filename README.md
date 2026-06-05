@@ -796,11 +796,13 @@ bounded output tail, stable fingerprint, likely owner path, and required proof
 command. The next backlog invocation selects that obligation before retrying the
 merge or starting fresh GitHub issue work.
 
-Backlog PR check and merge gates also protect against stale remote evidence. If
-the active backlog branch is clean and locally ahead of `origin/<branch>`, the
-launcher pushes those commits before waiting on PR checks or merging. Dirty,
-missing-remote, or diverged local-ahead branch states stop with a clear reason
-instead of treating older remote checks as current.
+Backlog branches stay local-only until the first real tracked fix is ready, so
+the launcher does not open or publish a GitHub PR for the empty batch. Once the
+branch has a real commit to share, PR-check and merge gates protect against
+stale remote evidence. If the active backlog branch is clean and locally ahead
+of `origin/<branch>`, the launcher pushes those commits before waiting on PR
+checks or merging. Dirty, missing-remote, or diverged local-ahead branch states
+stop with a clear reason instead of treating older remote checks as current.
 PR-check waits now have a bounded default timeout
 (`BACKLOG_PR_CHECK_TIMEOUT_SECONDS=1800`) and write local timeout evidence under
 the backlog state root before returning a pending status. Between issue fixes,

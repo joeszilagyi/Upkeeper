@@ -15,6 +15,8 @@ BACKLOG_ISSUE_LIMIT="${BACKLOG_ISSUE_LIMIT:-200}"
 BACKLOG_EXCLUDED_LABELS="${BACKLOG_EXCLUDED_LABELS:-feature,features,enhancement,research,r&d,r-and-d,documentation,docs,in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr}"
 BACKLOG_CODEX_MODEL="${BACKLOG_CODEX_MODEL:-gpt-5.3-codex-spark}"
 BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-xhigh}"
+BACKLOG_REASONING_EFFORT_AUTOSIZE="${BACKLOG_REASONING_EFFORT_AUTOSIZE:-1}"
+BACKLOG_REASONING_EFFORT_OVERRIDE="${BACKLOG_REASONING_EFFORT_OVERRIDE:-}"
 BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
 BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-1800}"
 BACKLOG_PR_CHECK_INTERVAL_SECONDS="${BACKLOG_PR_CHECK_INTERVAL_SECONDS:-60}"
@@ -1285,6 +1287,157 @@ backlog_path_high_risk_for_blocking_ci() {
   esac
 }
 
+backlog_reasoning_effort_truthy() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+backlog_reasoning_effort_is_valid() {
+  case "${1:-}" in
+    low|medium|high|xhigh)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+backlog_reasoning_effort_class_for_effort() {
+  case "${1:-high}" in
+    low)
+      printf 'docs-only\n'
+      ;;
+    medium)
+      printf 'mechanical\n'
+      ;;
+    high)
+      printf 'normal\n'
+      ;;
+    xhigh)
+      printf 'high-risk\n'
+      ;;
+    *)
+      printf 'normal\n'
+      ;;
+  esac
+}
+
+backlog_reasoning_effort_from_text() {
+  local text="${1:-}"
+  local lowered words
+
+  lowered="${text,,}"
+  words="$(printf '%s' "$lowered" | tr -cs '[:alnum:]' ' ')"
+
+  case "$lowered" in
+    ""|unknown)
+      printf 'high\tnormal\tdefault_normal_context\n'
+      return 0
+      ;;
+    *"orchestration/"*|*"lib/upkeeper/"*|*"tools/validate_upkeeper.sh"*|*"tools/run_validation_phases.sh"*|*"tools/upkeeper_lattice.py"*|*"tools/docs_only_fast_path.sh"*|*".github/workflows/"*)
+      printf 'xhigh\thigh-risk\thigh-risk path or file context\n'
+      return 0
+      ;;
+  esac
+
+  case " $words " in
+    *" backlog "*|*" launcher "*|*" quota "*|*" fallback "*|*" restore "*|*" security "*|*" data integrity "*|*" schema "*|*" control plane "*|*" policy blocker "*|*" prompt contract "*|*" validation "*|*" runtime module "*|*" log rotation "*|*" logging helpers "*|*" timestamp forks "*|*" command substitution "*|*" hot path "*|*" pre contact backup "*|*" precontact backup "*|*" python helpers "*|*" full validator "*|*" phase profiled "*|*" fast lane automation "*|*" docs only fast path "*|*" docs only changes "*|*" ci "*|*" workflow "*|*" issue triage "*|*" reasoning effort "*|*" task difficulty "*)
+      printf 'xhigh\thigh-risk\thigh-risk keywords in issue or job context\n'
+      return 0
+      ;;
+  esac
+
+  case "$lowered" in
+    *"docs/"*|*"docs scripts/"*|*"docs/scripts/"*|*"readme.md"*|*"change_notes_"*|*"prompts/"*|*"operator guide"*|*"help text"*|*"release note"*|*"markdown"*|*"documentation"*|*"docs only"*|*"docs-only"*|*"docs only changes"*|*"docs-only changes"*)
+      printf 'low\tdocs-only\tdocs-oriented issue or job context\n'
+      return 0
+      ;;
+  esac
+
+  case " $words " in
+    *" one character "*|*" one line "*|*" syntax "*|*" whitespace "*|*" formatting "*|*" format "*|*" config "*|*" test only "*|*" trivial "*|*" small "*|*" simple "*|*" shell config "*|*" local tool "*|*" tests "*|*" testruns "*|*" tools "*)
+      printf 'medium\tmechanical\tsmall mechanical issue or job context\n'
+      return 0
+      ;;
+  esac
+
+  case "$lowered" in
+    *".conf"*|*".ini"*|*".json"*|*".yaml"*|*".yml"*|*".toml"*)
+      printf 'medium\tmechanical\tsmall mechanical issue or job context\n'
+      return 0
+      ;;
+  esac
+
+  printf 'high\tnormal\tdefault_normal_context\n'
+}
+
+backlog_reasoning_effort_select() {
+  local context_kind="${1:-support}"
+  local target_hint="${2:-}"
+  local job_reason="${3:-}"
+  local selected_effort task_class source reason text
+
+  if backlog_reasoning_effort_is_valid "$BACKLOG_REASONING_EFFORT_OVERRIDE"; then
+    selected_effort="$BACKLOG_REASONING_EFFORT_OVERRIDE"
+    task_class="$(backlog_reasoning_effort_class_for_effort "$selected_effort")"
+    source="override"
+    reason="BACKLOG_REASONING_EFFORT_OVERRIDE"
+    printf '%s\t%s\t%s\t%s\n' "$selected_effort" "$task_class" "$source" "$reason"
+    return 0
+  fi
+
+  if ! backlog_reasoning_effort_truthy "$BACKLOG_REASONING_EFFORT_AUTOSIZE"; then
+    selected_effort="$BACKLOG_CODEX_REASONING_EFFORT"
+    if ! backlog_reasoning_effort_is_valid "$selected_effort"; then
+      selected_effort="xhigh"
+      reason="invalid BACKLOG_CODEX_REASONING_EFFORT fallback"
+    else
+      reason="BACKLOG_REASONING_EFFORT_AUTOSIZE=0"
+    fi
+    task_class="$(backlog_reasoning_effort_class_for_effort "$selected_effort")"
+    printf '%s\t%s\tlegacy\t%s\n' "$selected_effort" "$task_class" "$reason"
+    return 0
+  fi
+
+  if [[ "$context_kind" == "newest_file_review" ]]; then
+    selected_effort="high"
+    task_class="normal"
+    source="auto"
+    reason="newest_file_review_without_target"
+    printf '%s\t%s\t%s\t%s\n' "$selected_effort" "$task_class" "$source" "$reason"
+    return 0
+  fi
+
+  if [[ -n "$target_hint" ]]; then
+    IFS=$'\t' read -r selected_effort task_class reason < <(
+      backlog_reasoning_effort_from_text "$target_hint"
+    )
+    source="auto"
+    printf '%s\t%s\t%s\t%s\n' "$selected_effort" "$task_class" "$source" "$reason"
+    return 0
+  fi
+
+  case "$context_kind" in
+    issue_repair|obligation_repair)
+      IFS=$'\t' read -r selected_effort task_class reason < <(
+        backlog_reasoning_effort_from_text "$job_reason"
+      )
+      source="auto"
+      printf '%s\t%s\t%s\t%s\n' "$selected_effort" "$task_class" "$source" "$reason"
+      return 0
+      ;;
+  esac
+
+  IFS=$'\t' read -r selected_effort task_class reason < <(
+    backlog_reasoning_effort_from_text "${job_reason:-$context_kind}"
+  )
+  source="auto"
+  printf '%s\t%s\t%s\t%s\n' "$selected_effort" "$task_class" "$source" "$reason"
+}
+
 backlog_validation_authority_for_head() {
   local configured="${BACKLOG_VALIDATION_AUTHORITY_POLICY:-auto}"
   local paths path saw_path=0 all_low_risk=1 high_risk=0
@@ -2167,10 +2320,18 @@ autoshelve_dirty_worktree_if_enabled() {
 }
 
 prepare_backlog_runtime_env() {
+  local context_kind="${1:-support}"
+  local job_target="${2:-}"
+  local job_reason="${3:-}"
   local state_root
+  local effort_selected effort_class effort_source effort_reason
+
+  IFS=$'\t' read -r effort_selected effort_class effort_source effort_reason < <(
+    backlog_reasoning_effort_select "$context_kind" "$job_target" "$job_reason"
+  )
 
   export CODEX_MODEL="$BACKLOG_CODEX_MODEL"
-  export CODEX_REASONING_EFFORT="$BACKLOG_CODEX_REASONING_EFFORT"
+  export CODEX_REASONING_EFFORT="$effort_selected"
   export CODEX_FALLBACK_ENABLED="${BACKLOG_CODEX_FALLBACK_ENABLED:-0}"
   export CODEX_FALLBACK_SCREEN_ENABLED="${BACKLOG_CODEX_FALLBACK_SCREEN_ENABLED:-0}"
   export CODEX_POSTMORTEM_ENABLED="${BACKLOG_CODEX_POSTMORTEM_ENABLED:-0}"
@@ -2184,6 +2345,12 @@ prepare_backlog_runtime_env() {
   export UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="${BACKLOG_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL:-1}"
   export CODEX_TERMINAL_VERBOSITY="${BACKLOG_CODEX_TERMINAL_VERBOSITY:-${CODEX_TERMINAL_VERBOSITY:-quiet}}"
   export PYTHONDONTWRITEBYTECODE=1
+
+  export BACKLOG_SELECTED_REASONING_EFFORT="$effort_selected"
+  export BACKLOG_REASONING_EFFORT_CLASS="$effort_class"
+  export BACKLOG_REASONING_EFFORT_SOURCE="$effort_source"
+  export BACKLOG_REASONING_EFFORT_REASON="$effort_reason"
+  log "reasoning effort selected context=$context_kind target=${job_target:-none} effort=$effort_selected class=$effort_class source=$effort_source reason=$(backlog_disposition_sanitize "$effort_reason")"
 
   state_root="$(backlog_state_root)"
   mkdir -p \
@@ -2668,7 +2835,7 @@ backlog_sync_obligation_issue_reports() {
   local output status current_open drafted updated github_created github_existing github_reused github_failed report_dir umbrella_unlinked
 
   [[ "$BACKLOG_OBLIGATION_ISSUE_REPORTS" == "1" ]] || return 0
-  prepare_backlog_runtime_env
+  prepare_backlog_runtime_env "support" "" "sync_obligation_issue_reports"
   output="$(
     ROOT_DIR="$ROOT_DIR" \
       UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
@@ -2745,7 +2912,7 @@ quota_preflight_allows_backlog_run() {
   local secondary_reset
   local primary_reset_expired secondary_reset_expired snapshot_stale_after_reset
 
-  prepare_backlog_runtime_env
+  prepare_backlog_runtime_env "support" "" "quota_preflight"
   source "$ROOT_DIR/lib/upkeeper/config_validation.bash"
   source "$ROOT_DIR/lib/upkeeper/quota_state.bash"
   source "$ROOT_DIR/lib/upkeeper/quota_guardrails.bash"
@@ -3095,7 +3262,7 @@ run_upkeeper_for_one_target() {
   local upkeeper_args=()
   local upkeeper_status=0
 
-  prepare_backlog_runtime_env
+  prepare_backlog_runtime_env "issue_repair" "${target_hint:-}" "${issue_number:+issue #$issue_number: }${target_hint:-wrapper-inferred}"
 
   if [[ -n "$issue_number" ]]; then
     if [[ "$BACKLOG_IGNORE_FAILURE_QUEUE" == "1" ]]; then
@@ -3105,9 +3272,9 @@ run_upkeeper_for_one_target() {
       upkeeper_args+=(--target-file="$target_hint")
     fi
     upkeeper_args+=(--fix-issue="$issue_number")
-    log "running Upkeeper for issue #$issue_number with $CODEX_MODEL/$CODEX_REASONING_EFFORT target=${target_hint:-wrapper-inferred}"
+    log "running Upkeeper for issue #$issue_number with $CODEX_MODEL/$CODEX_REASONING_EFFORT target=${target_hint:-wrapper-inferred} effort_class=${BACKLOG_REASONING_EFFORT_CLASS:-unknown} effort_source=${BACKLOG_REASONING_EFFORT_SOURCE:-unknown}"
     backlog_update_active_owner_heartbeat "running_upkeeper" \
-      "$(backlog_wait_detail llm codex_issue_repair "issue=$issue_number" "target=${target_hint:-wrapper-inferred}" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "expected=patch_or_status")" \
+      "$(backlog_wait_detail llm codex_issue_repair "issue=$issue_number" "target=${target_hint:-wrapper-inferred}" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "effort_class=${BACKLOG_REASONING_EFFORT_CLASS:-unknown}" "expected=patch_or_status")" \
       "" "owner_pid_start_cwd_verified"
     backlog_run_upkeeper_capture ./Upkeeper "${upkeeper_args[@]}"
     upkeeper_status="$?"
@@ -3118,9 +3285,10 @@ run_upkeeper_for_one_target() {
       return "$upkeeper_status"
     fi
   else
-    log "no eligible issue found; running normal newest-file Upkeeper pass with $CODEX_MODEL/$CODEX_REASONING_EFFORT"
+    prepare_backlog_runtime_env "newest_file_review" "" "no eligible backlog issue found"
+    log "no eligible issue found; running normal newest-file Upkeeper pass with $CODEX_MODEL/$CODEX_REASONING_EFFORT effort_class=${BACKLOG_REASONING_EFFORT_CLASS:-unknown} effort_source=${BACKLOG_REASONING_EFFORT_SOURCE:-unknown}"
     backlog_update_active_owner_heartbeat "running_upkeeper" \
-      "$(backlog_wait_detail llm codex_file_review "selection_order=newest" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "expected=review_or_status")" \
+      "$(backlog_wait_detail llm codex_file_review "selection_order=newest" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "effort_class=${BACKLOG_REASONING_EFFORT_CLASS:-unknown}" "expected=review_or_status")" \
       "" "owner_pid_start_cwd_verified"
     backlog_run_upkeeper_capture ./Upkeeper --selection-order=newest
   fi
@@ -3131,7 +3299,6 @@ run_upkeeper_for_obligation() {
   local obligation_id obligation_path obligation_kind obligation_summary target_hint prompt_file prompt_root
   local upkeeper_status=0
 
-  prepare_backlog_runtime_env
   local -a obligation_fields=()
   mapfile -d '' -t obligation_fields < <(
     json_fields_nul \
@@ -3148,6 +3315,7 @@ run_upkeeper_for_obligation() {
   obligation_summary="${obligation_fields[3]:-automation obligation}"
   target_hint="${obligation_fields[4]:-Upkeeper}"
   [[ -n "$target_hint" && "$target_hint" != "null" ]] || target_hint="Upkeeper"
+  prepare_backlog_runtime_env "obligation_repair" "$target_hint" "$obligation_kind: $obligation_summary"
   if ! prompt_file="$(backlog_prepare_obligation_prompt_file "$obligation_json")"; then
     log "automation obligation $obligation_id could not prepare prompt file; skipping obligation repair"
     return 1
@@ -3158,9 +3326,9 @@ run_upkeeper_for_obligation() {
   fi
   prompt_root="$(dirname -- "$prompt_file")"
 
-  log "running Upkeeper for automation obligation $obligation_id kind=$obligation_kind target=$target_hint"
+  log "running Upkeeper for automation obligation $obligation_id kind=$obligation_kind target=$target_hint effort_class=${BACKLOG_REASONING_EFFORT_CLASS:-unknown} effort_source=${BACKLOG_REASONING_EFFORT_SOURCE:-unknown}"
   backlog_update_active_owner_heartbeat "running_upkeeper" \
-    "$(backlog_wait_detail llm codex_obligation_repair "obligation=$obligation_id" "kind=$obligation_kind" "target=$target_hint" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "expected=repair_or_preserve")" \
+    "$(backlog_wait_detail llm codex_obligation_repair "obligation=$obligation_id" "kind=$obligation_kind" "target=$target_hint" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "effort_class=${BACKLOG_REASONING_EFFORT_CLASS:-unknown}" "expected=repair_or_preserve")" \
     "" "owner_pid_start_cwd_verified"
   UPKEEPER_AUTOMATION_LAUNCHER="backlog" \
     UPKEEPER_AUTOMATION_VARIANT="issue-batch" \

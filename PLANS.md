@@ -3,6 +3,42 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issues #720-#726: Backlog Effort Sizing And Hot-Path Batch
+
+Status: in progress
+
+Goal:
+- handle the next five lowest open bug issues in order, starting with #720,
+  with one focused fix per issue and a local commit plus push after each
+  verified change
+- reduce the backlog launcher's blanket `xhigh` default by selecting effort
+  tier from deterministic issue/task context before `prepare_backlog_runtime_env`
+  exports model settings
+- keep the selection fail-closed for high-risk wrapper, recovery, lattice,
+  quota, fallback, restore, security, and data-integrity work
+
+Constraints:
+- no live backend Codex validation
+- preserve existing issue selection, validation authority, and PR-check flow
+- keep operator overrides explicit and documented
+- keep per-issue changes narrow enough that each can be validated and pushed
+  before the next open bug is started
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `tests/*.bash`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/backlog_loop.sh`
+- focused backlog effort-sizer tests
+- `tools/run_tests.sh`
+- `tools/check_public_docs.sh --quick` when docs/help change
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## ChimneySweep Combined Default Alignment
 
 Status: completed locally; pending PR CI after push

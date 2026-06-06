@@ -41,6 +41,27 @@ The run bill-of-materials and stable local identifier namespace in
 `docs/run-bom-identifiers.md` defines `upk:` references for cycles, runs,
 targets, prompts, backups, artifacts, validation, and config records so future
 tools can link evidence without scraping raw logs or exposing local paths.
+The run transaction, rollback, and replay contract in
+`docs/decisions/0004-run-transaction-contracts.md` defines the bounded
+lifecycle for one cycle plus the read-only `explain`, `replay`,
+`reproduce-selection`, `verify-backup`, and `verify-diff` helper contracts.
+The provenance and evidence-package export contract in
+`docs/decisions/0005-provenance-and-evidence-package-exports.md` defines the
+portable JSON `upkeeper export-cycle --cycle-id X --format json` surface and
+future RO-Crate or BagIt envelopes for Lattice cycles.
+The run taxonomy, observability, and cost accounting contract in
+`docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md`
+defines the local JSONL summary export for cycle outcomes, metrics, and TCO
+evidence without a full OpenTelemetry dependency.
+The adapter and plugin contract in
+`docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md`
+keeps future integrations bounded by declared inputs, outputs, side effects,
+network use, file-write scope, secret needs, Lattice events, failure modes,
+and validation expectations.
+The human review packet format in
+`docs/decisions/0008-human-review-packet-format-for-cycle-output.md` defines a
+concise markdown or JSON cycle summary separate from transcripts and internal
+Lattice rows, with explicit public-safe and unsafe-to-publish sections.
 The source-rights contract in `docs/source-rights-metadata.md` defines the
 sensitivity labels and rights fields that decide whether OSINT and citation
 sources may enter prompts, exports, archives, or public evidence packets.
@@ -344,7 +365,9 @@ broader quick suite.
 For committed or local README/docs/prompt-only edits,
 `tools/docs_only_fast_path.sh --validate` classifies the changed paths locally,
 rejects mixed source changes, and runs the no-network docs fast path without
-backend Codex, GitHub CLI, or PR polling.
+backend Codex, GitHub CLI, or PR polling. Its `--classify-only` mode also
+reports broader low-risk shell/config/test/tool changes so CI can keep those
+changes on the shared local gates without paying for the full validator.
 Smoke validation is the fast local edit-loop path: syntax, version/module-map
 contracts, prompt packaging, help/docs/diff checks, parser helpers, and launcher
 argument contracts. Quick validation adds bounded static/fixture checks and
@@ -368,7 +391,10 @@ such as `age`, classifies the change scope, and then takes one of two paths:
 - docs-only changes: `tools/check_public_docs.sh --quick` plus
   `tools/validate_upkeeper.sh --smoke`, via
   `tools/docs_only_fast_path.sh --validate`
-- broader changes: a bounded parallel local gate through
+- low-risk shell/config/test/tool changes: the bounded parallel local gate
+  through `tools/run_validation_phases.sh` for syntax, unit tests, public docs,
+  and whitespace, without the full validator
+- broader changes: the bounded parallel local gate through
   `tools/run_validation_phases.sh` for syntax, unit tests, public docs, and
   whitespace, followed by `tools/validate_upkeeper.sh --full`
 
@@ -469,8 +495,9 @@ UPKEEPER_FIX_NEXT_ISSUE="0"
 
 Before backend contact, Upkeeper derives a deterministic task profile from the
 selected path and recovery context. The profile is logged as `task.profile`,
-can lower routine docs/test/tool work from the default maximum effort, records a
-validation grade, prompt scope, and prompt-pass scope, and can prune
+can lower routine docs/test/tool/config and other routine mechanical work from
+the default maximum effort, records a validation grade, prompt scope, and
+prompt-pass scope, and can prune
 config-sourced review modules for lean low-risk runs. Prompt compilation logs
 per-section payload metrics so doctrine, module, target, issue, and control
 blocks have visible byte/token estimates before backend contact. Explicit model
@@ -796,18 +823,21 @@ bounded output tail, stable fingerprint, likely owner path, and required proof
 command. The next backlog invocation selects that obligation before retrying the
 merge or starting fresh GitHub issue work.
 
-Backlog PR check and merge gates also protect against stale remote evidence. If
-the active backlog branch is clean and locally ahead of `origin/<branch>`, the
-launcher pushes those commits before waiting on PR checks or merging. Dirty,
-missing-remote, or diverged local-ahead branch states stop with a clear reason
-instead of treating older remote checks as current.
+Backlog branches stay local-only until the first real tracked fix is ready, so
+the launcher does not open or publish a GitHub PR for the empty batch. Once the
+branch has a real commit to share, PR-check and merge gates protect against
+stale remote evidence. If the active backlog branch is clean and locally ahead
+of `origin/<branch>`, the launcher pushes those commits before waiting on PR
+checks or merging. Dirty, missing-remote, or diverged local-ahead branch states
+stop with a clear reason instead of treating older remote checks as current.
 PR-check waits now have a bounded default timeout
 (`BACKLOG_PR_CHECK_TIMEOUT_SECONDS=1800`) and write local timeout evidence under
 the backlog state root before returning a pending status. Between issue fixes,
 the launcher records a validation-authority decision for the just-pushed commit:
-low-risk docs/Markdown-only changes can continue to the next issue on local
-green validation while CI runs asynchronously, while source/control-plane
-changes still block on PR checks before more work stacks on the branch.
+low-risk docs/Markdown/config/test/tool changes can continue to the next issue
+on local green validation while CI runs asynchronously, while
+source/control-plane changes still block on PR checks before more work stacks
+on the branch.
 
 For an explicit one-cycle Upkeeper self-review with all built-in P1-P23 passes,
 use equals-form operator flags:

@@ -7,6 +7,58 @@ SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "$SCRIPT_SOURCE")"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 source "$ROOT_DIR/lib/upkeeper/runtime_format_json.bash"
+if [[ -r "$ROOT_DIR/lib/upkeeper/change_scope.bash" ]]; then
+  source "$ROOT_DIR/lib/upkeeper/change_scope.bash"
+else
+  upkeeper_change_scope_path_is_docs_only() {
+    local path="${1:-}"
+
+    case "$path" in
+      README.md|AGENTS.md|PLANS.md|change_notes_[0-9][0-9][0-9][0-9].md)
+        return 0
+        ;;
+      docs/*.md|docs/*/*.md|prompts/*.md|templates/*.md)
+        return 0
+        ;;
+      .github/pull_request_template.md|.github/ISSUE_TEMPLATE/*.yml)
+        return 0
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+
+  upkeeper_change_scope_path_is_low_risk() {
+    local path="${1:-}"
+
+    if upkeeper_change_scope_path_is_docs_only "$path"; then
+      return 0
+    fi
+
+    case "$path" in
+      Upkeeper.conf|configurations/*.conf)
+        return 0
+        ;;
+      completions/*.bash|tests/*.bash|testruns/*.sh)
+        return 0
+        ;;
+      tools/*.sh)
+        case "$path" in
+          tools/docs_only_fast_path.sh|tools/validate_upkeeper.sh|tools/run_validation_phases.sh|tools/check_public_docs.sh|tools/setup_ci_dependencies.sh)
+            return 1
+            ;;
+          *)
+            return 0
+            ;;
+        esac
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+fi
 
 BACKLOG_BRANCH_PREFIX="${BACKLOG_BRANCH_PREFIX:-backlog/}"
 BACKLOG_PR_TITLE="${BACKLOG_PR_TITLE:-[backlog] Upkeeper issue batch}"
@@ -15,6 +67,8 @@ BACKLOG_ISSUE_LIMIT="${BACKLOG_ISSUE_LIMIT:-200}"
 BACKLOG_EXCLUDED_LABELS="${BACKLOG_EXCLUDED_LABELS:-feature,features,enhancement,research,r&d,r-and-d,documentation,docs,in-progress,blocked,duplicate,wontfix,invalid,needs-info,done,merged,has-pr}"
 BACKLOG_CODEX_MODEL="${BACKLOG_CODEX_MODEL:-gpt-5.3-codex-spark}"
 BACKLOG_CODEX_REASONING_EFFORT="${BACKLOG_CODEX_REASONING_EFFORT:-xhigh}"
+BACKLOG_REASONING_EFFORT_AUTOSIZE="${BACKLOG_REASONING_EFFORT_AUTOSIZE:-1}"
+BACKLOG_REASONING_EFFORT_OVERRIDE="${BACKLOG_REASONING_EFFORT_OVERRIDE:-}"
 BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
 BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-1800}"
 BACKLOG_PR_CHECK_INTERVAL_SECONDS="${BACKLOG_PR_CHECK_INTERVAL_SECONDS:-60}"
@@ -294,7 +348,7 @@ backlog_attention_marker_for_line() {
       printf '%s\n' '--FYI--'
       return 0
       ;;
-    *"backlog: running Upkeeper"*|*"selected file "*|*"starting Codex review"*|*"opening new backlog PR"*|*"running normal newest-file Upkeeper pass"*)
+    *"backlog: running Upkeeper"*|*"selected file "*|*"starting Codex review"*|*"opening new backlog batch"*|*"opening new backlog PR"*|*"creating backlog PR"*|*"running normal newest-file Upkeeper pass"*)
       printf 'RUN\n'
       return 0
       ;;
@@ -1262,14 +1316,7 @@ backlog_changed_paths_for_head() {
 backlog_path_low_risk_for_async_ci() {
   local path="$1"
 
-  case "$path" in
-    README.md|CHANGELOG.md|AGENTS.md|PLANS.md|change_notes_*.md|docs/*|*.md)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  upkeeper_change_scope_path_is_low_risk "$path"
 }
 
 backlog_path_high_risk_for_blocking_ci() {
@@ -1283,6 +1330,157 @@ backlog_path_high_risk_for_blocking_ci() {
       return 1
       ;;
   esac
+}
+
+backlog_reasoning_effort_truthy() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+backlog_reasoning_effort_is_valid() {
+  case "${1:-}" in
+    low|medium|high|xhigh)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+backlog_reasoning_effort_class_for_effort() {
+  case "${1:-high}" in
+    low)
+      printf 'docs-only\n'
+      ;;
+    medium)
+      printf 'mechanical\n'
+      ;;
+    high)
+      printf 'normal\n'
+      ;;
+    xhigh)
+      printf 'high-risk\n'
+      ;;
+    *)
+      printf 'normal\n'
+      ;;
+  esac
+}
+
+backlog_reasoning_effort_from_text() {
+  local text="${1:-}"
+  local lowered words
+
+  lowered="${text,,}"
+  words="$(printf '%s' "$lowered" | tr -cs '[:alnum:]' ' ')"
+
+  case "$lowered" in
+    ""|unknown)
+      printf 'high\tnormal\tdefault_normal_context\n'
+      return 0
+      ;;
+    *"orchestration/"*|*"lib/upkeeper/"*|*"tools/validate_upkeeper.sh"*|*"tools/run_validation_phases.sh"*|*"tools/upkeeper_lattice.py"*|*"tools/docs_only_fast_path.sh"*|*".github/workflows/"*)
+      printf 'xhigh\thigh-risk\thigh-risk path or file context\n'
+      return 0
+      ;;
+  esac
+
+  case " $words " in
+    *" backlog "*|*" launcher "*|*" quota "*|*" fallback "*|*" restore "*|*" security "*|*" data integrity "*|*" schema "*|*" control plane "*|*" policy blocker "*|*" prompt contract "*|*" validation "*|*" runtime module "*|*" log rotation "*|*" logging helpers "*|*" timestamp forks "*|*" command substitution "*|*" hot path "*|*" pre contact backup "*|*" precontact backup "*|*" python helpers "*|*" full validator "*|*" phase profiled "*|*" fast lane automation "*|*" docs only fast path "*|*" docs only changes "*|*" ci "*|*" workflow "*|*" issue triage "*|*" reasoning effort "*|*" task difficulty "*)
+      printf 'xhigh\thigh-risk\thigh-risk keywords in issue or job context\n'
+      return 0
+      ;;
+  esac
+
+  case "$lowered" in
+    *"docs/"*|*"docs scripts/"*|*"docs/scripts/"*|*"readme.md"*|*"change_notes_"*|*"prompts/"*|*"operator guide"*|*"help text"*|*"release note"*|*"markdown"*|*"documentation"*|*"generated docs"*|*"help drift"*|*"dependency metadata"*|*"docs only"*|*"docs-only"*|*"docs only changes"*|*"docs-only changes"*)
+      printf 'low\tdocs-only\tdocs-oriented issue or job context\n'
+      return 0
+      ;;
+  esac
+
+  case " $words " in
+    *" one character "*|*" one line "*|*" syntax "*|*" shell syntax only "*|*" whitespace "*|*" formatting "*|*" format "*|*" config "*|*" config default alignment "*|*" single file mechanical "*|*" test only "*|*" trivial "*|*" small "*|*" simple "*|*" shell config "*|*" local tool "*|*" tests "*|*" testruns "*|*" tools "*)
+      printf 'medium\tmechanical\tsmall mechanical issue or job context\n'
+      return 0
+      ;;
+  esac
+
+  case "$lowered" in
+    *".conf"*|*".ini"*|*".json"*|*".yaml"*|*".yml"*|*".toml"*)
+      printf 'medium\tmechanical\tsmall mechanical issue or job context\n'
+      return 0
+      ;;
+  esac
+
+  printf 'high\tnormal\tdefault_normal_context\n'
+}
+
+backlog_reasoning_effort_select() {
+  local context_kind="${1:-support}"
+  local target_hint="${2:-}"
+  local job_reason="${3:-}"
+  local selected_effort task_class source reason text
+
+  if backlog_reasoning_effort_is_valid "$BACKLOG_REASONING_EFFORT_OVERRIDE"; then
+    selected_effort="$BACKLOG_REASONING_EFFORT_OVERRIDE"
+    task_class="$(backlog_reasoning_effort_class_for_effort "$selected_effort")"
+    source="override"
+    reason="BACKLOG_REASONING_EFFORT_OVERRIDE"
+    printf '%s\t%s\t%s\t%s\n' "$selected_effort" "$task_class" "$source" "$reason"
+    return 0
+  fi
+
+  if ! backlog_reasoning_effort_truthy "$BACKLOG_REASONING_EFFORT_AUTOSIZE"; then
+    selected_effort="$BACKLOG_CODEX_REASONING_EFFORT"
+    if ! backlog_reasoning_effort_is_valid "$selected_effort"; then
+      selected_effort="xhigh"
+      reason="invalid BACKLOG_CODEX_REASONING_EFFORT fallback"
+    else
+      reason="BACKLOG_REASONING_EFFORT_AUTOSIZE=0"
+    fi
+    task_class="$(backlog_reasoning_effort_class_for_effort "$selected_effort")"
+    printf '%s\t%s\tlegacy\t%s\n' "$selected_effort" "$task_class" "$reason"
+    return 0
+  fi
+
+  if [[ "$context_kind" == "newest_file_review" ]]; then
+    selected_effort="high"
+    task_class="normal"
+    source="auto"
+    reason="newest_file_review_without_target"
+    printf '%s\t%s\t%s\t%s\n' "$selected_effort" "$task_class" "$source" "$reason"
+    return 0
+  fi
+
+  if [[ -n "$target_hint" ]]; then
+    IFS=$'\t' read -r selected_effort task_class reason < <(
+      backlog_reasoning_effort_from_text "$target_hint"
+    )
+    source="auto"
+    printf '%s\t%s\t%s\t%s\n' "$selected_effort" "$task_class" "$source" "$reason"
+    return 0
+  fi
+
+  case "$context_kind" in
+    issue_repair|obligation_repair)
+      IFS=$'\t' read -r selected_effort task_class reason < <(
+        backlog_reasoning_effort_from_text "$job_reason"
+      )
+      source="auto"
+      printf '%s\t%s\t%s\t%s\n' "$selected_effort" "$task_class" "$source" "$reason"
+      return 0
+      ;;
+  esac
+
+  IFS=$'\t' read -r selected_effort task_class reason < <(
+    backlog_reasoning_effort_from_text "${job_reason:-$context_kind}"
+  )
+  source="auto"
+  printf '%s\t%s\t%s\t%s\n' "$selected_effort" "$task_class" "$source" "$reason"
 }
 
 backlog_validation_authority_for_head() {
@@ -1315,7 +1513,7 @@ backlog_validation_authority_for_head() {
   done <<<"$paths"
 
   if [[ "$saw_path" == "1" && "$all_low_risk" == "1" ]]; then
-    printf 'low-risk\t%s\tdocs-or-markdown-only\n' "$BACKLOG_VALIDATION_AUTHORITY_LOW_RISK"
+    printf 'low-risk\t%s\tdocs-or-low-risk-mechanical\n' "$BACKLOG_VALIDATION_AUTHORITY_LOW_RISK"
   elif [[ "$high_risk" == "1" ]]; then
     printf 'high-risk\t%s\tcontrol-plane-or-validation-change\n' "$BACKLOG_VALIDATION_AUTHORITY_HIGH_RISK"
   else
@@ -2167,10 +2365,18 @@ autoshelve_dirty_worktree_if_enabled() {
 }
 
 prepare_backlog_runtime_env() {
+  local context_kind="${1:-support}"
+  local job_target="${2:-}"
+  local job_reason="${3:-}"
   local state_root
+  local effort_selected effort_class effort_source effort_reason
+
+  IFS=$'\t' read -r effort_selected effort_class effort_source effort_reason < <(
+    backlog_reasoning_effort_select "$context_kind" "$job_target" "$job_reason"
+  )
 
   export CODEX_MODEL="$BACKLOG_CODEX_MODEL"
-  export CODEX_REASONING_EFFORT="$BACKLOG_CODEX_REASONING_EFFORT"
+  export CODEX_REASONING_EFFORT="$effort_selected"
   export CODEX_FALLBACK_ENABLED="${BACKLOG_CODEX_FALLBACK_ENABLED:-0}"
   export CODEX_FALLBACK_SCREEN_ENABLED="${BACKLOG_CODEX_FALLBACK_SCREEN_ENABLED:-0}"
   export CODEX_POSTMORTEM_ENABLED="${BACKLOG_CODEX_POSTMORTEM_ENABLED:-0}"
@@ -2184,6 +2390,12 @@ prepare_backlog_runtime_env() {
   export UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="${BACKLOG_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL:-1}"
   export CODEX_TERMINAL_VERBOSITY="${BACKLOG_CODEX_TERMINAL_VERBOSITY:-${CODEX_TERMINAL_VERBOSITY:-quiet}}"
   export PYTHONDONTWRITEBYTECODE=1
+
+  export BACKLOG_SELECTED_REASONING_EFFORT="$effort_selected"
+  export BACKLOG_REASONING_EFFORT_CLASS="$effort_class"
+  export BACKLOG_REASONING_EFFORT_SOURCE="$effort_source"
+  export BACKLOG_REASONING_EFFORT_REASON="$effort_reason"
+  log "reasoning effort selected context=$context_kind target=${job_target:-none} effort=$effort_selected class=$effort_class source=$effort_source reason=$(backlog_disposition_sanitize "$effort_reason")"
 
   state_root="$(backlog_state_root)"
   mkdir -p \
@@ -2668,7 +2880,7 @@ backlog_sync_obligation_issue_reports() {
   local output status current_open drafted updated github_created github_existing github_reused github_failed report_dir umbrella_unlinked
 
   [[ "$BACKLOG_OBLIGATION_ISSUE_REPORTS" == "1" ]] || return 0
-  prepare_backlog_runtime_env
+  prepare_backlog_runtime_env "support" "" "sync_obligation_issue_reports"
   output="$(
     ROOT_DIR="$ROOT_DIR" \
       UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
@@ -2745,7 +2957,7 @@ quota_preflight_allows_backlog_run() {
   local secondary_reset
   local primary_reset_expired secondary_reset_expired snapshot_stale_after_reset
 
-  prepare_backlog_runtime_env
+  prepare_backlog_runtime_env "support" "" "quota_preflight"
   source "$ROOT_DIR/lib/upkeeper/config_validation.bash"
   source "$ROOT_DIR/lib/upkeeper/quota_state.bash"
   source "$ROOT_DIR/lib/upkeeper/quota_guardrails.bash"
@@ -2848,9 +3060,23 @@ quota_preflight_allows_backlog_run() {
 }
 
 current_backlog_pr() {
-  gh pr list --state open --json number,title,headRefName \
-    --jq '.[] | select(.headRefName | startswith("'"$BACKLOG_BRANCH_PREFIX"'")) | [.number, .headRefName] | @tsv' \
-    | sed -n '1p'
+  local current_branch open_pr_info
+
+  open_pr_info="$(
+    gh pr list --state open --json number,title,headRefName \
+      --jq '.[] | select(.headRefName | startswith("'"$BACKLOG_BRANCH_PREFIX"'")) | [.number, .headRefName] | @tsv' \
+      | sed -n '1p'
+  )"
+  if [[ -n "$open_pr_info" ]]; then
+    printf '%s\n' "$open_pr_info"
+    return 0
+  fi
+
+  current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ "$current_branch" == "$BACKLOG_BRANCH_PREFIX"* ]]; then
+    printf '\t%s\n' "$current_branch"
+  fi
+  return 0
 }
 
 backlog_log_pr_watch_hint() {
@@ -2866,10 +3092,19 @@ checkout_backlog_branch() {
   log "branch sync: plane=git waiting_for=checkout_or_fetch branch=$branch"
   if git show-ref --verify --quiet "refs/heads/$branch"; then
     git checkout "$branch" >/dev/null
-    git pull --ff-only origin "$branch"
+    if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+      git pull --ff-only origin "$branch"
+    else
+      log "branch sync: plane=git waiting_for=checkout_or_fetch branch=$branch action=local_only_until_first_publish"
+    fi
   else
-    git fetch origin "$branch"
-    git checkout -b "$branch" "origin/$branch" >/dev/null
+    if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+      git fetch origin "$branch"
+      git checkout -b "$branch" "origin/$branch" >/dev/null
+    else
+      git checkout -b "$branch" >/dev/null
+      log "branch sync: plane=git waiting_for=create_branch branch=$branch action=local_only_until_first_publish"
+    fi
   fi
 }
 
@@ -2934,32 +3169,27 @@ backlog_ensure_local_branch_pushed() {
 }
 
 open_backlog_pr() {
-  local branch pr_number
+  local branch
 
-  log "new backlog PR setup: plane=git waiting_for=sync_main"
+  log "opening new backlog batch plane=git waiting_for=sync_main"
   git checkout main >/dev/null
   git pull --ff-only origin main >/dev/null
 
   branch="${BACKLOG_BRANCH_PREFIX}$(date +%Y%m%d-%H%M%S)"
-  log "new backlog PR setup: plane=git waiting_for=create_branch branch=$branch"
+  log "opening new backlog batch plane=git waiting_for=create_branch branch=$branch"
   git checkout -b "$branch" >/dev/null
-  git commit --allow-empty -m "Start backlog issue batch" >/dev/null
-  log "new backlog PR setup: plane=git waiting_for=push_branch branch=$branch"
-  git push -u origin "$branch" >/dev/null
-  log "new backlog PR setup: plane=github waiting_for=create_pull_request branch=$branch"
-  gh pr create \
-    --base main \
-    --head "$branch" \
-    --title "$BACKLOG_PR_TITLE" \
-    --body "Backlog wrench batch.
+  log "opening new backlog batch branch=$branch stays local until the first real tracked fix"
+  printf '\t%s\n' "$branch"
+}
+
+backlog_batch_pr_body() {
+  cat <<EOF
+Backlog wrench batch.
 
 Target: up to ${BACKLOG_BATCH_LIMIT} bug or data-protection fixes, newest non-feature/non-research issue first.
 
-Validation: script-local quick validation plus required PR checks before merge." >/dev/null
-
-  pr_number="$(gh pr view --json number --jq '.number')"
-  backlog_log_pr_watch_hint "$pr_number"
-  printf '%s\t%s\n' "$pr_number" "$branch"
+Validation: script-local quick validation plus required PR checks before merge.
+EOF
 }
 
 pr_body() {
@@ -3000,6 +3230,11 @@ clear_deferred_issues() {
 
 fix_count() {
   local pr_number="$1"
+
+  [[ -n "$pr_number" ]] || {
+    printf '0\n'
+    return 0
+  }
   fixed_issue_numbers "$pr_number" | sed '/^$/d' | wc -l | tr -d ' '
 }
 
@@ -3008,6 +3243,7 @@ append_pr_fix_line() {
   local issue_number="$2"
   local body_file
 
+  [[ -n "$pr_number" && -n "$issue_number" ]] || return 0
   pr_body "$pr_number" | grep -Fq "Fixes #$issue_number" && return 0
   body_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-backlog-pr-body.XXXXXX")"
   {
@@ -3023,7 +3259,11 @@ selected_issue() {
   local fixed_csv
   local deferred_csv
 
-  fixed_csv="$(fixed_issue_numbers "$pr_number" | paste -sd, -)"
+  if [[ -n "$pr_number" ]]; then
+    fixed_csv="$(fixed_issue_numbers "$pr_number" | paste -sd, -)"
+  else
+    fixed_csv=""
+  fi
   deferred_csv="$(deferred_issue_numbers | paste -sd, -)"
   gh issue list --state open --limit "$BACKLOG_ISSUE_LIMIT" --json number,title,createdAt,labels \
     | jq -r \
@@ -3095,7 +3335,7 @@ run_upkeeper_for_one_target() {
   local upkeeper_args=()
   local upkeeper_status=0
 
-  prepare_backlog_runtime_env
+  prepare_backlog_runtime_env "issue_repair" "${target_hint:-}" "${issue_number:+issue #$issue_number: }${target_hint:-wrapper-inferred}"
 
   if [[ -n "$issue_number" ]]; then
     if [[ "$BACKLOG_IGNORE_FAILURE_QUEUE" == "1" ]]; then
@@ -3105,9 +3345,9 @@ run_upkeeper_for_one_target() {
       upkeeper_args+=(--target-file="$target_hint")
     fi
     upkeeper_args+=(--fix-issue="$issue_number")
-    log "running Upkeeper for issue #$issue_number with $CODEX_MODEL/$CODEX_REASONING_EFFORT target=${target_hint:-wrapper-inferred}"
+    log "running Upkeeper for issue #$issue_number with $CODEX_MODEL/$CODEX_REASONING_EFFORT target=${target_hint:-wrapper-inferred} effort_class=${BACKLOG_REASONING_EFFORT_CLASS:-unknown} effort_source=${BACKLOG_REASONING_EFFORT_SOURCE:-unknown}"
     backlog_update_active_owner_heartbeat "running_upkeeper" \
-      "$(backlog_wait_detail llm codex_issue_repair "issue=$issue_number" "target=${target_hint:-wrapper-inferred}" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "expected=patch_or_status")" \
+      "$(backlog_wait_detail llm codex_issue_repair "issue=$issue_number" "target=${target_hint:-wrapper-inferred}" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "effort_class=${BACKLOG_REASONING_EFFORT_CLASS:-unknown}" "expected=patch_or_status")" \
       "" "owner_pid_start_cwd_verified"
     backlog_run_upkeeper_capture ./Upkeeper "${upkeeper_args[@]}"
     upkeeper_status="$?"
@@ -3118,9 +3358,10 @@ run_upkeeper_for_one_target() {
       return "$upkeeper_status"
     fi
   else
-    log "no eligible issue found; running normal newest-file Upkeeper pass with $CODEX_MODEL/$CODEX_REASONING_EFFORT"
+    prepare_backlog_runtime_env "newest_file_review" "" "no eligible backlog issue found"
+    log "no eligible issue found; running normal newest-file Upkeeper pass with $CODEX_MODEL/$CODEX_REASONING_EFFORT effort_class=${BACKLOG_REASONING_EFFORT_CLASS:-unknown} effort_source=${BACKLOG_REASONING_EFFORT_SOURCE:-unknown}"
     backlog_update_active_owner_heartbeat "running_upkeeper" \
-      "$(backlog_wait_detail llm codex_file_review "selection_order=newest" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "expected=review_or_status")" \
+      "$(backlog_wait_detail llm codex_file_review "selection_order=newest" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "effort_class=${BACKLOG_REASONING_EFFORT_CLASS:-unknown}" "expected=review_or_status")" \
       "" "owner_pid_start_cwd_verified"
     backlog_run_upkeeper_capture ./Upkeeper --selection-order=newest
   fi
@@ -3131,7 +3372,6 @@ run_upkeeper_for_obligation() {
   local obligation_id obligation_path obligation_kind obligation_summary target_hint prompt_file prompt_root
   local upkeeper_status=0
 
-  prepare_backlog_runtime_env
   local -a obligation_fields=()
   mapfile -d '' -t obligation_fields < <(
     json_fields_nul \
@@ -3148,6 +3388,7 @@ run_upkeeper_for_obligation() {
   obligation_summary="${obligation_fields[3]:-automation obligation}"
   target_hint="${obligation_fields[4]:-Upkeeper}"
   [[ -n "$target_hint" && "$target_hint" != "null" ]] || target_hint="Upkeeper"
+  prepare_backlog_runtime_env "obligation_repair" "$target_hint" "$obligation_kind: $obligation_summary"
   if ! prompt_file="$(backlog_prepare_obligation_prompt_file "$obligation_json")"; then
     log "automation obligation $obligation_id could not prepare prompt file; skipping obligation repair"
     return 1
@@ -3158,9 +3399,9 @@ run_upkeeper_for_obligation() {
   fi
   prompt_root="$(dirname -- "$prompt_file")"
 
-  log "running Upkeeper for automation obligation $obligation_id kind=$obligation_kind target=$target_hint"
+  log "running Upkeeper for automation obligation $obligation_id kind=$obligation_kind target=$target_hint effort_class=${BACKLOG_REASONING_EFFORT_CLASS:-unknown} effort_source=${BACKLOG_REASONING_EFFORT_SOURCE:-unknown}"
   backlog_update_active_owner_heartbeat "running_upkeeper" \
-    "$(backlog_wait_detail llm codex_obligation_repair "obligation=$obligation_id" "kind=$obligation_kind" "target=$target_hint" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "expected=repair_or_preserve")" \
+    "$(backlog_wait_detail llm codex_obligation_repair "obligation=$obligation_id" "kind=$obligation_kind" "target=$target_hint" "model=$CODEX_MODEL" "effort=$CODEX_REASONING_EFFORT" "effort_class=${BACKLOG_REASONING_EFFORT_CLASS:-unknown}" "expected=repair_or_preserve")" \
     "" "owner_pid_start_cwd_verified"
   UPKEEPER_AUTOMATION_LAUNCHER="backlog" \
     UPKEEPER_AUTOMATION_VARIANT="issue-batch" \
@@ -3751,7 +3992,12 @@ commit_and_push_changes() {
   local issue_number="${1:-}"
   local commit_message="${2:-}"
   local target_hint="${3:-}"
+  local pr_number="${4:-}"
+  local publish_pr_after_push="${5:-0}"
   local message
+  local branch published_pr_number body_file status
+
+  BACKLOG_LAST_PUBLISHED_PR_INFO=""
 
   cleanup_ephemeral_artifacts || return $?
   has_worktree_changes || return 1
@@ -3783,9 +4029,36 @@ commit_and_push_changes() {
   fi
   log "committing: $message plane=git waiting_for=commit"
   git commit -m "$message" || return $?
-  log "pushing branch updates plane=git waiting_for=push"
-  git push || return $?
-  backlog_log_pr_watch_hint "${pr_number:-}"
+  branch="$(git rev-parse --abbrev-ref HEAD)"
+  if [[ -n "$pr_number" ]]; then
+    log "pushing branch updates plane=git waiting_for=push branch=$branch pr=$pr_number"
+    backlog_ensure_local_branch_pushed "$pr_number" "$branch" "post_commit_publish" || return $?
+    BACKLOG_LAST_PUBLISHED_PR_INFO="$pr_number"$'\t'"$branch"
+    return 0
+  fi
+
+  [[ "$publish_pr_after_push" == "1" ]] || return 0
+
+  log "pushing branch updates plane=git waiting_for=push branch=$branch"
+  git push -u origin "HEAD:$branch" || return $?
+  log "creating backlog PR plane=github waiting_for=create_pull_request branch=$branch"
+  body_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-backlog-pr-body.XXXXXX")"
+  backlog_batch_pr_body >"$body_file"
+  if gh pr create \
+    --base main \
+    --head "$branch" \
+    --title "$BACKLOG_PR_TITLE" \
+    --body-file "$body_file" >/dev/null; then
+    :
+  else
+    status="$?"
+    rm -f "$body_file"
+    return "$status"
+  fi
+  rm -f "$body_file"
+  published_pr_number="$(gh pr view --json number --jq '.number')"
+  BACKLOG_LAST_PUBLISHED_PR_INFO="$published_pr_number"$'\t'"$branch"
+  backlog_log_pr_watch_hint "$published_pr_number"
   return 0
 }
 
@@ -4150,6 +4423,7 @@ backlog_ensure_pr_checks_allow_next_issue() {
   local count="$2"
   local status policy reason
 
+  [[ -n "$pr_number" ]] || return 0
   [[ "$BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE" == "1" ]] || return 0
   [[ "$count" -gt 0 ]] || return 0
 
@@ -4227,14 +4501,16 @@ main() {
 
   pr_info="$(current_backlog_pr)"
   if [[ -z "$pr_info" ]]; then
-    log "opening new backlog PR plane=github waiting_for=create_pull_request"
+    log "opening new backlog batch plane=git waiting_for=create_branch"
     pr_info="$(open_backlog_pr)"
   fi
 
   pr_number="$(awk -F '\t' '{print $1}' <<<"$pr_info")"
   branch="$(awk -F '\t' '{print $2}' <<<"$pr_info")"
   checkout_backlog_branch "$branch"
-  backlog_ensure_local_branch_pushed "$pr_number" "$branch" "post_branch_sync" || exit $?
+  if [[ -n "$pr_number" ]]; then
+    backlog_ensure_local_branch_pushed "$pr_number" "$branch" "post_branch_sync" || exit $?
+  fi
   record_control_plane_snapshot "backlog-cycle-after-branch-sync"
 
   if ! run_backlog_anomaly_custody_audit; then
@@ -4295,41 +4571,45 @@ main() {
     issue_title="$obligation_issue_title"
     target_hint="$obligation_target"
   else
-    count="$(fix_count "$pr_number")"
-    if [[ "$count" -ge "$BACKLOG_BATCH_LIMIT" ]]; then
-      log "PR #$pr_number has $count recorded fixes; merging batch"
-      backlog_emit_job_start_summary \
-        "PR #$pr_number batch merge" \
-        "batch limit reached with $count recorded fixes on $branch" \
-        "run local batch validation, wait for PR checks, merge, and clean local main"
-      if merge_and_clean "$pr_number" "$branch"; then
-        backlog_emit_job_finish_summary \
-          "batch validation, PR checks, and merge completed" \
-          "merged PR #$pr_number and returned to clean main"
-        backlog_write_loop_disposition "work_done" "batch_merge_completed"
+    if [[ -n "$pr_number" ]]; then
+      count="$(fix_count "$pr_number")"
+      if [[ "$count" -ge "$BACKLOG_BATCH_LIMIT" ]]; then
+        log "PR #$pr_number has $count recorded fixes; merging batch"
+        backlog_emit_job_start_summary \
+          "PR #$pr_number batch merge" \
+          "batch limit reached with $count recorded fixes on $branch" \
+          "run local batch validation, wait for PR checks, merge, and clean local main"
+        if merge_and_clean "$pr_number" "$branch"; then
+          backlog_emit_job_finish_summary \
+            "batch validation, PR checks, and merge completed" \
+            "merged PR #$pr_number and returned to clean main"
+          backlog_write_loop_disposition "work_done" "batch_merge_completed"
+        else
+          status="$?"
+          backlog_emit_job_finish_summary \
+            "batch merge path stopped with status $status" \
+            "launcher exiting with status $status"
+          if [[ "$status" -eq 2 ]]; then
+            backlog_write_loop_disposition "blocked_external" "batch_merge_pr_checks_pending"
+            exit 0
+          fi
+          exit "$status"
+        fi
+        exit 0
+      fi
+
+      if backlog_ensure_pr_checks_allow_next_issue "$pr_number" "$count"; then
+        :
       else
         status="$?"
-        backlog_emit_job_finish_summary \
-          "batch merge path stopped with status $status" \
-          "launcher exiting with status $status"
         if [[ "$status" -eq 2 ]]; then
-          backlog_write_loop_disposition "blocked_external" "batch_merge_pr_checks_pending"
+          backlog_write_loop_disposition "blocked_external" "pr_checks_pending_before_next_issue"
           exit 0
         fi
         exit "$status"
       fi
-      exit 0
-    fi
-
-    if backlog_ensure_pr_checks_allow_next_issue "$pr_number" "$count"; then
-      :
     else
-      status="$?"
-      if [[ "$status" -eq 2 ]]; then
-        backlog_write_loop_disposition "blocked_external" "pr_checks_pending_before_next_issue"
-        exit 0
-      fi
-      exit "$status"
+      count=0
     fi
 
     issue_info="$(selected_issue "$pr_number")"
@@ -4383,13 +4663,17 @@ main() {
     commit_result="blocked with no partial tracked changes"
     if has_worktree_changes; then
       partial_commit_message="$(backlog_partial_commit_message "$obligation_selected" "$obligation_id" "$issue_number")"
-      if commit_and_push_changes "" "$partial_commit_message" "$target_hint"; then
+      if commit_and_push_changes "" "$partial_commit_message" "$target_hint" "$pr_number" 0; then
+        if [[ -n "$BACKLOG_LAST_PUBLISHED_PR_INFO" ]]; then
+          commit_result="blocked; partial work committed and pushed"
+        else
+          commit_result="blocked; partial work committed locally"
+        fi
         if [[ "$obligation_selected" == "1" ]]; then
           log "preserved partial work for automation obligation $obligation_id"
         else
           log "preserved partial work for blocked issue #$issue_number"
         fi
-        commit_result="blocked; partial work committed and pushed"
       else
         commit_result="blocked; partial work present but no commit was produced"
       fi
@@ -4443,7 +4727,16 @@ main() {
   fi
 
   commit_result="no tracked changes produced"
-  if commit_and_push_changes "$issue_number" "" "$target_hint"; then
+  if commit_and_push_changes "$issue_number" "" "$target_hint" "$pr_number" 1; then
+    if [[ -n "$BACKLOG_LAST_PUBLISHED_PR_INFO" ]]; then
+      pr_info="$BACKLOG_LAST_PUBLISHED_PR_INFO"
+      pr_number="$(awk -F '\t' '{print $1}' <<<"$pr_info")"
+      branch="$(awk -F '\t' '{print $2}' <<<"$pr_info")"
+    fi
+    if [[ -z "$pr_number" ]]; then
+      log "tracked changes committed but no backlog PR number was published; stopping"
+      exit 1
+    fi
     commit_result="tracked changes committed and pushed"
     if [[ -n "$issue_number" ]]; then
       append_pr_fix_line "$pr_number" "$issue_number"

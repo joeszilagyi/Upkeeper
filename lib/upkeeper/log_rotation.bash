@@ -513,6 +513,35 @@ rotate_wrapper_log_if_needed() {
   local archive_owner archive_mode archive_retained archive_reason
   local live_log_hash archive_path_hash
   local rotation_safety_error live_log_snapshot
+  local previous_signal_traps
+
+  _log_rotate_wrapper_cleanup() {
+    if [[ -n "${live_log_snapshot:-}" && -f "$live_log_snapshot" ]]; then
+      rm -f -- "$live_log_snapshot"
+    fi
+    if [[ -n "${archive_temp_path:-}" && -f "$archive_temp_path" ]]; then
+      rm -f -- "$archive_temp_path"
+    fi
+  }
+
+  _log_rotate_wrapper_signal() {
+    local signal_name="$1"
+
+    _log_rotate_wrapper_cleanup
+    if declare -F handle_wrapper_signal >/dev/null 2>&1; then
+      handle_wrapper_signal "$signal_name"
+    fi
+    return 130
+  }
+
+  previous_signal_traps="$(trap -p INT TERM HUP)"
+
+  # RETURN handles the normal fast-path exits, while the signal traps clean up
+  # before handing control back to the wrapper's existing interrupt handler.
+  trap 'trap - RETURN; _log_rotate_wrapper_cleanup; if [[ -n "${previous_signal_traps:-}" ]]; then eval "$previous_signal_traps"; else trap - INT TERM HUP; fi' RETURN
+  trap '_log_rotate_wrapper_signal INT' INT
+  trap '_log_rotate_wrapper_signal TERM' TERM
+  trap '_log_rotate_wrapper_signal HUP' HUP
 
   rotation_safety_error="$(log_rotation_target_is_safe || true)"
   if [[ -n "$rotation_safety_error" ]]; then
@@ -618,4 +647,5 @@ rotate_wrapper_log_if_needed() {
   fi
 
   prune_wrapper_log_archives
+  return 0
 }

@@ -421,6 +421,20 @@ database, use `export-jsonl --include-paths`. The default redacted export is
 safe for sharing and inspection, but it intentionally leaves path-bearing rows
 too anonymized for full-fidelity file/cycle/history reconstruction.
 
+Cycle-level provenance packages are a separate export surface tracked in
+`docs/decisions/0005-provenance-and-evidence-package-exports.md`. The first
+proposal is a local-only JSON evidence package emitted by `upkeeper
+export-cycle --cycle-id X --format json`; future `--format ro-crate` or
+`--format bagit` envelopes may wrap the same graph without changing its
+provenance meaning.
+
+Run taxonomy and cost-accounting summaries are a separate local surface
+tracked in `docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md`.
+The first proposal is a JSONL summary export emitted by `upkeeper
+export-run-summary --cycle-id X --format jsonl`; future richer summary fields
+may build on the same taxonomy and metric names without requiring a telemetry
+daemon.
+
 `import-jsonl` is idempotent. Same logical key and same payload hash is a
 duplicate. Same logical key and a different payload hash records a conflict and
 does not silently overwrite existing facts. Raw source lines stay redacted on

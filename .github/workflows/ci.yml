@@ -52,8 +52,10 @@ jobs:
             printf '%s\n' "$scope_output" >>"$GITHUB_OUTPUT"
           else
             printf 'docs_only=0\n'
+            printf 'low_risk=0\n'
             printf 'scope_known=0\n'
             printf 'docs_only=0\n' >>"$GITHUB_OUTPUT"
+            printf 'low_risk=0\n' >>"$GITHUB_OUTPUT"
             printf 'scope_known=0\n' >>"$GITHUB_OUTPUT"
           fi
 
@@ -78,5 +80,5 @@ jobs:
           tools/docs_only_fast_path.sh "${scope_args[@]}"
 
       - name: Full validation
-        if: steps.scope.outputs.docs_only != '1'
+        if: steps.scope.outputs.low_risk != '1'
         run: tools/validate_upkeeper.sh --full

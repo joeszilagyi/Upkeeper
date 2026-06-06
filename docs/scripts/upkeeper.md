@@ -188,11 +188,14 @@ Important:
     returning to the outer loop. This keeps a no-op or already-addressed issue
     from being selected repeatedly while preserving the open issue for a later
     branch or manual close.
-  - Once a backlog PR has recorded fixes, the next invocation usually waits for
+  - Backlog branches stay local-only until the first real tracked fix is ready.
+    The launcher does not open or publish a GitHub PR for the initial empty
+    batch; it publishes the branch only when there is a real commit to share.
+    Once a backlog PR has recorded fixes, the next invocation usually waits for
     that PR's checks before selecting another issue. Passing checks allow the
     next issue, pending checks keep the local owner lease alive, and failed
     checks stop the launcher before more work stacks on a red branch. For
-    low-risk docs/Markdown-only commits, backlog records
+    low-risk docs/Markdown/config/test/tool commits, backlog records
     `local-green-async-ci` validation authority after local validation and lets
     the next issue start while CI continues asynchronously; source and
     control-plane changes keep the blocking PR-check gate. While checks are
@@ -214,8 +217,8 @@ Important:
     while `--interval SECONDS` controls polling while checks are pending. The
     watcher exits `0` when checks pass, `1` on failed/unreadable checks, and
     `2` for pending checks in `--once` mode. Backlog prints the same command as
-    a helper after it creates or pushes an active backlog PR branch.
-  - After syncing the active backlog PR branch, and again before batch merge,
+    a helper after it publishes an active backlog PR branch.
+  - After the backlog branch has been published, and again before batch merge,
     the launcher checks whether the local branch contains commits not yet on
     `origin/<branch>`. A clean local-ahead branch is pushed before PR checks or
     merge decisions so GitHub validation covers the current head. Dirty,
@@ -363,14 +366,19 @@ Important:
     cherry-picking. If that local transplant cannot apply cleanly, the launcher
     stops before stale automation can run and leaves the autoshelve branch as
     evidence.
-  - Backlog batches default to `gpt-5.3-codex-spark` with `xhigh` reasoning and
-    a zero weekly stop floor for reset-window burn-down runs. Backlog burn mode
-    also bypasses stale local quota snapshots and ordinary active
-    quota-cooldown markers by default so a provider-side reset can be used
-    immediately. Hard backend usage-limit markers are still honored even in
-    burn mode. Override with `BACKLOG_CODEX_MODEL`,
-    `BACKLOG_CODEX_REASONING_EFFORT`, `BACKLOG_WEEK_STOP_PERCENT`,
-    `BACKLOG_QUOTA_GUARDRAIL_BYPASS=0`, or
+  - Backlog batches default to `gpt-5.3-codex-spark` and auto-size reasoning
+    effort per selected issue or target instead of always exporting `xhigh`.
+    Docs-only work can use `low`, small mechanical/config work can use
+    `medium`, high-risk wrapper/control-plane work stays `xhigh`, and
+    newest-file review defaults to `high`. Set
+    `BACKLOG_REASONING_EFFORT_OVERRIDE` to force a one-cycle tier or
+    `BACKLOG_REASONING_EFFORT_AUTOSIZE=0` to keep the legacy
+    `BACKLOG_CODEX_REASONING_EFFORT` fallback.
+  - Backlog burn mode also bypasses stale local quota snapshots and ordinary
+    active quota-cooldown markers by default so a provider-side reset can be
+    used immediately. Hard backend usage-limit markers are still honored even
+    in burn mode. Override with `BACKLOG_CODEX_MODEL`,
+    `BACKLOG_WEEK_STOP_PERCENT`, `BACKLOG_QUOTA_GUARDRAIL_BYPASS=0`, or
     `BACKLOG_QUOTA_COOLDOWN_BYPASS=0` when a guarded or non-Spark run is wanted.
     If that burn bypass sees quota evidence whose reset window has already
     passed, the launcher records a structured `stale_quota_evidence`
@@ -1142,7 +1150,9 @@ prompts, backup log lines, or Lattice preselect evidence.
   `tools/docs_only_fast_path.sh --validate`; it classifies changed paths
   locally, rejects mixed source changes, and runs only public-docs, smoke, and
   diff whitespace checks without backend Codex, GitHub CLI, PR polling, or
-  network fetches.
+  network fetches. Its classifier also marks broader low-risk shell/config/
+  test/tool edits so CI can keep those changes on the shared local gates
+  without paying for the full validator.
   Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
   heavier config, manifest, Lattice, and review-module dry-run fixtures stay in
   full mode. Add `--profile` to validation runs to print per-check elapsed
@@ -1155,18 +1165,21 @@ prompts, backup log lines, or Lattice preselect evidence.
   `tools/setup_ci_dependencies.sh` to probe expected stock runner commands and
   install only missing nonstandard tools such as `age`, classifies the change
   scope, and then runs either the docs-only fast path
-  (`tools/docs_only_fast_path.sh --validate`) or the broader parallel local
-  gate (`tools/run_validation_phases.sh`) followed by full validation.
+  (`tools/docs_only_fast_path.sh --validate`), the broader parallel local gate
+  (`tools/run_validation_phases.sh`) for low-risk shell/config/test/tool
+  changes, or the broader parallel local gate followed by full validation for
+  higher-risk changes.
   `tools/run_tests.sh` is the unit-test entrypoint for local and CI use. It
   keeps serial mode available with `--serial`, but the default path runs
   independent tests with bounded fan-out and prints per-test timings.
   Before model contact, Upkeeper emits a deterministic `task.profile` log line
   with the task grade, validation grade, prompt scope, prompt pass, review-module
-  action, selected-path evidence, and final effort. Routine low-risk targets can
-  use a cheaper effort profile and lean prompt scope; config-sourced review
-  modules can be pruned for that lean profile. High-risk control-plane,
-  security, data-integrity, explicit model overrides, explicit review-module CLI
-  flags, and recovery contexts keep the stronger profile.
+  action, selected-path evidence, and final effort. Routine low-risk docs,
+  Markdown, config, shell, test, and tool targets can use a cheaper effort
+  profile and lean prompt scope; config-sourced review modules can be pruned for
+  that lean profile. High-risk control-plane, security, data-integrity, explicit
+  model overrides, explicit review-module CLI flags, and recovery contexts keep
+  the stronger profile.
   Primary, fallback-child, and auxiliary Codex executions are bounded by
   `CODEX_EXEC_TIMEOUT_SECONDS`. Each model contact is appended to the local
   model-contact ledger with phase, model, effort, exit status, elapsed time,

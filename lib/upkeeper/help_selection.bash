@@ -294,12 +294,17 @@ Important:
     cherry-picking. If that local transplant cannot apply cleanly, the launcher
     stops before stale automation can run and leaves the autoshelve branch as
     evidence.
-  - Backlog batches default to gpt-5.3-codex-spark with xhigh reasoning and a
-    zero weekly stop floor for reset-window burn-down runs. Backlog burn mode
-    also bypasses stale local quota snapshots and ordinary active
-    quota-cooldown markers by default so a provider-side reset can be used
-    immediately. Hard backend usage-limit markers are still honored even in
-    burn mode. Override with BACKLOG_CODEX_MODEL, BACKLOG_CODEX_REASONING_EFFORT,
+  - Backlog batches default to gpt-5.3-codex-spark and auto-size reasoning
+    effort per selected issue or target instead of always exporting xhigh.
+    Docs-only work can use low, small mechanical/config work can use medium,
+    high-risk wrapper/control-plane work stays xhigh, and newest-file review
+    defaults to high. Set BACKLOG_REASONING_EFFORT_OVERRIDE to force a one-cycle
+    tier or BACKLOG_REASONING_EFFORT_AUTOSIZE=0 to keep the legacy
+    BACKLOG_CODEX_REASONING_EFFORT fallback.
+  - Backlog burn mode also bypasses stale local quota snapshots and ordinary
+    active quota-cooldown markers by default so a provider-side reset can be
+    used immediately. Hard backend usage-limit markers are still honored even
+    in burn mode. Override with BACKLOG_CODEX_MODEL,
     BACKLOG_WEEK_STOP_PERCENT, BACKLOG_QUOTA_GUARDRAIL_BYPASS=0, or
     BACKLOG_QUOTA_COOLDOWN_BYPASS=0 when a guarded or non-Spark run is wanted.
     If that burn bypass sees quota evidence whose reset window has already
@@ -1499,6 +1504,50 @@ def source_safe_text_paths() -> list[tuple[float, str]]:
             continue
         result.append((stat_result.st_mtime, path))
     return sorted(result, key=lambda item: (item[0], item[1]))
+
+tools_dir = Path(lattice_tool_path).resolve().parent
+if str(tools_dir) not in sys.path:
+    sys.path.insert(0, str(tools_dir))
+from upkeeper_lib import candidates as candidate_selection
+
+load_upkeeperignore_patterns = lambda: candidate_selection.load_upkeeperignore_patterns(root_path, str(ignore_file))
+upkeeperignore_pattern_matches = candidate_selection.upkeeperignore_pattern_matches
+upkeeper_path_ignored = lambda path: candidate_selection.upkeeper_path_ignored(path, upkeeperignore_patterns)
+is_test_path = candidate_selection.is_test_path
+repo_relative_parts = candidate_selection.repo_relative_parts
+real_path_within_root = lambda path: candidate_selection.source_safe_real_path(root_path, path) is not None
+source_safe_file_stat = lambda path, require_text=False: candidate_selection.source_safe_file_stat(
+    root_path,
+    path,
+    require_text=require_text,
+)
+executable_text_candidate = lambda path: candidate_selection.executable_text_candidate(root_path, path)
+source_safe_text_stat = lambda path: candidate_selection.source_safe_file_stat(root_path, path, require_text=True)[0]
+git_path_is_ignored = lambda path: candidate_selection.git_path_ignored(root_path, Path(path))
+git_output = lambda args: candidate_selection.git_output(
+    root_path,
+    args[1:] if args and args[0] == "git" else args,
+)
+normalized_repo_target = lambda path: candidate_selection.normalized_repo_target(root_path, path)
+split_csv = candidate_selection.split_csv
+path_matches_any = candidate_selection.path_matches_any
+path_excluded = candidate_selection.path_excluded
+module_filter_match = candidate_selection.module_filter_match
+manifest_paths = lambda path: candidate_selection.manifest_paths(root_path, path)
+enumerate_paths = lambda: candidate_selection.enumerate_paths(root_path, select_untracked)
+path_within_target_root = lambda path, root_filter, max_depth: candidate_selection.path_within_target_root(
+    path,
+    root_filter,
+    max_depth,
+    root_path,
+)
+selected_git_metadata = lambda path: candidate_selection.selected_git_metadata(root_path, path)
+open_failure_markers = lambda candidate_paths: candidate_selection.open_failure_markers(
+    candidate_paths,
+    failure_queue_dir=failure_queue_dir,
+    failure_queue_enabled=failure_queue_enabled,
+    failure_queue_bypass=failure_queue_bypass,
+)
 
 
 def lattice_ranked_max_cover_paths() -> tuple[list[dict[str, object]], str]:

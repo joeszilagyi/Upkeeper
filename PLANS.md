@@ -3,6 +3,125 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #799: Deferred Backlog PR Publication
+
+Status: in progress
+
+Goal:
+- stop backlog runs from opening or publishing an empty GitHub PR before any
+  real tracked fix exists on the branch
+- keep the backlog branch local until the first publish-worthy commit is ready,
+  then create the PR from that real change
+- preserve branch reuse, PR-check gating after publication, and the existing
+  batch merge workflow
+
+Constraints:
+- no live backend Codex validation
+- keep the fix narrow to the backlog launcher and its local regression tests
+- preserve the current batch-merging and issue-selection contract once a PR has
+  been published
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `tests/*.bash`
+- `docs/scripts/upkeeper.md`
+- `README.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- focused backlog launcher regression test(s)
+- `tools/run_tests.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `git diff --check`
+
+## Issues #732-#786: Prompt Compilation And Selection Batch
+
+Status: in progress
+
+Goal:
+- fix the current lowest open bug queue starting with #732, then continue in
+  order for the next four lowest open bugs that remain actionable
+- collapse prompt compilation's tiny Python subprocess chain into a more
+  efficient emitter path without changing the emitted issue-fix packet contract
+- remove duplicate candidate-selection logic where help text and Lattice keep
+  the same policy in separate places
+- keep ownership boundaries visible if the oversized main/phase functions need
+  to be split for maintainability
+
+Constraints:
+- no live backend Codex validation
+- preserve existing prompt packet shape, candidate selection semantics, and
+  operator-visible help text
+- keep each bug fix focused enough to validate and push before moving to the
+  next open issue
+
+Files likely touched:
+- `lib/upkeeper/prompt_compile.bash`
+- `lib/upkeeper/help_selection.bash`
+- `tools/upkeeper_lib/*`
+- `tests/*.bash`
+- `docs/scripts/upkeeper.md`
+- `change_notes_2026.md`
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- focused prompt-compilation tests and candidate-selection tests
+- `tools/run_tests.sh`
+- `tools/check_public_docs.sh --quick` when docs/help change
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+## Issues #720-#726: Backlog Effort Sizing And Hot-Path Batch
+
+Status: in progress
+
+Goal:
+- handle the next five lowest open bug issues in order, starting with #720,
+  with one focused fix per issue and a local commit plus push after each
+  verified change
+- reduce the backlog launcher's blanket `xhigh` default by selecting effort
+  tier from deterministic issue/task context before `prepare_backlog_runtime_env`
+  exports model settings
+- keep the selection fail-closed for high-risk wrapper, recovery, lattice,
+  quota, fallback, restore, security, and data-integrity work
+- extend the docs-only CI fast path into a broader low-risk lane for
+  mechanical config, shell, test, and tool changes so those changes can skip
+  the full validator while still running the shared local gates
+
+Constraints:
+- no live backend Codex validation
+- preserve existing issue selection, validation authority, and PR-check flow
+- keep operator overrides explicit and documented
+- keep per-issue changes narrow enough that each can be validated and pushed
+  before the next open bug is started
+
+Files likely touched:
+- `orchestration/backlog.sh`
+- `lib/upkeeper/change_scope.bash`
+- `.github/workflows/ci.yml`
+- `tools/docs_only_fast_path.sh`
+- `lib/upkeeper/help_selection.bash`
+- `docs/scripts/upkeeper.md`
+- `tests/*.bash`
+- `change_notes_2026.md`
+- `README.md`
+- `docs/dependencies.md`
+- `docs/release-checklist.md`
+- `lib/upkeeper/README.md`
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/backlog_loop.sh`
+- focused backlog effort-sizer tests
+- `tools/run_tests.sh`
+- `tools/check_public_docs.sh --quick` when docs/help change
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
 ## ChimneySweep Combined Default Alignment
 
 Status: completed locally; pending PR CI after push
@@ -219,6 +338,131 @@ Constraints:
 Files likely touched:
 - `docs/run-bom-identifiers.md`
 - README, compatibility, Lattice, preservation, roadmap, release notes
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
+## Lattice Provenance And Evidence Packages
+
+Status: in progress
+
+Goal:
+- close issue #219 by defining a portable provenance and evidence-package
+  export surface for Lattice cycles
+- start with a local JSON package proposal before considering RO-Crate or
+  BagIt envelopes
+- keep exports local, deterministic, and privacy-safe by default
+
+Constraints:
+- no backend Codex validation
+- no heavy new export dependency in the first slice
+- preserve the existing JSONL export/import contract and Lattice custody rules
+
+Files likely touched:
+- `docs/decisions/0005-provenance-and-evidence-package-exports.md`
+- README, Lattice, preservation, compatibility, roadmap, release notes
+- `docs/decisions/README.md`
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
+## Run Taxonomy, Observability, And Cost Accounting Surface
+
+Status: in progress
+
+Goal:
+- close issue #223 by defining a local run taxonomy plus observability/cost
+  accounting surface that proves the wrapper is saving time and reducing risk
+- start with a local JSONL or summary export instead of a full OpenTelemetry
+  dependency
+- keep the taxonomy and metrics local, structured, and privacy-safe by default
+
+Constraints:
+- no backend Codex validation
+- no heavyweight telemetry dependency in the first slice
+- preserve the existing cycle.summary/run.finish log vocabulary and Lattice
+  evidence model
+
+Files likely touched:
+- `docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md`
+- README, Lattice, preservation, compatibility, roadmap, release notes
+- `docs/decisions/README.md`
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
+## Adapter And Plugin Contract With Side-Effect Declarations
+
+Status: in progress
+
+Goal:
+- close issue #225 by defining a bounded adapter/plugin contract for future
+  Upkeeper integrations
+- require each adapter to declare inputs, outputs, side effects, network use,
+  file-write scope, secret needs, Lattice events, failure modes, and
+  validation expectations
+- keep future integrations reviewable without turning Upkeeper into one giant
+  shell brain
+
+Constraints:
+- no backend Codex validation
+- no heavy plugin runtime or service in the first slice
+- preserve the core wrapper's authority boundaries and local-first defaults
+
+Files likely touched:
+- `docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md`
+- README, authority, compatibility, roadmap, release notes
+- `docs/decisions/README.md`
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
+## Human Review Packet Format For Cycle Output
+
+Status: in progress
+
+Goal:
+- close issue #226 by defining a concise human review packet for each
+  meaningful cycle
+- start as a generated markdown or JSON summary for one cycle before wiring it
+  to Lattice/export commands later
+- keep the packet concise, operator-readable, and explicit about what is safe
+  or unsafe to publish
+
+Constraints:
+- no backend Codex validation
+- no heavy export dependency in the first slice
+- preserve the separation between transcripts, internal Lattice rows, and
+  operator-facing review packets
+
+Files likely touched:
+- `docs/decisions/0008-human-review-packet-format-for-cycle-output.md`
+- README, preservation, compatibility, roadmap, release notes
+- `docs/decisions/README.md`
 - `tools/validate_upkeeper.sh`
 
 Validation:

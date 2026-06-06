@@ -69,6 +69,7 @@ source-rights review before any use beyond metadata.
 | Lattice JSONL exports | cold | private-operator by default | Export with redaction by default; `--include-raw` remains local and sensitive. |
 | Cycle evidence packages | cold | private-operator by default | Export portable provenance graphs with stable ids and bounded evidence refs; see `docs/decisions/0005-provenance-and-evidence-package-exports.md`; public-safe only after sanitization and source-rights review. |
 | Run summary exports | cold | private-operator by default | Export compact JSONL summaries of cycle outcomes and metrics; see `docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md`; public-safe only after sanitization. |
+| Human review packets | warm | private-operator by default | Keep concise markdown or JSON cycle summaries separate from transcripts and Lattice rows; see `docs/decisions/0008-human-review-packet-format-for-cycle-output.md`; sanitize before public use. |
 | Lattice recovery records | warm | private-operator | Keep until the DB or export conflict has explicit repair or custody. |
 | Run BOM records | cold | private-operator by default | Prefer `upk:` ids, hashes, HMACs, and schema refs; publish only when all referenced evidence is public-safe. |
 | Automation obligations | hot | private-operator | Keep open until repaired, resolved, or filed to GitHub with sanitized issue text. |

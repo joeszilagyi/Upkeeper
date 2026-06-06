@@ -37,3 +37,6 @@ Each decision should include:
 - [0007 Adapter and plugin contract with side-effect declarations](0007-adapter-plugin-contract-with-side-effect-declarations.md):
   accepted bounded integration contract for future adapters, exporters,
   trackers, feeds, validators, and reporters.
+- [0008 Human review packet format for cycle output](0008-human-review-packet-format-for-cycle-output.md):
+  accepted concise markdown or JSON summary contract for operator-facing
+  cycle review packets and public-safe/unsafe separation.

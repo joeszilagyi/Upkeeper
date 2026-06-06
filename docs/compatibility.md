@@ -77,6 +77,11 @@ Schema and contract versions are compatibility boundaries, not decoration:
   are also governed by the same discipline. Once runtime tooling emits them,
   the schema version, adapter type names, declared field meanings, and
   side-effect declarations are stable within schema version 1.
+- Human review packet records and the markdown/JSON section names in
+  `docs/decisions/0008-human-review-packet-format-for-cycle-output.md` are
+  also governed by the same discipline. Once runtime tooling emits them, the
+  schema version, packet section names, field meanings, and public-safe/unsafe
+  section meanings are stable within schema version 1.
 - Runtime BOM exports must preserve the `upk:` namespace grammar and avoid raw
   path, secret, issue-body, prompt, transcript, or command text in identifier
   segments.

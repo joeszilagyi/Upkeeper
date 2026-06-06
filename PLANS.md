@@ -441,6 +441,38 @@ Validation:
 - `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
 - `git diff --check`
 
+## Human Review Packet Format For Cycle Output
+
+Status: in progress
+
+Goal:
+- close issue #226 by defining a concise human review packet for each
+  meaningful cycle
+- start as a generated markdown or JSON summary for one cycle before wiring it
+  to Lattice/export commands later
+- keep the packet concise, operator-readable, and explicit about what is safe
+  or unsafe to publish
+
+Constraints:
+- no backend Codex validation
+- no heavy export dependency in the first slice
+- preserve the separation between transcripts, internal Lattice rows, and
+  operator-facing review packets
+
+Files likely touched:
+- `docs/decisions/0008-human-review-packet-format-for-cycle-output.md`
+- README, preservation, compatibility, roadmap, release notes
+- `docs/decisions/README.md`
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
 ## Kirk Protocol Closed-Loop Auditor
 
 Status: completed locally; pending PR/CI

@@ -25,6 +25,11 @@
 	2. README, authority, compatibility, and roadmap now point at the adapter contract so declared side effects stay visible before any future integration lands.
 	3. Quick validation now preserves the new adapter contract and its cross-links so future plugin work stays bounded and reviewable.
 
+2026-06-05: human review packet format:
+	1. `docs/decisions/0008-human-review-packet-format-for-cycle-output.md` now defines a concise markdown or JSON packet for one meaningful cycle, with explicit public-safe and unsafe-to-publish sections.
+	2. README, preservation, compatibility, and roadmap now point at the review packet contract so operator-facing output stays separate from transcripts and internal Lattice rows.
+	3. Quick validation now preserves the new review packet contract and its cross-links so future human-facing summaries stay compact and reviewable.
+
 Version numbering note:
 	1. This file records committed Upkeeper wrapper states from v1.0.0 forward.
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.

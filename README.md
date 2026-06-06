@@ -58,6 +58,10 @@ The adapter and plugin contract in
 keeps future integrations bounded by declared inputs, outputs, side effects,
 network use, file-write scope, secret needs, Lattice events, failure modes,
 and validation expectations.
+The human review packet format in
+`docs/decisions/0008-human-review-packet-format-for-cycle-output.md` defines a
+concise markdown or JSON cycle summary separate from transcripts and internal
+Lattice rows, with explicit public-safe and unsafe-to-publish sections.
 The source-rights contract in `docs/source-rights-metadata.md` defines the
 sensitivity labels and rights fields that decide whether OSINT and citation
 sources may enter prompts, exports, archives, or public evidence packets.

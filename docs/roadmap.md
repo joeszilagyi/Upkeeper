@@ -47,6 +47,9 @@ Use it to keep release direction visible without relying on chat history.
   Upkeeper without becoming part of the core wrapper, using the side-effect
   declaration contract in
   `docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md`.
+- Add a human review packet generator that emits markdown or JSON summaries
+  from `docs/decisions/0008-human-review-packet-format-for-cycle-output.md`
+  before wiring it to Lattice/export commands later.
 - Add broader cross-platform proof only after the Linux contract is stable.
 - Consider a typed non-shell config profile after current Bash config behavior
   is fully documented and compatibility-safe.

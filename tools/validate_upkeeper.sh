@@ -845,6 +845,62 @@ check_adapter_plugin_contract() {
     fail "change notes do not record the adapter/plugin contract"
 }
 
+check_human_review_packet_contract() {
+  local term
+  local doc_path="docs/decisions/0008-human-review-packet-format-for-cycle-output.md"
+  local -a required_terms
+
+  log "checking human review packet format contract"
+  [[ -s "$doc_path" ]] || fail "human review packet contract doc is missing"
+
+  required_terms=(
+    "Human Review Packet Format for Cycle Output"
+    "what changed"
+    "why it changed"
+    "what evidence supports it"
+    "what was not checked"
+    "what failed"
+    "what needs human attention"
+    "what is safe to copy/use publicly"
+    "what is unsafe to publish"
+    "how to restore if needed"
+    "upkeeper review-packet --cycle-id X --format markdown"
+    "upkeeper review-packet --cycle-id X --format json"
+    "schema_version"
+    "packet_ref"
+    "cycle_ref"
+    "run_ref"
+    "what_changed"
+    "why_it_changed"
+    "evidence_supporting_it"
+    "what_was_not_checked"
+    "what_failed"
+    "human_attention"
+    "safe_to_copy_use_publicly"
+    "unsafe_to_publish"
+    "restore_notes"
+    "private-operator"
+    "issue #226"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq -- "$term" "$doc_path" ||
+      fail "human review packet contract docs missing required term: $term"
+  done
+
+  grep -Fq "$doc_path" README.md ||
+    fail "README does not point to the human review packet contract"
+  grep -Fq "$doc_path" docs/preservation-policy.md ||
+    fail "preservation policy does not point to the human review packet contract"
+  grep -Fq "$doc_path" docs/compatibility.md ||
+    fail "compatibility docs do not point to the human review packet contract"
+  grep -Fq "$doc_path" docs/roadmap.md ||
+    fail "roadmap does not preserve the human review packet follow-up"
+  grep -Fq "0008 Human review packet format for cycle output" docs/decisions/README.md ||
+    fail "decision log index does not list the human review packet contract"
+  grep -Fq "human review packet format" change_notes_2026.md ||
+    fail "change notes do not record the human review packet contract"
+}
+
 check_schema_compatibility_contract() {
   local term
   local -a required_terms
@@ -8342,6 +8398,7 @@ run_check run_transaction_contract check_run_transaction_contract
 run_check cycle_evidence_package_contract check_cycle_evidence_package_contract
 run_check run_taxonomy_summary_contract check_run_taxonomy_summary_contract
 run_check adapter_plugin_contract check_adapter_plugin_contract
+run_check human_review_packet_contract check_human_review_packet_contract
 run_check schema_compatibility_contract check_schema_compatibility_contract
 run_check threat_model_doctrine_contract check_threat_model_doctrine_contract
 run_check preservation_policy_contract check_preservation_policy_contract

@@ -53,6 +53,11 @@ The run taxonomy, observability, and cost accounting contract in
 `docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md`
 defines the local JSONL summary export for cycle outcomes, metrics, and TCO
 evidence without a full OpenTelemetry dependency.
+The adapter and plugin contract in
+`docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md`
+keeps future integrations bounded by declared inputs, outputs, side effects,
+network use, file-write scope, secret needs, Lattice events, failure modes,
+and validation expectations.
 The source-rights contract in `docs/source-rights-metadata.md` defines the
 sensitivity labels and rights fields that decide whether OSINT and citation
 sources may enter prompts, exports, archives, or public evidence packets.

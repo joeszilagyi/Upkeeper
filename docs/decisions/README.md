@@ -34,3 +34,6 @@ Each decision should include:
 - [0006 Run taxonomy, observability, and cost accounting surface](0006-run-taxonomy-observability-and-cost-accounting.md):
   accepted local JSONL summary export contract for cycle outcomes, metrics,
   and cost accounting without a full OpenTelemetry dependency.
+- [0007 Adapter and plugin contract with side-effect declarations](0007-adapter-plugin-contract-with-side-effect-declarations.md):
+  accepted bounded integration contract for future adapters, exporters,
+  trackers, feeds, validators, and reporters.

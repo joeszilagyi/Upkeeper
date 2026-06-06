@@ -60,6 +60,15 @@ backend launch. Comment and review stages are source read-only. Apply stages may
 write source, but GitHub I/O remains wrapper-brokered and direct backend network
 tools are shadowed.
 
+### Adapters And Integrations
+
+Future selector, backup, sandbox, exporter, tracker, feed, validator, and
+reporter adapters are bounded wrapper integrations, not free-form shell
+extensions. `docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md`
+defines the required declared inputs, outputs, side effects, network use,
+file-write scope, secret needs, Lattice events, failure modes, and validation
+expectations for those integrations.
+
 ### Evidence And Lattice
 
 Logs, transcripts, Lattice rows, obligations, failure markers, manifests,
@@ -90,6 +99,9 @@ covered only by explicit quota fixtures.
   evidence artifacts, and status.
 - `docs/policy-decisions.md` defines the schema for local authority decisions
   that should be recorded as data instead of prompt prose.
+- `docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md`
+  defines the side-effect declaration contract for future adapter and plugin
+  integrations.
 - `docs/decisions/0004-run-transaction-contracts.md` defines the bounded
   transaction vocabulary for cycle explanation, replay, rollback, and
   verification.

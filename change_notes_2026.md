@@ -20,6 +20,11 @@
 	2. README, Lattice, preservation, compatibility, and roadmap now point at the summary-export contract so the observability vocabulary stays discoverable next to the existing cycle and provenance exports.
 	3. Quick validation now preserves the new summary-export contract and its cross-links so future run-summary work stays on the documented local-first path.
 
+2026-06-05: adapter and plugin side-effect contract:
+	1. `docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md` now defines the bounded integration contract for future selector, backup, sandbox, exporter, tracker, feed, validator, and reporter adapters.
+	2. README, authority, compatibility, and roadmap now point at the adapter contract so declared side effects stay visible before any future integration lands.
+	3. Quick validation now preserves the new adapter contract and its cross-links so future plugin work stays bounded and reviewable.
+
 Version numbering note:
 	1. This file records committed Upkeeper wrapper states from v1.0.0 forward.
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.

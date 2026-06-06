@@ -44,7 +44,9 @@ Use it to keep release direction visible without relying on chat history.
 - Decide whether Bash remains the long-term implementation shell or whether a
   staged Python migration is justified.
 - Define plugin or adapter boundaries for tools that should integrate with
-  Upkeeper without becoming part of the core wrapper.
+  Upkeeper without becoming part of the core wrapper, using the side-effect
+  declaration contract in
+  `docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md`.
 - Add broader cross-platform proof only after the Linux contract is stable.
 - Consider a typed non-shell config profile after current Bash config behavior
   is fully documented and compatibility-safe.

@@ -409,6 +409,38 @@ Validation:
 - `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
 - `git diff --check`
 
+## Adapter And Plugin Contract With Side-Effect Declarations
+
+Status: in progress
+
+Goal:
+- close issue #225 by defining a bounded adapter/plugin contract for future
+  Upkeeper integrations
+- require each adapter to declare inputs, outputs, side effects, network use,
+  file-write scope, secret needs, Lattice events, failure modes, and
+  validation expectations
+- keep future integrations reviewable without turning Upkeeper into one giant
+  shell brain
+
+Constraints:
+- no backend Codex validation
+- no heavy plugin runtime or service in the first slice
+- preserve the core wrapper's authority boundaries and local-first defaults
+
+Files likely touched:
+- `docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md`
+- README, authority, compatibility, roadmap, release notes
+- `docs/decisions/README.md`
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
 ## Kirk Protocol Closed-Loop Auditor
 
 Status: completed locally; pending PR/CI

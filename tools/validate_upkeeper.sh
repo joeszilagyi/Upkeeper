@@ -792,6 +792,59 @@ check_run_taxonomy_summary_contract() {
     fail "change notes do not record the run taxonomy summary contract"
 }
 
+check_adapter_plugin_contract() {
+  local term
+  local doc_path="docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md"
+  local -a required_terms
+
+  log "checking adapter and plugin contract with side-effect declarations"
+  [[ -s "$doc_path" ]] || fail "adapter/plugin contract doc is missing"
+
+  required_terms=(
+    "Adapter and Plugin Contract With Side-Effect Declarations"
+    "selector adapter"
+    "backup adapter"
+    "sandbox adapter"
+    "lineage exporter"
+    "citation exporter"
+    "issue tracker adapter"
+    "feed adapter"
+    "validator adapter"
+    "reporter adapter"
+    "inputs"
+    "outputs"
+    "side effects"
+    "network use"
+    "file write scope"
+    "secret needs"
+    "Lattice events emitted"
+    "failure modes"
+    "validation expectations"
+    "schema_version"
+    "adapter_id"
+    "adapter_type"
+    "privacy"
+    "issue #225"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq -- "$term" "$doc_path" ||
+      fail "adapter/plugin contract docs missing required term: $term"
+  done
+
+  grep -Fq "$doc_path" README.md ||
+    fail "README does not point to the adapter/plugin contract"
+  grep -Fq "$doc_path" docs/authority.md ||
+    fail "authority docs do not point to the adapter/plugin contract"
+  grep -Fq "$doc_path" docs/compatibility.md ||
+    fail "compatibility docs do not point to the adapter/plugin contract"
+  grep -Fq "$doc_path" docs/roadmap.md ||
+    fail "roadmap does not preserve the adapter/plugin follow-up"
+  grep -Fq "0007 Adapter and plugin contract with side-effect declarations" docs/decisions/README.md ||
+    fail "decision log index does not list the adapter/plugin contract"
+  grep -Fq "adapter and plugin side-effect contract" change_notes_2026.md ||
+    fail "change notes do not record the adapter/plugin contract"
+}
+
 check_schema_compatibility_contract() {
   local term
   local -a required_terms
@@ -8288,6 +8341,7 @@ run_check run_bom_identifier_contract check_run_bom_identifier_contract
 run_check run_transaction_contract check_run_transaction_contract
 run_check cycle_evidence_package_contract check_cycle_evidence_package_contract
 run_check run_taxonomy_summary_contract check_run_taxonomy_summary_contract
+run_check adapter_plugin_contract check_adapter_plugin_contract
 run_check schema_compatibility_contract check_schema_compatibility_contract
 run_check threat_model_doctrine_contract check_threat_model_doctrine_contract
 run_check preservation_policy_contract check_preservation_policy_contract

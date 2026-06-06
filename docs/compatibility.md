@@ -72,6 +72,11 @@ Schema and contract versions are compatibility boundaries, not decoration:
   governed by the same discipline. Once runtime tooling emits them, the schema
   version, taxonomy dimension names, metric field meanings, and summary ref
   meanings are stable within schema version 1.
+- Adapter and plugin contract records in
+  `docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md`
+  are also governed by the same discipline. Once runtime tooling emits them,
+  the schema version, adapter type names, declared field meanings, and
+  side-effect declarations are stable within schema version 1.
 - Runtime BOM exports must preserve the `upk:` namespace grammar and avoid raw
   path, secret, issue-body, prompt, transcript, or command text in identifier
   segments.

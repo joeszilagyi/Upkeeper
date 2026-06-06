@@ -10,6 +10,11 @@
 	2. README, authority, run BOM, compatibility, and roadmap now point at the transaction contract so the lifecycle vocabulary stays discoverable alongside the existing run BOM namespace.
 	3. Quick validation now preserves the new decision-file contract and its cross-links so future replay and verification helpers do not drift out of the public-doc surface.
 
+2026-06-05: provenance and evidence-package export contract:
+	1. `docs/decisions/0005-provenance-and-evidence-package-exports.md` now defines the local JSON cycle evidence-package export surface for Lattice cycles, with future RO-Crate and BagIt envelopes as explicit follow-up work.
+	2. README, Lattice, preservation, compatibility, and roadmap now point at the evidence-package contract so the portable provenance vocabulary stays discoverable next to the existing JSONL export surface.
+	3. Quick validation now preserves the new provenance contract and its cross-links so future export-cycle work stays on the documented no-heavy-dependency path.
+
 Version numbering note:
 	1. This file records committed Upkeeper wrapper states from v1.0.0 forward.
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.

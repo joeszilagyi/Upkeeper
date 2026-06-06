@@ -28,3 +28,6 @@ Each decision should include:
 - [0004 Run transaction, rollback, and replay contracts](0004-run-transaction-contracts.md):
   accepted lifecycle and helper-command contract for one cycle as a bounded
   transaction with read-only explain/replay helpers.
+- [0005 Provenance and evidence-package exports for Lattice cycles](0005-provenance-and-evidence-package-exports.md):
+  accepted local JSON evidence-package export contract for one cycle, with
+  future RO-Crate and BagIt envelopes as follow-up work.

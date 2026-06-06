@@ -421,6 +421,13 @@ database, use `export-jsonl --include-paths`. The default redacted export is
 safe for sharing and inspection, but it intentionally leaves path-bearing rows
 too anonymized for full-fidelity file/cycle/history reconstruction.
 
+Cycle-level provenance packages are a separate export surface tracked in
+`docs/decisions/0005-provenance-and-evidence-package-exports.md`. The first
+proposal is a local-only JSON evidence package emitted by `upkeeper
+export-cycle --cycle-id X --format json`; future `--format ro-crate` or
+`--format bagit` envelopes may wrap the same graph without changing its
+provenance meaning.
+
 `import-jsonl` is idempotent. Same logical key and same payload hash is a
 duplicate. Same logical key and a different payload hash records a conflict and
 does not silently overwrite existing facts. Raw source lines stay redacted on

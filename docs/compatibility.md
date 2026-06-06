@@ -62,6 +62,11 @@ Schema and contract versions are compatibility boundaries, not decoration:
   compatibility discipline. Once runtime tooling emits transaction records, the
   schema version, lifecycle stage names, resolution enums, and `upk:` reference
   meanings are stable within schema version 1.
+- Cycle evidence-package exports and the local JSON package schema in
+  `docs/decisions/0005-provenance-and-evidence-package-exports.md` are also
+  governed by that discipline. Once runtime tooling emits them, the schema
+  version, entity/activity/agent roles, provenance-edge meanings, and `upk:`
+  reference meanings are stable within schema version 1.
 - Runtime BOM exports must preserve the `upk:` namespace grammar and avoid raw
   path, secret, issue-body, prompt, transcript, or command text in identifier
   segments.

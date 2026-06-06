@@ -348,6 +348,36 @@ Validation:
 - `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
 - `git diff --check`
 
+## Lattice Provenance And Evidence Packages
+
+Status: in progress
+
+Goal:
+- close issue #219 by defining a portable provenance and evidence-package
+  export surface for Lattice cycles
+- start with a local JSON package proposal before considering RO-Crate or
+  BagIt envelopes
+- keep exports local, deterministic, and privacy-safe by default
+
+Constraints:
+- no backend Codex validation
+- no heavy new export dependency in the first slice
+- preserve the existing JSONL export/import contract and Lattice custody rules
+
+Files likely touched:
+- `docs/decisions/0005-provenance-and-evidence-package-exports.md`
+- README, Lattice, preservation, compatibility, roadmap, release notes
+- `docs/decisions/README.md`
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
 ## Kirk Protocol Closed-Loop Auditor
 
 Status: completed locally; pending PR/CI

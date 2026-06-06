@@ -29,6 +29,9 @@ Use it to keep release direction visible without relying on chat history.
 - Add local transaction explanation, replay, selection-reproduction, backup
   verification, and diff-verification helpers that follow
   `docs/decisions/0004-run-transaction-contracts.md`.
+- Add a private local cycle evidence-package exporter that emits the JSON
+  schema from `docs/decisions/0005-provenance-and-evidence-package-exports.md`
+  before considering RO-Crate or BagIt envelopes.
 - Build a live parallel backlog-worker supervisor on the accepted local lease
   primitive, including isolated worktree creation, independent PRs, remote
   visibility, quota sharing, and cleanup.

@@ -687,6 +687,56 @@ check_run_transaction_contract() {
     fail "change notes do not record the transaction contract"
 }
 
+check_cycle_evidence_package_contract() {
+  local term
+  local doc_path="docs/decisions/0005-provenance-and-evidence-package-exports.md"
+  local -a required_terms
+
+  log "checking provenance and evidence-package export contract"
+  [[ -s "$doc_path" ]] || fail "cycle evidence-package contract doc is missing"
+
+  required_terms=(
+    "Provenance and Evidence-Package Exports for Lattice Cycles"
+    "W3C PROV"
+    "OpenLineage"
+    "RO-Crate"
+    "BagIt"
+    "upkeeper export-cycle --cycle-id X --format json"
+    "--format ro-crate"
+    "--format bagit"
+    "schema_version"
+    "package_ref"
+    "cycle_ref"
+    "run_ref"
+    "entities"
+    "activities"
+    "agents"
+    "provenance_edges"
+    "evidence_refs"
+    "private-operator"
+    "issue #219"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq -- "$term" "$doc_path" ||
+      fail "cycle evidence-package contract docs missing required term: $term"
+  done
+
+  grep -Fq "$doc_path" README.md ||
+    fail "README does not point to the cycle evidence-package contract"
+  grep -Fq "$doc_path" docs/lattice.md ||
+    fail "Lattice docs do not point to the cycle evidence-package contract"
+  grep -Fq "$doc_path" docs/preservation-policy.md ||
+    fail "preservation policy does not point to the cycle evidence-package contract"
+  grep -Fq "$doc_path" docs/compatibility.md ||
+    fail "compatibility docs do not point to the cycle evidence-package contract"
+  grep -Fq "$doc_path" docs/roadmap.md ||
+    fail "roadmap does not preserve the cycle evidence-package follow-up"
+  grep -Fq "0005 Provenance and evidence-package exports for Lattice cycles" docs/decisions/README.md ||
+    fail "decision log index does not list the cycle evidence-package contract"
+  grep -Fq "provenance and evidence-package export contract" change_notes_2026.md ||
+    fail "change notes do not record the cycle evidence-package contract"
+}
+
 check_schema_compatibility_contract() {
   local term
   local -a required_terms
@@ -8181,6 +8231,7 @@ run_check policy_decisions_contract check_policy_decisions_contract
 run_check schema_gated_airlock_docs_contract check_schema_gated_airlock_docs_contract
 run_check run_bom_identifier_contract check_run_bom_identifier_contract
 run_check run_transaction_contract check_run_transaction_contract
+run_check cycle_evidence_package_contract check_cycle_evidence_package_contract
 run_check schema_compatibility_contract check_schema_compatibility_contract
 run_check threat_model_doctrine_contract check_threat_model_doctrine_contract
 run_check preservation_policy_contract check_preservation_policy_contract

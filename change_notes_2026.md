@@ -15,6 +15,11 @@
 	2. README, Lattice, preservation, compatibility, and roadmap now point at the evidence-package contract so the portable provenance vocabulary stays discoverable next to the existing JSONL export surface.
 	3. Quick validation now preserves the new provenance contract and its cross-links so future export-cycle work stays on the documented no-heavy-dependency path.
 
+2026-06-05: run taxonomy, observability, and cost accounting surface:
+	1. `docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md` now defines the local JSONL summary export for cycle outcomes, taxonomy dimensions, and cost-accounting metrics without a full OpenTelemetry dependency.
+	2. README, Lattice, preservation, compatibility, and roadmap now point at the summary-export contract so the observability vocabulary stays discoverable next to the existing cycle and provenance exports.
+	3. Quick validation now preserves the new summary-export contract and its cross-links so future run-summary work stays on the documented local-first path.
+
 Version numbering note:
 	1. This file records committed Upkeeper wrapper states from v1.0.0 forward.
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.

@@ -67,6 +67,11 @@ Schema and contract versions are compatibility boundaries, not decoration:
   governed by that discipline. Once runtime tooling emits them, the schema
   version, entity/activity/agent roles, provenance-edge meanings, and `upk:`
   reference meanings are stable within schema version 1.
+- Run taxonomy and cost-accounting summary exports in
+  `docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md` are
+  governed by the same discipline. Once runtime tooling emits them, the schema
+  version, taxonomy dimension names, metric field meanings, and summary ref
+  meanings are stable within schema version 1.
 - Runtime BOM exports must preserve the `upk:` namespace grammar and avoid raw
   path, secret, issue-body, prompt, transcript, or command text in identifier
   segments.

@@ -378,6 +378,37 @@ Validation:
 - `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
 - `git diff --check`
 
+## Run Taxonomy, Observability, And Cost Accounting Surface
+
+Status: in progress
+
+Goal:
+- close issue #223 by defining a local run taxonomy plus observability/cost
+  accounting surface that proves the wrapper is saving time and reducing risk
+- start with a local JSONL or summary export instead of a full OpenTelemetry
+  dependency
+- keep the taxonomy and metrics local, structured, and privacy-safe by default
+
+Constraints:
+- no backend Codex validation
+- no heavyweight telemetry dependency in the first slice
+- preserve the existing cycle.summary/run.finish log vocabulary and Lattice
+  evidence model
+
+Files likely touched:
+- `docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md`
+- README, Lattice, preservation, compatibility, roadmap, release notes
+- `docs/decisions/README.md`
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --smoke`
+- `tools/validate_upkeeper.sh --quick`
+- `set -e; for test_script in tests/*.bash; do bash "$test_script"; done`
+- `git diff --check`
+
 ## Kirk Protocol Closed-Loop Auditor
 
 Status: completed locally; pending PR/CI

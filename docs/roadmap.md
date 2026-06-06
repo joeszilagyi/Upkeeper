@@ -32,6 +32,9 @@ Use it to keep release direction visible without relying on chat history.
 - Add a private local cycle evidence-package exporter that emits the JSON
   schema from `docs/decisions/0005-provenance-and-evidence-package-exports.md`
   before considering RO-Crate or BagIt envelopes.
+- Add a private local run taxonomy and cost-accounting summary exporter that
+  emits JSONL from `docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md`
+  without introducing a telemetry daemon.
 - Build a live parallel backlog-worker supervisor on the accepted local lease
   primitive, including isolated worktree creation, independent PRs, remote
   visibility, quota sharing, and cleanup.

@@ -737,6 +737,61 @@ check_cycle_evidence_package_contract() {
     fail "change notes do not record the cycle evidence-package contract"
 }
 
+check_run_taxonomy_summary_contract() {
+  local term
+  local doc_path="docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md"
+  local -a required_terms
+
+  log "checking run taxonomy, observability, and cost accounting contract"
+  [[ -s "$doc_path" ]] || fail "run taxonomy summary contract doc is missing"
+
+  required_terms=(
+    "Run Taxonomy, Observability, and Cost Accounting Surface"
+    "cycle.summary"
+    "run.finish"
+    "upkeeper export-run-summary --cycle-id X --format jsonl"
+    "schema_version"
+    "summary_ref"
+    "cycle_ref"
+    "run_ref"
+    "format"
+    "taxonomy"
+    "metrics"
+    "model/backend used"
+    "reasoning effort if known"
+    "backend attempts"
+    "fallback attempts"
+    "wall time"
+    "files reviewed"
+    "bugs found/fixed/reported"
+    "tests run or harvested"
+    "manual interventions avoided"
+    "restore events"
+    "blocked cycles"
+    "private-operator"
+    "issue #223"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq -- "$term" "$doc_path" ||
+      fail "run taxonomy summary contract docs missing required term: $term"
+  done
+
+  grep -Fq "$doc_path" README.md ||
+    fail "README does not point to the run taxonomy summary contract"
+  grep -Fq "$doc_path" docs/lattice.md ||
+    fail "Lattice docs do not point to the run taxonomy summary contract"
+  grep -Fq "$doc_path" docs/preservation-policy.md ||
+    fail "preservation policy does not point to the run taxonomy summary contract"
+  grep -Fq "$doc_path" docs/compatibility.md ||
+    fail "compatibility docs do not point to the run taxonomy summary contract"
+  grep -Fq "$doc_path" docs/roadmap.md ||
+    fail "roadmap does not preserve the run taxonomy summary follow-up"
+  grep -Fq "0006 Run taxonomy, observability, and cost accounting surface" docs/decisions/README.md ||
+    fail "decision log index does not list the run taxonomy summary contract"
+  grep -Fq "run taxonomy, observability, and cost accounting surface" change_notes_2026.md ||
+    fail "change notes do not record the run taxonomy summary contract"
+}
+
 check_schema_compatibility_contract() {
   local term
   local -a required_terms
@@ -8232,6 +8287,7 @@ run_check schema_gated_airlock_docs_contract check_schema_gated_airlock_docs_con
 run_check run_bom_identifier_contract check_run_bom_identifier_contract
 run_check run_transaction_contract check_run_transaction_contract
 run_check cycle_evidence_package_contract check_cycle_evidence_package_contract
+run_check run_taxonomy_summary_contract check_run_taxonomy_summary_contract
 run_check schema_compatibility_contract check_schema_compatibility_contract
 run_check threat_model_doctrine_contract check_threat_model_doctrine_contract
 run_check preservation_policy_contract check_preservation_policy_contract

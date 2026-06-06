@@ -49,6 +49,10 @@ The provenance and evidence-package export contract in
 `docs/decisions/0005-provenance-and-evidence-package-exports.md` defines the
 portable JSON `upkeeper export-cycle --cycle-id X --format json` surface and
 future RO-Crate or BagIt envelopes for Lattice cycles.
+The run taxonomy, observability, and cost accounting contract in
+`docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md`
+defines the local JSONL summary export for cycle outcomes, metrics, and TCO
+evidence without a full OpenTelemetry dependency.
 The source-rights contract in `docs/source-rights-metadata.md` defines the
 sensitivity labels and rights fields that decide whether OSINT and citation
 sources may enter prompts, exports, archives, or public evidence packets.

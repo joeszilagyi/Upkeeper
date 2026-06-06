@@ -31,3 +31,6 @@ Each decision should include:
 - [0005 Provenance and evidence-package exports for Lattice cycles](0005-provenance-and-evidence-package-exports.md):
   accepted local JSON evidence-package export contract for one cycle, with
   future RO-Crate and BagIt envelopes as follow-up work.
+- [0006 Run taxonomy, observability, and cost accounting surface](0006-run-taxonomy-observability-and-cost-accounting.md):
+  accepted local JSONL summary export contract for cycle outcomes, metrics,
+  and cost accounting without a full OpenTelemetry dependency.

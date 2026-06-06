@@ -16,11 +16,14 @@ usage() {
 Usage: tools/docs_only_fast_path.sh [--validate|--classify-only] [--base REF] [--head REF] [--paths-from FILE] [--allow-empty]
 
 Classify and validate the narrow docs-only edit path without backend Codex,
-GitHub CLI, GitHub polling, or network fetches.
+GitHub CLI, GitHub polling, or network fetches. The classifier also reports
+broader low-risk path sets so CI can skip the full validator for mechanical
+config, shell, test, and tool edits.
 
 Modes:
   --validate       Require a docs-only change and run the local docs fast path.
-  --classify-only  Print docs_only/scope metadata and exit without validation.
+  --classify-only  Print docs_only/low_risk/scope metadata and exit without
+                   validation.
 
 Inputs:
   --base REF       Compare REF to --head for committed branch changes.
@@ -84,28 +87,10 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 cd "$ROOT_DIR"
+source "$ROOT_DIR/lib/upkeeper/change_scope.bash"
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
   fail "not a Git worktree: $ROOT_DIR"
-
-docs_only_path_allowed() {
-  local path="$1"
-
-  case "$path" in
-    README.md|AGENTS.md|PLANS.md|change_notes_[0-9][0-9][0-9][0-9].md)
-      return 0
-      ;;
-    docs/*.md|docs/*/*.md|prompts/*.md|templates/*.md)
-      return 0
-      ;;
-    .github/pull_request_template.md|.github/ISSUE_TEMPLATE/*.yml)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
 
 append_changed_paths_from_git() {
   local path_file="$1"
@@ -160,9 +145,11 @@ trap 'rm -r "$tmp_dir" 2>/dev/null || true' EXIT
 all_paths_file="$tmp_dir/paths.all"
 changed_paths_file="$tmp_dir/paths.changed"
 non_docs_file="$tmp_dir/paths.non-docs"
+non_low_risk_file="$tmp_dir/paths.non-low-risk"
 : >"$all_paths_file"
 : >"$changed_paths_file"
 : >"$non_docs_file"
+: >"$non_low_risk_file"
 
 if [[ -n "$PATHS_FROM" ]]; then
   [[ -r "$PATHS_FROM" ]] || fail "cannot read paths file: $PATHS_FROM"
@@ -175,27 +162,47 @@ sort -u "$all_paths_file" >"$changed_paths_file"
 
 while IFS= read -r path; do
   [[ -n "$path" ]] || continue
-  if ! docs_only_path_allowed "$path"; then
+  if ! upkeeper_change_scope_path_is_docs_only "$path"; then
     printf '%s\n' "$path" >>"$non_docs_file"
+  fi
+  if ! upkeeper_change_scope_path_is_low_risk "$path"; then
+    printf '%s\n' "$path" >>"$non_low_risk_file"
   fi
 done <"$changed_paths_file"
 
 changed_count="$(wc -l <"$changed_paths_file" | tr -d ' ')"
 non_docs_count="$(wc -l <"$non_docs_file" | tr -d ' ')"
+non_low_risk_count="$(wc -l <"$non_low_risk_file" | tr -d ' ')"
 docs_only=0
+low_risk=0
+scope="full"
+if [[ "$changed_count" -gt 0 && "$non_low_risk_count" == "0" ]]; then
+  low_risk=1
+  scope="low-risk"
+fi
 if [[ "$changed_count" -gt 0 && "$non_docs_count" == "0" ]]; then
   docs_only=1
+  low_risk=1
+  scope="docs-only"
 fi
 if [[ "$changed_count" == "0" && "$ALLOW_EMPTY" == "1" ]]; then
   docs_only=1
+  low_risk=1
+  scope="docs-only"
 fi
 
 printf 'scope_known=1\n'
+printf 'scope=%s\n' "$scope"
 printf 'docs_only=%s\n' "$docs_only"
+printf 'low_risk=%s\n' "$low_risk"
 printf 'changed_count=%s\n' "$changed_count"
 printf 'non_docs_count=%s\n' "$non_docs_count"
+printf 'non_low_risk_count=%s\n' "$non_low_risk_count"
 if [[ "$non_docs_count" != "0" ]]; then
   sed 's/^/non_doc_path=/' "$non_docs_file"
+fi
+if [[ "$non_low_risk_count" != "0" ]]; then
+  sed 's/^/non_low_risk_path=/' "$non_low_risk_file"
 fi
 
 if [[ "$MODE" == "classify" ]]; then

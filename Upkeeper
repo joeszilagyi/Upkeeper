@@ -697,6 +697,7 @@ UPKEEPER_MODULES=(
   "previous_run_anomalies.bash"
   "file_manifest.bash"
   "worktree_state.bash"
+  "change_scope.bash"
   "quota_state.bash"
   "operator_status.bash"
 

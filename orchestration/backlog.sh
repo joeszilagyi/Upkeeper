@@ -7,6 +7,58 @@ SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "$SCRIPT_SOURCE")"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 source "$ROOT_DIR/lib/upkeeper/runtime_format_json.bash"
+if [[ -r "$ROOT_DIR/lib/upkeeper/change_scope.bash" ]]; then
+  source "$ROOT_DIR/lib/upkeeper/change_scope.bash"
+else
+  upkeeper_change_scope_path_is_docs_only() {
+    local path="${1:-}"
+
+    case "$path" in
+      README.md|AGENTS.md|PLANS.md|change_notes_[0-9][0-9][0-9][0-9].md)
+        return 0
+        ;;
+      docs/*.md|docs/*/*.md|prompts/*.md|templates/*.md)
+        return 0
+        ;;
+      .github/pull_request_template.md|.github/ISSUE_TEMPLATE/*.yml)
+        return 0
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+
+  upkeeper_change_scope_path_is_low_risk() {
+    local path="${1:-}"
+
+    if upkeeper_change_scope_path_is_docs_only "$path"; then
+      return 0
+    fi
+
+    case "$path" in
+      Upkeeper.conf|configurations/*.conf)
+        return 0
+        ;;
+      completions/*.bash|tests/*.bash|testruns/*.sh)
+        return 0
+        ;;
+      tools/*.sh)
+        case "$path" in
+          tools/docs_only_fast_path.sh|tools/validate_upkeeper.sh|tools/run_validation_phases.sh|tools/check_public_docs.sh|tools/setup_ci_dependencies.sh)
+            return 1
+            ;;
+          *)
+            return 0
+            ;;
+        esac
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+fi
 
 BACKLOG_BRANCH_PREFIX="${BACKLOG_BRANCH_PREFIX:-backlog/}"
 BACKLOG_PR_TITLE="${BACKLOG_PR_TITLE:-[backlog] Upkeeper issue batch}"
@@ -1264,14 +1316,7 @@ backlog_changed_paths_for_head() {
 backlog_path_low_risk_for_async_ci() {
   local path="$1"
 
-  case "$path" in
-    README.md|CHANGELOG.md|AGENTS.md|PLANS.md|change_notes_*.md|docs/*|*.md)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  upkeeper_change_scope_path_is_low_risk "$path"
 }
 
 backlog_path_high_risk_for_blocking_ci() {
@@ -1351,14 +1396,14 @@ backlog_reasoning_effort_from_text() {
   esac
 
   case "$lowered" in
-    *"docs/"*|*"docs scripts/"*|*"docs/scripts/"*|*"readme.md"*|*"change_notes_"*|*"prompts/"*|*"operator guide"*|*"help text"*|*"release note"*|*"markdown"*|*"documentation"*|*"docs only"*|*"docs-only"*|*"docs only changes"*|*"docs-only changes"*)
+    *"docs/"*|*"docs scripts/"*|*"docs/scripts/"*|*"readme.md"*|*"change_notes_"*|*"prompts/"*|*"operator guide"*|*"help text"*|*"release note"*|*"markdown"*|*"documentation"*|*"generated docs"*|*"help drift"*|*"dependency metadata"*|*"docs only"*|*"docs-only"*|*"docs only changes"*|*"docs-only changes"*)
       printf 'low\tdocs-only\tdocs-oriented issue or job context\n'
       return 0
       ;;
   esac
 
   case " $words " in
-    *" one character "*|*" one line "*|*" syntax "*|*" whitespace "*|*" formatting "*|*" format "*|*" config "*|*" test only "*|*" trivial "*|*" small "*|*" simple "*|*" shell config "*|*" local tool "*|*" tests "*|*" testruns "*|*" tools "*)
+    *" one character "*|*" one line "*|*" syntax "*|*" shell syntax only "*|*" whitespace "*|*" formatting "*|*" format "*|*" config "*|*" config default alignment "*|*" single file mechanical "*|*" test only "*|*" trivial "*|*" small "*|*" simple "*|*" shell config "*|*" local tool "*|*" tests "*|*" testruns "*|*" tools "*)
       printf 'medium\tmechanical\tsmall mechanical issue or job context\n'
       return 0
       ;;
@@ -1468,7 +1513,7 @@ backlog_validation_authority_for_head() {
   done <<<"$paths"
 
   if [[ "$saw_path" == "1" && "$all_low_risk" == "1" ]]; then
-    printf 'low-risk\t%s\tdocs-or-markdown-only\n' "$BACKLOG_VALIDATION_AUTHORITY_LOW_RISK"
+    printf 'low-risk\t%s\tdocs-or-low-risk-mechanical\n' "$BACKLOG_VALIDATION_AUTHORITY_LOW_RISK"
   elif [[ "$high_risk" == "1" ]]; then
     printf 'high-risk\t%s\tcontrol-plane-or-validation-change\n' "$BACKLOG_VALIDATION_AUTHORITY_HIGH_RISK"
   else

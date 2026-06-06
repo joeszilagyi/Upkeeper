@@ -87,6 +87,7 @@ make_repo() {
   local repo="$1"
   local remote="$2"
 
+  rm -rf "$remote"
   git init -q --bare "$remote"
   mkdir -p "$repo"
   (

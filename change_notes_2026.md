@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-06-05: low-risk fast lane expansion:
+	1. The change-scope helper now distinguishes docs-only from broader low-risk shell, config, test, and tool edits so CI can skip the full validator for those mechanical changes.
+	2. GitHub Actions now uses the low-risk classification to keep those edits on the shared local gates while still sending higher-risk changes through the full validator.
+	3. Backlog validation authority and effort sizing now recognize the broader low-risk lane so operator output and PR gating stay consistent with the new CI split.
+
 Version numbering note:
 	1. This file records committed Upkeeper wrapper states from v1.0.0 forward.
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
@@ -41,7 +46,7 @@ Version numbering note:
 2026-06-01: high-priority time-savings batch:
 	1. `orchestration/backlog_loop.sh` now reads a per-cycle disposition file and uses a short busy sleep after productive work, while preserving the longer idle sleep for no-op, blocked, and quota-wait cycles.
 	2. Backlog PR-check waits now default to a bounded timeout and write local timeout evidence before returning a pending-check status.
-	3. Backlog records validation authority for each successful commit; low-risk docs/Markdown-only local-green commits can continue to the next issue while CI runs asynchronously, while source/control-plane work still blocks on PR checks.
+	3. Backlog records validation authority for each successful commit; low-risk docs/Markdown/config/test/tool local-green commits can continue to the next issue while CI runs asynchronously, while source/control-plane work still blocks on PR checks.
 	4. FlameOn batches automation-obligation JSON field extraction so one selected obligation does not spawn one parser per field before Upkeeper repeats startup.
 	5. Lattice can run as a warm per-cycle local service process, reducing repeated cold Python startup across init, doctor, selection, pass-result, and finish hooks.
 

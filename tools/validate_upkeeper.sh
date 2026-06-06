@@ -4226,11 +4226,12 @@ check_release_readiness_docs_contract() {
 }
 
 check_docs_only_fast_path_contract() {
-  local temp_dir docs_paths mixed_paths classify_out
+  local temp_dir docs_paths low_risk_paths mixed_paths classify_out
 
   log "checking docs-only fast path contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-docs-only-fast-path.XXXXXX)"
   docs_paths="$temp_dir/docs.paths"
+  low_risk_paths="$temp_dir/low-risk.paths"
   mixed_paths="$temp_dir/mixed.paths"
 
   cat >"$docs_paths" <<'EOF'
@@ -4242,8 +4243,28 @@ EOF
   classify_out="$(tools/docs_only_fast_path.sh --classify-only --paths-from "$docs_paths")"
   grep -Fq "docs_only=1" <<<"$classify_out" ||
     fail "docs-only fast path did not classify public docs paths as docs-only"
+  grep -Fq "low_risk=1" <<<"$classify_out" ||
+    fail "docs-only fast path did not classify public docs paths as low-risk"
+  grep -Fq "scope=docs-only" <<<"$classify_out" ||
+    fail "docs-only fast path did not report docs-only scope"
   grep -Fq "non_docs_count=0" <<<"$classify_out" ||
     fail "docs-only fast path reported non-docs for docs-only paths"
+
+  cat >"$low_risk_paths" <<'EOF'
+Upkeeper.conf
+configurations/default.conf
+tests/backlog_reasoning_effort_test.bash
+tools/run_tests.sh
+EOF
+  classify_out="$(tools/docs_only_fast_path.sh --classify-only --paths-from "$low_risk_paths")"
+  grep -Fq "docs_only=0" <<<"$classify_out" ||
+    fail "low-risk fast path incorrectly classified mechanical paths as docs-only"
+  grep -Fq "low_risk=1" <<<"$classify_out" ||
+    fail "low-risk fast path did not classify mechanical paths as low-risk"
+  grep -Fq "scope=low-risk" <<<"$classify_out" ||
+    fail "low-risk fast path did not report low-risk scope"
+  grep -Fq "non_low_risk_count=0" <<<"$classify_out" ||
+    fail "low-risk fast path reported non-low-risk paths for low-risk changes"
 
   cat >"$mixed_paths" <<'EOF'
 README.md
@@ -4253,8 +4274,12 @@ EOF
   classify_out="$(tools/docs_only_fast_path.sh --classify-only --paths-from "$mixed_paths")"
   grep -Fq "docs_only=0" <<<"$classify_out" ||
     fail "docs-only fast path accepted mixed source changes"
+  grep -Fq "low_risk=0" <<<"$classify_out" ||
+    fail "docs-only fast path accepted mixed source changes as low-risk"
   grep -Fq "non_doc_path=Upkeeper" <<<"$classify_out" ||
     fail "docs-only fast path did not report the source path that forced the broader path"
+  grep -Fq "non_low_risk_path=Upkeeper" <<<"$classify_out" ||
+    fail "docs-only fast path did not report the source path that forced the full path"
 
   grep -Fq "tools/check_public_docs.sh --quick" tools/docs_only_fast_path.sh ||
     fail "docs-only fast path does not run public docs validation"
@@ -4264,6 +4289,10 @@ EOF
     fail "docs-only fast path does not run diff whitespace validation"
   grep -Fq 'git diff --check "$base_ref" "$head_ref"' tools/docs_only_fast_path.sh ||
     fail "docs-only fast path does not check committed ref-to-ref whitespace"
+  grep -Fq 'source "$ROOT_DIR/lib/upkeeper/change_scope.bash"' tools/docs_only_fast_path.sh ||
+    fail "docs-only fast path does not source the shared change-scope helper"
+  grep -Fq 'source "$ROOT_DIR/lib/upkeeper/change_scope.bash"' orchestration/backlog.sh ||
+    fail "backlog launcher does not source the shared change-scope helper"
   if grep -Eq '(^|[[:space:]])(gh|curl|wget)[[:space:]]|git fetch|codex exec|[.]/Upkeeper' tools/docs_only_fast_path.sh; then
     fail "docs-only fast path contains network, GitHub CLI, backend, or wrapper launch commands"
   fi
@@ -4273,6 +4302,8 @@ EOF
     fail "CI checkout does not fetch enough local history for no-extra-fetch docs classification"
   grep -Fq "scope_args+=(--base HEAD^1 --head HEAD)" .github/workflows/ci.yml ||
     fail "CI pull-request docs-only path does not use local merge-parent refs"
+  grep -Fq "steps.scope.outputs.low_risk != '1'" .github/workflows/ci.yml ||
+    fail "CI workflow does not skip full validation for low-risk changes"
   if grep -Fq "git fetch --no-tags" .github/workflows/ci.yml; then
     fail "CI docs-only classifier still performs an explicit fetch"
   fi

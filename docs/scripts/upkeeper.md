@@ -195,7 +195,7 @@ Important:
     that PR's checks before selecting another issue. Passing checks allow the
     next issue, pending checks keep the local owner lease alive, and failed
     checks stop the launcher before more work stacks on a red branch. For
-    low-risk docs/Markdown-only commits, backlog records
+    low-risk docs/Markdown/config/test/tool commits, backlog records
     `local-green-async-ci` validation authority after local validation and lets
     the next issue start while CI continues asynchronously; source and
     control-plane changes keep the blocking PR-check gate. While checks are
@@ -1150,7 +1150,9 @@ prompts, backup log lines, or Lattice preselect evidence.
   `tools/docs_only_fast_path.sh --validate`; it classifies changed paths
   locally, rejects mixed source changes, and runs only public-docs, smoke, and
   diff whitespace checks without backend Codex, GitHub CLI, PR polling, or
-  network fetches.
+  network fetches. Its classifier also marks broader low-risk shell/config/
+  test/tool edits so CI can keep those changes on the shared local gates
+  without paying for the full validator.
   Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
   heavier config, manifest, Lattice, and review-module dry-run fixtures stay in
   full mode. Add `--profile` to validation runs to print per-check elapsed
@@ -1163,18 +1165,21 @@ prompts, backup log lines, or Lattice preselect evidence.
   `tools/setup_ci_dependencies.sh` to probe expected stock runner commands and
   install only missing nonstandard tools such as `age`, classifies the change
   scope, and then runs either the docs-only fast path
-  (`tools/docs_only_fast_path.sh --validate`) or the broader parallel local
-  gate (`tools/run_validation_phases.sh`) followed by full validation.
+  (`tools/docs_only_fast_path.sh --validate`), the broader parallel local gate
+  (`tools/run_validation_phases.sh`) for low-risk shell/config/test/tool
+  changes, or the broader parallel local gate followed by full validation for
+  higher-risk changes.
   `tools/run_tests.sh` is the unit-test entrypoint for local and CI use. It
   keeps serial mode available with `--serial`, but the default path runs
   independent tests with bounded fan-out and prints per-test timings.
   Before model contact, Upkeeper emits a deterministic `task.profile` log line
   with the task grade, validation grade, prompt scope, prompt pass, review-module
-  action, selected-path evidence, and final effort. Routine low-risk targets can
-  use a cheaper effort profile and lean prompt scope; config-sourced review
-  modules can be pruned for that lean profile. High-risk control-plane,
-  security, data-integrity, explicit model overrides, explicit review-module CLI
-  flags, and recovery contexts keep the stronger profile.
+  action, selected-path evidence, and final effort. Routine low-risk docs,
+  Markdown, config, shell, test, and tool targets can use a cheaper effort
+  profile and lean prompt scope; config-sourced review modules can be pruned for
+  that lean profile. High-risk control-plane, security, data-integrity, explicit
+  model overrides, explicit review-module CLI flags, and recovery contexts keep
+  the stronger profile.
   Primary, fallback-child, and auxiliary Codex executions are bounded by
   `CODEX_EXEC_TIMEOUT_SECONDS`. Each model contact is appended to the local
   model-contact ledger with phase, model, effort, exit status, elapsed time,

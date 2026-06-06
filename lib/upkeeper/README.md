@@ -64,6 +64,8 @@ unless there is no clearer owner and the new file has one named responsibility.
   and `process_control.bash`
 - Selection manifests, worktree state, and startup anomaly path rules:
   `file_manifest.bash` and `worktree_state.bash`
+- Shared docs-only and low-risk change-scope classifiers:
+  `change_scope.bash`
 - Validation harness helpers: `tools/validate_upkeeper.sh`
 - Public documentation drift checks: `tools/check_public_docs.sh`
 - Repo-root automation launcher full-burn defaults:
@@ -90,6 +92,7 @@ Runtime evidence:
 - `operator_guide.bash`
 - `cycle_cleanup_signals.bash`
 - `runtime_format_json.bash`
+- `change_scope.bash`
 - `policy_decisions.bash`
 - `automation_obligations.bash`
 - `breadcrumb_gate.bash`

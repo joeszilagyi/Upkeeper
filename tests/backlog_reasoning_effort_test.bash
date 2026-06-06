@@ -51,6 +51,36 @@ test_docs_only_target_selects_low() {
     "docs-oriented issue or job context"
 }
 
+test_generated_docs_help_drift_selects_low() {
+  BACKLOG_REASONING_EFFORT_AUTOSIZE=1
+  BACKLOG_REASONING_EFFORT_OVERRIDE=""
+  BACKLOG_CODEX_REASONING_EFFORT="xhigh"
+
+  assert_selection \
+    "issue_repair" \
+    "" \
+    "issue #3: generated docs/help drift in operator guide wording" \
+    "low" \
+    "docs-only" \
+    "auto" \
+    "docs-oriented issue or job context"
+}
+
+test_dependency_metadata_selects_low() {
+  BACKLOG_REASONING_EFFORT_AUTOSIZE=1
+  BACKLOG_REASONING_EFFORT_OVERRIDE=""
+  BACKLOG_CODEX_REASONING_EFFORT="xhigh"
+
+  assert_selection \
+    "issue_repair" \
+    "" \
+    "issue #5: dependency metadata refresh for release docs" \
+    "low" \
+    "docs-only" \
+    "auto" \
+    "docs-oriented issue or job context"
+}
+
 test_mechanical_target_selects_medium() {
   BACKLOG_REASONING_EFFORT_AUTOSIZE=1
   BACKLOG_REASONING_EFFORT_OVERRIDE=""
@@ -60,6 +90,36 @@ test_mechanical_target_selects_medium() {
     "issue_repair" \
     "Upkeeper.conf" \
     "issue #2: tiny config tweak" \
+    "medium" \
+    "mechanical" \
+    "auto" \
+    "small mechanical issue or job context"
+}
+
+test_single_file_mechanical_selects_medium() {
+  BACKLOG_REASONING_EFFORT_AUTOSIZE=1
+  BACKLOG_REASONING_EFFORT_OVERRIDE=""
+  BACKLOG_CODEX_REASONING_EFFORT="xhigh"
+
+  assert_selection \
+    "issue_repair" \
+    "" \
+    "issue #4: single-file mechanical repair in a shell helper" \
+    "medium" \
+    "mechanical" \
+    "auto" \
+    "small mechanical issue or job context"
+}
+
+test_shell_syntax_only_selects_medium() {
+  BACKLOG_REASONING_EFFORT_AUTOSIZE=1
+  BACKLOG_REASONING_EFFORT_OVERRIDE=""
+  BACKLOG_CODEX_REASONING_EFFORT="xhigh"
+
+  assert_selection \
+    "issue_repair" \
+    "" \
+    "issue #6: shell syntax-only fix for a shell helper" \
     "medium" \
     "mechanical" \
     "auto" \
@@ -120,7 +180,11 @@ test_override_and_legacy_fallback_export_runtime_env() {
 }
 
 test_docs_only_target_selects_low
+test_generated_docs_help_drift_selects_low
+test_dependency_metadata_selects_low
 test_mechanical_target_selects_medium
+test_single_file_mechanical_selects_medium
+test_shell_syntax_only_selects_medium
 test_high_risk_issue_title_selects_xhigh
 test_newest_file_review_defaults_high
 test_override_and_legacy_fallback_export_runtime_env

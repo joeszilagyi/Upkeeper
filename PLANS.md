@@ -88,6 +88,9 @@ Goal:
   exports model settings
 - keep the selection fail-closed for high-risk wrapper, recovery, lattice,
   quota, fallback, restore, security, and data-integrity work
+- extend the docs-only CI fast path into a broader low-risk lane for
+  mechanical config, shell, test, and tool changes so those changes can skip
+  the full validator while still running the shared local gates
 
 Constraints:
 - no live backend Codex validation
@@ -98,10 +101,18 @@ Constraints:
 
 Files likely touched:
 - `orchestration/backlog.sh`
+- `lib/upkeeper/change_scope.bash`
+- `.github/workflows/ci.yml`
+- `tools/docs_only_fast_path.sh`
 - `lib/upkeeper/help_selection.bash`
 - `docs/scripts/upkeeper.md`
 - `tests/*.bash`
 - `change_notes_2026.md`
+- `README.md`
+- `docs/dependencies.md`
+- `docs/release-checklist.md`
+- `lib/upkeeper/README.md`
+- `tools/validate_upkeeper.sh`
 
 Validation:
 - `bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh orchestration/backlog_loop.sh`

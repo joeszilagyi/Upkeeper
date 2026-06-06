@@ -67,6 +67,13 @@ postmortems, and wrapper health state are local evidence. They help future runs
 explain and repair work, but they do not override live Git state or source-safe
 eligibility without a documented control.
 
+### Run Transactions
+
+Every cycle is a transaction with prepare, select target, snapshot/backup,
+launch backend, capture side effects, classify diff/output, verify, resolve,
+and record stages. `docs/decisions/0004-run-transaction-contracts.md` defines
+the commit, rollback, replay, and verification vocabulary for that lifecycle.
+
 ### Validation And Release
 
 Validation entrypoints are deterministic and no-quota by default. They may run
@@ -83,6 +90,9 @@ covered only by explicit quota fixtures.
   evidence artifacts, and status.
 - `docs/policy-decisions.md` defines the schema for local authority decisions
   that should be recorded as data instead of prompt prose.
+- `docs/decisions/0004-run-transaction-contracts.md` defines the bounded
+  transaction vocabulary for cycle explanation, replay, rollback, and
+  verification.
 - `docs/decisions/0003-schema-gated-airlocks.md` defines the typed-signal
   airlock pattern for raw evidence that may cross into wrapper authority.
 - `docs/security.md` describes local trust boundaries and secret handling.

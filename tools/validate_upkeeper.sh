@@ -636,6 +636,57 @@ check_run_bom_identifier_contract() {
     fail "change notes do not record the run BOM identifier contract"
 }
 
+check_run_transaction_contract() {
+  local term
+  local doc_path="docs/decisions/0004-run-transaction-contracts.md"
+  local -a required_terms
+
+  log "checking run transaction, rollback, and replay contract"
+  [[ -s "$doc_path" ]] || fail "run transaction contract doc is missing"
+
+  required_terms=(
+    "Run Transaction, Rollback, and Replay Contracts"
+    "prepare"
+    "select target"
+    "snapshot and/or backup"
+    "launch backend under a declared capability profile"
+    "capture observed side effects"
+    "classify diff/output"
+    "commit, rollback, or leave for human review"
+    "upkeeper explain --cycle-id X"
+    "upkeeper replay --cycle-id X"
+    "upkeeper reproduce-selection --cycle-id X"
+    "upkeeper verify-backup --backup-id X"
+    "upkeeper verify-diff --cycle-id X"
+    "schema_version"
+    "transaction_ref"
+    "cycle_ref"
+    "run_ref"
+    "resolution"
+    "private-operator"
+    "issue #217"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq "$term" "$doc_path" ||
+      fail "run transaction contract docs missing required term: $term"
+  done
+
+  grep -Fq "$doc_path" README.md ||
+    fail "README does not point to the run transaction contract"
+  grep -Fq "$doc_path" docs/authority.md ||
+    fail "authority docs do not point to the run transaction contract"
+  grep -Fq "$doc_path" docs/compatibility.md ||
+    fail "compatibility docs do not point to the run transaction contract"
+  grep -Fq "$doc_path" docs/roadmap.md ||
+    fail "roadmap does not preserve the transaction helper follow-up"
+  grep -Fq "$doc_path" docs/run-bom-identifiers.md ||
+    fail "run BOM docs do not point to the transaction contract"
+  grep -Fq "0004 Run transaction, rollback, and replay contracts" docs/decisions/README.md ||
+    fail "decision log index does not list the transaction contract"
+  grep -Fq "run transaction, rollback, and replay contract" change_notes_2026.md ||
+    fail "change notes do not record the transaction contract"
+}
+
 check_schema_compatibility_contract() {
   local term
   local -a required_terms
@@ -8129,6 +8180,7 @@ run_check authority_control_docs_contract check_authority_control_docs_contract
 run_check policy_decisions_contract check_policy_decisions_contract
 run_check schema_gated_airlock_docs_contract check_schema_gated_airlock_docs_contract
 run_check run_bom_identifier_contract check_run_bom_identifier_contract
+run_check run_transaction_contract check_run_transaction_contract
 run_check schema_compatibility_contract check_schema_compatibility_contract
 run_check threat_model_doctrine_contract check_threat_model_doctrine_contract
 run_check preservation_policy_contract check_preservation_policy_contract

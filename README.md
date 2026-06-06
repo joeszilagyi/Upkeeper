@@ -41,6 +41,10 @@ The run bill-of-materials and stable local identifier namespace in
 `docs/run-bom-identifiers.md` defines `upk:` references for cycles, runs,
 targets, prompts, backups, artifacts, validation, and config records so future
 tools can link evidence without scraping raw logs or exposing local paths.
+The run transaction, rollback, and replay contract in
+`docs/decisions/0004-run-transaction-contracts.md` defines the bounded
+lifecycle for one cycle plus the read-only `explain`, `replay`,
+`reproduce-selection`, `verify-backup`, and `verify-diff` helper contracts.
 The source-rights contract in `docs/source-rights-metadata.md` defines the
 sensitivity labels and rights fields that decide whether OSINT and citation
 sources may enter prompts, exports, archives, or public evidence packets.

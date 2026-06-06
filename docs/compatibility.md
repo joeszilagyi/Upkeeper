@@ -57,6 +57,11 @@ Schema and contract versions are compatibility boundaries, not decoration:
   `docs/run-bom-identifiers.md`. Once emitted by runtime tooling, the section
   names, field meanings, identifier kind names, and identifier segment order are
   stable within schema version 1.
+- Run transaction contract records and the helper-command vocabulary in
+  `docs/decisions/0004-run-transaction-contracts.md` are governed by the same
+  compatibility discipline. Once runtime tooling emits transaction records, the
+  schema version, lifecycle stage names, resolution enums, and `upk:` reference
+  meanings are stable within schema version 1.
 - Runtime BOM exports must preserve the `upk:` namespace grammar and avoid raw
   path, secret, issue-body, prompt, transcript, or command text in identifier
   segments.

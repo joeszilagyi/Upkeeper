@@ -25,3 +25,6 @@ Each decision should include:
 - [0003 Schema-gated typed-signal airlocks](0003-schema-gated-airlocks.md):
   accepted vocabulary and implementation sequence for turning raw evidence
   into validated records before it can drive wrapper authority.
+- [0004 Run transaction, rollback, and replay contracts](0004-run-transaction-contracts.md):
+  accepted lifecycle and helper-command contract for one cycle as a bounded
+  transaction with read-only explain/replay helpers.

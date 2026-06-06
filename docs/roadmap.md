@@ -26,6 +26,9 @@ Use it to keep release direction visible without relying on chat history.
   draft blocks.
 - Add a private local run BOM exporter that emits the schema-v1 shape from
   `docs/run-bom-identifiers.md` without exposing raw paths or transcripts.
+- Add local transaction explanation, replay, selection-reproduction, backup
+  verification, and diff-verification helpers that follow
+  `docs/decisions/0004-run-transaction-contracts.md`.
 - Build a live parallel backlog-worker supervisor on the accepted local lease
   primitive, including isolated worktree creation, independent PRs, remote
   visibility, quota sharing, and cleanup.

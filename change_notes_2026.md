@@ -5,6 +5,11 @@
 	2. GitHub Actions now uses the low-risk classification to keep those edits on the shared local gates while still sending higher-risk changes through the full validator.
 	3. Backlog validation authority and effort sizing now recognize the broader low-risk lane so operator output and PR gating stay consistent with the new CI split.
 
+2026-06-05: run transaction, rollback, and replay contract:
+	1. `docs/decisions/0004-run-transaction-contracts.md` now defines the bounded transaction lifecycle for one cycle plus the read-only `explain`, `replay`, `reproduce-selection`, `verify-backup`, and `verify-diff` helper contracts.
+	2. README, authority, run BOM, compatibility, and roadmap now point at the transaction contract so the lifecycle vocabulary stays discoverable alongside the existing run BOM namespace.
+	3. Quick validation now preserves the new decision-file contract and its cross-links so future replay and verification helpers do not drift out of the public-doc surface.
+
 Version numbering note:
 	1. This file records committed Upkeeper wrapper states from v1.0.0 forward.
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.

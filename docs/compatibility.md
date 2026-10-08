@@ -491,6 +491,10 @@ Future changes should preserve this operator-visible surface as far as possible:
 - `--max-cover` may ask Lattice to rank a broader current tracked text-file
   pool, but final selection still revalidates the live source-safe boundary in
   the same cycle.
+- Opt-in worktree snapshot rows keep path and old-path fields HMAC-only. A row
+  may retain an existing opaque `files.file_id` so delta events for a known file
+  remain attributable; unknown dirty paths are not promoted into the raw
+  `files` or `file_paths` inventory.
 - `--bug-report-only` is a no-fix mode. It must not edit or touch tracked
   source, and the wrapper must fail the cycle if the source mutation
   fingerprint changes during a non-dry-run bug-report-only cycle.

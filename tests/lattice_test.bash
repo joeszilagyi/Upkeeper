@@ -1207,6 +1207,7 @@ test_worktree_snapshot_marks_existing_deleted_file_state() {
   rm "$repo/gone.sh"
   lattice record-worktree-snapshot --snapshot-kind deleted-state --worktree-untracked-files normal >"$TEST_TMP_ROOT/deleted-state-snapshot.json"
   assert_sql_value "deleted" "select current_state from files where canonical_path='gone.sh'"
+  assert_sql_value "1" "select count(*) from worktree_snapshot_paths p join worktree_snapshots s on s.worktree_snapshot_id=p.worktree_snapshot_id join files f on f.file_id=p.file_id where s.snapshot_kind='deleted-state' and f.canonical_path='gone.sh' and p.path like 'path-hmac-sha256:%' and p.path_hmac=p.path"
 }
 
 test_no_git_import_and_recovery() {

@@ -6635,7 +6635,7 @@ def record_worktree_snapshot(
             """,
             (
                 snapshot_id,
-                None,
+                existing_file_id,
                 stored_path,
                 stored_path_hmac,
                 worktree_snapshot_path_class(status_code),
@@ -8129,6 +8129,7 @@ def probe_worktree_snapshot_path_round_trip() -> dict[str, Any]:
                     raw_storage_mode="minimal",
                 )
                 cycle_pk = ensure_cycle(conn, repo_id, "cycle-worktree-paths", "run-worktree-paths", source_id=source_id)
+                known_file_id = ensure_file_identity(conn, repo_id, "a.py", source_id=source_id)
                 target.write_text("print('middle')\n", encoding="utf-8")
                 before_snapshot_id = record_worktree_snapshot(
                     conn,
@@ -8161,7 +8162,7 @@ def probe_worktree_snapshot_path_round_trip() -> dict[str, Any]:
                 expected_hmac = stored_target
                 before_row = conn.execute(
                     """
-                    select path, path_hmac, status
+                    select file_id, path, path_hmac, status
                     from worktree_snapshot_paths
                     where worktree_snapshot_id=?
                     order by worktree_snapshot_path_id
@@ -8179,7 +8180,7 @@ def probe_worktree_snapshot_path_round_trip() -> dict[str, Any]:
                 )
                 changed_event = conn.execute(
                     """
-                    select path
+                    select file_id, path
                     from file_events
                     where repo_id=? and cycle_pk=? and event_kind='changed'
                     order by event_id desc
@@ -8199,20 +8200,25 @@ def probe_worktree_snapshot_path_round_trip() -> dict[str, Any]:
     return {
         "before_snapshot_path": before_row["path"] if before_row else None,
         "before_snapshot_path_hmac": before_row["path_hmac"] if before_row else None,
+        "before_snapshot_file_id": before_row["file_id"] if before_row else None,
         "before_snapshot_status": before_row["status"] if before_row else None,
         "expected_path": stored_target,
         "expected_path_hmac": expected_hmac,
         "round_trip_row_found": round_trip_row is not None,
         "changed_event_path": changed_event["path"] if changed_event else None,
+        "changed_event_file_id": changed_event["file_id"] if changed_event else None,
+        "known_file_id": known_file_id,
         "hashed_file_rows": hashed_file_rows,
         "ok": all(
             (
                 before_row is not None,
                 before_row["path"] == stored_target,
                 before_row["path_hmac"] == expected_hmac,
+                before_row["file_id"] == known_file_id,
                 round_trip_row is not None,
                 changed_event is not None,
                 changed_event["path"] == stored_target,
+                changed_event["file_id"] == known_file_id,
                 hashed_file_rows == 0,
             )
         ),
@@ -8309,14 +8315,19 @@ def probe_worktree_snapshot_deleted_file_state() -> dict[str, Any]:
     deleted_status = str(deleted_snapshot_row["status"]) if deleted_snapshot_row is not None else None
     deleted_snapshot_file_id = int(deleted_snapshot_row["file_id"]) if deleted_snapshot_row and deleted_snapshot_row["file_id"] is not None else None
     current_file_id = int(file_row["file_id"]) if file_row is not None else None
-    snapshot_file_id_private = deleted_snapshot_row is not None and deleted_snapshot_file_id is None
+    snapshot_file_id_matches = (
+        deleted_snapshot_file_id is not None
+        and current_file_id is not None
+        and deleted_snapshot_file_id == current_file_id
+    )
     return {
         "before_state": before_state,
         "after_state": after_state,
         "snapshot_status": deleted_status,
         "snapshot_path": deleted_path,
         "snapshot_path_matched": deleted_path != "" and deleted_snapshot_row is not None,
-        "snapshot_file_id_private": snapshot_file_id_private,
+        "snapshot_file_id_private": deleted_snapshot_row is not None and deleted_snapshot_file_id is None,
+        "snapshot_file_id_matches": snapshot_file_id_matches,
         "current_file_id_present": current_file_id is not None,
         "ok": all(
             (
@@ -8324,7 +8335,7 @@ def probe_worktree_snapshot_deleted_file_state() -> dict[str, Any]:
                 deleted_status is not None and "D" in deleted_status,
                 deleted_snapshot_row is not None,
                 current_file_id is not None,
-                snapshot_file_id_private,
+                snapshot_file_id_matches,
             )
         ),
     }

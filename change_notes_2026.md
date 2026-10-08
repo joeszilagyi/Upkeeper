@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: known-file identity continuity in private worktree snapshots:
+	1. HMAC-only worktree snapshot rows now retain an existing `files.file_id`, so modified and deleted known files produce delta events tied to their established lineage instead of anonymous changes.
+	2. Snapshot path and rename fields remain HMAC-only, while previously unknown dirty paths remain unlinked and are not inserted into the raw `files` or `file_paths` inventory.
+	3. Full-doctor and focused CLI regressions verify both attributed changed/deleted events and the unchanged path-privacy boundary.
+
 2026-10-08: retryable Lattice cycle-finish persistence:
 	1. The finish-recorded guard is now set only after `record-cycle-finish` persists, so a failed DB write cannot suppress the terminal evidence repair path or masquerade as success.
 	2. An initial failure receives one bounded same-cycle retry; successful initial and retry writes emit distinct operator evidence while the success guard continues to prevent duplicates.

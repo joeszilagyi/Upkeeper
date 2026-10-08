@@ -265,8 +265,11 @@ facts are not deleted by default pruning.
 
 Worktree snapshots store dirty-path counts by default. Path-level snapshot
 inventory is opt-in and stores path HMACs plus coarse path classes instead of
-raw dirty or untracked filenames; those opt-in rows are not linked into the raw
-`files` or `file_paths` inventory.
+raw dirty or untracked filenames. When a path already has a known private
+`files.file_id`, the snapshot row preserves that opaque foreign key so changed
+and deleted events retain file-history attribution. Unknown paths remain
+unlinked, and snapshot collection does not add their raw names to `files` or
+`file_paths` merely to obtain an identity.
 
 ## Pass Counts
 

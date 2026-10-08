@@ -3,9 +3,30 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #664: Retryable Lattice Finish Persistence
+## Issue #690: Preserve Known File Identity in Lattice Snapshots
 
 Status: implemented locally; pending full validation and PR CI
+
+Goal:
+- retain an existing `files.file_id` on HMAC-only worktree snapshot rows
+- attribute changed and deleted delta events to the known file lineage
+- preserve the path privacy boundary for both known and unknown dirty paths
+
+Constraints:
+- never insert raw snapshot path identities merely to obtain a file id
+- keep snapshot `path`, `path_hmac`, and rename fields HMAC-only
+- leave previously unknown paths unlinked from `files` and `file_paths`
+- no live backend Codex validation
+
+Validation:
+- internal full-doctor probe for known modified-file snapshot and changed event
+- focused real-CLI deleted-file state and opaque foreign-key regression
+- complete six-group Lattice runner and unit suite
+- quick and full repository validation
+
+## Issue #664: Retryable Lattice Finish Persistence
+
+Status: complete; merged in PR #826
 
 Goal:
 - set the finish-recorded guard only after successful Lattice persistence

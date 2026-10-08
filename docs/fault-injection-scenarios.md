@@ -134,6 +134,7 @@ they are part of the local control-plane audit contract.
 | FI-021 | `lib/upkeeper/codex_io.bash` | Fake backend | fake `codex` exits zero with empty transcript and no final marker | `MISSING_STATUS_MARKER` | `3` | `run.finish` | yes | yes | `tools/validate_upkeeper.sh --full` | full | `surface:fake-backend,status:covered-by-full-validation,oracle:exit,oracle:log,oracle:recovery` | high | medium | medium | medium | medium |
 | FI-022 | `lib/upkeeper/active_lock.bash` | Active lock | stale owned active lock contains an unexpected child file | `DRY_RUN` | `0` | `active_lock.stale_quarantined` | yes | yes | `tools/validate_upkeeper.sh --full` | full | `surface:active-lock,status:covered-by-full-validation,oracle:exit,oracle:log,oracle:state,oracle:recovery` | high | medium | high | medium | medium |
 | FI-023 | `tools/check_upkeeper_log_invariants.py` | Wrapper health | wrapper log contains `cycle.start` without matching `cycle.exit` | `log_invariant_failed` | `1` | `cycle.start` | no | no | `tools/validate_upkeeper.sh --full` | full | `surface:wrapper-health,status:covered-by-full-validation,oracle:log` | high | medium | high | low | medium |
+| FI-024 | `lib/upkeeper/active_lock.bash` | Active lock | multiple wrappers race to reclaim the same stale lock | `reclaim_lost` | `7` for losers | `active_lock.reclaim_lost` | yes | yes | `bash tests/active_lock_reclaim_race_test.bash` | quick | `surface:active-lock,status:covered-by-quick-validation,oracle:exit,oracle:log,oracle:state,oracle:concurrency` | critical | medium | high | medium | high |
 
 ## Implemented Local Scenarios
 
@@ -159,6 +160,10 @@ one stays local and no-quota.
 - `FI-023`: Injection run feeds the reusable log-invariant checker a log with
   `cycle.start` but no `cycle.exit`, and expects the checker to fail closed.
   Oracle classes: `log`.
+- `FI-024`: Injection run releases twelve local workers against one stale lock.
+  The atomic reclaim guard permits exactly one owner; losing reclaimers fail
+  closed with `reclaim_lost`, and the winner releases both lock and guard.
+  Oracle classes: `exit`, `log`, `state`, and `concurrency`.
 
 ## Lattice Import Naming
 

@@ -5629,6 +5629,16 @@ check_active_lock_incomplete_guard() {
   rm -r "$temp_dir"
 }
 
+check_active_lock_reclaim_race() {
+  log "checking serialized active-lock stale reclaim"
+  bash tests/active_lock_reclaim_race_test.bash
+
+  grep -Fq 'active_lock.reclaim_lost' Upkeeper ||
+    fail "runtime active-lock override missing reclaim-lost evidence"
+  grep -Fq 'reason=reclaim_lost reclaim_reason=reclaim_guard_held' Upkeeper ||
+    fail "runtime active-lock override missing fail-closed reclaim result"
+}
+
 check_quota_fallback_exit_contract() {
   local temp_dir rc
 
@@ -6746,6 +6756,7 @@ EOF
     CODEX_TERMINAL_VERBOSITY=full
     CYCLE_ID="validation-genie"
     CYCLE_RUN_HASH="validationhashgenie"
+    CODEX_MODEL_CONTACT_LEDGER="$temp_dir/model-contacts.jsonl"
     RUN_TMP_DIR=""
     RUN_GENIE_BIN_DIR=""
     RUN_GENIE_GH_CONFIG_DIR=""
@@ -6772,6 +6783,9 @@ EOF
   [[ "$rc" -eq 0 ]] || fail "Genie Protocol backend boundary fixture exited $rc"
   grep -Fq "GENIE_BOUNDARY_OK" "$transcript_file" || fail "Genie Protocol boundary fixture did not complete"
   grep -Fq "genie_protocol.ready broker=wrapper github_direct=blocked" "$temp_dir/Upkeeper.log" || fail "Genie Protocol boundary readiness was not logged"
+  [[ -s "$temp_dir/model-contacts.jsonl" ]] || fail "Genie Protocol fixture did not use its isolated model-contact ledger"
+  grep -Fq '"work_key":"cycle:validation-genie"' "$temp_dir/model-contacts.jsonl" ||
+    fail "Genie Protocol fixture ledger missing its fake-backend contact"
 
   rm -r "$temp_dir"
 }
@@ -8440,6 +8454,7 @@ run_check process_control_guards check_process_control_guards
 run_check prior_run_anomaly_custody_contract check_prior_run_anomaly_custody_contract
 run_check breadcrumb_audit_contract check_breadcrumb_audit_contract
 run_check control_plane_audit_contract check_control_plane_audit_contract
+run_bounded_check active_lock_reclaim_race "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_active_lock_reclaim_race
 run_check lattice_custody_policy_contract check_lattice_custody_policy_contract
 run_check automation_obligation_root_boundary_contract check_automation_obligation_root_boundary_contract
 run_check automation_obligation_reconciliation_contract check_automation_obligation_reconciliation_contract

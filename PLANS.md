@@ -3,6 +3,30 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issues #713-#714: Same-Checkout Test Attestation Reuse
+
+Status: implementation in progress
+
+Goal:
+- stop the sequential CI full-validator phase from rerunning test scripts that
+  already passed in the same checkout and environment
+- bind reuse to Git head/tree, a clean tracked tree, environment class, exact
+  test path and content hash, and passing status
+- preserve standalone full validation by rerunning whenever evidence is absent
+  or mismatched
+
+Constraints:
+- fail closed on stale, dirty, malformed, cross-environment, or changed-test
+  evidence
+- keep attestations in runner-local ignored/transient storage
+- no live backend Codex validation
+
+Validation:
+- focused attestation acceptance/rejection test
+- complete unit suite
+- quick and full validators both with and without a valid attestation
+- GitHub CI timing comparison against PR #820
+
 ## Issue #726: Structured Full-Validation Timing
 
 Status: completed locally; pending PR CI

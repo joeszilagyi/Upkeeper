@@ -379,6 +379,10 @@ stable path. Each row binds a check to the mode, Git head/tree, command, status,
 duration, timeout, and cleanup result. Add `--profile` to print those details
 for every check. Full runs print the ten slowest checks even on failure, and CI
 uploads the JSONL artifact for later comparison without changing coverage.
+In sequential CI phases, `tools/run_tests.sh` also writes a runner-local test
+attestation. Full validation reuses an individual passing test only when the
+Git head/tree, tracked-worktree state, environment class, test path, and test
+content hash all still match; standalone and mismatched runs execute normally.
 The full validation mode remains the broad deterministic local integration gate
 without real backend Codex work. It runs bounded Upkeeper dry-run startup
 checks under validator-owned quota/cooldown bypasses, then uses a local fake

@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: same-checkout unit-test attestation reuse:
+	1. Successful `tools/run_tests.sh` runs can now publish a private JSON attestation keyed by Git head/tree, environment class, and every passing test file hash.
+	2. A later full-validator phase rehashes and reuses identical passing test scripts only when the tracked tree and all metadata still match; missing, changed, dirty, or cross-environment evidence fails closed to normal reruns.
+	3. GitHub CI passes the attestation between its sequential unit-test and full-validation phases, removing repeated test-script execution without weakening standalone full validation.
+
 2026-10-08: structured full-validation timing evidence:
 	1. Every validator run now writes `upkeeper.validation-timing.v1` JSONL records keyed by mode, Git head/tree, check command, status, exit code, duration, timeout, and cleanup result.
 	2. Bounded checks now terminate and report the full spawned process tree on timeout, while full validation prints its ten slowest checks even when a check fails.

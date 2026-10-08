@@ -489,6 +489,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   write schema `upkeeper.validation-timing.v1` JSONL evidence keyed by Git
   head/tree and check command; `UPKEEPER_VALIDATION_TIMING_FILE` selects a
   stable artifact path for CI or other automation.
+- Sequential CI validation phases may exchange schema
+  `upkeeper.test-attestation.v1` through
+  `UPKEEPER_TEST_ATTESTATION_FILE`. Reuse requires the same Git head/tree,
+  clean tracked state, environment class, passing status, and exact test blob;
+  standalone or mismatched runs retain normal execution.
 - Merge-steward cleanup for already-green backlog PRs remains local and
   no-backend. `tools/backlog_merge_steward.py` emits `merge_ready=yes|no`, a
   reason, and a next action, refuses unsafe PR/check/worktree states, and uses

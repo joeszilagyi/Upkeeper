@@ -1161,6 +1161,10 @@ prompts, backup log lines, or Lattice preselect evidence.
   Git head/tree, command, status, duration, timeout, and timeout-cleanup result.
   Add `--profile` to print each row's timing in the terminal; full runs always
   print a ten-check slowest summary, and CI retains the JSONL artifact. Full
+  validation may reuse same-checkout `tools/run_tests.sh` evidence supplied by
+  `UPKEEPER_TEST_ATTESTATION_FILE`, but only after matching Git head/tree, a
+  clean tracked tree, environment class, and every recorded test hash. Missing
+  or mismatched evidence is logged and rerun normally. Full
   validation uses bounded dry-runs under
   validator-owned quota/cooldown bypasses plus a local fake `codex` binary; it
   does not launch real backend work, and quota-specific contract tests use their

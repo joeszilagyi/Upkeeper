@@ -6,6 +6,7 @@ TOOLS_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 ROOT_DIR="$(cd -- "$TOOLS_DIR/.." && pwd)"
 UPKEEPER_IMPLEMENTATION_DIR="$ROOT_DIR"
 source "$ROOT_DIR/lib/upkeeper/review_modules.bash"
+source "$ROOT_DIR/tools/validation_timing_lib.bash"
 
 MODE="quick"
 VALIDATION_PROFILE="0"
@@ -85,7 +86,12 @@ Modes:
             local stress corpus, and failure paths.
 
 Flags:
-  --profile Print elapsed time for each validation check.
+  --profile Print detailed status, elapsed time, timeout, and cleanup evidence
+            for each validation check. Every run writes a JSONL timing artifact
+            even when this flag is omitted.
+
+Timing artifacts default to runtime/validation-timing/. Override the path with
+UPKEEPER_VALIDATION_TIMING_FILE. Full runs always print a slowest-check summary.
 
 No mode launches a real Codex backend task. Full mode uses UPKEEPER_DRY_RUN=1
 plus a local fake codex binary for launch/capture failure checks.
@@ -99,62 +105,6 @@ log() {
 fail() {
   printf 'validate_upkeeper: ERROR: %s\n' "$*" >&2
   exit 1
-}
-
-validation_now_us() {
-  local now="${EPOCHREALTIME:-}"
-  if [[ -n "$now" ]]; then
-    printf '%s\n' "${now/./}"
-    return 0
-  fi
-  date +%s%6N
-}
-
-validation_run_check() {
-  local name="$1"
-  local timeout_seconds="$2"
-  shift
-  shift
-  local start_us end_us elapsed_us
-  local pid rc elapsed
-
-  if [[ "$VALIDATION_PROFILE" == "1" ]]; then
-    start_us="$(validation_now_us)"
-  fi
-
-  if [[ "$timeout_seconds" =~ ^[0-9]+$ && "$timeout_seconds" -gt 0 ]]; then
-    set +e
-    "$@" &
-    pid=$!
-    elapsed=0
-    while kill -0 "$pid" 2>/dev/null; do
-      if ((elapsed >= timeout_seconds)); then
-        kill "$pid" 2>/dev/null || true
-        sleep 1
-        kill -KILL "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
-        set -e
-        fail "check $name exceeded ${timeout_seconds}s timeout"
-      fi
-      sleep 1
-      elapsed=$((elapsed + 1))
-    done
-    wait "$pid"
-    rc=$?
-    set -e
-    if [[ "$rc" -ne 0 ]]; then
-      return "$rc"
-    fi
-  else
-    "$@"
-  fi
-
-  if [[ "$VALIDATION_PROFILE" == "1" ]]; then
-    end_us="$(validation_now_us)"
-    elapsed_us=$((end_us - start_us))
-    printf 'validate_upkeeper: timing check=%s elapsed=%d.%03ds\n' \
-      "$name" "$((elapsed_us / 1000000))" "$(((elapsed_us % 1000000) / 1000))"
-  fi
 }
 
 run_check() {
@@ -208,10 +158,32 @@ done
 
 cd "$ROOT_DIR"
 
+VALIDATION_TMP_ROOT=""
+VALIDATION_ACTIVE_LOCK_ROOT=""
+validation_timing_initialize \
+  "$MODE" \
+  "$ROOT_DIR" \
+  "${UPKEEPER_VALIDATION_TIMING_FILE:-}" \
+  "$VALIDATION_PROFILE"
+
+validation_exit_handler() {
+  local exit_code=$?
+  trap - EXIT
+  validation_timing_finish "$exit_code" || true
+  validation_timing_print_summary 10 || true
+  if [[ -n "$VALIDATION_TMP_ROOT" ]]; then
+    rm -r "$VALIDATION_TMP_ROOT" 2>/dev/null || true
+  fi
+  if [[ -n "$VALIDATION_ACTIVE_LOCK_ROOT" ]]; then
+    rm -r "$VALIDATION_ACTIVE_LOCK_ROOT" 2>/dev/null || true
+  fi
+  exit "$exit_code"
+}
+trap validation_exit_handler EXIT
+
 VALIDATION_TMP_ROOT="$(mktemp -d /tmp/upkeeper-validate.XXXXXX)"
 VALIDATION_ACTIVE_LOCK_TOKEN="upkeeper-validate-active-locks/${VALIDATION_TMP_ROOT##*/}.$$"
 VALIDATION_ACTIVE_LOCK_ROOT="$ROOT_DIR/runtime/$VALIDATION_ACTIVE_LOCK_TOKEN"
-trap 'rm -r "$VALIDATION_TMP_ROOT" "$VALIDATION_ACTIVE_LOCK_ROOT" 2>/dev/null || true' EXIT
 export CODEX_POSTMORTEM_DIR="$VALIDATION_TMP_ROOT/postmortems"
 export UPKEEPER_PRECONTACT_BACKUP_ROOT="$VALIDATION_TMP_ROOT/precontact-vault"
 export UPKEEPER_AUTOMATION_LEDGER_DIR="$VALIDATION_TMP_ROOT/automation-ledger"
@@ -375,9 +347,16 @@ require_supported_platform() {
 
 require_commands() {
   local command_name
-  for command_name in bash chmod cp date diff find git grep jq ln mkdir mktemp python3 rm sed sort touch tr uname wc; do
+  for command_name in bash chmod cp date diff find git grep jq ln mkdir mktemp ps python3 rm sed sleep sort touch tr uname wc; do
     require_command "$command_name"
   done
+}
+
+check_validation_dependencies() {
+  if [[ "$MODE" != "deps" ]]; then
+    require_supported_platform
+  fi
+  require_commands
 }
 
 dependency_status_line() {
@@ -8371,11 +8350,7 @@ check_stress_corpus_harness() {
   tools/stress_upkeeper_corpus.sh --local
 }
 
-if [[ "$MODE" != "deps" ]]; then
-  require_supported_platform
-fi
-
-require_commands
+run_check dependency_preflight check_validation_dependencies
 if [[ "$MODE" == "deps" ]]; then
   check_dependencies
   log "dependency validation passed"
@@ -8473,11 +8448,14 @@ run_check backlog_autoshelve_contract check_backlog_autoshelve_contract
 run_bounded_check backend_usage_limit_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_backend_usage_limit_contract
 
 if [[ "$MODE" == "smoke" ]]; then
+  validation_timing_record_skip integration_checks mode_smoke tools/validate_upkeeper.sh --quick
+  validation_timing_record_skip full_only_checks mode_smoke tools/validate_upkeeper.sh --full
   log "$MODE validation passed"
   exit 0
 fi
 
 if [[ "$MODE" == "quick" ]]; then
+  validation_timing_record_skip integration_checks mode_quick tools/validate_upkeeper.sh --full
   log "$MODE validation passed"
   exit 0
 fi

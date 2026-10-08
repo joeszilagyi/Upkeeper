@@ -87,7 +87,7 @@ process_fingerprint_alive() {
 release_active_lock() {
   [[ "${ACTIVE_LOCK_ACQUIRED:-0}" == "1" ]] || return 0
   [[ -n "$CODEX_ACTIVE_LOCK_DIR" ]] || return 0
-  rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state.tmp.$$" 2>/dev/null || true
+  rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state.tmp.${BASHPID:-$$}" 2>/dev/null || true
   rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state" 2>/dev/null || true
   if declare -F upkeeper_active_lock_marker_path >/dev/null 2>&1; then
     rm -f -- "$(upkeeper_active_lock_marker_path "$CODEX_ACTIVE_LOCK_DIR")" 2>/dev/null || true
@@ -102,6 +102,7 @@ acquire_active_lock_or_exit() {
   local lock_age_seconds lock_parent owner_pid owner_start owner_boot owner_cycle owner_run_hash owner_token fallback_inherit_fail state_file state_tmp
   local fallback_parent_pid fallback_parent_start token_fd child_token child_token_hash
   local reclaim_guard reclaim_instance_before reclaim_instance_after
+  local reclaim_guard_held="0"
   local incomplete_lock_grace_seconds="30"
   if [[ -z "$CODEX_ACTIVE_LOCK_DIR" || "$CODEX_ACTIVE_LOCK_DIR" == "/" ]]; then
     log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=unsafe_lock_path"
@@ -198,6 +199,7 @@ acquire_active_lock_or_exit() {
       log_line "WARN" "active_lock.reclaim_lost path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=reclaim_guard_held action=exit"
       finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 reason=reclaim_lost reclaim_reason=reclaim_guard_held"
     fi
+    reclaim_guard_held="1"
     reclaim_instance_after="$(active_lock_instance_id "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null || true)"
     owner_pid="$(active_lock_field pid || true)"
     owner_start="$(active_lock_field wrapper_start || true)"
@@ -225,16 +227,10 @@ acquire_active_lock_or_exit() {
       finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=reclaim_mkdir_failed"
     fi
     ACTIVE_LOCK_ACQUIRED="1"
-    if ! release_active_lock_reclaim_guard "$reclaim_guard"; then
-      rmdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null || true
-      ACTIVE_LOCK_ACQUIRED="0"
-      log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=reclaim_guard_release_failed"
-      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=reclaim_guard_release_failed"
-    fi
   fi
 
   state_file="$CODEX_ACTIVE_LOCK_DIR/state"
-  state_tmp="$CODEX_ACTIVE_LOCK_DIR/state.tmp.$$"
+  state_tmp="$CODEX_ACTIVE_LOCK_DIR/state.tmp.${BASHPID:-$$}"
   if ! {
     printf 'cycle_id=%s\n' "$CYCLE_ID"
     printf 'run_hash=%s\n' "$CYCLE_RUN_HASH"
@@ -248,14 +244,31 @@ acquire_active_lock_or_exit() {
   } >"$state_tmp"; then
     rm -f -- "$state_tmp" 2>/dev/null || true
     release_active_lock
+    if [[ "$reclaim_guard_held" == "1" ]]; then
+      release_active_lock_reclaim_guard "$reclaim_guard" || true
+      reclaim_guard_held="0"
+    fi
     log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=state_write_failed"
     finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=state_write_failed"
   fi
   if ! mv -f -- "$state_tmp" "$state_file"; then
     rm -f -- "$state_tmp" 2>/dev/null || true
     release_active_lock
+    if [[ "$reclaim_guard_held" == "1" ]]; then
+      release_active_lock_reclaim_guard "$reclaim_guard" || true
+      reclaim_guard_held="0"
+    fi
     log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=state_rename_failed"
     finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=state_rename_failed"
+  fi
+
+  if [[ "$reclaim_guard_held" == "1" ]]; then
+    if ! release_active_lock_reclaim_guard "$reclaim_guard"; then
+      release_active_lock
+      log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=reclaim_guard_release_failed"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=reclaim_guard_release_failed"
+    fi
+    reclaim_guard_held="0"
   fi
 
   log_line "INFO" "active_lock.acquired path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR")"

@@ -1,5 +1,16 @@
 # 2026 Change Notes
 
+2026-10-08: structured full-validation timing evidence:
+	1. Every validator run now writes `upkeeper.validation-timing.v1` JSONL records keyed by mode, Git head/tree, check command, status, exit code, duration, timeout, and cleanup result.
+	2. Bounded checks now terminate and report the full spawned process tree on timeout, while full validation prints its ten slowest checks even when a check fails.
+	3. GitHub CI enables detailed timing output and uploads the machine-readable full-validation timing artifact so subsequent backlog optimization is based on current blocking-path evidence.
+	4. Deterministic tests cover timing records for passing, failing, timed-out, mode-skipped, and early dependency-failure paths without backend Codex work.
+
+2026-10-08: complete active-lock reclaim publication custody:
+	1. A stale-lock reclaim winner now retains the sibling reclaim guard until the replacement state and production ownership marker have been published, closing the scheduler window in which another reclaimer could replace an incomplete new lock.
+	2. Active-lock temporary state names use the current Bash process identity when available, and state/marker failure paths clean up both replacement ownership and reclaim custody.
+	3. The twelve-process race fixture now explicitly fails if a winner releases reclaim custody before publishing its state, in addition to repeated and parallel contention coverage.
+
 2026-10-08: repeated full-validation contact-ledger isolation:
 	1. The Genie Protocol fake-backend fixture now writes model-contact evidence to its temporary fixture directory instead of the repository runtime ledger, so repeated full validation cannot exhaust the normal contact budget.
 	2. Full validation asserts that the isolated ledger contains the expected fake `validation-genie` contact.

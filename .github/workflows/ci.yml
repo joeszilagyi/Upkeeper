@@ -81,4 +81,14 @@ jobs:
 
       - name: Full validation
         if: steps.scope.outputs.low_risk != '1'
-        run: tools/validate_upkeeper.sh --full
+        env:
+          UPKEEPER_VALIDATION_TIMING_FILE: ${{ runner.temp }}/upkeeper-validation-timing.jsonl
+        run: tools/validate_upkeeper.sh --full --profile
+
+      - name: Upload full-validation timings
+        if: always() && steps.scope.outputs.low_risk != '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-timing-${{ github.job }}
+          path: ${{ runner.temp }}/upkeeper-validation-timing.jsonl
+          if-no-files-found: ignore

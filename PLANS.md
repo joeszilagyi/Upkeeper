@@ -3,9 +3,9 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issues #713-#714: Same-Checkout Test Attestation Reuse
+## Issue #713: Same-Checkout Test Attestation Reuse
 
-Status: implementation in progress
+Status: completed locally; pending PR CI
 
 Goal:
 - stop the sequential CI full-validator phase from rerunning test scripts that
@@ -22,10 +22,20 @@ Constraints:
 - no live backend Codex validation
 
 Validation:
-- focused attestation acceptance/rejection test
-- complete unit suite
-- quick and full validators both with and without a valid attestation
-- GitHub CI timing comparison against PR #820
+- focused attestation acceptance/rejection test, including dirty-tree and
+  cross-environment rejection
+- complete 46-test unit suite and clean-tree attestation production
+- quick and full validators with a valid attestation; absent or rejected
+  evidence retains the existing rerun path
+- GitHub CI comparison against PR #820's retained timing artifact
+
+Measured local result:
+- quick and full validation accepted the same clean-tree 46-test attestation
+  and logged each reused test explicitly
+- full validation passed; `file_manifest_selection` remained the dominant
+  integration check at 360.919s despite reusing its three eligible unit tests
+- issue #714 was separately closed as stale: the current focused Lattice
+  contract no longer reruns `tests/lattice_test.bash`
 
 ## Issue #726: Structured Full-Validation Timing
 

@@ -128,6 +128,17 @@ timeout falls back deterministically to the oldest current source-safe text
 candidate only in optional mode. Plain explicit CLI invocations made directly
 by an operator are outside the wrapper timeout policy.
 
+Cycle-finish persistence uses a success-only idempotency guard. If the first
+`record-cycle-finish` write fails, Upkeeper reports
+`lattice.finish.retry attempt=2` and makes one bounded retry. A successful first
+or retry write reports `lattice.finish.persisted`, sets the in-memory guard, and
+prevents duplicate successful writes. If both attempts fail, the guard remains
+unset and Upkeeper reports `lattice.finish.spooled` after atomically publishing a
+mode-0600 `upkeeper.lattice-finish-retry.v1` payload beneath
+`runtime/upkeeper-lattice/recovery/finish-retry/`. The payload retains the exact
+`record-cycle-finish` arguments for local replay/recovery; a later successful
+same-process call clears the matching pending payload.
+
 Normal cycle startup invokes `doctor --fast`. This startup mode opens the DB,
 proves a rollback-able write transaction, verifies foreign-key enforcement,
 schema versions, and required tables/indexes, then reports

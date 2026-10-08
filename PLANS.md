@@ -3,9 +3,31 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #663: Bounded Lattice Commands and Max-Cover Selection
+## Issue #664: Retryable Lattice Finish Persistence
 
 Status: implemented locally; pending full validation and PR CI
+
+Goal:
+- set the finish-recorded guard only after successful Lattice persistence
+- retry one transient finish failure inside the terminal cycle boundary
+- retain exact private replay custody if both bounded writes fail
+
+Constraints:
+- never duplicate a successful finish write
+- keep failed or spooled finish state distinguishable from persisted state
+- atomically publish private retry payloads beneath ignored runtime state
+- report initial persistence, retry persistence, spooling, and spool failure
+- no live backend Codex validation
+
+Validation:
+- injected first-failure/second-success retry and duplicate suppression
+- persistent two-write failure, payload schema/privacy, and later-spool cleanup
+- complete six-group Lattice runner and unit suite
+- quick and full repository validation
+
+## Issue #663: Bounded Lattice Commands and Max-Cover Selection
+
+Status: complete; merged in PR #825
 
 Goal:
 - bound every wrapper-issued warm-service and direct-CLI Lattice command

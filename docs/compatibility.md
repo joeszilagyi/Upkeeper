@@ -267,7 +267,7 @@ Future changes should preserve this operator-visible surface as far as possible:
   or compatibility investigations.
 - Focused Lattice validation uses `tools/run_lattice_tests.sh` to preserve the
   complete core, CLI/full-doctor, wrapper-policy, evidence/recovery, and
-  command-timeout surface.
+  command-timeout and finish-retry surfaces.
   The groups may run independently and share an imported core for ordinary
   assertions, but executable, stream, environment, parser, and failure-exit
   compatibility remains covered through real subprocess calls.
@@ -458,6 +458,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   deterministic max-cover fallback; required timeouts fail closed as
   `LATTICE_TIMEOUT` before backend contact. Direct operator CLI invocations
   remain outside this wrapper compatibility boundary.
+- `record-cycle-finish` uses a success-only duplicate guard and one bounded
+  same-cycle retry. Two failed writes retain a private atomic
+  `upkeeper.lattice-finish-retry.v1` payload under ignored runtime recovery
+  state; a later successful call clears that payload and then suppresses
+  duplicate successful finish writes.
 - For audit, breadcrumb, anomaly, and automation-obligation custody, Lattice is
   supporting evidence, not sole custody authority, until the tracked Lattice
   integrity blockers are closed. Lattice-derived custody decisions must keep a

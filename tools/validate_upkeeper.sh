@@ -2327,6 +2327,12 @@ check_lattice_custody_policy_contract() {
     fail "required Lattice timeout does not fail closed with explicit custody"
   [[ -s tests/lattice_timeout_test.bash ]] ||
     fail "Lattice command-timeout regression is missing"
+  grep -Fq 'lattice.finish.persisted attempt=retry' lib/upkeeper/lattice.bash ||
+    fail "Lattice finish retry does not report successful persistence"
+  grep -Fq 'upkeeper.lattice-finish-retry.v1' lib/upkeeper/lattice.bash docs/lattice.md ||
+    fail "Lattice finish retry spool schema is undocumented or missing"
+  [[ -s tests/lattice_finish_retry_test.bash ]] ||
+    fail "Lattice finish retry regression is missing"
   grep -Fq 'service", help="serve multiple Lattice CLI commands in one warm process"' tools/upkeeper_lattice_core.py ||
     fail "Lattice CLI missing warm service subcommand"
   grep -Fq 'lattice.service.started' lib/upkeeper/lattice.bash ||
@@ -3731,6 +3737,7 @@ check_prompt_template() {
   [[ -s tests/lattice_wrapper_integration_test.bash ]] || fail "Lattice wrapper integration test is missing"
   [[ -s tests/lattice_evidence_test.bash ]] || fail "Lattice evidence test is missing"
   [[ -s tests/lattice_timeout_test.bash ]] || fail "Lattice timeout test is missing"
+  [[ -s tests/lattice_finish_retry_test.bash ]] || fail "Lattice finish retry test is missing"
   [[ -s tests/lib/lattice_inprocess_server.py ]] || fail "Lattice in-process test server is missing"
   [[ -s tests/precontact_backup_test.bash ]] || fail "pre-contact backup test is missing or empty"
   [[ -s docs/lattice.md ]] || fail "Lattice documentation is missing or empty"

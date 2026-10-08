@@ -680,6 +680,83 @@ lattice_planned_passes_csv() {
   printf '%s' "${passes[*]}"
 }
 
+lattice_finish_retry_dir() {
+  printf '%s/runtime/upkeeper-lattice/recovery/finish-retry\n' "$ROOT_DIR"
+}
+
+lattice_spool_finish_retry() {
+  local failure_detail="$1"
+  shift
+  local recovery_dir spool_path
+
+  recovery_dir="$(lattice_finish_retry_dir)"
+  mkdir -p "$recovery_dir" 2>/dev/null || return 1
+  chmod 700 "$ROOT_DIR/runtime/upkeeper-lattice" \
+    "$ROOT_DIR/runtime/upkeeper-lattice/recovery" "$recovery_dir" 2>/dev/null || true
+  spool_path="$(python3 - "$recovery_dir" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$failure_detail" "$@" <<'PY'
+import hashlib
+import json
+import os
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+recovery_dir = Path(sys.argv[1])
+cycle_id, run_hash, failure_detail = sys.argv[2:5]
+command_args = sys.argv[5:]
+identity = hashlib.sha256(f"{cycle_id}\0{run_hash}".encode("utf-8", errors="replace")).hexdigest()[:24]
+path = recovery_dir / f"finish-{identity}.json"
+payload = {
+    "schema": "upkeeper.lattice-finish-retry.v1",
+    "status": "pending",
+    "created_at_epoch": int(time.time()),
+    "cycle_id": cycle_id,
+    "run_hash": run_hash,
+    "command": "record-cycle-finish",
+    "command_args": command_args,
+    "attempt_count": 2,
+    "failure_detail": failure_detail,
+}
+fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=recovery_dir)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp_name, path)
+    directory_fd = os.open(recovery_dir, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+except Exception:
+    try:
+        os.unlink(temp_name)
+    except OSError:
+        pass
+    raise
+print(path)
+PY
+)" || return 1
+  [[ -n "$spool_path" && -f "$spool_path" ]] || return 1
+  UPKEEPER_LATTICE_FINISH_SPOOL_PATH="$spool_path"
+  printf '%s\n' "$spool_path"
+}
+
+lattice_clear_finish_retry_spool() {
+  local spool_path="${UPKEEPER_LATTICE_FINISH_SPOOL_PATH:-}"
+  local recovery_dir
+
+  [[ -n "$spool_path" ]] || return 0
+  recovery_dir="$(lattice_finish_retry_dir)"
+  [[ "$spool_path" == "$recovery_dir"/finish-*.json ]] || return 1
+  rm -f -- "$spool_path"
+  UPKEEPER_LATTICE_FINISH_SPOOL_PATH=""
+}
+
 lattice_record_cycle_finish() {
   local exit_code="$1"
   local reason="$2"
@@ -692,7 +769,6 @@ lattice_record_cycle_finish() {
   lattice_enabled || return 0
   [[ "${UPKEEPER_LATTICE_AVAILABLE:-0}" == "1" ]] || return 0
   [[ "${UPKEEPER_LATTICE_FINISH_RECORDED:-0}" != "1" ]] || return 0
-  UPKEEPER_LATTICE_FINISH_RECORDED="1"
 
   local -a args=(
     record-cycle-finish
@@ -722,7 +798,32 @@ lattice_record_cycle_finish() {
     args+=(--compiled-prompt-path "$RUN_COMPILED_PROMPT_FILE")
   fi
 
-  if ! lattice_run "${args[@]}"; then
-    lattice_warn_once "record_cycle_finish_failed" "${LATTICE_LAST_OUTPUT:-record_cycle_finish_failed}"
+  if lattice_run "${args[@]}"; then
+    UPKEEPER_LATTICE_FINISH_RECORDED="1"
+    lattice_clear_finish_retry_spool || true
+    log_line "INFO" "lattice.finish.persisted attempt=initial cycle=$(shell_quote "$CYCLE_ID") run_hash=$(shell_quote "$CYCLE_RUN_HASH")"
+    return 0
   fi
+
+  local first_failure="${LATTICE_LAST_OUTPUT:-record_cycle_finish_failed}"
+  log_line "WARN" "lattice.finish.retry attempt=2 reason=initial_write_failed cycle=$(shell_quote "$CYCLE_ID") run_hash=$(shell_quote "$CYCLE_RUN_HASH")"
+  if lattice_run "${args[@]}"; then
+    UPKEEPER_LATTICE_FINISH_RECORDED="1"
+    lattice_clear_finish_retry_spool || true
+    log_line "INFO" "lattice.finish.persisted attempt=retry cycle=$(shell_quote "$CYCLE_ID") run_hash=$(shell_quote "$CYCLE_RUN_HASH")"
+    return 0
+  fi
+
+  local retry_failure="${LATTICE_LAST_OUTPUT:-record_cycle_finish_retry_failed}"
+  local failure_summary spool_path
+  failure_summary="$(lattice_unavailable_detail_summary "$retry_failure")"
+  if spool_path="$(lattice_spool_finish_retry "$failure_summary" "${args[@]}")"; then
+    UPKEEPER_LATTICE_FINISH_SPOOL_PATH="$spool_path"
+    log_line "ERROR" "lattice.finish.spooled attempts=2 cycle=$(shell_quote "$CYCLE_ID") run_hash=$(shell_quote "$CYCLE_RUN_HASH") retry_path=$(shell_quote "$spool_path") action=retain_for_replay"
+  else
+    log_line "ERROR" "lattice.finish.spool_failed attempts=2 cycle=$(shell_quote "$CYCLE_ID") run_hash=$(shell_quote "$CYCLE_RUN_HASH") action=retain_local_log_evidence"
+  fi
+  lattice_warn_once "record_cycle_finish_failed" "$retry_failure"
+  LATTICE_LAST_OUTPUT="$first_failure; retry=$retry_failure"
+  return 1
 }

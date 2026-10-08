@@ -2333,6 +2333,14 @@ check_lattice_custody_policy_contract() {
     fail "Lattice finish retry spool schema is undocumented or missing"
   [[ -s tests/lattice_finish_retry_test.bash ]] ||
     fail "Lattice finish retry regression is missing"
+  grep -Fq 'snapshot_id,' tools/upkeeper_lattice_core.py ||
+    fail "Lattice worktree snapshot insertion is missing"
+  grep -Fq 'existing_file_id,' tools/upkeeper_lattice_core.py ||
+    fail "Lattice worktree snapshot does not retain known file identity"
+  grep -Fq 'changed_event["file_id"] == known_file_id' tools/upkeeper_lattice_core.py ||
+    fail "Lattice doctor lacks changed-event file identity regression"
+  grep -Fq "p.path like 'path-hmac-sha256:%'" tests/lattice_test.bash ||
+    fail "Lattice known-file snapshot regression does not retain HMAC-only paths"
   grep -Fq 'service", help="serve multiple Lattice CLI commands in one warm process"' tools/upkeeper_lattice_core.py ||
     fail "Lattice CLI missing warm service subcommand"
   grep -Fq 'lattice.service.started' lib/upkeeper/lattice.bash ||

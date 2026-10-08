@@ -239,6 +239,93 @@ lattice_service_enabled() {
   [[ "${UPKEEPER_LATTICE_SERVICE_ENABLED:-1}" == "1" ]]
 }
 
+lattice_command_timeout_seconds() {
+  local value="${UPKEEPER_LATTICE_COMMAND_TIMEOUT_SECONDS:-30}"
+  if [[ ! "$value" =~ ^[0-9]+$ || "$value" -lt 1 ]]; then
+    value=30
+  fi
+  printf '%s\n' "$value"
+}
+
+lattice_timeout_kill_after_seconds() {
+  local value="${UPKEEPER_LATTICE_TIMEOUT_KILL_AFTER_SECONDS:-2}"
+  if [[ ! "$value" =~ ^[0-9]+$ || "$value" -gt 30 ]]; then
+    value=2
+  fi
+  printf '%s\n' "$value"
+}
+
+lattice_command_kind() {
+  local value="${1:-unknown}"
+  if [[ "$value" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "unknown"
+  fi
+}
+
+lattice_timeout_detail() {
+  local command_kind transport timeout_seconds phase cleanup
+  command_kind="$(lattice_command_kind "${1:-unknown}")"
+  transport="$(lattice_command_kind "${2:-unknown}")"
+  timeout_seconds="${3:-$(lattice_command_timeout_seconds)}"
+  phase="$(lattice_command_kind "${4:-lattice_run}")"
+  cleanup="$(lattice_command_kind "${5:-process_tree_term_kill}")"
+  printf '{"status":"timeout","command":"%s","phase":"%s","transport":"%s","timeout_seconds":%s,"cleanup":"%s"}\n' \
+    "$command_kind" "$phase" "$transport" "$timeout_seconds" "$cleanup"
+}
+
+lattice_log_timeout() {
+  local command_kind="$1"
+  local transport="$2"
+  local timeout_seconds="$3"
+  declare -F log_line >/dev/null 2>&1 || return 0
+  log_line "WARN" \
+    "lattice.timeout command=$(shell_quote "$command_kind") phase=lattice_run transport=$(shell_quote "$transport") timeout_seconds=$timeout_seconds cleanup=process_tree_term_kill required=${UPKEEPER_LATTICE_REQUIRED:-0} action=return_failure"
+}
+
+lattice_descendant_pids() {
+  local root_pid="$1"
+  local table parent child found
+  local -a frontier=("$root_pid")
+  local -a descendants=()
+
+  table="$(ps -eo pid=,ppid= 2>/dev/null || true)"
+  while [[ "${#frontier[@]}" -gt 0 ]]; do
+    parent="${frontier[0]}"
+    frontier=("${frontier[@]:1}")
+    while read -r child found; do
+      [[ -n "$child" && "$found" == "$parent" ]] || continue
+      descendants+=("$child")
+      frontier+=("$child")
+    done <<<"$table"
+  done
+  printf '%s\n' "${descendants[@]}"
+}
+
+lattice_terminate_process_tree() {
+  local root_pid="$1"
+  local delay pid index
+  local -a descendants=()
+
+  [[ "$root_pid" =~ ^[0-9]+$ ]] || return 0
+  mapfile -t descendants < <(lattice_descendant_pids "$root_pid")
+  for ((index=${#descendants[@]} - 1; index >= 0; index--)); do
+    pid="${descendants[$index]}"
+    [[ -n "$pid" ]] && kill -TERM "$pid" 2>/dev/null || true
+  done
+  kill -TERM "$root_pid" 2>/dev/null || true
+  delay="$(lattice_timeout_kill_after_seconds)"
+  if [[ "$delay" -gt 0 ]]; then
+    sleep "$delay"
+  fi
+  for ((index=${#descendants[@]} - 1; index >= 0; index--)); do
+    pid="${descendants[$index]}"
+    [[ -n "$pid" ]] && kill -KILL "$pid" 2>/dev/null || true
+  done
+  kill -KILL "$root_pid" 2>/dev/null || true
+}
+
 lattice_service_close_fd() {
   local fd="${1:-}"
 
@@ -266,33 +353,58 @@ lattice_start_service() {
     " db=$(shell_quote "$UPKEEPER_LATTICE_DB")"
 }
 
+lattice_force_stop_service() {
+  local service_pid="${UPKEEPER_LATTICE_SERVICE_PID:-}"
+
+  if [[ "$service_pid" =~ ^[0-9]+$ ]] && kill -0 "$service_pid" 2>/dev/null; then
+    lattice_terminate_process_tree "$service_pid"
+  fi
+  lattice_service_close_fd "${UPKEEPER_LATTICE_SERVICE_IN_FD:-}"
+  lattice_service_close_fd "${UPKEEPER_LATTICE_SERVICE_OUT_FD:-}"
+  if [[ "$service_pid" =~ ^[0-9]+$ ]]; then
+    wait "$service_pid" 2>/dev/null || true
+  fi
+  UPKEEPER_LATTICE_SERVICE_ACTIVE="0"
+  UPKEEPER_LATTICE_SERVICE_PID=""
+  UPKEEPER_LATTICE_SERVICE_IN_FD=""
+  UPKEEPER_LATTICE_SERVICE_OUT_FD=""
+}
+
 lattice_stop_service() {
-  local rc_line output_line end_line command_count
+  local rc_line output_line end_line command_count shutdown_ok=1
 
   [[ "${UPKEEPER_LATTICE_SERVICE_ACTIVE:-0}" == "1" ]] || return 0
   command_count="${UPKEEPER_LATTICE_SERVICE_COMMAND_COUNT:-0}"
   if [[ -n "${UPKEEPER_LATTICE_SERVICE_IN_FD:-}" && -n "${UPKEEPER_LATTICE_SERVICE_OUT_FD:-}" ]]; then
     printf 'SHUTDOWN\n' >&"${UPKEEPER_LATTICE_SERVICE_IN_FD}" 2>/dev/null || true
-    IFS= read -r rc_line <&"${UPKEEPER_LATTICE_SERVICE_OUT_FD}" 2>/dev/null || true
-    IFS= read -r output_line <&"${UPKEEPER_LATTICE_SERVICE_OUT_FD}" 2>/dev/null || true
-    IFS= read -r end_line <&"${UPKEEPER_LATTICE_SERVICE_OUT_FD}" 2>/dev/null || true
+    IFS= read -r -t 2 rc_line <&"${UPKEEPER_LATTICE_SERVICE_OUT_FD}" 2>/dev/null || shutdown_ok=0
+    IFS= read -r -t 1 output_line <&"${UPKEEPER_LATTICE_SERVICE_OUT_FD}" 2>/dev/null || shutdown_ok=0
+    IFS= read -r -t 1 end_line <&"${UPKEEPER_LATTICE_SERVICE_OUT_FD}" 2>/dev/null || shutdown_ok=0
   fi
-  lattice_service_close_fd "${UPKEEPER_LATTICE_SERVICE_IN_FD:-}"
-  lattice_service_close_fd "${UPKEEPER_LATTICE_SERVICE_OUT_FD:-}"
-  if [[ -n "${UPKEEPER_LATTICE_SERVICE_PID:-}" ]]; then
-    wait "$UPKEEPER_LATTICE_SERVICE_PID" 2>/dev/null || true
+  if [[ "$shutdown_ok" != "1" ]]; then
+    lattice_force_stop_service
+  else
+    lattice_service_close_fd "${UPKEEPER_LATTICE_SERVICE_IN_FD:-}"
+    lattice_service_close_fd "${UPKEEPER_LATTICE_SERVICE_OUT_FD:-}"
+    if [[ -n "${UPKEEPER_LATTICE_SERVICE_PID:-}" ]]; then
+      wait "$UPKEEPER_LATTICE_SERVICE_PID" 2>/dev/null || true
+    fi
+    UPKEEPER_LATTICE_SERVICE_ACTIVE="0"
+    UPKEEPER_LATTICE_SERVICE_PID=""
+    UPKEEPER_LATTICE_SERVICE_IN_FD=""
+    UPKEEPER_LATTICE_SERVICE_OUT_FD=""
   fi
-  UPKEEPER_LATTICE_SERVICE_ACTIVE="0"
   log_line_parts "INFO" \
     "lattice.service.stopped commands=$command_count" \
     " db=$(shell_quote "$UPKEEPER_LATTICE_DB")"
 }
 
 lattice_run_service() {
-  local rc_line output_line end_line response_b64 rc
+  local rc_line output_line end_line response_b64 rc read_rc timeout_seconds command_kind
   local in_fd out_fd
 
   LATTICE_SERVICE_PROTOCOL_OK="0"
+  LATTICE_LAST_TIMEOUT="0"
   lattice_start_service || return 1
   in_fd="${UPKEEPER_LATTICE_SERVICE_IN_FD:-}"
   out_fd="${UPKEEPER_LATTICE_SERVICE_OUT_FD:-}"
@@ -303,9 +415,23 @@ lattice_run_service() {
     printf '%s\0' "$arg" >&"$in_fd" || return 1
   done
 
-  IFS= read -r rc_line <&"$out_fd" || return 1
-  IFS= read -r output_line <&"$out_fd" || return 1
-  IFS= read -r end_line <&"$out_fd" || return 1
+  timeout_seconds="$(lattice_command_timeout_seconds)"
+  command_kind="$(lattice_command_kind "${1:-unknown}")"
+  if IFS= read -r -t "$timeout_seconds" rc_line <&"$out_fd"; then
+    read_rc=0
+  else
+    read_rc="$?"
+  fi
+  if [[ "$read_rc" -gt 128 ]]; then
+    LATTICE_LAST_TIMEOUT="1"
+    LATTICE_LAST_OUTPUT="$(lattice_timeout_detail "$command_kind" service "$timeout_seconds")"
+    lattice_force_stop_service
+    lattice_log_timeout "$command_kind" service "$timeout_seconds"
+    return 124
+  fi
+  [[ "$read_rc" -eq 0 ]] || return 1
+  IFS= read -r -t 2 output_line <&"$out_fd" || return 1
+  IFS= read -r -t 2 end_line <&"$out_fd" || return 1
   [[ "$rc_line" =~ ^RC[[:space:]]+([0-9]+)$ ]] || return 1
   rc="${BASH_REMATCH[1]}"
   [[ "$output_line" == OUTPUT_B64\ * ]] || return 1
@@ -318,8 +444,10 @@ lattice_run_service() {
 }
 
 lattice_run() {
-  local output rc had_errexit=0
+  local output rc had_errexit=0 timeout_seconds kill_after command_kind
   local -a common_args=()
+
+  LATTICE_LAST_TIMEOUT="0"
 
   if lattice_service_enabled; then
     case "$-" in
@@ -336,6 +464,9 @@ lattice_run() {
     if [[ "$rc" -eq 0 ]]; then
       return 0
     fi
+    if [[ "${LATTICE_LAST_TIMEOUT:-0}" == "1" ]]; then
+      return 124
+    fi
     if [[ "${LATTICE_SERVICE_PROTOCOL_OK:-0}" == "1" ]]; then
       return "$rc"
     fi
@@ -348,16 +479,40 @@ lattice_run() {
 
   mapfile -d '' -t common_args < <(lattice_common_args)
 
+  timeout_seconds="$(lattice_command_timeout_seconds)"
+  kill_after="$(lattice_timeout_kill_after_seconds)"
+  command_kind="$(lattice_command_kind "${1:-unknown}")"
+  if ! command -v timeout >/dev/null 2>&1; then
+    LATTICE_LAST_OUTPUT="{\"status\":\"timeout_unavailable\",\"command\":\"$command_kind\",\"phase\":\"lattice_run\"}"
+    declare -F log_line >/dev/null 2>&1 &&
+      log_line "ERROR" "lattice.timeout_unavailable command=$(shell_quote "$command_kind") phase=lattice_run action=refuse_unbounded_execution"
+    return 127
+  fi
+
+  case "$-" in
+    *e*) had_errexit=1 ;;
+    *) had_errexit=0 ;;
+  esac
   set +e
-  output="$(python3 "$(lattice_tool_path)" "${common_args[@]}" "$@" 2>&1)"
+  output="$(timeout --kill-after="${kill_after}s" "$timeout_seconds" python3 "$(lattice_tool_path)" "${common_args[@]}" "$@" 2>&1)"
   rc=$?
-  set -e
+  if [[ "$had_errexit" == "1" ]]; then
+    set -e
+  else
+    set +e
+  fi
+  if [[ "$rc" -eq 124 ]]; then
+    LATTICE_LAST_TIMEOUT="1"
+    LATTICE_LAST_OUTPUT="$(lattice_timeout_detail "$command_kind" cli "$timeout_seconds")"
+    lattice_log_timeout "$command_kind" cli "$timeout_seconds"
+    return 124
+  fi
   LATTICE_LAST_OUTPUT="$output"
   return "$rc"
 }
 
 lattice_init_and_doctor_or_exit() {
-  local detail detail_summary
+  local detail detail_summary failure_reason
 
   UPKEEPER_LATTICE_AVAILABLE="0"
   lattice_enabled || return 0
@@ -374,23 +529,33 @@ lattice_init_and_doctor_or_exit() {
 
   if ! lattice_run init; then
     detail="${LATTICE_LAST_OUTPUT:-init_failed}"
+    failure_reason="init_failed"
+    [[ "${LATTICE_LAST_TIMEOUT:-0}" == "1" ]] && failure_reason="init_timeout"
     if lattice_required; then
       detail_summary="$(lattice_unavailable_detail_summary "$detail")"
-      log_line "ERROR" "lattice.unavailable required=1 reason=init_failed db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail_summary=$(shell_quote "$detail_summary")"
-      finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=init_failed detail_summary=$(shell_quote "$detail_summary")"
+      log_line "ERROR" "lattice.unavailable required=1 reason=$failure_reason db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail_summary=$(shell_quote "$detail_summary")"
+      if [[ "${LATTICE_LAST_TIMEOUT:-0}" == "1" ]]; then
+        finish_cycle 3 LATTICE_TIMEOUT ERROR "codex_exec_started=0 reason=$failure_reason detail_summary=$(shell_quote "$detail_summary")"
+      fi
+      finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=$failure_reason detail_summary=$(shell_quote "$detail_summary")"
     fi
-    lattice_warn_once "init_failed" "$detail"
+    lattice_warn_once "$failure_reason" "$detail"
     return 0
   fi
 
   if ! lattice_run doctor --fast; then
     detail="${LATTICE_LAST_OUTPUT:-doctor_failed}"
+    failure_reason="doctor_failed"
+    [[ "${LATTICE_LAST_TIMEOUT:-0}" == "1" ]] && failure_reason="doctor_timeout"
     if lattice_required; then
       detail_summary="$(lattice_unavailable_detail_summary "$detail")"
-      log_line "ERROR" "lattice.unavailable required=1 reason=doctor_failed db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail_summary=$(shell_quote "$detail_summary")"
-      finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=doctor_failed detail_summary=$(shell_quote "$detail_summary")"
+      log_line "ERROR" "lattice.unavailable required=1 reason=$failure_reason db=$(shell_quote "$UPKEEPER_LATTICE_DB") detail_summary=$(shell_quote "$detail_summary")"
+      if [[ "${LATTICE_LAST_TIMEOUT:-0}" == "1" ]]; then
+        finish_cycle 3 LATTICE_TIMEOUT ERROR "codex_exec_started=0 reason=$failure_reason detail_summary=$(shell_quote "$detail_summary")"
+      fi
+      finish_cycle 3 LATTICE_UNAVAILABLE ERROR "codex_exec_started=0 reason=$failure_reason detail_summary=$(shell_quote "$detail_summary")"
     fi
-    lattice_warn_once "doctor_failed" "$detail"
+    lattice_warn_once "$failure_reason" "$detail"
     return 0
   fi
 
@@ -437,6 +602,13 @@ lattice_record_preselect() {
       if lattice_run query selection-candidates --mode "$UPKEEPER_LATTICE_SELECTION_MODE" --format jsonl; then
         printf '%s\n' "$LATTICE_LAST_OUTPUT" >"$candidate_file"
       else
+        if [[ "${LATTICE_LAST_TIMEOUT:-0}" == "1" ]]; then
+          if lattice_required; then
+            log_line "ERROR" "lattice.timeout command=selection-candidates phase=record_preselect timeout_seconds=$(lattice_command_timeout_seconds) required=1 action=fail_closed"
+            finish_cycle 3 LATTICE_TIMEOUT ERROR "codex_exec_started=0 command=selection-candidates phase=record_preselect timeout_seconds=$(lattice_command_timeout_seconds)"
+          fi
+          lattice_warn_once "selection_candidates_timeout" "${LATTICE_LAST_OUTPUT:-selection_candidates_timeout}"
+        fi
         candidate_file=""
       fi
     else

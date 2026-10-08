@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-lattice-tests.XXXXXX")"
+export PYTHONDONTWRITEBYTECODE=1
 trap 'rm -rf -- "$TMP_ROOT"' EXIT
 
 tests=(
@@ -10,6 +11,7 @@ tests=(
   tests/lattice_cli_integration_test.bash
   tests/lattice_wrapper_integration_test.bash
   tests/lattice_evidence_test.bash
+  tests/lattice_timeout_test.bash
 )
 pids=()
 

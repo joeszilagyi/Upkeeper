@@ -266,7 +266,8 @@ Future changes should preserve this operator-visible surface as far as possible:
   test path remains available with `tools/run_tests.sh --serial` for debugging
   or compatibility investigations.
 - Focused Lattice validation uses `tools/run_lattice_tests.sh` to preserve the
-  complete core, CLI/full-doctor, wrapper-policy, and evidence/recovery surface.
+  complete core, CLI/full-doctor, wrapper-policy, evidence/recovery, and
+  command-timeout surface.
   The groups may run independently and share an imported core for ordinary
   assertions, but executable, stream, environment, parser, and failure-exit
   compatibility remains covered through real subprocess calls.
@@ -450,6 +451,13 @@ Future changes should preserve this operator-visible surface as far as possible:
   as `doctor_mode=fast`. Plain `doctor` remains the backward-compatible full
   self-test and integrity operation, including foreign-key and SQLite quick
   checks; no automatic full-doctor cadence is implied by startup success.
+- Wrapper-issued Lattice commands have a 30-second default deadline through
+  `UPKEEPER_LATTICE_COMMAND_TIMEOUT_SECONDS`, followed by a two-second TERM
+  grace through `UPKEEPER_LATTICE_TIMEOUT_KILL_AFTER_SECONDS` and process-tree
+  KILL cleanup. Optional timeouts retain log/transcript/runtime evidence and
+  deterministic max-cover fallback; required timeouts fail closed as
+  `LATTICE_TIMEOUT` before backend contact. Direct operator CLI invocations
+  remain outside this wrapper compatibility boundary.
 - For audit, breadcrumb, anomaly, and automation-obligation custody, Lattice is
   supporting evidence, not sole custody authority, until the tracked Lattice
   integrity blockers are closed. Lattice-derived custody decisions must keep a

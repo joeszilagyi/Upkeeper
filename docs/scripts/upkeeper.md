@@ -858,6 +858,8 @@ Environment overrides:
   UPKEEPER_LATTICE_RAW_STORAGE Default: limited
   UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE Default: delete
   UPKEEPER_LATTICE_SERVICE_ENABLED Default: 1
+  UPKEEPER_LATTICE_COMMAND_TIMEOUT_SECONDS Default: 30
+  UPKEEPER_LATTICE_TIMEOUT_KILL_AFTER_SECONDS Default: 2
   UPKEEPER_LOCAL_ENV_FILE      Default: ${XDG_CONFIG_HOME:-$HOME/.config}/upkeeper/local.env
   UPKEEPER_LOCAL_ENV_DISABLE   Default: 0
   UPKEEPER_PRECONTACT_BACKUP_ENABLED Default: 1
@@ -1194,8 +1196,9 @@ prompts, backup log lines, or Lattice preselect evidence.
   `tools/run_tests.sh` is the unit-test entrypoint for local and CI use. It
   keeps serial mode available with `--serial`, but the default path runs
   independent tests with bounded fan-out and prints per-test timings.
-  `tools/run_lattice_tests.sh` is the narrower all-groups entrypoint for a
-  Lattice-only change; `tests/lattice_test.bash` by itself runs only the fast
+  `tools/run_lattice_tests.sh` is the narrower five-group entrypoint for a
+  Lattice-only change, including command-timeout and cleanup policy;
+  `tests/lattice_test.bash` by itself runs only the fast
   core-ledger group.
   Before model contact, Upkeeper emits a deterministic `task.profile` log line
   with the task grade, validation grade, prompt scope, prompt pass, review-module

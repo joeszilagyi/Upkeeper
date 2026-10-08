@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: bounded Lattice command and selection execution:
+	1. Every wrapper-issued warm-service or direct-CLI Lattice command now has a configurable 30-second default deadline, a short TERM grace, and process-tree KILL cleanup; an unavailable timeout utility refuses unbounded direct execution.
+	2. Optional startup timeouts emit structured logs and private recovery evidence, while required startup and selection timeouts fail closed as `LATTICE_TIMEOUT` before backend contact.
+	3. Max-cover ranking has the same deadline and, in optional mode only, deterministically falls back to the oldest current source-safe text candidate; focused tests cover both transports, cleanup, recovery, required custody, and fallback behavior.
+
 2026-10-08: import-once parallel Lattice test harness:
 	1. Ordinary Lattice command assertions now use a test-only long-lived Python server that imports `upkeeper_lattice_core` once while preserving command exit codes and separate stdout/stderr; environment-sensitive and representative executable/stream/failure cases remain real subprocess checks.
 	2. The former monolithic Lattice suite is divided into core, CLI/full-doctor, wrapper-policy, and evidence/recovery groups, with explicit 30-45 second integration bounds and a focused parallel `tools/run_lattice_tests.sh` entrypoint.

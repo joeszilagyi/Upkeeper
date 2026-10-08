@@ -3,9 +3,31 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #663: Bounded Lattice Commands and Max-Cover Selection
+
+Status: implemented locally; pending full validation and PR CI
+
+Goal:
+- bound every wrapper-issued warm-service and direct-CLI Lattice command
+- make startup and max-cover timeouts deterministic without backend contact
+- retain structured timeout, cleanup, degraded-mode, and obligation evidence
+
+Constraints:
+- optional Lattice failures may continue only with local recovery evidence
+- required Lattice timeouts fail closed as `LATTICE_TIMEOUT`
+- max-cover may fall back only to the oldest current source-safe text candidate
+- terminate the complete local command process tree after a short TERM grace
+- no live backend Codex validation
+
+Validation:
+- focused warm-service, direct-CLI, optional, required, max-cover, and cleanup
+  regression
+- complete five-group Lattice runner and unit suite
+- quick and full repository validation
+
 ## Issue #712: Import-Once Lattice Test Harness
 
-Status: completed locally; pending full validation and PR CI
+Status: complete; merged in PR #824
 
 Goal:
 - stop serializing the broad Lattice regression surface through repeated core

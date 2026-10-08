@@ -26,6 +26,15 @@ Use it to keep release direction visible without relying on chat history.
   draft blocks.
 - Add a private local run BOM exporter that emits the schema-v1 shape from
   `docs/run-bom-identifiers.md` without exposing raw paths or transcripts.
+- Add local transaction explanation, replay, selection-reproduction, backup
+  verification, and diff-verification helpers that follow
+  `docs/decisions/0004-run-transaction-contracts.md`.
+- Add a private local cycle evidence-package exporter that emits the JSON
+  schema from `docs/decisions/0005-provenance-and-evidence-package-exports.md`
+  before considering RO-Crate or BagIt envelopes.
+- Add a private local run taxonomy and cost-accounting summary exporter that
+  emits JSONL from `docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md`
+  without introducing a telemetry daemon.
 - Build a live parallel backlog-worker supervisor on the accepted local lease
   primitive, including isolated worktree creation, independent PRs, remote
   visibility, quota sharing, and cleanup.
@@ -35,7 +44,12 @@ Use it to keep release direction visible without relying on chat history.
 - Decide whether Bash remains the long-term implementation shell or whether a
   staged Python migration is justified.
 - Define plugin or adapter boundaries for tools that should integrate with
-  Upkeeper without becoming part of the core wrapper.
+  Upkeeper without becoming part of the core wrapper, using the side-effect
+  declaration contract in
+  `docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md`.
+- Add a human review packet generator that emits markdown or JSON summaries
+  from `docs/decisions/0008-human-review-packet-format-for-cycle-output.md`
+  before wiring it to Lattice/export commands later.
 - Add broader cross-platform proof only after the Linux contract is stable.
 - Consider a typed non-shell config profile after current Bash config behavior
   is fully documented and compatibility-safe.

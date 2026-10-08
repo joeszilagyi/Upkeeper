@@ -182,8 +182,12 @@ tables or exports.
    cycles, using hashes/HMACs for all path-bearing material.
 3. Teach Lattice imports to reference the BOM id and core `upk:` ids without
    changing Lattice custody authority.
-4. Add operator commands or helper modes to explain a cycle from a BOM, verify
-   the selected target hash, verify the backup id, and list validation refs.
+4. Add operator commands or helper modes to explain a cycle from a BOM, replay
+   a recorded transaction, reproduce selection, verify the selected target
+   hash, verify the backup id, verify the diff, and list validation refs. The
+   transaction contract in
+   `docs/decisions/0004-run-transaction-contracts.md` defines the shared
+   lifecycle vocabulary for those helpers.
 5. Consider public-safe BOM export only after redaction and source-rights
    checks prove that raw private evidence is not being published.
 

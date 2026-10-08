@@ -163,9 +163,49 @@ test_issue_fix_prompt_allows_private_issue_packet_when_enabled() {
   unset UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL
 }
 
+test_issue_fix_prompt_uses_single_python_emitter() {
+  local project_root="${PROJECT_ROOT:?PROJECT_ROOT is required}"
+  local test_tmp_root="${TEST_TMP_ROOT:?TEST_TMP_ROOT is required}"
+  local compiled="$test_tmp_root/issue-single-python.prompt"
+  local python3_call_count=0
+
+  : >"$compiled"
+  RUN_TMP_DIR="$test_tmp_root/run tmp"
+  CODEX_ISSUE_FIX_NUMBER="323"
+  CODEX_ISSUE_FIX_URL="https://example.test/private/323"
+  CODEX_ISSUE_FIX_SELECTED_LABEL="explicit"
+  CODEX_ISSUE_FIX_LABELS="bug"
+  CODEX_ISSUE_FIX_TITLE="Emitter count SECRET_TITLE_3"
+  CODEX_ISSUE_FIX_CREATED_AT="2026-05-02T00:00:00Z"
+  CODEX_ISSUE_FIX_TARGET_FILE="targets/app.sh"
+  CODEX_ISSUE_FIX_BODY="private body SECRET_BODY_3"
+  CODEX_ISSUE_FIX_COMMENTS_JSON='[{"author":{"login":"carol"},"createdAt":"2026-05-02T00:01:00Z","body":"comment SECRET_COMMENT_3"}]'
+  UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL="1"
+
+  python3() {
+    python3_call_count=$((python3_call_count + 1))
+    command python3 "$@"
+  }
+
+  issue_fix_private_packet_contract_enable_issue_mode
+  source "$project_root/lib/upkeeper/prompt_compile.bash"
+
+  append_issue_fix_prompt "$compiled"
+
+  [[ "$python3_call_count" -eq 1 ]] ||
+    issue_fix_private_packet_contract_fail "issue-fix prompt emitted $python3_call_count python subprocesses; expected one emitter"
+  grep -Fq 'issue_body_excerpt_json=' "$compiled" ||
+    issue_fix_private_packet_contract_fail "single-emitter issue-fix prompt did not include the issue body excerpt"
+  grep -Fq 'issue_comments_excerpt_json=' "$compiled" ||
+    issue_fix_private_packet_contract_fail "single-emitter issue-fix prompt did not include the issue comments excerpt"
+  unset UPKEEPER_ALLOW_PRIVATE_ISSUE_BODY_TO_MODEL
+  unset -f python3
+}
+
 run_issue_fix_private_packet_contract_tests() {
   issue_fix_private_packet_contract_install_runtime_stubs
   test_issue_body_fence_delimiters_are_sanitized
   test_issue_fix_prompt_withholds_private_issue_packet_by_default
   test_issue_fix_prompt_allows_private_issue_packet_when_enabled
+  test_issue_fix_prompt_uses_single_python_emitter
 }

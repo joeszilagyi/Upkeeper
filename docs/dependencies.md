@@ -29,10 +29,12 @@ source-only contracts used by backlog per-bug commit gates, including log-line
 source length. `tools/docs_only_fast_path.sh --validate` is the local
 README/docs/prompt-only path; it classifies changed paths without `gh`, `curl`,
 `wget`, `git fetch`, or backend Codex, rejects mixed source changes, and then
-runs the public-docs, smoke, and diff checks. `--smoke` runs the fast local
-edit-loop checks without backend work. `--quick` adds bounded static/fixture
-checks while staying out of wrapper dry-run integration paths. `--full` runs the
-release guardrails with
+runs the public-docs, smoke, and diff checks. Its classifier also reports
+broader low-risk shell/config/test/tool changes so CI can keep those edits on
+the shared local gates without paying for the full validator. `--smoke` runs
+the fast local edit-loop checks without backend work. `--quick` adds bounded
+static/fixture checks while staying out of wrapper dry-run integration paths.
+`--full` runs the release guardrails with
 `UPKEEPER_DRY_RUN=1` for startup checks and a local fake `codex` binary for
 launch/capture failure classification, including central startup,
 symlinked-client startup, missing-module failure, missing prompt-template
@@ -43,8 +45,9 @@ pull requests and on pushes to `main`. That workflow starts on
 `ubuntu-latest`, runs `tools/setup_ci_dependencies.sh` to probe the runner for
 expected stock commands, fails clearly if runner-provided tools disappear, and
 installs only missing nonstandard tools such as `age`. The helper also prints
-dependency-setup timing so CI latency stays visible. For broader changes the
-workflow then runs:
+dependency-setup timing so CI latency stays visible. For low-risk shell/
+config/test/tool changes the workflow keeps the shared local gate and skips the
+full validator. For broader changes the workflow then runs:
 
 ```sh
 bash -n Upkeeper Upkeeper.conf configurations/default.conf lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh

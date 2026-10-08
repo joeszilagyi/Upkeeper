@@ -636,6 +636,271 @@ check_run_bom_identifier_contract() {
     fail "change notes do not record the run BOM identifier contract"
 }
 
+check_run_transaction_contract() {
+  local term
+  local doc_path="docs/decisions/0004-run-transaction-contracts.md"
+  local -a required_terms
+
+  log "checking run transaction, rollback, and replay contract"
+  [[ -s "$doc_path" ]] || fail "run transaction contract doc is missing"
+
+  required_terms=(
+    "Run Transaction, Rollback, and Replay Contracts"
+    "prepare"
+    "select target"
+    "snapshot and/or backup"
+    "launch backend under a declared capability profile"
+    "capture observed side effects"
+    "classify diff/output"
+    "commit, rollback, or leave for human review"
+    "upkeeper explain --cycle-id X"
+    "upkeeper replay --cycle-id X"
+    "upkeeper reproduce-selection --cycle-id X"
+    "upkeeper verify-backup --backup-id X"
+    "upkeeper verify-diff --cycle-id X"
+    "schema_version"
+    "transaction_ref"
+    "cycle_ref"
+    "run_ref"
+    "resolution"
+    "private-operator"
+    "issue #217"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq "$term" "$doc_path" ||
+      fail "run transaction contract docs missing required term: $term"
+  done
+
+  grep -Fq "$doc_path" README.md ||
+    fail "README does not point to the run transaction contract"
+  grep -Fq "$doc_path" docs/authority.md ||
+    fail "authority docs do not point to the run transaction contract"
+  grep -Fq "$doc_path" docs/compatibility.md ||
+    fail "compatibility docs do not point to the run transaction contract"
+  grep -Fq "$doc_path" docs/roadmap.md ||
+    fail "roadmap does not preserve the transaction helper follow-up"
+  grep -Fq "$doc_path" docs/run-bom-identifiers.md ||
+    fail "run BOM docs do not point to the transaction contract"
+  grep -Fq "0004 Run transaction, rollback, and replay contracts" docs/decisions/README.md ||
+    fail "decision log index does not list the transaction contract"
+  grep -Fq "run transaction, rollback, and replay contract" change_notes_2026.md ||
+    fail "change notes do not record the transaction contract"
+}
+
+check_cycle_evidence_package_contract() {
+  local term
+  local doc_path="docs/decisions/0005-provenance-and-evidence-package-exports.md"
+  local -a required_terms
+
+  log "checking provenance and evidence-package export contract"
+  [[ -s "$doc_path" ]] || fail "cycle evidence-package contract doc is missing"
+
+  required_terms=(
+    "Provenance and Evidence-Package Exports for Lattice Cycles"
+    "W3C PROV"
+    "OpenLineage"
+    "RO-Crate"
+    "BagIt"
+    "upkeeper export-cycle --cycle-id X --format json"
+    "--format ro-crate"
+    "--format bagit"
+    "schema_version"
+    "package_ref"
+    "cycle_ref"
+    "run_ref"
+    "entities"
+    "activities"
+    "agents"
+    "provenance_edges"
+    "evidence_refs"
+    "private-operator"
+    "issue #219"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq -- "$term" "$doc_path" ||
+      fail "cycle evidence-package contract docs missing required term: $term"
+  done
+
+  grep -Fq "$doc_path" README.md ||
+    fail "README does not point to the cycle evidence-package contract"
+  grep -Fq "$doc_path" docs/lattice.md ||
+    fail "Lattice docs do not point to the cycle evidence-package contract"
+  grep -Fq "$doc_path" docs/preservation-policy.md ||
+    fail "preservation policy does not point to the cycle evidence-package contract"
+  grep -Fq "$doc_path" docs/compatibility.md ||
+    fail "compatibility docs do not point to the cycle evidence-package contract"
+  grep -Fq "$doc_path" docs/roadmap.md ||
+    fail "roadmap does not preserve the cycle evidence-package follow-up"
+  grep -Fq "0005 Provenance and evidence-package exports for Lattice cycles" docs/decisions/README.md ||
+    fail "decision log index does not list the cycle evidence-package contract"
+  grep -Fq "provenance and evidence-package export contract" change_notes_2026.md ||
+    fail "change notes do not record the cycle evidence-package contract"
+}
+
+check_run_taxonomy_summary_contract() {
+  local term
+  local doc_path="docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md"
+  local -a required_terms
+
+  log "checking run taxonomy, observability, and cost accounting contract"
+  [[ -s "$doc_path" ]] || fail "run taxonomy summary contract doc is missing"
+
+  required_terms=(
+    "Run Taxonomy, Observability, and Cost Accounting Surface"
+    "cycle.summary"
+    "run.finish"
+    "upkeeper export-run-summary --cycle-id X --format jsonl"
+    "schema_version"
+    "summary_ref"
+    "cycle_ref"
+    "run_ref"
+    "format"
+    "taxonomy"
+    "metrics"
+    "model/backend used"
+    "reasoning effort if known"
+    "backend attempts"
+    "fallback attempts"
+    "wall time"
+    "files reviewed"
+    "bugs found/fixed/reported"
+    "tests run or harvested"
+    "manual interventions avoided"
+    "restore events"
+    "blocked cycles"
+    "private-operator"
+    "issue #223"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq -- "$term" "$doc_path" ||
+      fail "run taxonomy summary contract docs missing required term: $term"
+  done
+
+  grep -Fq "$doc_path" README.md ||
+    fail "README does not point to the run taxonomy summary contract"
+  grep -Fq "$doc_path" docs/lattice.md ||
+    fail "Lattice docs do not point to the run taxonomy summary contract"
+  grep -Fq "$doc_path" docs/preservation-policy.md ||
+    fail "preservation policy does not point to the run taxonomy summary contract"
+  grep -Fq "$doc_path" docs/compatibility.md ||
+    fail "compatibility docs do not point to the run taxonomy summary contract"
+  grep -Fq "$doc_path" docs/roadmap.md ||
+    fail "roadmap does not preserve the run taxonomy summary follow-up"
+  grep -Fq "0006 Run taxonomy, observability, and cost accounting surface" docs/decisions/README.md ||
+    fail "decision log index does not list the run taxonomy summary contract"
+  grep -Fq "run taxonomy, observability, and cost accounting surface" change_notes_2026.md ||
+    fail "change notes do not record the run taxonomy summary contract"
+}
+
+check_adapter_plugin_contract() {
+  local term
+  local doc_path="docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md"
+  local -a required_terms
+
+  log "checking adapter and plugin contract with side-effect declarations"
+  [[ -s "$doc_path" ]] || fail "adapter/plugin contract doc is missing"
+
+  required_terms=(
+    "Adapter and Plugin Contract With Side-Effect Declarations"
+    "selector adapter"
+    "backup adapter"
+    "sandbox adapter"
+    "lineage exporter"
+    "citation exporter"
+    "issue tracker adapter"
+    "feed adapter"
+    "validator adapter"
+    "reporter adapter"
+    "inputs"
+    "outputs"
+    "side effects"
+    "network use"
+    "file write scope"
+    "secret needs"
+    "Lattice events emitted"
+    "failure modes"
+    "validation expectations"
+    "schema_version"
+    "adapter_id"
+    "adapter_type"
+    "privacy"
+    "issue #225"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq -- "$term" "$doc_path" ||
+      fail "adapter/plugin contract docs missing required term: $term"
+  done
+
+  grep -Fq "$doc_path" README.md ||
+    fail "README does not point to the adapter/plugin contract"
+  grep -Fq "$doc_path" docs/authority.md ||
+    fail "authority docs do not point to the adapter/plugin contract"
+  grep -Fq "$doc_path" docs/compatibility.md ||
+    fail "compatibility docs do not point to the adapter/plugin contract"
+  grep -Fq "$doc_path" docs/roadmap.md ||
+    fail "roadmap does not preserve the adapter/plugin follow-up"
+  grep -Fq "0007 Adapter and plugin contract with side-effect declarations" docs/decisions/README.md ||
+    fail "decision log index does not list the adapter/plugin contract"
+  grep -Fq "adapter and plugin side-effect contract" change_notes_2026.md ||
+    fail "change notes do not record the adapter/plugin contract"
+}
+
+check_human_review_packet_contract() {
+  local term
+  local doc_path="docs/decisions/0008-human-review-packet-format-for-cycle-output.md"
+  local -a required_terms
+
+  log "checking human review packet format contract"
+  [[ -s "$doc_path" ]] || fail "human review packet contract doc is missing"
+
+  required_terms=(
+    "Human Review Packet Format for Cycle Output"
+    "what changed"
+    "why it changed"
+    "what evidence supports it"
+    "what was not checked"
+    "what failed"
+    "what needs human attention"
+    "what is safe to copy/use publicly"
+    "what is unsafe to publish"
+    "how to restore if needed"
+    "upkeeper review-packet --cycle-id X --format markdown"
+    "upkeeper review-packet --cycle-id X --format json"
+    "schema_version"
+    "packet_ref"
+    "cycle_ref"
+    "run_ref"
+    "what_changed"
+    "why_it_changed"
+    "evidence_supporting_it"
+    "what_was_not_checked"
+    "what_failed"
+    "human_attention"
+    "safe_to_copy_use_publicly"
+    "unsafe_to_publish"
+    "restore_notes"
+    "private-operator"
+    "issue #226"
+  )
+  for term in "${required_terms[@]}"; do
+    grep -Fq -- "$term" "$doc_path" ||
+      fail "human review packet contract docs missing required term: $term"
+  done
+
+  grep -Fq "$doc_path" README.md ||
+    fail "README does not point to the human review packet contract"
+  grep -Fq "$doc_path" docs/preservation-policy.md ||
+    fail "preservation policy does not point to the human review packet contract"
+  grep -Fq "$doc_path" docs/compatibility.md ||
+    fail "compatibility docs do not point to the human review packet contract"
+  grep -Fq "$doc_path" docs/roadmap.md ||
+    fail "roadmap does not preserve the human review packet follow-up"
+  grep -Fq "0008 Human review packet format for cycle output" docs/decisions/README.md ||
+    fail "decision log index does not list the human review packet contract"
+  grep -Fq "human review packet format" change_notes_2026.md ||
+    fail "change notes do not record the human review packet contract"
+}
+
 check_schema_compatibility_contract() {
   local term
   local -a required_terms
@@ -1365,8 +1630,8 @@ PY
   ' bash "$ROOT_DIR" >"$temp_dir/defaults.out"
   grep -Fxq 'model=gpt-5.3-codex-spark' "$temp_dir/defaults.out" ||
     fail "backlog launcher did not default to Spark model"
-  grep -Fxq 'effort=xhigh' "$temp_dir/defaults.out" ||
-    fail "backlog launcher did not default to xhigh reasoning"
+  grep -Fxq 'effort=high' "$temp_dir/defaults.out" ||
+    fail "backlog launcher did not auto-size newest-file review to high reasoning"
   grep -Fxq 'week=0' "$temp_dir/defaults.out" ||
     fail "backlog launcher did not default to spend-to-zero weekly floor"
   grep -Fxq 'bypass=1' "$temp_dir/defaults.out" ||
@@ -4226,11 +4491,12 @@ check_release_readiness_docs_contract() {
 }
 
 check_docs_only_fast_path_contract() {
-  local temp_dir docs_paths mixed_paths classify_out
+  local temp_dir docs_paths low_risk_paths mixed_paths classify_out
 
   log "checking docs-only fast path contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-docs-only-fast-path.XXXXXX)"
   docs_paths="$temp_dir/docs.paths"
+  low_risk_paths="$temp_dir/low-risk.paths"
   mixed_paths="$temp_dir/mixed.paths"
 
   cat >"$docs_paths" <<'EOF'
@@ -4242,8 +4508,28 @@ EOF
   classify_out="$(tools/docs_only_fast_path.sh --classify-only --paths-from "$docs_paths")"
   grep -Fq "docs_only=1" <<<"$classify_out" ||
     fail "docs-only fast path did not classify public docs paths as docs-only"
+  grep -Fq "low_risk=1" <<<"$classify_out" ||
+    fail "docs-only fast path did not classify public docs paths as low-risk"
+  grep -Fq "scope=docs-only" <<<"$classify_out" ||
+    fail "docs-only fast path did not report docs-only scope"
   grep -Fq "non_docs_count=0" <<<"$classify_out" ||
     fail "docs-only fast path reported non-docs for docs-only paths"
+
+  cat >"$low_risk_paths" <<'EOF'
+Upkeeper.conf
+configurations/default.conf
+tests/backlog_reasoning_effort_test.bash
+tools/run_tests.sh
+EOF
+  classify_out="$(tools/docs_only_fast_path.sh --classify-only --paths-from "$low_risk_paths")"
+  grep -Fq "docs_only=0" <<<"$classify_out" ||
+    fail "low-risk fast path incorrectly classified mechanical paths as docs-only"
+  grep -Fq "low_risk=1" <<<"$classify_out" ||
+    fail "low-risk fast path did not classify mechanical paths as low-risk"
+  grep -Fq "scope=low-risk" <<<"$classify_out" ||
+    fail "low-risk fast path did not report low-risk scope"
+  grep -Fq "non_low_risk_count=0" <<<"$classify_out" ||
+    fail "low-risk fast path reported non-low-risk paths for low-risk changes"
 
   cat >"$mixed_paths" <<'EOF'
 README.md
@@ -4253,8 +4539,12 @@ EOF
   classify_out="$(tools/docs_only_fast_path.sh --classify-only --paths-from "$mixed_paths")"
   grep -Fq "docs_only=0" <<<"$classify_out" ||
     fail "docs-only fast path accepted mixed source changes"
+  grep -Fq "low_risk=0" <<<"$classify_out" ||
+    fail "docs-only fast path accepted mixed source changes as low-risk"
   grep -Fq "non_doc_path=Upkeeper" <<<"$classify_out" ||
     fail "docs-only fast path did not report the source path that forced the broader path"
+  grep -Fq "non_low_risk_path=Upkeeper" <<<"$classify_out" ||
+    fail "docs-only fast path did not report the source path that forced the full path"
 
   grep -Fq "tools/check_public_docs.sh --quick" tools/docs_only_fast_path.sh ||
     fail "docs-only fast path does not run public docs validation"
@@ -4264,6 +4554,10 @@ EOF
     fail "docs-only fast path does not run diff whitespace validation"
   grep -Fq 'git diff --check "$base_ref" "$head_ref"' tools/docs_only_fast_path.sh ||
     fail "docs-only fast path does not check committed ref-to-ref whitespace"
+  grep -Fq 'source "$ROOT_DIR/lib/upkeeper/change_scope.bash"' tools/docs_only_fast_path.sh ||
+    fail "docs-only fast path does not source the shared change-scope helper"
+  grep -Fq 'source "$ROOT_DIR/lib/upkeeper/change_scope.bash"' orchestration/backlog.sh ||
+    fail "backlog launcher does not source the shared change-scope helper"
   if grep -Eq '(^|[[:space:]])(gh|curl|wget)[[:space:]]|git fetch|codex exec|[.]/Upkeeper' tools/docs_only_fast_path.sh; then
     fail "docs-only fast path contains network, GitHub CLI, backend, or wrapper launch commands"
   fi
@@ -4273,6 +4567,8 @@ EOF
     fail "CI checkout does not fetch enough local history for no-extra-fetch docs classification"
   grep -Fq "scope_args+=(--base HEAD^1 --head HEAD)" .github/workflows/ci.yml ||
     fail "CI pull-request docs-only path does not use local merge-parent refs"
+  grep -Fq "steps.scope.outputs.low_risk != '1'" .github/workflows/ci.yml ||
+    fail "CI workflow does not skip full validation for low-risk changes"
   if grep -Fq "git fetch --no-tags" .github/workflows/ci.yml; then
     fail "CI docs-only classifier still performs an explicit fetch"
   fi
@@ -8098,6 +8394,11 @@ run_check authority_control_docs_contract check_authority_control_docs_contract
 run_check policy_decisions_contract check_policy_decisions_contract
 run_check schema_gated_airlock_docs_contract check_schema_gated_airlock_docs_contract
 run_check run_bom_identifier_contract check_run_bom_identifier_contract
+run_check run_transaction_contract check_run_transaction_contract
+run_check cycle_evidence_package_contract check_cycle_evidence_package_contract
+run_check run_taxonomy_summary_contract check_run_taxonomy_summary_contract
+run_check adapter_plugin_contract check_adapter_plugin_contract
+run_check human_review_packet_contract check_human_review_packet_contract
 run_check schema_compatibility_contract check_schema_compatibility_contract
 run_check threat_model_doctrine_contract check_threat_model_doctrine_contract
 run_check preservation_policy_contract check_preservation_policy_contract

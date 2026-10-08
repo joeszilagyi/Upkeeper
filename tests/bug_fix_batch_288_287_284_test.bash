@@ -250,8 +250,117 @@ EOF
   [[ "$selected" == "z_older.sh" ]] || fail "manifest-based selection did not prefer smaller mtime_ns; expected z_older.sh"
 }
 
+test_shared_candidate_classification_matches_lattice_and_runtime_selection() {
+  local repo="$TEST_TMP_ROOT/candidate-parity"
+  local db="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  local shared_rows_json="$TEST_TMP_ROOT/candidate-parity-shared.json"
+  local lattice_rows_jsonl="$TEST_TMP_ROOT/candidate-parity-lattice.jsonl"
+  local selection_error="$TEST_TMP_ROOT/candidate-parity-preselect.err"
+  local output selected_path
+
+  make_git_repo "$repo"
+  (
+    cd "$repo"
+    printf 'runtime/\nignored.txt\ntests/\n' >.upkeeperignore
+    printf '#!/usr/bin/env bash\nprintf "alpha\\n"\n' >alpha.sh
+    chmod +x alpha.sh
+    printf 'tracked text\n' >README.md
+    mkdir -p tests
+    printf 'test file\n' >tests/example.txt
+    printf 'ignored\n' >ignored.txt
+    git add -A
+    git commit -q -m "candidate parity fixture"
+    printf '#!/usr/bin/env bash\nprintf "beta\\n"\n' >beta.sh
+    chmod +x beta.sh
+    touch -d '@1700000000' README.md
+    touch -d '@1700000100' alpha.sh
+    touch -d '@1700000200' tests/example.txt
+    touch -d '@1700000300' ignored.txt
+    touch -d '@1700000400' beta.sh
+  )
+
+  python3 "$PROJECT_ROOT/tools/upkeeper_lattice.py" --root "$repo" --db "$db" init >/dev/null
+
+  python3 - "$PROJECT_ROOT" "$repo" "$shared_rows_json" <<'PY' || fail "shared candidate helper did not emit rows"
+import json
+import sys
+from pathlib import Path
+
+project_root = Path(sys.argv[1])
+repo = Path(sys.argv[2])
+out = Path(sys.argv[3])
+sys.path.insert(0, str(project_root / "tools"))
+from upkeeper_lib import candidates
+
+rows = {
+    row["path"]: {
+        "candidate_state": row["candidate_state"],
+        "exclusion_reason": row["exclusion_reason"],
+        "git_status": row["git_status"],
+    }
+    for row in candidates.live_candidate_rows(repo)
+}
+out.write_text(json.dumps(rows, sort_keys=True), encoding="utf-8")
+PY
+
+  python3 "$PROJECT_ROOT/tools/upkeeper_lattice.py" --root "$repo" --db "$db" query selection-candidates --mode oldest-mtime --format jsonl \
+    >"$lattice_rows_jsonl"
+
+  python3 - "$shared_rows_json" "$lattice_rows_jsonl" <<'PY' || fail "shared helper and lattice candidate classification diverged"
+import json
+import sys
+
+shared = json.loads(open(sys.argv[1], encoding="utf-8").read())
+lattice = {}
+for line in open(sys.argv[2], encoding="utf-8"):
+    row = json.loads(line)
+    lattice[row["path"]] = {
+        "candidate_state": row.get("candidate_state"),
+        "exclusion_reason": row.get("exclusion_reason"),
+        "git_status": row.get("git_status"),
+    }
+
+if shared != lattice:
+    raise AssertionError({"shared": shared, "lattice": lattice})
+PY
+
+  CYCLE_ID="cycle-candidate-parity"
+  CYCLE_RUN_HASH="run-candidate-parity"
+  ROOT_DIR="$repo"
+  SELF_PATH="$PROJECT_ROOT/Upkeeper"
+  CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS="7"
+  STARTUP_ANOMALY_GATE="0"
+  CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER="0"
+  CODEX_TARGET_FILE=""
+  CODEX_TOOL_FAILURE_QUEUE_DIR="$repo/runtime/tool-failure-queue"
+  CODEX_TOOL_FAILURE_QUEUE_ENABLED="0"
+  CODEX_TOOL_FAILURE_QUEUE_BYPASS="0"
+  CODEX_SELECTION_SOURCE="enumerate"
+  CODEX_FILE_MANIFEST_PATH="$repo/runtime-manifest.json"
+  CODEX_SELECTION_ORDER="oldest"
+  CODEX_TARGET_ROOT=""
+  CODEX_TARGET_MAX_DEPTH=""
+  CODEX_SELECTION_INCLUDE_GLOBS=""
+  CODEX_SELECTION_EXCLUDE_GLOBS=""
+  CODEX_SELECTION_REVIEW_MODULES=""
+  CODEX_SELECTION_RANDOM_SEED=""
+  CODEX_SELECT_UNTRACKED="1"
+  CODEX_MAX_COVER_MODE="0"
+  UPKEEPER_LATTICE_ENABLED="0"
+  UPKEEPER_LATTICE_SELECTION_MODE="oldest"
+  UPKEEPER_IMPLEMENTATION_DIR="$PROJECT_ROOT"
+  UPKEEPER_LATTICE_DB="$db"
+  UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE="wal"
+  CODEX_UPKEEPER_IGNORE_FILE="$repo/.upkeeperignore"
+
+  output="$(preselect_review_target 2>"$selection_error")"
+  selected_path="$(sed -n 's/^path=//p' <<<"$output" | head -n 1)"
+  [[ "$selected_path" == "alpha.sh" ]] || fail "runtime preselection did not choose the oldest eligible candidate"
+}
+
 test_record_startup_anomaly_gate_review_rejects_missing_log_review_marker
 test_record_startup_anomaly_gate_review_requires_matching_log_review_marker
 test_source_mutation_fingerprint_tracks_ref_and_reflog_changes
 test_manifest_selection_prefers_manifest_mtime_ns
+test_shared_candidate_classification_matches_lattice_and_runtime_selection
 printf 'bug_fix_batch_288_287_284_test: ok\n'

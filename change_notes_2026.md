@@ -1,10 +1,55 @@
 # 2026 Change Notes
 
+2026-06-05: low-risk fast lane expansion:
+	1. The change-scope helper now distinguishes docs-only from broader low-risk shell, config, test, and tool edits so CI can skip the full validator for those mechanical changes.
+	2. GitHub Actions now uses the low-risk classification to keep those edits on the shared local gates while still sending higher-risk changes through the full validator.
+	3. Backlog validation authority and effort sizing now recognize the broader low-risk lane so operator output and PR gating stay consistent with the new CI split.
+
+2026-06-05: run transaction, rollback, and replay contract:
+	1. `docs/decisions/0004-run-transaction-contracts.md` now defines the bounded transaction lifecycle for one cycle plus the read-only `explain`, `replay`, `reproduce-selection`, `verify-backup`, and `verify-diff` helper contracts.
+	2. README, authority, run BOM, compatibility, and roadmap now point at the transaction contract so the lifecycle vocabulary stays discoverable alongside the existing run BOM namespace.
+	3. Quick validation now preserves the new decision-file contract and its cross-links so future replay and verification helpers do not drift out of the public-doc surface.
+
+2026-06-05: provenance and evidence-package export contract:
+	1. `docs/decisions/0005-provenance-and-evidence-package-exports.md` now defines the local JSON cycle evidence-package export surface for Lattice cycles, with future RO-Crate and BagIt envelopes as explicit follow-up work.
+	2. README, Lattice, preservation, compatibility, and roadmap now point at the evidence-package contract so the portable provenance vocabulary stays discoverable next to the existing JSONL export surface.
+	3. Quick validation now preserves the new provenance contract and its cross-links so future export-cycle work stays on the documented no-heavy-dependency path.
+
+2026-06-05: run taxonomy, observability, and cost accounting surface:
+	1. `docs/decisions/0006-run-taxonomy-observability-and-cost-accounting.md` now defines the local JSONL summary export for cycle outcomes, taxonomy dimensions, and cost-accounting metrics without a full OpenTelemetry dependency.
+	2. README, Lattice, preservation, compatibility, and roadmap now point at the summary-export contract so the observability vocabulary stays discoverable next to the existing cycle and provenance exports.
+	3. Quick validation now preserves the new summary-export contract and its cross-links so future run-summary work stays on the documented local-first path.
+
+2026-06-05: adapter and plugin side-effect contract:
+	1. `docs/decisions/0007-adapter-plugin-contract-with-side-effect-declarations.md` now defines the bounded integration contract for future selector, backup, sandbox, exporter, tracker, feed, validator, and reporter adapters.
+	2. README, authority, compatibility, and roadmap now point at the adapter contract so declared side effects stay visible before any future integration lands.
+	3. Quick validation now preserves the new adapter contract and its cross-links so future plugin work stays bounded and reviewable.
+
+2026-06-05: human review packet format:
+	1. `docs/decisions/0008-human-review-packet-format-for-cycle-output.md` now defines a concise markdown or JSON packet for one meaningful cycle, with explicit public-safe and unsafe-to-publish sections.
+	2. README, preservation, compatibility, and roadmap now point at the review packet contract so operator-facing output stays separate from transcripts and internal Lattice rows.
+	3. Quick validation now preserves the new review packet contract and its cross-links so future human-facing summaries stay compact and reviewable.
+
 Version numbering note:
 	1. This file records committed Upkeeper wrapper states from v1.0.0 forward.
 	2. Some version numbers were skipped during local batching and do not have a standalone committed wrapper state.
 	3. Entries focus on notable operator-facing behavior, contracts, defaults, prompt behavior, quota handling, logging, and maintenance expectations.
 	4. Release notes are annual root files named `change_notes_YYYY.md`; new calendar years start a new root file instead of appending to an old year.
+
+2026-06-05: deferred backlog PR publication:
+	1. Backlog branches now stay local-only until a real tracked fix is ready to publish, so the launcher no longer opens or pushes an empty GitHub PR for the initial batch setup.
+	2. The first publish-worthy commit now pushes the backlog branch and opens the PR at commit time, preserving PR-check and batch-merge gating after a real change exists.
+	3. Operator docs and the README now describe the local-only pending branch until publication.
+
+2026-06-05: backlog reasoning-effort auto-sizing:
+	1. Backlog now auto-sizes `CODEX_REASONING_EFFORT` per selected issue or target instead of always exporting `xhigh`.
+	2. Docs-only targets can use `low`, small mechanical/config targets can use `medium`, high-risk wrapper/control-plane targets stay `xhigh`, and newest-file review defaults to `high`.
+	3. Operators can force one tier for one cycle with `BACKLOG_REASONING_EFFORT_OVERRIDE` or keep the legacy `BACKLOG_CODEX_REASONING_EFFORT` fallback by setting `BACKLOG_REASONING_EFFORT_AUTOSIZE=0`.
+
+2026-06-05: log rotation early-return cleanup:
+	1. `rotate_wrapper_log_if_needed()` now returns cleanly from its blocked, snapshot-failure, empty-log, and zero-hour fast paths instead of falling through into archive or truncation work.
+	2. The rotation cleanup path now preserves the wrapper's existing INT/TERM/HUP handlers after a normal return, instead of leaving those traps unset for the rest of the run.
+	3. A regression test now checks that the zero-hour rotation path leaves the log unchanged, restores the signal traps, and leaves no rotation archives behind.
 
 2026-06-05: bug-report-only stale quota custody before triage:
 	1. Direct `--bug-report-only` and `--audit-only` runs now treat exact-model stale-after-reset quota stops before target triage as quota/control-plane custody rather than a generic fallback-chain exit.
@@ -26,7 +71,7 @@ Version numbering note:
 2026-06-01: high-priority time-savings batch:
 	1. `orchestration/backlog_loop.sh` now reads a per-cycle disposition file and uses a short busy sleep after productive work, while preserving the longer idle sleep for no-op, blocked, and quota-wait cycles.
 	2. Backlog PR-check waits now default to a bounded timeout and write local timeout evidence before returning a pending-check status.
-	3. Backlog records validation authority for each successful commit; low-risk docs/Markdown-only local-green commits can continue to the next issue while CI runs asynchronously, while source/control-plane work still blocks on PR checks.
+	3. Backlog records validation authority for each successful commit; low-risk docs/Markdown/config/test/tool local-green commits can continue to the next issue while CI runs asynchronously, while source/control-plane work still blocks on PR checks.
 	4. FlameOn batches automation-obligation JSON field extraction so one selected obligation does not spawn one parser per field before Upkeeper repeats startup.
 	5. Lattice can run as a warm per-cycle local service process, reducing repeated cold Python startup across init, doctor, selection, pass-result, and finish hooks.
 

@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: import-once parallel Lattice test harness:
+	1. Ordinary Lattice command assertions now use a test-only long-lived Python server that imports `upkeeper_lattice_core` once while preserving command exit codes and separate stdout/stderr; environment-sensitive and representative executable/stream/failure cases remain real subprocess checks.
+	2. The former monolithic Lattice suite is divided into core, CLI/full-doctor, wrapper-policy, and evidence/recovery groups, with explicit 30-45 second integration bounds and a focused parallel `tools/run_lattice_tests.sh` entrypoint.
+	3. The clean sequential `tests/lattice_test.bash` baseline fell from 29.329s to 3.743s, all four coverage groups completed together in 11.826s locally, and the complete shared test runner fell from 51.920s to 20.437s under concurrent load.
+
 2026-10-08: bounded Lattice startup doctor:
 	1. Normal wrapper startup now uses `doctor --fast` to prove DB access, rollback-able writes, schema versions, required tables/indexes, and foreign-key enablement without running database-wide integrity scans or the full internal self-test surface.
 	2. Plain `tools/upkeeper_lattice.py doctor` remains the explicit full doctor and still runs the complete probes, `PRAGMA foreign_key_check`, and `PRAGMA quick_check`; no automatic full-doctor cadence is introduced.

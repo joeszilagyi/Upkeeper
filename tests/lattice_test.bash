@@ -4,9 +4,15 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 LATTICE_TOOL="$ROOT_DIR/tools/upkeeper_lattice.py"
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-lattice-test.XXXXXX")"
-trap 'rm -r "$TEST_TMP_ROOT" 2>/dev/null || true' EXIT
 
 source "$ROOT_DIR/tests/lib/lattice_validator_contract.bash"
+source "$ROOT_DIR/tests/lib/lattice_inprocess_harness.bash"
+
+cleanup() {
+  lattice_harness_stop
+  rm -r "$TEST_TMP_ROOT" 2>/dev/null || true
+}
+trap cleanup EXIT
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -108,7 +114,22 @@ make_repo() {
 }
 
 lattice() {
-  "$LATTICE_TOOL" --root "$REPO" --db "$DB" "$@"
+  local current_raw_storage="${UPKEEPER_LATTICE_RAW_STORAGE-__UNSET__}"
+  local -a common_args=(--root "$REPO" --db "$DB")
+
+  if [[ "${UPKEEPER_LATTICE_ALLOW_UNSAFE_DB:-0}" == "1" ]]; then
+    common_args+=(--allow-unsafe-db)
+  fi
+  if [[ -n "${CODEX_UPKEEPER_IGNORE_FILE:-}" ]]; then
+    common_args+=(--upkeeper-ignore-file "$CODEX_UPKEEPER_IGNORE_FILE")
+  fi
+  # Environment-sensitive raw-storage cases remain real subprocess checks;
+  # the persistent server deliberately retains its startup environment.
+  if [[ "$current_raw_storage" != "$LATTICE_HARNESS_RAW_STORAGE" ]]; then
+    "$LATTICE_TOOL" "${common_args[@]}" "$@"
+    return
+  fi
+  lattice_harness_run "${common_args[@]}" "$@"
 }
 
 assert_sql_value() {
@@ -254,7 +275,8 @@ PY
     fail ".upkeeperignore did not exclude max-cover Lattice candidates"
 
   set +e
-  lattice query selection-candidates --mode max-cover --format jsonl \
+  "$LATTICE_TOOL" --root "$REPO" --db "$DB" \
+    query selection-candidates --mode max-cover --format jsonl \
     2>"$TEST_TMP_ROOT/max-cover-head.err" |
     head -n 1 >"$TEST_TMP_ROOT/max-cover-head.jsonl"
   pipe_status=("${PIPESTATUS[@]}")
@@ -2614,33 +2636,50 @@ if int(row[0]) != 0:
 PY
 }
 
-test_lattice_validator_contract
-test_lattice_cli_contracts
-test_repository_identity_survives_origin_url_change
-test_git_status_xy_preserves_index_worktree_columns
-test_worktree_snapshot_marks_existing_deleted_file_state
-test_no_git_import_and_recovery
-test_import_git_prefers_checked_out_branch_state
-test_import_git_privacy_defaults_and_opt_in
-test_backup_is_read_only
-test_missing_selection_path_stays_missing
-test_missing_selected_candidate_target_stays_missing
-test_wrapper_required_policy
-test_lattice_unavailable_summary_redacts_raw_detail
-test_out_of_scope_transcript_artifacts_are_safe
-test_unsafe_lattice_db_path_is_rejected_by_default
-test_default_runtime_symlink_db_path_is_rejected
-test_ordinary_command_does_not_create_missing_db
-test_lattice_jsonl_input_guardrails
-test_export_backup_output_collision
-test_prune_respects_transient_artifact_older_than_days
-test_prune_scopes_actions_to_current_repo
-test_recover_no_backup_first_toggle
-test_recover_backup_first_preserves_pre_recovery_provenance
-test_review_parser_and_redaction
-test_clean_touch_uses_mtime_ns
-test_sparse_lifecycle_replay_preserves_metadata
-test_import_upkeeper_log_omits_sensitive_parsed_fields
-test_source_record_identity_reuses_imported_lines_only
-test_planned_pass_semantics_do_not_mark_all_runs_as_planned
-printf 'ok - lattice\n'
+lattice_harness_start "$TEST_TMP_ROOT/inprocess-harness"
+
+test_group="${UPKEEPER_LATTICE_TEST_GROUP:-core}"
+case "$test_group" in
+  core)
+    test_repository_identity_survives_origin_url_change
+    test_git_status_xy_preserves_index_worktree_columns
+    test_worktree_snapshot_marks_existing_deleted_file_state
+    test_no_git_import_and_recovery
+    test_import_git_prefers_checked_out_branch_state
+    test_import_git_privacy_defaults_and_opt_in
+    test_backup_is_read_only
+    test_missing_selection_path_stays_missing
+    test_missing_selected_candidate_target_stays_missing
+    ;;
+  cli-integration)
+    test_lattice_validator_contract
+    test_lattice_cli_contracts
+    ;;
+  wrapper-integration)
+    test_wrapper_required_policy
+    ;;
+  evidence)
+    test_lattice_unavailable_summary_redacts_raw_detail
+    test_out_of_scope_transcript_artifacts_are_safe
+    test_unsafe_lattice_db_path_is_rejected_by_default
+    test_default_runtime_symlink_db_path_is_rejected
+    test_ordinary_command_does_not_create_missing_db
+    test_lattice_jsonl_input_guardrails
+    test_export_backup_output_collision
+    test_prune_respects_transient_artifact_older_than_days
+    test_prune_scopes_actions_to_current_repo
+    test_recover_no_backup_first_toggle
+    test_recover_backup_first_preserves_pre_recovery_provenance
+    test_review_parser_and_redaction
+    test_clean_touch_uses_mtime_ns
+    test_sparse_lifecycle_replay_preserves_metadata
+    test_import_upkeeper_log_omits_sensitive_parsed_fields
+    test_source_record_identity_reuses_imported_lines_only
+    test_planned_pass_semantics_do_not_mark_all_runs_as_planned
+    ;;
+  *)
+    fail "unknown Lattice test group: $test_group"
+    ;;
+esac
+
+printf 'ok - lattice (%s)\n' "$test_group"

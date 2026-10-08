@@ -12,6 +12,7 @@ tests=(
   tests/lattice_wrapper_integration_test.bash
   tests/lattice_evidence_test.bash
   tests/lattice_timeout_test.bash
+  tests/lattice_finish_retry_test.bash
 )
 pids=()
 

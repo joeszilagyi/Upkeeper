@@ -411,11 +411,11 @@ artifacts by default.
 `tools/run_tests.sh` is the shared unit-test entrypoint for local and CI use;
 pass `--serial` when debugging a single ordered suite locally.
 Lattice coverage is split into independent core, CLI/full-doctor,
-wrapper-policy, evidence/recovery, and command-timeout groups. Ordinary command
-assertions use one test-only process that imports `upkeeper_lattice_core` once,
-while
-representative executable, parser, stream, environment, and failure-exit checks
-remain real subprocesses. Run all five bounded groups with
+wrapper-policy, evidence/recovery, command-timeout, and finish-retry groups.
+Ordinary command assertions use one test-only process that imports
+`upkeeper_lattice_core` once, while representative executable, parser, stream,
+environment, and failure-exit checks
+remain real subprocesses. Run all six bounded groups with
 `tools/run_lattice_tests.sh`; `tests/lattice_test.bash` alone is the fast core
 group used for narrow debugging.
 `tools/validate_upkeeper.sh --architecture-report` prints the report-only
@@ -595,6 +595,14 @@ required. Readiness logs record `doctor_mode=fast`, and doctor JSON records
 `tools/upkeeper_lattice.py` executable is a thin compatibility shim over the
 import-cacheable implementation, so repeated direct CLI calls also avoid
 recompiling the full Lattice source after it changes.
+
+Terminal Lattice evidence is marked recorded only after `record-cycle-finish`
+persists successfully. A failed initial write receives one bounded same-cycle
+retry. If both writes fail, Upkeeper logs `lattice.finish.spooled` and atomically
+writes a private mode-0600 replay payload under
+`runtime/upkeeper-lattice/recovery/finish-retry/`; the success guard remains
+unset. A later successful call in the same process removes that pending payload,
+and the guard prevents a duplicate successful finish write.
 
 Selected-target pre-contact backups are enabled and required by default. The
 default vault is outside the repository, and Upkeeper logs only an opaque

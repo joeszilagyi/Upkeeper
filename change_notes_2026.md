@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: retryable Lattice cycle-finish persistence:
+	1. The finish-recorded guard is now set only after `record-cycle-finish` persists, so a failed DB write cannot suppress the terminal evidence repair path or masquerade as success.
+	2. An initial failure receives one bounded same-cycle retry; successful initial and retry writes emit distinct operator evidence while the success guard continues to prevent duplicates.
+	3. Two failed writes atomically publish a private mode-0600 replay payload with the exact finish arguments under ignored runtime recovery state, and a later successful same-process call clears the stale spool.
+
 2026-10-08: bounded Lattice command and selection execution:
 	1. Every wrapper-issued warm-service or direct-CLI Lattice command now has a configurable 30-second default deadline, a short TERM grace, and process-tree KILL cleanup; an unavailable timeout utility refuses unbounded direct execution.
 	2. Optional startup timeouts emit structured logs and private recovery evidence, while required startup and selection timeouts fail closed as `LATTICE_TIMEOUT` before backend contact.

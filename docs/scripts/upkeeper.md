@@ -1196,10 +1196,10 @@ prompts, backup log lines, or Lattice preselect evidence.
   `tools/run_tests.sh` is the unit-test entrypoint for local and CI use. It
   keeps serial mode available with `--serial`, but the default path runs
   independent tests with bounded fan-out and prints per-test timings.
-  `tools/run_lattice_tests.sh` is the narrower five-group entrypoint for a
-  Lattice-only change, including command-timeout and cleanup policy;
-  `tests/lattice_test.bash` by itself runs only the fast
-  core-ledger group.
+  `tools/run_lattice_tests.sh` is the narrower six-group entrypoint for a
+  Lattice-only change, including command-timeout, cleanup, and finish-retry
+  policy; `tests/lattice_test.bash` by itself runs only the fast core-ledger
+  group.
   Before model contact, Upkeeper emits a deterministic `task.profile` log line
   with the task grade, validation grade, prompt scope, prompt pass, review-module
   action, selected-path evidence, and final effort. Routine low-risk docs,

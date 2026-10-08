@@ -3,9 +3,37 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #713: Same-Checkout Test Attestation Reuse
+## Issue #700: Import-Cacheable Lattice CLI
 
 Status: completed locally; pending PR CI
+
+Goal:
+- keep `tools/upkeeper_lattice.py` as the stable executable and import surface
+- move the large implementation into an import-cacheable module so repeated
+  direct CLI and validation invocations reuse bytecode
+- retain the existing warm per-cycle Lattice service and CLI behavior
+
+Constraints:
+- preserve every command, exit code, and direct-import contract
+- keep Lattice paths classified as high-risk and under focused validation
+- no live backend Codex validation
+
+Validation:
+- deterministic core-bytecode creation and reuse regression
+- direct CLI/import compatibility and focused Lattice suite
+- complete unit, quick, and full validation
+- before/after direct CLI and `tests/lattice_test.bash` timings
+
+Measured local result:
+- repeated direct CLI startup fell from 0.157s on the monolithic script to
+  0.072s through a warm core bytecode cache
+- standalone `tests/lattice_test.bash` passed in 31.421s
+- the eight-way unit run passed all 47 tests and reduced the Lattice test from
+  the final pre-change 84.646s sample to 47.362s under concurrent load
+
+## Issue #713: Same-Checkout Test Attestation Reuse
+
+Status: complete; merged in PR #821
 
 Goal:
 - stop the sequential CI full-validator phase from rerunning test scripts that

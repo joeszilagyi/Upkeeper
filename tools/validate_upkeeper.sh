@@ -2312,7 +2312,7 @@ check_lattice_custody_policy_contract() {
     fail "Lattice docs missing per-cycle service default"
   grep -Fq 'UPKEEPER_LATTICE_SERVICE_ENABLED:=1' Upkeeper.conf ||
     fail "root config missing Lattice per-cycle service default"
-  grep -Fq 'service", help="serve multiple Lattice CLI commands in one warm process"' tools/upkeeper_lattice.py ||
+  grep -Fq 'service", help="serve multiple Lattice CLI commands in one warm process"' tools/upkeeper_lattice_core.py ||
     fail "Lattice CLI missing warm service subcommand"
   grep -Fq 'lattice.service.started' lib/upkeeper/lattice.bash ||
     fail "Lattice wrapper does not start a per-cycle warm service"
@@ -6804,7 +6804,8 @@ check_lattice_contract() {
   )
   rm -rf -- "$temp_dir"
 
-  if rg -n '\b(curl|gh|requests|urllib3|urllib\.request|urllib\.error|http\.client|GITHUB_TOKEN)\b' tools/upkeeper_lattice.py lib/upkeeper/lattice.bash >/dev/null; then
+  if rg -n '\b(curl|gh|requests|urllib3|urllib\.request|urllib\.error|http\.client|GITHUB_TOKEN)\b' \
+      tools/upkeeper_lattice.py tools/upkeeper_lattice_core.py lib/upkeeper/lattice.bash >/dev/null; then
     fail "Lattice implementation contains a default network/token surface"
   fi
 }

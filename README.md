@@ -562,7 +562,10 @@ and the fallback evidence class. Set `UPKEEPER_LATTICE_REQUIRED=1` only when a
 run must fail before Codex launch unless Lattice is writable and healthy.
 `UPKEEPER_LATTICE_SERVICE_ENABLED=1` keeps one warm local Lattice subprocess
 open for the wrapper cycle, so init, doctor, selection, pass-result, and finish
-records do not each pay a separate Python startup.
+records do not each pay a separate Python startup. The stable
+`tools/upkeeper_lattice.py` executable is a thin compatibility shim over the
+import-cacheable implementation, so repeated direct CLI calls also avoid
+recompiling the full Lattice source after it changes.
 
 Selected-target pre-contact backups are enabled and required by default. The
 default vault is outside the repository, and Upkeeper logs only an opaque

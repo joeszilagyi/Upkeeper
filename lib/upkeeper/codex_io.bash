@@ -615,7 +615,7 @@ upkeeper_task_profile_path_grade() {
       printf 'contract-security\n'
       return 0
       ;;
-    tools/upkeeper_lattice.py|tools/upkeeper_lattice/*|lib/upkeeper/lattice.bash)
+    tools/upkeeper_lattice.py|tools/upkeeper_lattice_core.py|tools/upkeeper_lattice/*|lib/upkeeper/lattice.bash)
       printf 'data-integrity\n'
       return 0
       ;;

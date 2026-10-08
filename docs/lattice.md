@@ -104,7 +104,10 @@ when a run must fail before Codex launch if Lattice is unavailable.
 `UPKEEPER_LATTICE_SERVICE_ENABLED=1` means those cycle hooks share a warm local
 Python process instead of launching a cold `tools/upkeeper_lattice.py` process
 for every Lattice event. Set it to `0` to force the legacy one-command-per-spawn
-CLI path for diagnosis.
+CLI path for diagnosis. The stable `tools/upkeeper_lattice.py` executable is a
+thin compatibility shim over `tools/upkeeper_lattice_core.py`, so even that
+diagnostic path can reuse Python's bytecode cache after the implementation
+changes.
 
 The default SQLite journal mode is rollback journal (`delete`). WAL is opt-in
 with `UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE=wal`; when WAL is enabled,

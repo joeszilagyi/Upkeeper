@@ -282,8 +282,8 @@ Important:
     only by explicit state, not by disappearing from terminal output.
   - Light per-bug validation still avoids the full batch suite, but it now
     compiles changed Python files before commit. Lattice issue fixes that touch
-    tools/upkeeper_lattice.py also run tests/lattice_test.bash before the fix is
-    recorded.
+    tools/upkeeper_lattice.py or tools/upkeeper_lattice_core.py also run
+    tests/lattice_test.bash before the fix is recorded.
   - Before backlog issue work starts, the launcher autoshelves dirty local work
     to a private wip/backlog-autoshelve/* branch. Ordinary dirty files stay
     shelved while the loop continues from a clean branch. If the dirty set

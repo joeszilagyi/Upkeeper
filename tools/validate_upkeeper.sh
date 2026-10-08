@@ -4080,7 +4080,7 @@ check_gitignore_contract() {
   local output path
 
   log "checking Git ignore contract"
-  for path in Upkeeper.log runtime/example runtime/upkeeper-file-manifest.json out out/tmp; do
+  for path in Upkeeper.log Upkeeper.log.upkeeper-log-rotation.marker runtime/example runtime/upkeeper-file-manifest.json out out/tmp; do
     output="$(
       GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
         git -c core.excludesfile=/dev/null check-ignore -v --no-index -- "$path"

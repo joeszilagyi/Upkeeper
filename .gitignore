@@ -8,5 +8,6 @@ Thumbs.db
 # Upkeeper local run artifacts.
 Upkeeper.log
 Upkeeper.log.*.zip
+Upkeeper.log.upkeeper-log-rotation.marker
 runtime/
 /out

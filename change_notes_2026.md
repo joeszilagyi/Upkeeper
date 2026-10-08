@@ -1,5 +1,9 @@
 # 2026 Change Notes
 
+2026-10-08: default log-rotation marker ignore contract:
+	1. The trusted marker created beside the default root `Upkeeper.log` is now ignored as wrapper-owned local runtime state, so first-run log rotation does not dirty the repository worktree or alter fallback dirty-worktree decisions.
+	2. Deterministic validation now requires the default marker path to be ignored by the repository `.gitignore` contract itself.
+
 2026-06-05: low-risk fast lane expansion:
 	1. The change-scope helper now distinguishes docs-only from broader low-risk shell, config, test, and tool edits so CI can skip the full validator for those mechanical changes.
 	2. GitHub Actions now uses the low-risk classification to keep those edits on the shared local gates while still sending higher-risk changes through the full validator.

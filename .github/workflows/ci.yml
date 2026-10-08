@@ -61,6 +61,8 @@ jobs:
 
       - name: Parallel local gates
         if: steps.scope.outputs.docs_only != '1'
+        env:
+          UPKEEPER_TEST_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-test-attestation.json
         run: tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace
 
       - name: Docs-only fast path
@@ -83,6 +85,7 @@ jobs:
         if: steps.scope.outputs.low_risk != '1'
         env:
           UPKEEPER_VALIDATION_TIMING_FILE: ${{ runner.temp }}/upkeeper-validation-timing.jsonl
+          UPKEEPER_TEST_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-test-attestation.json
         run: tools/validate_upkeeper.sh --full --profile
 
       - name: Upload full-validation timings

@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+source "$ROOT_DIR/tools/test_attestation_lib.bash"
 
 TEST_JOBS="${UPKEEPER_TEST_JOBS:-auto}"
 TEST_TIMEOUT_SECONDS="${UPKEEPER_TEST_TIMEOUT_SECONDS:-180}"
@@ -193,6 +194,8 @@ while [[ "$index" -le "${#TESTS[@]}" ]]; do
 done
 
 if [[ "$overall_rc" -eq 0 ]]; then
+  upkeeper_test_attestation_write \
+    "$ROOT_DIR" "${UPKEEPER_TEST_ATTESTATION_FILE:-}" "${TESTS[@]}"
   printf 'run_tests: ok\n'
 else
   printf 'run_tests: failed rc=%s\n' "$overall_rc" >&2

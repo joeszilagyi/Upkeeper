@@ -7,6 +7,7 @@ ROOT_DIR="$(cd -- "$TOOLS_DIR/.." && pwd)"
 UPKEEPER_IMPLEMENTATION_DIR="$ROOT_DIR"
 source "$ROOT_DIR/lib/upkeeper/review_modules.bash"
 source "$ROOT_DIR/tools/validation_timing_lib.bash"
+source "$ROOT_DIR/tools/test_attestation_lib.bash"
 
 MODE="quick"
 VALIDATION_PROFILE="0"
@@ -119,6 +120,15 @@ run_bounded_check() {
   shift
   shift
   validation_run_check "$name" "$timeout_seconds" "$@"
+}
+
+validation_run_test() {
+  local test_path="$1"
+  if upkeeper_test_attestation_has "$test_path"; then
+    log "validation_reused command=bash test=$test_path reason=$UPKEEPER_TEST_ATTESTATION_REASON"
+    return 0
+  fi
+  bash "$test_path"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -516,7 +526,7 @@ check_policy_decisions_contract() {
   grep -Fq 'may_retarget' docs/policy-decisions.md || fail "policy decision docs missing retarget field"
   grep -Fq 'denied_actions' docs/policy-decisions.md || fail "policy decision docs missing denied_actions field"
   grep -Fq 'wrapper-local-control-plane' docs/capability-profiles.md || fail "capability profiles missing policy profile ids"
-  bash tests/policy_decisions_test.bash
+  validation_run_test tests/policy_decisions_test.bash
 }
 
 check_schema_gated_airlock_docs_contract() {
@@ -1188,9 +1198,9 @@ check_time_budget_contract() {
     fail "direct fallback no longer uses prompt-pass inheritance gate"
   grep -Fq 'upkeeper_fallback_prompt_pass_for_child' Upkeeper ||
     fail "screen fallback no longer uses prompt-pass inheritance gate"
-  bash tests/codex_exec_contact_budget_test.bash
-  bash tests/task_profile_test.bash
-  bash tests/prompt_compile_profile_test.bash
+  validation_run_test tests/codex_exec_contact_budget_test.bash
+  validation_run_test tests/task_profile_test.bash
+  validation_run_test tests/prompt_compile_profile_test.bash
 }
 
 check_architecture_lint_contract() {
@@ -1231,7 +1241,7 @@ check_contract_manifest_contract() {
     fail "public docs checker does not consume the public docs contract manifest"
   tools/check_contract_manifest.py --root "$ROOT_DIR" contracts/public_docs.tsv >/dev/null ||
     fail "public docs contract manifest does not pass"
-  bash tests/contract_manifest_test.bash
+  validation_run_test tests/contract_manifest_test.bash
 }
 
 check_lattice_selection_profile_contract() {
@@ -1255,7 +1265,7 @@ assert isinstance(data["subprocess_check_output_count"], int), data
 assert isinstance(data["wall_ms"], int), data
 assert data["budget"]["enforced"] is False, data
 PY
-  bash tests/lattice_selection_profile_test.bash
+  validation_run_test tests/lattice_selection_profile_test.bash
 }
 
 check_backlog_launcher_contract() {
@@ -2283,7 +2293,7 @@ check_control_plane_audit_contract() {
   grep -Fq "tools/upkeeper_control_plane_audit.py" README.md docs/scripts/upkeeper.md docs/negative-space-testing.md docs/kirk-invariants.md ||
     fail "public docs missing control-plane audit command"
   python3 -m py_compile tools/upkeeper_control_plane_audit.py
-  bash tests/control_plane_audit_test.bash
+  validation_run_test tests/control_plane_audit_test.bash
 }
 
 check_lattice_custody_policy_contract() {
@@ -2940,7 +2950,7 @@ check_backlog_batch_validation_obligation_contract() {
     fail "ChimneySweep test does not guard against inherited live obligation state"
   grep -Fq 'second identical validation failure reran command' tests/backlog_batch_validation_obligation_test.bash ||
     fail "batch-validation obligation test does not prove retry guard avoids rerunning the failed command"
-  bash tests/backlog_batch_validation_obligation_test.bash
+  validation_run_test tests/backlog_batch_validation_obligation_test.bash
 }
 
 check_backlog_wrapper_failure_obligation_contract() {
@@ -2953,7 +2963,7 @@ check_backlog_wrapper_failure_obligation_contract() {
     fail "wrapper failure obligation test does not assert wrapper execution failure kind"
   grep -Fq 'lib/upkeeper/report_analysis.bash' tests/backlog_wrapper_failure_obligation_test.bash ||
     fail "wrapper failure obligation test does not prove crash-tail target mapping"
-  bash tests/backlog_wrapper_failure_obligation_test.bash
+  validation_run_test tests/backlog_wrapper_failure_obligation_test.bash
 }
 
 check_backlog_local_ahead_guard_contract() {
@@ -2967,7 +2977,7 @@ check_backlog_local_ahead_guard_contract() {
     fail "backlog launcher does not guard local-ahead branches after branch sync"
   [[ -s tests/backlog_local_ahead_guard_test.bash ]] ||
     fail "backlog local-ahead guard tests are missing or empty"
-  bash tests/backlog_local_ahead_guard_test.bash
+  validation_run_test tests/backlog_local_ahead_guard_test.bash
 }
 
 check_backlog_merge_steward_contract() {
@@ -2980,7 +2990,7 @@ check_backlog_merge_steward_contract() {
   grep -Fq "dirty_main_worktree" tools/backlog_merge_steward.py || fail "merge steward does not block dirty secondary main worktrees"
   grep -Fq "tools/backlog_merge_steward.py" docs/scripts/upkeeper.md || fail "operator guide missing merge steward command"
   grep -Fq "merge_ready=yes|no" docs/compatibility.md || fail "compatibility docs missing merge steward output contract"
-  bash tests/backlog_merge_steward_test.bash
+  validation_run_test tests/backlog_merge_steward_test.bash
 }
 
 check_backlog_pr_watch_contract() {
@@ -3002,7 +3012,7 @@ check_backlog_pr_watch_contract() {
     fail "operator guide missing PR watcher command"
   grep -Fq 'status=pass|pending|fail' docs/compatibility.md ||
     fail "compatibility docs missing PR watcher output contract"
-  bash tests/watch_pr_test.bash
+  validation_run_test tests/watch_pr_test.bash
 }
 
 check_backlog_triage_contract() {
@@ -3015,7 +3025,7 @@ check_backlog_triage_contract() {
   grep -Fq "backlog-triage-" tools/backlog_triage.py || fail "backlog triage does not leave visible obligation evidence"
   grep -Fq "tools/backlog_triage.py" docs/scripts/upkeeper.md || fail "operator guide missing backlog triage command"
   grep -Fq "safe_to_restart=yes|no|wait" docs/compatibility.md || fail "compatibility docs missing backlog triage output contract"
-  bash tests/backlog_triage_test.bash
+  validation_run_test tests/backlog_triage_test.bash
 }
 
 check_backlog_parallel_leases_contract() {
@@ -3040,7 +3050,7 @@ check_backlog_parallel_leases_contract() {
     fail "operator guide missing parallel backlog lease helper"
   grep -Fq "parallel-worker lease registry" docs/compatibility.md ||
     fail "compatibility docs missing parallel worker lease registry contract"
-  bash tests/backlog_parallel_leases_test.bash
+  validation_run_test tests/backlog_parallel_leases_test.bash
 }
 
 check_backlog_quota_hibernation_contract() {
@@ -3184,7 +3194,7 @@ EOF
   grep -Fq "quota blocked bucket=backend_usage_limit" "$temp_dir/hard-marker.err" ||
     fail "hard backend usage-limit marker did not drive quota hibernation"
 
-  bash tests/backlog_stale_quota_obligation_test.bash
+  validation_run_test tests/backlog_stale_quota_obligation_test.bash
 
   rm -r "$temp_dir"
 }
@@ -4436,7 +4446,7 @@ check_ci_dependency_setup_contract() {
   if grep -Fq "sudo apt-get install -y --no-install-recommends \\" .github/workflows/ci.yml; then
     fail "CI workflow still contains the blanket apt-get install block"
   fi
-  bash tests/ci_dependency_setup_test.bash
+  validation_run_test tests/ci_dependency_setup_test.bash
 }
 
 check_release_readiness_docs_contract() {
@@ -4807,8 +4817,8 @@ PY
 
 check_wrapper_contract_tests() {
   log "checking focused wrapper contract tests"
-  bash tests/wrapper_contract_test.bash
-  bash tests/json_fields_test.bash
+  validation_run_test tests/wrapper_contract_test.bash
+  validation_run_test tests/json_fields_test.bash
 }
 
 prepare_validation_session_file() {
@@ -5610,7 +5620,7 @@ check_active_lock_incomplete_guard() {
 
 check_active_lock_reclaim_race() {
   log "checking serialized active-lock stale reclaim"
-  bash tests/active_lock_reclaim_race_test.bash
+  validation_run_test tests/active_lock_reclaim_race_test.bash
 
   grep -Fq 'active_lock.reclaim_lost' Upkeeper ||
     fail "runtime active-lock override missing reclaim-lost evidence"
@@ -6113,8 +6123,8 @@ PY
     fail "audit-only validation dry-run did not bypass fixture quota cooldown marker"
   grep -Fq "bug_report_only.draft.destination mode=audit_only" "$temp_dir/audit-only.log" || fail "audit-only did not use the audit report destination"
   grep -Fq "bug_report_only.prompt appended" "$temp_dir/audit-only.log" || fail "audit-only prompt addendum was not appended"
-  bash tests/bug_report_only_test.bash
-  bash tests/bug_report_only_stale_quota_pretriage_test.bash
+  validation_run_test tests/bug_report_only_test.bash
+  validation_run_test tests/bug_report_only_stale_quota_pretriage_test.bash
 
   mkdir -p "$temp_dir/bin"
   cat >"$temp_dir/bin/gh" <<'EOF'
@@ -6237,7 +6247,7 @@ JSON
   if grep -Fq 'Post the comment with `gh issue comment' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash"; then
     fail "issue workflow stage prompt still asks Codex to post GitHub comments directly"
   fi
-  bash tests/issue_workflow_review_contract_test.bash
+  validation_run_test tests/issue_workflow_review_contract_test.bash
   grep -Fq 'issue_workflow_comment_transport=final_message_block' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash" || fail "issue workflow stage prompt does not declare final-message comment transport"
   grep -Fq 'UPKEEPER_ISSUE_COMMENT_DRAFT_START' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash" || fail "issue workflow stage prompt does not require a final-message draft block"
   if grep -Fq 'issue_workflow_comment_file=%s' "$ROOT_DIR/lib/upkeeper/prompt_compile.bash"; then
@@ -8351,6 +8361,11 @@ check_stress_corpus_harness() {
 }
 
 run_check dependency_preflight check_validation_dependencies
+if upkeeper_test_attestation_load "$ROOT_DIR" "${UPKEEPER_TEST_ATTESTATION_FILE:-}"; then
+  log "test attestation accepted reason=$UPKEEPER_TEST_ATTESTATION_REASON tests=${#UPKEEPER_ATTESTED_TESTS[@]}"
+elif [[ -n "${UPKEEPER_TEST_ATTESTATION_FILE:-}" ]]; then
+  log "test attestation rejected reason=$UPKEEPER_TEST_ATTESTATION_REASON action=rerun"
+fi
 if [[ "$MODE" == "deps" ]]; then
   check_dependencies
   log "dependency validation passed"

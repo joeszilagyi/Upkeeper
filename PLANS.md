@@ -3,6 +3,41 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #652: Serialized Active-Lock Stale Reclaim
+
+Status: completed locally; pending PR CI
+
+Goal:
+- serialize stale-lock reclamation so exactly one wrapper can replace a stale
+  active-lock directory
+- make losing reclaimers fail closed with explicit `reclaim_lost` evidence
+- revalidate the lock instance after winning reclaim custody so a changed or
+  newly live lock is never removed
+- preserve fallback-child lock inheritance and normal atomic first acquisition
+
+Constraints:
+- no live backend Codex validation
+- keep the change limited to active-lock ownership and deterministic fixtures
+- preserve stale-lock evidence and existing unsafe-path protections
+
+Files likely touched:
+- `Upkeeper`
+- `lib/upkeeper/active_lock.bash`
+- `tests/active_lock_reclaim_race_test.bash`
+- `tools/validate_upkeeper.sh`
+- `docs/fault-injection-scenarios.md`
+- `change_notes_2026.md`
+
+Validation:
+- `bash -n Upkeeper lib/upkeeper/active_lock.bash tests/active_lock_reclaim_race_test.bash tools/validate_upkeeper.sh`
+- `bash tests/active_lock_reclaim_race_test.bash`
+- `UPKEEPER_INTERNAL_ACTIVE_LOCK_SELF_TEST=1 ./Upkeeper`
+- `tools/run_tests.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `tools/validate_upkeeper.sh --full`
+- `git diff --check`
+
 ## Issue #799: Deferred Backlog PR Publication
 
 Status: completed locally; pending PR CI

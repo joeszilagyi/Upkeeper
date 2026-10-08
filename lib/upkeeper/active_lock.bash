@@ -43,6 +43,31 @@ print(max(age, 0))
 PY
 }
 
+active_lock_instance_id() {
+  local path="$1"
+
+  [[ -d "$path" && ! -L "$path" ]] || return 1
+  stat -Lc '%d:%i' -- "$path" 2>/dev/null
+}
+
+active_lock_reclaim_guard_path() {
+  local lock_dir="$1"
+
+  printf '%s.reclaim' "$lock_dir"
+}
+
+acquire_active_lock_reclaim_guard() {
+  local guard_dir="$1"
+
+  mkdir -- "$guard_dir" 2>/dev/null
+}
+
+release_active_lock_reclaim_guard() {
+  local guard_dir="$1"
+
+  rmdir -- "$guard_dir" 2>/dev/null
+}
+
 process_fingerprint_alive() {
   local pid="$1"
   local expected_start="$2"
@@ -76,6 +101,7 @@ release_active_lock() {
 acquire_active_lock_or_exit() {
   local lock_age_seconds lock_parent owner_pid owner_start owner_boot owner_cycle owner_run_hash owner_token fallback_inherit_fail state_file state_tmp
   local fallback_parent_pid fallback_parent_start token_fd child_token child_token_hash
+  local reclaim_guard reclaim_instance_before reclaim_instance_after
   local incomplete_lock_grace_seconds="30"
   if [[ -z "$CODEX_ACTIVE_LOCK_DIR" || "$CODEX_ACTIVE_LOCK_DIR" == "/" ]]; then
     log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=unsafe_lock_path"
@@ -162,17 +188,49 @@ acquire_active_lock_or_exit() {
       finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 reason=incomplete_recent_lock owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} lock_age_seconds=$lock_age_seconds grace_seconds=$incomplete_lock_grace_seconds"
     fi
     log_line "WARN" "active_lock.stale path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} owner_cycle=${owner_cycle:-unknown} owner_run_hash=${owner_run_hash:-unknown} action=reclaim"
+    reclaim_instance_before="$(active_lock_instance_id "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null || true)"
+    reclaim_guard="$(active_lock_reclaim_guard_path "$CODEX_ACTIVE_LOCK_DIR")"
+    if [[ -z "$reclaim_instance_before" ]]; then
+      log_line "WARN" "active_lock.reclaim_lost path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=lock_instance_unavailable action=exit"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 reason=reclaim_lost reclaim_reason=lock_instance_unavailable"
+    fi
+    if ! acquire_active_lock_reclaim_guard "$reclaim_guard"; then
+      log_line "WARN" "active_lock.reclaim_lost path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=reclaim_guard_held action=exit"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 reason=reclaim_lost reclaim_reason=reclaim_guard_held"
+    fi
+    reclaim_instance_after="$(active_lock_instance_id "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null || true)"
+    owner_pid="$(active_lock_field pid || true)"
+    owner_start="$(active_lock_field wrapper_start || true)"
+    owner_boot="$(active_lock_field boot_id || true)"
+    if [[ "$reclaim_instance_after" != "$reclaim_instance_before" ]]; then
+      release_active_lock_reclaim_guard "$reclaim_guard" || true
+      log_line "WARN" "active_lock.reclaim_lost path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=lock_instance_changed action=exit"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 reason=reclaim_lost reclaim_reason=lock_instance_changed"
+    fi
+    if process_fingerprint_alive "$owner_pid" "$owner_start" "$owner_boot"; then
+      release_active_lock_reclaim_guard "$reclaim_guard" || true
+      log_line "WARN" "active_lock.reclaim_lost path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") owner_pid=${owner_pid:-unknown} reason=owner_became_live action=exit"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_HELD WARN "codex_exec_started=0 reason=reclaim_lost reclaim_reason=owner_became_live owner_pid=${owner_pid:-unknown}"
+    fi
     rm -f -- "$CODEX_ACTIVE_LOCK_DIR/state" 2>/dev/null || true
     rm -f -- "$CODEX_ACTIVE_LOCK_DIR"/state.tmp.* 2>/dev/null || true
     if ! rmdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
+      release_active_lock_reclaim_guard "$reclaim_guard" || true
       log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=stale_lock_not_empty"
       finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=stale_lock_not_empty"
     fi
     if ! mkdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null; then
+      release_active_lock_reclaim_guard "$reclaim_guard" || true
       log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=reclaim_mkdir_failed"
       finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=reclaim_mkdir_failed"
     fi
     ACTIVE_LOCK_ACQUIRED="1"
+    if ! release_active_lock_reclaim_guard "$reclaim_guard"; then
+      rmdir -- "$CODEX_ACTIVE_LOCK_DIR" 2>/dev/null || true
+      ACTIVE_LOCK_ACQUIRED="0"
+      log_line "ERROR" "active_lock.failed path=$(shell_quote "$CODEX_ACTIVE_LOCK_DIR") reason=reclaim_guard_release_failed"
+      finish_cycle 7 UPKEEPER_ACTIVE_LOCK_FAILED ERROR "codex_exec_started=0 reason=reclaim_guard_release_failed"
+    fi
   fi
 
   state_file="$CODEX_ACTIVE_LOCK_DIR/state"

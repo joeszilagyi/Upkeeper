@@ -1,5 +1,14 @@
 # 2026 Change Notes
 
+2026-10-08: repeated full-validation contact-ledger isolation:
+	1. The Genie Protocol fake-backend fixture now writes model-contact evidence to its temporary fixture directory instead of the repository runtime ledger, so repeated full validation cannot exhaust the normal contact budget.
+	2. Full validation asserts that the isolated ledger contains the expected fake `validation-genie` contact.
+
+2026-10-08: serialized active-lock stale reclaim:
+	1. Stale active-lock replacement now uses an atomic sibling reclaim guard, so concurrent wrappers cannot both remove and recreate the same lock directory.
+	2. The reclaim winner revalidates the lock directory instance and owner after taking custody; losers fail closed with explicit `active_lock.reclaim_lost` evidence instead of touching a possibly fresh lock.
+	3. A deterministic twelve-process regression proves exactly one stale-lock owner, eleven blocked losers, and complete lock/guard cleanup without backend Codex work.
+
 2026-10-08: default log-rotation marker ignore contract:
 	1. The trusted marker created beside the default root `Upkeeper.log` is now ignored as wrapper-owned local runtime state, so first-run log rotation does not dirty the repository worktree or alter fallback dirty-worktree decisions.
 	2. Deterministic validation now requires the default marker path to be ignored by the repository `.gitignore` contract itself.

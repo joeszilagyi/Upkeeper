@@ -410,6 +410,13 @@ It does not launch real Codex backend work and does not upload runtime
 artifacts by default.
 `tools/run_tests.sh` is the shared unit-test entrypoint for local and CI use;
 pass `--serial` when debugging a single ordered suite locally.
+Lattice coverage is split into independent core, CLI/full-doctor,
+wrapper-policy, and evidence/recovery groups. Ordinary command assertions use
+one test-only process that imports `upkeeper_lattice_core` once, while
+representative executable, parser, stream, environment, and failure-exit checks
+remain real subprocesses. Run all four bounded groups with
+`tools/run_lattice_tests.sh`; `tests/lattice_test.bash` alone is the fast core
+group used for narrow debugging.
 `tools/validate_upkeeper.sh --architecture-report` prints the report-only
 ownership, hot-loop, and inline-Python architecture lint described in
 [`docs/architecture-lint.md`](docs/architecture-lint.md).

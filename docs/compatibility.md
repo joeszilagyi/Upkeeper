@@ -265,6 +265,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   `tools/run_tests.sh` with bounded fan-out and per-test timing. The serial
   test path remains available with `tools/run_tests.sh --serial` for debugging
   or compatibility investigations.
+- Focused Lattice validation uses `tools/run_lattice_tests.sh` to preserve the
+  complete core, CLI/full-doctor, wrapper-policy, and evidence/recovery surface.
+  The groups may run independently and share an imported core for ordinary
+  assertions, but executable, stream, environment, parser, and failure-exit
+  compatibility remains covered through real subprocess calls.
 - Before backend contact, Upkeeper can classify the selected task into a
   deterministic task profile. The default profile layer may lower effort for
   routine low-risk targets, records validation and prompt-scope grades, and may

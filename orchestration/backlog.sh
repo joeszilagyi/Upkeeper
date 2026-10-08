@@ -3457,9 +3457,9 @@ run_focused_issue_validation() {
     if backlog_git_path_changed "tools/upkeeper_lattice.py" ||
         backlog_git_path_changed "tools/upkeeper_lattice_core.py"; then
       require_command python3 || return $?
-      log "per-bug validation: lattice focused coverage (tests/lattice_test.bash)"
+      log "per-bug validation: lattice focused coverage (tools/run_lattice_tests.sh)"
       python3 -m py_compile tools/upkeeper_lattice.py tools/upkeeper_lattice_core.py || return $?
-      bash tests/lattice_test.bash || return $?
+      bash tools/run_lattice_tests.sh || return $?
     fi
   fi
 }

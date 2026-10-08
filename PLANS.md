@@ -3,9 +3,44 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #712: Import-Once Lattice Test Harness
+
+Status: completed locally; pending full validation and PR CI
+
+Goal:
+- stop serializing the broad Lattice regression surface through repeated core
+  imports and one monolithic Bash test
+- keep representative executable, parser, stream, and failure-exit smoke tests
+  while routing ordinary command assertions through one imported core process
+- separate independent full-CLI, wrapper-policy, core-ledger, and
+  evidence/recovery scenarios so the standard runner can execute them in
+  parallel
+
+Constraints:
+- preserve every existing assertion and separate stdout/stderr behavior
+- retain real subprocess coverage for environment-sensitive and broken-pipe
+  cases
+- hard-bound the deliberately slower full-CLI and wrapper integration groups
+- no live backend Codex validation
+
+Validation:
+- focused four-group runner and complete unit suite
+- quick and full repository validation
+- before/after standalone and parallel wall-clock measurements
+
+Measured local result:
+- monolithic sequential baseline: 29.329s
+- core `tests/lattice_test.bash`: 3.743s
+- all four groups in parallel: 11.826s wall time
+- complete 51-test shared runner: 20.437s wall time, with the core Lattice group
+  at 5.829s under concurrent load (the prior 48-test run took 51.920s)
+- explicit slow groups: CLI/full-doctor 11.826s with a 45s inner bound;
+  wrapper policy 8.479s with a 30s inner bound
+- evidence/recovery group: 5.198s with a 30s inner bound
+
 ## Issue #702: Bounded Lattice Startup Doctor
 
-Status: completed locally; pending PR CI
+Status: complete; merged in PR #823
 
 Goal:
 - keep ordinary wrapper startup bounded as the append-only Lattice DB grows

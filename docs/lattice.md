@@ -109,6 +109,22 @@ thin compatibility shim over `tools/upkeeper_lattice_core.py`, so even that
 diagnostic path can reuse Python's bytecode cache after the implementation
 changes.
 
+Normal cycle startup invokes `doctor --fast`. This startup mode opens the DB,
+proves a rollback-able write transaction, verifies foreign-key enforcement,
+schema versions, and required tables/indexes, then reports
+`full_integrity=deferred_to_explicit_doctor`. It does not run the internal
+self-test probes, `PRAGMA foreign_key_check`, or `PRAGMA quick_check`, so its
+work stays bounded as evidence rows accumulate. The `lattice.ready` log line
+records `doctor_mode=fast`; doctor JSON also records `doctor_mode`.
+
+Plain `tools/upkeeper_lattice.py doctor` remains the explicit full integrity
+and self-test operation. There is no automatic full-doctor cadence today:
+operators should run it during maintenance, after a detected write anomaly,
+before or after a migration, or whenever current full-integrity evidence is
+needed. Keeping that trigger explicit avoids silently adding an unbounded scan
+to every unattended cycle; any future schedule needs its own cadence and
+failure-custody policy.
+
 The default SQLite journal mode is rollback journal (`delete`). WAL is opt-in
 with `UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE=wal`; when WAL is enabled,
 `lattice.sqlite3-wal` and `lattice.sqlite3-shm` are treated as ignored runtime
@@ -133,6 +149,7 @@ The standalone CLI is:
 
 ```sh
 tools/upkeeper_lattice.py --root "$PWD" --db runtime/upkeeper-lattice/lattice.sqlite3 init
+tools/upkeeper_lattice.py doctor --fast
 tools/upkeeper_lattice.py doctor
 tools/upkeeper_lattice.py backup
 tools/upkeeper_lattice.py export-jsonl
@@ -144,11 +161,13 @@ Every SQLite connection enables:
 - `PRAGMA foreign_keys=ON`
 - `PRAGMA busy_timeout=5000`
 
-`doctor` checks DB readability and writability, parent directory state and
-permissions, ignored-path safety, schema version, `PRAGMA user_version`,
-foreign-key enablement, `PRAGMA foreign_key_check`, `PRAGMA quick_check`,
-required tables, required indexes, rollback-able writes, side-file safety, and
-optional backup creation.
+`doctor --fast` checks DB readability and writability, parent directory state
+and permissions, ignored-path safety, schema version, `PRAGMA user_version`,
+foreign-key enablement, required tables, required indexes, rollback-able
+writes, and side-file safety. Plain `doctor` additionally runs the complete
+internal self-test surface, `PRAGMA foreign_key_check`, and
+`PRAGMA quick_check`; `doctor --backup` runs that full mode before creating the
+backup.
 
 Stable exit codes are:
 

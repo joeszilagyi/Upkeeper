@@ -383,7 +383,7 @@ lattice_init_and_doctor_or_exit() {
     return 0
   fi
 
-  if ! lattice_run doctor; then
+  if ! lattice_run doctor --fast; then
     detail="${LATTICE_LAST_OUTPUT:-doctor_failed}"
     if lattice_required; then
       detail_summary="$(lattice_unavailable_detail_summary "$detail")"
@@ -397,6 +397,7 @@ lattice_init_and_doctor_or_exit() {
   UPKEEPER_LATTICE_AVAILABLE="1"
   log_line_parts "INFO" \
     "lattice.ready schema_version=1 db=$(shell_quote "$UPKEEPER_LATTICE_DB")" \
+    " doctor_mode=fast" \
     " journal_mode=$UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE" \
     " selection_mode=$(shell_quote "$UPKEEPER_LATTICE_SELECTION_MODE")" \
     " raw_storage=$(shell_quote "$UPKEEPER_LATTICE_RAW_STORAGE")"

@@ -584,6 +584,14 @@ Prompt behavior:
     `replacement_evidence=local_logs_runtime_obligations` so repeated degraded
     mode has explicit custody. If `UPKEEPER_LATTICE_REQUIRED=1`, startup fails
     before Codex launch.
+    Normal startup runs `tools/upkeeper_lattice.py doctor --fast`, which proves
+    DB access, rollback-able writes, schema versions, required tables/indexes,
+    and foreign-key enablement without database-wide integrity scans. The
+    `lattice.ready` event records `doctor_mode=fast`. Plain
+    `tools/upkeeper_lattice.py doctor` remains the explicit full self-test and
+    integrity operation, including `PRAGMA foreign_key_check` and
+    `PRAGMA quick_check`; it is not automatically scheduled, and should be run
+    at maintenance boundaries or after a Lattice write anomaly.
     Transient transcript artifacts may live under repo runtime, Upkeeper-owned
     state directories, or Upkeeper-owned temp directories; Lattice records their
     hashed identity without treating those operator-local transcript locations

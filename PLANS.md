@@ -3,9 +3,37 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #700: Import-Cacheable Lattice CLI
+## Issue #702: Bounded Lattice Startup Doctor
 
 Status: completed locally; pending PR CI
+
+Goal:
+- keep ordinary wrapper startup bounded as the append-only Lattice DB grows
+- use a startup-specific liveness/schema doctor that avoids database-wide
+  integrity scans and the full internal self-test surface
+- retain the existing plain `doctor` command as the explicit full integrity
+  and maintenance boundary
+
+Constraints:
+- preserve full-doctor behavior, exit codes, and backup behavior
+- fail startup on unavailable, unwritable, or schema-incompatible databases
+- make the selected doctor mode explicit in JSON and readiness logs
+- do not add an automatic full-doctor cadence without a separately specified
+  scheduling and failure-custody policy
+- no live backend Codex validation
+
+Validation:
+- focused fast/full mode regression, including an injected foreign-key orphan
+- growing synthetic database timing that compares fast and explicit full modes
+- complete Lattice, unit, quick, and full validation
+
+Measured local result:
+- fast startup doctor averaged 0.0921s on an empty DB and 0.0834s after 50,000
+  rows, while the explicit full doctor took 2.8712s on the populated DB
+
+## Issue #700: Import-Cacheable Lattice CLI
+
+Status: complete; merged in PR #822
 
 Goal:
 - keep `tools/upkeeper_lattice.py` as the stable executable and import surface

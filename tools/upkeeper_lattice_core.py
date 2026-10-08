@@ -6187,8 +6187,10 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     root = Path(args.root).resolve()
     db_path = normalize_db_path(args.db, root)
     journal_mode = args.journal_mode
+    fast_mode = bool(getattr(args, "fast", False))
     result: dict[str, Any] = {
         "status": "ok",
+        "doctor_mode": "fast" if fast_mode else "full",
         "db_path": str(db_path),
         "schema_version": SCHEMA_VERSION,
         "checks": {},
@@ -6253,6 +6255,14 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             return result, EXIT_SCHEMA_MISMATCH
         meta = conn.execute("select value from schema_meta where key='schema_version'").fetchone()
         result["checks"]["schema_meta_version"] = meta["value"] if meta else None
+        if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
+            result["status"] = "schema_mismatch"
+            return result, EXIT_SCHEMA_MISMATCH
+        if fast_mode:
+            result["checks"]["startup_liveness"] = "ok"
+            result["checks"]["full_integrity"] = "deferred_to_explicit_doctor"
+            return result, EXIT_SUCCESS
+        result["checks"]["full_integrity"] = "running"
         configured_raw_storage = configured_lattice_raw_storage()
         result["checks"]["raw_storage_requested"] = configured_raw_storage
         result["checks"]["raw_storage_effective"] = effective_lattice_raw_storage(configured_raw_storage)
@@ -6400,9 +6410,6 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if not bool(import_conflicted_fk_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
-        if not meta or str(meta["value"]) != str(SCHEMA_VERSION) or user_version != SCHEMA_VERSION:
-            result["status"] = "schema_mismatch"
-            return result, EXIT_SCHEMA_MISMATCH
         fk_rows = [dict(row) for row in conn.execute("PRAGMA foreign_key_check")]
         result["checks"]["foreign_key_check_rows"] = fk_rows
         if fk_rows:
@@ -6413,6 +6420,7 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if str(quick).lower() != "ok":
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
+        result["checks"]["full_integrity"] = "passed"
         if args.backup:
             backup_path = create_backup(conn, root, db_path, output=args.backup_output, allow_overwrite=True)
             result["checks"]["backup_path"] = str(backup_path)
@@ -14919,7 +14927,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=command_init)
 
     p = sub.add_parser("doctor")
-    p.add_argument("--backup", action="store_true")
+    doctor_mode = p.add_mutually_exclusive_group()
+    doctor_mode.add_argument(
+        "--fast",
+        action="store_true",
+        help="run startup liveness/schema checks and defer full integrity/self-test probes",
+    )
+    doctor_mode.add_argument("--backup", action="store_true")
     p.add_argument("--backup-output")
     p.set_defaults(func=command_doctor)
 

@@ -2313,6 +2313,20 @@ check_lattice_custody_policy_contract() {
     fail "Lattice docs missing per-cycle service default"
   grep -Fq 'UPKEEPER_LATTICE_SERVICE_ENABLED:=1' Upkeeper.conf ||
     fail "root config missing Lattice per-cycle service default"
+  grep -Fq 'UPKEEPER_LATTICE_COMMAND_TIMEOUT_SECONDS:=30' Upkeeper.conf ||
+    fail "root config missing bounded Lattice command default"
+  grep -Fq 'UPKEEPER_LATTICE_TIMEOUT_KILL_AFTER_SECONDS:=2' configurations/default.conf ||
+    fail "default config missing Lattice timeout cleanup grace"
+  grep -Fq 'timeout --kill-after="${kill_after}s" "$timeout_seconds" python3' lib/upkeeper/lattice.bash ||
+    fail "direct Lattice CLI transport is not command-bounded"
+  grep -Fq 'read -r -t "$timeout_seconds" rc_line' lib/upkeeper/lattice.bash ||
+    fail "warm Lattice service transport is not response-bounded"
+  grep -Fq 'timeout=lattice_timeout_seconds' lib/upkeeper/help_selection.bash ||
+    fail "max-cover Lattice query is not command-bounded"
+  grep -Fq 'finish_cycle 3 LATTICE_TIMEOUT' lib/upkeeper/lattice.bash lib/upkeeper/help_selection.bash ||
+    fail "required Lattice timeout does not fail closed with explicit custody"
+  [[ -s tests/lattice_timeout_test.bash ]] ||
+    fail "Lattice command-timeout regression is missing"
   grep -Fq 'service", help="serve multiple Lattice CLI commands in one warm process"' tools/upkeeper_lattice_core.py ||
     fail "Lattice CLI missing warm service subcommand"
   grep -Fq 'lattice.service.started' lib/upkeeper/lattice.bash ||
@@ -3716,6 +3730,7 @@ check_prompt_template() {
   [[ -s tests/lattice_cli_integration_test.bash ]] || fail "Lattice CLI integration test is missing"
   [[ -s tests/lattice_wrapper_integration_test.bash ]] || fail "Lattice wrapper integration test is missing"
   [[ -s tests/lattice_evidence_test.bash ]] || fail "Lattice evidence test is missing"
+  [[ -s tests/lattice_timeout_test.bash ]] || fail "Lattice timeout test is missing"
   [[ -s tests/lib/lattice_inprocess_server.py ]] || fail "Lattice in-process test server is missing"
   [[ -s tests/precontact_backup_test.bash ]] || fail "pre-contact backup test is missing or empty"
   [[ -s docs/lattice.md ]] || fail "Lattice documentation is missing or empty"

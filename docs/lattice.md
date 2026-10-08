@@ -89,6 +89,8 @@ UPKEEPER_LATTICE_SELECTION_MODE=oldest-mtime
 UPKEEPER_LATTICE_RAW_STORAGE=limited
 UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE=delete
 UPKEEPER_LATTICE_SERVICE_ENABLED=1
+UPKEEPER_LATTICE_COMMAND_TIMEOUT_SECONDS=30
+UPKEEPER_LATTICE_TIMEOUT_KILL_AFTER_SECONDS=2
 ```
 
 `UPKEEPER_LATTICE_ENABLED=1` means every wrapper cycle attempts to initialize,
@@ -108,6 +110,23 @@ CLI path for diagnosis. The stable `tools/upkeeper_lattice.py` executable is a
 thin compatibility shim over `tools/upkeeper_lattice_core.py`, so even that
 diagnostic path can reuse Python's bytecode cache after the implementation
 changes.
+
+Every Lattice command issued by the wrapper is bounded by
+`UPKEEPER_LATTICE_COMMAND_TIMEOUT_SECONDS`. The default is 30 seconds; empty,
+zero, negative, or non-numeric values are rejected in favor of that safe
+default. At the deadline Upkeeper terminates the whole command process tree,
+waits up to `UPKEEPER_LATTICE_TIMEOUT_KILL_AFTER_SECONDS` (default 2), and then
+uses KILL for survivors. If the platform `timeout` command is unavailable, the
+direct CLI transport refuses to start an unbounded command.
+
+Timeout evidence names the command, transport, deadline, and cleanup policy.
+With optional Lattice, startup and record failures keep the existing degraded
+mode and spool private recovery JSONL. With required Lattice, startup and
+selection timeouts fail closed as `LATTICE_TIMEOUT` before backend contact so
+automation-obligation custody can retain the failure. A max-cover ranking
+timeout falls back deterministically to the oldest current source-safe text
+candidate only in optional mode. Plain explicit CLI invocations made directly
+by an operator are outside the wrapper timeout policy.
 
 Normal cycle startup invokes `doctor --fast`. This startup mode opens the DB,
 proves a rollback-able write transaction, verifies foreign-key enforcement,

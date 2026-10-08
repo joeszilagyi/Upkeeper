@@ -699,6 +699,8 @@ Environment overrides:
   UPKEEPER_LATTICE_SELECTION_MODE Default: oldest-mtime
   UPKEEPER_LATTICE_RAW_STORAGE Default: limited
   UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE Default: delete
+  UPKEEPER_LATTICE_COMMAND_TIMEOUT_SECONDS Default: 30
+  UPKEEPER_LATTICE_TIMEOUT_KILL_AFTER_SECONDS Default: 2
   UPKEEPER_LOCAL_ENV_FILE      Default: $UPKEEPER_LOCAL_ENV_FILE
   UPKEEPER_LOCAL_ENV_DISABLE   Default: $UPKEEPER_LOCAL_ENV_DISABLE
   UPKEEPER_PRECONTACT_BACKUP_ENABLED Default: $UPKEEPER_PRECONTACT_BACKUP_ENABLED
@@ -881,7 +883,7 @@ enforce_startup_anomaly_gate_target_or_exit() {
 }
 
 preselect_review_target() {
-  python3 - "$ROOT_DIR" "$SELF_PATH" "$CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS" "$STARTUP_ANOMALY_GATE" "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" "$CODEX_TARGET_FILE" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$CODEX_TOOL_FAILURE_QUEUE_ENABLED" "$CODEX_TOOL_FAILURE_QUEUE_BYPASS" "$CODEX_SELECTION_SOURCE" "$CODEX_FILE_MANIFEST_PATH" "$CODEX_SELECTION_ORDER" "${CODEX_SELECT_UNTRACKED:-1}" "$CODEX_TARGET_ROOT" "$CODEX_TARGET_MAX_DEPTH" "$CODEX_SELECTION_INCLUDE_GLOBS" "$CODEX_SELECTION_EXCLUDE_GLOBS" "$CODEX_SELECTION_REVIEW_MODULES" "$CODEX_SELECTION_RANDOM_SEED" "$CODEX_MAX_COVER_MODE" "$UPKEEPER_LATTICE_ENABLED" "$UPKEEPER_LATTICE_SELECTION_MODE" "$(lattice_tool_path)" "$UPKEEPER_LATTICE_DB" "$UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE" "$CODEX_UPKEEPER_IGNORE_FILE" <<'PY'
+  python3 - "$ROOT_DIR" "$SELF_PATH" "$CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS" "$STARTUP_ANOMALY_GATE" "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" "$CODEX_TARGET_FILE" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$CODEX_TOOL_FAILURE_QUEUE_ENABLED" "$CODEX_TOOL_FAILURE_QUEUE_BYPASS" "$CODEX_SELECTION_SOURCE" "$CODEX_FILE_MANIFEST_PATH" "$CODEX_SELECTION_ORDER" "${CODEX_SELECT_UNTRACKED:-1}" "$CODEX_TARGET_ROOT" "$CODEX_TARGET_MAX_DEPTH" "$CODEX_SELECTION_INCLUDE_GLOBS" "$CODEX_SELECTION_EXCLUDE_GLOBS" "$CODEX_SELECTION_REVIEW_MODULES" "$CODEX_SELECTION_RANDOM_SEED" "$CODEX_MAX_COVER_MODE" "$UPKEEPER_LATTICE_ENABLED" "$UPKEEPER_LATTICE_SELECTION_MODE" "$(lattice_tool_path)" "$UPKEEPER_LATTICE_DB" "$UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE" "$CODEX_UPKEEPER_IGNORE_FILE" "$(lattice_command_timeout_seconds)" <<'PY'
 import datetime
 import errno
 import fnmatch
@@ -923,7 +925,8 @@ from pathlib import Path
     lattice_db_path,
     lattice_journal_mode,
     upkeeper_ignore_file,
-) = sys.argv[1:27]
+    lattice_timeout_raw,
+) = sys.argv[1:28]
 os.chdir(root)
 root_path = Path(root).resolve()
 select_untracked = select_untracked_raw.lower() in {"1", "true", "yes", "on"}
@@ -935,6 +938,10 @@ try:
 except ValueError:
     self_review_after_days = "7"
     self_review_threshold_seconds = 7 * 86400
+try:
+    lattice_timeout_seconds = max(1, int(lattice_timeout_raw))
+except ValueError:
+    lattice_timeout_seconds = 30
 
 script_exts = {
     ".awk",
@@ -1578,7 +1585,14 @@ def lattice_ranked_max_cover_paths() -> tuple[list[dict[str, object]], str]:
         "jsonl",
     ]
     try:
-        output = subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL)
+        output = subprocess.check_output(
+            args,
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=lattice_timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return [], "lattice_query_timeout"
     except (OSError, subprocess.CalledProcessError):
         return [], "lattice_query_failed"
 
@@ -1683,6 +1697,7 @@ stale_self_candidates = [
 candidate_map = {path: mtime for mtime, path in candidates}
 max_cover_candidates = source_safe_text_paths() if max_cover_mode == "1" else []
 max_cover_candidate_map = {path: mtime for mtime, path in max_cover_candidates}
+lattice_status = "not_requested"
 failure_queue_candidate_map = max_cover_candidate_map if max_cover_mode == "1" and max_cover_candidate_map else candidate_map
 failure_queue_markers = open_failure_markers(set(failure_queue_candidate_map))
 selected_failure_marker = {}
@@ -1815,6 +1830,7 @@ print(f"head_blob={metadata['head_blob']}")
 print(f"worktree_hash={metadata['worktree_hash']}")
 print(f"eligible_count={eligible_output_count}")
 print(f"selection_mode={selection_mode}")
+print(f"lattice_status={lattice_status}")
 print(f"selection_source={selection_source_used}")
 print(f"manifest_status={manifest_status}")
 print(f"selection_order={selection_order}")
@@ -1843,7 +1859,7 @@ append_preselected_review_target() {
   local compiled_file="$1"
   local selection selector_rc err_file detail selected_path selected_epoch selected_age eligible_count selected_git_status selected_content_state selected_worktree_hash selected_basis
   local selected_head_blob selected_content_changed
-  local selection_mode selection_source manifest_status selection_order select_untracked target_root target_max_depth include_globs exclude_globs selection_review_modules
+  local selection_mode lattice_status selection_source manifest_status selection_order select_untracked target_root target_max_depth include_globs exclude_globs selection_review_modules
   local failure_queue_selected failure_marker_id failure_marker_path failure_marker_first_seen_epoch failure_marker_failure_count failure_marker_first_failure_kind failure_marker_first_failure_exit_line
   local selection_file
 
@@ -1890,6 +1906,7 @@ append_preselected_review_target() {
   selected_basis="$(sed -n 's/^selection_basis=//p' <<<"$selection")"
   eligible_count="$(sed -n 's/^eligible_count=//p' <<<"$selection")"
   selection_mode="$(sed -n 's/^selection_mode=//p' <<<"$selection")"
+  lattice_status="$(sed -n 's/^lattice_status=//p' <<<"$selection")"
   selection_source="$(sed -n 's/^selection_source=//p' <<<"$selection")"
   manifest_status="$(sed -n 's/^manifest_status=//p' <<<"$selection")"
   selection_order="$(sed -n 's/^selection_order=//p' <<<"$selection")"
@@ -1906,6 +1923,14 @@ append_preselected_review_target() {
   failure_marker_failure_count="$(sed -n 's/^failure_marker_failure_count=//p' <<<"$selection")"
   failure_marker_first_failure_kind="$(sed -n 's/^failure_marker_first_failure_kind=//p' <<<"$selection")"
   failure_marker_first_failure_exit_line="$(sed -n 's/^failure_marker_first_failure_exit_line=//p' <<<"$selection")"
+  if [[ "$lattice_status" == "lattice_query_timeout" ]]; then
+    detail="$(lattice_timeout_detail selection-candidates selector "$(lattice_command_timeout_seconds)" preselect subprocess_timeout_kill_wait)"
+    if lattice_required; then
+      log_line "ERROR" "lattice.timeout command=selection-candidates phase=preselect transport=selector timeout_seconds=$(lattice_command_timeout_seconds) cleanup=subprocess_timeout_kill_wait required=1 action=fail_closed"
+      finish_cycle 3 LATTICE_TIMEOUT ERROR "codex_exec_started=0 command=selection-candidates phase=preselect timeout_seconds=$(lattice_command_timeout_seconds)"
+    fi
+    lattice_warn_once "selection_candidates_timeout" "$detail"
+  fi
   case "$selected_content_state" in
     matches_head)
       selected_content_changed="0"
@@ -1998,6 +2023,7 @@ append_preselected_review_target() {
     " worktree_hmac=${selected_worktree_hash:-unknown}" \
     " eligible_count=${eligible_count:-unknown}" \
     " selection_mode=${selection_mode:-unknown}" \
+    " lattice_status=${lattice_status:-unknown}" \
     " selection_source=${selection_source:-unknown}" \
     " manifest_status=$(shell_quote "${manifest_status:-unknown}")" \
     " selection_order=${selection_order:-unknown}" \

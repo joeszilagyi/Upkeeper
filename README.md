@@ -561,8 +561,17 @@ the failure reason, `owner_issue=430`, the `advisory_lattice_degraded` contract,
 and the fallback evidence class. Set `UPKEEPER_LATTICE_REQUIRED=1` only when a
 run must fail before Codex launch unless Lattice is writable and healthy.
 `UPKEEPER_LATTICE_SERVICE_ENABLED=1` keeps one warm local Lattice subprocess
-open for the wrapper cycle, so init, doctor, selection, pass-result, and finish
-records do not each pay a separate Python startup. The stable
+open for the wrapper cycle, so init, startup doctor, selection, pass-result,
+and finish records do not each pay a separate Python startup. Normal cycle
+startup uses `doctor --fast`: it verifies DB access, rollback-able writes,
+schema versions, and required tables/indexes without running database-wide
+integrity scans or the full internal self-test surface. Run plain
+`tools/upkeeper_lattice.py doctor` explicitly for the full doctor, including
+`PRAGMA foreign_key_check` and `PRAGMA quick_check`. No automatic full-doctor
+cadence is currently scheduled; operators should run it as maintenance after a
+write anomaly, around migrations, or whenever full integrity evidence is
+required. Readiness logs record `doctor_mode=fast`, and doctor JSON records
+`doctor_mode` plus full-integrity state. The stable
 `tools/upkeeper_lattice.py` executable is a thin compatibility shim over the
 import-cacheable implementation, so repeated direct CLI calls also avoid
 recompiling the full Lattice source after it changes.

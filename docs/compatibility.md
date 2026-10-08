@@ -441,6 +441,10 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Advisory `lattice.unavailable` log lines remain non-fatal when
   `UPKEEPER_LATTICE_REQUIRED=0`, but they must carry a reason class, owner issue
   or contract, and replacement-evidence class instead of only a detail hash.
+- Normal cycle startup uses the additive `doctor --fast` mode and identifies it
+  as `doctor_mode=fast`. Plain `doctor` remains the backward-compatible full
+  self-test and integrity operation, including foreign-key and SQLite quick
+  checks; no automatic full-doctor cadence is implied by startup success.
 - For audit, breadcrumb, anomaly, and automation-obligation custody, Lattice is
   supporting evidence, not sole custody authority, until the tracked Lattice
   integrity blockers are closed. Lattice-derived custody decisions must keep a

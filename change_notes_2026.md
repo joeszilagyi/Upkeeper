@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: bounded Lattice startup doctor:
+	1. Normal wrapper startup now uses `doctor --fast` to prove DB access, rollback-able writes, schema versions, required tables/indexes, and foreign-key enablement without running database-wide integrity scans or the full internal self-test surface.
+	2. Plain `tools/upkeeper_lattice.py doctor` remains the explicit full doctor and still runs the complete probes, `PRAGMA foreign_key_check`, and `PRAGMA quick_check`; no automatic full-doctor cadence is introduced.
+	3. Doctor JSON and wrapper readiness logs distinguish fast startup liveness from full integrity, and a deterministic regression proves the fast path defers an injected foreign-key orphan that the full doctor detects.
+
 2026-10-08: import-cacheable Lattice CLI implementation:
 	1. The stable `tools/upkeeper_lattice.py` executable is now a small compatibility shim over `tools/upkeeper_lattice_core.py`, preserving commands and direct-import helpers while allowing Python to cache the large implementation.
 	2. Lattice-focused backlog validation, high-risk classification, mutation ownership, and network-boundary checks now cover both the shim and implementation module.

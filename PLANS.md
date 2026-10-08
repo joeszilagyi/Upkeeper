@@ -5,7 +5,7 @@ Upkeeper changes. Keep entries brief and update their status before merge.
 
 ## Issue #799: Deferred Backlog PR Publication
 
-Status: in progress
+Status: completed locally; pending PR CI
 
 Goal:
 - stop backlog runs from opening or publishing an empty GitHub PR before any
@@ -37,13 +37,12 @@ Validation:
 - `tools/validate_upkeeper.sh --smoke`
 - `git diff --check`
 
-## Issues #732-#786: Prompt Compilation And Selection Batch
+## Issues #732-#733: Prompt Compilation And Selection Batch
 
-Status: in progress
+Status: completed locally; pending PR CI
 
 Goal:
-- fix the current lowest open bug queue starting with #732, then continue in
-  order for the next four lowest open bugs that remain actionable
+- fix the two completed queue items, #732 and #733
 - collapse prompt compilation's tiny Python subprocess chain into a more
   efficient emitter path without changing the emitted issue-fix packet contract
 - remove duplicate candidate-selection logic where help text and Lattice keep
@@ -55,8 +54,7 @@ Constraints:
 - no live backend Codex validation
 - preserve existing prompt packet shape, candidate selection semantics, and
   operator-visible help text
-- keep each bug fix focused enough to validate and push before moving to the
-  next open issue
+- keep each bug fix focused enough to validate independently
 
 Files likely touched:
 - `lib/upkeeper/prompt_compile.bash`
@@ -75,14 +73,13 @@ Validation:
 - `tools/validate_upkeeper.sh --quick`
 - `git diff --check`
 
-## Issues #720-#726: Backlog Effort Sizing And Hot-Path Batch
+## Issues #720-#721: Backlog Effort Sizing And Hot-Path Batch
 
-Status: in progress
+Status: completed locally; pending PR CI
 
 Goal:
-- handle the next five lowest open bug issues in order, starting with #720,
-  with one focused fix per issue and a local commit plus push after each
-  verified change
+- complete the two implemented queue items, #720 and #721, with one focused
+  fix per issue
 - reduce the backlog launcher's blanket `xhigh` default by selecting effort
   tier from deterministic issue/task context before `prepare_backlog_runtime_env`
   exports model settings
@@ -350,7 +347,7 @@ Validation:
 
 ## Lattice Provenance And Evidence Packages
 
-Status: in progress
+Status: completed; issue #219 closed
 
 Goal:
 - close issue #219 by defining a portable provenance and evidence-package
@@ -380,7 +377,7 @@ Validation:
 
 ## Run Taxonomy, Observability, And Cost Accounting Surface
 
-Status: in progress
+Status: completed; issue #223 closed
 
 Goal:
 - close issue #223 by defining a local run taxonomy plus observability/cost
@@ -411,7 +408,7 @@ Validation:
 
 ## Adapter And Plugin Contract With Side-Effect Declarations
 
-Status: in progress
+Status: completed; issue #225 closed
 
 Goal:
 - close issue #225 by defining a bounded adapter/plugin contract for future
@@ -443,7 +440,7 @@ Validation:
 
 ## Human Review Packet Format For Cycle Output
 
-Status: in progress
+Status: completed; issue #226 closed
 
 Goal:
 - close issue #226 by defining a concise human review packet for each

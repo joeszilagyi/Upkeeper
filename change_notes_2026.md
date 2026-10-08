@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: import-cacheable Lattice CLI implementation:
+	1. The stable `tools/upkeeper_lattice.py` executable is now a small compatibility shim over `tools/upkeeper_lattice_core.py`, preserving commands and direct-import helpers while allowing Python to cache the large implementation.
+	2. Lattice-focused backlog validation, high-risk classification, mutation ownership, and network-boundary checks now cover both the shim and implementation module.
+	3. A deterministic regression proves the first direct CLI call creates core bytecode and a later call consumes it without rewriting the valid cache.
+
 2026-10-08: same-checkout unit-test attestation reuse:
 	1. Successful `tools/run_tests.sh` runs can now publish a private JSON attestation keyed by Git head/tree, environment class, and every passing test file hash.
 	2. A later full-validator phase rehashes and reuses identical passing test scripts only when the tracked tree and all metadata still match; missing, changed, dirty, or cross-environment evidence fails closed to normal reruns.

@@ -126,6 +126,10 @@ Lattice has two compatibility layers:
 - The SQLite database schema is local runtime state. Upkeeper may migrate it,
   but the tracked schema version and `PRAGMA user_version` must describe the
   current expected shape.
+- `tools/upkeeper_lattice.py` remains the stable executable and direct-import
+  compatibility surface; its implementation may live in an import-cacheable
+  module as long as commands, exit codes, and public registry helpers remain
+  available through the stable path.
 - JSONL export/import is the portable exchange surface. Export rows must keep
   `schema_version`, `row_type`, `row_version`, `logical_key`, source identity,
   repo identity, payload, `payload_sha256`, and exported epoch meanings stable

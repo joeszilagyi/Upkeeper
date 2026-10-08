@@ -1323,7 +1323,7 @@ backlog_path_high_risk_for_blocking_ci() {
   local path="$1"
 
   case "$path" in
-    Upkeeper|ChimneySweep|FlameOn|lib/upkeeper/*|orchestration/*|tools/upkeeper_lattice.py|tools/validate_upkeeper.sh|.github/workflows/*)
+    Upkeeper|ChimneySweep|FlameOn|lib/upkeeper/*|orchestration/*|tools/upkeeper_lattice.py|tools/upkeeper_lattice_core.py|tools/validate_upkeeper.sh|.github/workflows/*)
       return 0
       ;;
     *)
@@ -1382,7 +1382,7 @@ backlog_reasoning_effort_from_text() {
       printf 'high\tnormal\tdefault_normal_context\n'
       return 0
       ;;
-    *"orchestration/"*|*"lib/upkeeper/"*|*"tools/validate_upkeeper.sh"*|*"tools/run_validation_phases.sh"*|*"tools/upkeeper_lattice.py"*|*"tools/docs_only_fast_path.sh"*|*".github/workflows/"*)
+    *"orchestration/"*|*"lib/upkeeper/"*|*"tools/validate_upkeeper.sh"*|*"tools/run_validation_phases.sh"*|*"tools/upkeeper_lattice.py"*|*"tools/upkeeper_lattice_core.py"*|*"tools/docs_only_fast_path.sh"*|*".github/workflows/"*)
       printf 'xhigh\thigh-risk\thigh-risk path or file context\n'
       return 0
       ;;
@@ -3451,11 +3451,14 @@ run_focused_issue_validation() {
   local target_hint="${2:-}"
 
   [[ -n "$issue_number" ]] || return 0
-  if [[ "$target_hint" == "tools/upkeeper_lattice.py" ]] || backlog_git_path_changed "tools/upkeeper_lattice.py"; then
-    if backlog_git_path_changed "tools/upkeeper_lattice.py"; then
+  if [[ "$target_hint" == "tools/upkeeper_lattice.py" || "$target_hint" == "tools/upkeeper_lattice_core.py" ]] ||
+      backlog_git_path_changed "tools/upkeeper_lattice.py" ||
+      backlog_git_path_changed "tools/upkeeper_lattice_core.py"; then
+    if backlog_git_path_changed "tools/upkeeper_lattice.py" ||
+        backlog_git_path_changed "tools/upkeeper_lattice_core.py"; then
       require_command python3 || return $?
       log "per-bug validation: lattice focused coverage (tests/lattice_test.bash)"
-      python3 -m py_compile tools/upkeeper_lattice.py || return $?
+      python3 -m py_compile tools/upkeeper_lattice.py tools/upkeeper_lattice_core.py || return $?
       bash tests/lattice_test.bash || return $?
     fi
   fi

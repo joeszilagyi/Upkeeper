@@ -1155,8 +1155,13 @@ prompts, backup log lines, or Lattice preselect evidence.
   without paying for the full validator.
   Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
   heavier config, manifest, Lattice, and review-module dry-run fixtures stay in
-  full mode. Add `--profile` to validation runs to print per-check elapsed
-  timings without changing coverage. Full validation uses bounded dry-runs under
+  full mode. Validation runs always write per-check JSONL timing evidence under
+  ignored `runtime/validation-timing/`, or at
+  `UPKEEPER_VALIDATION_TIMING_FILE` when explicitly set. Rows include the mode,
+  Git head/tree, command, status, duration, timeout, and timeout-cleanup result.
+  Add `--profile` to print each row's timing in the terminal; full runs always
+  print a ten-check slowest summary, and CI retains the JSONL artifact. Full
+  validation uses bounded dry-runs under
   validator-owned quota/cooldown bypasses plus a local fake `codex` binary; it
   does not launch real backend work, and quota-specific contract tests use their
   own explicit fixtures.

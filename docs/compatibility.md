@@ -485,7 +485,10 @@ Future changes should preserve this operator-visible surface as far as possible:
   wrapper-only behavior for a later cycle.
 - Validation entrypoints remain available:
   `tools/validate_upkeeper.sh --deps`, `--source-contracts`, `--smoke`,
-  `--quick`, `--full`, and the additive `--profile` timing flag.
+  `--quick`, `--full`, and the additive `--profile` timing flag. All modes
+  write schema `upkeeper.validation-timing.v1` JSONL evidence keyed by Git
+  head/tree and check command; `UPKEEPER_VALIDATION_TIMING_FILE` selects a
+  stable artifact path for CI or other automation.
 - Merge-steward cleanup for already-green backlog PRs remains local and
   no-backend. `tools/backlog_merge_steward.py` emits `merge_ready=yes|no`, a
   reason, and a next action, refuses unsafe PR/check/worktree states, and uses

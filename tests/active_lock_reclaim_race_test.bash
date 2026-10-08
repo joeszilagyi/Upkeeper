@@ -39,9 +39,26 @@ load_active_lock_fixture() {
   source "$PROJECT_ROOT/lib/upkeeper/active_lock.bash"
 }
 
+instrument_reclaim_guard_release() {
+  local original_definition
+
+  original_definition="$(declare -f release_active_lock_reclaim_guard)"
+  original_definition="release_active_lock_reclaim_guard_original${original_definition#release_active_lock_reclaim_guard}"
+  eval "$original_definition"
+  release_active_lock_reclaim_guard() {
+    local guard_dir="$1"
+
+    if [[ "${ACTIVE_LOCK_ACQUIRED:-0}" == "1" && ! -f "$CODEX_ACTIVE_LOCK_DIR/state" ]]; then
+      printf 'worker=%s guard_released_before_state\n' "$worker_id"
+    fi
+    release_active_lock_reclaim_guard_original "$guard_dir"
+  }
+}
+
 if [[ "${1:-}" == "--worker" ]]; then
   worker_id="${2:?worker id required}"
   load_active_lock_fixture
+  instrument_reclaim_guard_release
 
   : >"$RACE_READY_DIR/$worker_id"
   while [[ ! -e "$RACE_START_FILE" ]]; do
@@ -175,6 +192,9 @@ winner_records="$(wc -l <"$RACE_WINNERS_FILE")"
 
 if ! grep -Fq 'reason=reclaim_lost' "$TEST_TMP_ROOT"/worker-*.out; then
   fail "losing reclaimers did not report reclaim_lost"
+fi
+if grep -Fq 'guard_released_before_state' "$TEST_TMP_ROOT"/worker-*.out; then
+  fail "reclaim winner released its guard before publishing ownership state"
 fi
 if [[ -e "$RACE_LOCK_DIR" ]]; then
   fail "winning owner did not release the active lock"

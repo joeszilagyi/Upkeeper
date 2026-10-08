@@ -3,6 +3,78 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #726: Structured Full-Validation Timing
+
+Status: completed locally; pending PR CI
+
+Goal:
+- make the blocking full-validator path emit durable per-check timing evidence
+- bind timing rows to the validator mode, Git head/tree, command, status,
+  duration, timeout, and cleanup outcome
+- print the slowest full-validation checks even on failure and retain the JSONL
+  artifact in GitHub CI
+- use current measurements, rather than the old Lattice estimate, to choose the
+  next backlog throughput optimization
+
+Constraints:
+- no live backend Codex validation
+- preserve the validation surface and fail-closed behavior
+- keep timeout cleanup explicit and prevent descendant fixture processes from
+  escaping validator custody
+- keep local timing evidence ignored and uncommitted
+
+Files likely touched:
+- `.github/workflows/ci.yml`
+- `tools/validation_timing_lib.bash`
+- `tools/validate_upkeeper.sh`
+- `tests/validation_timing_test.bash`
+- validation documentation and `change_notes_2026.md`
+
+Validation:
+- `bash -n tools/validation_timing_lib.bash tools/validate_upkeeper.sh tests/validation_timing_test.bash`
+- `bash tests/validation_timing_test.bash`
+- `tools/run_tests.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick --profile`
+- `tools/validate_upkeeper.sh --full --profile`
+- `git diff --check`
+
+Validation discovery:
+- the parallel suite exposed issue #819, where the #652 reclaim guard was
+  released after replacement `mkdir` but before state/marker publication
+- the same patch now retains reclaim custody through complete ownership
+  publication and strengthens the race fixture against early guard release
+
+Measured full-validator result:
+- `file_manifest_selection`: 350.949s
+- `stress_corpus_harness`: 136.114s
+- `fault_injection_first_scenarios`: 121.742s
+- `backlog_autoshelve_contract`: 101.466s
+- `config_file_support`: 57.196s
+- complete `lattice_contract`: 4.396s
+- these current measurements make manifest/integration duplication—not the
+  older Lattice estimate—the next validation-throughput target
+
+## Issue #819: Complete Active-Lock Reclaim Publication Custody
+
+Status: completed locally; pending PR CI
+
+Goal:
+- keep the stale-reclaim guard held until replacement ownership is completely
+  published
+- clean up lock and guard custody on state, rename, or marker failures
+- make the concurrency fixture explicitly reject pre-publication guard release
+
+Constraints:
+- preserve normal atomic first acquisition and fallback inheritance
+- keep the correction within the #652 ownership model
+- no live backend Codex validation
+
+Validation:
+- repeated and concurrent `tests/active_lock_reclaim_race_test.bash`
+- `UPKEEPER_INTERNAL_ACTIVE_LOCK_SELF_TEST=1 ./Upkeeper`
+- whole test suite and quick/full validators listed above
+
 ## Issue #652: Serialized Active-Lock Stale Reclaim
 
 Status: completed locally; pending PR CI

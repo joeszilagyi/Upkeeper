@@ -372,9 +372,13 @@ Smoke validation is the fast local edit-loop path: syntax, version/module-map
 contracts, prompt packaging, help/docs/diff checks, parser helpers, and launcher
 argument contracts. Quick validation adds bounded static/fixture checks and
 stays out of wrapper dry-run integration paths such as manifest selection,
-Lattice selection, and config-file startup. Add `--profile` to any
-non-dependency validation mode to print per-check timings and find the next
-local bottleneck without changing coverage.
+Lattice selection, and config-file startup. Every validator run writes a
+machine-readable JSONL timing artifact under ignored
+`runtime/validation-timing/`; set `UPKEEPER_VALIDATION_TIMING_FILE` to choose a
+stable path. Each row binds a check to the mode, Git head/tree, command, status,
+duration, timeout, and cleanup result. Add `--profile` to print those details
+for every check. Full runs print the ten slowest checks even on failure, and CI
+uploads the JSONL artifact for later comparison without changing coverage.
 The full validation mode remains the broad deterministic local integration gate
 without real backend Codex work. It runs bounded Upkeeper dry-run startup
 checks under validator-owned quota/cooldown bypasses, then uses a local fake

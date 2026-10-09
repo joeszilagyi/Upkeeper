@@ -196,11 +196,11 @@ test_plain_required_backup_succeeds() {
   grep -Fq "precontact_backup.created target_hmac=$expected_path_hmac" "$LOG_FILE" || fail "created log did not record target HMAC"
   ! grep -Fq "target=dir/space file.sh" "$LOG_FILE" || fail "created log leaked selected relative path"
   jq -e \
-    --arg rel "dir/space file.sh" \
     --arg content_hmac "$(precontact_backup_content_hmac "$expected_sha")" \
     --arg path_hmac "$expected_path_hmac" \
-    '.schema_version == 2
-      and .selected_relative_path == $rel
+    '.schema_version == 3
+      and .selected_relative_path_redacted == true
+      and (has("selected_relative_path") | not)
       and .content_hmac == $content_hmac
       and .relative_path_hmac == $path_hmac
       and (.content_sha256 | not)
@@ -209,11 +209,12 @@ test_plain_required_backup_succeeds() {
       and .cycle_run_hash == "hash-plain"
       and .selected_git_status == "clean"
       and .selected_worktree_hash == "worktree-fixture"
-      and .selection_basis == "test selected dir/space file.sh"
+      and .selection_basis == "redacted"
       and .backup_mode == "plain"
       and .encrypted == false
       and .protected_from_backend == false' "$json_file" >/dev/null ||
     fail "plain sidecar JSON missing required fields"
+  ! grep -Fq 'dir/space file.sh' "$json_file" || fail "redacted plain sidecar leaked the selected path"
 }
 
 test_age_mode_uses_public_recipient_only() {
@@ -689,7 +690,12 @@ test_plain_restore_and_unsafe_id() {
   backup_id="$RUN_PRECONTACT_BACKUP_ID"
 
   printf 'mutated\n' >"$repo/dir/space file.sh"
-  precontact_backup_restore_by_id "$backup_id" "$repo" "" ""
+  if precontact_backup_restore_by_id "$backup_id" "$repo" "" ""; then
+    fail "redacted plain backup restored without an explicit destination"
+  fi
+  [[ "$PRECONTACT_BACKUP_LAST_REASON" == "restore_path_redacted_requires_override" ]] ||
+    fail "redacted plain restore failed as $PRECONTACT_BACKUP_LAST_REASON"
+  precontact_backup_restore_by_id "$backup_id" "$repo" "" "dir/space file.sh"
   restored_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
   [[ "$restored_sha" == "$original_sha" ]] || fail "plain restore did not restore original bytes"
 
@@ -719,12 +725,16 @@ test_standalone_restore_rejects_wrong_repo_by_default() {
   UPKEEPER_PRECONTACT_BACKUP_MODE=plain
   UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
   UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
+  UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS=0
   printf 'source repository backup\n' >"$source_repo/dir/space file.sh"
   printf 'destination repository content\n' >"$destination_repo/dir/space file.sh"
   destination_sha="$(precontact_backup_sha256_file "$destination_repo/dir/space file.sh")"
 
   precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
   backup_id="$RUN_PRECONTACT_BACKUP_ID"
+  jq -e --arg rel "dir/space file.sh" '.schema_version == 2 and .selected_relative_path == $rel' \
+    "$(find "$UPKEEPER_PRECONTACT_BACKUP_ROOT" -type f -name "${backup_id}.json" -print -quit)" >/dev/null ||
+    fail "explicit redaction opt-out did not preserve legacy path metadata"
 
   set +e
   output="$(env \
@@ -771,7 +781,7 @@ test_secure_restore_preserves_recorded_mode() {
   backup_id="$RUN_PRECONTACT_BACKUP_ID"
 
   printf 'mutated\n' >"$repo/dir/space file.sh"
-  precontact_backup_restore_by_id "$backup_id" "$repo" "" ""
+  precontact_backup_restore_by_id "$backup_id" "$repo" "" "dir/space file.sh"
 
   final_mode="$(stat -Lc '%a' -- "$repo/dir/space file.sh" 2>/dev/null || printf 'missing')"
   [[ "$final_mode" == "644" ]] || fail "securely restored target mode was $final_mode, expected 644"
@@ -816,7 +826,7 @@ PY
   }
 
   set +e
-  precontact_backup_restore_by_id "$backup_id" "$repo" "" ""
+  precontact_backup_restore_by_id "$backup_id" "$repo" "" "dir/space file.sh"
   rc=$?
   set -e
 
@@ -856,7 +866,7 @@ test_plain_restore_temporary_directory_cleaned_on_failure() {
   TMPDIR="$tmp_root"
 
   set +e
-  precontact_backup_restore_by_id "$backup_id" "$repo" "" ""
+  precontact_backup_restore_by_id "$backup_id" "$repo" "" "dir/space file.sh"
   rc=$?
   set -e
 

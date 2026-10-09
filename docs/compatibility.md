@@ -367,6 +367,11 @@ Future changes should preserve this operator-visible surface as far as possible:
   plaintext recovery must explicitly set both
   `UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0` and
   `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1`.
+- Default path redaction omits `selected_relative_path` from plain backup
+  sidecars, so their restore requires `--restore-to`. Operators may explicitly
+  set `UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS=0` to retain the legacy automatic
+  restore path at the cost of plaintext path disclosure. Age public sidecars
+  remain path-free and keep automatic restore metadata inside encryption.
 - Trusted machine-local encrypted-backup bootstrap is now part of the stable
   operator surface. `UPKEEPER_LOCAL_ENV_FILE` may provide
   `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT`, and

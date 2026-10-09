@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.42
+## Version: v1.2.43
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.42"
+UPKEEPER_VERSION="v1.2.43"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -4415,9 +4415,13 @@ precontact_backup_restore_by_id() {
     if ! precontact_backup_validate_restore_repo_identity "$sidecar" "$repo_root"; then
       return 1
     fi
-    if ! rel_path="$(precontact_backup_json_field "$sidecar" "selected_relative_path")"; then
-      precontact_backup_set_reason "metadata_read_failed"
-      return 1
+    rel_path="$(precontact_backup_json_field "$sidecar" "selected_relative_path")" || rel_path=""
+    if [[ -z "$rel_path" ]]; then
+      if [[ -z "$restore_to" ]]; then
+        precontact_backup_set_reason "restore_path_redacted_requires_override"
+        return 1
+      fi
+      rel_path="$restore_to"
     fi
     if ! content_fingerprint="$(precontact_backup_content_fingerprint_field "$sidecar")"; then
       precontact_backup_set_reason "metadata_read_failed"

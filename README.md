@@ -674,8 +674,15 @@ UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE="20"
 Restore a plain backup by id with:
 
 ```sh
-tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID
+tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID --restore-to=REPO_RELATIVE_PATH
 ```
+
+Plain sidecars omit the raw target path by default
+(`UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS=1`), so `--restore-to` is required.
+Setting redaction to `0` preserves legacy automatic-path restore but exposes the
+repo-relative target path in plaintext metadata. Age public sidecars never
+contain that path; automatic age restore reads it only from the encrypted
+payload.
 
 CLI flags are the final one-cycle overrides. That means a cron profile can set
 the normal model, target, and review modules, while an operator can still run:

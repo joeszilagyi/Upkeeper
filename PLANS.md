@@ -3,9 +3,29 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #688: Typed JSON-to-Shell Parsing
+## Issue #694: Redact Plain Backup Sidecar Paths
 
 Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- honor the default-on path-redaction setting in plain backup sidecars
+- preserve legacy raw-path metadata only when redaction is explicitly disabled
+- require an explicit restore destination when a plain sidecar omits its path
+
+Verified defect:
+- `UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS=1` is the documented default, but
+  the plain metadata writer always serialized `selected_relative_path`
+- age public sidecars already omit the field; their private encrypted payload
+  correctly retains it for automatic restore
+
+Validation:
+- redacted plain sidecars contain only the path HMAC and require `--restore-to`
+- opt-out plain sidecars retain automatic legacy restore behavior
+- age public/private metadata behavior remains unchanged
+
+## Issue #688: Typed JSON-to-Shell Parsing
+
+Status: complete; merged in PR #853
 
 Goal:
 - replace JSON-generated shell assignments and their seven `eval` consumers

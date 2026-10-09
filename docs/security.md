@@ -200,6 +200,14 @@ plaintext path when the selected file contains high-confidence private-key
 material. Upkeeper records accepted plain backups as `encrypted=false` and
 `protected_from_backend=false`.
 
+With the default `UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS=1`, a plain public
+sidecar contains the target path HMAC but omits `selected_relative_path`.
+Restoring that backup therefore requires an explicit repo-relative
+`--restore-to` path. Setting redaction to `0` deliberately restores the legacy
+automatic-path behavior and exposes that relative path in plaintext metadata.
+Age public sidecars always omit it; the private age payload retains it only
+inside encrypted content.
+
 Plain and age backups are published as one private backup-id directory. The
 payload and sidecar files plus staging directory are fsynced before an atomic
 directory rename, and the parent directory is fsynced before success is

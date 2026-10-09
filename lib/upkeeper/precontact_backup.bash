@@ -551,6 +551,7 @@ precontact_backup_write_metadata() {
   local derivation_sha="${19}"
   local selected_content_state="${20}"
   local selected_head_blob="${21}"
+  local redact_paths="${22:-1}"
 
   python3 - "$output_path" \
     "$repo_key" "$repo_root_hmac" "$rel_path" "$path_hmac" \
@@ -558,7 +559,7 @@ precontact_backup_write_metadata() {
     "$size_bytes" "$mode" "$mtime" "$selected_git_status" \
     "$selected_worktree_hash" "$selection_basis" "$backup_mode" \
     "$encrypted" "$protected_from_backend" "$derivation_sha" \
-    "$selected_content_state" "$selected_head_blob" <<'PY'
+    "$selected_content_state" "$selected_head_blob" "$redact_paths" <<'PY'
 import json
 import sys
 
@@ -584,7 +585,8 @@ import sys
     derivation_sha,
     selected_content_state,
     selected_head_blob,
-) = sys.argv[1:23]
+    redact_paths,
+) = sys.argv[1:24]
 
 def maybe_int(value):
     try:
@@ -593,7 +595,7 @@ def maybe_int(value):
         return value or "unknown"
 
 def boolish(value):
-    return str(value).lower() in {"1", "true", "yes"}
+    return str(value).lower() in {"1", "true", "yes", "on"}
 
 protected_value = protected_from_backend
 if protected_from_backend in {"0", "false", "False"}:
@@ -603,12 +605,12 @@ elif protected_from_backend in {"1", "true", "True"}:
 elif not protected_from_backend:
     protected_value = "unknown"
 
+path_redacted = backup_mode == "plain" and boolish(redact_paths)
 metadata = {
-    "schema_version": 2,
+    "schema_version": 3 if path_redacted else 2,
     "backup_id_derivation_sha256": derivation_sha,
     "repo_key": repo_key,
     "repo_root_hmac": repo_root_hmac,
-    "selected_relative_path": rel_path,
     "relative_path_hmac": path_hmac,
     "content_hmac": content_hmac,
     "cycle_id": cycle_id,
@@ -619,13 +621,17 @@ metadata = {
     "mtime": mtime or "unknown",
     "selected_git_status": selected_git_status or "unknown",
     "selected_worktree_hash": selected_worktree_hash or "unknown",
-    "selection_basis": selection_basis or "unknown",
+    "selection_basis": "redacted" if path_redacted else (selection_basis or "unknown"),
     "backup_mode": backup_mode,
     "encrypted": boolish(encrypted),
     "protected_from_backend": protected_value,
     "selected_content_state": selected_content_state or "unknown",
     "selected_head_blob": selected_head_blob or "unknown",
 }
+if path_redacted:
+    metadata["selected_relative_path_redacted"] = True
+else:
+    metadata["selected_relative_path"] = rel_path
 
 with open(output_path, "w", encoding="utf-8") as handle:
     json.dump(metadata, handle, sort_keys=True, indent=2)
@@ -1138,7 +1144,8 @@ PY
     "$rel_path" "$path_hmac" "$content_hmac" "$CYCLE_ID" "$CYCLE_RUN_HASH" \
     "$created_utc" "$size_bytes" "$mode_text" "$mtime_text" "$selected_git_status" \
     "$selected_worktree_hash" "$selection_basis" "$resolved_mode" "$encrypted" \
-    "$protected" "$derivation_sha" "$selected_content_state" "$selected_head_blob"; then
+    "$protected" "$derivation_sha" "$selected_content_state" "$selected_head_blob" \
+    "${UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS:-1}"; then
     precontact_backup_fail_or_continue "$rel_path" "metadata_write_failed" 0
     return 0
   fi
@@ -1506,9 +1513,13 @@ precontact_backup_restore_by_id() {
     if ! precontact_backup_validate_restore_repo_identity "$sidecar" "$repo_root"; then
       return 1
     fi
-    if ! rel_path="$(precontact_backup_json_field "$sidecar" "selected_relative_path")"; then
-      precontact_backup_set_reason "metadata_read_failed"
-      return 1
+    rel_path="$(precontact_backup_json_field "$sidecar" "selected_relative_path")" || rel_path=""
+    if [[ -z "$rel_path" ]]; then
+      if [[ -z "$restore_to" ]]; then
+        precontact_backup_set_reason "restore_path_redacted_requires_override"
+        return 1
+      fi
+      rel_path="$restore_to"
     fi
     if ! content_fingerprint="$(precontact_backup_content_fingerprint_field "$sidecar")"; then
       precontact_backup_set_reason "metadata_read_failed"

@@ -1,5 +1,9 @@
 # 2026 Change Notes
 
+2026-10-09: v1.2.43 changes:
+	1. Default-redacted plain pre-contact backup sidecars now omit the raw `selected_relative_path` and retain only its HMAC; age public sidecars remain path-free.
+	2. Redacted plain restores require an explicit `--restore-to` path, while `UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS=0` preserves legacy automatic-path metadata and restore behavior.
+
 2026-10-09: v1.2.42 changes:
 	1. Quota, status-marker, session-diagnostic, review-summary, and pass-coverage JSON now cross into shell variables through fixed-schema NUL-delimited parsing instead of `jq @sh` source generation and `eval`.
 	2. Parser destination prefixes and field names are allowlisted, malformed JSON fails closed, and structured values plus shell metacharacters, quotes, tabs, newlines, and backslashes remain inert data.

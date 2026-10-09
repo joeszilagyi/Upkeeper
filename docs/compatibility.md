@@ -458,6 +458,12 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Advisory `lattice.unavailable` log lines remain non-fatal when
   `UPKEEPER_LATTICE_REQUIRED=0`, but they must carry a reason class, owner issue
   or contract, and replacement-evidence class instead of only a detail hash.
+- Plain operator-driven Upkeeper remains advisory by default. Mutation-capable
+  FlameOn, ChimneySweep, backlog issue-repair, newest-file, and obligation-repair
+  paths force Lattice enabled and required. Backlog's only degraded exception is
+  the explicit `BACKLOG_ALLOW_LATTICE_DEGRADED=1` one-cycle override, which is
+  logged before backend work and retains local logs/runtime obligations as
+  replacement evidence.
 - Normal cycle startup uses the additive `doctor --fast` mode and identifies it
   as `doctor_mode=fast`. Plain `doctor` remains the backward-compatible full
   self-test and integrity operation, including foreign-key and SQLite quick

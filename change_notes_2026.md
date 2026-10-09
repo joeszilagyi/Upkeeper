@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: fail-closed Lattice policy for backlog mutation:
+	1. Backlog issue repair, newest-file mutation, and obligation repair now force Lattice enabled and required, matching the existing FlameOn and ChimneySweep full-burn policy.
+	2. Plain operator-driven Upkeeper remains advisory by default; a backlog run can opt into one-cycle degraded operation only with `BACKLOG_ALLOW_LATTICE_DEGRADED=1`.
+	3. The override keeps Lattice enabled and logs the degraded policy plus `local_logs_runtime_obligations` replacement evidence before backend work; validation covers issue repair, obligation repair, interactive defaults, and the override.
+
 2026-10-08: terminal evidence before Lattice cycle finish:
 	1. `finish_cycle` now publishes the canonical `cycle.exit` line before automation-ledger and Lattice finish recording, while retaining automation-before-Lattice ordering.
 	2. The Lattice log artifact digest therefore observes the terminal exit code and reason, and a failed Lattice finish write cannot suppress the canonical terminal evidence.

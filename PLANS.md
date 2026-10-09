@@ -3,9 +3,38 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #665: Terminal Evidence Before Lattice Finish
+## Issue #666: Fail-Closed Lattice for Backlog Mutation
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- require a healthy Lattice before backlog issue, newest-file, or obligation
+  repair can contact the backend and mutate source
+- preserve the advisory default for direct operator-driven Upkeeper runs
+- provide a narrow, explicit, operator-visible degraded backlog override
+
+Audit result:
+- FlameOn and ChimneySweep already force Lattice enabled and required through
+  the shared full-burn profile
+- backlog sets its own mutation environment around plain `./Upkeeper` and did
+  not override the advisory default for issue or obligation repair
+
+Constraints:
+- never allow disabling Lattice to bypass the required backlog gate
+- keep existing required-mode init, doctor, unsafe-path, and timeout custody
+- degraded operation must be an explicit one-cycle choice with replacement
+  evidence logged before backend work
+- no live backend Codex validation
+
+Validation:
+- backlog issue and obligation repair export enabled/required Lattice
+- explicit degraded override exports enabled/advisory Lattice and logs custody
+- existing plain-wrapper validation retains the advisory default
+- FlameOn and ChimneySweep required-mode tests remain green
+
+## Issue #665: Terminal Evidence Before Lattice Finish
+
+Status: complete; merged in PR #840
 
 Goal:
 - publish canonical `cycle.exit` evidence before Lattice hashes the log artifact

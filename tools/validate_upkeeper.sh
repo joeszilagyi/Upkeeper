@@ -1607,11 +1607,17 @@ PY
     -u BACKLOG_CODEX_REASONING_EFFORT \
     -u BACKLOG_QUOTA_GUARDRAIL_BYPASS \
     -u BACKLOG_QUOTA_COOLDOWN_BYPASS \
+    -u BACKLOG_ALLOW_LATTICE_DEGRADED \
+    -u UPKEEPER_LATTICE_ENABLED \
+    -u UPKEEPER_LATTICE_REQUIRED \
     BACKLOG_SOURCE_ONLY=1 bash -lc '
     set -euo pipefail
     cd "$1"
     source ./orchestration/backlog.sh
-    prepare_backlog_runtime_env
+    prepare_backlog_runtime_env issue_repair Upkeeper "issue repair fixture"
+    printf "issue_lattice=%s/%s\n" "$UPKEEPER_LATTICE_ENABLED" "$UPKEEPER_LATTICE_REQUIRED"
+    prepare_backlog_runtime_env obligation_repair Upkeeper "obligation repair fixture"
+    printf "obligation_lattice=%s/%s\n" "$UPKEEPER_LATTICE_ENABLED" "$UPKEEPER_LATTICE_REQUIRED"
     printf "model=%s\n" "$CODEX_MODEL"
     printf "effort=%s\n" "$CODEX_REASONING_EFFORT"
     printf "week=%s\n" "$CODEX_WEEK_STOP_PERCENT"
@@ -1628,6 +1634,24 @@ PY
     fail "backlog launcher did not export quota guardrail bypass"
   grep -Fxq 'cooldown=1' "$temp_dir/defaults.out" ||
     fail "backlog launcher did not export quota cooldown bypass"
+  grep -Fxq 'issue_lattice=1/1' "$temp_dir/defaults.out" ||
+    fail "backlog issue repair did not require enabled Lattice"
+  grep -Fxq 'obligation_lattice=1/1' "$temp_dir/defaults.out" ||
+    fail "backlog obligation repair did not require enabled Lattice"
+
+  BACKLOG_SOURCE_ONLY=1 \
+    BACKLOG_ALLOW_LATTICE_DEGRADED=1 \
+    bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./orchestration/backlog.sh
+      prepare_backlog_runtime_env obligation_repair Upkeeper "explicit degraded fixture"
+      printf "lattice=%s/%s\n" "$UPKEEPER_LATTICE_ENABLED" "$UPKEEPER_LATTICE_REQUIRED"
+    ' bash "$ROOT_DIR" >"$temp_dir/degraded.out" 2>"$temp_dir/degraded.err"
+  grep -Fxq 'lattice=1/0' "$temp_dir/degraded.out" ||
+    fail "explicit backlog degraded override did not retain enabled advisory Lattice"
+  grep -Fq 'degraded_override=1 reason=BACKLOG_ALLOW_LATTICE_DEGRADED' "$temp_dir/degraded.err" ||
+    fail "explicit backlog degraded override was not operator-visible"
 
   temp_dir="$VALIDATION_TMP_ROOT/backlog-owner-lease"
   mkdir -p "$temp_dir"

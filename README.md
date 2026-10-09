@@ -570,6 +570,13 @@ existing cycle behavior. That warning is owned instead of anonymous: it includes
 the failure reason, `owner_issue=430`, the `advisory_lattice_degraded` contract,
 and the fallback evidence class. Set `UPKEEPER_LATTICE_REQUIRED=1` only when a
 run must fail before Codex launch unless Lattice is writable and healthy.
+Plain operator-driven `./Upkeeper` runs retain this advisory default. The
+mutation-capable FlameOn, ChimneySweep, backlog issue-repair, newest-file, and
+obligation-repair launchers force Lattice enabled and required. Backlog permits
+a deliberate one-cycle exception only with
+`BACKLOG_ALLOW_LATTICE_DEGRADED=1`; that keeps Lattice enabled, changes it to
+advisory, and logs the override plus its replacement-evidence class before the
+backend can run.
 `UPKEEPER_LATTICE_SERVICE_ENABLED=1` keeps one warm local Lattice subprocess
 open for the wrapper cycle, so init, startup doctor, selection, pass-result,
 and finish records do not each pay a separate Python startup.

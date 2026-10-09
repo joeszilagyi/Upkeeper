@@ -610,6 +610,13 @@ Prompt behavior:
     `replacement_evidence=local_logs_runtime_obligations` so repeated degraded
     mode has explicit custody. If `UPKEEPER_LATTICE_REQUIRED=1`, startup fails
     before Codex launch.
+    Plain operator-driven `./Upkeeper` runs retain the advisory default.
+    FlameOn and ChimneySweep already force Lattice enabled and required, and
+    backlog now does the same for issue repair, newest-file mutation, and
+    obligation repair. Set `BACKLOG_ALLOW_LATTICE_DEGRADED=1` only for a
+    deliberate one-cycle backlog exception; Lattice stays enabled but advisory,
+    and backlog logs `degraded_override=1` with
+    `replacement_evidence=local_logs_runtime_obligations` before backend work.
     Normal startup runs `tools/upkeeper_lattice.py doctor --fast`, which proves
     DB access, rollback-able writes, schema versions, required tables/indexes,
     and foreign-key enablement without database-wide integrity scans. The

@@ -234,19 +234,39 @@ def session_snapshot(path: Path):
 def parse_session_snapshots(root: Path, limit: int):
     sessions_root = root / "sessions"
     if not sessions_root.exists():
-        return []
+        return [], 0
 
-    candidates = sorted(
-        sessions_root.rglob("*.jsonl"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )[:limit]
+    candidate_entries = []
+    scan_error_count = 0
+    try:
+        for path in sessions_root.rglob("*.jsonl"):
+            try:
+                source_mtime = path.stat().st_mtime
+            except OSError:
+                # Codex may rotate a session after rglob discovers it. Skip the
+                # raced path and keep evaluating any readable quota evidence.
+                scan_error_count += 1
+                continue
+            candidate_entries.append((source_mtime, str(path), path))
+    except OSError:
+        # A directory-level walk error degrades this scan, but entries already
+        # collected remain usable. If none survive, the caller fails closed.
+        scan_error_count += 1
+
+    candidate_entries.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    candidates = [item[2] for item in candidate_entries[:limit]]
 
     snapshots = []
     for path in candidates:
         snapshot = session_snapshot(path)
         if snapshot:
             snapshots.append(snapshot)
+            continue
+        try:
+            with path.open("rb"):
+                pass
+        except OSError:
+            scan_error_count += 1
 
     def snapshot_order_key(item):
         source_mtime = float(item.get("source_mtime") or 0.0)
@@ -260,7 +280,7 @@ def parse_session_snapshots(root: Path, limit: int):
         )
 
     snapshots.sort(key=snapshot_order_key)
-    return snapshots
+    return snapshots, scan_error_count
 
 
 def snapshots_for_target_model(items, model):
@@ -373,7 +393,7 @@ def last_positive_delta_from_log(path: Path, model: str):
 
 
 try:
-    snapshots = parse_session_snapshots(codex_home, scan_limit)
+    snapshots, session_scan_error_count = parse_session_snapshots(codex_home, scan_limit)
     now_epoch = int(time.time())
     snapshot, snapshot_selection, matching_snapshot_count, snapshot_is_current = snapshot_for_target_model(
         snapshots,
@@ -381,7 +401,8 @@ try:
         now_epoch,
     )
     if snapshot is None:
-        print(json.dumps({"error": "no_rate_limit_snapshot_found"}))
+        error = "session_scan_failed" if session_scan_error_count else "no_rate_limit_snapshot_found"
+        print(json.dumps({"error": error, "session_scan_error_count": session_scan_error_count}))
         sys.exit(0)
 
     log_primary, log_secondary = last_positive_delta_from_log(log_path, target_model)
@@ -401,6 +422,7 @@ try:
                 "snapshot_selection": snapshot_selection,
                 "snapshot_is_current": snapshot_is_current,
                 "matching_snapshot_count": matching_snapshot_count,
+                "session_scan_error_count": session_scan_error_count,
                 "target_model": target_model,
                 "projection": {
                     "primary_delta": primary_delta,
@@ -412,6 +434,9 @@ try:
     )
 except KeyboardInterrupt:
     print(json.dumps({"error": "interrupted"}))
+    sys.exit(0)
+except OSError:
+    print(json.dumps({"error": "session_scan_failed"}))
     sys.exit(0)
 PY
 }

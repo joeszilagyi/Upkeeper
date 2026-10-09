@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: rotation-safe quota session enumeration:
+	1. Quota session discovery now guards per-file metadata reads and directory walking so a concurrently rotated JSONL path cannot escape as a traceback.
+	2. Readable snapshots remain eligible when another candidate disappears, while the JSON result reports a bounded scan-error count.
+	3. If no reliable snapshot survives an I/O-degraded scan, the reader emits `session_scan_failed`; pre-run handling fails closed and post-run handling skips the comparison with an operator-visible warning.
+
 2026-10-08: instant-based quota snapshot selection:
 	1. Quota snapshot selection now normalizes ISO-8601 `Z`, UTC-offset, and nonzero local-offset timestamps to epoch instants before choosing the latest event.
 	2. An unparseable event timestamp falls back deterministically to its session file mtime, with timestamp text and source path retained only as stable tie breakers.

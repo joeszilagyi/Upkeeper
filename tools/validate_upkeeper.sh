@@ -4391,7 +4391,7 @@ validation_quota_state_for_home() {
 check_validation_quota_session_fixture_contract() {
   local temp_dir state diagnostics agent_messages reached_type
   local current_home stale_home wrong_home nonfinite_home missing_home
-  local mixed_timestamp_home invalid_timestamp_home
+  local mixed_timestamp_home invalid_timestamp_home rotation_home failed_scan_home
   local malformed_session empty_session empty_state
 
   log "checking validation quota/session fixtures"
@@ -4463,6 +4463,28 @@ PY
   state="$(validation_quota_state_for_home "$invalid_timestamp_home" "gpt-5.5" "$temp_dir/invalid-timestamps.log")"
   [[ "$(jq -r '.snapshot.limit_id' <<<"$state")" == "newer-invalid" ]] ||
     fail "unparseable quota timestamps did not use deterministic source-mtime fallback"
+
+  rotation_home="$temp_dir/session-rotation/codex-home"
+  write_validation_quota_snapshot "$rotation_home/sessions/2026/05/31/readable.jsonl" "gpt-5.5"
+  ln -s "missing-rotated-session" "$rotation_home/sessions/2026/05/31/rotated.jsonl"
+  state="$(validation_quota_state_for_home "$rotation_home" "gpt-5.5" "$temp_dir/session-rotation.log")"
+  [[ "$(jq -r '.snapshot.limit_id' <<<"$state")" == "validation-gpt-5.5" ]] ||
+    fail "quota scan did not preserve readable snapshot after a candidate rotated"
+  [[ "$(jq -r '.session_scan_error_count' <<<"$state")" == "1" ]] ||
+    fail "quota scan did not report skipped rotated candidate"
+
+  failed_scan_home="$temp_dir/session-scan-failed/codex-home"
+  mkdir -p "$failed_scan_home/sessions/2026/05/31"
+  ln -s "missing-rotated-session" "$failed_scan_home/sessions/2026/05/31/rotated.jsonl"
+  state="$(validation_quota_state_for_home "$failed_scan_home" "gpt-5.5" "$temp_dir/session-scan-failed.log")"
+  [[ "$(jq -r '.error' <<<"$state")" == "session_scan_failed" ]] ||
+    fail "quota scan with no surviving candidate did not return structured failure"
+  [[ "$(jq -r '.session_scan_error_count' <<<"$state")" == "1" ]] ||
+    fail "failed quota scan did not report its skipped candidate count"
+  grep -Fq 'die "Codex quota snapshot scan failed ($before_error)' Upkeeper ||
+    fail "pre-run quota session scan failure does not fail closed"
+  grep -Fq 'quota snapshot scan failed after codex exec; skipping post-run quota comparison' Upkeeper ||
+    fail "post-run quota session scan failure lacks operator-visible warning"
 
   malformed_session="$temp_dir/malformed/session.jsonl"
   write_validation_malformed_session_jsonl "$malformed_session"

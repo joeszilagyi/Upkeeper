@@ -479,7 +479,11 @@ Important:
     when the tail does not contain enough quota/model metadata. Snapshot
     timestamps are normalized to chronological instants before newest-event
     selection, so mixed ISO-8601 offsets compare correctly; an unparseable
-    timestamp falls back deterministically to the session file mtime.
+    timestamp falls back deterministically to the session file mtime. Session
+    paths that rotate during enumeration are skipped while readable siblings
+    remain eligible. If an I/O-degraded scan leaves no reliable snapshot, the
+    reader returns `session_scan_failed`: pre-run quota enforcement fails closed,
+    while a post-run scan logs a warning and omits the comparison.
   - Exact-model Spark quota snapshots may still report the generic Codex
     limiter identity; once snapshot selection proves the target model, that is
     treated as usable quota metadata instead of a conflict.

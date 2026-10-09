@@ -5514,7 +5514,7 @@ check_arg0_tmp_cleanup_contract() {
 }
 
 check_automation_obligation_framework() {
-  local temp_dir run_record obligation_count obligation_file obligation_id resolved_file selected_json prompt_file machine_file
+  local temp_dir run_record obligation_count obligation_file obligation_id resolved_file selected_json prompt_file machine_file resolution_marker
 
   log "checking automation obligation framework"
   temp_dir="$(mktemp -d /tmp/upkeeper-automation-obligations.XXXXXX)"
@@ -5580,6 +5580,10 @@ check_automation_obligation_framework() {
   )"
   [[ -f "$prompt_file" ]] || fail "automation obligation prompt file was not written"
   grep -Fq "Upkeeper automation obligation repair task." "$prompt_file" || fail "automation obligation prompt file missing task header"
+  resolution_marker="$(grep -F 'UPKEEPER_OBLIGATION_RESOLUTION: {' "$prompt_file")"
+  resolution_marker="${resolution_marker/\"classification\":\"repaired\"/\"classification\":\"obsolete\"}"
+  resolution_marker="${resolution_marker/REPLACE_WITH_CONCRETE_DETERMINISTIC_EVIDENCE/current fixture proves the original blocked record is obsolete}"
+  printf '%s\nUPKEEPER_STATUS: WORK_DONE\n' "$resolution_marker" >"$temp_dir/resolve-last-message.txt"
 
   (
     cd "$ROOT_DIR"
@@ -5598,10 +5602,12 @@ check_automation_obligation_framework() {
     UPKEEPER_AUTOMATION_OBLIGATION_ID="$obligation_id"
     UPKEEPER_AUTOMATION_OBLIGATION_PATH="$obligation_file"
     RUN_SELECTED_REVIEW_PATH="lib/upkeeper/session_store_preflight.bash"
+    RUN_LAST_MESSAGE_FILE="$temp_dir/resolve-last-message.txt"
     RUN_TRANSCRIPT_FILE="$temp_dir/transcript.log"
     RUN_AUTOMATION_RECORD_FILE=""
     source lib/upkeeper/runtime_foundation.bash
     source lib/upkeeper/automation_obligations.bash
+    automation_capture_obligation_resolution_baseline "$RUN_SELECTED_REVIEW_PATH"
     automation_record_cycle_start
     automation_record_cycle_finish 0 WORK_DONE INFO WORK_DONE 0 1 "$RUN_SELECTED_REVIEW_PATH"
   )
@@ -5611,6 +5617,7 @@ check_automation_obligation_framework() {
   [[ -f "$resolved_file" ]] || fail "automation obligation was not moved to resolved after clean selected cycle"
   [[ "$(jq -r '.status' "$resolved_file")" == "resolved" ]] || fail "resolved automation obligation status was not resolved"
   [[ "$(jq -r '.resolved_by_cycle_id' "$resolved_file")" == "validation-automation-resolve" ]] || fail "resolved automation obligation lost resolver cycle"
+  [[ "$(jq -r '.resolution_proof.classification' "$resolved_file")" == "obsolete" ]] || fail "resolved automation obligation did not retain explicit obsolete proof"
 
   mkdir -p "$temp_dir/obligations/open"
   cat >"$temp_dir/obligations/open/runtime-target.json" <<'JSON'

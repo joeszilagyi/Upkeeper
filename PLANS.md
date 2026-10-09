@@ -3,9 +3,41 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #666: Fail-Closed Lattice for Backlog Mutation
+## Issue #667: Proof-Bound Automation Obligation Resolution
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- prevent a zero-exit no-op, wrong-target run, or unrelated successful review
+  from retiring the selected automation obligation
+- bind resolution to the obligation id, selected repair target, and canonical
+  required-resolution digest
+- retain inspectable proof in the resolved record
+
+Verified defect:
+- the resolver checked only selected obligation id, exit zero, and non-dry-run
+  reason before moving the open record to resolved custody
+- the stored `required_resolution`, final response, selected target, and actual
+  target delta were not consulted
+
+Constraints:
+- repaired classification requires an independently observed in-cycle target
+  content change plus explicit final-response evidence
+- obsolete classification requires explicit evidence and an unchanged target
+- absent, malformed, duplicated, mismatched, placeholder, or blocked proof must
+  preserve the open record
+- no live backend Codex validation
+
+Validation:
+- deterministic tests cover proved repair, zero-exit missing proof, asserted
+  repair without a change, wrong-target success, blocked review, and explicit
+  obsolete classification
+- resolved records retain classification, evidence, required-resolution digest,
+  target before/after state, and final-response digest
+
+## Issue #666: Fail-Closed Lattice for Backlog Mutation
+
+Status: complete; merged in PR #841
 
 Goal:
 - require a healthy Lattice before backlog issue, newest-file, or obligation

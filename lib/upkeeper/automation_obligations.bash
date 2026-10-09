@@ -39,6 +39,85 @@ automation_git_head() {
   git -C "$ROOT_DIR" rev-parse --verify HEAD 2>/dev/null || printf 'unknown'
 }
 
+automation_obligation_target_state_json() {
+  local target="$1"
+
+  python3 - "$ROOT_DIR" "$target" <<'PY'
+import hashlib
+import json
+from pathlib import Path, PurePosixPath
+import stat
+import sys
+
+root_text, target_text = sys.argv[1:3]
+root = Path(root_text).resolve()
+
+
+def reject(reason):
+    print(json.dumps({"status": "invalid", "reason": reason}, separators=(",", ":")))
+    raise SystemExit(1)
+
+
+target_posix = PurePosixPath(target_text)
+if not target_text or target_posix.is_absolute() or ".." in target_posix.parts:
+    reject("unsafe_target")
+normalized = target_posix.as_posix()
+if normalized in {"", "."}:
+    reject("unsafe_target")
+path = root.joinpath(*target_posix.parts)
+resolved_path = path.resolve(strict=False)
+try:
+    resolved_path.relative_to(root)
+except ValueError:
+    reject("target_outside_root")
+
+cursor = root
+for part in target_posix.parts:
+    cursor = cursor / part
+    if cursor.is_symlink():
+        reject("target_symlink")
+
+try:
+    metadata = path.lstat()
+except FileNotFoundError:
+    print(json.dumps({"status": "ok", "path": normalized, "kind": "missing", "sha256": ""}, separators=(",", ":")))
+    raise SystemExit(0)
+except OSError:
+    reject("target_unreadable")
+
+if stat.S_ISLNK(metadata.st_mode):
+    reject("target_symlink")
+if not stat.S_ISREG(metadata.st_mode):
+    reject("target_not_regular")
+
+digest = hashlib.sha256()
+try:
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+except OSError:
+    reject("target_unreadable")
+
+print(
+    json.dumps(
+        {"status": "ok", "path": normalized, "kind": "regular", "sha256": digest.hexdigest()},
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
+automation_capture_obligation_resolution_baseline() {
+  local target="${1:-${RUN_SELECTED_REVIEW_PATH:-${CODEX_TARGET_FILE:-}}}"
+  local state
+
+  [[ "${UPKEEPER_AUTOMATION_WORKFLOW:-}" == "obligation-repair" ]] || return 0
+  [[ -n "${UPKEEPER_AUTOMATION_OBLIGATION_ID:-}" ]] || return 0
+  [[ -n "$target" ]] || return 1
+  state="$(automation_obligation_target_state_json "$target")" || return 1
+  UPKEEPER_AUTOMATION_OBLIGATION_TARGET_BEFORE_STATE="$state"
+}
+
 automation_write_json() {
   local path="$1"
   local payload="$2"
@@ -558,7 +637,7 @@ PY
   fi
 
   automation_write_json "$RUN_AUTOMATION_RECORD_FILE" "$merged_payload"
-  automation_resolve_selected_obligation "$exit_code" "$reason"
+  automation_resolve_selected_obligation "$exit_code" "$reason" "$status_marker" "$selected_target"
   automation_open_cycle_obligation "$exit_code" "$reason" "$level" "$status_marker" "$codex_exit" "$codex_exec_started" "$selected_target"
 }
 
@@ -1345,6 +1424,7 @@ automation_prepare_obligation_prompt_file() {
   prompt_path="$work_dir/$obligation_id.prompt.md"
 
   python3 - "$obligation_json" "$prompt_path" <<'PY'
+import hashlib
 import json
 import os
 import sys
@@ -1354,6 +1434,18 @@ path = sys.argv[2]
 required = data.get("required_resolution") or []
 if not isinstance(required, list):
     required = [str(required)]
+required = [str(item) for item in required]
+required_resolution_sha256 = hashlib.sha256(
+    json.dumps(required, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+repair_target = str(data.get("repair_target_file") or data.get("target_file") or "Upkeeper")
+resolution_marker = {
+    "id": str(data.get("id", "")),
+    "classification": "repaired",
+    "target": repair_target,
+    "required_resolution_sha256": required_resolution_sha256,
+    "evidence": ["REPLACE_WITH_CONCRETE_DETERMINISTIC_EVIDENCE"],
+}
 
 lines = [
     "Upkeeper automation obligation repair task.",
@@ -1410,6 +1502,16 @@ else:
 
 lines.extend(
     [
+        "",
+        "Resolution proof contract:",
+        "- A zero exit does not resolve this obligation by itself.",
+        "- Emit exactly one raw UPKEEPER_OBLIGATION_RESOLUTION line only when this obligation is actually repaired or deterministically obsolete.",
+        "- Keep the id, target, and required_resolution_sha256 exactly as supplied below.",
+        "- Use classification repaired only when this cycle changed the selected repair target; the wrapper independently verifies its before/after content hash.",
+        "- Use classification obsolete only when the selected target did not change and evidence explains the deterministic stale/obsolete finding.",
+        "- Replace the evidence placeholder with one or more concrete validation results or obsolete-classification facts.",
+        "- Put the raw JSON marker outside Markdown fences before the final UPKEEPER_LOG_REVIEW and UPKEEPER_STATUS lines.",
+        "UPKEEPER_OBLIGATION_RESOLUTION: " + json.dumps(resolution_marker, ensure_ascii=True, separators=(",", ":")),
         "",
         "Repair policy:",
         "- Work the locked target and directly necessary Upkeeper support files only.",
@@ -2227,23 +2329,190 @@ print(
 PY
 }
 
+automation_obligation_resolution_proof_json() {
+  local open_path="$1"
+  local status_marker="$2"
+  local selected_target="$3"
+  local before_state="${UPKEEPER_AUTOMATION_OBLIGATION_TARGET_BEFORE_STATE:-}"
+  local after_state
+
+  if ! after_state="$(automation_obligation_target_state_json "$selected_target" 2>/dev/null)"; then
+    after_state='{"status":"invalid","reason":"target_after_state_unavailable"}'
+  fi
+
+  python3 - \
+    "$open_path" \
+    "${RUN_LAST_MESSAGE_FILE:-}" \
+    "${UPKEEPER_AUTOMATION_OBLIGATION_ID:-}" \
+    "$status_marker" \
+    "$selected_target" \
+    "$before_state" \
+    "$after_state" <<'PY'
+import hashlib
+import json
+from pathlib import PurePosixPath
+import sys
+
+(
+    open_path,
+    last_message_path,
+    selected_obligation_id,
+    status_marker,
+    selected_target,
+    before_state_json,
+    after_state_json,
+) = sys.argv[1:8]
+
+
+def finish(status, reason, proof=None):
+    result = {"status": status, "reason": reason}
+    if proof is not None:
+        result["proof"] = proof
+    print(json.dumps(result, ensure_ascii=True, separators=(",", ":")))
+    raise SystemExit(0)
+
+
+def normalized_target(value):
+    text = str(value or "")
+    path = PurePosixPath(text)
+    if not text or path.is_absolute() or ".." in path.parts:
+        return ""
+    normalized = path.as_posix()
+    return "" if normalized in {"", "."} else normalized
+
+
+if status_marker != "WORK_DONE":
+    finish("rejected", "status_not_work_done")
+try:
+    with open(open_path, "r", encoding="utf-8") as handle:
+        obligation = json.load(handle)
+except (OSError, json.JSONDecodeError):
+    finish("rejected", "open_obligation_unreadable")
+
+obligation_id = str(obligation.get("id") or "")
+if not obligation_id or obligation_id != selected_obligation_id:
+    finish("rejected", "obligation_id_mismatch")
+
+expected_target = normalized_target(
+    obligation.get("repair_target_file") or obligation.get("target_file") or "Upkeeper"
+)
+actual_target = normalized_target(selected_target)
+if not expected_target or actual_target != expected_target:
+    finish("rejected", "selected_target_mismatch")
+
+required_resolution = obligation.get("required_resolution") or []
+if not isinstance(required_resolution, list):
+    required_resolution = [str(required_resolution)]
+required_resolution = [str(item) for item in required_resolution]
+required_digest = hashlib.sha256(
+    json.dumps(required_resolution, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+
+try:
+    with open(last_message_path, "r", encoding="utf-8", errors="replace") as handle:
+        last_message = handle.read()
+except OSError:
+    finish("rejected", "last_message_unreadable")
+
+prefix = "UPKEEPER_OBLIGATION_RESOLUTION: "
+marker_lines = []
+in_fence = False
+for raw_line in last_message.splitlines():
+    line = raw_line.strip()
+    if line.startswith("```"):
+        in_fence = not in_fence
+        continue
+    if not in_fence and "UPKEEPER_OBLIGATION_RESOLUTION:" in line:
+        marker_lines.append(line)
+if len(marker_lines) != 1:
+    finish("rejected", "missing_resolution_marker" if not marker_lines else "multiple_resolution_markers")
+marker_line = marker_lines[0]
+if not marker_line.startswith(prefix):
+    finish("rejected", "decorated_resolution_marker")
+try:
+    marker = json.loads(marker_line[len(prefix):])
+except json.JSONDecodeError:
+    finish("rejected", "malformed_resolution_marker")
+if not isinstance(marker, dict):
+    finish("rejected", "malformed_resolution_marker")
+
+classification = str(marker.get("classification") or "")
+if classification not in {"repaired", "obsolete"}:
+    finish("rejected", "invalid_resolution_classification")
+if str(marker.get("id") or "") != obligation_id:
+    finish("rejected", "marker_obligation_id_mismatch")
+if normalized_target(marker.get("target")) != expected_target:
+    finish("rejected", "marker_target_mismatch")
+if str(marker.get("required_resolution_sha256") or "") != required_digest:
+    finish("rejected", "required_resolution_mismatch")
+
+evidence = marker.get("evidence")
+if isinstance(evidence, str):
+    evidence = [evidence]
+if not isinstance(evidence, list):
+    finish("rejected", "missing_resolution_evidence")
+evidence = [str(item).strip() for item in evidence if str(item).strip()]
+if not evidence or "REPLACE_WITH_CONCRETE_DETERMINISTIC_EVIDENCE" in evidence:
+    finish("rejected", "missing_resolution_evidence")
+
+try:
+    before_state = json.loads(before_state_json)
+    after_state = json.loads(after_state_json)
+except json.JSONDecodeError:
+    finish("rejected", "target_state_unavailable")
+if before_state.get("status") != "ok" or after_state.get("status") != "ok":
+    finish("rejected", "target_state_unavailable")
+if before_state.get("path") != expected_target or after_state.get("path") != expected_target:
+    finish("rejected", "target_state_path_mismatch")
+
+before_identity = (before_state.get("kind"), before_state.get("sha256"))
+after_identity = (after_state.get("kind"), after_state.get("sha256"))
+target_changed = before_identity != after_identity
+if classification == "repaired":
+    if not target_changed:
+        finish("rejected", "repaired_target_unchanged")
+    if after_state.get("kind") != "regular" or not after_state.get("sha256"):
+        finish("rejected", "repaired_target_not_regular")
+elif target_changed:
+    finish("rejected", "obsolete_target_changed")
+
+proof = {
+    "schema": 1,
+    "obligation_id": obligation_id,
+    "classification": classification,
+    "target": expected_target,
+    "required_resolution_sha256": required_digest,
+    "evidence": evidence,
+    "target_before": before_state,
+    "target_after": after_state,
+    "last_message_sha256": hashlib.sha256(last_message.encode("utf-8", "surrogateescape")).hexdigest(),
+}
+finish("accepted", "proof_verified", proof)
+PY
+}
+
 automation_cycle_exit_resolves_obligation() {
   local exit_code="$1"
   local reason="$2"
+  local status_marker="$3"
 
   [[ -n "${UPKEEPER_AUTOMATION_OBLIGATION_ID:-}" ]] || return 1
+  [[ "${UPKEEPER_AUTOMATION_WORKFLOW:-}" == "obligation-repair" ]] || return 1
   [[ "$exit_code" == "0" ]] || return 1
   [[ "$reason" != "DRY_RUN" ]] || return 1
+  [[ "$status_marker" == "WORK_DONE" ]] || return 1
   return 0
 }
 
 automation_resolve_selected_obligation() {
   local exit_code="$1"
   local reason="$2"
-  local open_path resolved_dir resolved_path payload now
+  local status_marker="${3:-}"
+  local selected_target="${4:-${RUN_SELECTED_REVIEW_PATH:-${CODEX_TARGET_FILE:-}}}"
+  local open_path resolved_dir resolved_path payload now proof_json proof_status proof_reason
 
   automation_framework_enabled || return 0
-  automation_cycle_exit_resolves_obligation "$exit_code" "$reason" || return 0
+  automation_cycle_exit_resolves_obligation "$exit_code" "$reason" "$status_marker" || return 0
 
   open_path="${UPKEEPER_AUTOMATION_OBLIGATION_PATH:-}"
   if [[ -z "$open_path" ]]; then
@@ -2251,29 +2520,41 @@ automation_resolve_selected_obligation() {
   fi
   [[ -f "$open_path" ]] || return 0
 
+  proof_json="$(automation_obligation_resolution_proof_json "$open_path" "$status_marker" "$selected_target")"
+  proof_status="$(automation_json_field "$proof_json" status)"
+  proof_reason="$(automation_json_field "$proof_json" reason)"
+  if [[ "$proof_status" != "accepted" ]]; then
+    if declare -F log_line >/dev/null 2>&1; then
+      log_line "WARN" "automation.obligation.resolution_preserved id=$(automation_shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_ID") proof_reason=$(automation_shell_quote "${proof_reason:-unknown}")"
+    fi
+    return 0
+  fi
+
   resolved_dir="$(automation_obligation_root)/resolved"
   automation_private_dir "$resolved_dir" || return 1
   resolved_path="$resolved_dir/$UPKEEPER_AUTOMATION_OBLIGATION_ID.json"
   now="$(date '+%Y-%m-%dT%H:%M:%S%z')"
 
-  payload="$(python3 - "$open_path" "$now" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$reason" <<'PY'
+  payload="$(python3 - "$open_path" "$now" "$CYCLE_ID" "$CYCLE_RUN_HASH" "$reason" "$proof_json" <<'PY'
 import json
 import sys
 
-path, resolved_at, cycle_id, run_hash, reason = sys.argv[1:6]
+path, resolved_at, cycle_id, run_hash, reason, proof_json = sys.argv[1:7]
 with open(path, "r", encoding="utf-8") as handle:
     data = json.load(handle)
+proof_result = json.loads(proof_json)
 data["status"] = "resolved"
 data["resolved_at"] = resolved_at
 data["resolved_by_cycle_id"] = cycle_id
 data["resolved_by_run_hash"] = run_hash
 data["resolved_reason"] = reason
+data["resolution_proof"] = proof_result["proof"]
 print(json.dumps(data, separators=(",", ":")))
 PY
 )"
-  automation_write_json "$resolved_path" "$payload"
+  automation_write_json "$resolved_path" "$payload" || return 1
   rm -f -- "$open_path"
   if declare -F log_line >/dev/null 2>&1; then
-    log_line "INFO" "automation.obligation.resolved id=$(automation_shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_ID") reason=$(automation_shell_quote "$reason") path=$(automation_shell_quote "$resolved_path")"
+    log_line "INFO" "automation.obligation.resolved id=$(automation_shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_ID") reason=$(automation_shell_quote "$reason") proof=verified path=$(automation_shell_quote "$resolved_path")"
   fi
 }

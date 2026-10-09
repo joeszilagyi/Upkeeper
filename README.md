@@ -210,6 +210,12 @@ unresolved obligation, stale control-plane failure, or broken launcher state,
 the next unattended launcher run repairs or preserves that obligation before it
 starts fresh GitHub issue work. This is intentional: the automation should not
 pretend the bug queue is healthy while the machinery that works it is not.
+An obligation-repair cycle does not retire that record merely because the
+wrapper exits zero. Resolution requires a unique final-response proof bound to
+the obligation id, selected repair target, and required-resolution digest.
+`repaired` proof also requires an observed in-cycle content change to that
+target; explicit `obsolete` proof requires the target to remain unchanged.
+Rejected proof leaves the original open record in custody.
 
 Operator output should be readable without cross-referencing logs or alternate
 mode names. A launcher that pauses new issue work to repair itself should say

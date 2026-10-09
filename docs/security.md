@@ -206,7 +206,9 @@ Restoring that backup therefore requires an explicit repo-relative
 `--restore-to` path. Setting redaction to `0` deliberately restores the legacy
 automatic-path behavior and exposes that relative path in plaintext metadata.
 Age public sidecars always omit it; the private age payload retains it only
-inside encrypted content.
+inside encrypted content. The private payload also records the selected file's
+nanosecond modification time for fidelity; this timestamp is not added to the
+public age sidecar.
 
 Plain and age backups are published as one private backup-id directory. The
 payload and sidecar files plus staging directory are fsynced before an atomic

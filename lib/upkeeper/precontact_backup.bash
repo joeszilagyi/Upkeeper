@@ -552,6 +552,7 @@ precontact_backup_write_metadata() {
   local selected_content_state="${20}"
   local selected_head_blob="${21}"
   local redact_paths="${22:-1}"
+  local mtime_ns="${23:-}"
 
   python3 - "$output_path" \
     "$repo_key" "$repo_root_hmac" "$rel_path" "$path_hmac" \
@@ -559,7 +560,7 @@ precontact_backup_write_metadata() {
     "$size_bytes" "$mode" "$mtime" "$selected_git_status" \
     "$selected_worktree_hash" "$selection_basis" "$backup_mode" \
     "$encrypted" "$protected_from_backend" "$derivation_sha" \
-    "$selected_content_state" "$selected_head_blob" "$redact_paths" <<'PY'
+    "$selected_content_state" "$selected_head_blob" "$redact_paths" "$mtime_ns" <<'PY'
 import json
 import sys
 
@@ -586,7 +587,8 @@ import sys
     selected_content_state,
     selected_head_blob,
     redact_paths,
-) = sys.argv[1:24]
+    mtime_ns,
+) = sys.argv[1:25]
 
 def maybe_int(value):
     try:
@@ -628,6 +630,11 @@ metadata = {
     "selected_content_state": selected_content_state or "unknown",
     "selected_head_blob": selected_head_blob or "unknown",
 }
+if backup_mode == "age":
+    try:
+        metadata["mtime_ns"] = int(mtime_ns)
+    except (TypeError, ValueError):
+        pass
 if path_redacted:
     metadata["selected_relative_path_redacted"] = True
 else:
@@ -1048,7 +1055,7 @@ precontact_backup_selected_target_or_exit() {
   local resolved_mode target_abs content_sha content_hmac path_hmac path_key repo_real repo_hmac repo_key path_dir
   local created_utc compact_utc derivation_sha backup_id metadata_file size_bytes
   local sidecar_file
-  local mode_text mtime_text selected_git_status selected_worktree_hash
+  local mode_text mtime_text mtime_ns_text selected_git_status selected_worktree_hash
   local selection_basis selected_content_state selected_head_blob encrypted protected
 
   RUN_PRECONTACT_BACKUP_ID=""
@@ -1122,6 +1129,13 @@ st = Path(sys.argv[1]).stat()
 print(datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat().replace("+00:00", "Z"))
 PY
   )"
+  mtime_ns_text="$(python3 - "$target_abs" <<'PY' 2>/dev/null || printf ''
+from pathlib import Path
+import sys
+
+print(Path(sys.argv[1]).stat().st_mtime_ns)
+PY
+  )"
   selected_git_status="$(precontact_backup_selection_field "$selection_file" "git_status")"
   selected_worktree_hash="$(precontact_backup_selection_field "$selection_file" "worktree_hash")"
   selection_basis="$(precontact_backup_selection_field "$selection_file" "selection_basis")"
@@ -1145,7 +1159,7 @@ PY
     "$created_utc" "$size_bytes" "$mode_text" "$mtime_text" "$selected_git_status" \
     "$selected_worktree_hash" "$selection_basis" "$resolved_mode" "$encrypted" \
     "$protected" "$derivation_sha" "$selected_content_state" "$selected_head_blob" \
-    "${UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS:-1}"; then
+    "${UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS:-1}" "$mtime_ns_text"; then
     precontact_backup_fail_or_continue "$rel_path" "metadata_write_failed" 0
     return 0
   fi
@@ -1220,12 +1234,13 @@ precontact_backup_secure_install_restored_file() {
   local override_path="${3:-}"
   local tmp_restore="$4"
   local mode="${5:-}"
+  local mtime_ns="${6:-}"
   local result status reason target_abs
 
   PRECONTACT_BACKUP_SECURE_TARGET_ABS=""
 
   if ! result="$(
-    python3 - "$repo_root" "$rel_path" "$override_path" "$tmp_restore" "$mode" <<'PY'
+    python3 - "$repo_root" "$rel_path" "$override_path" "$tmp_restore" "$mode" "$mtime_ns" <<'PY'
 import errno
 import os
 import re
@@ -1233,7 +1248,7 @@ import stat
 import sys
 from pathlib import Path
 
-repo_root, rel_path, override_path, tmp_restore, mode_text = sys.argv[1:6]
+repo_root, rel_path, override_path, tmp_restore, mode_text, mtime_ns_text = sys.argv[1:7]
 
 
 def emit(status: str, reason: str = "", target_abs: str = "") -> None:
@@ -1281,6 +1296,23 @@ if nofollow_flag == 0:
 mode_value = None
 if mode_text and re.fullmatch(r"[0-7]{3,4}", mode_text):
     mode_value = int(mode_text, 8)
+
+mtime_ns_value = None
+if mtime_ns_text:
+    if not re.fullmatch(r"-?[0-9]+", mtime_ns_text):
+        emit("error", "invalid_restore_mtime_ns")
+        raise SystemExit(0)
+    mtime_ns_value = int(mtime_ns_text)
+    try:
+        restored_stat = os.stat(tmp_restore, follow_symlinks=False)
+        os.utime(
+            tmp_restore,
+            ns=(restored_stat.st_atime_ns, mtime_ns_value),
+            follow_symlinks=False,
+        )
+    except (OSError, OverflowError, ValueError) as exc:
+        emit("error", f"restore_mtime_failed:{exc.__class__.__name__}")
+        raise SystemExit(0)
 
 dir_fd = None
 next_fd = None
@@ -1476,7 +1508,7 @@ precontact_backup_restore_by_id() {
   local repo_root="$2"
   local identity_path="${3:-${UPKEEPER_PRECONTACT_BACKUP_AGE_IDENTITY:-}}"
   local restore_to="${4:-}"
-  local vault_root sidecar rel_path content_fingerprint encrypted mode
+  local vault_root sidecar rel_path content_fingerprint encrypted mode mtime_ns=""
   local -a sidecars=()
   local target_abs tmp_restore="" artifact payload_tmp="" payload_metadata="" restored_sha
   local restore_tmp_dir=""
@@ -1609,6 +1641,7 @@ precontact_backup_restore_by_id() {
       precontact_backup_set_reason "metadata_read_failed"
       return 1
     fi
+    mtime_ns="$(precontact_backup_json_field "$payload_metadata" "mtime_ns")" || mtime_ns=""
   else
     artifact="$(dirname -- "$sidecar")/${backup_id}.bak"
     [[ -s "$artifact" ]] || {
@@ -1639,7 +1672,7 @@ precontact_backup_restore_by_id() {
       fi
       ;;
   esac
-  if ! precontact_backup_secure_install_restored_file "$repo_root" "$rel_path" "$restore_to" "$tmp_restore" "$mode"; then
+  if ! precontact_backup_secure_install_restored_file "$repo_root" "$rel_path" "$restore_to" "$tmp_restore" "$mode" "$mtime_ns"; then
     return 1
   fi
   target_abs="$PRECONTACT_BACKUP_SECURE_TARGET_ABS"

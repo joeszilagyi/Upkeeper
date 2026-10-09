@@ -375,6 +375,9 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Restore-by-id discovery now carries sidecar paths as NUL-delimited array
   entries, preserving embedded newlines while continuing to reject missing or
   non-unique backup ids.
+- New encrypted backup payloads record and restore `mtime_ns` so recovery does
+  not make old content appear newly modified. Legacy payloads without that
+  optional field remain restorable and retain the previous restore-time mtime.
 - Trusted machine-local encrypted-backup bootstrap is now part of the stable
   operator surface. `UPKEEPER_LOCAL_ENV_FILE` may provide
   `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT`, and

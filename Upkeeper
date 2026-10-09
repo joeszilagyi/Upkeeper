@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.44
+## Version: v1.2.45
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.44"
+UPKEEPER_VERSION="v1.2.45"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -4124,12 +4124,13 @@ precontact_backup_secure_install_restored_file() {
   local override_path="${3:-}"
   local tmp_restore="$4"
   local mode="${5:-}"
+  local mtime_ns="${6:-}"
   local result status reason target_abs
 
   PRECONTACT_BACKUP_SECURE_TARGET_ABS=""
 
   if ! result="$(
-    python3 - "$repo_root" "$rel_path" "$override_path" "$tmp_restore" "$mode" <<'PY'
+    python3 - "$repo_root" "$rel_path" "$override_path" "$tmp_restore" "$mode" "$mtime_ns" <<'PY'
 import errno
 import os
 import re
@@ -4137,7 +4138,7 @@ import stat
 import sys
 from pathlib import Path
 
-repo_root, rel_path, override_path, tmp_restore, mode_text = sys.argv[1:6]
+repo_root, rel_path, override_path, tmp_restore, mode_text, mtime_ns_text = sys.argv[1:7]
 
 
 def emit(status: str, reason: str = "", target_abs: str = "") -> None:
@@ -4185,6 +4186,23 @@ if nofollow_flag == 0:
 mode_value = None
 if mode_text and re.fullmatch(r"[0-7]{3,4}", mode_text):
     mode_value = int(mode_text, 8)
+
+mtime_ns_value = None
+if mtime_ns_text:
+    if not re.fullmatch(r"-?[0-9]+", mtime_ns_text):
+        emit("error", "invalid_restore_mtime_ns")
+        raise SystemExit(0)
+    mtime_ns_value = int(mtime_ns_text)
+    try:
+        restored_stat = os.stat(tmp_restore, follow_symlinks=False)
+        os.utime(
+            tmp_restore,
+            ns=(restored_stat.st_atime_ns, mtime_ns_value),
+            follow_symlinks=False,
+        )
+    except (OSError, OverflowError, ValueError) as exc:
+        emit("error", f"restore_mtime_failed:{exc.__class__.__name__}")
+        raise SystemExit(0)
 
 dir_fd = None
 next_fd = None
@@ -4380,7 +4398,7 @@ precontact_backup_restore_by_id() {
   local repo_root="$2"
   local identity_path="${3:-${UPKEEPER_PRECONTACT_BACKUP_AGE_IDENTITY:-}}"
   local restore_to="${4:-}"
-  local vault_root sidecar rel_path content_fingerprint encrypted mode
+  local vault_root sidecar rel_path content_fingerprint encrypted mode mtime_ns=""
   local -a sidecars=()
   local target_abs tmp_restore="" artifact payload_tmp="" payload_metadata="" restored_sha
   local restore_tmp_dir=""
@@ -4512,6 +4530,7 @@ precontact_backup_restore_by_id() {
       precontact_backup_set_reason "metadata_read_failed"
       return 1
     fi
+    mtime_ns="$(precontact_backup_json_field "$payload_metadata" "mtime_ns")" || mtime_ns=""
   else
     artifact="$(dirname -- "$sidecar")/${backup_id}.bak"
     [[ -s "$artifact" ]] || {
@@ -4543,7 +4562,7 @@ precontact_backup_restore_by_id() {
       ;;
   esac
 
-  if ! precontact_backup_secure_install_restored_file "$repo_root" "$rel_path" "$restore_to" "$tmp_restore" "$mode"; then
+  if ! precontact_backup_secure_install_restored_file "$repo_root" "$rel_path" "$restore_to" "$tmp_restore" "$mode" "$mtime_ns"; then
     return 1
   fi
   target_abs="$PRECONTACT_BACKUP_SECURE_TARGET_ABS"

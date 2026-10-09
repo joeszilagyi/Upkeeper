@@ -287,7 +287,8 @@ test_age_restore_uses_payload_metadata() {
   local fake_bin="$TEST_TMP_ROOT/fake-age-bin"
   local selection_file json_file age_file restored_sha original_sha sidecar destination_sha
   local identity_file="$TEST_TMP_ROOT/age-identity.key"
-  local old_path expected_path_hmac
+  local old_path expected_path_hmac expected_mtime_ns restored_mtime_ns
+  local extracted_file extracted_metadata
   local record
   make_repo "$repo"
   make_repo "$destination_repo"
@@ -344,6 +345,20 @@ SH
   export FAKE_AGE_RECORD="$record"
   UPKEEPER_PRECONTACT_BACKUP_MODE=age
   UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT="age1testrecipient"
+  python3 - "$repo/dir/space file.sh" <<'PY'
+import os
+import sys
+
+known_mtime_ns = 946_684_800_123_456_789
+os.utime(sys.argv[1], ns=(known_mtime_ns, known_mtime_ns))
+PY
+  expected_mtime_ns="$(python3 - "$repo/dir/space file.sh" <<'PY'
+from pathlib import Path
+import sys
+
+print(Path(sys.argv[1]).stat().st_mtime_ns)
+PY
+)"
   precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
 
   json_file="$(find "$UPKEEPER_PRECONTACT_BACKUP_ROOT" -type f -name "${RUN_PRECONTACT_BACKUP_ID}.json" -print)"
@@ -351,6 +366,11 @@ SH
   sidecar="$json_file"
   [[ -s "$age_file" ]] || fail "age restore test missing age artifact"
   [[ -s "$sidecar" ]] || fail "age restore test missing age sidecar"
+  extracted_file="$RUN_TMP_DIR/age-restore-extracted"
+  extracted_metadata="$RUN_TMP_DIR/age-restore-metadata.json"
+  precontact_backup_extract_payload "$age_file" "$extracted_file" "$extracted_metadata"
+  jq -e --argjson expected "$expected_mtime_ns" '.mtime_ns == $expected' "$extracted_metadata" >/dev/null ||
+    fail "age private metadata did not record integer mtime_ns"
 
   printf 'encrypted restore destination content\n' >"$destination_repo/dir/space file.sh"
   destination_sha="$(precontact_backup_sha256_file "$destination_repo/dir/space file.sh")"
@@ -365,12 +385,53 @@ SH
   original_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
   expected_path_hmac="$(precontact_backup_path_hmac "dir/space file.sh")"
   printf 'mutated\n' >"$repo/dir/space file.sh"
-  precontact_backup_restore_by_id "$RUN_PRECONTACT_BACKUP_ID" "$repo" "$identity_file" ""
+  env \
+    PATH="$PATH" \
+    UPKEEPER_REDACTION_KEY="$UPKEEPER_REDACTION_KEY" \
+    CODEX_LOG_FILE="$LOG_FILE" \
+    "$PROJECT_ROOT/tools/upkeeper_precontact_restore.sh" \
+      --repo-root="$repo" \
+      --backup-id="$RUN_PRECONTACT_BACKUP_ID" \
+      --identity="$identity_file" \
+      --vault-root="$UPKEEPER_PRECONTACT_BACKUP_ROOT"
   restored_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
-  PATH="$old_path"
   [[ "$restored_sha" == "$original_sha" ]] || fail "age restore did not restore original bytes"
+  restored_mtime_ns="$(python3 - "$repo/dir/space file.sh" <<'PY'
+from pathlib import Path
+import sys
+
+print(Path(sys.argv[1]).stat().st_mtime_ns)
+PY
+)"
+  [[ "$restored_mtime_ns" == "$expected_mtime_ns" ]] ||
+    fail "age restore mtime_ns was $restored_mtime_ns, expected $expected_mtime_ns"
   grep -Fq "precontact_backup.restore target_hmac=$expected_path_hmac" "$LOG_FILE" || fail "restore log did not record target HMAC"
   ! grep -Fq "precontact_backup.restore target=dir/space file.sh" "$LOG_FILE" || fail "restore log leaked selected relative path"
+
+  python3 - "$age_file" <<'PY'
+import json
+import sys
+
+payload_path = sys.argv[1]
+with open(payload_path, "rb") as handle:
+    magic = handle.readline()
+    metadata_length = int(handle.readline().strip())
+    metadata = json.loads(handle.read(metadata_length))
+    content = handle.read()
+metadata.pop("mtime_ns", None)
+encoded = json.dumps(metadata, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+with open(payload_path, "wb") as handle:
+    handle.write(magic)
+    handle.write(str(len(encoded)).encode("ascii") + b"\n")
+    handle.write(encoded)
+    handle.write(content)
+PY
+  printf 'mutated before legacy age restore\n' >"$repo/dir/space file.sh"
+  precontact_backup_restore_by_id "$RUN_PRECONTACT_BACKUP_ID" "$repo" "$identity_file" ""
+  [[ "$(precontact_backup_sha256_file "$repo/dir/space file.sh")" == "$original_sha" ]] ||
+    fail "legacy age payload without mtime_ns did not restore original bytes"
+
+  PATH="$old_path"
 
   jq -e 'has("selected_relative_path") | not' "$sidecar" >/dev/null ||
     fail "age sidecar leaked detailed restore metadata"

@@ -7333,3 +7333,23 @@ Validation:
 - `tools/check_public_docs.sh --quick`
 - `tools/validate_upkeeper.sh --quick`
 - `git diff --check`
+
+## Validator Fixture Reader Cleanup
+
+Status: in progress
+
+Goal:
+- close issue #868 by ensuring the autoshelve validator fixture owns, terminates,
+  and reaps its intentional active-reader process
+- make a surviving fixture process a deterministic contract failure
+
+Constraints:
+- retain the active-reader race coverage and its bounded timing behavior
+- do not weaken timeouts or use operator state as a fixture
+- preserve failure-path cleanup as well as the successful path
+
+Validation:
+- reproduce the former escaped reader under quick validation
+- `tools/validate_upkeeper.sh --quick`
+- `tools/run_tests.sh`
+- `git diff --check`

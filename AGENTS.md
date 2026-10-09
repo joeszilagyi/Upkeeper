@@ -99,6 +99,29 @@ They should not launch real backend Codex work.
 - After merge, verify local `main` is clean and synced with `origin/main`.
 - Delete or prune merged feature branches so the repo returns to a clean sheet.
 
+## Autonomous Issue Continuity And Status Updates
+
+- Once work has selected a concrete repository issue, continue it through
+  verification, repair, validation, PR CI, merge, and post-merge verification
+  without waiting for imperative operator sign-off when those steps need no new
+  authority beyond this repository and its GitHub project.
+- Stop and request direction only when a step needs new authority, materially
+  expands scope, requires a destructive action, affects another repository or
+  external system, consumes paid resources, or is blocked by an account or
+  platform condition.
+- While selected issue work remains active, provide the operator a concise,
+  single-sentence progress update at least every ten minutes. Treat this as a
+  deadline, not a best-effort reminder: before launching a command likely to
+  run through the deadline, send the update first; split monitoring and waits
+  into intervals that cannot cross it; and send another update immediately
+  after a long command returns. At selected-issue start and immediately after
+  each update, set a nine-minute status alarm; the alarm is a prompt to send
+  the update before the hard ten-minute deadline, never a blocking sleep. Do
+  not use a blind `sleep 600` as a substitute for a status update. Prefix
+  updates with the current date and time in the
+  operator's configured timezone; include the selected issue number and the
+  current blocking state or next concrete step.
+
 ## Central-First Rule
 
 - Make Upkeeper behavior changes in this repository, primarily in the root

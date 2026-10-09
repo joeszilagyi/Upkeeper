@@ -3468,13 +3468,10 @@ check_backlog_autoshelve_contract() {
       fail "control-plane autoshelve branch did not preserve the dirty launcher fix"
 
     printf '\n# validation control-plane active-reader race marker\n' >>orchestration/backlog.sh
-    (
-      cd "$temp_dir"
-      bash -c 'while true; do sleep 1; done' tools/validate_upkeeper.sh >/dev/null 2>&1 &
-      printf '%s\n' "$!" >"$temp_dir/active_validation_reader.pid"
-    )
-    active_validation_pid="$(cat "$temp_dir/active_validation_reader.pid")"
-    trap 'kill "$active_validation_pid" 2>/dev/null || true; wait "$active_validation_pid" 2>/dev/null || true' RETURN
+    bash -c 'while true; do sleep 1; done' tools/validate_upkeeper.sh >/dev/null 2>&1 &
+    active_validation_pid="$!"
+    printf '%s\n' "$active_validation_pid" >"$temp_dir/active_validation_reader.pid"
+    trap 'kill "$active_validation_pid" 2>/dev/null || true; wait "$active_validation_pid" 2>/dev/null || true' EXIT
 
     set +e
     output="$(BACKLOG_ALLOW_INTERACTIVE_STDIO=1 BACKLOG_AUTOSHELVE_PROBE=1 BACKLOG_STATE_ROOT="$temp_dir-state" BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_WAIT_SECONDS=1 BACKLOG_AUTOSHELVE_ACTIVE_VALIDATOR_POLL_SECONDS=1 ./orchestration/backlog.sh 2>&1)"
@@ -3486,6 +3483,13 @@ check_backlog_autoshelve_contract() {
     [[ -n "$(git status --short)" ]] && fail "backlog autoshelve left unexpected git state while blocked on validation readers"
     ! git show HEAD:orchestration/backlog.sh | grep -Fq 'validation control-plane active-reader race marker' ||
       fail "blocked autoshelve unexpectedly applied dirty launcher fix while validation reader was active"
+
+    kill "$active_validation_pid" 2>/dev/null || true
+    wait "$active_validation_pid" 2>/dev/null || true
+    trap - EXIT
+    if kill -0 "$active_validation_pid" 2>/dev/null; then
+      fail "backlog autoshelve fixture left active validation reader pid=$active_validation_pid"
+    fi
 
   )
 

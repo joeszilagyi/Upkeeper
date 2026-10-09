@@ -12424,6 +12424,13 @@ def semantic_import_payload(table: str, payload: dict[str, Any]) -> dict[str, An
     return normalized
 
 
+def canonical_jsonl_logical_key(table: str, primary_key: str | None, payload: dict[str, Any]) -> str:
+    primary_value = payload.get(primary_key) if primary_key else None
+    if primary_value is not None:
+        return f"{table}:{primary_value}"
+    return f"{table}:sha256:{sha256_text(json_dumps(payload))}"
+
+
 def align_redacted_import_compare_payload(incoming: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
     aligned = dict(incoming)
     for key, value in list(aligned.items()):
@@ -12467,7 +12474,7 @@ def command_export_jsonl(args: argparse.Namespace) -> int:
                     payload = sanitize_import_identity_payload(table, payload, context)
                     payload = redact_payload(payload, args)
                     pk = table_primary_key(conn, table)
-                    logical = f"{table}:{payload.get(pk) if pk else sha256_text(json_dumps(payload))}"
+                    logical = canonical_jsonl_logical_key(table, pk, payload)
                     payload_hash = sha256_text(json_dumps(payload))
                     row = {
                         "schema_version": SCHEMA_VERSION,
@@ -12538,6 +12545,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
     conn = connect_checked(root, normalize_db_path(args.db, root), args.journal_mode, allow_unsafe_db=args.allow_unsafe_db)
     ensure_schema(conn)
     rows_seen = rows_written = conflicts = duplicates = 0
+    rows_skipped = data_conflicts = 0
     refresh_pass_rollup_file_ids: set[int] = set()
     imported_import_max = 0
     incoming_repo_identity: dict[str, str] = {}
@@ -12769,10 +12777,12 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 row = load_strict_json(raw)
             except (TypeError, ValueError, json.JSONDecodeError):
                 conflicts += 1
+                rows_skipped += 1
                 record_import_conflict(conn, import_id, repo_id, "jsonl", f"line:{rows_seen}", "", "", "malformed_json")
                 continue
             if not isinstance(row, dict):
                 conflicts += 1
+                rows_skipped += 1
                 record_import_conflict(conn, import_id, repo_id, "jsonl", f"line:{rows_seen}", "", "", "unsupported_row")
                 continue
             table = row.get("row_type") or ""
@@ -12781,6 +12791,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             observed_repo_identity = _extract_repo_identity(row.get("repo_identity"))
             if not incoming_repo_identity and not observed_repo_identity:
                 conflicts += 1
+                rows_skipped += 1
                 record_import_conflict(
                     conn,
                     import_id,
@@ -12803,6 +12814,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             )
             if mismatch_reason:
                 conflicts += 1
+                rows_skipped += 1
                 record_import_conflict(
                     conn,
                     import_id,
@@ -12823,6 +12835,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     raise ValueError
             except (TypeError, ValueError):
                 conflicts += 1
+                rows_skipped += 1
                 record_import_conflict(
                     conn,
                     import_id,
@@ -12840,6 +12853,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                     raise ValueError
             except (TypeError, ValueError):
                 conflicts += 1
+                rows_skipped += 1
                 record_import_conflict(
                     conn,
                     import_id,
@@ -12854,6 +12868,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 continue
             if not isinstance(payload, dict):
                 conflicts += 1
+                rows_skipped += 1
                 record_import_conflict(
                     conn,
                     import_id,
@@ -12867,6 +12882,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 continue
             if not getattr(args, "anonymized_archive", False) and has_redacted_path_token(row, check_any_context=True):
                 conflicts += 1
+                rows_skipped += 1
                 record_import_conflict(
                     conn,
                     import_id,
@@ -12881,6 +12897,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             incoming_raw_hash = sha256_text(json_dumps(payload))
             if declared_payload_hash != incoming_raw_hash:
                 conflicts += 1
+                rows_skipped += 1
                 record_import_conflict(
                     conn,
                     import_id,
@@ -12911,6 +12928,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 continue
             if table not in REQUIRED_TABLES:
                 conflicts += 1
+                rows_skipped += 1
                 record_import_conflict(
                     conn,
                     import_id,
@@ -12926,6 +12944,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             unexpected_payload_fields = sorted(str(key) for key in payload if key not in columns)
             if unexpected_payload_fields:
                 conflicts += 1
+                rows_skipped += 1
                 record_import_conflict(
                     conn,
                     import_id,
@@ -12939,6 +12958,38 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 )
                 continue
             pk = table_primary_key(conn, table)
+            canonical_logical_key = canonical_jsonl_logical_key(str(table), pk, payload)
+            if pk and (pk not in payload or payload.get(pk) is None):
+                conflicts += 1
+                rows_skipped += 1
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    canonical_logical_key,
+                    "",
+                    incoming_raw_hash,
+                    "missing_primary_key",
+                    details={"primary_key": pk},
+                )
+                continue
+            if logical_key != canonical_logical_key:
+                conflicts += 1
+                rows_skipped += 1
+                record_import_conflict(
+                    conn,
+                    import_id,
+                    repo_id,
+                    str(table),
+                    canonical_logical_key,
+                    "",
+                    incoming_raw_hash,
+                    "logical_key_mismatch",
+                    details={"declared_logical_key_sha256": sha256_text(logical_key)},
+                )
+                continue
+            logical_key = canonical_logical_key
             filtered = {k: v for k, v in payload.items() if k in columns}
             if "repo_id" in filtered:
                 filtered["repo_id"] = repo_id
@@ -12953,6 +13004,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 filtered = normalize_imported_stored_rel_path_payload(str(table), filtered)
             except ValueError as exc:
                 conflicts += 1
+                rows_skipped += 1
                 record_import_conflict(
                     conn,
                     import_id,
@@ -12966,6 +13018,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 continue
             if not filtered:
                 conflicts += 1
+                rows_skipped += 1
                 record_import_conflict(
                     conn,
                     import_id,
@@ -13024,6 +13077,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 if staged["mode"] == "recovery":
                     if not isinstance(staged["payload"], dict):
                         conflicts += 1
+                        rows_skipped += 1
                         record_import_conflict(
                             conn,
                             import_id,
@@ -13082,6 +13136,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                             duplicates += 1
                             continue
                         conflicts += 1
+                        data_conflicts += 1
                         record_import_conflict(
                             conn,
                             import_id,
@@ -13116,6 +13171,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                         next_round_rows.append(staged)
                         continue
                     conflicts += 1
+                    data_conflicts += 1
                     record_import_conflict(
                         conn,
                         import_id,
@@ -13137,6 +13193,7 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
                 incoming_semantic_hash = str(staged["incoming_semantic_hash"]) if staged["mode"] == "insert" else ""
                 incoming_raw_hash = str(staged["incoming_raw_hash"]) if staged["mode"] == "insert" else str(staged["payload_sha256"])
                 conflicts += 1
+                data_conflicts += 1
                 record_import_conflict(
                     conn,
                     import_id,
@@ -13154,13 +13211,23 @@ def command_import_jsonl(args: argparse.Namespace) -> int:
             rows_seen,
             rows_written,
             conflicts,
-            {"duplicates": duplicates},
+            {"duplicates": duplicates, "rows_skipped": rows_skipped, "data_conflicts": data_conflicts},
         )
         if refresh_pass_rollup_file_ids:
             refresh_rollups(conn, repo_id, file_ids=refresh_pass_rollup_file_ids)
         record_file_event(conn, repo_id, "import_reconciled", details={"path": str(input_path), "conflicts": conflicts})
     status = "conflicts" if conflicts else "ok"
-    print_json({"status": status, "rows_seen": rows_seen, "rows_written": rows_written, "duplicates": duplicates, "conflicts": conflicts})
+    print_json(
+        {
+            "status": status,
+            "rows_seen": rows_seen,
+            "rows_written": rows_written,
+            "rows_skipped": rows_skipped,
+            "duplicates": duplicates,
+            "conflicts": conflicts,
+            "data_conflicts": data_conflicts,
+        }
+    )
     if conflicts > args.max_conflicts:
         return EXIT_IMPORT_CONFLICT
     return EXIT_SUCCESS

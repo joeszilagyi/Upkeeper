@@ -677,6 +677,30 @@ PY
 
   UPKEEPER_LATTICE_RAW_STORAGE=full \
     lattice export-jsonl --include-paths --include-raw --output "$TEST_TMP_ROOT/export-replay.jsonl" >"$TEST_TMP_ROOT/lattice-export-replay.json"
+  python3 - "$DB" "$TEST_TMP_ROOT/export-replay.jsonl" <<'PY' || fail "exported logical keys do not preserve canonical primary-key identity"
+import json
+import sqlite3
+import sys
+
+db_path, export_path = sys.argv[1:3]
+conn = sqlite3.connect(db_path)
+with open(export_path, encoding="utf-8") as handle:
+    for raw in handle:
+        row = json.loads(raw)
+        table = row["row_type"]
+        pk_rows = sorted(
+            (item for item in conn.execute(f"pragma table_info({table})") if item[5]),
+            key=lambda item: item[5],
+        )
+        if not pk_rows:
+            continue
+        primary_key = pk_rows[0][1]
+        if row["payload"].get(primary_key) is None:
+            raise AssertionError(f"export omitted {table}.{primary_key}: {row['logical_key']}")
+        expected = f"{table}:{row['payload'][primary_key]}"
+        if row["logical_key"] != expected:
+            raise AssertionError(f"noncanonical logical key: expected={expected} actual={row['logical_key']}")
+PY
 
   UPKEEPER_LATTICE_RAW_STORAGE=full \
     lattice import-jsonl --preserve-raw "$TEST_TMP_ROOT/export-replay.jsonl" >$TEST_TMP_ROOT/lattice-import-repeat-1.json
@@ -757,6 +781,8 @@ if summary.get("duplicates", 0) <= 0:
     raise AssertionError(f"expected unchanged rows to remain duplicates: {summary}")
 if summary.get("conflicts", 0) < 2:
     raise AssertionError(f"expected file and schema conflicts: {summary}")
+if summary.get("data_conflicts", 0) < 2 or summary.get("rows_skipped", -1) != 0:
+    raise AssertionError(f"true conflicts were not distinguished from skipped rows: {summary}")
 
 conn = sqlite3.connect(db_path)
 rows = conn.execute(
@@ -772,6 +798,70 @@ if "files" not in row_types or "schema_meta" not in row_types:
 for row_type, logical_key, resolution, existing_hash, incoming_hash in rows:
     if not existing_hash or not incoming_hash or existing_hash == incoming_hash:
         raise AssertionError(f"conflict hash evidence was incomplete for {row_type}:{logical_key}: {rows}")
+PY
+
+  python3 - "$TEST_TMP_ROOT/export-replay.jsonl" "$TEST_TMP_ROOT/missing-primary-key.jsonl" <<'PY'
+import hashlib
+import json
+import sys
+
+
+def dumps(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+src, dst = sys.argv[1:3]
+with open(src, encoding="utf-8") as handle:
+    template = next(json.loads(line) for line in handle if json.loads(line).get("row_type") == "files")
+with open(dst, "w", encoding="utf-8") as out:
+    for suffix in ("one", "two"):
+        row = json.loads(dumps(template))
+        row["payload"].pop("file_id", None)
+        row["payload"]["canonical_path"] = f"missing-pk-{suffix}.txt"
+        row["payload"]["current_path"] = f"missing-pk-{suffix}.txt"
+        row["logical_key"] = "files:None"
+        row["payload_sha256"] = hashlib.sha256(dumps(row["payload"]).encode("utf-8")).hexdigest()
+        print(dumps(row), file=out)
+PY
+  set +e
+  UPKEEPER_LATTICE_RAW_STORAGE=full \
+    lattice import-jsonl --preserve-raw "$TEST_TMP_ROOT/missing-primary-key.jsonl" >"$TEST_TMP_ROOT/missing-primary-key.out" 2>"$TEST_TMP_ROOT/missing-primary-key.err"
+  local missing_primary_key_rc=$?
+  set -e
+  [[ "$missing_primary_key_rc" -eq 8 ]] || fail "missing-primary-key JSONL import exited $missing_primary_key_rc, expected 8"
+  python3 - "$TEST_TMP_ROOT/missing-primary-key.out" "$DB" <<'PY' || fail "missing-primary-key rows did not retain distinct explainable evidence"
+import json
+import sqlite3
+import sys
+
+summary_path, db_path = sys.argv[1:3]
+summary = json.load(open(summary_path, encoding="utf-8"))
+if summary.get("rows_seen") != 2 or summary.get("rows_written") != 0:
+    raise AssertionError(summary)
+if summary.get("rows_skipped") != 2 or summary.get("conflicts") != 2 or summary.get("data_conflicts") != 0:
+    raise AssertionError(f"skipped rows were not distinguished from true conflicts: {summary}")
+conn = sqlite3.connect(db_path)
+rows = conn.execute(
+    """
+    select logical_key, resolution, details_json
+    from lattice_import_conflicts
+    where resolution='missing_primary_key'
+    order by conflict_id desc
+    limit 2
+    """
+).fetchall()
+if len(rows) != 2:
+    raise AssertionError(rows)
+keys = {row[0] for row in rows}
+if len(keys) != 2 or not all(key.startswith("files:sha256:") for key in keys):
+    raise AssertionError(f"missing-PK rows collapsed logical identity: {rows}")
+if any(key == "files:None" for key in keys):
+    raise AssertionError(rows)
+if any(json.loads(row[2]).get("primary_key") != "file_id" for row in rows):
+    raise AssertionError(f"missing-PK evidence lacks the expected column: {rows}")
+for path in ("missing-pk-one.txt", "missing-pk-two.txt"):
+    if conn.execute("select count(*) from files where canonical_path=?", (path,)).fetchone()[0]:
+        raise AssertionError(f"malformed row was inserted: {path}")
 PY
 
   set +e

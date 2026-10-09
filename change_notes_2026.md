@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: canonical Lattice JSONL import identity:
+	1. Lattice export/import now derives logical keys through one canonical helper; current exports preserve table primary keys, while the no-PK fallback is a namespaced payload hash instead of `table:None`.
+	2. Import rejects missing primary keys and declared logical-key mismatches before staging, recording unique hashed evidence without inventing destination identities.
+	3. Import summaries now separate `rows_skipped` from `data_conflicts` while retaining the aggregate `conflicts` count and exit contract.
+
 2026-10-08: bounded recent-log reads:
 	1. Stopped-loop triage now reads at most the final 1 MiB of its loop log before applying the requested line limit, instead of materializing the entire growing file.
 	2. Quota projection now scans at most the final 1 MiB of `Upkeeper.log` for the latest usable successful-cycle delta and retains the one-percent fallback when the window has none.

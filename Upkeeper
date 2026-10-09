@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.43
+## Version: v1.2.44
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.43"
+UPKEEPER_VERSION="v1.2.44"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -2525,6 +2525,7 @@ precontact_backup_find_sidecar_by_id() {
   [[ -d "$vault_root" ]] || return 0
   python3 - "$backup_id" "$vault_root" <<'PY'
 from pathlib import Path
+import os
 import sys
 
 backup_id, vault_root = sys.argv[1:3]
@@ -2546,7 +2547,7 @@ for candidate in root.rglob(needle):
     matches.append(str(candidate))
 
 for match in sorted(set(matches)):
-    print(match)
+    sys.stdout.buffer.write(os.fsencode(match) + b"\0")
 PY
 }
 
@@ -4379,7 +4380,8 @@ precontact_backup_restore_by_id() {
   local repo_root="$2"
   local identity_path="${3:-${UPKEEPER_PRECONTACT_BACKUP_AGE_IDENTITY:-}}"
   local restore_to="${4:-}"
-  local vault_root sidecars sidecar_count sidecar rel_path content_fingerprint encrypted mode
+  local vault_root sidecar rel_path content_fingerprint encrypted mode
+  local -a sidecars=()
   local target_abs tmp_restore="" artifact payload_tmp="" payload_metadata="" restored_sha
   local restore_tmp_dir=""
   local restore_tmp_dir_is_temp=0
@@ -4398,13 +4400,12 @@ precontact_backup_restore_by_id() {
   fi
   vault_root="$PRECONTACT_BACKUP_RESOLVED_ROOT"
 
-  sidecars="$(precontact_backup_find_sidecar_by_id "$backup_id" "$vault_root")"
-  sidecar_count="$(printf '%s\n' "$sidecars" | sed '/^$/d' | wc -l | tr -d ' ')"
-  if [[ "$sidecar_count" != "1" ]]; then
+  mapfile -d '' -t sidecars < <(precontact_backup_find_sidecar_by_id "$backup_id" "$vault_root")
+  if [[ "${#sidecars[@]}" -ne 1 ]]; then
     precontact_backup_set_reason "backup_id_not_unique_or_missing"
     return 1
   fi
-  sidecar="$(printf '%s\n' "$sidecars" | sed -n '1p')"
+  sidecar="${sidecars[0]}"
   if ! encrypted="$(precontact_backup_json_field "$sidecar" "encrypted")"; then
     precontact_backup_set_reason "metadata_read_failed"
     return 1

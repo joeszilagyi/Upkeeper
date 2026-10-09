@@ -1,5 +1,9 @@
 # 2026 Change Notes
 
+2026-10-09: v1.2.44 changes:
+	1. Restore-by-id sidecar discovery now uses NUL-delimited paths and array-based uniqueness checks, so valid vault paths containing newlines remain intact.
+	2. Both the root entrypoint and standalone restore path reject missing or duplicate backup ids without parsing filesystem paths as newline-delimited text.
+
 2026-10-09: v1.2.43 changes:
 	1. Default-redacted plain pre-contact backup sidecars now omit the raw `selected_relative_path` and retain only its HMAC; age public sidecars remain path-free.
 	2. Redacted plain restores require an explicit `--restore-to` path, while `UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS=0` preserves legacy automatic-path metadata and restore behavior.

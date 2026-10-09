@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: proof-bound automation obligation resolution:
+	1. Obligation repair no longer treats any zero wrapper exit as success; resolution requires one final-response proof bound to the obligation id, selected repair target, and canonical required-resolution digest.
+	2. A repaired classification must also match an independently captured before/after target content change, while an explicit obsolete classification must provide concrete evidence and leave the target unchanged.
+	3. Missing, malformed, duplicate, placeholder, wrong-target, unchanged-repair, changed-obsolete, and blocked evidence preserves the open record; accepted private resolved records retain the proof, target states, and final-response digest.
+
 2026-10-08: fail-closed Lattice policy for backlog mutation:
 	1. Backlog issue repair, newest-file mutation, and obligation repair now force Lattice enabled and required, matching the existing FlameOn and ChimneySweep full-burn policy.
 	2. Plain operator-driven Upkeeper remains advisory by default; a backlog run can opt into one-cycle degraded operation only with `BACKLOG_ALLOW_LATTICE_DEGRADED=1`.

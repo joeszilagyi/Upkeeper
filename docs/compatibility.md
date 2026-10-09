@@ -222,6 +222,13 @@ Future changes should preserve this operator-visible surface as far as possible:
   stale control-plane failures block fresh GitHub issue work or bug-hunting
   runs until they are repaired, resolved, or preserved as explicit obligations
   for the next run.
+- A successful obligation-repair process exit is not resolution proof. The
+  final response must contain one raw proof record bound to the obligation id,
+  selected repair target, and canonical required-resolution digest. A repaired
+  classification also requires a wrapper-observed target content change; an
+  obsolete classification requires explicit evidence and no target change.
+  Missing, malformed, duplicate, placeholder, wrong-target, or blocked proof
+  preserves the open obligation.
 - Backlog batch-merge validation failures are machine-health obligations, not
   one-off terminal events. A failing local validation phase writes or updates a
   current-root obligation with the failed phase, command, exit code, bounded

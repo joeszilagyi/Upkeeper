@@ -6660,6 +6660,9 @@ main() {
   last_message_file="$(run_mktemp last-message)"
   RUN_COMPILED_PROMPT_FILE="$compiled_prompt_file"
   RUN_LAST_MESSAGE_FILE="$last_message_file"
+  if ! automation_capture_obligation_resolution_baseline "${RUN_SELECTED_REVIEW_PATH:-${CODEX_TARGET_FILE:-}}"; then
+    log_line "WARN" "automation.obligation.resolution_baseline_unavailable id=$(shell_quote "${UPKEEPER_AUTOMATION_OBLIGATION_ID:-unknown}") target=$(shell_quote "${RUN_SELECTED_REVIEW_PATH:-${CODEX_TARGET_FILE:-unknown}}")"
+  fi
   prepare_bug_report_draft_artifact || finish_cycle 70 BUG_REPORT_DRAFT_PREP_FAILED ERROR "codex_exec_started=0"
   trap cleanup_run_temp_files EXIT
 

@@ -530,6 +530,15 @@ Important:
     Those launchers reconcile open obligations before normal bug-finding or
     issue-queue selection, handing the oldest/highest-priority obligation back
     to Upkeeper as a locked repair target.
+    A zero-exit obligation-repair run does not resolve that target by itself.
+    The final response must supply exactly one raw
+    `UPKEEPER_OBLIGATION_RESOLUTION` JSON marker bound to the obligation id,
+    selected repair target, and canonical `required_resolution` digest.
+    `classification=repaired` additionally requires the wrapper's before/after
+    content hashes to prove that target changed during this cycle;
+    `classification=obsolete` requires concrete stale/obsolete evidence and an
+    unchanged target. Rejected proof is logged without removing the open record,
+    while accepted proof is copied into the private resolved record.
   - Long-running launcher and wrapper progress lines use explicit wait-plane
     fields:
       plane=...

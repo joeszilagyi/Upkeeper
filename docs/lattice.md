@@ -111,6 +111,12 @@ thin compatibility shim over `tools/upkeeper_lattice_core.py`, so even that
 diagnostic path can reuse Python's bytecode cache after the implementation
 changes.
 
+Pass-result planned coverage is projected through the `planned-passes` command
+from the active Python pass registry. The registry owns default versus all-pass
+base membership and the active P24-P30 review modules; the Bash wrapper only
+requests and consumes that projection. P31 is reserved and unwired, so it is
+rejected rather than appearing in planned coverage.
+
 Every Lattice command issued by the wrapper is bounded by
 `UPKEEPER_LATTICE_COMMAND_TIMEOUT_SECONDS`. The default is 30 seconds; empty,
 zero, negative, or non-numeric values are rejected in favor of that safe

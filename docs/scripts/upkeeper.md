@@ -634,6 +634,10 @@ Prompt behavior:
     integrity operation, including `PRAGMA foreign_key_check` and
     `PRAGMA quick_check`; it is not automatically scheduled, and should be run
     at maintenance boundaries or after a Lattice write anomaly.
+    Pass-result planned coverage comes from the Lattice `planned-passes`
+    projection of the active Python pass registry. The default/all base passes
+    and selected P24-P30 modules therefore have one authority rather than a
+    second Bash case mapping; reserved, unwired P31 remains excluded.
     Transient transcript artifacts may live under repo runtime, Upkeeper-owned
     state directories, or Upkeeper-owned temp directories; Lattice records their
     hashed identity without treating those operator-local transcript locations

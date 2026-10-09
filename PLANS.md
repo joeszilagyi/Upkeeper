@@ -3,9 +3,36 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #667: Proof-Bound Automation Obligation Resolution
+## Issue #668: Registry-Derived Lattice Planned Passes
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- derive pass-result planned coverage from the active Python pass registry
+- remove the separate Bash base-pass list and P24-P30 case mapping
+- keep reserved, unwired P31 outside planned coverage
+
+Verified defect:
+- `lattice_planned_passes_csv` duplicated the active base and review-module
+  passes even though `PASS_REGISTRY` already owned that metadata
+- adding or retiring a pass could therefore leave run evidence with stale
+  planned coverage while the registry and prompt wiring appeared valid
+
+Constraints:
+- preserve the exact existing default and all-pass projections
+- append only active registered module passes selected for the cycle
+- reject unknown, inactive, base, and reserved module requests
+- do not run a nested warm-service command in a command-substitution subshell
+
+Validation:
+- focused CLI and Bash-wrapper tests cover default, all, P24/P30, and rejected
+  P31 projections
+- embedded behavior validation compares both projections directly with the
+  authoritative registry and rejects any restored Bash case mapping
+
+## Issue #667: Proof-Bound Automation Obligation Resolution
+
+Status: complete; merged in PR #842
 
 Goal:
 - prevent a zero-exit no-op, wrong-target run, or unrelated successful review

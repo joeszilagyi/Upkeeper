@@ -634,11 +634,18 @@ lattice_record_preselect() {
 lattice_record_pass_results() {
   local last_message_file="$1"
   local selected_path="$2"
-  local planned_passes="$3"
+  local planned_passes="${3:-}"
 
   lattice_enabled || return 0
   [[ "${UPKEEPER_LATTICE_AVAILABLE:-0}" == "1" ]] || return 0
   [[ -n "$last_message_file" && -f "$last_message_file" ]] || return 0
+  if [[ -z "$planned_passes" ]]; then
+    if ! lattice_prepare_planned_passes; then
+      lattice_warn_once "planned_pass_projection_failed" "${LATTICE_LAST_OUTPUT:-planned_pass_projection_failed}"
+      return 0
+    fi
+    planned_passes="$(lattice_planned_passes_csv)"
+  fi
 
   if ! lattice_run record-pass-result \
     --cycle-id "$CYCLE_ID" \
@@ -650,34 +657,27 @@ lattice_record_pass_results() {
   fi
 }
 
-lattice_planned_passes_csv() {
-  local -a passes=()
-  local module
+lattice_prepare_planned_passes() {
+  local prompt_pass="default" module output
+  local -a args=(planned-passes)
 
-  if [[ "${CODEX_PROMPT_PASS:-}" == "all" ]]; then
-    passes=(P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20 P21 P22 P23)
-  else
-    # The default automatic rotation targets script/tool files, so this list
-    # mirrors the default prompt's script/tool repertoire plus the always-on
-    # P22 and the applicability-gated P23. Explicit non-script targets may
-    # report not_applicable markers for the entries that do not fit.
-    passes=(P1 P3 P4 P5 P6 P7 P9 P10 P11 P12 P13 P14 P15 P17 P18 P19 P20 P21 P22 P23)
-  fi
-
+  [[ "${CODEX_PROMPT_PASS:-}" == "all" ]] && prompt_pass="all"
+  args+=(--prompt-pass "$prompt_pass")
   for module in "${CODEX_REVIEW_MODULES[@]}"; do
-    case "$module" in
-      p24) passes+=(P24) ;;
-      p25) passes+=(P25) ;;
-      p26) passes+=(P26) ;;
-      p27) passes+=(P27) ;;
-      p28) passes+=(P28) ;;
-      p29) passes+=(P29) ;;
-      p30) passes+=(P30) ;;
-    esac
+    args+=(--review-module "$module")
   done
+  lattice_run "${args[@]}" || return $?
+  output="${LATTICE_LAST_OUTPUT//$'\n'/}"
+  output="${output//$'\r'/}"
+  [[ "$output" =~ ^P[0-9]+(,P[0-9]+)*$ ]] || {
+    LATTICE_LAST_OUTPUT="invalid planned-pass projection: $output"
+    return 1
+  }
+  LATTICE_PLANNED_PASSES_CSV="$output"
+}
 
-  local IFS=,
-  printf '%s' "${passes[*]}"
+lattice_planned_passes_csv() {
+  printf '%s' "${LATTICE_PLANNED_PASSES_CSV:-}"
 }
 
 lattice_finish_retry_dir() {

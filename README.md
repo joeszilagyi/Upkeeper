@@ -586,6 +586,11 @@ backend can run.
 `UPKEEPER_LATTICE_SERVICE_ENABLED=1` keeps one warm local Lattice subprocess
 open for the wrapper cycle, so init, startup doctor, selection, pass-result,
 and finish records do not each pay a separate Python startup.
+The pass-result planned-coverage list is projected by the Lattice
+`planned-passes` command from the active Python pass registry. Default and
+all-pass base coverage plus selected P24-P30 modules therefore share one
+authority; the Bash wrapper contains no parallel per-module mapping. Reserved,
+unwired P31 is not projected.
 
 Every wrapper-issued Lattice command is bounded by
 `UPKEEPER_LATTICE_COMMAND_TIMEOUT_SECONDS`; after the deadline, Upkeeper

@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: backlog owner PID-reuse detection:
+	1. Stopped-loop triage now compares current-format owner PID and Linux process start ticks, preventing a recycled PID from being mistaken for the original backlog worker.
+	2. Dead and reused owners produce explicit `owner_status` and stale-owner reasons while all later restart-safety gates remain enforced.
+	3. Legacy records without start ticks retain conservative PID-only compatibility, and unreadable process fingerprints fail closed to the live-owner wait behavior.
+
 2026-10-08: repository-scoped parallel worker leases:
 	1. Global parallel-worker registry claims now compare normalized repository roots before applying renewal, issue-number, or target-file conflicts, so unrelated repositories cannot block or overwrite one another.
 	2. Explicit release is repository-scoped as well, while legacy records with missing or unusable root scope remain conservatively global.

@@ -535,7 +535,12 @@ Future changes should preserve this operator-visible surface as far as possible:
 - Stopped backlog loop triage remains local and no-backend. The focused
   command `tools/backlog_triage.py` emits `safe_to_restart=yes|no|wait` plus a
   reason and next action, using local evidence and optional GitHub PR/check
-  metadata.
+  metadata. On Linux, current-format owner records are live only when their PID
+  and `/proc` start ticks match. A live reused PID produces
+  `owner_status=pid_reused` and reason `stale_backlog_owner_pid_reused`; a dead
+  PID produces `owner_status=dead`. Old records without `start_ticks` preserve
+  the conservative PID-only compatibility check, and an unreadable process
+  fingerprint remains conservatively live rather than declaring restart safe.
 - Control-plane inventory remains local and no-backend. The focused command
   `tools/upkeeper_control_plane_audit.py` emits stable JSON or concise terminal
   text for observed repo/runtime state, including tracked local-evidence

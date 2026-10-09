@@ -48,10 +48,37 @@ def read_tsv(path: pathlib.Path) -> dict[str, str]:
     return fields
 
 
-def pid_alive(pid_text: str) -> bool:
+def process_start_ticks(pid_text: str) -> str | None:
+    """Return Linux /proc stat field 22 without assuming a space-free comm."""
     if not pid_text.isdigit():
-        return False
-    return pathlib.Path("/proc", pid_text).exists()
+        return None
+    try:
+        stat = pathlib.Path("/proc", pid_text, "stat").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        return None
+    comm_end = stat.rfind(")")
+    if comm_end < 0:
+        return None
+    fields = stat[comm_end + 1 :].split()
+    # The first remaining value is field 3 (state), so index 19 is field 22.
+    if len(fields) <= 19 or not fields[19].isdigit():
+        return None
+    return fields[19]
+
+
+def owner_process_status(pid_text: str, expected_start_ticks: str) -> str:
+    if not pid_text.isdigit() or not pathlib.Path("/proc", pid_text).exists():
+        return "dead"
+    if not expected_start_ticks:
+        return "legacy_live"
+    current_start_ticks = process_start_ticks(pid_text)
+    if current_start_ticks is None or not expected_start_ticks.isdigit():
+        return "unverified_live"
+    if current_start_ticks != expected_start_ticks:
+        return "pid_reused"
+    return "live"
 
 
 def git_branch(root: pathlib.Path) -> str:
@@ -165,12 +192,15 @@ def classify(args: argparse.Namespace) -> dict[str, Any]:
         "dirty_count": len(dirty),
         "open_obligation_count": len(obligations),
         "active_owner": "no",
+        "owner_status": "none",
         "active_lock": "yes" if active_lock.exists() else "no",
         "obligation_path": "",
     }
 
     owner_pid = owner.get("pid", "")
-    if owner_pid and pid_alive(owner_pid):
+    owner_status = owner_process_status(owner_pid, owner.get("start_ticks", "")) if owner_pid else "none"
+    result["owner_status"] = owner_status
+    if owner_status in {"live", "legacy_live", "unverified_live"}:
         result.update(
             safe_to_restart="wait",
             reason="active_backlog_owner",
@@ -178,6 +208,18 @@ def classify(args: argparse.Namespace) -> dict[str, Any]:
             active_owner="yes",
         )
         return result
+    if owner_status == "pid_reused":
+        result.update(
+            reason="stale_backlog_owner_pid_reused",
+            next_action=(
+                f"restart is safe; stale owner pid {owner_pid} belongs to a different process"
+            ),
+        )
+    elif owner_status == "dead":
+        result.update(
+            reason="stale_backlog_owner_dead",
+            next_action=f"restart is safe; recorded owner pid {owner_pid} is no longer running",
+        )
 
     if active_lock.exists():
         result.update(

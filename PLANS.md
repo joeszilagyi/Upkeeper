@@ -3,9 +3,30 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #676: Wrapper-Owned Bug-Report Issue Creation
+## Issue #689: Safe Fallback Token Descriptor Close
 
 Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- remove entrypoint `eval` from fallback-token descriptor cleanup
+- share one numeric-only dynamic-fd close helper with the active-lock module
+- preserve valid inherited-token reads while rejecting untrusted fd syntax
+
+Verified defect:
+- root entrypoint overrides retained two `eval "exec ${token_fd}<&-"` calls
+  after the sourced active-lock implementation had moved to safe Bash fd syntax
+- the descriptor originates in `CODEX_FALLBACK_CHAIN_TOKEN_FD`, so malformed
+  environment text reached shell evaluation in both root cleanup paths
+
+Validation:
+- valid numeric descriptors are read and closed in module and root paths
+- empty, alphabetic, and shell-looking values cannot close an unrelated fd or
+  create an attack marker
+- repository validation rejects reintroduction of the root `eval` pattern
+
+## Issue #676: Wrapper-Owned Bug-Report Issue Creation
+
+Status: complete; merged in PR #851
 
 Goal:
 - always block backend `gh issue create`, independent of wrapper write opt-in

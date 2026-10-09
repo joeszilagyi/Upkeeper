@@ -28,6 +28,13 @@ print(hashlib.sha256(sys.argv[1].encode("utf-8")).hexdigest())
 PY
 }
 
+upkeeper_close_inherited_read_fd() {
+  local token_fd="${1:-}"
+
+  [[ "$token_fd" =~ ^[0-9]+$ ]] || return 1
+  exec {token_fd}<&- 2>/dev/null
+}
+
 active_lock_age_seconds() {
   local path="$1"
   python3 - "$path" <<'PY'
@@ -157,9 +164,7 @@ acquire_active_lock_or_exit() {
           fi
         fi
         token_fd="${CODEX_FALLBACK_CHAIN_TOKEN_FD:-}"
-        if [[ "$token_fd" =~ ^[0-9]+$ ]]; then
-          exec {token_fd}<&- 2>/dev/null || true
-        fi
+        upkeeper_close_inherited_read_fd "$token_fd" || true
         fallback_parent_pid="${CODEX_FALLBACK_PARENT_PID:-}"
         fallback_parent_start="${CODEX_FALLBACK_PARENT_START:-}"
 

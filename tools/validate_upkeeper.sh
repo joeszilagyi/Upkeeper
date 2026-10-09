@@ -5964,6 +5964,11 @@ check_active_lock_reclaim_race() {
   if grep -Fq 'eval "exec ${token_fd}<&-"' lib/upkeeper/active_lock.bash; then
     fail "active-lock fallback token descriptor still uses eval"
   fi
+  [[ "$(grep -Fc 'upkeeper_close_inherited_read_fd "$token_fd" || true' Upkeeper)" -eq 2 ]] ||
+    fail "runtime fallback token cleanup paths do not share the safe fd-close helper"
+  if grep -Fq 'eval "exec ${token_fd}<&-"' Upkeeper; then
+    fail "runtime fallback token descriptor still uses eval"
+  fi
 
   grep -Fq 'active_lock.reclaim_lost' Upkeeper ||
     fail "runtime active-lock override missing reclaim-lost evidence"

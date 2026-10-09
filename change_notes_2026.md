@@ -1,5 +1,9 @@
 # 2026 Change Notes
 
+2026-10-09: v1.2.41 changes:
+	1. Fallback-token descriptor cleanup now uses one numeric-only Bash dynamic-fd helper in both the active-lock module and root entrypoint overrides.
+	2. Empty, nonnumeric, and shell-looking `CODEX_FALLBACK_CHAIN_TOKEN_FD` values are rejected without evaluation, while valid inherited-token descriptors retain their read-and-close behavior.
+
 2026-10-09: v1.2.40 changes:
 	1. Backend Codex can no longer invoke `gh issue create`, including when issue-write opt-in is enabled; it must return the wrapper-owned local draft artifact.
 	2. Opted-in bug-report filing is now wrapper-owned and requires accepted completion, zero backend exit, unchanged-source evidence, a strict title/body/label draft, and an exact-title duplicate check.

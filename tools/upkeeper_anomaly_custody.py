@@ -11,15 +11,18 @@ output.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as _dt
+import fcntl
 import hashlib
 import json
 import os
 import pathlib
 import re
 import sys
+import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 DEFAULT_UMBRELLA_ISSUE = "418"
@@ -174,15 +177,38 @@ def private_dir(path: pathlib.Path) -> None:
 
 def write_json(path: pathlib.Path, payload: dict) -> None:
     private_dir(path.parent)
-    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
-    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
-        handle.write("\n")
-    os.replace(tmp, path)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.tmp.", dir=path.parent)
+    tmp = pathlib.Path(tmp_name)
     try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
+
+
+def acquire_publication_locks(*roots: pathlib.Path) -> list[object]:
+    """Serialize readers and publishers that share either custody root."""
+
+    handles: list[object] = []
+    for root in sorted({path.resolve() for path in roots}, key=str):
+        private_dir(root)
+        lock_path = root / ".anomaly-custody.lock"
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        os.fchmod(fd, 0o600)
+        handle = os.fdopen(fd, "a+", encoding="utf-8")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        handles.append(handle)
+    return handles
 
 
 def tail_lines(path: pathlib.Path, limit: int) -> list[tuple[int, str]]:
@@ -731,23 +757,61 @@ def make_finding(lines: list[tuple[int, str]], index: int, line_number: int, raw
     )
 
 
-def existing_obligation_records(root: pathlib.Path) -> dict[str, dict]:
+def existing_obligation_records(
+    root: pathlib.Path,
+    expected_root: pathlib.Path,
+) -> tuple[dict[str, dict], set[str], list[dict[str, str]], int]:
     seen: dict[str, dict] = {}
+    occupied_ids: set[str] = set()
+    corrupt_records: list[dict[str, str]] = []
+    foreign_records = 0
     for subdir in ("open", "resolved"):
         base = root / subdir
         if not base.is_dir():
             continue
         for path in base.glob("*.json"):
+            occupied_ids.add(path.stem)
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except OSError as exc:
+                corrupt_records.append({"file": path.name, "state": subdir, "reason": f"read_error:{type(exc).__name__}"})
+                continue
+            except json.JSONDecodeError:
+                corrupt_records.append({"file": path.name, "state": subdir, "reason": "invalid_json"})
                 continue
             if not isinstance(data, dict):
+                corrupt_records.append({"file": path.name, "state": subdir, "reason": "record_not_object"})
                 continue
             ident = str(data.get("id") or path.stem)
+            occupied_ids.add(ident)
+            raw_record_root = data.get("root")
+            if not isinstance(raw_record_root, str) or not raw_record_root.strip():
+                corrupt_records.append({"file": path.name, "state": subdir, "reason": "missing_root"})
+                continue
+            try:
+                record_root = pathlib.Path(raw_record_root).resolve()
+            except (OSError, RuntimeError, ValueError):
+                corrupt_records.append({"file": path.name, "state": subdir, "reason": "invalid_root"})
+                continue
+            if record_root != expected_root:
+                foreign_records += 1
+                continue
             if ident:
                 seen[ident] = {"state": subdir, "path": path, "data": data}
-    return seen
+    return seen, occupied_ids, corrupt_records, foreign_records
+
+
+def root_scoped_finding(finding: Finding, root: pathlib.Path, records: dict[str, dict], occupied_ids: set[str]) -> Finding:
+    """Avoid overwriting a corrupt or foreign-root record with the same ID."""
+
+    if finding.ident in records or finding.ident not in occupied_ids:
+        return finding
+    root_digest = hashlib.sha256(str(root).encode("utf-8", "surrogateescape")).hexdigest()
+    for width in (12, 16, 24, 32, 64):
+        ident = f"{finding.ident}-root-{root_digest[:width]}"
+        if ident in records or ident not in occupied_ids:
+            return replace(finding, ident=ident)
+    raise RuntimeError(f"cannot allocate root-scoped finding id for {finding.ident}")
 
 
 def finding_payload(finding: Finding, root: pathlib.Path, loop_log: pathlib.Path) -> dict:
@@ -1166,8 +1230,9 @@ def update_terminal_failure_owner(path: pathlib.Path, finding: Finding, loop_log
 def audit(args: argparse.Namespace) -> int:
     root = pathlib.Path(args.root).resolve()
     loop_log = pathlib.Path(args.loop_log).expanduser()
-    state_root = pathlib.Path(args.state_root)
-    obligation_root = pathlib.Path(args.obligation_root)
+    state_root = pathlib.Path(args.state_root).expanduser().resolve()
+    obligation_root = pathlib.Path(args.obligation_root).expanduser().resolve()
+    publication_locks = acquire_publication_locks(state_root, obligation_root)
     recent_lines = max(0, int(args.recent_lines))
     max_findings = max(0, int(args.max_findings))
 
@@ -1185,7 +1250,10 @@ def audit(args: argparse.Namespace) -> int:
     truncated_count = 0
     created_obligations = 0
     updated_obligations = 0
-    obligation_records = existing_obligation_records(obligation_root)
+    obligation_records, occupied_obligation_ids, corrupt_records, foreign_records = existing_obligation_records(
+        obligation_root,
+        root,
+    )
     recent_terminal_owner: tuple[dict, int] | None = None
     for index, (line_number, raw_line) in enumerate(lines):
         classified = classify(lines, index, raw_line)
@@ -1224,6 +1292,12 @@ def audit(args: argparse.Namespace) -> int:
 
     candidate_findings, incident_rollup_count, incident_signal_count = roll_up_incident_findings(candidate_findings)
     coalesced_count += max(0, incident_signal_count - incident_rollup_count)
+    scoped_findings: list[Finding] = []
+    for finding in candidate_findings:
+        finding = root_scoped_finding(finding, root, obligation_records, occupied_obligation_ids)
+        occupied_obligation_ids.add(finding.ident)
+        scoped_findings.append(finding)
+    candidate_findings = scoped_findings
 
     for finding in candidate_findings:
         record = obligation_records.get(finding.ident)
@@ -1269,8 +1343,13 @@ def audit(args: argparse.Namespace) -> int:
         status = "actionable"
     elif known_open_findings:
         status = "known_open"
+    elif corrupt_records:
+        status = "corrupt"
     else:
         status = "clean"
+    promoted_count = len(findings)
+    duplicate_count = coalesced_count + len(known_open_findings)
+    skipped_count = expected_count + resolved_count + truncated_count
     latest = {
         "schema": 1,
         "record_type": "anomaly_custody_audit",
@@ -1290,7 +1369,13 @@ def audit(args: argparse.Namespace) -> int:
         "truncated_findings": truncated_count,
         "created_obligations": created_obligations,
         "updated_obligations": updated_obligations,
+        "promoted_findings": promoted_count,
+        "skipped_findings": skipped_count,
+        "corrupt_records": len(corrupt_records),
+        "duplicate_findings": duplicate_count,
+        "foreign_root_records": foreign_records,
         "obligation_root": str(obligation_root),
+        "corrupt_record_details": corrupt_records,
         "findings": [finding_payload(finding, root, loop_log) for finding in findings],
     }
     write_json(state_root / "latest.json", latest)
@@ -1302,8 +1387,17 @@ def audit(args: argparse.Namespace) -> int:
         f"known_open={len(known_open_findings)} resolved={resolved_count} "
         f"coalesced={coalesced_count} incident_rollups={incident_rollup_count} "
         f"truncated={truncated_count} "
+        f"promoted={promoted_count} skipped={skipped_count} "
+        f"corrupt={len(corrupt_records)} duplicate={duplicate_count} "
+        f"foreign_root={foreign_records} "
         f"new_obligations={created_obligations} updated_obligations={updated_obligations}"
     )
+    for corrupt in corrupt_records[:5]:
+        print(
+            "anomaly custody: "
+            f"state=corrupt file={json.dumps(corrupt['file'])} "
+            f"record_state={corrupt['state']} reason={corrupt['reason']} action=preserved"
+        )
     for finding in findings[:5]:
         print(
             "anomaly custody: "
@@ -1312,6 +1406,9 @@ def audit(args: argparse.Namespace) -> int:
         )
     if len(findings) > 5:
         print(f"anomaly custody: finding output truncated remaining={len(findings) - 5}")
+    for handle in reversed(publication_locks):
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
     return 0
 
 

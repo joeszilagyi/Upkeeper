@@ -238,7 +238,16 @@ Important:
     cycle id or run hash. When one source cycle emits multiple hard
     control-plane signals, anomaly custody opens one incident-rollup obligation
     that preserves the individual signal excerpts instead of filing sibling
-    obligations for the same blowup. Quoted backend shell/test fixture snippets that contain
+    obligations for the same blowup. Custody JSON publication stages a private
+    file, syncs its contents, atomically renames it, and syncs the containing
+    directory while a per-root advisory lock serializes concurrent publishers.
+    Existing obligation records are accepted for matching only when they contain
+    valid object JSON and belong to the current resolved repository root.
+    Foreign-root or corrupt records are preserved byte-for-byte; a colliding
+    current-root finding receives a deterministic root-scoped ID instead of
+    overwriting or updating that evidence. The summary reports `promoted`,
+    `skipped`, `corrupt`, and `duplicate` counts, plus foreign-root records, so
+    operators can distinguish every publication disposition. Quoted backend shell/test fixture snippets that contain
     embedded `[WARN]`, `[ERROR]`, `PAGE`, diagnostic search commands,
     control-plane log text, or quoted source-code fixture lines are treated as
     transcript content, not as new wrapper failures; lines already classified as

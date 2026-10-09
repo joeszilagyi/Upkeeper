@@ -1821,6 +1821,7 @@ PY
 
 check_prior_run_anomaly_custody_contract() {
   local temp_dir obligation_count selected_json prompt_file second_count incident_count quota_guardrail_count
+  local integrity_base integrity_original_sha integrity_corrupt_sha concurrent_record concurrent_expected
 
   log "checking prior-run anomaly custody contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-anomaly-custody.XXXXXX)"
@@ -1877,6 +1878,87 @@ LOG
     fail "prior-run anomaly custody recreated existing obligations instead of updating them"
   [[ "$(jq -r '.updated_obligations' "$temp_dir/custody/latest.json")" == "$obligation_count" ]] ||
     fail "prior-run anomaly custody did not update existing coalesced obligations"
+  grep -Eq 'promoted=0 .*duplicate=4' "$temp_dir/audit-second.out" ||
+    fail "prior-run anomaly custody did not distinguish duplicate evidence in operator output"
+
+  cat >"$temp_dir/integrity.log" <<'LOG'
+2026-05-21T12:10:00 outcome/results: Upkeeper exited with status 3
+LOG
+  mkdir -p "$temp_dir/root-a" "$temp_dir/root-b" "$temp_dir/root-c"
+  tools/upkeeper_anomaly_custody.py \
+    --root "$temp_dir/root-a" \
+    --loop-log "$temp_dir/integrity.log" \
+    --state-root "$temp_dir/integrity-state-a" \
+    --obligation-root "$temp_dir/integrity-obligations" \
+    --write-obligations >"$temp_dir/integrity-a.out"
+  integrity_base="$(find "$temp_dir/integrity-obligations/open" -maxdepth 1 -type f -name '*.json' -printf '%f\n')"
+  [[ -n "$integrity_base" ]] || fail "anomaly custody integrity fixture did not publish an obligation"
+  integrity_original_sha="$(sha256sum "$temp_dir/integrity-obligations/open/$integrity_base" | awk '{print $1}')"
+  tools/upkeeper_anomaly_custody.py \
+    --root "$temp_dir/root-b" \
+    --loop-log "$temp_dir/integrity.log" \
+    --state-root "$temp_dir/integrity-state-b" \
+    --obligation-root "$temp_dir/integrity-obligations" \
+    --write-obligations >"$temp_dir/integrity-b.out"
+  [[ "$(find "$temp_dir/integrity-obligations/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')" == "2" ]] ||
+    fail "cross-root anomaly evidence did not receive an isolated obligation"
+  [[ "$(sha256sum "$temp_dir/integrity-obligations/open/$integrity_base" | awk '{print $1}')" == "$integrity_original_sha" ]] ||
+    fail "cross-root anomaly promotion mutated the foreign-root obligation"
+  jq -s --arg root_a "$(realpath "$temp_dir/root-a")" --arg root_b "$(realpath "$temp_dir/root-b")" \
+    'length == 2 and (map(.root) | sort == ([$root_a, $root_b] | sort))' \
+    "$temp_dir"/integrity-obligations/open/*.json >/dev/null ||
+    fail "cross-root anomaly obligations lost their checkout ownership"
+  grep -Eq 'promoted=1 .*corrupt=0 .*duplicate=0 .*foreign_root=1' "$temp_dir/integrity-b.out" ||
+    fail "cross-root anomaly promotion was not explicit in operator output"
+
+  mkdir -p "$temp_dir/corrupt-obligations/open"
+  printf '{not valid json\n' >"$temp_dir/corrupt-obligations/open/$integrity_base"
+  integrity_corrupt_sha="$(sha256sum "$temp_dir/corrupt-obligations/open/$integrity_base" | awk '{print $1}')"
+  tools/upkeeper_anomaly_custody.py \
+    --root "$temp_dir/root-c" \
+    --loop-log "$temp_dir/integrity.log" \
+    --state-root "$temp_dir/corrupt-state" \
+    --obligation-root "$temp_dir/corrupt-obligations" \
+    --write-obligations >"$temp_dir/corrupt.out"
+  [[ "$(sha256sum "$temp_dir/corrupt-obligations/open/$integrity_base" | awk '{print $1}')" == "$integrity_corrupt_sha" ]] ||
+    fail "anomaly custody overwrote corrupt source evidence"
+  [[ "$(find "$temp_dir/corrupt-obligations/open" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')" == "2" ]] ||
+    fail "anomaly custody did not publish valid evidence beside a colliding corrupt record"
+  grep -Eq 'promoted=1 .*corrupt=1 .*duplicate=0' "$temp_dir/corrupt.out" ||
+    fail "corrupt anomaly evidence was not explicit in operator output"
+  grep -Fq 'state=corrupt' "$temp_dir/corrupt.out" ||
+    fail "corrupt anomaly evidence omitted its preserved-state operator record"
+  [[ "$(jq -r '.corrupt_records' "$temp_dir/corrupt-state/latest.json")" == "1" ]] ||
+    fail "anomaly custody latest record did not count corrupt evidence"
+
+  tools/upkeeper_anomaly_custody.py \
+    --root "$temp_dir/root-a" \
+    --loop-log "$temp_dir/integrity.log" \
+    --state-root "$temp_dir/concurrent-state-seed" \
+    --obligation-root "$temp_dir/concurrent-obligations" \
+    --write-obligations >"$temp_dir/concurrent-seed.out"
+  concurrent_record="$(find "$temp_dir/concurrent-obligations/open" -maxdepth 1 -type f -name '*.json' -print -quit)"
+  concurrent_expected=7
+  for attempt in 1 2 3 4 5 6; do
+    tools/upkeeper_anomaly_custody.py \
+      --root "$temp_dir/root-a" \
+      --loop-log "$temp_dir/integrity.log" \
+      --state-root "$temp_dir/concurrent-state-$attempt" \
+      --obligation-root "$temp_dir/concurrent-obligations" \
+      --write-obligations >"$temp_dir/concurrent-$attempt.out" &
+  done
+  wait
+  [[ "$(jq -r '.occurrence_count' "$concurrent_record")" == "$concurrent_expected" ]] ||
+    fail "concurrent anomaly publishers lost a duplicate-evidence update"
+  jq empty "$concurrent_record" "$temp_dir"/concurrent-state-*/latest.json >/dev/null ||
+    fail "concurrent anomaly publication exposed partial JSON"
+  if find "$temp_dir" -type f -name '.*.tmp.*' -print -quit | grep -q .; then
+    fail "atomic anomaly publication left a temporary file behind"
+  fi
+  grep -Fq 'os.fsync(handle.fileno())' tools/upkeeper_anomaly_custody.py ||
+    fail "anomaly custody publication does not sync record contents"
+  grep -Fq 'os.fsync(directory_fd)' tools/upkeeper_anomaly_custody.py ||
+    fail "anomaly custody publication does not sync the rename directory"
 
   cat >"$temp_dir/incident.log" <<'LOG'
 2026-05-24T20:52:30 █ PAGE    [ERROR] cycle=incident-cycle run_hash=incident123 Upkeeper: primary failure transcript tail
@@ -1992,6 +2074,8 @@ LOG
     fail "prior-run anomaly custody treated a proved negative-test fixture as actionable"
   [[ "$(jq -r '.expected_fixture_findings' "$temp_dir/fixture-custody/latest.json")" == "3" ]] ||
     fail "prior-run anomaly custody did not count the expected negative-test fixture"
+  grep -Eq 'promoted=0 .*skipped=3 .*corrupt=0 .*duplicate=0' "$temp_dir/fixture-audit.out" ||
+    fail "prior-run anomaly custody did not distinguish skipped fixture evidence in operator output"
 
   cat >"$temp_dir/model-fixture.log" <<'LOG'
 2026-05-23T07:07:51 █ INFO    [ERROR] Upkeeper: primary: printf '"'%s [WARN] cycle=prior-cycle run_hash=abc startup_anomaly.gate_unresolved reason=changed_path_violation reasons=previous_run_anomaly boot_id=boot-current\n' "$stamp_old" >>"$log_file"

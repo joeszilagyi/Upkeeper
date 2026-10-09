@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--audit-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.39
+Version: v1.2.40
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -825,8 +825,9 @@ Prompt behavior:
     makes the cycle investigate and file/report confirmed bugs without editing
     or touching tracked source. It intentionally supersedes the normal clean
     review touch requirement for that invocation. By default it writes a local
-    issue draft under runtime/upkeeper-bug-report-drafts and blocks direct
-    GitHub issue creation unless `UPKEEPER_ALLOW_GH_ISSUE_WRITE=1`.
+    issue draft under runtime/upkeeper-bug-report-drafts. Backend GitHub writes
+    are always blocked; `UPKEEPER_ALLOW_GH_ISSUE_WRITE=1` permits only the
+    wrapper to validate, deduplicate, and create an issue from that draft.
   - --audit-only is the canonical no-fix/read-only audit alias; --review-only,
     --no-fix, and --read-only are accepted aliases. It uses the same source
     mutation guard and final-message draft contract as bug-report-only, records

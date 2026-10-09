@@ -221,17 +221,6 @@ prepare_genie_protocol_env() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-truthy() {
-  case "${1,,}" in
-    1|true|yes|on)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
 real_gh="${UPKEEPER_REAL_GH_BIN:-}"
 if [[ -z "$real_gh" || ! -x "$real_gh" ]]; then
   printf 'Upkeeper bug-report-only: real gh binary is unavailable; use the wrapper-owned local draft artifact instead.\n' >&2
@@ -284,14 +273,8 @@ if [[ "$allow_read" == "1" ]]; then
 fi
 
 if [[ "$cmd1" == "issue" && "$cmd2" == "create" ]]; then
-  if ! truthy "${UPKEEPER_ALLOW_GH_ISSUE_WRITE:-0}"; then
-    printf 'Upkeeper bug-report-only: gh issue create is blocked unless UPKEEPER_ALLOW_GH_ISSUE_WRITE=1; write the wrapper-owned local draft instead.\n' >&2
-    exit 126
-  fi
-  visibility="$("$real_gh" repo view --json visibility --jq .visibility 2>/dev/null || printf 'unknown')"
-  [[ -n "$visibility" ]] || visibility="unknown"
-  printf 'Upkeeper bug-report-only: gh issue create allowed by UPKEEPER_ALLOW_GH_ISSUE_WRITE=1 repo_visibility=%s\n' "$visibility" >&2
-  exec "$real_gh" "$@"
+  printf 'Upkeeper Genie Protocol: backend gh issue create is always blocked; return a local draft for wrapper-owned validation and filing.\n' >&2
+  exit 126
 fi
 
 printf 'Upkeeper bug-report-only: direct gh command is blocked for backend Codex; use read-only gh inspection or the wrapper-owned local draft artifact.\n' >&2
@@ -1777,7 +1760,164 @@ upkeeper_bug_report_materialize_draft() {
   return 0
 }
 
+upkeeper_bug_report_parse_draft_json() {
+  local draft_file="$1"
+  local body_file="$2"
+
+  python3 - "$draft_file" "$body_file" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import re
+import sys
+
+draft_path = pathlib.Path(sys.argv[1])
+body_path = pathlib.Path(sys.argv[2])
+
+try:
+    lines = draft_path.read_text(encoding="utf-8", errors="replace").splitlines()
+except OSError:
+    raise SystemExit(1)
+if not lines or not lines[0].startswith("Title: "):
+    raise SystemExit(1)
+title = lines[0][len("Title: "):].strip()
+if not title or len(title) > 256 or any(ord(char) < 32 for char in title):
+    raise SystemExit(1)
+
+index = 1
+labels = []
+if index < len(lines) and lines[index].startswith("Labels: "):
+    raw_labels = lines[index][len("Labels: "):]
+    labels = [item.strip() for item in raw_labels.split(",") if item.strip()]
+    if not labels or len(labels) > 20:
+        raise SystemExit(1)
+    if any(not re.fullmatch(r"[A-Za-z0-9_.-]+", item) for item in labels):
+        raise SystemExit(1)
+    if len(set(labels)) != len(labels):
+        raise SystemExit(1)
+    index += 1
+
+while index < len(lines) and not lines[index].strip():
+    index += 1
+body = "\n".join(lines[index:]).rstrip() + "\n"
+if not body.strip() or "\0" in body:
+    raise SystemExit(1)
+if len(body.encode("utf-8", errors="replace")) > 131072:
+    raise SystemExit(1)
+
+try:
+    fd = os.open(str(body_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(body)
+    os.chmod(str(body_path), 0o600)
+except OSError:
+    raise SystemExit(1)
+
+print(
+    json.dumps(
+        {
+            "schema_version": "upkeeper.issue_draft.v1",
+            "title": title,
+            "labels": labels,
+            "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
+upkeeper_bug_report_open_duplicate_number() {
+  local title="$1"
+  local issues_json
+
+  issues_json="$(gh issue list --state open --limit 1000 --json number,title 2>/dev/null)" || return 2
+  python3 - "$title" "$issues_json" <<'PY'
+import json
+import sys
+
+title = sys.argv[1]
+try:
+    issues = json.loads(sys.argv[2])
+except json.JSONDecodeError:
+    raise SystemExit(2)
+if not isinstance(issues, list):
+    raise SystemExit(2)
+for issue in issues:
+    if isinstance(issue, dict) and issue.get("title") == title:
+        number = issue.get("number")
+        if isinstance(number, int) and number > 0:
+            print(number)
+            raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+upkeeper_bug_report_create_from_draft() {
+  local accepted_status="${1:-}"
+  local codex_exit_value="${2:-}"
+  local source_guard_outcome="${3:-}"
+  local draft_file="${RUN_BUG_REPORT_DRAFT_FILE:-}"
+  local body_file draft_json title duplicate_number duplicate_rc output rc label
+  local -a create_args labels=()
+
+  [[ "$accepted_status" == "WORK_DONE" && "$codex_exit_value" == "0" && "$source_guard_outcome" == "unchanged" ]] || {
+    log_line_parts "ERROR" \
+      "bug_report_only.issue_write_blocked transport=wrapper" \
+      "reason=runtime_evidence_invalid status=$(shell_quote "${accepted_status:-missing}")" \
+      "codex_exit=$(shell_quote "${codex_exit_value:-missing}")" \
+      "source_guard_outcome=$(shell_quote "${source_guard_outcome:-missing}")"
+    return 1
+  }
+  [[ -n "$draft_file" && -r "$draft_file" ]] || return 1
+
+  body_file="$(run_mktemp bug-report-issue-body)" || return 1
+  if ! draft_json="$(upkeeper_bug_report_parse_draft_json "$draft_file" "$body_file")"; then
+    log_line "ERROR" "bug_report_only.issue_write_blocked transport=wrapper reason=invalid_draft draft_path=$(shell_quote "$(upkeeper_path_hmac "$draft_file")") path_redacted=1"
+    rm -f -- "$body_file"
+    return 1
+  fi
+  title="$(json_field "$draft_json" '.title')"
+  mapfile -t labels < <(jq -r '.labels[]' <<<"$draft_json")
+
+  set +e
+  duplicate_number="$(upkeeper_bug_report_open_duplicate_number "$title")"
+  duplicate_rc=$?
+  set -e
+  if [[ "$duplicate_rc" -eq 0 ]]; then
+    log_line "INFO" "bug_report_only.issue_duplicate transport=wrapper number=$duplicate_number title_hash=$(shell_quote "$(upkeeper_value_hmac issue_title "$title")") action=skip_create"
+    rm -f -- "$body_file"
+    return 0
+  fi
+  if [[ "$duplicate_rc" -ne 1 ]]; then
+    log_line "ERROR" "bug_report_only.issue_write_blocked transport=wrapper reason=duplicate_lookup_failed title_hash=$(shell_quote "$(upkeeper_value_hmac issue_title "$title")")"
+    rm -f -- "$body_file"
+    return 1
+  fi
+
+  create_args=(issue create --title "$title" --body-file "$body_file")
+  for label in "${labels[@]}"; do
+    create_args+=(--label "$label")
+  done
+  set +e
+  output="$(gh "${create_args[@]}" 2>&1)"
+  rc=$?
+  set -e
+  rm -f -- "$body_file"
+  if [[ "$rc" -ne 0 ]]; then
+    log_line "ERROR" "bug_report_only.issue_create_failed transport=wrapper exit=$rc title_hash=$(shell_quote "$(upkeeper_value_hmac issue_title "$title")") detail=$(shell_quote "$output")"
+    return 1
+  fi
+
+  log_line "INFO" "bug_report_only.issue_created transport=wrapper title_hash=$(shell_quote "$(upkeeper_value_hmac issue_title "$title")") labels=$(shell_quote "$(IFS=,; printf '%s' "${labels[*]}")") result=$(shell_quote "$output")"
+  return 0
+}
+
 upkeeper_bug_report_finalize() {
+  local accepted_status="${1:-${status_marker:-}}"
+  local codex_exit_value="${2:-${codex_exit:-}}"
+  local source_guard_outcome="${3:-not_required}"
   local summary_json outcome
 
   upkeeper_bug_report_only_enabled || return 0
@@ -1786,7 +1926,16 @@ upkeeper_bug_report_finalize() {
   if [[ "$outcome" != "REVIEWED_AND_REPORTED" ]]; then
     return 0
   fi
-  upkeeper_bug_report_materialize_draft
+  upkeeper_bug_report_materialize_draft || return 1
+  if upkeeper_audit_only_enabled; then
+    log_line "INFO" "bug_report_only.issue_write_blocked transport=wrapper reason=audit_only draft_path=$(shell_quote "$(upkeeper_path_hmac "${RUN_BUG_REPORT_DRAFT_FILE:-}")") path_redacted=1"
+    return 0
+  fi
+  if ! upkeeper_bug_report_issue_write_allowed; then
+    log_line "INFO" "bug_report_only.issue_write_blocked transport=wrapper reason=operator_opt_in_disabled draft_path=$(shell_quote "$(upkeeper_path_hmac "${RUN_BUG_REPORT_DRAFT_FILE:-}")") path_redacted=1"
+    return 0
+  fi
+  upkeeper_bug_report_create_from_draft "$accepted_status" "$codex_exit_value" "$source_guard_outcome"
 }
 
 upkeeper_source_mutation_status_summary() {

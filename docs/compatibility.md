@@ -543,6 +543,9 @@ Future changes should preserve this operator-visible surface as far as possible:
 - `--bug-report-only` is a no-fix mode. It must not edit or touch tracked
   source, and the wrapper must fail the cycle if the source mutation
   fingerprint changes during a non-dry-run bug-report-only cycle.
+- Backend GitHub writes remain blocked in bug-report-only mode regardless of
+  operator write opt-in. `UPKEEPER_ALLOW_GH_ISSUE_WRITE=1` authorizes only the
+  wrapper to validate and deduplicate the local draft before issue creation.
 - `--audit-only` is the canonical no-fix/read-only audit alias, with
   `--review-only`, `--no-fix`, and `--read-only` accepted as equivalent
   spellings. It uses the same source mutation guard and final-message report

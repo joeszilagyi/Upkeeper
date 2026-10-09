@@ -3,9 +3,30 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #675: Typed Issue-Comment Actuator
+## Issue #676: Wrapper-Owned Bug-Report Issue Creation
 
 Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- always block backend `gh issue create`, independent of wrapper write opt-in
+- validate and deduplicate the local issue draft before wrapper-owned creation
+- keep audit-only and non-opted-in runs local-artifact-only
+
+Verified defect:
+- the backend command stub conditionally forwarded `gh issue create` even
+  though backend execution removes GitHub credentials and isolates config
+- the write opt-in therefore authorized a contradictory, ambient-auth-dependent
+  backend side effect instead of a wrapper-owned actuator
+
+Validation:
+- backend create attempts fail with and without wrapper write opt-in
+- wrapper filing parses title, labels, and body only after successful runtime
+  evidence; disabled policy and exact-title duplicates do not invoke transport
+- focused, full test, and repository validation suites cover the boundary
+
+## Issue #675: Typed Issue-Comment Actuator
+
+Status: complete; merged in PR #850
 
 Goal:
 - require `upkeeper.issue_comment_action.v1` before any issue-comment write

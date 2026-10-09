@@ -621,8 +621,9 @@ $(review_module_flag_help_lines)
     makes the cycle investigate and file/report confirmed bugs without editing
     or touching tracked source. It intentionally supersedes the normal clean
     review touch requirement for that invocation. By default it writes a local
-    issue draft under runtime/upkeeper-bug-report-drafts and blocks direct
-    GitHub issue creation unless UPKEEPER_ALLOW_GH_ISSUE_WRITE=1.
+    issue draft under runtime/upkeeper-bug-report-drafts. Backend GitHub writes
+    are always blocked; UPKEEPER_ALLOW_GH_ISSUE_WRITE=1 permits only the wrapper
+    to validate, deduplicate, and create an issue from that draft.
   - --audit-only is the canonical no-fix/read-only audit alias; --review-only,
     --no-fix, and --read-only are accepted aliases. It uses the same source
     mutation guard and final-message draft contract as bug-report-only, records

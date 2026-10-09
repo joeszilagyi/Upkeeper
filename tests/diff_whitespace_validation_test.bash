@@ -19,6 +19,17 @@ git -C "$repo" config user.email "upkeeper-test@example.invalid"
 mkdir -p "$repo/tools"
 cp "$ROOT_DIR/tools/git_diff_validation.bash" "$repo/tools/"
 cp "$ROOT_DIR/tools/run_validation_phases.sh" "$repo/tools/"
+
+run_fixture_phase() {
+  (
+    cd "$repo"
+    # This fixture owns its Git history. CI exports these variables for the
+    # outer checkout, which must not replace the fixture's default range.
+    env -u UPKEEPER_VALIDATION_DIFF_BASE -u UPKEEPER_VALIDATION_DIFF_HEAD \
+      bash tools/run_validation_phases.sh "$@"
+  )
+}
+
 printf 'clean baseline\n' >"$repo/fixture.txt"
 git -C "$repo" add fixture.txt
 git -C "$repo" commit -q -m baseline
@@ -27,12 +38,17 @@ printf 'committed trailing whitespace  \n' >"$repo/fixture.txt"
 git -C "$repo" add fixture.txt
 git -C "$repo" commit -q -m bad-commit
 
+# Deliberately model an outer CI range that is meaningless inside this private
+# repository. Every fixture phase below must select only fixture-owned refs.
+export UPKEEPER_VALIDATION_DIFF_BASE='outer-ci-base'
+export UPKEEPER_VALIDATION_DIFF_HEAD='outer-ci-head'
+
 set +e
 bare_output="$(git -C "$repo" diff --check 2>&1)"
 bare_rc=$?
-ranged_output="$(cd "$repo" && bash tools/run_validation_phases.sh --serial --phases diff_whitespace --diff-base HEAD^ --diff-head HEAD 2>&1)"
+ranged_output="$(run_fixture_phase --serial --phases diff_whitespace --diff-base HEAD^ --diff-head HEAD 2>&1)"
 ranged_rc=$?
-default_output="$(cd "$repo" && bash tools/run_validation_phases.sh --serial --phases diff_whitespace 2>&1)"
+default_output="$(run_fixture_phase --serial --phases diff_whitespace 2>&1)"
 default_rc=$?
 set -e
 [[ "$bare_rc" -eq 0 && -z "$bare_output" ]] || fail "bare clean-worktree diff unexpectedly found the committed defect"
@@ -43,11 +59,11 @@ grep -Fq 'fixture.txt:1: trailing whitespace.' <<<"$default_output" || fail "loc
 
 git -C "$repo" checkout -q HEAD^ -- fixture.txt
 git -C "$repo" commit -qam clean-commit
-(cd "$repo" && bash tools/run_validation_phases.sh --serial --phases diff_whitespace --diff-base HEAD^ --diff-head HEAD) ||
+run_fixture_phase --serial --phases diff_whitespace --diff-base HEAD^ --diff-head HEAD ||
   fail "phase runner rejected a clean committed range"
 
 set +e
-missing_output="$(cd "$repo" && bash tools/run_validation_phases.sh --serial --phases diff_whitespace --diff-base does-not-exist --diff-head HEAD 2>&1)"
+missing_output="$(run_fixture_phase --serial --phases diff_whitespace --diff-base does-not-exist --diff-head HEAD 2>&1)"
 missing_rc=$?
 set -e
 [[ "$missing_rc" -ne 0 ]] || fail "missing base ref was accepted"
@@ -55,7 +71,7 @@ grep -Fq 'base ref is unavailable: does-not-exist' <<<"$missing_output" || fail 
 
 printf 'unstaged trailing whitespace  \n' >"$repo/fixture.txt"
 set +e
-local_output="$(cd "$repo" && bash tools/run_validation_phases.sh --serial --phases diff_whitespace --diff-base HEAD^ --diff-head HEAD 2>&1)"
+local_output="$(run_fixture_phase --serial --phases diff_whitespace --diff-base HEAD^ --diff-head HEAD 2>&1)"
 local_rc=$?
 set -e
 [[ "$local_rc" -ne 0 ]] || fail "unstaged whitespace was accepted"

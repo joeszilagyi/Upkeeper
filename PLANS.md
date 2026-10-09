@@ -3,9 +3,29 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #671: Bounded Lattice Validation
+## Issue #672: Preserve Prompt-Pass Coverage Failures
 
 Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- preserve the original coverage-gate return status in the production path
+- force `BLOCKED` for incomplete or unavailable all-pass evidence
+- test the production enforcement helper rather than a duplicated shell sketch
+
+Verified defect:
+- the runtime captured `$?` inside an `if ! gate; then` branch, where Bash had
+  already replaced the gate's `2`/`3` status with the negated status `0`
+- the existing validator reproduced the intended logic separately and therefore
+  passed without exercising the defective runtime block
+
+Validation:
+- complete P1-P23 evidence preserves the original status and source
+- incomplete evidence overrides to `BLOCKED` and logs gate status 2
+- unavailable analysis overrides to `BLOCKED` and logs gate status 3
+
+## Issue #671: Bounded Lattice Validation
+
+Status: complete; merged in PR #846
 
 Goal:
 - make every validator check and delegated test independently bounded

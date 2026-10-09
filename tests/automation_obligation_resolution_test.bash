@@ -115,6 +115,8 @@ prepare_attempt() {
   UPKEEPER_AUTOMATION_WORKFLOW="obligation-repair"
   UPKEEPER_AUTOMATION_OBLIGATION_ID="$obligation_id"
   UPKEEPER_AUTOMATION_OBLIGATION_PATH="$UPKEEPER_OBLIGATION_DIR/open/$obligation_id.json"
+  UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_PATH=""
+  UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_TOKEN=""
   RUN_SELECTED_REVIEW_PATH="$selected_target"
   RUN_LAST_MESSAGE_FILE="$TEST_TMP_ROOT/$obligation_id.last-message.txt"
   UPKEEPER_AUTOMATION_OBLIGATION_TARGET_BEFORE_STATE=""
@@ -220,6 +222,33 @@ test_explicit_obsolete_proof_resolves_unchanged_target() {
   [[ "$(jq -r '.resolution_proof.evidence[0]' "$resolved")" == "current deterministic fixture proves the source finding is stale" ]] || fail "obsolete resolution did not persist evidence"
 }
 
+test_claimed_resolution_requires_token_and_releases_claim() {
+  local obligation_id="claimed-obsolete-success" claim_json claim_path claim_token
+  find "$UPKEEPER_OBLIGATION_DIR/open" -maxdepth 1 -type f -name '*.json' -delete
+  printf 'unchanged\n' >"$ROOT_DIR/$TARGET_PATH"
+  prepare_attempt "$obligation_id"
+  claim_json="$(UPKEEPER_OBLIGATION_CLAIM_OWNER_PID="${BASHPID:-$$}" automation_claim_open_obligation_json)"
+  [[ "$(jq -r '.status' <<<"$claim_json")" == "ok" ]] || fail "resolution fixture could not claim obligation"
+  claim_path="$(jq -r '.claim_path' <<<"$claim_json")"
+  claim_token="$(jq -r '.claim_token' <<<"$claim_json")"
+  UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_PATH="$claim_path"
+  UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_TOKEN="wrong-$claim_token"
+  automation_capture_obligation_resolution_baseline "$TARGET_PATH"
+  write_resolution_message "$obligation_id" obsolete "$TARGET_PATH" "claimed fixture is obsolete" "$RUN_LAST_MESSAGE_FILE"
+
+  if automation_resolve_selected_obligation 0 WORK_DONE WORK_DONE "$TARGET_PATH"; then
+    fail "mismatched claim token resolved obligation"
+  fi
+  [[ -f "$UPKEEPER_AUTOMATION_OBLIGATION_PATH" ]] || fail "mismatched token removed open obligation"
+  [[ -f "$claim_path" ]] || fail "mismatched token removed active claim"
+
+  UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_TOKEN="$claim_token"
+  automation_resolve_selected_obligation 0 WORK_DONE WORK_DONE "$TARGET_PATH"
+  [[ ! -e "$UPKEEPER_AUTOMATION_OBLIGATION_PATH" ]] || fail "valid claimed resolution remained open"
+  [[ ! -e "$claim_path" ]] || fail "valid claimed resolution did not release claim"
+  [[ -f "$UPKEEPER_OBLIGATION_DIR/resolved/$obligation_id.json" ]] || fail "valid claimed resolution was not retained"
+}
+
 test_repaired_requires_bound_proof_and_target_change
 test_zero_exit_without_marker_stays_open
 test_repaired_marker_without_target_change_stays_open
@@ -227,5 +256,6 @@ test_wrong_target_success_stays_open
 test_required_resolution_mismatch_stays_open
 test_blocked_run_stays_open
 test_explicit_obsolete_proof_resolves_unchanged_target
+test_claimed_resolution_requires_token_and_releases_claim
 
 printf 'automation obligation resolution tests passed\n'

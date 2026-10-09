@@ -532,6 +532,13 @@ Important:
     history, and logs `action=updated_existing`. Per-run identity is reserved
     for an explicit evidence-preservation allowlist; no current terminal
     reason is on that allowlist.
+    Production launchers reserve selected work with an atomic mode-0600
+    `claims/<id>.claim.json` sidecar before backend contact. It records a random
+    token, repository root, launcher, owner PID and process start ticks,
+    cycle/run identity, and claim time. A live claim stops another launcher
+    from selecting that obligation. Blocked/failed attempts and dry runs
+    release it; verified resolution releases it after resolved publication;
+    dead or PID-reused owners are recovered on the next claim attempt.
     FlameOn, ChimneySweep, and future derivative launchers use the same
     Upkeeper-owned record format and only supply launcher identity and policy.
     Those launchers reconcile open obligations before normal bug-finding or
@@ -899,6 +906,7 @@ Environment overrides:
   UPKEEPER_AUTOMATION_WORKFLOW  Default: empty
   UPKEEPER_AUTOMATION_OBLIGATION_ID Default: empty
   UPKEEPER_AUTOMATION_OBLIGATION_PATH Default: empty
+  UPKEEPER_OBLIGATION_CLAIM_STALE_SECONDS Default: 21600
   UPKEEPER_LATTICE_ENABLED     Default: 1
   UPKEEPER_LATTICE_REQUIRED    Default: 0
   UPKEEPER_LATTICE_DB          Default: runtime/upkeeper-lattice/lattice.sqlite3

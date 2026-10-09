@@ -437,6 +437,10 @@ Important:
     Those launchers reconcile open obligations before normal bug-finding or
     issue-queue selection, handing the oldest/highest-priority obligation back
     to Upkeeper as a locked repair target.
+    Production selection atomically publishes a private claim sidecar with an
+    owner PID/start fingerprint and random token. Live claims defer other
+    workers; blocked/failed attempts and dry runs release them, while dead or
+    PID-reused owners are recovered by the next selector.
   - Before the first wrapper log write, Upkeeper rejects unsafe log paths:
     symlink log files, non-regular log files, hard-linked log files, log files
     not owned by the current user, and symlink log parent directories fail
@@ -693,6 +697,7 @@ Environment overrides:
   UPKEEPER_AUTOMATION_WORKFLOW  Default: empty
   UPKEEPER_AUTOMATION_OBLIGATION_ID Default: empty
   UPKEEPER_AUTOMATION_OBLIGATION_PATH Default: empty
+  UPKEEPER_OBLIGATION_CLAIM_STALE_SECONDS Default: 21600
   UPKEEPER_LATTICE_ENABLED     Default: 1
   UPKEEPER_LATTICE_REQUIRED    Default: 0
   UPKEEPER_LATTICE_DB          Default: runtime/upkeeper-lattice/lattice.sqlite3

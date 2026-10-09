@@ -261,7 +261,7 @@ fi
 
 upkeeper_launcher_control_plane_guard "ChimneySweep" "chimneysweep-preflight"
 
-obligation_json="$(automation_select_open_obligation_json)"
+obligation_json="$(automation_claim_open_obligation_json)"
 obligation_status="$(automation_json_field "$obligation_json" status)"
 if [[ "$obligation_status" == "ok" ]]; then
   obligation_id="$(automation_json_field "$obligation_json" id)"
@@ -272,6 +272,8 @@ if [[ "$obligation_status" == "ok" ]]; then
   obligation_repair_detail="$(automation_json_field "$obligation_json" repair_target_detail)"
   obligation_kind="$(automation_json_field "$obligation_json" kind)"
   obligation_summary="$(automation_json_field "$obligation_json" summary)"
+  obligation_claim_path="$(automation_json_field "$obligation_json" claim_path)"
+  obligation_claim_token="$(automation_json_field "$obligation_json" claim_token)"
   obligation_prompt_file="$(automation_prepare_obligation_prompt_file "$obligation_json")" || {
     printf 'ChimneySweep: failed to prepare automation obligation prompt\n' >&2
     exit 3
@@ -279,9 +281,13 @@ if [[ "$obligation_status" == "ok" ]]; then
   UPKEEPER_AUTOMATION_WORKFLOW="obligation-repair"
   UPKEEPER_AUTOMATION_OBLIGATION_ID="$obligation_id"
   UPKEEPER_AUTOMATION_OBLIGATION_PATH="$obligation_path"
+  UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_PATH="$obligation_claim_path"
+  UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_TOKEN="$obligation_claim_token"
   export UPKEEPER_AUTOMATION_WORKFLOW
   export UPKEEPER_AUTOMATION_OBLIGATION_ID
   export UPKEEPER_AUTOMATION_OBLIGATION_PATH
+  export UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_PATH
+  export UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_TOKEN
 
   args=(
     "--model-override=$CHIMNEYSWEEP_MODEL_OVERRIDE"
@@ -309,11 +315,16 @@ if [[ "$obligation_status" == "ok" ]]; then
     printf '%q' "$UPKEEPER_CMD"
     printf ' %q' "${args[@]}"
     printf '\n'
+    automation_release_obligation_claim_json "$obligation_json" dry_run >/dev/null || true
     exit 0
   fi
 
   upkeeper_launcher_report_full_burn "ChimneySweep"
   CODEX_TERMINAL_VERBOSITY="$CHIMNEYSWEEP_VERBOSITY" exec "$UPKEEPER_CMD" "${args[@]}"
+fi
+if [[ "$obligation_status" == "claimed_deferred" ]]; then
+  printf 'ChimneySweep: automation obligation is already claimed by another live worker; deferring issue work\n' >&2
+  exit 75
 fi
 if [[ "$obligation_status" == "operator_action_required" ]]; then
   obligation_id="$(automation_json_field "$obligation_json" id)"

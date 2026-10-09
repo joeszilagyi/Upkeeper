@@ -3,9 +3,38 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #670: Atomic Automation Obligation Claims
+
+Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- atomically reserve an open obligation before launcher/backend work
+- make claims independently enforceable from outer checkout ownership
+- recover dead or PID-reused owners without stealing live work
+
+Verified defect:
+- production launchers selected an `open/*.json` record without any obligation-
+  layer reservation, so a shared obligation root could hand the same work to
+  multiple launch contexts
+
+Constraints:
+- preserve the compatible open/resolved record layout
+- publish private, durable `O_EXCL` sidecars containing token, root, owner PID,
+  process start ticks, launcher, cycle/run, and timestamp evidence
+- blocked/failed attempts release back to open; verified resolution removes the
+  claim only after resolved custody is published
+- dry runs release immediately; active claims stop fresh work
+
+Validation:
+- two concurrent selectors racing one record produce exactly one winner
+- blocked attempt release, wrong-token resolution rejection, valid resolution
+  release, and dead-owner recovery are deterministic
+- existing FlameOn, ChimneySweep, backlog, and obligation-resolution contracts
+  remain covered
+
 ## Issue #669: Stable Repeatable Obligation Identity
 
-Status: implemented and locally validated; pending PR CI
+Status: complete; merged in PR #844
 
 Goal:
 - make wrapper/control-plane failure obligations stable by failure class,

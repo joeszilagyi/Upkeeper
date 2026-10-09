@@ -1211,12 +1211,23 @@ automation_select_open_obligation_json() {
 import json
 import os
 import pathlib
+import secrets
 import stat
 import sys
 import time
 
 open_dir = pathlib.Path(sys.argv[1])
 root_dir = pathlib.Path(sys.argv[2]).resolve()
+claim_enabled = os.environ.get("UPKEEPER_OBLIGATION_CLAIM_ENABLED", "0") == "1"
+claim_dir = open_dir.parent / "claims"
+try:
+    claim_owner_pid = int(os.environ.get("UPKEEPER_OBLIGATION_CLAIM_OWNER_PID", "") or os.getppid())
+except ValueError:
+    claim_owner_pid = os.getppid()
+try:
+    claim_stale_seconds = max(1, int(os.environ.get("UPKEEPER_OBLIGATION_CLAIM_STALE_SECONDS", "21600")))
+except ValueError:
+    claim_stale_seconds = 21600
 try:
     now_epoch = int(os.environ.get("UPKEEPER_AUTOMATION_NOW_EPOCH", "") or time.time())
 except ValueError:
@@ -1308,6 +1319,114 @@ def safe_int(value, default=0):
         return default
 
 
+def process_start_ticks(pid):
+    try:
+        text = pathlib.Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        tail = text[text.rfind(")") + 2 :].split()
+        return tail[19] if len(tail) > 19 else ""
+    except (OSError, ValueError):
+        return ""
+
+
+def process_alive(pid):
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def claim_path_for(item):
+    ident = str(item.get("id", "") or pathlib.Path(item["_path"]).stem)
+    safe_ident = "".join(ch for ch in ident if ch.isalnum() or ch in "._-")
+    if not safe_ident or safe_ident != ident:
+        return None
+    return claim_dir / f"{safe_ident}.claim.json"
+
+
+def claim_is_active(path, obligation_id):
+    try:
+        metadata = path.stat()
+        claim = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False, False
+    except (OSError, json.JSONDecodeError):
+        try:
+            age = max(0, now_epoch - int(path.stat().st_mtime))
+        except OSError:
+            return False, False
+        return age <= claim_stale_seconds, age > claim_stale_seconds
+    if not isinstance(claim, dict):
+        age = max(0, now_epoch - int(metadata.st_mtime))
+        return age <= claim_stale_seconds, age > claim_stale_seconds
+    if str(claim.get("obligation_id", "")) != obligation_id or str(claim.get("root", "")) != str(root_dir):
+        age = max(0, now_epoch - safe_int(claim.get("claimed_epoch"), int(metadata.st_mtime)))
+        return age <= claim_stale_seconds, age > claim_stale_seconds
+    owner_pid = safe_int(claim.get("owner_pid"), 0)
+    if not process_alive(owner_pid):
+        return False, True
+    expected_ticks = str(claim.get("owner_start_ticks", ""))
+    current_ticks = process_start_ticks(owner_pid)
+    if expected_ticks and current_ticks and expected_ticks != current_ticks:
+        return False, True
+    return True, False
+
+
+def publish_claim(item):
+    path = claim_path_for(item)
+    if path is None:
+        return None
+    claim_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        claim_dir.chmod(0o700)
+    except OSError:
+        pass
+    token = secrets.token_hex(16)
+    owner_start_ticks = process_start_ticks(claim_owner_pid)
+    owner_cycle_id = os.environ.get("CYCLE_ID", "") or f"claim-{now_epoch}-{claim_owner_pid}"
+    owner_run_hash = os.environ.get("CYCLE_RUN_HASH", "") or token[:16]
+    claim = {
+        "schema": "upkeeper.automation-obligation-claim.v1",
+        "obligation_id": str(item.get("id", "")),
+        "root": str(root_dir),
+        "open_path": str(item.get("_path", "")),
+        "claim_token": token,
+        "owner_pid": claim_owner_pid,
+        "owner_start_ticks": owner_start_ticks,
+        "owner_launcher": os.environ.get("UPKEEPER_AUTOMATION_LAUNCHER", ""),
+        "owner_cycle_id": owner_cycle_id,
+        "owner_run_hash": owner_run_hash,
+        "claimed_epoch": now_epoch,
+        "claimed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(now_epoch)),
+    }
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return None
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(claim, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        parent_fd = os.open(claim_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    except BaseException:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise
+    return path, token, claim
+
+
 def retry_epoch(item):
     return safe_int(item.get("next_retry_epoch"), 0)
 
@@ -1358,10 +1477,49 @@ if not items:
     )
     raise SystemExit(0)
 
-cooldown_items = [item for item in items if retry_epoch(item) > now_epoch]
-eligible_items = [item for item in items if retry_epoch(item) <= now_epoch]
+active_claim_ids = set()
+stale_claims_recovered = 0
+if claim_enabled:
+    for item in items:
+        claim_path = claim_path_for(item)
+        if claim_path is None:
+            continue
+        obligation_id = str(item.get("id", ""))
+        active, stale = claim_is_active(claim_path, obligation_id)
+        if stale:
+            try:
+                claim_path.unlink()
+                stale_claims_recovered += 1
+            except FileNotFoundError:
+                pass
+            except OSError:
+                active = True
+        if active:
+            active_claim_ids.add(obligation_id)
+
+selectable_items = [item for item in items if str(item.get("id", "")) not in active_claim_ids]
+if not selectable_items:
+    print(
+        json.dumps(
+            {
+                "status": "claimed_deferred",
+                "open_count": len(items),
+                "claimed_deferred_count": len(active_claim_ids),
+                "stale_claims_recovered": stale_claims_recovered,
+                "deferred_foreign_root_count": foreign_root_count,
+            },
+            separators=(",", ":"),
+        )
+    )
+    raise SystemExit(0)
+
+cooldown_items = [item for item in selectable_items if retry_epoch(item) > now_epoch]
+eligible_items = [item for item in selectable_items if retry_epoch(item) <= now_epoch]
 if not eligible_items:
-    print(json.dumps(cooldown_summary(items), separators=(",", ":")))
+    summary = cooldown_summary(selectable_items)
+    summary["claimed_deferred_count"] = len(active_claim_ids)
+    summary["stale_claims_recovered"] = stale_claims_recovered
+    print(json.dumps(summary, separators=(",", ":")))
     raise SystemExit(0)
 
 
@@ -1374,7 +1532,35 @@ def key(item):
     return (severity, kind, created, target, ident)
 
 
-selected = sorted(eligible_items, key=key)[0]
+selected = None
+claim_path = ""
+claim_token = ""
+claim_record = {}
+for candidate in sorted(eligible_items, key=key):
+    if str(candidate.get("target_scope", "target") or "target") == "machine" or not claim_enabled:
+        selected = candidate
+        break
+    published_claim = publish_claim(candidate)
+    if published_claim is None:
+        continue
+    selected = candidate
+    claim_path, claim_token, claim_record = published_claim
+    claim_path = str(claim_path)
+    break
+if selected is None:
+    print(
+        json.dumps(
+            {
+                "status": "claimed_deferred",
+                "open_count": len(items),
+                "claimed_deferred_count": len(active_claim_ids) + len(eligible_items),
+                "stale_claims_recovered": stale_claims_recovered,
+                "deferred_foreign_root_count": foreign_root_count,
+            },
+            separators=(",", ":"),
+        )
+    )
+    raise SystemExit(0)
 target_scope = str(selected.get("target_scope", "target") or "target")
 target = str(selected.get("target_file") or "")
 repair_target_hint = normalized_repo_target(selected.get("repair_target_file", ""))
@@ -1408,6 +1594,8 @@ if target_scope == "machine":
         "transcript": str(selected.get("transcript", "")),
         "evidence": selected.get("evidence", {}),
         "required_resolution": selected.get("required_resolution", []),
+        "claimed_deferred_count": len(active_claim_ids),
+        "stale_claims_recovered": stale_claims_recovered,
     }
     print(json.dumps(result, separators=(",", ":")))
     raise SystemExit(0)
@@ -1458,8 +1646,104 @@ result = {
     "repair_attempt_count": str(selected.get("repair_attempt_count", "")),
     "blocked_attempt_count": str(selected.get("blocked_attempt_count", "")),
     "next_retry_epoch": str(selected.get("next_retry_epoch", "")),
+    "claim_path": claim_path,
+    "claim_token": claim_token,
+    "claim_owner_pid": str(claim_record.get("owner_pid", "")),
+    "claim_owner_start_ticks": str(claim_record.get("owner_start_ticks", "")),
+    "claimed_deferred_count": len(active_claim_ids),
+    "stale_claims_recovered": stale_claims_recovered,
 }
 print(json.dumps(result, separators=(",", ":")))
+PY
+}
+
+automation_claim_open_obligation_json() {
+  UPKEEPER_OBLIGATION_CLAIM_ENABLED=1 \
+    UPKEEPER_OBLIGATION_CLAIM_OWNER_PID="${UPKEEPER_OBLIGATION_CLAIM_OWNER_PID:-${BASHPID:-$$}}" \
+    automation_select_open_obligation_json
+}
+
+automation_release_obligation_claim_json() {
+  local obligation_json="$1"
+  local release_reason="${2:-completed}"
+
+  python3 - "$obligation_json" "$ROOT_DIR" "$(automation_obligation_root)" "$release_reason" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+obligation_json, root_text, obligation_root_text, release_reason = sys.argv[1:5]
+try:
+    selected = json.loads(obligation_json)
+except json.JSONDecodeError:
+    print(json.dumps({"status": "invalid_json"}, separators=(",", ":")))
+    raise SystemExit(1)
+claim_path_text = str(selected.get("claim_path", "")).strip()
+claim_token = str(selected.get("claim_token", "")).strip()
+obligation_id = str(selected.get("id", "")).strip()
+if not claim_path_text or not claim_token:
+    print(json.dumps({"status": "no_claim"}, separators=(",", ":")))
+    raise SystemExit(0)
+claim_path = pathlib.Path(claim_path_text)
+expected_claim_dir = pathlib.Path(obligation_root_text).resolve(strict=False) / "claims"
+try:
+    claim_path.resolve(strict=False).relative_to(expected_claim_dir)
+except ValueError:
+    print(json.dumps({"status": "unsafe_claim_path"}, separators=(",", ":")))
+    raise SystemExit(1)
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    if release_reason == "verify":
+        print(json.dumps({"status": "claim_missing"}, separators=(",", ":")))
+        raise SystemExit(1)
+    print(json.dumps({"status": "already_released"}, separators=(",", ":")))
+    raise SystemExit(0)
+except (OSError, json.JSONDecodeError):
+    print(json.dumps({"status": "claim_unreadable"}, separators=(",", ":")))
+    raise SystemExit(1)
+if (
+    not isinstance(claim, dict)
+    or str(claim.get("claim_token", "")) != claim_token
+    or str(claim.get("obligation_id", "")) != obligation_id
+    or str(claim.get("root", "")) != str(pathlib.Path(root_text).resolve())
+):
+    print(json.dumps({"status": "claim_mismatch"}, separators=(",", ":")))
+    raise SystemExit(1)
+if release_reason == "verify":
+    print(json.dumps({"status": "claimed", "id": obligation_id}, separators=(",", ":")))
+    raise SystemExit(0)
+claim_path.unlink()
+parent_fd = os.open(claim_path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+try:
+    os.fsync(parent_fd)
+finally:
+    os.close(parent_fd)
+print(
+    json.dumps(
+        {"status": "released", "id": obligation_id, "reason": release_reason},
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
+automation_selected_obligation_claim_json() {
+  python3 - \
+    "${UPKEEPER_AUTOMATION_OBLIGATION_ID:-}" \
+    "${UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_PATH:-}" \
+    "${UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_TOKEN:-}" <<'PY'
+import json
+import sys
+
+obligation_id, claim_path, claim_token = sys.argv[1:4]
+print(
+    json.dumps(
+        {"id": obligation_id, "claim_path": claim_path, "claim_token": claim_token},
+        separators=(",", ":"),
+    )
+)
 PY
 }
 
@@ -1638,8 +1922,16 @@ automation_record_obligation_attempt_json() {
   local result_summary="${4:-}"
   local attempt_limit="${UPKEEPER_OBLIGATION_RETRY_LIMIT:-3}"
   local cooldown_seconds="${UPKEEPER_OBLIGATION_RETRY_COOLDOWN_SECONDS:-21600}"
+  local output
+  local -a claim_fields=()
 
-  python3 - \
+  mapfile -d '' -t claim_fields < <(
+    automation_json_fields_nul "$obligation_json" claim_path claim_token
+  )
+  if [[ -n "${claim_fields[0]:-}${claim_fields[1]:-}" ]]; then
+    automation_release_obligation_claim_json "$obligation_json" verify >/dev/null || return 1
+  fi
+  output="$(python3 - \
     "$obligation_json" \
     "$attempt_status" \
     "$exit_status" \
@@ -1765,6 +2057,9 @@ print(
     )
 )
 PY
+)" || return $?
+  automation_release_obligation_claim_json "$obligation_json" "attempt_$attempt_status" >/dev/null || return 1
+  printf '%s\n' "$output"
 }
 
 automation_sync_obligation_issue_reports_json() {
@@ -2596,7 +2891,7 @@ automation_resolve_selected_obligation() {
   local reason="$2"
   local status_marker="${3:-}"
   local selected_target="${4:-${RUN_SELECTED_REVIEW_PATH:-${CODEX_TARGET_FILE:-}}}"
-  local open_path resolved_dir resolved_path payload now proof_json proof_status proof_reason
+  local open_path resolved_dir resolved_path payload now proof_json proof_status proof_reason claim_json
 
   automation_framework_enabled || return 0
   automation_cycle_exit_resolves_obligation "$exit_code" "$reason" "$status_marker" || return 0
@@ -2606,6 +2901,16 @@ automation_resolve_selected_obligation() {
     open_path="$(automation_obligation_root)/open/$UPKEEPER_AUTOMATION_OBLIGATION_ID.json"
   fi
   [[ -f "$open_path" ]] || return 0
+
+  if [[ -n "${UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_PATH:-}${UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_TOKEN:-}" ]]; then
+    if [[ -z "${UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_PATH:-}" || -z "${UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_TOKEN:-}" ]]; then
+      return 1
+    fi
+    claim_json="$(automation_selected_obligation_claim_json)" || return 1
+    automation_release_obligation_claim_json "$claim_json" verify >/dev/null || return 1
+  else
+    claim_json=""
+  fi
 
   proof_json="$(automation_obligation_resolution_proof_json "$open_path" "$status_marker" "$selected_target")"
   proof_status="$(automation_json_field "$proof_json" status)"
@@ -2641,6 +2946,9 @@ PY
 )"
   automation_write_json "$resolved_path" "$payload" || return 1
   rm -f -- "$open_path"
+  if [[ -n "$claim_json" ]]; then
+    automation_release_obligation_claim_json "$claim_json" resolved >/dev/null || return 1
+  fi
   if declare -F log_line >/dev/null 2>&1; then
     log_line "INFO" "automation.obligation.resolved id=$(automation_shell_quote "$UPKEEPER_AUTOMATION_OBLIGATION_ID") reason=$(automation_shell_quote "$reason") proof=verified path=$(automation_shell_quote "$resolved_path")"
   fi

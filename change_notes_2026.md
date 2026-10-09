@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-09: atomic automation-obligation claims:
+	1. Production obligation selection now reserves one open record with a private, durable `O_EXCL` claim sidecar carrying a random token, repository root, launcher, PID/start fingerprint, cycle/run identity, and timestamp.
+	2. Concurrent selectors defer claimed work; blocked/failed attempts and dry runs release it, verified resolution releases only after resolved publication, and a mismatched token cannot resolve the record.
+	3. Dead and PID-reused owners are recovered on the next claim attempt while the existing open/resolved record layout and read-only inspection selector remain compatible.
+
 2026-10-09: stable repeatable automation-obligation identity:
 	1. Wrapper and control-plane terminal failures now default to repository-scoped stable obligation IDs keyed by failure class, reason, scope, target, and repair target instead of cycle/run IDs.
 	2. Repeated failures update one open record, increment its occurrence count, preserve first/latest source evidence plus a bounded 50-entry observation history, and log whether publication created or updated the record.

@@ -2351,11 +2351,12 @@ def metadata_value_hmac(root: Path, key: str, value: str) -> str:
     return METADATA_HMAC_PREFIX + digest
 
 
-def content_value_hmac(root: Path, value: str) -> str:
+def content_value_hmac(root: Path, value: str, *, hmac_key: bytes | None = None) -> str:
     if not value or value in {"none", "unknown", "missing", "unavailable", "clean", "not_regular"}:
         return value or "unknown"
     material = f"content\0{value}"
-    digest = hmac.digest(pass_result_hmac_key(root), material.encode("utf-8", "surrogateescape"), "sha256").hex()
+    key = hmac_key if hmac_key is not None else pass_result_hmac_key(root)
+    digest = hmac.digest(key, material.encode("utf-8", "surrogateescape"), "sha256").hex()
     return CONTENT_HMAC_PREFIX + digest
 
 
@@ -5931,13 +5932,18 @@ def is_test_path(path: str) -> bool:
 def live_candidate_paths(root: Path, candidate_scope: str = "eligible", upkeeper_ignore_file: str | None = None) -> list[dict[str, Any]]:
     candidate_selection.read_fd_sample = read_fd_sample
     rows = candidate_selection.live_candidate_rows(root, candidate_scope=candidate_scope, upkeeper_ignore_file=upkeeper_ignore_file)
+    hmac_key: bytes | None = None
     for row in rows:
         head_blob = row.get("head_blob")
         if isinstance(head_blob, str) and head_blob not in {"", "none", "unavailable"}:
-            row["head_blob"] = content_value_hmac(root, head_blob)
+            if hmac_key is None:
+                hmac_key = pass_result_hmac_key(root)
+            row["head_blob"] = content_value_hmac(root, head_blob, hmac_key=hmac_key)
         worktree_hash = row.get("worktree_hash")
         if isinstance(worktree_hash, str) and worktree_hash not in {"", "missing", "unavailable"}:
-            row["worktree_hash"] = content_value_hmac(root, worktree_hash)
+            if hmac_key is None:
+                hmac_key = pass_result_hmac_key(root)
+            row["worktree_hash"] = content_value_hmac(root, worktree_hash, hmac_key=hmac_key)
     return rows
 
 

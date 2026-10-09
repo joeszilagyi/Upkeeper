@@ -6868,7 +6868,7 @@ PY
 }
 
 check_issue_workflow_comment_relay() {
-  local temp_dir draft_file posted_file last_message_file expected_file
+  local temp_dir draft_file posted_file last_message_file expected_file action_json
 
   log "checking issue workflow comment relay"
   temp_dir="$(mktemp -d /tmp/upkeeper-issue-workflow-relay.XXXXXX)"
@@ -6915,19 +6915,27 @@ EOF
     CYCLE_RUN_HASH="validationhashrelay"
     CODEX_ISSUE_WORKFLOW_STAGE=comment
     CODEX_ISSUE_FIX_NUMBER=125
+    RUN_SELECTED_REVIEW_PATH=Upkeeper
     RUN_ISSUE_WORKFLOW_COMMENT_FILE="$draft_file"
     RUN_LAST_MESSAGE_FILE="$last_message_file"
     UPKEEPER_TEST_POSTED_FILE="$posted_file"
     export UPKEEPER_TEST_POSTED_FILE
     source lib/upkeeper/fallback_artifacts.bash
     source lib/upkeeper/runtime_foundation.bash
+    source lib/upkeeper/runtime_format_json.bash
     source lib/upkeeper/codex_io.bash
-    upkeeper_issue_workflow_post_comment
+    upkeeper_issue_workflow_materialize_comment_draft
+    action_json="$(upkeeper_issue_workflow_comment_action_json WORK_DONE 0 unchanged "$RUN_SELECTED_REVIEW_PATH")"
+    upkeeper_issue_workflow_post_comment "$action_json" WORK_DONE 0 unchanged "$RUN_SELECTED_REVIEW_PATH"
+    if upkeeper_issue_workflow_post_comment '{}' WORK_DONE 0 unchanged "$RUN_SELECTED_REVIEW_PATH"; then
+      exit 1
+    fi
   )
 
   cmp -s "$expected_file" "$posted_file" || fail "issue workflow comment relay did not post the extracted final-message body"
   grep -Fq "issue.workflow_comment.extracted stage=comment number=125" "$temp_dir/Upkeeper.log" || fail "issue workflow comment relay did not log final-message extraction"
   grep -Fq "issue.workflow_comment.posted stage=comment number=125" "$temp_dir/Upkeeper.log" || fail "issue workflow comment relay did not log success"
+  grep -Fq "issue.workflow_comment.action_blocked stage=comment number=125" "$temp_dir/Upkeeper.log" || fail "issue workflow comment relay did not log action validation refusal"
 
   draft_file="$temp_dir/review.md"
   posted_file="$temp_dir/posted-review.md"
@@ -6959,14 +6967,18 @@ EOF
     CYCLE_RUN_HASH="validationhashreviewrelay"
     CODEX_ISSUE_WORKFLOW_STAGE=review
     CODEX_ISSUE_FIX_NUMBER=125
+    RUN_SELECTED_REVIEW_PATH=Upkeeper
     RUN_ISSUE_WORKFLOW_COMMENT_FILE="$draft_file"
     RUN_LAST_MESSAGE_FILE="$last_message_file"
     UPKEEPER_TEST_POSTED_FILE="$posted_file"
     export UPKEEPER_TEST_POSTED_FILE
     source lib/upkeeper/fallback_artifacts.bash
     source lib/upkeeper/runtime_foundation.bash
+    source lib/upkeeper/runtime_format_json.bash
     source lib/upkeeper/codex_io.bash
-    upkeeper_issue_workflow_post_comment
+    upkeeper_issue_workflow_materialize_comment_draft
+    action_json="$(upkeeper_issue_workflow_comment_action_json WORK_DONE 0 unchanged "$RUN_SELECTED_REVIEW_PATH")"
+    upkeeper_issue_workflow_post_comment "$action_json" WORK_DONE 0 unchanged "$RUN_SELECTED_REVIEW_PATH"
   )
 
   cmp -s "$expected_file" "$posted_file" || fail "issue workflow review relay did not accept inline review decision prefix"

@@ -3,9 +3,31 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #674: Strict Status Authority Airlock
+## Issue #675: Typed Issue-Comment Actuator
 
 Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- require `upkeeper.issue_comment_action.v1` before any issue-comment write
+- bind the action to issue, stage, draft path/content, accepted status, backend
+  exit, unchanged-source result, and selected target
+- distinguish action validation refusal from GitHub transport failure
+
+Verified defect:
+- the actuator materialized a prose draft and called `gh issue comment` using
+  ambient globals without an accepted-outcome action record
+- review-decision status mapping happened only after the GitHub write
+- unavailable source-mutation evidence did not prevent comment posting
+
+Validation:
+- valid bound comment and review actions post through a fake `gh` transport
+- missing status, wrong target, mutation violation, wrong prefix, invalid schema,
+  and altered draft content fail before transport
+- runtime builds the record only after the status and source guard are known
+
+## Issue #674: Strict Status Authority Airlock
+
+Status: complete; merged in PR #849
 
 Goal:
 - accept status authority only from one exact final legacy marker or a strict

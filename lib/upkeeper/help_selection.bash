@@ -640,7 +640,10 @@ $(review_module_flag_help_lines)
     stages that leave issue comments; apply is the implementation stage.
     The read-only stages force backend Codex into a read-only repository
     sandbox and carry issue-comment text back in a final-message draft block
-    that the wrapper extracts and posts after validation. review and apply use
+    that the wrapper extracts and posts only through a validated
+    upkeeper.issue_comment_action.v1 record bound to issue, stage, draft,
+    accepted status, backend exit, unchanged-source guard, and selected target.
+    review and apply use
     the latest wrapper-fetched staged comments as prompt context, and review
     fails closed before backend launch if the latest proposal comment is
     missing.

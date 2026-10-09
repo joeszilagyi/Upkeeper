@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-09: v1.2.39 changes:
+	1. Staged issue comments now require a validated `upkeeper.issue_comment_action.v1` record binding issue, stage, draft path/content hashes, accepted status, backend exit, unchanged-source result, and selected target.
+	2. Missing, malformed, mismatched, nonzero-exit, or source-guard-invalid action records fail before `gh issue comment`; logs distinguish action refusal from transport failure.
+	3. Review decisions are mapped into the candidate action before posting and affect cycle status only after that typed action validates.
+
 2026-10-09: v1.2.38 changes:
 	1. Runtime status authority now requires one exact raw final legacy marker or one schema-valid `upkeeper.final-status.v1` JSON outcome record.
 	2. Quoted, backticked, bulleted, fenced, punctuated, indented, trailing-content, and duplicate markers remain structured rejection evidence and cannot drive primary or fallback/postmortem decisions.

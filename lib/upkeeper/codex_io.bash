@@ -1437,26 +1437,214 @@ upkeeper_issue_workflow_materialize_comment_draft() {
   return 0
 }
 
+upkeeper_issue_workflow_comment_action_json() {
+  local accepted_status="${1:-}"
+  local codex_exit_value="${2:-}"
+  local source_guard_outcome="${3:-}"
+  local selected_target="${4:-}"
+  local stage="${CODEX_ISSUE_WORKFLOW_STAGE:-}"
+  local issue_number="${CODEX_ISSUE_FIX_NUMBER:-}"
+  local draft_file="${RUN_ISSUE_WORKFLOW_COMMENT_FILE:-}"
+  local draft_path_hash
+
+  [[ -n "$draft_file" && -r "$draft_file" ]] || return 1
+  draft_path_hash="$(upkeeper_path_hmac "$draft_file")"
+
+  python3 - "$draft_file" "$draft_path_hash" "$issue_number" "$stage" \
+    "$accepted_status" "$codex_exit_value" "$source_guard_outcome" "$selected_target" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import sys
+
+(
+    draft_path,
+    draft_path_hash,
+    issue_number,
+    stage,
+    accepted_status,
+    codex_exit,
+    source_guard_outcome,
+    selected_target,
+) = sys.argv[1:9]
+
+try:
+    draft = pathlib.Path(draft_path).read_bytes()
+except OSError:
+    raise SystemExit(1)
+
+if not re.fullmatch(r"[1-9][0-9]*", issue_number):
+    raise SystemExit(1)
+if stage not in {"comment", "review"}:
+    raise SystemExit(1)
+if accepted_status not in {"WORK_DONE", "BLOCKED"}:
+    raise SystemExit(1)
+if not re.fullmatch(r"[0-9]+", codex_exit):
+    raise SystemExit(1)
+if source_guard_outcome != "unchanged" or not selected_target:
+    raise SystemExit(1)
+if not re.fullmatch(r"path-hmac-sha256:[0-9a-f]{64}", draft_path_hash):
+    raise SystemExit(1)
+
+print(
+    json.dumps(
+        {
+            "schema_version": "upkeeper.issue_comment_action.v1",
+            "issue_number": issue_number,
+            "stage": stage,
+            "draft_path_hash": draft_path_hash,
+            "draft_sha256": hashlib.sha256(draft).hexdigest(),
+            "accepted_status": accepted_status,
+            "codex_exit": int(codex_exit),
+            "source_guard_outcome": source_guard_outcome,
+            "selected_target": selected_target,
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
+upkeeper_issue_workflow_validate_comment_action() {
+  local action_json="${1:-}"
+  local expected_status="${2:-}"
+  local expected_codex_exit="${3:-}"
+  local expected_source_guard_outcome="${4:-}"
+  local expected_selected_target="${5:-}"
+  local draft_file="${RUN_ISSUE_WORKFLOW_COMMENT_FILE:-}"
+  local expected_path_hash
+
+  [[ -n "$action_json" ]] || {
+    printf 'missing_action_record'
+    return 1
+  }
+  [[ -n "$draft_file" && -r "$draft_file" ]] || {
+    printf 'missing_draft'
+    return 1
+  }
+  expected_path_hash="$(upkeeper_path_hmac "$draft_file")"
+
+  python3 - "$action_json" "$draft_file" "$expected_path_hash" \
+    "${CODEX_ISSUE_FIX_NUMBER:-}" "${CODEX_ISSUE_WORKFLOW_STAGE:-}" \
+    "$expected_status" "$expected_codex_exit" "$expected_source_guard_outcome" \
+    "$expected_selected_target" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import sys
+
+(
+    raw,
+    draft_path,
+    expected_path_hash,
+    issue_number,
+    stage,
+    expected_status,
+    expected_codex_exit,
+    expected_source_guard_outcome,
+    expected_selected_target,
+) = sys.argv[1:10]
+expected_keys = {
+    "schema_version",
+    "issue_number",
+    "stage",
+    "draft_path_hash",
+    "draft_sha256",
+    "accepted_status",
+    "codex_exit",
+    "source_guard_outcome",
+    "selected_target",
+}
+
+try:
+    record = json.loads(raw)
+except (TypeError, json.JSONDecodeError):
+    print("invalid_json")
+    raise SystemExit(1)
+if not isinstance(record, dict) or set(record) != expected_keys:
+    print("invalid_schema_fields")
+    raise SystemExit(1)
+if record.get("schema_version") != "upkeeper.issue_comment_action.v1":
+    print("invalid_schema_version")
+    raise SystemExit(1)
+if not re.fullmatch(r"[1-9][0-9]*", str(record.get("issue_number", ""))):
+    print("invalid_issue_number")
+    raise SystemExit(1)
+if record["issue_number"] != issue_number:
+    print("issue_number_mismatch")
+    raise SystemExit(1)
+if record.get("stage") not in {"comment", "review"} or record["stage"] != stage:
+    print("stage_mismatch")
+    raise SystemExit(1)
+if record.get("accepted_status") not in {"WORK_DONE", "BLOCKED"} or record["accepted_status"] != expected_status:
+    print("missing_or_invalid_status")
+    raise SystemExit(1)
+if (
+    type(record.get("codex_exit")) is not int
+    or not re.fullmatch(r"[0-9]+", expected_codex_exit)
+    or record["codex_exit"] != int(expected_codex_exit)
+    or record["codex_exit"] != 0
+):
+    print("nonzero_or_invalid_codex_exit")
+    raise SystemExit(1)
+if record.get("source_guard_outcome") != expected_source_guard_outcome or record["source_guard_outcome"] != "unchanged":
+    print("source_guard_not_unchanged")
+    raise SystemExit(1)
+if not expected_selected_target or record.get("selected_target") != expected_selected_target:
+    print("selected_target_mismatch")
+    raise SystemExit(1)
+if record.get("draft_path_hash") != expected_path_hash:
+    print("draft_path_hash_mismatch")
+    raise SystemExit(1)
+try:
+    draft_sha256 = hashlib.sha256(pathlib.Path(draft_path).read_bytes()).hexdigest()
+except OSError:
+    print("draft_unreadable")
+    raise SystemExit(1)
+if record.get("draft_sha256") != draft_sha256:
+    print("draft_content_mismatch")
+    raise SystemExit(1)
+print("valid")
+PY
+}
+
 upkeeper_issue_workflow_post_comment() {
+  local action_json="${1:-}"
+  local expected_status="${2:-}"
+  local expected_codex_exit="${3:-}"
+  local expected_source_guard_outcome="${4:-}"
+  local expected_selected_target="${5:-}"
   local stage="${CODEX_ISSUE_WORKFLOW_STAGE:-}"
   local draft_file="${RUN_ISSUE_WORKFLOW_COMMENT_FILE:-}"
-  local prefix first_line output rc
+  local prefix first_line output rc validation_result
 
   upkeeper_issue_workflow_comment_stage_enabled || return 0
 
   if [[ -z "${CODEX_ISSUE_FIX_NUMBER:-}" || -z "$draft_file" ]]; then
-    log_line "ERROR" "issue.workflow_comment.unavailable stage=$(shell_quote "$stage") number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}") reason=missing_context"
+    log_line "ERROR" "issue.workflow_comment.action_blocked stage=$(shell_quote "$stage") number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}") reason=missing_context"
     return 1
   fi
-  if ! upkeeper_issue_workflow_materialize_comment_draft; then
-    log_line "ERROR" "issue.workflow_comment.unavailable stage=$(shell_quote "$stage") number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") path=$(shell_quote "$draft_file") reason=missing_or_empty_draft"
+  if ! validation_result="$(upkeeper_issue_workflow_validate_comment_action \
+    "$action_json" "$expected_status" "$expected_codex_exit" \
+    "$expected_source_guard_outcome" "$expected_selected_target" 2>&1)"; then
+    log_line_parts "ERROR" \
+      "issue.workflow_comment.action_blocked stage=$(shell_quote "$stage")" \
+      " number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER")" \
+      " draft_path_hash=$(shell_quote "$(upkeeper_path_hmac "$draft_file")") path_redacted=1" \
+      " reason=$(shell_quote "${validation_result:-invalid_action_record}")"
     return 1
   fi
 
   prefix="$(upkeeper_issue_workflow_comment_prefix)" || return 1
   IFS= read -r first_line <"$draft_file" || first_line=""
   if [[ "$first_line" != "$prefix" && "$first_line" != "$prefix "* ]]; then
-    log_line "ERROR" "issue.workflow_comment.unavailable stage=$(shell_quote "$stage") number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") path=$(shell_quote "$draft_file") reason=wrong_prefix expected=$(shell_quote "$prefix")"
+    log_line_parts "ERROR" \
+      "issue.workflow_comment.action_blocked stage=$(shell_quote "$stage")" \
+      " number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER")" \
+      " draft_path_hash=$(shell_quote "$(upkeeper_path_hmac "$draft_file")") path_redacted=1" \
+      " reason=wrong_prefix expected=$(shell_quote "$prefix")"
     return 1
   fi
 
@@ -1465,11 +1653,19 @@ upkeeper_issue_workflow_post_comment() {
   rc=$?
   set -e
   if [[ "$rc" -ne 0 ]]; then
-    log_line "ERROR" "issue.workflow_comment.post_failed stage=$(shell_quote "$stage") number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") path=$(shell_quote "$draft_file") exit=$rc detail=$(shell_quote "$output")"
+    log_line_parts "ERROR" \
+      "issue.workflow_comment.post_failed stage=$(shell_quote "$stage")" \
+      " number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") action_validation=passed" \
+      " draft_path_hash=$(shell_quote "$(upkeeper_path_hmac "$draft_file")") path_redacted=1" \
+      " exit=$rc detail=$(shell_quote "$output")"
     return 1
   fi
 
-  log_line "INFO" "issue.workflow_comment.posted stage=$(shell_quote "$stage") number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") path=$(shell_quote "$draft_file")"
+  log_line_parts "INFO" \
+    "issue.workflow_comment.posted stage=$(shell_quote "$stage")" \
+    " number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER") action_validation=passed" \
+    " accepted_status=$(shell_quote "$(json_field "$action_json" '.accepted_status')")" \
+    " draft_path_hash=$(shell_quote "$(upkeeper_path_hmac "$draft_file")") path_redacted=1"
   return 0
 }
 

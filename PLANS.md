@@ -3,6 +3,24 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #798: Authoritative Issue-Repair Target Selection
+
+Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- prevent the backlog launcher from pinning a broad keyword-derived target
+  before the wrapper reads the selected issue's concrete repository paths
+- keep one wrapper-owned source of truth for issue-repair targets
+- make a genuine operator explicit-target override visibly conflict with a
+  differing issue inference
+
+Validation:
+- an Issue #793-style fixture keeps `tools/run_tests.sh` as the wrapper target
+  even when its evidence also names `tools/upkeeper_lattice.py`
+- the backlog handoff invokes `--fix-issue` without `--target-file`
+- an explicit conflicting target remains an override but emits its reason and
+  both target values
+
 ## Issue #694: Redact Plain Backup Sidecar Paths
 
 Status: complete; merged in PR #854
@@ -68,7 +86,7 @@ Validation:
 
 ## Issue #696: Component-Aware Sensitive Worktree Paths
 
-Status: implemented; local validation passed; pending PR CI
+Status: complete; merged in PR #857
 
 Goal:
 - stop classifying ordinary paths by incidental sensitive-word substrings

@@ -1,5 +1,9 @@
 # 2026 Change Notes
 
+2026-10-09: authoritative issue-repair target selection:
+	1. The backlog launcher no longer converts broad issue keywords into a `--target-file` pin; the wrapper's concrete issue-path parser now selects the repair target.
+	2. A real explicit target that differs from the issue inference remains an intentional override, but logs the conflict reason and both targets before backend work.
+
 2026-10-09: v1.2.46 changes:
 	1. Lattice sensitive-path detection now uses path components and explicit secret-file token boundaries instead of arbitrary substring matching.
 	2. Sensitive dirty paths remain represented by HMAC-only `path_class='sensitive'` snapshot rows without content metadata or file linkage, while ordinary names such as `tokenizer.py` and `secretary.md` retain normal accounting.

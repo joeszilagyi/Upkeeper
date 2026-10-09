@@ -2390,6 +2390,12 @@ PY
     elif [[ -n "$target_from_issue" ]]; then
       log_line "WARN" "issue_fix.target ignored reason=untrusted_inferred_source selected_label=$(shell_quote "$CODEX_ISSUE_FIX_SELECTED_LABEL") inferred_file=$(shell_quote "$target_from_issue")"
     fi
+  elif [[ -n "$target_from_issue" && "$target_from_issue" != "$CODEX_TARGET_FILE" ]]; then
+    log_line_parts "WARN" \
+      "issue_fix.target conflict reason=explicit_target_differs_from_issue_inference" \
+      " action=honor_explicit_override number=$(shell_quote "$CODEX_ISSUE_FIX_NUMBER")" \
+      " explicit_target=$(shell_quote "$CODEX_TARGET_FILE")" \
+      " inferred_target=$(shell_quote "$target_from_issue")"
   fi
 
   log_line_parts "INFO" \

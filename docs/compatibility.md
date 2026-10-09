@@ -551,6 +551,10 @@ Future changes should preserve this operator-visible surface as far as possible:
   may retain an existing opaque `files.file_id` so delta events for a known file
   remain attributable; unknown dirty paths are not promoted into the raw
   `files` or `file_paths` inventory.
+- Sensitive worktree paths are classified by component or explicit filename
+  pattern instead of broad substring. Their HMAC-only rows remain in snapshot
+  accounting with `path_class='sensitive'`, no content metadata, and no file
+  link; incidental names such as `tokenizer.py` and `secretary.md` stay normal.
 - `--bug-report-only` is a no-fix mode. It must not edit or touch tracked
   source, and the wrapper must fail the cycle if the source mutation
   fingerprint changes during a non-dry-run bug-report-only cycle.

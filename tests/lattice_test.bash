@@ -1328,6 +1328,109 @@ test_worktree_snapshot_marks_existing_deleted_file_state() {
   assert_sql_value "1" "select count(*) from worktree_snapshot_paths p join worktree_snapshots s on s.worktree_snapshot_id=p.worktree_snapshot_id join files f on f.file_id=p.file_id where s.snapshot_kind='deleted-state' and f.canonical_path='gone.sh' and p.path like 'path-hmac-sha256:%' and p.path_hmac=p.path"
 }
 
+test_worktree_snapshot_preserves_sensitive_hmac_rows_without_false_positives() {
+  local repo
+
+  repo="$TEST_TMP_ROOT/lattice-worktree-sensitive-paths"
+  REPO="$repo"
+  DB="$repo/runtime/upkeeper-lattice/lattice.sqlite3"
+  mkdir -p "$repo/src" "$repo/docs"
+  (
+    cd "$repo"
+    git init -q
+    git config user.name "Lattice Test"
+    git config user.email "lattice@example.invalid"
+    printf 'runtime/\n' >.gitignore
+    printf 'tokenizer baseline\n' >src/tokenizer.py
+    printf 'secretary baseline\n' >docs/secretary.md
+    printf 'credentialing baseline\n' >credentialing.md
+    printf 'secretary notes baseline\n' >my_secretary_notes.txt
+    git add -A
+    git commit -q -m "sensitive path fixtures"
+    printf 'changed\n' >>src/tokenizer.py
+    printf 'changed\n' >>docs/secretary.md
+    printf 'changed\n' >>credentialing.md
+    printf 'changed\n' >>my_secretary_notes.txt
+    mkdir -p keys .aws auth
+    printf 'secret env value\n' >.env
+    printf 'private key fixture\n' >keys/private.key
+    printf 'credential fixture\n' >.aws/credentials
+    printf 'token fixture\n' >auth/access-token.txt
+  )
+
+  python3 - "$ROOT_DIR/tools" <<'PY' || fail "sensitive worktree path classifier retained broad substring matching"
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from upkeeper_lattice_core import worktree_snapshot_path_is_sensitive
+
+false_positives = (
+    "src/tokenizer.py",
+    "docs/secretary.md",
+    "credentialing.md",
+    "my_secretary_notes.txt",
+)
+true_positives = (
+    ".env",
+    ".env.development.local",
+    "keys/private.key",
+    ".aws/credentials",
+    "auth/access-token.txt",
+    "auth/tokens.json",
+    "passwords.txt",
+    "id_rsa",
+)
+for path in false_positives:
+    if worktree_snapshot_path_is_sensitive(path):
+        raise AssertionError(f"ordinary path classified sensitive: {path}")
+for path in true_positives:
+    if not worktree_snapshot_path_is_sensitive(path):
+        raise AssertionError(f"sensitive path classified ordinary: {path}")
+PY
+
+  lattice init >"$TEST_TMP_ROOT/sensitive-path-init.json"
+  lattice record-worktree-snapshot \
+    --snapshot-kind sensitive-paths \
+    --worktree-untracked-files all >"$TEST_TMP_ROOT/sensitive-path-snapshot.json"
+
+  python3 - "$DB" <<'PY' || fail "sensitive worktree paths were dropped or disclosed"
+import sqlite3
+import sys
+
+conn = sqlite3.connect(sys.argv[1])
+conn.row_factory = sqlite3.Row
+rows = list(
+    conn.execute(
+        """
+        select p.*
+          from worktree_snapshot_paths p
+          join worktree_snapshots s on s.worktree_snapshot_id=p.worktree_snapshot_id
+         where s.snapshot_kind='sensitive-paths'
+         order by p.worktree_snapshot_path_id
+        """
+    )
+)
+if len(rows) != 8:
+    raise AssertionError(f"expected all 8 dirty paths in snapshot accounting, found {len(rows)}")
+sensitive = [row for row in rows if row["path_class"] == "sensitive"]
+ordinary = [row for row in rows if row["path_class"] != "sensitive"]
+if len(sensitive) != 4 or len(ordinary) != 4:
+    raise AssertionError(f"expected 4 sensitive and 4 ordinary rows, got {len(sensitive)} and {len(ordinary)}")
+for row in rows:
+    if not str(row["path"]).startswith("path-hmac-sha256:") or row["path_hmac"] != row["path"]:
+        raise AssertionError(f"snapshot path identity was not HMAC-only: {dict(row)}")
+for row in sensitive:
+    if row["file_id"] is not None:
+        raise AssertionError(f"sensitive row linked to file inventory: {dict(row)}")
+    for field in ("head_blob", "worktree_hash", "size_bytes", "mtime_epoch", "mtime_ns"):
+        if row[field] is not None:
+            raise AssertionError(f"sensitive row retained {field}: {dict(row)}")
+for row in ordinary:
+    if row["worktree_hash"] is None or row["size_bytes"] is None or row["mtime_ns"] is None:
+        raise AssertionError(f"ordinary row lost snapshot metadata: {dict(row)}")
+PY
+}
+
 test_no_git_import_and_recovery() {
   local no_git_dir no_git_db rc recover_repo recover_db
 
@@ -2762,6 +2865,7 @@ case "$test_group" in
   core)
     test_repository_identity_survives_origin_url_change
     test_git_status_xy_preserves_index_worktree_columns
+    test_worktree_snapshot_preserves_sensitive_hmac_rows_without_false_positives
     test_worktree_snapshot_marks_existing_deleted_file_state
     test_no_git_import_and_recovery
     test_import_git_prefers_checked_out_branch_state

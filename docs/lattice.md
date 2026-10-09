@@ -293,6 +293,13 @@ and deleted events retain file-history attribution. Unknown paths remain
 unlinked, and snapshot collection does not add their raw names to `files` or
 `file_paths` merely to obtain an identity.
 
+Sensitive names are matched by path component or explicit secret-file pattern,
+not arbitrary substring. Thus names such as `tokenizer.py`, `secretary.md`, and
+`credentialing.md` remain ordinary inventory. Actual secret paths such as
+`.env`, private-key files, credential stores, and token files remain HMAC-only
+and are retained as `path_class='sensitive'` rows without content metadata or a
+`files.file_id` link, rather than disappearing from snapshot accounting.
+
 ## Pass Counts
 
 “Net times through P*” means `completed_count`.

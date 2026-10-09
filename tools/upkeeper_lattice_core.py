@@ -191,15 +191,9 @@ SENSITIVE_WORKTREE_PATH_PARTS = {
     ".kube",
     "kubeconfig",
 }
-SENSITIVE_WORKTREE_PATH_FRAGMENTS = {
-    "secret",
-    "secrets",
-    "credential",
-    "credentials",
-    "password",
-    "private_key",
-    "token",
-}
+SENSITIVE_WORKTREE_PATH_NAME_PATTERN = re.compile(
+    r"(?:^|[._-])(?:secrets?|credentials?|passwords?|private[._-]?keys?|tokens?)(?:$|[._-])"
+)
 WORKTREE_PATH_CLASS_TRACKED = "tracked"
 WORKTREE_PATH_CLASS_UNTRACKED = "untracked"
 WORKTREE_PATH_CLASS_RENAMED_NEW = "renamed_new"
@@ -1557,8 +1551,10 @@ def worktree_snapshot_path_is_sensitive(path: str) -> bool:
     for suffix in SENSITIVE_WORKTREE_PATH_SUFFIXES:
         if normalized_lower.endswith(suffix):
             return True
-    for fragment in SENSITIVE_WORKTREE_PATH_FRAGMENTS:
-        if fragment in normalized_lower:
+    for part in parts:
+        if part == ".env" or part.startswith(".env."):
+            return True
+        if SENSITIVE_WORKTREE_PATH_NAME_PATTERN.search(part):
             return True
     return False
 
@@ -6669,16 +6665,16 @@ def record_worktree_snapshot(
     for status_code, path, old_path in entries:
         if not include_path_inventory:
             continue
-        if worktree_snapshot_path_is_sensitive(path) or (old_path and worktree_snapshot_path_is_sensitive(old_path)):
-            continue
-        meta = live_file_metadata(root, path)
+        path_sensitive = worktree_snapshot_path_is_sensitive(path)
+        old_path_sensitive = bool(old_path and worktree_snapshot_path_is_sensitive(old_path))
+        meta = {} if path_sensitive else live_file_metadata(root, path)
         stored_path = stored_worktree_snapshot_path(root, path)
         stored_old_path = stored_worktree_snapshot_path(root, old_path) if old_path else None
         stored_path_hmac = stored_path
         stored_old_path_hmac = stored_old_path
         if not stored_path or not stored_path_hmac:
             continue
-        existing_file_id = file_id_for_path(conn, repo_id, path)
+        existing_file_id = None if path_sensitive or old_path_sensitive else file_id_for_path(conn, repo_id, path)
         if existing_file_id is not None:
             conn.execute(
                 "update files set current_state=?, last_seen_epoch=? where file_id=?",
@@ -6696,11 +6692,11 @@ def record_worktree_snapshot(
                 existing_file_id,
                 stored_path,
                 stored_path_hmac,
-                worktree_snapshot_path_class(status_code),
+                WORKTREE_PATH_CLASS_SENSITIVE if path_sensitive else worktree_snapshot_path_class(status_code),
                 status_code,
                 stored_old_path,
                 stored_old_path_hmac,
-                worktree_snapshot_path_class(status_code, is_old=True),
+                WORKTREE_PATH_CLASS_SENSITIVE if old_path_sensitive else worktree_snapshot_path_class(status_code, is_old=True),
                 meta.get("head_blob"),
                 meta.get("worktree_hash"),
                 meta.get("size_bytes"),

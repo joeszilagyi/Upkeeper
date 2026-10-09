@@ -14,13 +14,8 @@ else
     local path="${1:-}"
 
     case "$path" in
-      README.md|AGENTS.md|PLANS.md|change_notes_[0-9][0-9][0-9][0-9].md)
-        return 0
-        ;;
-      docs/*.md|docs/*/*.md|prompts/*.md|templates/*.md)
-        return 0
-        ;;
-      .github/pull_request_template.md|.github/ISSUE_TEMPLATE/*.yml)
+      README.md|change_notes_[0-9][0-9][0-9][0-9].md|\
+      docs/known-issues.md|docs/prd.md|docs/roadmap.md)
         return 0
         ;;
       *)
@@ -32,31 +27,7 @@ else
   upkeeper_change_scope_path_is_low_risk() {
     local path="${1:-}"
 
-    if upkeeper_change_scope_path_is_docs_only "$path"; then
-      return 0
-    fi
-
-    case "$path" in
-      Upkeeper.conf|configurations/*.conf)
-        return 0
-        ;;
-      completions/*.bash|tests/*.bash|testruns/*.sh)
-        return 0
-        ;;
-      tools/*.sh)
-        case "$path" in
-          tools/docs_only_fast_path.sh|tools/validate_upkeeper.sh|tools/run_validation_phases.sh|tools/check_public_docs.sh|tools/setup_ci_dependencies.sh)
-            return 1
-            ;;
-          *)
-            return 0
-            ;;
-        esac
-        ;;
-      *)
-        return 1
-        ;;
-    esac
+    upkeeper_change_scope_path_is_docs_only "$path"
   }
 fi
 
@@ -1514,7 +1485,7 @@ backlog_validation_authority_for_head() {
   done <<<"$paths"
 
   if [[ "$saw_path" == "1" && "$all_low_risk" == "1" ]]; then
-    printf 'low-risk\t%s\tdocs-or-low-risk-mechanical\n' "$BACKLOG_VALIDATION_AUTHORITY_LOW_RISK"
+    printf 'low-risk\t%s\texplicit-editorial-docs\n' "$BACKLOG_VALIDATION_AUTHORITY_LOW_RISK"
   elif [[ "$high_risk" == "1" ]]; then
     printf 'high-risk\t%s\tcontrol-plane-or-validation-change\n' "$BACKLOG_VALIDATION_AUTHORITY_HIGH_RISK"
   else

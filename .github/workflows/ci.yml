@@ -70,11 +70,17 @@ jobs:
           else
             printf 'docs_only=0\n'
             printf 'low_risk=0\n'
+            printf 'validation_gate=full\n'
             printf 'scope_known=0\n'
             printf 'docs_only=0\n' >>"$GITHUB_OUTPUT"
             printf 'low_risk=0\n' >>"$GITHUB_OUTPUT"
+            printf 'validation_gate=full\n' >>"$GITHUB_OUTPUT"
             printf 'scope_known=0\n' >>"$GITHUB_OUTPUT"
           fi
+
+      - name: Report selected validation gate
+        shell: bash
+        run: printf 'CI validation gate: %s\n' "${{ steps.scope.outputs.validation_gate }}"
 
       - name: Parallel local gates
         if: steps.scope.outputs.docs_only != '1'
@@ -96,14 +102,14 @@ jobs:
           tools/docs_only_fast_path.sh "${scope_args[@]}"
 
       - name: Full validation
-        if: steps.scope.outputs.low_risk != '1'
+        if: steps.scope.outputs.validation_gate == 'full'
         env:
           UPKEEPER_VALIDATION_TIMING_FILE: ${{ runner.temp }}/upkeeper-validation-timing.jsonl
           UPKEEPER_TEST_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-test-attestation.json
         run: tools/validate_upkeeper.sh --full --profile
 
       - name: Upload full-validation timings
-        if: always() && steps.scope.outputs.low_risk != '1'
+        if: always() && steps.scope.outputs.validation_gate == 'full'
         uses: actions/upload-artifact@v4
         with:
           name: validation-timing-${{ github.job }}

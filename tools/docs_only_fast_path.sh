@@ -15,10 +15,9 @@ usage() {
   cat <<'USAGE'
 Usage: tools/docs_only_fast_path.sh [--validate|--classify-only] [--base REF] [--head REF] [--paths-from FILE] [--allow-empty]
 
-Classify and validate the narrow docs-only edit path without backend Codex,
-GitHub CLI, GitHub polling, or network fetches. The classifier also reports
-broader low-risk path sets so CI can skip the full validator for mechanical
-config, shell, test, and tool edits.
+Classify and validate the narrow editorial docs-only path without backend
+Codex, GitHub CLI, GitHub polling, or network fetches. Every path outside the
+explicit editorial allowlist is reported as full validation scope.
 
 Modes:
   --validate       Require a docs-only change and run the local docs fast path.
@@ -164,6 +163,7 @@ non_low_risk_count="$(wc -l <"$non_low_risk_file" | tr -d ' ')"
 docs_only=0
 low_risk=0
 scope="full"
+validation_gate="full"
 if [[ "$changed_count" -gt 0 && "$non_low_risk_count" == "0" ]]; then
   low_risk=1
   scope="low-risk"
@@ -172,17 +172,20 @@ if [[ "$changed_count" -gt 0 && "$non_docs_count" == "0" ]]; then
   docs_only=1
   low_risk=1
   scope="docs-only"
+  validation_gate="docs-only"
 fi
 if [[ "$changed_count" == "0" && "$ALLOW_EMPTY" == "1" ]]; then
   docs_only=1
   low_risk=1
   scope="docs-only"
+  validation_gate="docs-only"
 fi
 
 printf 'scope_known=1\n'
 printf 'scope=%s\n' "$scope"
 printf 'docs_only=%s\n' "$docs_only"
 printf 'low_risk=%s\n' "$low_risk"
+printf 'validation_gate=%s\n' "$validation_gate"
 printf 'changed_count=%s\n' "$changed_count"
 printf 'non_docs_count=%s\n' "$non_docs_count"
 printf 'non_low_risk_count=%s\n' "$non_low_risk_count"

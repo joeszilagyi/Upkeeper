@@ -4826,19 +4826,18 @@ check_release_readiness_docs_contract() {
 }
 
 check_docs_only_fast_path_contract() {
-  local temp_dir docs_paths low_risk_paths mixed_paths classify_out
+  local temp_dir docs_paths high_risk_paths mixed_paths classify_out
 
   log "checking docs-only fast path contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-docs-only-fast-path.XXXXXX)"
   docs_paths="$temp_dir/docs.paths"
-  low_risk_paths="$temp_dir/low-risk.paths"
+  high_risk_paths="$temp_dir/high-risk.paths"
   mixed_paths="$temp_dir/mixed.paths"
 
   cat >"$docs_paths" <<'EOF'
 README.md
-docs/scripts/upkeeper.md
-prompts/p26-public-documentation-review.md
-.github/pull_request_template.md
+docs/roadmap.md
+change_notes_2026.md
 EOF
   classify_out="$(tools/docs_only_fast_path.sh --classify-only --paths-from "$docs_paths")"
   grep -Fq "docs_only=1" <<<"$classify_out" ||
@@ -4849,22 +4848,31 @@ EOF
     fail "docs-only fast path did not report docs-only scope"
   grep -Fq "non_docs_count=0" <<<"$classify_out" ||
     fail "docs-only fast path reported non-docs for docs-only paths"
+  grep -Fq "validation_gate=docs-only" <<<"$classify_out" ||
+    fail "docs-only fast path did not select the docs-only validation gate"
 
-  cat >"$low_risk_paths" <<'EOF'
+  cat >"$high_risk_paths" <<'EOF'
+AGENTS.md
+prompts/default-review.md
 Upkeeper.conf
 configurations/default.conf
-tests/backlog_reasoning_effort_test.bash
 tools/run_tests.sh
+tools/run_validation_phases.sh
+.github/workflows/ci.yml
+tests/client_link_tools_test.bash
+docs/security.md
 EOF
-  classify_out="$(tools/docs_only_fast_path.sh --classify-only --paths-from "$low_risk_paths")"
+  classify_out="$(tools/docs_only_fast_path.sh --classify-only --paths-from "$high_risk_paths")"
   grep -Fq "docs_only=0" <<<"$classify_out" ||
-    fail "low-risk fast path incorrectly classified mechanical paths as docs-only"
-  grep -Fq "low_risk=1" <<<"$classify_out" ||
-    fail "low-risk fast path did not classify mechanical paths as low-risk"
-  grep -Fq "scope=low-risk" <<<"$classify_out" ||
-    fail "low-risk fast path did not report low-risk scope"
-  grep -Fq "non_low_risk_count=0" <<<"$classify_out" ||
-    fail "low-risk fast path reported non-low-risk paths for low-risk changes"
+    fail "operational paths were incorrectly classified as docs-only"
+  grep -Fq "low_risk=0" <<<"$classify_out" ||
+    fail "operational paths were incorrectly classified as low-risk"
+  grep -Fq "scope=full" <<<"$classify_out" ||
+    fail "operational paths did not report full scope"
+  grep -Fq "validation_gate=full" <<<"$classify_out" ||
+    fail "operational paths did not select full validation"
+  grep -Fq "non_low_risk_path=AGENTS.md" <<<"$classify_out" ||
+    fail "operational path diagnostics omitted AGENTS.md"
 
   cat >"$mixed_paths" <<'EOF'
 README.md
@@ -4880,6 +4888,8 @@ EOF
     fail "docs-only fast path did not report the source path that forced the broader path"
   grep -Fq "non_low_risk_path=Upkeeper" <<<"$classify_out" ||
     fail "docs-only fast path did not report the source path that forced the full path"
+  grep -Fq "validation_gate=full" <<<"$classify_out" ||
+    fail "mixed paths did not select full validation"
 
   grep -Fq "tools/check_public_docs.sh --quick" tools/docs_only_fast_path.sh ||
     fail "docs-only fast path does not run public docs validation"
@@ -4904,8 +4914,10 @@ EOF
     fail "CI pull-request diff range does not use the local merge parent"
   grep -Fq "UPKEEPER_VALIDATION_DIFF_BASE" .github/workflows/ci.yml ||
     fail "CI does not pass its committed diff base to the standard phase runner"
-  grep -Fq "steps.scope.outputs.low_risk != '1'" .github/workflows/ci.yml ||
-    fail "CI workflow does not skip full validation for low-risk changes"
+  grep -Fq "Report selected validation gate" .github/workflows/ci.yml ||
+    fail "CI workflow does not report its selected validation gate"
+  grep -Fq "steps.scope.outputs.validation_gate == 'full'" .github/workflows/ci.yml ||
+    fail "CI workflow does not run full validation for the full classifier gate"
   if grep -Fq "git fetch --no-tags" .github/workflows/ci.yml; then
     fail "CI docs-only classifier still performs an explicit fetch"
   fi

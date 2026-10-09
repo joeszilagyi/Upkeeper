@@ -390,12 +390,13 @@ Source-contract validation is the narrowest source-only gate used by the
 backlog launcher before per-bug commits. It catches cheap structural source
 contract failures, such as oversized `log_line` call sites, without running the
 broader quick suite.
-For committed or local README/docs/prompt-only edits,
+For committed or local changes limited to the explicit editorial allowlist
+(README, change notes, roadmap, PRD, and known-issues pages),
 `tools/docs_only_fast_path.sh --validate` classifies the changed paths locally,
 rejects mixed source changes, and runs the no-network docs fast path without
-backend Codex, GitHub CLI, or PR polling. Its `--classify-only` mode also
-reports broader low-risk shell/config/test/tool changes so CI can keep those
-changes on the shared local gates without paying for the full validator.
+backend Codex, GitHub CLI, or PR polling. Prompts, operational documentation,
+configuration, tests, tools, workflows, and unknown paths take full CI
+validation.
 Smoke validation is the fast local edit-loop path: syntax, version/module-map
 contracts, prompt packaging, help/docs/diff checks, parser helpers, and launcher
 argument contracts. Quick validation adds bounded static/fixture checks and
@@ -438,10 +439,7 @@ such as `age`, classifies the change scope, and then takes one of two paths:
 - docs-only changes: `tools/check_public_docs.sh --quick` plus
   `tools/validate_upkeeper.sh --smoke`, via
   `tools/docs_only_fast_path.sh --validate`
-- low-risk shell/config/test/tool changes: the bounded parallel local gate
-  through `tools/run_validation_phases.sh` for syntax, unit tests, public docs,
-  and whitespace, without the full validator
-- broader changes: the bounded parallel local gate through
+- all other changes: the bounded parallel local gate through
   `tools/run_validation_phases.sh` for syntax, unit tests, public docs, and
   whitespace, followed by `tools/validate_upkeeper.sh --full`
 
@@ -946,10 +944,10 @@ PR-check waits now have a bounded default timeout
 (`BACKLOG_PR_CHECK_TIMEOUT_SECONDS=1800`) and write local timeout evidence under
 the backlog state root before returning a pending status. Between issue fixes,
 the launcher records a validation-authority decision for the just-pushed commit:
-low-risk docs/Markdown/config/test/tool changes can continue to the next issue
-on local green validation while CI runs asynchronously, while
-source/control-plane changes still block on PR checks before more work stacks
-on the branch.
+only the explicit editorial-docs allowlist can continue to the next issue on
+local green validation while CI runs asynchronously. Configuration, tests,
+tools, prompts, operational documentation, source, and unknown paths still
+block on PR checks before more work stacks on the branch.
 
 For an explicit one-cycle Upkeeper self-review with all built-in P1-P23 passes,
 use equals-form operator flags:

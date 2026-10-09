@@ -3748,6 +3748,10 @@ check_prompt_template() {
   [[ -s tests/lattice_finish_retry_test.bash ]] || fail "Lattice finish retry test is missing"
   [[ -s tests/lib/lattice_inprocess_server.py ]] || fail "Lattice in-process test server is missing"
   [[ -s tests/precontact_backup_test.bash ]] || fail "pre-contact backup test is missing or empty"
+  grep -Fq 'precontact_backup_validate_restore_repo_identity "$sidecar" "$repo_root"' lib/upkeeper/precontact_backup.bash || fail "plain pre-contact restore missing repository identity check"
+  grep -Fq 'precontact_backup_validate_restore_repo_identity "$payload_metadata" "$repo_root"' lib/upkeeper/precontact_backup.bash || fail "encrypted pre-contact restore missing repository identity check"
+  grep -Fq 'precontact_backup_set_reason "restore_repo_identity_mismatch"' lib/upkeeper/precontact_backup.bash || fail "pre-contact restore missing stable repository mismatch reason"
+  grep -Fq 'test_standalone_restore_rejects_wrong_repo_by_default' tests/precontact_backup_test.bash || fail "pre-contact restore missing cross-repository regression"
   [[ -s docs/lattice.md ]] || fail "Lattice documentation is missing or empty"
   [[ -x tools/upkeeper_precontact_bootstrap.sh ]] || fail "pre-contact bootstrap helper is missing or not executable"
   [[ -x tools/upkeeper_precontact_restore.sh ]] || fail "pre-contact restore helper is missing or not executable"
@@ -3848,6 +3852,7 @@ check_prompt_template() {
   grep -Fq "UPKEEPER_LOCAL_ENV_FILE" docs/security.md || fail "security docs missing machine-local env contract"
   grep -Fq "age" docs/dependencies.md || fail "dependency docs missing age optional dependency"
   grep -Fq "tools/upkeeper_precontact_restore.sh" docs/scripts/upkeeper.md || fail "operator guide missing pre-contact restore helper"
+  grep -Fq "restore_repo_identity_mismatch" docs/scripts/upkeeper.md || fail "operator guide missing pre-contact restore repository identity guard"
   grep -Fq "tools/stress_upkeeper_corpus.sh --local" docs/stress-corpus.md || fail "stress corpus docs missing implemented command"
   grep -Fq "public project material" docs/public-documentation-policy.md || fail "public documentation policy missing public-by-default rule"
 }

@@ -1149,6 +1149,41 @@ precontact_backup_restore_log() {
   fi
 }
 
+precontact_backup_validate_restore_repo_identity() {
+  local metadata_path="$1"
+  local repo_root="$2"
+  local expected_repo_root_hmac expected_repo_key current_repo_real
+  local repo_root_hmac_from_metadata repo_key_from_metadata
+
+  repo_root_hmac_from_metadata="$(precontact_backup_json_field "$metadata_path" "repo_root_hmac")" || {
+    precontact_backup_set_reason "metadata_read_failed"
+    return 1
+  }
+  repo_key_from_metadata="$(precontact_backup_json_field "$metadata_path" "repo_key")" || {
+    precontact_backup_set_reason "metadata_read_failed"
+    return 1
+  }
+  if [[ -z "$repo_root_hmac_from_metadata" || -z "$repo_key_from_metadata" ]]; then
+    precontact_backup_set_reason "metadata_read_failed"
+    return 1
+  fi
+  if ! current_repo_real="$(precontact_backup_realpath "$repo_root")"; then
+    precontact_backup_set_reason "repo_root_unresolvable"
+    return 1
+  fi
+  expected_repo_root_hmac="repo-hmac-sha256:$(precontact_backup_hmac_text repo "$current_repo_real")"
+  expected_repo_key="repo-hmac-${expected_repo_root_hmac#repo-hmac-sha256:}"
+  if [[ "$repo_root_hmac_from_metadata" == "$expected_repo_root_hmac" && "$repo_key_from_metadata" == "$expected_repo_key" ]]; then
+    return 0
+  fi
+  if [[ "${UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE:-0}" == "1" ]]; then
+    precontact_backup_restore_log "WARN" "precontact_backup.restore unsafe_cross_repo_restore blocked=0 allowed=1 reason=repo_identity_mismatch sidecar_repo_key=$(shell_quote "$repo_key_from_metadata") sidecar_repo_root_hmac=$(shell_quote "$repo_root_hmac_from_metadata") current_repo_key=$(shell_quote "$expected_repo_key") current_repo_root_hmac=$(shell_quote "$expected_repo_root_hmac")"
+    return 0
+  fi
+  precontact_backup_restore_log "WARN" "precontact_backup.restore blocked=1 allowed=0 reason=repo_identity_mismatch sidecar_repo_key=$(shell_quote "$repo_key_from_metadata") sidecar_repo_root_hmac=$(shell_quote "$repo_root_hmac_from_metadata") current_repo_key=$(shell_quote "$expected_repo_key") current_repo_root_hmac=$(shell_quote "$expected_repo_root_hmac")"
+  precontact_backup_set_reason "restore_repo_identity_mismatch"
+}
+
 precontact_backup_restore_by_id() {
   local backup_id="$1"
   local repo_root="$2"
@@ -1188,6 +1223,9 @@ precontact_backup_restore_by_id() {
   if [[ "$encrypted" == "true" ]]; then
     :
   else
+    if ! precontact_backup_validate_restore_repo_identity "$sidecar" "$repo_root"; then
+      return 1
+    fi
     if ! rel_path="$(precontact_backup_json_field "$sidecar" "selected_relative_path")"; then
       precontact_backup_set_reason "metadata_read_failed"
       return 1
@@ -1263,6 +1301,9 @@ precontact_backup_restore_by_id() {
     fi
     if ! precontact_backup_extract_payload "$payload_tmp" "$tmp_restore" "$payload_metadata"; then
       precontact_backup_set_reason "payload_extract_failed"
+      return 1
+    fi
+    if ! precontact_backup_validate_restore_repo_identity "$payload_metadata" "$repo_root"; then
       return 1
     fi
     if ! rel_path="$(precontact_backup_json_field "$payload_metadata" "selected_relative_path")"; then

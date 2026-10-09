@@ -75,11 +75,9 @@ Loop stop semantics:
     UPKEEPER_STATUS: NO_BACKEND_TASK
   - while the worktree is dirty, a NO_BACKEND_TASK result is treated as a soft miss
     and the outer loop keeps running so Codex can try again on the next cycle
-  - if Codex exits cleanly with a final agent message and a parseable terminal
-    review outcome (REVIEWED_AND_FIXED, REVIEWED_CLEAN, or STOPPED_ON_BLOCKER)
-    but omits the literal UPKEEPER_STATUS line, the wrapper recovers the
-    equivalent machine status and logs status_marker.recovered_from_review_outcome;
-    exact status markers remain the preferred contract
+  - status authority requires exactly one final raw UPKEEPER_STATUS line or one
+    schema-valid UPKEEPER_STATUS_JSON record; prose, decorations, duplicates,
+    review summaries, and blocker requests remain diagnostic-only
   - set CODEX_CONTINUE_ON_NO_BACKEND_TASK=1 to keep polling even after
     an empty cycle even when the worktree is clean
   - when the primary model stalls, fails, or exhausts its bucket, the wrapper can

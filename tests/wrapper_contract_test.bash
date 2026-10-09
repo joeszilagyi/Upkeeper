@@ -153,11 +153,12 @@ test_shell_assignment_helpers_quote_and_reject_bad_input() {
   assert_assignment_eval_preserves_value "$assignments" summary_changes '{"k":"v"}' "$sentinel"
   assert_assignment_eval_preserves_value "$assignments" summary_verification $'line one\nline two' "$sentinel"
 
-  json="$(printf '{"candidate_line":%s,"candidate_marker":"WORK_DONE","candidate_rejection_reason":null,"accepted_marker":"BLOCKED"}' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$malicious")")"
+  json="$(printf '{"candidate_line":%s,"candidate_marker":"WORK_DONE","candidate_rejection_reason":null,"accepted_marker":"BLOCKED","accepted_source":"typed_json"}' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$malicious")")"
   assignments="$(assignment_output_for status_marker_analysis_assignments "$json" marker)"
   assert_assignment_eval_preserves_value "$assignments" marker_candidate_line "$malicious" "$sentinel"
   assert_assignment_eval_preserves_value "$assignments" marker_candidate_rejection_reason "" "$sentinel"
   assert_assignment_eval_preserves_value "$assignments" marker_accepted_marker "BLOCKED" "$sentinel"
+  assert_assignment_eval_preserves_value "$assignments" marker_accepted_source "typed_json" "$sentinel"
 
   json="$(printf '{"agent_message_count":2,"tool_call_count":["not","scalar"],"tool_result_count":{"nested":1},"task_complete_last_agent_message":%s,"last_rate_limit_reached_type":null}' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$malicious")")"
   assignments="$(assignment_output_for session_diagnostics_assignments "$json" session)"
@@ -276,13 +277,13 @@ EOF
     source lib/upkeeper/report_analysis.bash
     source lib/upkeeper/status_session.bash
     marker_analysis="$(while_marker_analysis_json "$marker_file")"
-    recovered="$(resolved_status_marker_from_analysis "$marker_analysis" 0 present)"
-    printf '%s\nrecovered=%s\n' "$marker_analysis" "$recovered"
+    resolved="$(resolved_status_marker_from_analysis "$marker_analysis" 0 present)"
+    printf '%s\nresolved=%s\n' "$marker_analysis" "$resolved"
   )"
   grep -Fq '"candidate_rejection_reason":"trailing_content_after_marker"' <<<"$analysis" ||
     fail "trailing marker recovery reason missing: $analysis"
-  grep -Fq 'recovered=WORK_DONE' <<<"$analysis" ||
-    fail "strict marker followed by trailing non-control text was not recovered: $analysis"
+  grep -Fxq 'resolved=' <<<"$analysis" ||
+    fail "strict marker followed by trailing non-control text became authoritative: $analysis"
 }
 
 test_startup_anomaly_allowlist_reports_only_unallowed_redacted_paths() {

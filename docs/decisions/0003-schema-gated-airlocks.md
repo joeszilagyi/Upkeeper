@@ -45,6 +45,14 @@ code block that looks like a shell command, or a GitHub issue sentence that
 names a target path is evidence until a local parser accepts it as a typed
 record for a specific actuator.
 
+For the status boundary, compatibility permits one undecorated raw final line
+matching the documented `UPKEEPER_STATUS` enum. The typed alternative is one
+raw final `UPKEEPER_STATUS_JSON` line whose object has exactly
+`schema_version=upkeeper.final-status.v1` and one documented `outcome` value.
+Quoted, backticked, bulleted, fenced, punctuated, trailing-content, indented,
+or duplicate markers never authorize status; their parser records are retained
+only as rejection diagnostics.
+
 ## Threat Model And Failure Classes
 
 The design is meant to reduce these concrete failure classes:
@@ -68,7 +76,7 @@ The design is meant to reduce these concrete failure classes:
 
 | Boundary | Current shape | Accepted typed-signal direction | Policy |
 | --- | --- | --- | --- |
-| LLM final text to wrapper status/action | Status marker and review-summary parsing, with local validation for known markers. | A status outcome record with schema id, selected target, changed paths, outcome, blocked reason, and parser rejection evidence. | Always-on before status, issue, merge, or obligation decisions. |
+| LLM final text to wrapper status/action | One exact final legacy marker or one strict `upkeeper.final-status.v1` JSON record is normalized by the airlock; review summaries and rejected candidates are diagnostic-only. | A status outcome record with schema id, outcome, accepted source, and parser rejection evidence. Future schema versions may add selected target, changed paths, blocked reason, and evidence bindings. | Always-on before status, issue, merge, or obligation decisions. |
 | Issue body/comment text to prompt evidence and workflow state | ChimneySweep and issue-fix paths fetch evidence and redact private packet fields by default. | An issue evidence packet with issue number, URL/title hashes, labels, stage, body exposure flag, and source-safe excerpt boundaries. | Always-on before backend launch or GitHub side effects. |
 | Bug-report draft blocks to GitHub issue creation | Obligation issue reports and bug-report-only output are parsed before public issue creation. | A bug-report draft record with title, body, labels, target, owning obligation or finding id, and public-safe evidence excerpts. | Always-on before GitHub writes. |
 | Transcript/log imports to Lattice rows | Lattice uses row versions and payload hashes; logs still contain mixed human and machine text. | Import records with row type, row version, logical key, payload hash, source cycle, and explicit raw-evidence privacy class. | Always-on for imports; diagnostic-only for raw trace display. |

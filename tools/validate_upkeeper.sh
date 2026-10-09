@@ -7544,16 +7544,16 @@ check_postmortem_context_marker_classification() {
     write_postmortem_bug_record "$bug_record_path" "primary_quota_before_run" "quota guardrail" "0" "not_run" "$report_path" "$context_path" "$incident_log_path"
   )
 
-  grep -Fq "incident_classification: CONTROLLED_QUOTA_HANDOFF" "$context_path" || fail "context did not classify recovered fallback marker as controlled handoff"
-  grep -Fq "fallback_child_status_marker: WORK_DONE" "$context_path" || fail "context did not record recovered fallback marker"
-  grep -Fq "fallback_child_status_marker_source: recovered_malformed_candidate" "$context_path" || fail "context did not record recovered marker source"
+  grep -Fq "incident_classification: INCIDENT_REVIEW" "$context_path" || fail "context allowed a malformed fallback marker to classify a controlled handoff"
+  grep -Fq "fallback_child_status_marker: missing" "$context_path" || fail "context treated malformed fallback marker as authoritative"
+  grep -Fq "fallback_child_status_marker_source: missing" "$context_path" || fail "context did not record rejected fallback authority"
   grep -Fq "primary_before_snapshot_source_hmac:" "$context_path" || fail "context did not redact snapshot source"
   if grep -Fq "primary_before_snapshot_source: " "$context_path"; then
     fail "context retained raw snapshot source in non-debug mode"
   fi
-  grep -Fq -- "- incident_classification: CONTROLLED_QUOTA_HANDOFF" "$bug_record_path" || fail "bug record did not classify recovered fallback marker as controlled handoff"
-  grep -Fq -- "- fallback_child_status_marker: WORK_DONE" "$bug_record_path" || fail "bug record did not record recovered fallback marker"
-  grep -Fq -- "- fallback_child_status_marker_source: recovered_malformed_candidate" "$bug_record_path" || fail "bug record did not record recovered marker source"
+  grep -Fq -- "- incident_classification: INCIDENT_REVIEW" "$bug_record_path" || fail "bug record allowed a malformed fallback marker to classify a controlled handoff"
+  grep -Fq -- "- fallback_child_status_marker: missing" "$bug_record_path" || fail "bug record treated malformed fallback marker as authoritative"
+  grep -Fq -- "- fallback_child_status_marker_source: missing" "$bug_record_path" || fail "bug record did not record rejected fallback authority"
 
   rm -r "$temp_dir"
 }

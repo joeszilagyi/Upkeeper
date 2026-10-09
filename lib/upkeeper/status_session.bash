@@ -1,74 +1,3 @@
-# Codex final response markers are the contract between the model and wrapper.
-# Session parsing provides diagnostics for missing markers so operators can
-# diagnose turn shape issues without trusting natural-language inference.
-recover_status_marker_from_review_outcome() {
-  local last_message_file="$1"
-  local codex_exit_value="$2"
-  local task_complete_last_agent_message="$3"
-  local summary_json
-  local recovery_outcome recovery_selected_file recovery_findings recovery_changes recovery_verification
-  local recovered_marker
-
-  [[ "$codex_exit_value" == "0" ]] || return 1
-  [[ "$task_complete_last_agent_message" == "present" ]] || return 1
-  [[ -n "$last_message_file" && -f "$last_message_file" ]] || return 1
-
-  summary_json="$(review_report_summary_json "$last_message_file")" || return 1
-  eval "$(review_summary_assignments "$summary_json" recovery)"
-  case "$recovery_outcome" in
-    REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN)
-      recovered_marker="WORK_DONE"
-      ;;
-    STOPPED_ON_BLOCKER)
-      recovered_marker="BLOCKED"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-
-  printf '%s\t%s\t%s\n' "$recovered_marker" "$recovery_outcome" "$recovery_selected_file"
-}
-
-recover_status_marker_from_blocker_request() {
-  local last_message_file="$1"
-  local codex_exit_value="$2"
-  local task_complete_last_agent_message="$3"
-
-  [[ "$codex_exit_value" == "0" ]] || return 1
-  [[ "$task_complete_last_agent_message" == "present" ]] || return 1
-  [[ -n "$last_message_file" && -f "$last_message_file" ]] || return 1
-
-  python3 - "$last_message_file" <<'PY'
-from pathlib import Path
-import sys
-
-try:
-    text = Path(sys.argv[1]).read_text(encoding='utf-8', errors='replace').lower()
-except OSError:
-    raise SystemExit(1)
-question = any(needle in text for needle in (
-    'i need your direction',
-    'should i proceed',
-    'do you want a different action',
-    'how would you like to proceed',
-))
-stopped = any(needle in text for needle in (
-    'stopped immediately',
-    'per your agent',
-    'per your agents',
-    'unexpected modifications',
-    'unexpected changes',
-    'i have stopped',
-    "i've stopped",
-))
-if question and stopped:
-    print('BLOCKED\toperator_direction_request\t')
-else:
-    raise SystemExit(1)
-PY
-}
-
 parse_status_marker() {
   local last_message_file="$1"
   local analysis
@@ -80,7 +9,7 @@ resolved_status_marker_from_analysis() {
   local analysis="$1"
   local codex_exit="$2"
   local task_complete_last_agent_message="$3"
-  local accepted candidate candidate_rejection_reason
+  local accepted
 
   accepted="$(json_field "$analysis" '.accepted_marker')"
   if [[ "$accepted" == "NO_CHANGES" ]]; then
@@ -88,19 +17,6 @@ resolved_status_marker_from_analysis() {
   fi
   if [[ -n "$accepted" ]]; then
     printf '%s' "$accepted"
-    return 0
-  fi
-  candidate="$(json_field "$analysis" '.candidate_marker')"
-  candidate_rejection_reason="$(json_field "$analysis" '.candidate_rejection_reason')"
-  if [[ "$candidate" == "NO_CHANGES" ]]; then
-    candidate="WORK_DONE"
-  fi
-  if [[ -n "$candidate" && "$candidate_rejection_reason" == "markdown_backticks" ]]; then
-    printf '%s' "$candidate"
-    return 0
-  fi
-  if [[ -n "$candidate" && "$candidate_rejection_reason" == "trailing_content_after_marker" ]]; then
-    printf '%s' "$candidate"
     return 0
   fi
 }

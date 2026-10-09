@@ -4391,6 +4391,7 @@ validation_quota_state_for_home() {
 check_validation_quota_session_fixture_contract() {
   local temp_dir state diagnostics agent_messages reached_type
   local current_home stale_home wrong_home nonfinite_home missing_home
+  local mixed_timestamp_home invalid_timestamp_home
   local malformed_session empty_session empty_state
 
   log "checking validation quota/session fixtures"
@@ -4431,6 +4432,37 @@ check_validation_quota_session_fixture_contract() {
   state="$(validation_quota_state_for_home "$missing_home" "gpt-5.5" "$temp_dir/missing.log")"
   [[ "$(jq -r '.error // ""' <<<"$state")" == "no_rate_limit_snapshot_found" ]] ||
     fail "missing-field quota fixture should not produce a usable snapshot"
+
+  mixed_timestamp_home="$temp_dir/mixed-timestamps/codex-home"
+  write_validation_quota_snapshot "$mixed_timestamp_home/sessions/2026/05/31/newest-z.jsonl" "gpt-5.5" 3600 86400 \
+    "2026-05-31T23:30:00Z" "newest-instant"
+  write_validation_quota_snapshot "$mixed_timestamp_home/sessions/2026/05/31/middle-utc-offset.jsonl" "gpt-5.5" 3600 86400 \
+    "2026-05-31T23:00:00+00:00" "middle-instant"
+  write_validation_quota_snapshot "$mixed_timestamp_home/sessions/2026/06/01/older-local-offset.jsonl" "gpt-5.5" 3600 86400 \
+    "2026-06-01T00:00:00+02:00" "older-instant"
+  state="$(validation_quota_state_for_home "$mixed_timestamp_home" "gpt-5.5" "$temp_dir/mixed-timestamps.log")"
+  [[ "$(jq -r '.snapshot.limit_id' <<<"$state")" == "newest-instant" ]] ||
+    fail "mixed-offset quota snapshots were not ordered by instant"
+  [[ "$(jq -r '.snapshot.event_timestamp' <<<"$state")" == "2026-05-31T23:30:00Z" ]] ||
+    fail "mixed-offset quota winner did not retain operator-readable timestamp"
+
+  invalid_timestamp_home="$temp_dir/invalid-timestamps/codex-home"
+  write_validation_quota_snapshot "$invalid_timestamp_home/sessions/2026/05/31/older.jsonl" "gpt-5.5" 3600 86400 \
+    "not-a-timestamp-z" "older-invalid"
+  write_validation_quota_snapshot "$invalid_timestamp_home/sessions/2026/05/31/newer.jsonl" "gpt-5.5" 3600 86400 \
+    "not-a-timestamp-a" "newer-invalid"
+  python3 - \
+    "$invalid_timestamp_home/sessions/2026/05/31/older.jsonl" \
+    "$invalid_timestamp_home/sessions/2026/05/31/newer.jsonl" <<'PY'
+import os
+import sys
+
+os.utime(sys.argv[1], (1_700_000_000, 1_700_000_000))
+os.utime(sys.argv[2], (1_700_000_100, 1_700_000_100))
+PY
+  state="$(validation_quota_state_for_home "$invalid_timestamp_home" "gpt-5.5" "$temp_dir/invalid-timestamps.log")"
+  [[ "$(jq -r '.snapshot.limit_id' <<<"$state")" == "newer-invalid" ]] ||
+    fail "unparseable quota timestamps did not use deterministic source-mtime fallback"
 
   malformed_session="$temp_dir/malformed/session.jsonl"
   write_validation_malformed_session_jsonl "$malformed_session"
@@ -4897,9 +4929,12 @@ write_validation_quota_snapshot() {
   local model="$2"
   local primary_reset_offset="${3:-3600}"
   local secondary_reset_offset="${4:-86400}"
+  local fixture_timestamp="${5:-}"
+  local fixture_limit_id="${6:-}"
 
   prepare_validation_session_file "$session_file"
-  python3 - "$session_file" "$model" "$primary_reset_offset" "$secondary_reset_offset" <<'PY'
+  python3 - "$session_file" "$model" "$primary_reset_offset" "$secondary_reset_offset" \
+    "$fixture_timestamp" "$fixture_limit_id" <<'PY'
 import json
 import sys
 import time
@@ -4910,8 +4945,10 @@ path = Path(sys.argv[1])
 model = sys.argv[2]
 primary_reset_offset = int(sys.argv[3])
 secondary_reset_offset = int(sys.argv[4])
+fixture_timestamp = sys.argv[5]
+fixture_limit_id = sys.argv[6]
 now = int(time.time())
-event_timestamp = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
+event_timestamp = fixture_timestamp or datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
 rows = [
     {"type": "turn_context", "payload": {"model": model}},
     {
@@ -4920,7 +4957,7 @@ rows = [
         "payload": {
             "type": "token_count",
             "rate_limits": {
-                "limit_id": f"validation-{model}",
+                "limit_id": fixture_limit_id or f"validation-{model}",
                 "limit_name": f"{model} validation",
                 "plan_type": "validation",
                 "rate_limit_reached_type": None,

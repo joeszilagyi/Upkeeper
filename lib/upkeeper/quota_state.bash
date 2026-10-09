@@ -248,7 +248,18 @@ def parse_session_snapshots(root: Path, limit: int):
         if snapshot:
             snapshots.append(snapshot)
 
-    snapshots.sort(key=lambda item: ((item.get("event_timestamp") or ""), item.get("source_mtime") or 0.0))
+    def snapshot_order_key(item):
+        source_mtime = float(item.get("source_mtime") or 0.0)
+        event_epoch = parse_event_epoch(item.get("event_timestamp"))
+        effective_epoch = source_mtime if event_epoch is None else event_epoch
+        return (
+            effective_epoch,
+            source_mtime,
+            str(item.get("event_timestamp") or ""),
+            str(item.get("source_path") or ""),
+        )
+
+    snapshots.sort(key=snapshot_order_key)
     return snapshots
 
 

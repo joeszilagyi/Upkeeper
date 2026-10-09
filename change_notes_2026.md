@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: instant-based quota snapshot selection:
+	1. Quota snapshot selection now normalizes ISO-8601 `Z`, UTC-offset, and nonzero local-offset timestamps to epoch instants before choosing the latest event.
+	2. An unparseable event timestamp falls back deterministically to its session file mtime, with timestamp text and source path retained only as stable tie breakers.
+	3. Validation proves mixed-offset timestamps select the chronologically newest event and malformed timestamps remain non-crashing and deterministic.
+
 2026-10-08: crash-durable Lattice backup publication:
 	1. Lattice backup creation now fsyncs the containing directory after publishing and permissioning the final backup path in both overwrite and no-overwrite modes.
 	2. Directory open or fsync failures fail closed with the database-unavailable command contract, while retaining any already-published artifact as conservative recovery evidence.

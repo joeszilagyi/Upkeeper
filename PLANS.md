@@ -3,9 +3,31 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #654: Crash-Durable Lattice Backup Publication
+## Issue #655: Quota Snapshot Instant Ordering
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- select the newest quota snapshot by chronological instant across ISO-8601
+  offset representations
+- keep malformed timestamp handling deterministic and non-crashing
+- preserve operator-readable timestamp and freshness evidence
+
+Constraints:
+- reuse the existing timestamp parser used by freshness annotation
+- fall back to source-file mtime only when an event timestamp is unparseable
+- retain stable tie breakers for reproducible selection
+- no live backend Codex validation
+
+Validation:
+- mixed `Z`, `+00:00`, and nonzero-offset fixtures where lexical order differs
+  from chronological order
+- malformed timestamp fixtures with deliberately ordered source mtimes
+- complete unit suite and quick/full repository validation
+
+## Issue #654: Crash-Durable Lattice Backup Publication
+
+Status: complete; merged in PR #831
 
 Goal:
 - make a reported Lattice backup contingent on durable final-name publication

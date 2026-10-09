@@ -25,7 +25,7 @@ Validation:
 
 ## Issue #695: NUL-Safe Restore Sidecar Discovery
 
-Status: implemented; local validation passed; pending PR CI
+Status: complete; merged in PR #855
 
 Goal:
 - preserve sidecar paths containing embedded newlines during restore-by-id
@@ -44,6 +44,27 @@ Validation:
   `backup_id_not_unique_or_missing` using an array count
 - static validation covers the root entrypoint's separate NUL writer and array
   consumer
+
+## Issue #693: Preserve Encrypted Restore Modification Time
+
+Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- record the selected file's nanosecond modification time in private metadata
+- restore that timestamp without weakening fd-relative destination installation
+- keep encrypted payloads created before the new field backward compatible
+
+Verified defect:
+- metadata recorded only a formatted `mtime`, not integer `mtime_ns`
+- payload extraction created a new file and secure installation preserved that
+  new timestamp instead of the selected file's original modification time
+
+Validation:
+- an encrypted backup restores a known filesystem-reported `st_mtime_ns`
+  exactly through the standalone helper
+- root and module installers validate and apply the optional timestamp before
+  atomic rename
+- a rewritten legacy payload without `mtime_ns` still restores its bytes
 
 ## Issue #688: Typed JSON-to-Shell Parsing
 

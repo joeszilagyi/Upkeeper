@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--audit-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.44
+Version: v1.2.45
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -1166,7 +1166,9 @@ standalone helper rejects a backup from another repository with
 `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE=1` to override that guard.
 Final installation walks and rechecks repository parent components through
 directory descriptors with nofollow semantics, then publishes through the
-verified parent descriptor. Parent or final-target symlinks are rejected.
+verified parent descriptor. Parent or final-target symlinks are rejected. New
+encrypted payloads also restore the recorded nanosecond modification time;
+legacy payloads without `mtime_ns` remain restorable with their prior behavior.
 
 `UPKEEPER_PRECONTACT_BACKUP_ROOT` may point at an operator-local vault outside
 the repository. The wrapper never includes the generated vault path in compiled

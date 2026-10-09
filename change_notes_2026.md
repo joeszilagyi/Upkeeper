@@ -1,5 +1,9 @@
 # 2026 Change Notes
 
+2026-10-09: v1.2.45 changes:
+	1. Encrypted pre-contact backups now record integer `mtime_ns` in private payload metadata and restore it before secure atomic installation.
+	2. Root and standalone restore paths preserve nanosecond modification time, while legacy encrypted payloads without `mtime_ns` remain restorable with prior timestamp behavior.
+
 2026-10-09: v1.2.44 changes:
 	1. Restore-by-id sidecar discovery now uses NUL-delimited paths and array-based uniqueness checks, so valid vault paths containing newlines remain intact.
 	2. Both the root entrypoint and standalone restore path reject missing or duplicate backup ids without parsing filesystem paths as newline-delimited text.

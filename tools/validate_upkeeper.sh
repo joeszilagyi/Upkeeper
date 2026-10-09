@@ -4887,8 +4887,8 @@ EOF
     fail "docs-only fast path does not run smoke validation"
   grep -Fq "git diff --check" tools/docs_only_fast_path.sh ||
     fail "docs-only fast path does not run diff whitespace validation"
-  grep -Fq 'git diff --check "$base_ref" "$head_ref"' tools/docs_only_fast_path.sh ||
-    fail "docs-only fast path does not check committed ref-to-ref whitespace"
+  grep -Fq 'source "$ROOT_DIR/tools/git_diff_validation.bash"' tools/docs_only_fast_path.sh ||
+    fail "docs-only fast path does not use shared committed-diff whitespace validation"
   grep -Fq 'source "$ROOT_DIR/lib/upkeeper/change_scope.bash"' tools/docs_only_fast_path.sh ||
     fail "docs-only fast path does not source the shared change-scope helper"
   grep -Fq 'source "$ROOT_DIR/lib/upkeeper/change_scope.bash"' orchestration/backlog.sh ||
@@ -4898,10 +4898,12 @@ EOF
   fi
   grep -Fq "tools/docs_only_fast_path.sh" .github/workflows/ci.yml ||
     fail "CI docs-only path does not use the shared docs-only helper"
-  grep -Fq "fetch-depth: 2" .github/workflows/ci.yml ||
-    fail "CI checkout does not fetch enough local history for no-extra-fetch docs classification"
-  grep -Fq "scope_args+=(--base HEAD^1 --head HEAD)" .github/workflows/ci.yml ||
-    fail "CI pull-request docs-only path does not use local merge-parent refs"
+  grep -Fq "fetch-depth: 0" .github/workflows/ci.yml ||
+    fail "CI checkout does not retain history for committed push-range validation"
+  grep -Fq 'base_ref="HEAD^1"' .github/workflows/ci.yml ||
+    fail "CI pull-request diff range does not use the local merge parent"
+  grep -Fq "UPKEEPER_VALIDATION_DIFF_BASE" .github/workflows/ci.yml ||
+    fail "CI does not pass its committed diff base to the standard phase runner"
   grep -Fq "steps.scope.outputs.low_risk != '1'" .github/workflows/ci.yml ||
     fail "CI workflow does not skip full validation for low-risk changes"
   if grep -Fq "git fetch --no-tags" .github/workflows/ci.yml; then

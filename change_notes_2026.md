@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-09: registry-derived Lattice planned-pass coverage:
+	1. Pass-result planned coverage now comes from a `planned-passes` projection of the authoritative Python pass registry instead of separate Bash base lists and P24-P30 case mappings.
+	2. The registry preserves the exact default and all-pass repertoires and appends only selected active module passes; reserved, unwired P31 is explicitly rejected.
+	3. Focused CLI, wrapper, and embedded-table validation prevents registry/projection drift and prevents a duplicated Bash module mapping from returning.
+
 2026-10-08: proof-bound automation obligation resolution:
 	1. Obligation repair no longer treats any zero wrapper exit as success; resolution requires one final-response proof bound to the obligation id, selected repair target, and canonical required-resolution digest.
 	2. A repaired classification must also match an independently captured before/after target content change, while an explicit obsolete classification must provide concrete evidence and leave the target unchanged.

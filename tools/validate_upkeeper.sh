@@ -3553,6 +3553,8 @@ check_review_module_registry_contract() {
     fail "p29 library-reuse alias did not normalize"
   [[ "$(normalize_review_module STARK_PROTOCOL)" == "p30" ]] ||
     fail "p30 uppercase underscore alias did not normalize"
+
+  validation_run_test tests/lattice_planned_passes_test.bash
 }
 
 check_embedded_behavior_table_contracts() {
@@ -3766,16 +3768,36 @@ else:
             "review module ids drifted from Lattice module passes: "
             f"review={review_module_ids!r} lattice={lattice_module_ids!r}"
         )
+    expected_default_passes = [
+        "P1", "P3", "P4", "P5", "P6", "P7", "P9", "P10", "P11", "P12",
+        "P13", "P14", "P15", "P17", "P18", "P19", "P20", "P21", "P22", "P23",
+    ]
+    expected_all_passes = [f"P{i}" for i in range(1, 24)]
+    actual_default_passes = lattice_module.planned_pass_codes("default")
+    if actual_default_passes != expected_default_passes:
+        add_issue(
+            "default planned-pass registry projection drifted: "
+            f"{actual_default_passes!r}"
+        )
+    actual_all_passes = lattice_module.planned_pass_codes("all")
+    if actual_all_passes != expected_all_passes:
+        add_issue(
+            "all planned-pass registry projection drifted: "
+            f"{actual_all_passes!r}"
+        )
+    expected_with_modules = expected_default_passes + [item.upper() for item in review_module_ids]
+    actual_with_modules = lattice_module.planned_pass_codes("default", review_module_ids)
+    if actual_with_modules != expected_with_modules:
+        add_issue(
+            "review-module planned-pass registry projection drifted: "
+            f"{actual_with_modules!r}"
+        )
 
 lattice_wrapper = read("lib/upkeeper/lattice.bash")
-lattice_case_mappings = dict(
-    re.findall(r"\b(p[0-9]+)\)\s+passes\+=\((P[0-9]+)\)", lattice_wrapper)
-)
-for module_id in review_module_ids:
-    expected = module_id.upper()
-    actual = lattice_case_mappings.get(module_id)
-    if actual != expected:
-        add_issue(f"lattice planned pass mapping for {module_id} is {actual!r}, expected {expected!r}")
+if "lattice_prepare_planned_passes" not in lattice_wrapper or "planned-passes" not in lattice_wrapper:
+    add_issue("Lattice wrapper no longer consumes the registry planned-pass projection")
+if re.search(r"\bp[0-9]+\)\s+passes\+=\(P[0-9]+\)", lattice_wrapper):
+    add_issue("Lattice wrapper contains a duplicated hardcoded review-module pass mapping")
 
 for rel in ("docs/scripts/upkeeper.md", "docs/compatibility.md", "change_notes_2026.md"):
     text = read(rel)

@@ -7151,7 +7151,7 @@ PY
     " task_complete_last_agent_message=$primary_session_task_complete_last_agent_message" \
     " codex_exit=$codex_exit"
   log_review_report_summary "$last_message_file" "${status_marker:-missing}" "$codex_exit"
-  lattice_record_pass_results "$last_message_file" "${RUN_SELECTED_REVIEW_PATH:-}" "$(lattice_planned_passes_csv)"
+  lattice_record_pass_results "$last_message_file" "${RUN_SELECTED_REVIEW_PATH:-}"
   enforce_startup_anomaly_changed_paths
   record_startup_anomaly_gate_review "$last_message_file" "${status_marker:-missing}" "$codex_exit"
   tool_failure_queue_finalize_run "${RUN_SELECTED_REVIEW_PATH:-}" "${RUN_TRANSCRIPT_FILE:-}" "$codex_exit" "${status_marker:-missing}"

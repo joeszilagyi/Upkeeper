@@ -562,7 +562,7 @@ PASS_REGISTRY: list[dict[str, Any]] = [
         "pass_code": f"P{i}",
         "title": title,
         "prompt_source_path": "prompts/default-review.md",
-        "default_in_repertoire": True,
+        "default_in_repertoire": i not in {2, 8, 16},
         "module_prompt": False,
         "aliases": [],
         "active": True,
@@ -5020,6 +5020,41 @@ def validate_pass_registry_contract() -> list[str]:
             if not isinstance(alias, str) or not alias.strip():
                 issues.append(f"PASS_REGISTRY[{normalized}] alias must be non-empty string")
     return issues
+
+
+def planned_pass_codes(prompt_pass: str, review_modules: list[str] | None = None) -> list[str]:
+    """Project wrapper planned-pass metadata from the authoritative registry."""
+
+    registry_issues = validate_pass_registry_contract()
+    if registry_issues:
+        raise_command_error(
+            "pass registry contract failed: " + "; ".join(registry_issues),
+            EXIT_INTEGRITY,
+        )
+    include_all = prompt_pass == "all"
+    planned = [
+        str(item["pass_code"]).upper()
+        for item in PASS_REGISTRY
+        if item.get("active", True)
+        and not item.get("module_prompt", False)
+        and (include_all or item.get("default_in_repertoire", False))
+    ]
+    for raw_module in review_modules or []:
+        item = get_registered_pass_item(raw_module)
+        if item is None or not item.get("active", True) or not item.get("module_prompt", False):
+            raise_command_error(
+                f"unknown or inactive review module pass: {raw_module}",
+                EXIT_USAGE,
+            )
+        pass_code = str(item["pass_code"]).upper()
+        if pass_code not in planned:
+            planned.append(pass_code)
+    return planned
+
+
+def command_planned_passes(args: argparse.Namespace) -> int:
+    print(",".join(planned_pass_codes(args.prompt_pass, args.review_module)))
+    return EXIT_SUCCESS
 
 
 def _extract_shell_collection(text: str, name: str) -> tuple[str, ...] | None:
@@ -15094,6 +15129,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("service", help="serve multiple Lattice CLI commands in one warm process")
     p.set_defaults(func=command_service)
+
+    p = sub.add_parser("planned-passes", help="project planned pass codes from the active pass registry")
+    p.add_argument("--prompt-pass", choices=["default", "all"], default="default")
+    p.add_argument("--review-module", action="append", default=[])
+    p.set_defaults(func=command_planned_passes)
 
     p = sub.add_parser("init")
     p.set_defaults(func=command_init)

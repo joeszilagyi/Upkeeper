@@ -216,6 +216,11 @@ the obligation id, selected repair target, and required-resolution digest.
 `repaired` proof also requires an observed in-cycle content change to that
 target; explicit `obsolete` proof requires the target to remain unchanged.
 Rejected proof leaves the original open record in custody.
+Repeatable wrapper and control-plane failures use a stable repository-scoped
+identity based on failure class, reason, target scope, target, and repair target.
+Later cycles update the same open record, increment its occurrence count, and
+retain a bounded source-cycle/run history. Per-run obligation identity is an
+explicit exception class; no current terminal failure reason requires it.
 
 Operator output should be readable without cross-referencing logs or alternate
 mode names. A launcher that pauses new issue work to repair itself should say

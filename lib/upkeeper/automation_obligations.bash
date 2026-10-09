@@ -382,13 +382,13 @@ automation_obligation_repair_target_hint() {
   esac
 }
 
-automation_obligation_stable_cycle_identity() {
+automation_obligation_requires_per_run_identity() {
   local reason="$1"
 
+  # No current terminal failure reason requires a distinct open obligation for
+  # every run. Add only evidence-preservation exceptions here; ordinary source
+  # cycle/run identity belongs in the bounded occurrence history instead.
   case "$reason" in
-    CODEX_EXEC_EMPTY_TRANSCRIPT|MISSING_STATUS_MARKER|BACKEND_CONTEXT_LENGTH_EXCEEDED|TURN_ABORTED_WITHOUT_MARKER|UPKEEPER_CHILD_EXIT_NONZERO)
-      return 0
-      ;;
   esac
   return 1
 }
@@ -402,6 +402,7 @@ automation_open_cycle_obligation() {
   local codex_exec_started="$6"
   local selected_target="$7"
   local severity kind summary id open_dir path payload now target_scope repair_target_hint repair_target_file fingerprint required_resolution_json
+  local publication_action="created" occurrence_count="1" existing_record_root=""
 
   automation_framework_enabled || return 0
   automation_cycle_exit_requires_obligation "$exit_code" "$reason" || return 0
@@ -432,16 +433,36 @@ automation_open_cycle_obligation() {
   if [[ -z "$repair_target_file" && "$target_scope" != "machine" ]]; then
     repair_target_file="$selected_target"
   fi
-  if automation_obligation_stable_cycle_identity "$reason"; then
-    fingerprint="cycle-obligation:$kind:$reason:$target_scope:$selected_target:$repair_target_file"
-    id="$(printf '%s' "$fingerprint" | automation_hash_text)"
-  else
+  if automation_obligation_requires_per_run_identity "$reason"; then
     fingerprint=""
     id="$(printf '%s' "$kind|$target_scope|$CYCLE_ID|$CYCLE_RUN_HASH|$selected_target|$repair_target_file" | automation_hash_text)"
+  else
+    fingerprint="cycle-obligation:$kind:$reason:$target_scope:$selected_target:$repair_target_file"
+    id="$(printf '%s' "$fingerprint" | automation_hash_text)"
   fi
   open_dir="$(automation_obligation_root)/open"
   automation_private_dir "$open_dir" || return 1
   path="$open_dir/$id.json"
+  if [[ -f "$path" ]]; then
+    existing_record_root="$(
+      python3 - "$path" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(0)
+if isinstance(data, dict):
+    print(str(data.get("root", "")))
+PY
+    )"
+    if [[ "$existing_record_root" != "$ROOT_DIR" ]]; then
+      id="$(printf '%s' "$ROOT_DIR|$fingerprint" | automation_hash_text)"
+      path="$open_dir/$id.json"
+    fi
+  fi
   now="$(date '+%Y-%m-%dT%H:%M:%S%z')"
 
   payload="$(
@@ -548,6 +569,21 @@ print(
             "run_record": run_record,
             "transcript": transcript,
             "required_resolution": required_resolution,
+            "occurrence_count": 1,
+            "seen_count": 1,
+            "occurrence_history_truncated": 0,
+            "first_source_cycle_id": cycle_id,
+            "first_source_run_hash": run_hash,
+            "occurrences": [
+                {
+                    "observed_at": created_at,
+                    "source_cycle_id": cycle_id,
+                    "source_run_hash": run_hash,
+                    "exit_code": exit_code,
+                    "reason": reason,
+                    "status_marker": status_marker,
+                }
+            ],
         },
         separators=(",", ":"),
     )
@@ -556,6 +592,7 @@ PY
   )"
 
   if [[ -f "$path" ]]; then
+    publication_action="updated_existing"
     payload="$(
       python3 - "$path" "$payload" "$now" <<'PY'
 import json
@@ -578,15 +615,63 @@ new["occurrence_count"] = old_count + 1
 new["seen_count"] = old_count + 1
 new["first_source_cycle_id"] = old.get("first_source_cycle_id") or old.get("source_cycle_id") or new.get("source_cycle_id", "")
 new["first_source_run_hash"] = old.get("first_source_run_hash") or old.get("source_run_hash") or new.get("source_run_hash", "")
-if old.get("issue_number") and not new.get("issue_number"):
-    new["issue_number"] = old.get("issue_number")
-if old.get("issue_title") and not new.get("issue_title"):
-    new["issue_title"] = old.get("issue_title")
+old_occurrences = old.get("occurrences")
+if not isinstance(old_occurrences, list):
+    old_occurrences = []
+if not old_occurrences and old.get("source_cycle_id"):
+    old_occurrences.append(
+        {
+            "observed_at": old.get("updated_at") or old.get("created_at", ""),
+            "source_cycle_id": old.get("source_cycle_id", ""),
+            "source_run_hash": old.get("source_run_hash", ""),
+            "exit_code": old.get("exit_code", ""),
+            "reason": old.get("reason", ""),
+            "status_marker": old.get("status_marker", ""),
+        }
+    )
+new_occurrences = new.get("occurrences")
+if not isinstance(new_occurrences, list):
+    new_occurrences = []
+combined_occurrences = old_occurrences + new_occurrences
+new["occurrences"] = combined_occurrences[-50:]
+new["occurrence_history_truncated"] = max(0, old_count + 1 - len(new["occurrences"]))
+custody_fields = (
+    "repair_attempt_count",
+    "blocked_attempt_count",
+    "last_repair_attempt_at",
+    "last_repair_exit_status",
+    "last_repair_status",
+    "next_retry_at",
+    "next_retry_epoch",
+    "cooldown_attempt_limit",
+    "cooldown_reason",
+    "issue_number",
+    "issue_title",
+    "issue_url",
+    "github_issue_number",
+    "github_issue_url",
+    "linked_issue_number",
+    "issue_report_state",
+    "issue_report_path",
+    "issue_report_title",
+    "issue_report_updated_at",
+    "issue_report_required",
+    "specific_issue_required",
+    "owner_issue_number",
+    "owner_issue_title",
+    "duplicate_obligation_ids",
+    "reconciled_at",
+    "reconciled_by",
+)
+for field in custody_fields:
+    if field in old and new.get(field) in (None, "", [], {}):
+        new[field] = old[field]
 print(json.dumps(new, separators=(",", ":")))
 PY
     )"
   fi
 
+  occurrence_count="$(automation_json_field "$payload" occurrence_count)"
   automation_write_json "$path" "$payload"
   if declare -F log_line >/dev/null 2>&1; then
     log_line_parts "WARN" \
@@ -596,6 +681,8 @@ PY
       " target_scope=$(automation_shell_quote "$target_scope")" \
       " target=$(automation_shell_quote "${selected_target:-machine-local}")" \
       " reason=$(automation_shell_quote "$reason")" \
+      " action=$publication_action" \
+      " occurrence_count=$occurrence_count" \
       " path=$(automation_shell_quote "$path")"
   fi
 }

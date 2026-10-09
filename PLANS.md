@@ -3,9 +3,30 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #655: Quota Snapshot Instant Ordering
+## Issue #656: Rotation-Safe Quota Session Enumeration
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- keep quota evaluation alive when Codex rotates a session during enumeration
+- continue with remaining readable snapshots
+- fail closed with structured evidence when no reliable snapshot survives
+
+Constraints:
+- guard each candidate `stat` and the directory walk against `OSError`
+- preserve deterministic mtime/path ordering for surviving candidates
+- never expose filesystem exception details or session paths in structured errors
+- no live backend Codex validation
+
+Validation:
+- a dangling session JSONL candidate simulates rotation during enumeration
+- a readable sibling still supplies quota evidence and reports the skipped count
+- an all-rotated fixture returns `session_scan_failed` without a traceback
+- complete unit suite and quick/full repository validation
+
+## Issue #655: Quota Snapshot Instant Ordering
+
+Status: complete; merged in PR #832
 
 Goal:
 - select the newest quota snapshot by chronological instant across ISO-8601

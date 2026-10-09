@@ -6423,6 +6423,9 @@ main() {
     log_line "WARN" "quota snapshot scan interrupted by operator before cycle start completed"
     finish_cycle 130 QUOTA_SCAN_INTERRUPTED WARN "phase=before_start"
   fi
+  if [[ -n "$before_error" ]]; then
+    die "Codex quota snapshot scan failed ($before_error); check $CODEX_HOME_DIR/sessions before retrying"
+  fi
 
   primary_used="$before_primary_used"
   primary_window="$before_primary_window"
@@ -6759,7 +6762,10 @@ main() {
     log_line "WARN" "quota snapshot scan interrupted by operator after codex exec"
     finish_cycle 130 QUOTA_SCAN_INTERRUPTED WARN "phase=after_run codex_exit=$codex_exit"
   fi
-  if [[ "$after_error" != "no_rate_limit_snapshot_found" ]]; then
+  if [[ "$after_error" == "session_scan_failed" ]]; then
+    log_line "WARN" "quota snapshot scan failed after codex exec; skipping post-run quota comparison"
+  fi
+  if [[ -z "$after_error" ]]; then
     after_primary="$after_primary_used"
     after_secondary="$after_secondary_used"
     after_primary_left="$(awk -v used="$after_primary" 'BEGIN { printf "%.1f", 100 - used }')"

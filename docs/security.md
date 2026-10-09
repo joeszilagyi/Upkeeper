@@ -629,3 +629,25 @@ UPKEEPER_DRY_RUN=1 ./Upkeeper.sh
 
 Move to a live backend loop only after the repo, config, sandbox mode, ignored
 files, and expected evidence paths are understood.
+
+## Remaining `eval` Boundaries
+
+Structured backend, quota, session, and review JSON never uses `eval`: fixed
+schemas extract fields over a NUL-delimited transport and assign only approved
+variable prefixes and names. The remaining production `eval` sites are narrow
+legacy shell-mechanics boundaries:
+
+- config expansion evaluates the already policy-validated operator-owned
+  config expression so documented environment-variable interpolation remains
+  compatible;
+- two root entrypoint overrides rename wrapper-owned function definitions, and
+  fallback orchestration restores one previously captured wrapper-owned
+  function definition;
+- Lattice closes a wrapper-created, numeric-validated dynamic descriptor; and
+- log rotation restores signal trap text previously returned by Bash's own
+  `trap -p` serialization.
+
+These sites must not accept backend/model JSON or unconstrained field names.
+Tests and architecture checks should keep further data-parsing uses from being
+introduced; the remaining function-override duplication is tracked separately
+as architecture debt.

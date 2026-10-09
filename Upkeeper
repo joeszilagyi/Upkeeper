@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.41
+## Version: v1.2.42
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.41"
+UPKEEPER_VERSION="v1.2.42"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -6209,7 +6209,7 @@ main() {
   local primary_projected_left secondary_projected_left
   local primary_guardrail_decision="defer" secondary_guardrail_decision="defer"
 
-  eval "$(quota_json_assignments "$quota_json" before)"
+  quota_json_parse "$quota_json" before || die "invalid quota snapshot JSON for before-run parsing"
   if [[ "$before_error" == "no_rate_limit_snapshot_found" ]]; then
     die "no Codex rate-limit snapshot found under $CODEX_HOME_DIR/sessions; run a normal Codex session first or check CODEX_HOME"
   fi
@@ -6557,7 +6557,7 @@ main() {
   local after_primary_left="" after_secondary_left=""
   local after_primary_guardrail_decision="defer" after_secondary_guardrail_decision="defer"
   after_quota_json="$(quota_state_json)"
-  eval "$(quota_json_assignments "$after_quota_json" after)"
+  quota_json_parse "$after_quota_json" after || die "invalid quota snapshot JSON for after-run parsing"
   if [[ "$after_error" == "interrupted" ]]; then
     log_line "WARN" "quota snapshot scan interrupted by operator after codex exec"
     finish_cycle 130 QUOTA_SCAN_INTERRUPTED WARN "phase=after_run codex_exit=$codex_exit"
@@ -6696,7 +6696,7 @@ main() {
   marker_accepted_marker=""
   marker_accepted_source=""
   status_marker_analysis="$(while_marker_analysis_json "$last_message_file")"
-  eval "$(status_marker_analysis_assignments "$status_marker_analysis" marker)"
+  status_marker_analysis_parse "$status_marker_analysis" marker || die "invalid status marker analysis JSON"
   status_marker_candidate="$marker_candidate_line"
   status_marker_candidate_marker="$marker_candidate_marker"
   status_marker_candidate_rejection_reason="$marker_candidate_rejection_reason"
@@ -6716,7 +6716,7 @@ main() {
     session_end_state="$(parse_session_end_state "$primary_session_diagnostics_source")"
   fi
   primary_session_diagnostics="$(session_diagnostics_json "$primary_session_diagnostics_source")"
-  eval "$(session_diagnostics_assignments "$primary_session_diagnostics" session)"
+  session_diagnostics_parse "$primary_session_diagnostics" session || die "invalid session diagnostics JSON"
   primary_session_agent_message_count="$session_agent_message_count"
   primary_session_tool_call_count="$session_tool_call_count"
   primary_session_tool_result_count="$session_tool_result_count"

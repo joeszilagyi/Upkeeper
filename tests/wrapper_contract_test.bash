@@ -10,6 +10,9 @@ fail() {
   exit 1
 }
 
+source "$ROOT_DIR/lib/upkeeper/runtime_format_json.bash"
+source "$ROOT_DIR/lib/upkeeper/codex_io.bash"
+
 run_codex_mode_case() {
   local mode="$1"
   local output rc
@@ -70,127 +73,94 @@ test_codex_mode_accepts_only_allowlisted_sandboxes() {
     fail "read-only sandbox value missing"
 }
 
-assignment_output_for() {
+assert_json_parser_rejects() {
   local function_name="$1"
   local json="$2"
   local prefix="$3"
+  local rc err_file
 
-  (
-    cd "$ROOT_DIR"
-    source lib/upkeeper/codex_io.bash
-    "$function_name" "$json" "$prefix"
-  )
-}
-
-assert_assignment_rejects() {
-  local function_name="$1"
-  local json="$2"
-  local prefix="$3"
-  local expected="$4"
-  local output rc err_file expected_command
-
-  err_file="$TEST_TMP_ROOT/${function_name}-assignment.err"
+  err_file="$TEST_TMP_ROOT/${function_name}-parser.err"
   set +e
-  output="$(assignment_output_for "$function_name" "$json" "$prefix" 2>"$err_file")"
+  "$function_name" "$json" "$prefix" 2>"$err_file"
   rc=$?
   set -e
 
-  [[ "$rc" -ne 0 ]] || fail "$function_name accepted invalid assignment input"
-  if [[ "$expected" == "invalid" ]]; then
-    [[ "$output" == die*invalid* ]] ||
-      fail "$function_name did not emit an invalid-JSON rejection command: $output"
-  else
-    printf -v expected_command 'die %q' "$expected"
-    [[ "$output" == "$expected_command" ]] ||
-      fail "$function_name did not emit expected rejection command: $output"
-  fi
+  [[ "$rc" -ne 0 ]] || fail "$function_name accepted invalid parser input"
 }
 
-assert_assignment_eval_preserves_value() {
-  local assignments="$1"
-  local variable_name="$2"
-  local expected_value="$3"
-  local sentinel="$4"
+assert_parsed_value() {
+  local variable_name="$1"
+  local expected_value="$2"
   local actual_value
 
-  (
-    set -euo pipefail
-    eval "$assignments"
-    [[ ! -e "$sentinel" ]] || exit 91
-    actual_value="${!variable_name}"
-    [[ "$actual_value" == "$expected_value" ]] || {
-      printf 'expected %s=%q, got %q\n' "$variable_name" "$expected_value" "$actual_value" >&2
-      exit 92
-    }
-  ) || fail "assignment evaluation failed for $variable_name"
+  actual_value="${!variable_name}"
+  [[ "$actual_value" == "$expected_value" ]] ||
+    fail "expected $variable_name=$(printf '%q' "$expected_value"), got $(printf '%q' "$actual_value")"
 }
 
-test_shell_assignment_helpers_quote_and_reject_bad_input() {
-  local sentinel malicious assignments json function_name output rc
-  local -a assignment_functions
-
-  assignment_functions=(
-    quota_json_assignments
-    status_marker_analysis_assignments
-    session_diagnostics_assignments
-    review_summary_assignments
-    review_pass_coverage_assignments
+test_typed_json_parsers_preserve_data_and_reject_bad_input() {
+  local sentinel malicious json index
+  local -a parser_functions=(
+    quota_json_parse
+    status_marker_analysis_parse
+    session_diagnostics_parse
+    review_summary_parse
+    review_pass_coverage_parse
+  )
+  local -a parser_prefixes=(
+    quota
+    marker
+    session
+    summary
+    coverage
   )
 
   sentinel="$TEST_TMP_ROOT/assignment-injection-ran"
-  malicious="space value; \$(touch '$sentinel') \"double\" 'single'"
+  malicious="space value; \$(touch '$sentinel') \"double\" 'single'"$'\ttab\\backslash\nline two'
 
-  for function_name in "${assignment_functions[@]}"; do
-    assert_assignment_rejects "$function_name" '{bad json' "bad-prefix" "invalid shell assignment prefix: bad-prefix"
-    assert_assignment_rejects "$function_name" '{bad json' "bad_prefix" "invalid"
+  for ((index = 0; index < ${#parser_functions[@]}; index++)); do
+    assert_json_parser_rejects "${parser_functions[index]}" '{}' 'bad;prefix'
+    assert_json_parser_rejects "${parser_functions[index]}" '{bad json' "${parser_prefixes[index]}"
   done
 
   json="$(printf '{"outcome":null,"selected_file":%s,"findings":["array","value"],"changes":{"k":"v"},"verification":"line one\\nline two"}' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$malicious")")"
-  assignments="$(assignment_output_for review_summary_assignments "$json" summary)"
-  assert_assignment_eval_preserves_value "$assignments" summary_outcome "" "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" summary_selected_file "$malicious" "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" summary_findings '["array","value"]' "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" summary_changes '{"k":"v"}' "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" summary_verification $'line one\nline two' "$sentinel"
+  review_summary_parse "$json" summary || fail "review summary parser rejected valid JSON"
+  assert_parsed_value summary_outcome ""
+  assert_parsed_value summary_selected_file "$malicious"
+  assert_parsed_value summary_findings '["array","value"]'
+  assert_parsed_value summary_changes '{"k":"v"}'
+  assert_parsed_value summary_verification $'line one\nline two'
 
   json="$(printf '{"candidate_line":%s,"candidate_marker":"WORK_DONE","candidate_rejection_reason":null,"accepted_marker":"BLOCKED","accepted_source":"typed_json"}' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$malicious")")"
-  assignments="$(assignment_output_for status_marker_analysis_assignments "$json" marker)"
-  assert_assignment_eval_preserves_value "$assignments" marker_candidate_line "$malicious" "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" marker_candidate_rejection_reason "" "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" marker_accepted_marker "BLOCKED" "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" marker_accepted_source "typed_json" "$sentinel"
+  status_marker_analysis_parse "$json" marker || fail "status parser rejected valid JSON"
+  assert_parsed_value marker_candidate_line "$malicious"
+  assert_parsed_value marker_candidate_rejection_reason ""
+  assert_parsed_value marker_accepted_marker "BLOCKED"
+  assert_parsed_value marker_accepted_source "typed_json"
 
   json="$(printf '{"agent_message_count":2,"tool_call_count":["not","scalar"],"tool_result_count":{"nested":1},"task_complete_last_agent_message":%s,"last_rate_limit_reached_type":null}' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$malicious")")"
-  assignments="$(assignment_output_for session_diagnostics_assignments "$json" session)"
-  assert_assignment_eval_preserves_value "$assignments" session_agent_message_count "2" "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" session_tool_call_count '["not","scalar"]' "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" session_tool_result_count '{"nested":1}' "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" session_task_complete_last_agent_message "$malicious" "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" session_last_rate_limit_reached_type "unknown" "$sentinel"
+  session_diagnostics_parse "$json" session || fail "session parser rejected valid JSON"
+  assert_parsed_value session_agent_message_count "2"
+  assert_parsed_value session_tool_call_count '["not","scalar"]'
+  assert_parsed_value session_tool_result_count '{"nested":1}'
+  assert_parsed_value session_task_complete_last_agent_message "$malicious"
+  assert_parsed_value session_last_rate_limit_reached_type "unknown"
 
   json="$(printf '{"status":"incomplete","expected":23,"present":3,"missing":%s}' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$malicious")")"
-  assignments="$(assignment_output_for review_pass_coverage_assignments "$json" coverage)"
-  assert_assignment_eval_preserves_value "$assignments" coverage_status "incomplete" "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" coverage_expected "23" "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" coverage_missing "$malicious" "$sentinel"
+  review_pass_coverage_parse "$json" coverage || fail "coverage parser rejected valid JSON"
+  assert_parsed_value coverage_status "incomplete"
+  assert_parsed_value coverage_expected "23"
+  assert_parsed_value coverage_missing "$malicious"
 
   json="$(printf '{"snapshot":{"event_timestamp":"2026-05-24T00:00:00Z","source_path":%s,"model_hint":"gpt-5.5","primary_used_percent":12.5,"limit_name":{"object":"value"}},"snapshot_selection":"latest","matching_snapshot_count":1,"projection":{"primary_delta":["array"],"basis":null}}' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$malicious")")"
-  assignments="$(assignment_output_for quota_json_assignments "$json" quota)"
-  assert_assignment_eval_preserves_value "$assignments" quota_source "$malicious" "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" quota_primary_used "12.5" "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" quota_limit_name '{"object":"value"}' "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" quota_projected_primary_delta '["array"]' "$sentinel"
-  assert_assignment_eval_preserves_value "$assignments" quota_projected_basis "unknown" "$sentinel"
+  quota_json_parse "$json" quota || fail "quota parser rejected valid JSON"
+  assert_parsed_value quota_source "$malicious"
+  assert_parsed_value quota_primary_used "12.5"
+  assert_parsed_value quota_limit_name '{"object":"value"}'
+  assert_parsed_value quota_projected_primary_delta '["array"]'
+  assert_parsed_value quota_projected_basis "unknown"
 
-  set +e
-  output="$(assignment_output_for review_summary_assignments "$json" "bad;prefix" 2>"$TEST_TMP_ROOT/bad-prefix.err")"
-  rc=$?
-  set -e
-  [[ "$rc" -ne 0 ]] || fail "bad shell assignment prefix was accepted"
-  printf -v malicious "die %q" "invalid shell assignment prefix: bad;prefix"
-  [[ "$output" == "$malicious" ]] ||
-    fail "bad shell assignment prefix did not produce clear rejection"
-  [[ ! -e "$sentinel" ]] || fail "assignment helper evaluation executed shell metacharacters"
+  [[ ! -e "$sentinel" ]] || fail "typed JSON parser executed shell metacharacters"
 }
 
 test_parent_stop_guard_refuses_unsafe_shells_and_pids() {
@@ -449,7 +419,7 @@ PY
 
 test_codex_mode_rejects_malformed_and_unsafe_modes
 test_codex_mode_accepts_only_allowlisted_sandboxes
-test_shell_assignment_helpers_quote_and_reject_bad_input
+test_typed_json_parsers_preserve_data_and_reject_bad_input
 test_parent_stop_guard_refuses_unsafe_shells_and_pids
 test_status_marker_rejects_decorated_or_ambiguous_candidates
 test_startup_anomaly_allowlist_reports_only_unallowed_redacted_paths

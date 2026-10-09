@@ -72,7 +72,37 @@ test_json_fields_nul_rejects_malformed_json() {
   trap - RETURN
 }
 
+test_json_fields_nul_into_array_preserves_status_and_boundaries() {
+  local json rc sentinel unsafe_name
+  local -a fields=()
+
+  json='{"text":"line one\nline two","nested":{"k":"v"}}'
+  json_fields_nul_into_array "$json" fields '.text' '.nested' ||
+    fail "json_fields_nul_into_array rejected valid JSON"
+  [[ "${#fields[@]}" -eq 2 ]] || fail "array parser returned the wrong field count"
+  [[ "${fields[0]}" == $'line one\nline two' ]] || fail "array parser lost embedded newline"
+  [[ "${fields[1]}" == '{"k":"v"}' ]] || fail "array parser lost structured value"
+
+  set +e
+  json_fields_nul_into_array '{bad json' fields '.text' >/dev/null 2>&1
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 ]] || fail "array parser hid malformed producer JSON"
+  [[ "${#fields[@]}" -eq 0 ]] || fail "array parser retained fields after malformed JSON"
+
+  sentinel="${TMPDIR:-/tmp}/upkeeper-json-fields-name-attack.$$"
+  rm -f -- "$sentinel"
+  unsafe_name="fields[\$(touch $sentinel)]"
+  set +e
+  json_fields_nul_into_array '{}' "$unsafe_name" '.text' >/dev/null 2>&1
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 ]] || fail "array parser accepted an unsafe output name"
+  [[ ! -e "$sentinel" ]] || fail "array parser evaluated an unsafe output name"
+}
+
 test_json_fields_nul_preserves_scalar_and_structured_values
 test_json_fields_nul_rejects_malformed_json
+test_json_fields_nul_into_array_preserves_status_and_boundaries
 
 printf 'json_fields_test: ok\n'

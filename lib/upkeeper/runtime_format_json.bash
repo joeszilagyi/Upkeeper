@@ -52,3 +52,29 @@ json_fields_nul() {
     return 1
   fi
 }
+
+json_fields_nul_into_array() {
+  local json="$1"
+  local output_name="$2"
+  shift 2
+  local expected_count="$#"
+  local completion_marker="upkeeper-json-fields-complete-v1"
+
+  [[ "$output_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+    printf 'Upkeeper: ERROR: invalid JSON field output array name: %s\n' "$output_name" >&2
+    return 1
+  }
+  local -n output_ref="$output_name"
+  output_ref=()
+  mapfile -d '' -t output_ref < <(
+    json_fields_nul "$json" "$@" && printf '%s\0' "$completion_marker"
+  )
+  if [[ "${#output_ref[@]}" -ne "$((expected_count + 1))" ||
+    "${output_ref[expected_count]:-}" != "$completion_marker" ]]; then
+    printf 'Upkeeper: ERROR: JSON field transport failed: expected %s field(s), got %s\n' \
+      "$expected_count" "${#output_ref[@]}" >&2
+    output_ref=()
+    return 1
+  fi
+  unset 'output_ref[expected_count]'
+}

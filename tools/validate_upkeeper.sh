@@ -5145,6 +5145,12 @@ check_wrapper_contract_tests() {
   log "checking focused wrapper contract tests"
   validation_run_test tests/wrapper_contract_test.bash
   validation_run_test tests/json_fields_test.bash
+  if rg -q '_(assignments)\(|eval "\$\((quota_json|status_marker_analysis|session_diagnostics|review_summary|review_pass_coverage)' \
+    Upkeeper lib/upkeeper tests/wrapper_contract_test.bash; then
+    fail "JSON-to-shell assignment source generation or eval consumer was reintroduced"
+  fi
+  grep -Fq '## Remaining `eval` Boundaries' docs/security.md ||
+    fail "security documentation does not account for remaining production eval boundaries"
 }
 
 prepare_validation_session_file() {

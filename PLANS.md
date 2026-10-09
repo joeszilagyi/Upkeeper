@@ -3,9 +3,30 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #689: Safe Fallback Token Descriptor Close
+## Issue #688: Typed JSON-to-Shell Parsing
 
 Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- replace JSON-generated shell assignments and their seven `eval` consumers
+- preserve structured/string values through the NUL-delimited JSON transport
+- restrict every destination prefix and field name to a fixed parser schema
+
+Verified defect:
+- five helpers used `jq @sh` to generate assignment source consumed by `eval`
+  in quota, status, session, review-summary, and pass-coverage paths
+- escaping was currently sound, but correctness depended on continuing to
+  generate executable shell text for data transport
+
+Validation:
+- quotes, newlines, tabs, backslashes, arrays, objects, and shell-looking text
+  round-trip as inert data without `eval`
+- malformed JSON and unapproved destination prefixes fail closed
+- production and tests contain no consumers of the removed assignment helpers
+
+## Issue #689: Safe Fallback Token Descriptor Close
+
+Status: complete; merged in PR #852
 
 Goal:
 - remove entrypoint `eval` from fallback-token descriptor cleanup

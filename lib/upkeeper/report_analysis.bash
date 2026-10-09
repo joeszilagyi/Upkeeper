@@ -492,7 +492,7 @@ prompt_pass_coverage_gate() {
   [[ "${CODEX_PROMPT_PASS:-}" == "all" ]] || return 1
 
   if pass_coverage_json="$(review_pass_coverage_json "$last_message_file")"; then
-    eval "$(review_pass_coverage_assignments "$pass_coverage_json" coverage)"
+    review_pass_coverage_parse "$pass_coverage_json" coverage || return 3
     pass_coverage_status="$coverage_status"
     pass_coverage_expected="$coverage_expected"
     pass_coverage_present="$coverage_present"
@@ -540,7 +540,7 @@ log_review_report_summary() {
   local coverage_status coverage_expected coverage_present coverage_missing
 
   summary_json="$(review_report_summary_json "$last_message_file")"
-  eval "$(review_summary_assignments "$summary_json" summary)"
+  review_summary_parse "$summary_json" summary || die "invalid review summary JSON"
   outcome="$summary_outcome"
   selected_file="$summary_selected_file"
   findings="$summary_findings"

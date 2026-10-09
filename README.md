@@ -26,6 +26,12 @@ affect GitHub, modify Lattice, record local policy decisions as structured data,
 and turn raw evidence into validated records before it can drive wrapper
 authority.
 
+The final-status airlock accepts either one undecorated final
+`UPKEEPER_STATUS: <outcome>` line or one strict final
+`UPKEEPER_STATUS_JSON` record using schema `upkeeper.final-status.v1` and a
+documented outcome. Decorated, quoted, fenced, duplicated, or prose-embedded
+markers—and natural-language review summaries—are diagnostic evidence only.
+
 The security contract in `docs/security.md` defines the explicit threat model,
 degraded-mode doctrine, and override doctrine for malicious or confused model
 output, wrapper bugs, config mistakes, filesystem weirdness, same-user access,

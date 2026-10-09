@@ -20,16 +20,13 @@ postmortem_incident_classification() {
 
 postmortem_fallback_child_status_marker_fields() {
   local fallback_marker_analysis="$1"
-  local accepted_marker candidate_marker candidate_rejection_reason
+  local accepted_marker accepted_source
 
   accepted_marker="$(json_field "$fallback_marker_analysis" '.accepted_marker')"
-  candidate_marker="$(json_field "$fallback_marker_analysis" '.candidate_marker')"
-  candidate_rejection_reason="$(json_field "$fallback_marker_analysis" '.candidate_rejection_reason')"
+  accepted_source="$(json_field "$fallback_marker_analysis" '.accepted_source')"
 
   if [[ -n "$accepted_marker" ]]; then
-    printf '%s exact' "$accepted_marker"
-  elif [[ -n "$candidate_marker" && "$candidate_rejection_reason" != "decorated_marker" ]]; then
-    printf '%s recovered_malformed_candidate' "$candidate_marker"
+    printf '%s %s' "$accepted_marker" "${accepted_source:-exact}"
   else
     printf 'missing missing'
   fi

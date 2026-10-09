@@ -4,12 +4,12 @@ marker_analysis_json() {
   local allowed_markers="${3:-}"
 
   if [[ -z "$marker_prefix" || -z "$allowed_markers" ]]; then
-    printf '{"accepted_marker":"","candidate_marker":"","candidate_line":"","candidate_rejection_reason":"invalid_marker_analysis_args"}'
+    printf '{"schema_version":"upkeeper.marker-analysis.v1","accepted_marker":"","accepted_source":"","status_record":null,"candidate_marker":"","candidate_line":"","candidate_rejection_reason":"invalid_marker_analysis_args"}'
     return 0
   fi
 
   if [[ ! -f "$last_message_file" ]]; then
-    printf '{"accepted_marker":"","candidate_marker":"","candidate_line":"","candidate_rejection_reason":""}'
+    printf '{"schema_version":"upkeeper.marker-analysis.v1","accepted_marker":"","accepted_source":"","status_record":null,"candidate_marker":"","candidate_line":"","candidate_rejection_reason":""}'
     return 0
   fi
 
@@ -22,11 +22,17 @@ prefix = sys.argv[2]
 allowed = [item for item in sys.argv[3].split() if item]
 cores = {f"{prefix}: {status}": status for status in allowed}
 result = {
+    "schema_version": "upkeeper.marker-analysis.v1",
     "accepted_marker": "",
+    "accepted_source": "",
+    "status_record": None,
     "candidate_marker": "",
     "candidate_line": "",
     "candidate_rejection_reason": "",
 }
+typed_prefix = f"{prefix}_JSON: "
+typed_schema = "upkeeper.final-status.v1"
+typed_enabled = prefix == "UPKEEPER_STATUS"
 
 
 def decorated_reason(line: str, core: str) -> str:
@@ -46,62 +52,94 @@ def decorated_reason(line: str, core: str) -> str:
     return ""
 
 
-non_fenced_lines = []
-final_line = ""
+visible_lines = []
+fenced_marker_lines = []
 in_code_fence = False
 with open(path, "r", encoding="utf-8", errors="replace") as handle:
     for raw_line in handle:
-        line = raw_line.rstrip("\r\n").strip()
-        if not line:
+        raw = raw_line.rstrip("\r\n")
+        stripped = raw.strip()
+        if not stripped:
             continue
-        if line.startswith("```"):
+        if stripped.startswith("```"):
             in_code_fence = not in_code_fence
             continue
         if in_code_fence:
+            if any(core in stripped for core in cores) or (typed_enabled and typed_prefix in stripped):
+                fenced_marker_lines.append(raw)
             continue
-        non_fenced_lines.append(line)
-        final_line = line
+        visible_lines.append(raw)
 
-if final_line:
-    for core, status in cores.items():
-        if final_line == core:
-            result["accepted_marker"] = status
-            break
+marker_hits = []
+for index, raw in enumerate(visible_lines):
+    stripped = raw.strip()
+    legacy_hits = [(core, status) for core, status in cores.items() if core in stripped]
+    typed_hit = typed_enabled and typed_prefix in stripped
+    if legacy_hits or typed_hit:
+        marker_hits.append((index, raw, stripped, legacy_hits, typed_hit))
 
-    if not result["accepted_marker"]:
-        candidates = []
-        for core, status in cores.items():
-            if core in final_line:
-                candidates.append((core, status))
-        if len(candidates) > 1:
-            result["candidate_marker"] = candidates[0][1]
-            result["candidate_line"] = final_line
-            result["candidate_rejection_reason"] = "multiple_markers"
-        elif len(candidates) == 1:
-            core, status = candidates[0]
-            reason = decorated_reason(final_line, core) or "decorated_marker"
-            result["candidate_marker"] = status
-            result["candidate_line"] = final_line
-            result["candidate_rejection_reason"] = reason
-
-if not result["accepted_marker"] and not result["candidate_marker"]:
-    marker_hits = []
-    for index, line in enumerate(non_fenced_lines):
-        hits = [(core, status) for core, status in cores.items() if core in line]
-        if hits:
-            marker_hits.append((index, line, hits))
-    if len(marker_hits) == 1:
-        index, line, hits = marker_hits[0]
-        core, status = hits[0]
-        if len(hits) == 1 and line == core and index < len(non_fenced_lines) - 1:
-            result["candidate_marker"] = status
-            result["candidate_line"] = line
-            result["candidate_rejection_reason"] = "trailing_content_after_marker"
-    elif len(marker_hits) > 1:
-        index, line, hits = marker_hits[-1]
-        result["candidate_marker"] = hits[0][1]
-        result["candidate_line"] = line
+if len(marker_hits) > 1:
+    _, raw, _, legacy_hits, _ = marker_hits[-1]
+    result["candidate_marker"] = legacy_hits[0][1] if legacy_hits else ""
+    result["candidate_line"] = raw
+    result["candidate_rejection_reason"] = "multiple_markers"
+elif len(marker_hits) == 1:
+    index, raw, stripped, legacy_hits, typed_hit = marker_hits[0]
+    result["candidate_line"] = raw
+    if len(legacy_hits) > 1 or (legacy_hits and typed_hit):
+        result["candidate_marker"] = legacy_hits[0][1] if legacy_hits else ""
         result["candidate_rejection_reason"] = "multiple_markers"
+    elif index != len(visible_lines) - 1:
+        result["candidate_marker"] = legacy_hits[0][1] if legacy_hits else ""
+        result["candidate_rejection_reason"] = "trailing_content_after_marker"
+    elif typed_hit:
+        if not raw.startswith(typed_prefix):
+            result["candidate_rejection_reason"] = "decorated_marker"
+        else:
+            try:
+                record = json.loads(raw[len(typed_prefix):])
+            except (TypeError, json.JSONDecodeError):
+                result["candidate_rejection_reason"] = "invalid_typed_status_json"
+            else:
+                valid = (
+                    isinstance(record, dict)
+                    and set(record) == {"schema_version", "outcome"}
+                    and record.get("schema_version") == typed_schema
+                    and isinstance(record.get("outcome"), str)
+                    and record.get("outcome") in allowed
+                )
+                if valid:
+                    result["accepted_marker"] = record["outcome"]
+                    result["accepted_source"] = "typed_json"
+                    result["status_record"] = record
+                    result["candidate_line"] = ""
+                else:
+                    if isinstance(record, dict) and isinstance(record.get("outcome"), str):
+                        result["candidate_marker"] = record["outcome"]
+                    result["candidate_rejection_reason"] = "invalid_typed_status_schema"
+    elif len(legacy_hits) == 1:
+        core, status = legacy_hits[0]
+        result["candidate_marker"] = status
+        if raw == core:
+            result["accepted_marker"] = status
+            result["accepted_source"] = "exact"
+            if typed_enabled:
+                result["status_record"] = {
+                    "schema_version": typed_schema,
+                    "outcome": status,
+                }
+            result["candidate_marker"] = ""
+            result["candidate_line"] = ""
+        else:
+            result["candidate_rejection_reason"] = decorated_reason(stripped, core) or "decorated_marker"
+elif fenced_marker_lines:
+    result["candidate_line"] = fenced_marker_lines[-1]
+    stripped = fenced_marker_lines[-1].strip()
+    for core, status in cores.items():
+        if core in stripped:
+            result["candidate_marker"] = status
+            break
+    result["candidate_rejection_reason"] = "markdown_code_fence"
 
 print(json.dumps(result, separators=(",", ":")))
 PY
@@ -183,7 +221,7 @@ def compact_items(items, max_items=8, max_len=900):
         item = item.strip()
         if not item:
             continue
-        if item.startswith("UPKEEPER_STATUS:") or item.startswith("CODEX_POSTMORTEM_STATUS:"):
+        if item.startswith(("UPKEEPER_STATUS:", "UPKEEPER_STATUS_JSON:", "CODEX_POSTMORTEM_STATUS:")):
             continue
         item = re.sub(r"^[-*]\s+", "", item)
         item = re.sub(r"^\d+[.)]\s+", "", item)
@@ -278,7 +316,7 @@ def capture_section(names):
             break
         if any(norm.startswith(header) for header in known_headers):
             break
-        if line.startswith(("UPKEEPER_STATUS:", "UPKEEPER_LOG_REVIEW:")):
+        if line.startswith(("UPKEEPER_STATUS:", "UPKEEPER_STATUS_JSON:", "UPKEEPER_LOG_REVIEW:")):
             break
         items.append(line)
         if len(items) >= 10:
@@ -373,7 +411,7 @@ if outcome == "REVIEWED_AND_FIXED" and not changes:
     for line in lines:
         lowered = line.lower()
         norm = normalized(line)
-        if line.startswith("UPKEEPER_STATUS:"):
+        if line.startswith(("UPKEEPER_STATUS:", "UPKEEPER_STATUS_JSON:")):
             continue
         if re.search(r"\b(REVIEWED_AND_FIXED|REVIEWED_AND_REPORTED|REVIEWED_CLEAN|STOPPED_ON_BLOCKER)\b", line):
             continue

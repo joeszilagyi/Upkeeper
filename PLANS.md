@@ -3,9 +3,32 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #673: Bound the Private-Packet Validation Contract
+## Issue #674: Strict Status Authority Airlock
 
 Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- accept status authority only from one exact final legacy marker or a strict
+  `upkeeper.final-status.v1` JSON record
+- keep decorated, duplicated, fenced, and prose-derived status diagnostic-only
+- apply the same boundary to primary and fallback/postmortem paths
+
+Verified defect:
+- the module parser classified malformed marker candidates, but entrypoint and
+  session overrides promoted several rejected forms back into runtime status
+- an entrypoint override selected the last decorated marker from duplicates
+- default review-summary and blocker-request recovery synthesized status from
+  natural-language text, bypassing the documented airlock
+
+Validation:
+- exact legacy and typed JSON fixtures pass through one normalized record
+- quotes, backticks, bullets, fences, punctuation, trailing prose, indentation,
+  duplicate markers, and invalid JSON schemas fail closed with a reason
+- fallback/postmortem classification cannot recover malformed candidates
+
+## Issue #673: Bound the Private-Packet Validation Contract
+
+Status: complete; merged in PR #848
 
 Goal:
 - give the private issue-packet contract a documented focused deadline

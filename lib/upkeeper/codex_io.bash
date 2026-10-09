@@ -917,7 +917,8 @@ status_marker_analysis_assignments() {
       assignment("candidate_line"; ["candidate_line"]; ""),
       assignment("candidate_marker"; ["candidate_marker"]; ""),
       assignment("candidate_rejection_reason"; ["candidate_rejection_reason"]; ""),
-      assignment("accepted_marker"; ["accepted_marker"]; "")
+      assignment("accepted_marker"; ["accepted_marker"]; ""),
+      assignment("accepted_source"; ["accepted_source"]; "")
     ] | .[]
   ' <<<"$json" || {
     emit_assignment_failure_command "invalid status marker analysis JSON for shell assignment prefix: $prefix"

@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--audit-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.37
+Version: v1.2.38
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -59,12 +59,11 @@ Loop stop semantics:
     UPKEEPER_STATUS: NO_BACKEND_TASK
   - while the worktree is dirty, a NO_BACKEND_TASK result is treated as a soft miss
     and the outer loop keeps running so Codex can try again on the next cycle
-  - if Codex exits cleanly with a final agent message and a parseable terminal
-    review outcome (`REVIEWED_AND_FIXED`, `REVIEWED_CLEAN`, or
-    `STOPPED_ON_BLOCKER`) but omits the literal `UPKEEPER_STATUS` line, the
-    wrapper recovers the equivalent machine status and logs
-    `status_marker.recovered_from_review_outcome`; exact status markers remain
-    the preferred contract
+  - status authority requires exactly one final raw `UPKEEPER_STATUS` line or
+    one final `UPKEEPER_STATUS_JSON` object with exactly
+    `{"schema_version":"upkeeper.final-status.v1","outcome":"WORK_DONE"}`
+    (using another documented outcome as needed); prose, Markdown decoration,
+    duplicates, review summaries, and blocker requests remain diagnostic-only
   - set CODEX_CONTINUE_ON_NO_BACKEND_TASK=1 to keep polling even after
     an empty cycle even when the worktree is clean
   - when the primary model stalls, fails, or exhausts its bucket, the wrapper can

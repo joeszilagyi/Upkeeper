@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-09: v1.2.38 changes:
+	1. Runtime status authority now requires one exact raw final legacy marker or one schema-valid `upkeeper.final-status.v1` JSON outcome record.
+	2. Quoted, backticked, bulleted, fenced, punctuated, indented, trailing-content, and duplicate markers remain structured rejection evidence and cannot drive primary or fallback/postmortem decisions.
+	3. Natural-language review outcomes and blocker requests are diagnostic-only instead of synthesizing machine status, and redundant entrypoint recovery overrides were removed.
+
 2026-10-09: bounded private issue-packet validation:
 	1. The focused private issue-packet contract now has a dedicated 90-second validator deadline instead of relying on the broader ordinary-check budget.
 	2. Its quota, backup, postmortem, automation-ledger, obligation, and state roots are isolated under the contract fixture before prompt tests run.

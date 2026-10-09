@@ -476,7 +476,10 @@ Important:
   - Quota detection uses Codex's machine-readable session JSONL snapshots rather than
     scraping the interactive /status TUI output. The snapshot reader uses a
     tail-first scan of recent session JSONL files, with full-file fallback only
-    when the tail does not contain enough quota/model metadata.
+    when the tail does not contain enough quota/model metadata. Snapshot
+    timestamps are normalized to chronological instants before newest-event
+    selection, so mixed ISO-8601 offsets compare correctly; an unparseable
+    timestamp falls back deterministically to the session file mtime.
   - Exact-model Spark quota snapshots may still report the generic Codex
     limiter identity; once snapshot selection proves the target model, that is
     treated as usable quota metadata instead of a conflict.

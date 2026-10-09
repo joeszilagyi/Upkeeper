@@ -111,8 +111,9 @@ validation to check. The minimum local proof is one of:
 
 - `tools/check_public_docs.sh --quick` for public documentation links, help,
   and required wording.
-- `tools/docs_only_fast_path.sh --validate` for README/docs/prompt-only changes
-  that should stay on the no-backend, no-GitHub local validation path.
+- `tools/docs_only_fast_path.sh --validate` for the explicit editorial-docs
+  allowlist only; prompts and operational documentation require full CI
+  validation.
 - `tools/validate_upkeeper.sh --smoke` for fast schema/help/prompt drift.
 - `tools/validate_upkeeper.sh --quick` for fixture-backed parser, marker,
   issue-workflow, Lattice, and authority contracts.
@@ -276,7 +277,7 @@ Future changes should preserve this operator-visible surface as far as possible:
   write local timeout evidence under the selected backlog state root.
 - Backlog records validation authority for the current branch head after a
   successful local commit/push. `local-green-async-ci` authority is limited to
-  low-risk docs/Markdown-only commits by default and skips only the
+  the explicit editorial-docs allowlist by default and skips only the
   between-issues PR-check wait; batch merge still runs local batch validation
   and blocks on current PR checks before integration.
 - Local batch validation can run independent read-only gates through

@@ -26,12 +26,12 @@ tools/validate_upkeeper.sh --full
 
 `--deps` reports command availability. `--source-contracts` runs the cheapest
 source-only contracts used by backlog per-bug commit gates, including log-line
-source length. `tools/docs_only_fast_path.sh --validate` is the local
-README/docs/prompt-only path; it classifies changed paths without `gh`, `curl`,
-`wget`, `git fetch`, or backend Codex, rejects mixed source changes, and then
-runs the public-docs, smoke, and diff checks. Its classifier also reports
-broader low-risk shell/config/test/tool changes so CI can keep those edits on
-the shared local gates without paying for the full validator. `--smoke` runs
+source length. `tools/docs_only_fast_path.sh --validate` is the local explicit
+editorial-docs path; it classifies changed paths without `gh`, `curl`, `wget`,
+`git fetch`, or backend Codex, rejects mixed source changes, and then runs the
+public-docs, smoke, and diff checks. Prompts, configuration, tests, tools,
+workflows, operational docs, and unknown paths require full CI validation.
+`--smoke` runs
 the fast local edit-loop checks without backend work. `--quick` adds bounded
 static/fixture checks while staying out of wrapper dry-run integration paths.
 `--full` runs the release guardrails with
@@ -45,9 +45,8 @@ pull requests and on pushes to `main`. That workflow starts on
 `ubuntu-latest`, runs `tools/setup_ci_dependencies.sh` to probe the runner for
 expected stock commands, fails clearly if runner-provided tools disappear, and
 installs only missing nonstandard tools such as `age`. The helper also prints
-dependency-setup timing so CI latency stays visible. For low-risk shell/
-config/test/tool changes the workflow keeps the shared local gate and skips the
-full validator. For broader changes the workflow then runs:
+dependency-setup timing so CI latency stays visible. Outside the explicit
+editorial-docs allowlist, the workflow runs full validation:
 
 ```sh
 bash -n Upkeeper Upkeeper.conf configurations/default.conf lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh

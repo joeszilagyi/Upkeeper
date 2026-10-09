@@ -7272,7 +7272,7 @@ Result:
 
 ## Committed Diff Whitespace Validation
 
-Status: implemented locally; PR pending
+Status: completed; merged in PR #865
 
 Goal:
 - close issue #864 by making the normal CI whitespace phase inspect the
@@ -7300,3 +7300,36 @@ Validation:
 - `tools/run_tests.sh`
 - `git diff --check`
 - `tools/validate_upkeeper.sh --quick`
+
+## Conservative CI Change Classification
+
+Status: implemented locally; PR pending
+
+Goal:
+- close issue #866 by ensuring only an explicit, editorial docs allowlist can
+  take the reduced CI gate
+- make every operational/configuration/test/prompt/policy/unknown path take
+  full deterministic validation
+- expose and test the validation gate selected from the classifier result
+
+Constraints:
+- retain a cheap no-network docs-only path for narrowly descriptive material
+- do not treat filename extensions, all docs, tests, or all shell/config files
+  as evidence of low operational risk
+- preserve CI concurrency and no-real-backend validation behavior
+
+Files likely touched:
+- `lib/upkeeper/change_scope.bash`
+- `tools/docs_only_fast_path.sh`
+- `.github/workflows/ci.yml`
+- `tools/validate_upkeeper.sh`
+- public docs describing the CI validation lanes
+
+Validation:
+- deterministic classifier/gate and backlog-authority cases for editorial and
+  operational paths, including the no-library fallback classifier
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/run_tests.sh`
+- `tools/check_public_docs.sh --quick`
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`

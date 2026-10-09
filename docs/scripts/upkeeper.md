@@ -194,10 +194,11 @@ Important:
     that PR's checks before selecting another issue. Passing checks allow the
     next issue, pending checks keep the local owner lease alive, and failed
     checks stop the launcher before more work stacks on a red branch. For
-    low-risk docs/Markdown/config/test/tool commits, backlog records
+    explicit editorial-docs allowlist commits, backlog records
     `local-green-async-ci` validation authority after local validation and lets
-    the next issue start while CI continues asynchronously; source and
-    control-plane changes keep the blocking PR-check gate. While checks are
+    the next issue start while CI continues asynchronously; configuration,
+    tests, tools, prompts, operational documentation, source, and unknown
+    paths keep the blocking PR-check gate. While checks are
     pending, the wait line includes local `gh`/`jq` progress details such as
     pass/pending/fail counts, the active check name, state, elapsed check time,
     Actions step when available, and the check URL. PR-check waits are bounded
@@ -1247,13 +1248,12 @@ orphan payloads are not valid restore ids.
   `./orchestration/watch-pr.sh [PR_NUMBER]`. It prints timestamped
   pass/pending/fail counts, per-check names, conclusions, and URLs when present;
   `--once` exits immediately and `--interval SECONDS` controls polling.
-  README/docs/prompt-only edits can use
+  Only the explicit editorial-docs allowlist can use
   `tools/docs_only_fast_path.sh --validate`; it classifies changed paths
   locally, rejects mixed source changes, and runs only public-docs, smoke, and
   diff whitespace checks without backend Codex, GitHub CLI, PR polling, or
-  network fetches. Its classifier also marks broader low-risk shell/config/
-  test/tool edits so CI can keep those changes on the shared local gates
-  without paying for the full validator.
+  network fetches. Prompts, configuration, tests, tools, workflows, operational
+  documentation, and unknown paths require full CI validation.
   Smoke mode covers fast syntax, help, docs, parser, and launcher contracts;
   heavier config, manifest, Lattice, and review-module dry-run fixtures stay in
   full mode. Validation runs always write per-check JSONL timing evidence under
@@ -1289,9 +1289,8 @@ orphan payloads are not valid restore ids.
   install only missing nonstandard tools such as `age`, classifies the change
   scope, and then runs either the docs-only fast path
   (`tools/docs_only_fast_path.sh --validate`), the broader parallel local gate
-  (`tools/run_validation_phases.sh`) for low-risk shell/config/test/tool
-  changes, or the broader parallel local gate followed by full validation for
-  higher-risk changes.
+  (`tools/run_validation_phases.sh`) followed by full validation for every
+  non-editorial change.
   `tools/run_tests.sh` is the unit-test entrypoint for local and CI use. It
   keeps serial mode available with `--serial`, but the default path runs
   independent tests with bounded fan-out and prints per-test timings.

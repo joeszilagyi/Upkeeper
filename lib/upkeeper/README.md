@@ -64,7 +64,7 @@ unless there is no clearer owner and the new file has one named responsibility.
   and `process_control.bash`
 - Selection manifests, worktree state, and startup anomaly path rules:
   `file_manifest.bash` and `worktree_state.bash`
-- Shared docs-only and low-risk change-scope classifiers:
+- Shared conservative editorial-docs change-scope classifier:
   `change_scope.bash`
 - Validation harness helpers: `tools/validate_upkeeper.sh`
 - Public documentation drift checks: `tools/check_public_docs.sh`

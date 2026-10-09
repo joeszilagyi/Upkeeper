@@ -1,5 +1,9 @@
 # 2026 Change Notes
 
+2026-10-09: conservative CI change classification:
+	1. The reduced CI path is now restricted to an explicit editorial allowlist: README, dated change notes, and the roadmap, PRD, and known-issues pages.
+	2. Prompts, operational documentation, configuration, tests, tools, workflows, policy files, and unknown paths now receive the full deterministic CI gate; CI logs the selected gate explicitly.
+
 2026-10-09: authoritative issue-repair target selection:
 	1. The backlog launcher no longer converts broad issue keywords into a `--target-file` pin; the wrapper's concrete issue-path parser now selects the repair target.
 	2. A real explicit target that differs from the issue inference remains an intentional override, but logs the conflict reason and both targets before backend work.

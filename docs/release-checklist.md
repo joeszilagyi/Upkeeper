@@ -55,10 +55,9 @@ git diff --check
   local deterministic repro fixture, cloud audit repro, or explicit non-repro
   rationale named in their issue or PR.
 
-Docs-only releases may use the cheaper docs path when no runtime, tool, config,
-prompt, test, or launcher behavior changed. Low-risk shell/config/test/tool
-changes still stay on the shared local gate and skip the full validator once
-the classifier marks them low-risk:
+Only explicit editorial-docs releases may use the cheaper docs path when no
+runtime, tool, config, prompt, test, launcher, authority, or policy behavior
+changed. All other changes run full validation:
 
 ```sh
 tools/docs_only_fast_path.sh --validate

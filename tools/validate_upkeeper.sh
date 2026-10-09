@@ -3057,6 +3057,8 @@ check_backlog_triage_contract() {
   [[ -s tests/backlog_triage_test.bash ]] || fail "backlog triage tests are missing or empty"
   grep -Fq "safe_to_restart" tools/backlog_triage.py || fail "backlog triage does not emit safe_to_restart"
   grep -Fq "unknown_log_error" tools/backlog_triage.py || fail "backlog triage does not fail closed on unknown log errors"
+  grep -Fq "stale_backlog_owner_pid_reused" tools/backlog_triage.py || fail "backlog triage does not identify recycled owner PIDs"
+  grep -Fq "process_start_ticks" tools/backlog_triage.py || fail "backlog triage does not fingerprint owner process starts"
   grep -Fq "backlog-triage-" tools/backlog_triage.py || fail "backlog triage does not leave visible obligation evidence"
   grep -Fq "tools/backlog_triage.py" docs/scripts/upkeeper.md || fail "operator guide missing backlog triage command"
   grep -Fq "safe_to_restart=yes|no|wait" docs/compatibility.md || fail "compatibility docs missing backlog triage output contract"

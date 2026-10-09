@@ -3,9 +3,32 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #657: Repository-Scoped Parallel Worker Leases
+## Issue #658: Backlog Owner PID-Reuse Detection
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- distinguish the recorded backlog owner from an unrelated process that reused
+  its PID
+- report dead and recycled owner records explicitly while allowing safe restart
+- retain conservative compatibility for owner records created before process
+  start ticks were recorded
+
+Constraints:
+- parse `/proc/<pid>/stat` without assuming the process name contains no spaces
+- treat unreadable or malformed fingerprints as live when the PID still exists
+- preserve all later lock, dirty-worktree, obligation, and CI safety gates
+- no live backend Codex validation
+
+Validation:
+- matching PID/start ticks waits for the live owner
+- a current PID with different start ticks is reported as recycled and stale
+- a dead PID is reported as stale, and a legacy record keeps PID-only behavior
+- focused triage test, complete unit suite, and quick/full repository validation
+
+## Issue #657: Repository-Scoped Parallel Worker Leases
+
+Status: complete; merged in PR #834
 
 Goal:
 - scope lease renewal, issue conflicts, target conflicts, and release to one

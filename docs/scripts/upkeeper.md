@@ -1181,7 +1181,11 @@ orphan payloads are not valid restore ids.
   Stopped-loop restart triage is available without backend work with
   `tools/backlog_triage.py`. It reads local loop evidence, branch state,
   obligations, locks, and optional PR metadata, then emits
-  `safe_to_restart=yes|no|wait`, a reason, and a next action.
+  `safe_to_restart=yes|no|wait`, a reason, and a next action. Current owner
+  records are matched by both PID and Linux process start ticks, so a recycled
+  PID is reported as `stale_backlog_owner_pid_reused` instead of waiting on an
+  unrelated process. Legacy owner records without start ticks retain the
+  conservative PID-only wait behavior.
   PR check watching is available without backend work with
   `./orchestration/watch-pr.sh [PR_NUMBER]`. It prints timestamped
   pass/pending/fail counts, per-check names, conclusions, and URLs when present;

@@ -57,6 +57,17 @@ assert_triage() {
     fail "expected reason=$expected_reason, got: $TRIAGE_OUT"
 }
 
+process_start_ticks() {
+  python3 - "$1" <<'PY'
+import pathlib
+import sys
+
+stat = pathlib.Path("/proc", sys.argv[1], "stat").read_text(encoding="utf-8")
+fields = stat[stat.rfind(")") + 1:].split()
+print(fields[19])
+PY
+}
+
 test_clean_noop_is_safe() {
   local repo="$TEST_TMP_ROOT/clean" state_root="$TEST_TMP_ROOT/clean-state" log_file="$TEST_TMP_ROOT/clean.log"
   make_repo "$repo"
@@ -78,14 +89,15 @@ test_dirty_worktree_blocks_restart() {
   assert_triage no dirty_worktree
 }
 
-test_active_owner_waits() {
-  local repo="$TEST_TMP_ROOT/owner" state_root="$TEST_TMP_ROOT/owner-state" log_file="$TEST_TMP_ROOT/owner.log"
+test_matching_owner_waits() {
+  local repo="$TEST_TMP_ROOT/matching-owner" state_root="$TEST_TMP_ROOT/matching-owner-state" log_file="$TEST_TMP_ROOT/matching-owner.log"
   local owner_file
   make_repo "$repo"
   mkdir -p "$state_root"
   owner_file="$state_root/active-owner.$(repo_key "$repo").tsv"
   {
     printf 'pid\t%s\n' "$$"
+    printf 'start_ticks\t%s\n' "$(process_start_ticks "$$")"
     printf 'state\trunning\n'
     printf 'detail\tfixture\n'
   } >"$owner_file"
@@ -93,6 +105,60 @@ test_active_owner_waits() {
   run_triage "$repo" "$state_root" "$log_file" --no-write-obligation
   [[ "$TRIAGE_RC" -eq 0 ]] || fail "active owner triage exited $TRIAGE_RC"
   assert_triage wait active_backlog_owner
+  grep -Fq 'owner_status=live' <<<"$TRIAGE_OUT" || fail "matching owner was not identified as live"
+}
+
+test_recycled_pid_owner_is_stale() {
+  local repo="$TEST_TMP_ROOT/recycled-owner" state_root="$TEST_TMP_ROOT/recycled-owner-state" log_file="$TEST_TMP_ROOT/recycled-owner.log"
+  local owner_file
+  make_repo "$repo"
+  mkdir -p "$state_root"
+  owner_file="$state_root/active-owner.$(repo_key "$repo").tsv"
+  {
+    printf 'pid\t%s\n' "$$"
+    printf 'start_ticks\t0\n'
+    printf 'state\trunning\n'
+  } >"$owner_file"
+  : >"$log_file"
+  run_triage "$repo" "$state_root" "$log_file" --no-write-obligation
+  [[ "$TRIAGE_RC" -eq 0 ]] || fail "recycled owner triage exited $TRIAGE_RC"
+  assert_triage yes stale_backlog_owner_pid_reused
+  grep -Fq 'owner_status=pid_reused' <<<"$TRIAGE_OUT" || fail "recycled owner status was not explicit"
+}
+
+test_dead_owner_is_stale() {
+  local repo="$TEST_TMP_ROOT/dead-owner" state_root="$TEST_TMP_ROOT/dead-owner-state" log_file="$TEST_TMP_ROOT/dead-owner.log"
+  local owner_file
+  make_repo "$repo"
+  mkdir -p "$state_root"
+  owner_file="$state_root/active-owner.$(repo_key "$repo").tsv"
+  {
+    printf 'pid\t999999999\n'
+    printf 'start_ticks\t1\n'
+    printf 'state\trunning\n'
+  } >"$owner_file"
+  : >"$log_file"
+  run_triage "$repo" "$state_root" "$log_file" --no-write-obligation
+  [[ "$TRIAGE_RC" -eq 0 ]] || fail "dead owner triage exited $TRIAGE_RC"
+  assert_triage yes stale_backlog_owner_dead
+  grep -Fq 'owner_status=dead' <<<"$TRIAGE_OUT" || fail "dead owner status was not explicit"
+}
+
+test_old_format_owner_keeps_pid_only_compatibility() {
+  local repo="$TEST_TMP_ROOT/old-owner" state_root="$TEST_TMP_ROOT/old-owner-state" log_file="$TEST_TMP_ROOT/old-owner.log"
+  local owner_file
+  make_repo "$repo"
+  mkdir -p "$state_root"
+  owner_file="$state_root/active-owner.$(repo_key "$repo").tsv"
+  {
+    printf 'pid\t%s\n' "$$"
+    printf 'state\trunning\n'
+  } >"$owner_file"
+  : >"$log_file"
+  run_triage "$repo" "$state_root" "$log_file" --no-write-obligation
+  [[ "$TRIAGE_RC" -eq 0 ]] || fail "old owner triage exited $TRIAGE_RC"
+  assert_triage wait active_backlog_owner
+  grep -Fq 'owner_status=legacy_live' <<<"$TRIAGE_OUT" || fail "old owner did not use compatibility behavior"
 }
 
 test_active_lock_blocks_restart() {
@@ -169,7 +235,10 @@ test_unknown_page_error_opens_obligation() {
 
 test_clean_noop_is_safe
 test_dirty_worktree_blocks_restart
-test_active_owner_waits
+test_matching_owner_waits
+test_recycled_pid_owner_is_stale
+test_dead_owner_is_stale
+test_old_format_owner_keeps_pid_only_compatibility
 test_active_lock_blocks_restart
 test_open_obligation_blocks_restart
 test_quota_hibernation_waits

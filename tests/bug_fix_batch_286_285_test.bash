@@ -140,12 +140,23 @@ test_fallback_chain_token_is_hashed_and_required_for_inheritance() {
   [[ "$CHILD_OUT" == *"active_lock_inherited=0"* ]] || fail "empty token fd disrupted inherited token"
   [[ "$CHILD_OUT" == *"token_fd_status=open"* ]] || fail "empty token fd closed an unrelated descriptor"
 
+  run_fallback_child "$CODEX_FALLBACK_CHAIN_TOKEN" env "not-a-descriptor"
+  [[ "$CHILD_RC" -eq 0 ]] || fail "fallback child with nonnumeric fd exited $CHILD_RC"
+  [[ "$CHILD_OUT" == *"active_lock_inherited=0"* ]] || fail "nonnumeric token fd disrupted inherited token"
+  [[ "$CHILD_OUT" == *"token_fd_status=open"* ]] || fail "nonnumeric token fd closed an unrelated descriptor"
+
   rm -f -- "$TEST_TMP_ROOT/fallback-fd-attack"
   run_fallback_child "$CODEX_FALLBACK_CHAIN_TOKEN" env '9<&-; printf exploited >"$FALLBACK_FD_ATTACK_PATH"; #'
   [[ "$CHILD_RC" -eq 0 ]] || fail "fallback child with shell-looking fd exited $CHILD_RC"
   [[ "$CHILD_OUT" == *"active_lock_inherited=0"* ]] || fail "shell-looking token fd disrupted inherited token"
   [[ "$CHILD_OUT" == *"token_fd_status=open"* ]] || fail "shell-looking token fd was interpreted"
   [[ ! -e "$TEST_TMP_ROOT/fallback-fd-attack" ]] || fail "shell-looking token fd was evaluated"
+
+  [[ "$(grep -Fc 'upkeeper_close_inherited_read_fd "$token_fd" || true' "$PROJECT_ROOT/Upkeeper")" -eq 2 ]] ||
+    fail "root fallback-token cleanup paths do not share the validated fd-close helper"
+  if grep -Fq 'eval "exec ${token_fd}<&-"' "$PROJECT_ROOT/Upkeeper"; then
+    fail "root fallback-token cleanup still evaluates the environment-derived descriptor"
+  fi
 }
 
 test_selected_target_validation_runs_when_precontact_backup_off() {

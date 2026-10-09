@@ -3,9 +3,29 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #672: Preserve Prompt-Pass Coverage Failures
+## Issue #673: Bound the Private-Packet Validation Contract
 
 Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- give the private issue-packet contract a documented focused deadline
+- isolate its quota, backup, postmortem, ledger, and obligation fixture state
+- prove timeout cleanup reaches a nested child and grandchild
+
+Verified current state:
+- issue #671 already gave every ordinary validator check a 240-second bound,
+  structured timing evidence, and recursive TERM/KILL cleanup
+- this contract still lacks its requested tighter budget and explicit minimal
+  environment, while the process-tree test covers only one spawned level
+
+Validation:
+- run the private-packet contract through a dedicated 90-second bounded check
+- assert the focused fixture sees only validator-owned state roots
+- simulate a hanging child/grandchild tree and prove both are terminated
+
+## Issue #672: Preserve Prompt-Pass Coverage Failures
+
+Status: complete; merged in PR #847
 
 Goal:
 - preserve the original coverage-gate return status in the production path

@@ -21,7 +21,8 @@ fixture_fail() {
 }
 
 fixture_timeout() {
-  sleep 30 &
+  bash -c 'sleep 30 & printf "%s\n" "$!" >"$1"; wait' bash \
+    "$TEST_ROOT/timeout-grandchild.pid" &
   printf '%s\n' "$!" >"$TEST_ROOT/timeout-child.pid"
   wait
 }
@@ -38,14 +39,20 @@ set -e
 [[ "$rc" -eq 23 ]] || fail_test "failure fixture exited $rc, expected 23"
 
 set +e
-validation_run_check timeout_fixture 1 fixture_timeout
+validation_run_check timeout_fixture 1 fixture_timeout 2>"$TEST_ROOT/timeout.err"
 rc=$?
 set -e
 [[ "$rc" -eq 124 ]] || fail_test "timeout fixture exited $rc, expected 124"
 timeout_child="$(<"$TEST_ROOT/timeout-child.pid")"
+timeout_grandchild="$(<"$TEST_ROOT/timeout-grandchild.pid")"
 if kill -0 "$timeout_child" 2>/dev/null; then
-  fail_test "timeout fixture left descendant $timeout_child running"
+  fail_test "timeout fixture left child $timeout_child running"
 fi
+if kill -0 "$timeout_grandchild" 2>/dev/null; then
+  fail_test "timeout fixture left grandchild $timeout_grandchild running"
+fi
+grep -Fq 'check timeout_fixture exceeded 1s timeout; command=fixture_timeout cleanup=process_tree_term_kill artifact=' \
+  "$TEST_ROOT/timeout.err" || fail_test "timeout diagnostic did not name the check and cleanup"
 
 validation_timing_record_skip full_only_checks mode_quick tools/validate_upkeeper.sh --full
 validation_timing_finish 0

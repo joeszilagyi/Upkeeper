@@ -1258,7 +1258,12 @@ orphan payloads are not valid restore ids.
   its exact command before launch. Direct and in-process Lattice selection
   probes add a command-level deadline; timeout writes private structured JSONL
   custody under ignored `runtime/validation-timeouts/` with phase, command,
-  timeout, and cleanup evidence. Full validation may reuse same-checkout
+  timeout, and cleanup evidence. The issue-fix private-packet contract uses a
+  dedicated 90-second bound via
+  `VALIDATION_ISSUE_FIX_PRIVATE_PACKET_TIMEOUT_SECONDS` and isolated quota,
+  backup, postmortem, automation-ledger, and obligation fixture roots.
+  Validator timeout diagnostics name the check, exact command, cleanup policy,
+  and timing artifact. Full validation may reuse same-checkout
   `tools/run_tests.sh` evidence supplied by
   `UPKEEPER_TEST_ATTESTATION_FILE`, but only after matching Git head/tree, a
   clean tracked tree, environment class, and every recorded test hash. Missing

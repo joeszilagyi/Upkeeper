@@ -210,8 +210,8 @@ validation_run_check() {
       "$timeout_seconds" "$cleanup"
   fi
   if [[ "$status" == "timeout" ]]; then
-    printf 'validate_upkeeper: ERROR: check %s exceeded %ss timeout; cleanup=%s\n' \
-      "$name" "$timeout_seconds" "$cleanup" >&2
+    printf 'validate_upkeeper: ERROR: check %s exceeded %ss timeout; command=%s cleanup=%s artifact=%s\n' \
+      "$name" "$timeout_seconds" "$command_text" "$cleanup" "$VALIDATION_TIMING_FILE" >&2
   fi
   return "$rc"
 }

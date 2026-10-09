@@ -3,9 +3,33 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #659: Safe Active-Lock Fallback Token FD Close
+## Issue #660: Bounded Recent-Log Reads
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- keep stopped-loop triage memory independent of total loop-log size
+- keep quota delta projection work independent of total `Upkeeper.log` size
+- preserve the newest relevant event and existing missing/unreadable fallback
+  behavior
+
+Constraints:
+- cap both reads by bytes, not only by output line count
+- discard a potentially partial first line when a read begins mid-file
+- retain triage's `--lines` cap after the byte-tail read
+- retain quota's deterministic default when no usable recent summary exists
+- no live backend Codex validation
+
+Validation:
+- a multi-megabyte triage log still finds the latest pending-check marker
+- a multi-megabyte quota log still selects the latest valid model summary and
+  its exact primary/secondary deltas
+- static contracts require both byte-cap constants
+- focused regression, complete unit suite, and quick/full validation
+
+## Issue #659: Safe Active-Lock Fallback Token FD Close
+
+Status: complete; merged in PR #836
 
 Goal:
 - remove shell evaluation from the active-lock fallback token descriptor close

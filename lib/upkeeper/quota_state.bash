@@ -99,6 +99,7 @@ summary_re = re.compile(
 
 TAIL_SCAN_BYTES = 512 * 1024
 HEAD_SCAN_BYTES = 128 * 1024
+LOG_TAIL_SCAN_BYTES = 1024 * 1024
 
 
 def snapshot_from_token_count(item, path: Path, source_mtime: float, model_hint):
@@ -353,42 +354,49 @@ def last_positive_delta_from_log(path: Path, model: str):
     # Recent successful cycles tell us what "one more run" usually costs for
     # this model. Failed or missing-marker cycles are deliberately ignored so an
     # incident does not poison the next projection.
-    if not path.exists():
-        return None, None
     cycle_models = {}
     primary = None
     secondary = None
     try:
-        with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            for raw_line in handle:
-                cycle_match = cycle_re.search(raw_line)
-                cycle_id = cycle_match.group(1) if cycle_match else None
-                start_model_match = start_model_re.search(raw_line)
-                if cycle_id and start_model_match:
-                    cycle_models[cycle_id] = start_model_match.group(1)
-                match = summary_re.search(raw_line)
-                if not match:
-                    continue
-                summary_model_match = summary_model_re.search(raw_line)
-                summary_model = None
-                if summary_model_match:
-                    summary_model = summary_model_match.group(1)
-                elif cycle_id:
-                    summary_model = cycle_models.get(cycle_id)
-                if model and summary_model and summary_model != model:
-                    continue
-                status_marker = match.group(3)
-                codex_exit = int(match.group(4))
-                if codex_exit != 0 or status_marker == "missing":
-                    continue
-                primary_delta = float(match.group(1))
-                secondary_delta = float(match.group(2))
-                if primary_delta <= 0.0 and secondary_delta <= 0.0:
-                    continue
-                primary = primary_delta
-                secondary = secondary_delta
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            start = max(0, size - LOG_TAIL_SCAN_BYTES)
+            handle.seek(start)
+            data = handle.read(LOG_TAIL_SCAN_BYTES)
     except OSError:
         return None, None
+    text = data.decode("utf-8", errors="ignore")
+    lines = text.splitlines()
+    if start > 0 and lines:
+        lines = lines[1:]
+    for raw_line in lines:
+        cycle_match = cycle_re.search(raw_line)
+        cycle_id = cycle_match.group(1) if cycle_match else None
+        start_model_match = start_model_re.search(raw_line)
+        if cycle_id and start_model_match:
+            cycle_models[cycle_id] = start_model_match.group(1)
+        match = summary_re.search(raw_line)
+        if not match:
+            continue
+        summary_model_match = summary_model_re.search(raw_line)
+        summary_model = None
+        if summary_model_match:
+            summary_model = summary_model_match.group(1)
+        elif cycle_id:
+            summary_model = cycle_models.get(cycle_id)
+        if model and summary_model and summary_model != model:
+            continue
+        status_marker = match.group(3)
+        codex_exit = int(match.group(4))
+        if codex_exit != 0 or status_marker == "missing":
+            continue
+        primary_delta = float(match.group(1))
+        secondary_delta = float(match.group(2))
+        if primary_delta <= 0.0 and secondary_delta <= 0.0:
+            continue
+        primary = primary_delta
+        secondary = secondary_delta
     return primary, secondary
 
 

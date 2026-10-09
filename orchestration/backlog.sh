@@ -2850,7 +2850,9 @@ backlog_select_open_obligation_json() {
   ROOT_DIR="$ROOT_DIR" \
     UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
     UPKEEPER_AUTOMATION_NOW_EPOCH="${BACKLOG_TEST_NOW_EPOCH:-}" \
-    bash -c 'source "$1"; automation_select_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
+    UPKEEPER_OBLIGATION_CLAIM_OWNER_PID="${BASHPID:-$$}" \
+    UPKEEPER_AUTOMATION_LAUNCHER="backlog" \
+    bash -c 'source "$1"; automation_claim_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
 }
 
 backlog_reconcile_open_obligations() {
@@ -3379,6 +3381,7 @@ run_upkeeper_for_one_target() {
 run_upkeeper_for_obligation() {
   local obligation_json="$1"
   local obligation_id obligation_path obligation_kind obligation_summary target_hint prompt_file prompt_root
+  local obligation_claim_path obligation_claim_token
   local upkeeper_status=0
 
   local -a obligation_fields=()
@@ -3389,13 +3392,17 @@ run_upkeeper_for_obligation() {
       '.path // ""' \
       '.kind // "prior_run_anomaly"' \
       '.summary // "automation obligation"' \
-      '.repair_target_file // .target_file // "Upkeeper"'
+      '.repair_target_file // .target_file // "Upkeeper"' \
+      '.claim_path // ""' \
+      '.claim_token // ""'
   )
   obligation_id="${obligation_fields[0]:-}"
   obligation_path="${obligation_fields[1]:-}"
   obligation_kind="${obligation_fields[2]:-prior_run_anomaly}"
   obligation_summary="${obligation_fields[3]:-automation obligation}"
   target_hint="${obligation_fields[4]:-Upkeeper}"
+  obligation_claim_path="${obligation_fields[5]:-}"
+  obligation_claim_token="${obligation_fields[6]:-}"
   [[ -n "$target_hint" && "$target_hint" != "null" ]] || target_hint="Upkeeper"
   prepare_backlog_runtime_env "obligation_repair" "$target_hint" "$obligation_kind: $obligation_summary"
   if ! prompt_file="$(backlog_prepare_obligation_prompt_file "$obligation_json")"; then
@@ -3418,6 +3425,8 @@ run_upkeeper_for_obligation() {
     UPKEEPER_AUTOMATION_WORKFLOW="obligation-repair" \
     UPKEEPER_AUTOMATION_OBLIGATION_ID="$obligation_id" \
     UPKEEPER_AUTOMATION_OBLIGATION_PATH="$obligation_path" \
+    UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_PATH="$obligation_claim_path" \
+    UPKEEPER_AUTOMATION_OBLIGATION_CLAIM_TOKEN="$obligation_claim_token" \
     UPKEEPER_PROMPT_TRUST_ROOT="$prompt_root" \
     backlog_run_upkeeper_capture ./Upkeeper --ignore-failure-queue --target-file="$target_hint" --prompt-file "$prompt_file"
   upkeeper_status="$?"
@@ -4549,7 +4558,7 @@ main() {
       '.deferred_foreign_root_count // 0' \
       '.id // "unknown"' \
       '.summary // "machine-local automation obligation"' \
-      '.cooldown_deferred_count // 0' \
+      '.cooldown_deferred_count // .claimed_deferred_count // 0' \
       '.next_retry_epoch // 0' \
       '.repair_target_file // .target_file // "Upkeeper"' \
       '.issue_number // ""' \
@@ -4569,6 +4578,11 @@ main() {
   if [[ "$obligation_status" == "cooldown_deferred" ]]; then
     log "automation obligations are cooling down after repeated blocked repair attempts: count=${selected_obligation_fields[4]:-0} next_retry_epoch=${selected_obligation_fields[5]:-0}"
     backlog_write_loop_disposition "blocked_external" "automation_obligation_cooldown_deferred"
+    exit 0
+  fi
+  if [[ "$obligation_status" == "claimed_deferred" ]]; then
+    log "automation obligations are already claimed by another live worker: count=${selected_obligation_fields[4]:-0}"
+    backlog_write_loop_disposition "blocked_external" "automation_obligation_claimed_deferred"
     exit 0
   fi
 

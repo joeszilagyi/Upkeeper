@@ -221,6 +221,13 @@ identity based on failure class, reason, target scope, target, and repair target
 Later cycles update the same open record, increment its occurrence count, and
 retain a bounded source-cycle/run history. Per-run obligation identity is an
 explicit exception class; no current terminal failure reason requires it.
+Production launchers atomically reserve a selected record with a private claim
+sidecar before backend work. The claim binds the obligation to a random token,
+repository root, launcher, PID, process start ticks, cycle/run identity, and
+timestamp. Another worker defers rather than selecting claimed work. Blocked or
+failed attempts release the claim back to the open queue, successful resolution
+removes it after resolved custody is written, and a later selector recovers a
+dead or PID-reused owner.
 
 Operator output should be readable without cross-referencing logs or alternate
 mode names. A launcher that pauses new issue work to repair itself should say

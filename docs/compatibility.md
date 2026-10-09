@@ -228,6 +228,12 @@ Future changes should preserve this operator-visible surface as far as possible:
   primary identity: repeats increment one record and retain a bounded 50-entry
   history. Per-run identity is exception-only, and no current terminal reason
   requires that exception.
+- Production obligation selection creates a mode-0600 `O_EXCL` claim sidecar
+  before repair work. The token is bound to the obligation, repository root,
+  launcher, PID/start fingerprint, cycle/run, and claim time. Live claims defer
+  another worker; blocked/failed attempts reopen by releasing the sidecar,
+  verified resolution releases after resolved publication, and dead or reused
+  PID owners are recovered without changing open/resolved record compatibility.
 - A successful obligation-repair process exit is not resolution proof. The
   final response must contain one raw proof record bound to the obligation id,
   selected repair target, and canonical required-resolution digest. A repaired

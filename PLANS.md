@@ -3,9 +3,30 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #670: Atomic Automation Obligation Claims
+## Issue #671: Bounded Lattice Validation
 
 Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- make every validator check and delegated test independently bounded
+- give expensive direct Lattice probes their own command-level deadline
+- retain exact phase, command, timeout, and cleanup evidence on timeout
+
+Verified current state:
+- suite runners now bound whole test files and full-mode integration groups
+- direct `validate_upkeeper.sh --quick` checks still use a zero timeout
+- delegated validator tests do not announce or record their exact command
+- the in-process Lattice harness has read deadlines, but does not retain a
+  structured timeout artifact; one direct max-cover pipe has no local deadline
+
+Validation:
+- simulate a wedged Lattice command and assert bounded exit plus JSONL custody
+- exercise validator timeout output/artifact fields and process-tree cleanup
+- keep the existing Lattice CLI, wrapper, evidence, and full validator green
+
+## Issue #670: Atomic Automation Obligation Claims
+
+Status: complete; merged in PR #845
 
 Goal:
 - atomically reserve an open obligation before launcher/backend work

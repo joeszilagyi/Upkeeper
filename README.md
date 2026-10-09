@@ -397,6 +397,13 @@ stable path. Each row binds a check to the mode, Git head/tree, command, status,
 duration, timeout, and cleanup result. Add `--profile` to print those details
 for every check. Full runs print the ten slowest checks even on failure, and CI
 uploads the JSONL artifact for later comparison without changing coverage.
+Ordinary checks default to a 240-second process-tree deadline and delegated
+`tests/*.bash` commands to 180 seconds; the positive-integer
+`VALIDATION_CHECK_TIMEOUT_SECONDS` and `VALIDATION_TEST_TIMEOUT_SECONDS`
+overrides can tighten those bounds. Direct Lattice selection probes also name
+their phase and exact command before execution. A timeout writes a private
+`upkeeper.lattice-validation-timeout.v1` JSONL record under ignored
+`runtime/validation-timeouts/` with the command, deadline, and cleanup result.
 In sequential CI phases, `tools/run_tests.sh` also writes a runner-local test
 attestation. Full validation reuses an individual passing test only when the
 Git head/tree, tracked-worktree state, environment class, test path, and test
@@ -435,7 +442,10 @@ Ordinary command assertions use one test-only process that imports
 environment, and failure-exit checks
 remain real subprocesses. Run all six bounded groups with
 `tools/run_lattice_tests.sh`; `tests/lattice_test.bash` alone is the fast core
-group used for narrow debugging.
+group used for narrow debugging. The in-process harness gives each command a
+15-second response deadline, and direct selection probes carry their own
+deadline and structured timeout artifact rather than relying only on the outer
+test-file timeout.
 `tools/validate_upkeeper.sh --architecture-report` prints the report-only
 ownership, hot-loop, and inline-Python architecture lint described in
 [`docs/architecture-lint.md`](docs/architecture-lint.md).

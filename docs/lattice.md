@@ -134,6 +134,16 @@ timeout falls back deterministically to the oldest current source-safe text
 candidate only in optional mode. Plain explicit CLI invocations made directly
 by an operator are outside the wrapper timeout policy.
 
+Validation has a separate test-only boundary. Validator checks and delegated
+tests have process-tree deadlines recorded in the normal validation timing
+JSONL. The Lattice validator and `tests/lattice_test.bash` additionally announce
+selection phases and exact commands before execution. Direct probes use a
+command deadline, and the in-process harness uses a 15-second response
+deadline. A timeout terminates the test process, fails the test, and appends a
+private `upkeeper.lattice-validation-timeout.v1` record under ignored
+`runtime/validation-timeouts/` with phase, command, deadline, and cleanup
+evidence. This boundary does not affect operator-driven CLI commands.
+
 The wrapper publishes its canonical `cycle.exit` log line before updating the
 automation run ledger and before invoking `record-cycle-finish`. Automation
 therefore retains its prior ordering ahead of Lattice, while the Lattice log

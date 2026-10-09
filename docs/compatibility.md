@@ -372,6 +372,9 @@ Future changes should preserve this operator-visible surface as far as possible:
   set `UPKEEPER_PRECONTACT_BACKUP_REDACT_PATHS=0` to retain the legacy automatic
   restore path at the cost of plaintext path disclosure. Age public sidecars
   remain path-free and keep automatic restore metadata inside encryption.
+- Restore-by-id discovery now carries sidecar paths as NUL-delimited array
+  entries, preserving embedded newlines while continuing to reject missing or
+  non-unique backup ids.
 - Trusted machine-local encrypted-backup bootstrap is now part of the stable
   operator surface. `UPKEEPER_LOCAL_ENV_FILE` may provide
   `UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT`, and

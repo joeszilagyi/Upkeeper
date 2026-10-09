@@ -712,6 +712,56 @@ test_plain_restore_and_unsafe_id() {
     fail "absolute restore destination failed as $PRECONTACT_BACKUP_LAST_REASON"
 }
 
+test_restore_by_id_handles_newline_vault_and_duplicate_sidecars() {
+  local repo="$TEST_TMP_ROOT/newline-vault repo"
+  local selection_file backup_id original_sha restored_sha rc
+  local -a sidecar_files=()
+
+  make_repo "$repo"
+  reset_env "$repo" newline-vault
+  UPKEEPER_PRECONTACT_BACKUP_ROOT="$TEST_TMP_ROOT/newline"$'\n'"vault"
+  selection_file="$TEST_TMP_ROOT/newline-vault-selection.env"
+  write_selection_file "dir/space file.sh" "$selection_file"
+  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
+  original_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
+
+  precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
+  backup_id="$RUN_PRECONTACT_BACKUP_ID"
+  printf 'mutated before newline restore\n' >"$repo/dir/space file.sh"
+  precontact_backup_restore_by_id "$backup_id" "$repo" "" "dir/space file.sh"
+  restored_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
+  [[ "$restored_sha" == "$original_sha" ]] || fail "newline-vault library restore changed backup bytes"
+
+  printf 'mutated before standalone newline restore\n' >"$repo/dir/space file.sh"
+  env \
+    UPKEEPER_REDACTION_KEY="$UPKEEPER_REDACTION_KEY" \
+    CODEX_LOG_FILE="$LOG_FILE" \
+    "$PROJECT_ROOT/tools/upkeeper_precontact_restore.sh" \
+      --repo-root="$repo" \
+      --backup-id="$backup_id" \
+      --vault-root="$UPKEEPER_PRECONTACT_BACKUP_ROOT" \
+      --restore-to="dir/space file.sh"
+  restored_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
+  [[ "$restored_sha" == "$original_sha" ]] || fail "standalone newline-vault restore changed backup bytes"
+
+  mapfile -d '' -t sidecar_files < <(
+    find "$UPKEEPER_PRECONTACT_BACKUP_ROOT" -type f -name "${backup_id}.json" -print0
+  )
+  [[ "${#sidecar_files[@]}" -eq 1 ]] || fail "newline-vault fixture did not create exactly one sidecar"
+  mkdir -p "$UPKEEPER_PRECONTACT_BACKUP_ROOT/duplicate"
+  cp -- "${sidecar_files[0]}" "$UPKEEPER_PRECONTACT_BACKUP_ROOT/duplicate/${backup_id}.json"
+
+  set +e
+  precontact_backup_restore_by_id "$backup_id" "$repo" "" "dir/space file.sh"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 1 ]] || fail "duplicate sidecar restore returned $rc, expected 1"
+  [[ "$PRECONTACT_BACKUP_LAST_REASON" == "backup_id_not_unique_or_missing" ]] ||
+    fail "duplicate sidecar restore failed as $PRECONTACT_BACKUP_LAST_REASON"
+}
+
 test_standalone_restore_rejects_wrong_repo_by_default() {
   local source_repo="$TEST_TMP_ROOT/restore identity source repo"
   local destination_repo="$TEST_TMP_ROOT/restore identity destination repo"
@@ -954,6 +1004,7 @@ test_precontact_backup_validate_root_secure_private_dir
 test_prompt_redaction_and_replacement_rule
 test_retention_prunes_only_same_path
 test_plain_restore_and_unsafe_id
+test_restore_by_id_handles_newline_vault_and_duplicate_sidecars
 test_standalone_restore_rejects_wrong_repo_by_default
 test_secure_restore_preserves_recorded_mode
 test_plain_restore_temporary_directory_cleaned_on_failure

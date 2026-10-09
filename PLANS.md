@@ -5,7 +5,7 @@ Upkeeper changes. Keep entries brief and update their status before merge.
 
 ## Issue #694: Redact Plain Backup Sidecar Paths
 
-Status: implemented; local validation passed; pending PR CI
+Status: complete; merged in PR #854
 
 Goal:
 - honor the default-on path-redaction setting in plain backup sidecars
@@ -22,6 +22,28 @@ Validation:
 - redacted plain sidecars contain only the path HMAC and require `--restore-to`
 - opt-out plain sidecars retain automatic legacy restore behavior
 - age public/private metadata behavior remains unchanged
+
+## Issue #695: NUL-Safe Restore Sidecar Discovery
+
+Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- preserve sidecar paths containing embedded newlines during restore-by-id
+- count complete discovered paths rather than newline-separated fragments
+- keep missing and duplicate backup ids fail-closed in root and standalone paths
+
+Verified defect:
+- the shared finder used `find -print`, and restore captured its output in a
+  scalar before counting and selecting lines with `sed` and `wc -l`
+- the root entrypoint's filtered Python finder also printed one path per line
+
+Validation:
+- library and standalone restores recover the expected bytes through a vault
+  path containing a newline
+- a second matching sidecar is rejected with
+  `backup_id_not_unique_or_missing` using an array count
+- static validation covers the root entrypoint's separate NUL writer and array
+  consumer
 
 ## Issue #688: Typed JSON-to-Shell Parsing
 

@@ -1201,7 +1201,7 @@ precontact_backup_find_sidecar_by_id() {
   local vault_root="$2"
 
   [[ -d "$vault_root" ]] || return 0
-  find "$vault_root" -type f -name "${backup_id}.json" -print 2>/dev/null
+  find "$vault_root" -type f -name "${backup_id}.json" -print0 2>/dev/null
 }
 
 precontact_backup_restore_log() {
@@ -1476,7 +1476,8 @@ precontact_backup_restore_by_id() {
   local repo_root="$2"
   local identity_path="${3:-${UPKEEPER_PRECONTACT_BACKUP_AGE_IDENTITY:-}}"
   local restore_to="${4:-}"
-  local vault_root sidecars sidecar_count sidecar rel_path content_fingerprint encrypted mode
+  local vault_root sidecar rel_path content_fingerprint encrypted mode
+  local -a sidecars=()
   local target_abs tmp_restore="" artifact payload_tmp="" payload_metadata="" restored_sha
   local restore_tmp_dir=""
   local restore_tmp_dir_is_temp=0
@@ -1495,13 +1496,12 @@ precontact_backup_restore_by_id() {
   fi
   vault_root="$PRECONTACT_BACKUP_RESOLVED_ROOT"
 
-  sidecars="$(precontact_backup_find_sidecar_by_id "$backup_id" "$vault_root")"
-  sidecar_count="$(printf '%s\n' "$sidecars" | sed '/^$/d' | wc -l | tr -d ' ')"
-  if [[ "$sidecar_count" != "1" ]]; then
+  mapfile -d '' -t sidecars < <(precontact_backup_find_sidecar_by_id "$backup_id" "$vault_root")
+  if [[ "${#sidecars[@]}" -ne 1 ]]; then
     precontact_backup_set_reason "backup_id_not_unique_or_missing"
     return 1
   fi
-  sidecar="$(printf '%s\n' "$sidecars" | sed -n '1p')"
+  sidecar="${sidecars[0]}"
 
   if ! encrypted="$(precontact_backup_json_field "$sidecar" "encrypted")"; then
     precontact_backup_set_reason "metadata_read_failed"

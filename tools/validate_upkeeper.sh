@@ -2341,6 +2341,12 @@ check_lattice_custody_policy_contract() {
     fail "Lattice doctor lacks changed-event file identity regression"
   grep -Fq "p.path like 'path-hmac-sha256:%'" tests/lattice_test.bash ||
     fail "Lattice known-file snapshot regression does not retain HMAC-only paths"
+  grep -Fq 'fsync_directory_required(backup_path.parent, operation="backup publication")' tools/upkeeper_lattice_core.py ||
+    fail "Lattice backup publication does not require a parent-directory fsync"
+  grep -Fq 'probe_backup_publication_directory_sync()' tools/upkeeper_lattice_core.py ||
+    fail "Lattice doctor lacks backup directory-sync fault coverage"
+  grep -Fq 'fsyncs the containing directory before reporting success' docs/lattice.md ||
+    fail "Lattice docs omit backup directory durability policy"
   grep -Fq 'service", help="serve multiple Lattice CLI commands in one warm process"' tools/upkeeper_lattice_core.py ||
     fail "Lattice CLI missing warm service subcommand"
   grep -Fq 'lattice.service.started' lib/upkeeper/lattice.bash ||

@@ -1663,6 +1663,24 @@ def write_private_text_atomic(path: Path, text: str) -> None:
                 pass
 
 
+def fsync_directory_required(path: Path, *, operation: str) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
+    try:
+        directory_fd = os.open(path, flags)
+    except OSError as exc:
+        fail(f"{operation} directory not openable for durability sync: {path} ({exc})", EXIT_DB_UNAVAILABLE)
+    try:
+        try:
+            os.fsync(directory_fd)
+        except OSError as exc:
+            fail(f"{operation} directory durability sync failed: {path} ({exc})", EXIT_DB_UNAVAILABLE)
+    finally:
+        try:
+            os.close(directory_fd)
+        except OSError:
+            pass
+
+
 def normalize_contributor_identity_value(raw: str | None) -> str:
     return "" if raw is None else raw
 
@@ -6302,6 +6320,8 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         result["checks"]["backup_command_rejects_existing_default_destination"] = backup_rejects_existing_probe
         backup_failure_partial_probe = probe_backup_failure_does_not_publish_partial_destination()
         result["checks"]["backup_failure_does_not_publish_partial_destination"] = backup_failure_partial_probe
+        backup_directory_sync_probe = probe_backup_publication_directory_sync()
+        result["checks"]["backup_publication_directory_sync"] = backup_directory_sync_probe
         recover_primary_sources_probe = probe_recover_requires_primary_sources()
         result["checks"]["recover_requires_primary_sources"] = recover_primary_sources_probe
         recover_empty_preexisting_probe = probe_recover_empty_preexisting_db_is_incomplete_with_backup()
@@ -6376,6 +6396,9 @@ def doctor_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(backup_failure_partial_probe.get("ok")):
+            result["status"] = "integrity_failure"
+            return result, EXIT_INTEGRITY
+        if not bool(backup_directory_sync_probe.get("ok")):
             result["status"] = "integrity_failure"
             return result, EXIT_INTEGRITY
         if not bool(recover_primary_sources_probe.get("ok")):
@@ -8600,6 +8623,76 @@ def probe_backup_failure_does_not_publish_partial_destination() -> dict[str, Any
             "backup_exists": backup_path.exists(),
             "temp_paths": [str(path) for path in temp_paths],
             "ok": bool(error) and not backup_path.exists() and not temp_paths,
+        }
+
+
+def probe_backup_publication_directory_sync() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="upkeeper-lattice-backup-directory-sync-") as tmpdir:
+        root = Path(tmpdir).resolve()
+        db_path = root / "runtime" / "upkeeper-lattice" / "lattice.sqlite3"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        backup_path = db_path.parent / "manual-backup.sqlite3"
+        failed_backup_path = db_path.parent / "failed-sync-backup.sqlite3"
+        conn = sqlite3.connect(str(db_path))
+        original_fsync = os.fsync
+        directory_sync_count = 0
+
+        def tracking_fsync(fd: int) -> None:
+            nonlocal directory_sync_count
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
+                directory_sync_count += 1
+            original_fsync(fd)
+
+        try:
+            conn.execute("create table backup_directory_sync_probe(value text)")
+            conn.execute("insert into backup_directory_sync_probe(value) values ('durable')")
+            conn.commit()
+            os.fsync = tracking_fsync
+            create_backup(conn, root, db_path, output=str(backup_path), allow_overwrite=False)
+            non_overwrite_syncs = directory_sync_count
+            create_backup(conn, root, db_path, output=str(backup_path), allow_overwrite=True)
+            overwrite_syncs = directory_sync_count - non_overwrite_syncs
+
+            def failing_directory_fsync(fd: int) -> None:
+                if stat.S_ISDIR(os.fstat(fd).st_mode):
+                    raise OSError(errno.EIO, "injected backup directory sync failure")
+                original_fsync(fd)
+
+            os.fsync = failing_directory_fsync
+            failure_code = EXIT_SUCCESS
+            failure_error = ""
+            with contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    create_backup(
+                        conn,
+                        root,
+                        db_path,
+                        output=str(failed_backup_path),
+                        allow_overwrite=False,
+                    )
+                except LatticeCommandError as exc:
+                    failure_code = int(exc.code)
+                    failure_error = str(exc)
+        finally:
+            os.fsync = original_fsync
+            conn.close()
+
+        temp_paths = sorted(db_path.parent.glob(".*.tmp-*"))
+        return {
+            "non_overwrite_directory_syncs": non_overwrite_syncs,
+            "overwrite_directory_syncs": overwrite_syncs,
+            "failure_code": failure_code,
+            "failure_error": failure_error,
+            "failed_backup_exists": failed_backup_path.exists(),
+            "temp_paths": [str(path) for path in temp_paths],
+            "ok": (
+                non_overwrite_syncs >= 1
+                and overwrite_syncs >= 1
+                and failure_code == EXIT_DB_UNAVAILABLE
+                and "directory durability sync failed" in failure_error
+                and failed_backup_path.exists()
+                and not temp_paths
+            ),
         }
 
 
@@ -13191,6 +13284,7 @@ def create_backup(
             except OSError:
                 pass
     chmod_private(backup_path)
+    fsync_directory_required(backup_path.parent, operation="backup publication")
     return backup_path
 
 

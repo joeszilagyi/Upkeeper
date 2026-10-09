@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: crash-durable Lattice backup publication:
+	1. Lattice backup creation now fsyncs the containing directory after publishing and permissioning the final backup path in both overwrite and no-overwrite modes.
+	2. Directory open or fsync failures fail closed with the database-unavailable command contract, while retaining any already-published artifact as conservative recovery evidence.
+	3. Full-doctor fault injection verifies both publication modes perform the directory sync and that an injected sync failure is operator-visible without leaving a temporary backup.
+
 2026-10-08: crash-durable atomic pre-contact backup publication:
 	1. Plain and encrypted payloads now stage beside their sidecar in a private backup-id directory and become discoverable through one atomic directory rename, eliminating half-published pairs.
 	2. Publication strictly fsyncs both staged files and the staged directory before rename, then fsyncs the parent directory; any durability failure keeps the required backup gate fail-closed.

@@ -3,9 +3,32 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #653: Crash-Durable Atomic Pre-Contact Backup Publication
+## Issue #654: Crash-Durable Lattice Backup Publication
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- make a reported Lattice backup contingent on durable final-name publication
+- cover both overwrite and no-overwrite backup modes
+- surface directory durability failures as operator-visible command failures
+
+Constraints:
+- fsync the final backup's parent directory after publication and permission setup
+- fail closed with the existing database-unavailable exit contract on open or
+  fsync failure
+- retain the published artifact when a post-publication sync fails so recovery
+  evidence is not destructively discarded
+- no live backend Codex validation
+
+Validation:
+- full-doctor regression observes a directory fsync in both publication modes
+- injected directory-fsync failure must return the database-unavailable code,
+  preserve the published artifact, and leave no temporary backup
+- focused Lattice suite and quick/full repository validation
+
+## Issue #653: Crash-Durable Atomic Pre-Contact Backup Publication
+
+Status: complete; merged in PR #830
 
 Goal:
 - publish each backup payload and sidecar as one discoverable unit

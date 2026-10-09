@@ -169,6 +169,7 @@ json_path_count() {
 test_plain_required_backup_succeeds() {
   local repo="$TEST_TMP_ROOT/plain repo"
   local selection_file json_file bak_file expected_sha derivation_prefix backup_id expected_path_hmac
+  local expected_size expected_mode expected_mtime
   make_repo "$repo"
   reset_env "$repo" plain
   selection_file="$TEST_TMP_ROOT/plain-selection.env"
@@ -176,6 +177,24 @@ test_plain_required_backup_succeeds() {
   UPKEEPER_PRECONTACT_BACKUP_MODE=plain
   UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
   UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
+  chmod 640 "$repo/dir/space file.sh"
+  python3 - "$repo/dir/space file.sh" <<'PY'
+import os
+import sys
+
+known_mtime_ns = 946_684_800_123_456_789
+os.utime(sys.argv[1], ns=(known_mtime_ns, known_mtime_ns))
+PY
+  expected_size="$(file_size_bytes "$repo/dir/space file.sh")"
+  expected_mode="640"
+  expected_mtime="$(python3 - "$repo/dir/space file.sh" <<'PY'
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+print(datetime.fromtimestamp(Path(sys.argv[1]).stat().st_mtime, timezone.utc).isoformat().replace("+00:00", "Z"))
+PY
+)"
 
   precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
 
@@ -198,6 +217,9 @@ test_plain_required_backup_succeeds() {
   jq -e \
     --arg content_hmac "$(precontact_backup_content_hmac "$expected_sha")" \
     --arg path_hmac "$expected_path_hmac" \
+    --argjson expected_size "$expected_size" \
+    --arg expected_mode "$expected_mode" \
+    --arg expected_mtime "$expected_mtime" \
     '.schema_version == 3
       and .selected_relative_path_redacted == true
       and (has("selected_relative_path") | not)
@@ -209,6 +231,9 @@ test_plain_required_backup_succeeds() {
       and .cycle_run_hash == "hash-plain"
       and .selected_git_status == "clean"
       and .selected_worktree_hash == "worktree-fixture"
+      and .size_bytes == $expected_size
+      and .mode == $expected_mode
+      and .mtime == $expected_mtime
       and .selection_basis == "redacted"
       and .backup_mode == "plain"
       and .encrypted == false

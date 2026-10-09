@@ -111,6 +111,27 @@ print(Path(sys.argv[1]).expanduser().resolve(strict=False))
 PY
 }
 
+precontact_backup_file_metadata() {
+  local path="$1"
+
+  # Keep the backup sidecar's four filesystem fields in one stat call.  Aside
+  # from avoiding inconsistent observations of a concurrently changed file,
+  # this avoids three extra Python launches for every backup.
+  python3 - "$path" <<'PY' 2>/dev/null || printf 'unknown\tunknown\tunknown\tunknown\n'
+from datetime import datetime, timezone
+from pathlib import Path
+import stat
+import sys
+
+st = Path(sys.argv[1]).stat()
+print(
+    f"{st.st_size}\t{stat.S_IMODE(st.st_mode):o}\t"
+    f"{datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat().replace('+00:00', 'Z')}\t"
+    f"{st.st_mtime_ns}"
+)
+PY
+}
+
 precontact_backup_json_field() {
   local json_path="$1"
   local field="$2"
@@ -1053,7 +1074,7 @@ precontact_backup_selected_target_or_exit() {
   local rel_path="$1"
   local selection_file="${2:-}"
   local resolved_mode target_abs content_sha content_hmac path_hmac path_key repo_real repo_hmac repo_key path_dir
-  local created_utc compact_utc derivation_sha backup_id metadata_file size_bytes
+  local created_utc compact_utc derivation_sha backup_id metadata_file size_bytes file_metadata
   local sidecar_file
   local mode_text mtime_text mtime_ns_text selected_git_status selected_worktree_hash
   local selection_basis selected_content_state selected_head_blob encrypted protected
@@ -1110,32 +1131,8 @@ precontact_backup_selected_target_or_exit() {
   fi
   chmod 700 "$PRECONTACT_BACKUP_RESOLVED_ROOT" "$PRECONTACT_BACKUP_RESOLVED_ROOT/$repo_key" "$path_dir" 2>/dev/null || true
 
-  size_bytes="$(file_size_bytes "$target_abs")"
-  mode_text="$(python3 - "$target_abs" <<'PY' 2>/dev/null || printf 'unknown'
-from pathlib import Path
-import stat
-import sys
-
-st = Path(sys.argv[1]).stat()
-print(oct(stat.S_IMODE(st.st_mode))[2:])
-PY
-  )"
-  mtime_text="$(python3 - "$target_abs" <<'PY' 2>/dev/null || printf 'unknown'
-from datetime import datetime, timezone
-from pathlib import Path
-import sys
-
-st = Path(sys.argv[1]).stat()
-print(datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat().replace("+00:00", "Z"))
-PY
-  )"
-  mtime_ns_text="$(python3 - "$target_abs" <<'PY' 2>/dev/null || printf ''
-from pathlib import Path
-import sys
-
-print(Path(sys.argv[1]).stat().st_mtime_ns)
-PY
-  )"
+  file_metadata="$(precontact_backup_file_metadata "$target_abs")"
+  IFS=$'\t' read -r size_bytes mode_text mtime_text mtime_ns_text <<<"$file_metadata"
   selected_git_status="$(precontact_backup_selection_field "$selection_file" "git_status")"
   selected_worktree_hash="$(precontact_backup_selection_field "$selection_file" "worktree_hash")"
   selection_basis="$(precontact_backup_selection_field "$selection_file" "selection_basis")"

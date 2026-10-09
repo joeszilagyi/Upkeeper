@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: fd-safe standalone pre-contact restore publication:
+	1. Root and standalone restores now share the same installer, which walks and rechecks repository parents through directory descriptors opened with `O_NOFOLLOW`.
+	2. Restored bytes publish with `os.replace(..., dst_dir_fd=...)`, and recorded permissions are applied through a nofollow file descriptor instead of path-based `mkdir`, `mv`, and `chmod` operations.
+	3. A deterministic parent-swap regression proves the old check/use race is rejected without overwriting an outside target.
+
 2026-10-08: standalone restore repository-identity enforcement:
 	1. The reusable pre-contact restore library and root entrypoint now check both repository identity fields before selecting or installing a restore destination; encrypted restores validate the private payload metadata after decryption.
 	2. A backup from another repository fails with `restore_repo_identity_mismatch` and leaves the destination unchanged unless the operator explicitly sets `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE=1`.

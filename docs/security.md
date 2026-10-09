@@ -215,6 +215,11 @@ reject backup metadata from another repository as
 The compatibility escape hatch
 `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE=1` is reserved for deliberate
 operator-directed disaster recovery into a different checkout.
+Restore publication does not reuse an earlier path check. Both entrypoints walk
+and recheck parent components through `O_NOFOLLOW` directory descriptors,
+replace the destination relative to the verified parent descriptor, and apply
+recorded permissions through a nofollow file descriptor. Parent and final
+target symlinks therefore fail closed instead of redirecting restored bytes.
 
 The repo-root automation launchers `FlameOn` and `ChimneySweep` run the
 full-burn profile: Lattice is required, selected-target backup is required,

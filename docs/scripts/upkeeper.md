@@ -1095,6 +1095,11 @@ tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID
 tools/upkeeper_precontact_restore.sh --repo-root=. --backup-id=BACKUP_ID --identity=/path/to/age-identity.txt
 ```
 
+Restore metadata is bound to the repository root that created the backup. The
+standalone helper rejects a backup from another repository with
+`restore_repo_identity_mismatch`. For deliberate disaster recovery only, set
+`UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE=1` to override that guard.
+
 `UPKEEPER_PRECONTACT_BACKUP_ROOT` may point at an operator-local vault outside
 the repository. The wrapper never includes the generated vault path in compiled
 prompts, backup log lines, or Lattice preselect evidence.

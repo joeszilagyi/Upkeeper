@@ -208,6 +208,14 @@ logs, or placed in an environment visible to backend Codex processes. Without a
 separate backend confinement layer, encrypted mode protects content at rest but
 does not make same-user deletion impossible.
 
+Plain and encrypted restore metadata is bound to the repository root that
+created it. Both the root entrypoint and `tools/upkeeper_precontact_restore.sh`
+reject backup metadata from another repository as
+`restore_repo_identity_mismatch`.
+The compatibility escape hatch
+`UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE=1` is reserved for deliberate
+operator-directed disaster recovery into a different checkout.
+
 The repo-root automation launchers `FlameOn` and `ChimneySweep` run the
 full-burn profile: Lattice is required, selected-target backup is required,
 encrypted backup is required, and `CODEX_MODE` is pinned to

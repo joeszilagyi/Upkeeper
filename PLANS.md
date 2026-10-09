@@ -3,9 +3,30 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #691: Bind Standalone Restore to Repository Identity
+
+Status: implemented and locally validated; pending PR CI
+
+Goal:
+- reject a standalone pre-contact restore when its metadata belongs to another
+  repository
+- keep the existing explicit unsafe-restore override for deliberate recovery
+- align the reusable library path with the guarded root entrypoint behavior
+
+Constraints:
+- validate both repository identity fields before selecting or installing the
+  restore destination
+- leave a rejected destination byte-for-byte unchanged
+- preserve the stable `restore_repo_identity_mismatch` failure reason
+- no live backend Codex validation
+
+Validation:
+- focused cross-repository reject, no-mutation, and explicit-override regression
+- complete unit suite and quick/full repository validation
+
 ## Issue #690: Preserve Known File Identity in Lattice Snapshots
 
-Status: implemented locally; pending full validation and PR CI
+Status: complete; merged in PR #827
 
 Goal:
 - retain an existing `files.file_id` on HMAC-only worktree snapshot rows

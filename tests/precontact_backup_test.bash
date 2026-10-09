@@ -101,6 +101,7 @@ reset_env() {
   UPKEEPER_PRECONTACT_BACKUP_MODE=auto
   UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=1
   UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=0
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE=0
   UPKEEPER_PRECONTACT_BACKUP_ROOT="$TEST_TMP_ROOT/$name vault redacted"
   UPKEEPER_PRECONTACT_BACKUP_KEEP_PER_FILE=20
   UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT=""
@@ -277,12 +278,14 @@ SH
 
 test_age_restore_uses_payload_metadata() {
   local repo="$TEST_TMP_ROOT/age-restore repo"
+  local destination_repo="$TEST_TMP_ROOT/age-restore destination repo"
   local fake_bin="$TEST_TMP_ROOT/fake-age-bin"
-  local selection_file json_file age_file restored_sha original_sha sidecar
+  local selection_file json_file age_file restored_sha original_sha sidecar destination_sha
   local identity_file="$TEST_TMP_ROOT/age-identity.key"
   local old_path expected_path_hmac
   local record
   make_repo "$repo"
+  make_repo "$destination_repo"
   reset_env "$repo" age_restore
   selection_file="$TEST_TMP_ROOT/age-restore-selection.env"
   write_selection_file "dir/space file.sh" "$selection_file"
@@ -343,6 +346,16 @@ SH
   sidecar="$json_file"
   [[ -s "$age_file" ]] || fail "age restore test missing age artifact"
   [[ -s "$sidecar" ]] || fail "age restore test missing age sidecar"
+
+  printf 'encrypted restore destination content\n' >"$destination_repo/dir/space file.sh"
+  destination_sha="$(precontact_backup_sha256_file "$destination_repo/dir/space file.sh")"
+  if precontact_backup_restore_by_id "$RUN_PRECONTACT_BACKUP_ID" "$destination_repo" "$identity_file" ""; then
+    fail "encrypted restore accepted private metadata from another repository"
+  fi
+  [[ "$PRECONTACT_BACKUP_LAST_REASON" == "restore_repo_identity_mismatch" ]] ||
+    fail "encrypted cross-repository restore failed as $PRECONTACT_BACKUP_LAST_REASON"
+  [[ "$(precontact_backup_sha256_file "$destination_repo/dir/space file.sh")" == "$destination_sha" ]] ||
+    fail "rejected encrypted cross-repository restore changed the destination"
 
   original_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
   expected_path_hmac="$(precontact_backup_path_hmac "dir/space file.sh")"
@@ -689,6 +702,56 @@ test_plain_restore_and_unsafe_id() {
     fail "absolute restore destination failed as $PRECONTACT_BACKUP_LAST_REASON"
 }
 
+test_standalone_restore_rejects_wrong_repo_by_default() {
+  local source_repo="$TEST_TMP_ROOT/restore identity source repo"
+  local destination_repo="$TEST_TMP_ROOT/restore identity destination repo"
+  local selection_file backup_id destination_sha restored_sha output rc
+
+  make_repo "$source_repo"
+  make_repo "$destination_repo"
+  reset_env "$source_repo" restore-identity
+  selection_file="$TEST_TMP_ROOT/restore-identity-selection.env"
+  write_selection_file "dir/space file.sh" "$selection_file"
+  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
+  printf 'source repository backup\n' >"$source_repo/dir/space file.sh"
+  printf 'destination repository content\n' >"$destination_repo/dir/space file.sh"
+  destination_sha="$(precontact_backup_sha256_file "$destination_repo/dir/space file.sh")"
+
+  precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
+  backup_id="$RUN_PRECONTACT_BACKUP_ID"
+
+  set +e
+  output="$(env \
+    UPKEEPER_REDACTION_KEY="$UPKEEPER_REDACTION_KEY" \
+    UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE=0 \
+    CODEX_LOG_FILE="$LOG_FILE" \
+    "$PROJECT_ROOT/tools/upkeeper_precontact_restore.sh" \
+      --repo-root="$destination_repo" \
+      --backup-id="$backup_id" \
+      --vault-root="$UPKEEPER_PRECONTACT_BACKUP_ROOT" 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 2 ]] || fail "standalone restore from another repository returned $rc, expected 2"
+  [[ "$output" == *"restore_repo_identity_mismatch"* ]] ||
+    fail "standalone cross-repository restore did not report the stable mismatch reason"
+  [[ "$(precontact_backup_sha256_file "$destination_repo/dir/space file.sh")" == "$destination_sha" ]] ||
+    fail "rejected cross-repository restore changed the destination"
+
+  env \
+    UPKEEPER_REDACTION_KEY="$UPKEEPER_REDACTION_KEY" \
+    UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE=1 \
+    CODEX_LOG_FILE="$LOG_FILE" \
+    "$PROJECT_ROOT/tools/upkeeper_precontact_restore.sh" \
+      --repo-root="$destination_repo" \
+      --backup-id="$backup_id" \
+      --vault-root="$UPKEEPER_PRECONTACT_BACKUP_ROOT"
+  restored_sha="$(precontact_backup_sha256_file "$destination_repo/dir/space file.sh")"
+  [[ "$restored_sha" == "$(precontact_backup_sha256_file "$source_repo/dir/space file.sh")" ]] ||
+    fail "explicit unsafe cross-repository restore did not restore the source bytes"
+}
+
 test_restore_temp_stays_private_until_rename() {
   local repo="$TEST_TMP_ROOT/restore-mode repo"
   local selection_file backup_id tmp_mode final_mode
@@ -786,6 +849,7 @@ test_precontact_backup_validate_root_secure_private_dir
 test_prompt_redaction_and_replacement_rule
 test_retention_prunes_only_same_path
 test_plain_restore_and_unsafe_id
+test_standalone_restore_rejects_wrong_repo_by_default
 test_restore_temp_stays_private_until_rename
 test_plain_restore_temporary_directory_cleaned_on_failure
 test_age_restore_uses_payload_metadata

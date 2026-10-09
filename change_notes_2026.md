@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: standalone restore repository-identity enforcement:
+	1. The reusable pre-contact restore library and root entrypoint now check both repository identity fields before selecting or installing a restore destination; encrypted restores validate the private payload metadata after decryption.
+	2. A backup from another repository fails with `restore_repo_identity_mismatch` and leaves the destination unchanged unless the operator explicitly sets `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE=1`.
+	3. Focused coverage proves default rejection, destination preservation, and the deliberate disaster-recovery override.
+
 2026-10-08: known-file identity continuity in private worktree snapshots:
 	1. HMAC-only worktree snapshot rows now retain an existing `files.file_id`, so modified and deleted known files produce delta events tied to their established lineage instead of anonymous changes.
 	2. Snapshot path and rename fields remain HMAC-only, while previously unknown dirty paths remain unlinked and are not inserted into the raw `files` or `file_paths` inventory.

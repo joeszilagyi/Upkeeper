@@ -360,6 +360,10 @@ Future changes should preserve this operator-visible surface as far as possible:
   can be selected per invocation with `--config-file=PATH`.
 - Existing documented environment knobs keep their meaning unless a change note
   states an unavoidable safety reason.
+- Quota projection derives its most recent successful-cycle delta from at most
+  the final 1 MiB of `Upkeeper.log`. When that bounded window has no usable
+  summary, projection retains the documented one-percent default rather than
+  scanning an indefinitely growing log from byte zero.
 - `CODEX_TERMINAL_VERBOSITY` keeps the documented modes and aliases for
   `basic`, `quiet`, `silent`, `verbose`, `debug1`, and `full`.
 - Status-marker contracts remain stable:
@@ -544,6 +548,8 @@ Future changes should preserve this operator-visible surface as far as possible:
   PID produces `owner_status=dead`. Old records without `start_ticks` preserve
   the conservative PID-only compatibility check, and an unreadable process
   fingerprint remains conservatively live rather than declaring restart safe.
+  The input log scan is capped at its final 1 MiB and then narrowed by
+  `--lines`; a partial leading line in that byte window is ignored.
 - Control-plane inventory remains local and no-backend. The focused command
   `tools/upkeeper_control_plane_audit.py` emits stable JSON or concise terminal
   text for observed repo/runtime state, including tracked local-evidence

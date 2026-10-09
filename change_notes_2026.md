@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: bounded recent-log reads:
+	1. Stopped-loop triage now reads at most the final 1 MiB of its loop log before applying the requested line limit, instead of materializing the entire growing file.
+	2. Quota projection now scans at most the final 1 MiB of `Upkeeper.log` for the latest usable successful-cycle delta and retains the one-percent fallback when the window has none.
+	3. Multi-megabyte fixtures prove both bounded readers still find the newest relevant triage and quota events.
+
 2026-10-08: safe active-lock fallback token descriptor close:
 	1. Active-lock inheritance no longer evaluates the environment-derived fallback token descriptor as shell syntax.
 	2. Numeric descriptors close through Bash's dynamic descriptor form after token handling, while empty or nonnumeric values are ignored.

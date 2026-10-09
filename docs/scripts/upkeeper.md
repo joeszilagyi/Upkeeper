@@ -1185,7 +1185,9 @@ orphan payloads are not valid restore ids.
   records are matched by both PID and Linux process start ticks, so a recycled
   PID is reported as `stale_backlog_owner_pid_reused` instead of waiting on an
   unrelated process. Legacy owner records without start ticks retain the
-  conservative PID-only wait behavior.
+  conservative PID-only wait behavior. Triage reads only the final 1 MiB of
+  the loop log before enforcing `--lines`, so restart checks stay bounded as an
+  unattended log grows.
   PR check watching is available without backend work with
   `./orchestration/watch-pr.sh [PR_NUMBER]`. It prints timestamped
   pass/pending/fail counts, per-check names, conclusions, and URLs when present;

@@ -15,6 +15,9 @@ import time
 from typing import Any
 
 
+RECENT_LOG_MAX_BYTES = 1024 * 1024
+
+
 def run_text(argv: list[str], *, cwd: pathlib.Path) -> tuple[int, str]:
     try:
         proc = subprocess.run(
@@ -102,10 +105,23 @@ def open_obligations(root: pathlib.Path) -> list[pathlib.Path]:
 
 
 def read_recent_lines(log_path: pathlib.Path, limit: int) -> list[str]:
+    if limit <= 0:
+        return []
     try:
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        with log_path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            start = max(0, size - RECENT_LOG_MAX_BYTES)
+            handle.seek(start)
+            data = handle.read(RECENT_LOG_MAX_BYTES)
     except OSError:
         return []
+    if start > 0:
+        first_newline = data.find(b"\n")
+        if first_newline < 0:
+            return []
+        data = data[first_newline + 1 :]
+    lines = data.decode("utf-8", errors="replace").splitlines()
     return lines[-limit:]
 
 

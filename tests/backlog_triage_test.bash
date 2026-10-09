@@ -207,6 +207,17 @@ test_pending_ci_waits_and_failed_validation_blocks() {
   assert_triage no failed_validation_or_checks
 }
 
+test_large_log_uses_recent_bounded_tail() {
+  local repo="$TEST_TMP_ROOT/large-log" state_root="$TEST_TMP_ROOT/large-log-state" log_file="$TEST_TMP_ROOT/large.log"
+  make_repo "$repo"
+  mkdir -p "$state_root"
+  head -c 2097152 </dev/zero | tr '\0' x >"$log_file"
+  printf '\n2026-05-24T01:00:00 INFO backlog: waiting for PR #7 checks pending\n' >>"$log_file"
+  run_triage "$repo" "$state_root" "$log_file" --lines 20 --no-write-obligation
+  [[ "$TRIAGE_RC" -eq 0 ]] || fail "large-log triage exited $TRIAGE_RC"
+  assert_triage wait local_log_checks_pending
+}
+
 test_merged_pr_cleanup_needed() {
   local repo="$TEST_TMP_ROOT/merged" state_root="$TEST_TMP_ROOT/merged-state" log_file="$TEST_TMP_ROOT/merged.log"
   make_repo "$repo"
@@ -243,6 +254,7 @@ test_active_lock_blocks_restart
 test_open_obligation_blocks_restart
 test_quota_hibernation_waits
 test_pending_ci_waits_and_failed_validation_blocks
+test_large_log_uses_recent_bounded_tail
 test_merged_pr_cleanup_needed
 test_unknown_page_error_opens_obligation
 printf 'backlog_triage_test: ok\n'

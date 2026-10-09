@@ -3059,6 +3059,7 @@ check_backlog_triage_contract() {
   grep -Fq "unknown_log_error" tools/backlog_triage.py || fail "backlog triage does not fail closed on unknown log errors"
   grep -Fq "stale_backlog_owner_pid_reused" tools/backlog_triage.py || fail "backlog triage does not identify recycled owner PIDs"
   grep -Fq "process_start_ticks" tools/backlog_triage.py || fail "backlog triage does not fingerprint owner process starts"
+  grep -Fq "RECENT_LOG_MAX_BYTES" tools/backlog_triage.py || fail "backlog triage recent-log scan is not byte bounded"
   grep -Fq "backlog-triage-" tools/backlog_triage.py || fail "backlog triage does not leave visible obligation evidence"
   grep -Fq "tools/backlog_triage.py" docs/scripts/upkeeper.md || fail "operator guide missing backlog triage command"
   grep -Fq "safe_to_restart=yes|no|wait" docs/compatibility.md || fail "compatibility docs missing backlog triage output contract"
@@ -4398,7 +4399,7 @@ check_validation_quota_session_fixture_contract() {
   local temp_dir state diagnostics agent_messages reached_type
   local current_home stale_home wrong_home nonfinite_home missing_home
   local mixed_timestamp_home invalid_timestamp_home rotation_home failed_scan_home
-  local malformed_session empty_session empty_state
+  local large_log_home large_log malformed_session empty_session empty_state
 
   log "checking validation quota/session fixtures"
   temp_dir="$(mktemp -d /tmp/upkeeper-validation-fixtures.XXXXXX)"
@@ -4491,6 +4492,24 @@ PY
     fail "pre-run quota session scan failure does not fail closed"
   grep -Fq 'quota snapshot scan failed after codex exec; skipping post-run quota comparison' Upkeeper ||
     fail "post-run quota session scan failure lacks operator-visible warning"
+
+  large_log_home="$temp_dir/large-log/codex-home"
+  large_log="$temp_dir/large.log"
+  write_validation_current_quota_snapshot "$large_log_home/sessions/2026/05/07/current.jsonl" "gpt-5.5"
+  head -c 2097152 </dev/zero | tr '\0' x >"$large_log"
+  {
+    printf '\n2026-05-24T01:00:00 [INFO] cycle=cycle-large-1 cycle.start execution_origin=primary model=gpt-5.5\n'
+    printf '2026-05-24T01:01:00 [INFO] cycle=cycle-large-1 cycle.summary execution_origin=primary model=gpt-5.5 observed_primary_delta=2.5 observed_secondary_delta=3.5 observed_delta_status=measured status_marker=WORK_DONE status_marker_source=model codex_exit=0\n'
+  } >>"$large_log"
+  state="$(validation_quota_state_for_home "$large_log_home" "gpt-5.5" "$large_log")"
+  [[ "$(jq -r '.projection.basis' <<<"$state")" == "log_summary" ]] ||
+    fail "bounded large-log quota scan did not find the latest summary"
+  [[ "$(jq -r '.projection.primary_delta' <<<"$state")" == "2.5" ]] ||
+    fail "bounded large-log quota scan lost the primary delta"
+  [[ "$(jq -r '.projection.secondary_delta' <<<"$state")" == "3.5" ]] ||
+    fail "bounded large-log quota scan lost the secondary delta"
+  grep -Fq 'LOG_TAIL_SCAN_BYTES' lib/upkeeper/quota_state.bash ||
+    fail "quota log-summary scan is not byte bounded"
 
   malformed_session="$temp_dir/malformed/session.jsonl"
   write_validation_malformed_session_jsonl "$malformed_session"

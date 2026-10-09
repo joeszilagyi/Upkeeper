@@ -157,7 +157,9 @@ acquire_active_lock_or_exit() {
           fi
         fi
         token_fd="${CODEX_FALLBACK_CHAIN_TOKEN_FD:-}"
-        [[ -n "$token_fd" ]] && eval "exec ${token_fd}<&-" 2>/dev/null || true
+        if [[ "$token_fd" =~ ^[0-9]+$ ]]; then
+          exec {token_fd}<&- 2>/dev/null || true
+        fi
         fallback_parent_pid="${CODEX_FALLBACK_PARENT_PID:-}"
         fallback_parent_start="${CODEX_FALLBACK_PARENT_START:-}"
 

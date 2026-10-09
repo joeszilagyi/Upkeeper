@@ -3,9 +3,32 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #658: Backlog Owner PID-Reuse Detection
+## Issue #659: Safe Active-Lock Fallback Token FD Close
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- remove shell evaluation from the active-lock fallback token descriptor close
+- accept only numeric descriptor values at the close boundary
+- preserve token-based lock inheritance for descriptor and direct-env inputs
+
+Constraints:
+- do not interpret nonnumeric environment text as shell syntax
+- close a valid inherited descriptor after its token has been consumed
+- ignore empty or invalid descriptors when a direct inherited token is valid
+- no live backend Codex validation
+
+Validation:
+- the existing numeric descriptor inheritance path still succeeds and closes
+  the descriptor
+- direct token inheritance succeeds with empty and malicious-looking descriptor
+  values while leaving an unrelated descriptor open
+- the malicious-looking value cannot create its sentinel side effect
+- focused regression, complete unit suite, and quick/full validation
+
+## Issue #658: Backlog Owner PID-Reuse Detection
+
+Status: complete; merged in PR #835
 
 Goal:
 - distinguish the recorded backlog owner from an unrelated process that reused

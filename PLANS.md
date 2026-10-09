@@ -3,9 +3,34 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #662: Anomaly Custody Publication Integrity
+## Issue #665: Terminal Evidence Before Lattice Finish
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- publish canonical `cycle.exit` evidence before Lattice hashes the log artifact
+- preserve automation-ledger ordering ahead of Lattice finish recording
+- retain terminal evidence even when Lattice persistence fails
+
+Verified defect:
+- `finish_cycle` called both finish ledgers before `log_line`, while Lattice
+  received `--log-path "$LOG_FILE"` during its write
+- the Lattice artifact observation could therefore predate the terminal line it
+  was meant to anchor
+
+Constraints:
+- pass identical exit code, reason, level, and status to both ledgers
+- do not make Lattice success a prerequisite for cleanup or wrapper exit
+- no live backend Codex validation
+
+Validation:
+- successful and failing Lattice mocks both observe `cycle.exit` before they run
+- traces prove `cycle.exit`, automation finish, then Lattice finish ordering
+- focused retry test, complete unit suite, and quick/full repository validation
+
+## Issue #662: Anomaly Custody Publication Integrity
+
+Status: complete; merged in PR #839
 
 Goal:
 - make every anomaly-custody JSON promotion atomic and crash-durable

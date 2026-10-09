@@ -2417,6 +2417,7 @@ check_lattice_custody_policy_contract() {
     fail "Lattice finish retry spool schema is undocumented or missing"
   [[ -s tests/lattice_finish_retry_test.bash ]] ||
     fail "Lattice finish retry regression is missing"
+  validation_run_test tests/lattice_finish_retry_test.bash
   grep -Fq 'snapshot_id,' tools/upkeeper_lattice_core.py ||
     fail "Lattice worktree snapshot insertion is missing"
   grep -Fq 'existing_file_id,' tools/upkeeper_lattice_core.py ||

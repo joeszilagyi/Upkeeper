@@ -6,7 +6,13 @@ LATTICE_TOOL="$ROOT_DIR/tools/upkeeper_lattice.py"
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-lattice-test.XXXXXX")"
 
 source "$ROOT_DIR/tests/lib/lattice_validator_contract.bash"
+source "$ROOT_DIR/tests/lib/lattice_command_guard.bash"
 source "$ROOT_DIR/tests/lib/lattice_inprocess_harness.bash"
+
+LATTICE_TEST_COMMAND_TIMEOUT_SECONDS="${LATTICE_TEST_COMMAND_TIMEOUT_SECONDS:-15}"
+LATTICE_TEST_TIMEOUT_ARTIFACT="${LATTICE_TEST_TIMEOUT_ARTIFACT:-$ROOT_DIR/runtime/validation-timeouts/lattice-test-$$.jsonl}"
+LATTICE_HARNESS_COMMAND_TIMEOUT_SECONDS="$LATTICE_TEST_COMMAND_TIMEOUT_SECONDS"
+LATTICE_HARNESS_TIMEOUT_ARTIFACT="$LATTICE_TEST_TIMEOUT_ARTIFACT"
 
 cleanup() {
   lattice_harness_stop
@@ -115,6 +121,7 @@ make_repo() {
 
 lattice() {
   local current_raw_storage="${UPKEEPER_LATTICE_RAW_STORAGE-__UNSET__}"
+  local max_cover_query=0
   local -a common_args=(--root "$REPO" --db "$DB")
 
   if [[ "${UPKEEPER_LATTICE_ALLOW_UNSAFE_DB:-0}" == "1" ]]; then
@@ -123,9 +130,24 @@ lattice() {
   if [[ -n "${CODEX_UPKEEPER_IGNORE_FILE:-}" ]]; then
     common_args+=(--upkeeper-ignore-file "$CODEX_UPKEEPER_IGNORE_FILE")
   fi
+  if [[ " $* " == *" query selection-candidates "* && " $* " == *" --mode max-cover "* ]]; then
+    max_cover_query=1
+    printf 'lattice_validation: command phase=lattice_test:max-cover timeout=%ss artifact=%s command=%s\n' \
+      "$LATTICE_TEST_COMMAND_TIMEOUT_SECONDS" \
+      "$LATTICE_TEST_TIMEOUT_ARTIFACT" \
+      "$(lattice_command_guard_display "$LATTICE_TOOL" "${common_args[@]}" "$@")" >&2
+  fi
   # Environment-sensitive raw-storage cases remain real subprocess checks;
   # the persistent server deliberately retains its startup environment.
   if [[ "$current_raw_storage" != "$LATTICE_HARNESS_RAW_STORAGE" ]]; then
+    if [[ "$max_cover_query" == "1" ]]; then
+      lattice_command_guard_run \
+        lattice_test:max-cover \
+        "$LATTICE_TEST_COMMAND_TIMEOUT_SECONDS" \
+        "$LATTICE_TEST_TIMEOUT_ARTIFACT" \
+        "$LATTICE_TOOL" "${common_args[@]}" "$@"
+      return
+    fi
     "$LATTICE_TOOL" "${common_args[@]}" "$@"
     return
   fi
@@ -275,11 +297,17 @@ PY
     fail ".upkeeperignore did not exclude max-cover Lattice candidates"
 
   set +e
-  "$LATTICE_TOOL" --root "$REPO" --db "$DB" \
+  exec 3>&2
+  LATTICE_COMMAND_GUARD_LOG_FD=3 lattice_command_guard_run \
+    lattice_test:max-cover-head \
+    "$LATTICE_TEST_COMMAND_TIMEOUT_SECONDS" \
+    "$LATTICE_TEST_TIMEOUT_ARTIFACT" \
+    "$LATTICE_TOOL" --root "$REPO" --db "$DB" \
     query selection-candidates --mode max-cover --format jsonl \
     2>"$TEST_TMP_ROOT/max-cover-head.err" |
     head -n 1 >"$TEST_TMP_ROOT/max-cover-head.jsonl"
   pipe_status=("${PIPESTATUS[@]}")
+  exec 3>&-
   set -e
   [[ "${pipe_status[0]}" -eq 0 ]] || fail "max-cover query did not tolerate a closed stdout pipe"
   [[ "${pipe_status[1]}" -eq 0 ]] || fail "head unexpectedly failed for max-cover pipe"

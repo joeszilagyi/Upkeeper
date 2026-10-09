@@ -6,7 +6,9 @@ from __future__ import annotations
 import base64
 import contextlib
 import io
+import os
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import BinaryIO
@@ -65,6 +67,11 @@ def serve() -> int:
 
         stdout = io.StringIO()
         stderr = io.StringIO()
+        if (
+            os.environ.get("LATTICE_INPROCESS_HARNESS_TEST_HANG") == "1"
+            and argv == ["test-hang"]
+        ):
+            time.sleep(60)
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             try:
                 rc = lattice.main(argv)

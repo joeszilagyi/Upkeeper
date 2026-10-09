@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-09: bounded Lattice validation custody:
+	1. Every validator check now has a default process-tree deadline, and delegated test commands have a shorter independent deadline plus exact command announcement and timing-artifact attribution.
+	2. Direct max-cover validation probes and the test-only in-process Lattice harness now enforce command-level deadlines instead of relying solely on whole-suite timeouts.
+	3. Simulated wedges verify descendant cleanup and private `upkeeper.lattice-validation-timeout.v1` JSONL evidence carrying phase, command, timeout, and cleanup fields.
+
 2026-10-09: atomic automation-obligation claims:
 	1. Production obligation selection now reserves one open record with a private, durable `O_EXCL` claim sidecar carrying a random token, repository root, launcher, PID/start fingerprint, cycle/run identity, and timestamp.
 	2. Concurrent selectors defer claimed work; blocked/failed attempts and dry runs release it, verified resolution releases only after resolved publication, and a mismatched token cannot resolve the record.

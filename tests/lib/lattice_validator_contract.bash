@@ -29,6 +29,12 @@ test_lattice_validator_contract() {
   local lattice_tool="$project_root/tools/upkeeper_lattice.py"
   local test_tmp_root="${TEST_TMP_ROOT:-}"
   local owned_tmp=0 repo db first_path
+  local timeout_seconds="${LATTICE_VALIDATOR_COMMAND_TIMEOUT_SECONDS:-30}"
+  local timeout_artifact="${LATTICE_VALIDATOR_TIMEOUT_ARTIFACT:-$project_root/runtime/validation-timeouts/lattice-validator-$$.jsonl}"
+
+  if ! declare -F lattice_command_guard_run >/dev/null 2>&1; then
+    source "$project_root/tests/lib/lattice_command_guard.bash"
+  fi
 
   if [[ -z "$test_tmp_root" ]]; then
     test_tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-lattice-validator.XXXXXX")"
@@ -53,12 +59,16 @@ assert data["checks"]["quick_check"] == "ok", data
 PY
     lattice_validator_contract_fail "doctor JSON did not pass"
 
-  "$lattice_tool" --root "$repo" --db "$db" query selection-candidates --mode oldest-mtime --format jsonl \
+  lattice_command_guard_run \
+    lattice_validator:oldest-mtime "$timeout_seconds" "$timeout_artifact" \
+    "$lattice_tool" --root "$repo" --db "$db" query selection-candidates --mode oldest-mtime --format jsonl \
     >"$test_tmp_root/lattice-validator-candidates.jsonl"
   grep -Fq '"path":"space name.sh"' "$test_tmp_root/lattice-validator-candidates.jsonl" ||
     lattice_validator_contract_fail "selection candidates missed space-bearing fixture"
 
-  "$lattice_tool" --root "$repo" --db "$db" query selection-candidates --mode max-cover --format jsonl \
+  lattice_command_guard_run \
+    lattice_validator:max-cover "$timeout_seconds" "$timeout_artifact" \
+    "$lattice_tool" --root "$repo" --db "$db" query selection-candidates --mode max-cover --format jsonl \
     >"$test_tmp_root/lattice-validator-max-cover.jsonl"
   first_path="$(python3 - "$test_tmp_root/lattice-validator-max-cover.jsonl" <<'PY'
 import json
@@ -78,7 +88,11 @@ PY
 
   printf 'README.md\ntests/\n' >"$test_tmp_root/lattice-validator.upkeeperignore"
   CODEX_UPKEEPER_IGNORE_FILE="$test_tmp_root/lattice-validator.upkeeperignore" \
-    "$lattice_tool" --root "$repo" --db "$db" query selection-candidates --mode max-cover --format jsonl \
+    lattice_command_guard_run \
+    lattice_validator:max-cover-upkeeperignore "$timeout_seconds" "$timeout_artifact" \
+    "$lattice_tool" --root "$repo" --db "$db" \
+    --upkeeper-ignore-file "$test_tmp_root/lattice-validator.upkeeperignore" \
+    query selection-candidates --mode max-cover --format jsonl \
     >"$test_tmp_root/lattice-validator-upkeeperignore.jsonl"
   python3 - "$test_tmp_root/lattice-validator-upkeeperignore.jsonl" <<'PY' ||
 import json

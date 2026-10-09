@@ -11,6 +11,8 @@ source "$ROOT_DIR/tools/test_attestation_lib.bash"
 
 MODE="quick"
 VALIDATION_PROFILE="0"
+VALIDATION_CHECK_TIMEOUT_SECONDS="${VALIDATION_CHECK_TIMEOUT_SECONDS:-240}"
+VALIDATION_TEST_TIMEOUT_SECONDS="${VALIDATION_TEST_TIMEOUT_SECONDS:-180}"
 VALIDATION_INTEGRATION_TIMEOUT_SECONDS="${VALIDATION_INTEGRATION_TIMEOUT_SECONDS:-300}"
 VALIDATION_FULL_TIMEOUT_SECONDS="${VALIDATION_FULL_TIMEOUT_SECONDS:-420}"
 VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS="${VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS:-600}"
@@ -111,7 +113,7 @@ fail() {
 run_check() {
   local name="$1"
   shift
-  validation_run_check "$name" 0 "$@"
+  validation_run_check "$name" "$VALIDATION_CHECK_TIMEOUT_SECONDS" "$@"
 }
 
 run_bounded_check() {
@@ -128,7 +130,8 @@ validation_run_test() {
     log "validation_reused command=bash test=$test_path reason=$UPKEEPER_TEST_ATTESTATION_REASON"
     return 0
   fi
-  bash "$test_path"
+  log "checking delegated test command=bash\\ $test_path timeout=${VALIDATION_TEST_TIMEOUT_SECONDS}s"
+  validation_run_check "test:$test_path" "$VALIDATION_TEST_TIMEOUT_SECONDS" bash "$test_path"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -190,6 +193,17 @@ validation_exit_handler() {
   exit "$exit_code"
 }
 trap validation_exit_handler EXIT
+
+for timeout_name in \
+  VALIDATION_CHECK_TIMEOUT_SECONDS \
+  VALIDATION_TEST_TIMEOUT_SECONDS \
+  VALIDATION_INTEGRATION_TIMEOUT_SECONDS \
+  VALIDATION_FULL_TIMEOUT_SECONDS \
+  VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS; do
+  timeout_value="${!timeout_name}"
+  [[ "$timeout_value" =~ ^[0-9]+$ && "$timeout_value" -ge 1 ]] ||
+    fail "$timeout_name must be a positive integer (got: $timeout_value)"
+done
 
 VALIDATION_TMP_ROOT="$(mktemp -d /tmp/upkeeper-validate.XXXXXX)"
 VALIDATION_ACTIVE_LOCK_TOKEN="upkeeper-validate-active-locks/${VALIDATION_TMP_ROOT##*/}.$$"
@@ -1154,6 +1168,14 @@ check_test_invocation_mode_contract() {
     fail "validation phase runner no longer delegates unit tests to tools/run_tests.sh"
   grep -Fq 'timeout --kill-after=5s "$TEST_TIMEOUT_SECONDS" bash "$test_path"' tools/run_tests.sh ||
     fail "test runner no longer bounds each test with timeout"
+  grep -Fq 'VALIDATION_CHECK_TIMEOUT_SECONDS="${VALIDATION_CHECK_TIMEOUT_SECONDS:-240}"' tools/validate_upkeeper.sh ||
+    fail "validator checks no longer have a default deadline"
+  grep -Fq 'validation_run_check "test:$test_path" "$VALIDATION_TEST_TIMEOUT_SECONDS" bash "$test_path"' tools/validate_upkeeper.sh ||
+    fail "delegated validator tests no longer have an independent deadline"
+  grep -Fq 'lattice_test:max-cover-head' tests/lattice_test.bash ||
+    fail "direct max-cover pipe no longer has command-level timeout custody"
+  grep -Fq 'upkeeper.lattice-validation-timeout.v1' tests/lib/lattice_command_guard.bash ||
+    fail "Lattice validation timeout artifact schema is missing"
   grep -Fq 'TEST %s status=%s rc=%s elapsed=' tools/run_tests.sh ||
     fail "test runner no longer emits per-test timing"
   grep -Fq 'tools/run_tests.sh' README.md ||
@@ -1166,6 +1188,7 @@ check_test_invocation_mode_contract() {
 
 check_time_budget_contract() {
   log "checking time budget contract"
+  validation_run_test tests/lattice_validation_timeout_test.bash
   grep -Fq 'CODEX_EXEC_TIMEOUT_SECONDS="${CODEX_EXEC_TIMEOUT_SECONDS:-7200}"' Upkeeper ||
     fail "Upkeeper missing default Codex exec timeout"
   grep -Fq ': "${CODEX_EXEC_TIMEOUT_SECONDS:=7200}"' Upkeeper.conf ||

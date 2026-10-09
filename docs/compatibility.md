@@ -496,6 +496,13 @@ Future changes should preserve this operator-visible surface as far as possible:
   deterministic max-cover fallback; required timeouts fail closed as
   `LATTICE_TIMEOUT` before backend contact. Direct operator CLI invocations
   remain outside this wrapper compatibility boundary.
+- Validator checks and delegated tests are independently bounded, including
+  direct `validate_upkeeper.sh --quick` use outside CI. Delegated test commands
+  are announced before execution and their timing rows retain exact command,
+  timeout, and process-tree cleanup evidence. Test-only direct and in-process
+  Lattice selection probes also retain private structured timeout JSONL under
+  ignored `runtime/validation-timeouts/`; this does not impose a deadline on
+  operator-driven Lattice CLI use.
 - `record-cycle-finish` uses a success-only duplicate guard and one bounded
   same-cycle retry. Two failed writes retain a private atomic
   `upkeeper.lattice-finish-retry.v1` payload under ignored runtime recovery

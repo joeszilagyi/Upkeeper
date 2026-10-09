@@ -1250,8 +1250,16 @@ orphan payloads are not valid restore ids.
   `UPKEEPER_VALIDATION_TIMING_FILE` when explicitly set. Rows include the mode,
   Git head/tree, command, status, duration, timeout, and timeout-cleanup result.
   Add `--profile` to print each row's timing in the terminal; full runs always
-  print a ten-check slowest summary, and CI retains the JSONL artifact. Full
-  validation may reuse same-checkout `tools/run_tests.sh` evidence supplied by
+  print a ten-check slowest summary, and CI retains the JSONL artifact.
+  Validator checks default to a 240-second process-tree deadline and delegated
+  test commands to 180 seconds. Positive-integer
+  `VALIDATION_CHECK_TIMEOUT_SECONDS` and `VALIDATION_TEST_TIMEOUT_SECONDS`
+  overrides may tighten those limits. Each delegated test is announced with
+  its exact command before launch. Direct and in-process Lattice selection
+  probes add a command-level deadline; timeout writes private structured JSONL
+  custody under ignored `runtime/validation-timeouts/` with phase, command,
+  timeout, and cleanup evidence. Full validation may reuse same-checkout
+  `tools/run_tests.sh` evidence supplied by
   `UPKEEPER_TEST_ATTESTATION_FILE`, but only after matching Git head/tree, a
   clean tracked tree, environment class, and every recorded test hash. Missing
   or mismatched evidence is logged and rerun normally. Full
@@ -1274,7 +1282,8 @@ orphan payloads are not valid restore ids.
   `tools/run_lattice_tests.sh` is the narrower six-group entrypoint for a
   Lattice-only change, including command-timeout, cleanup, and finish-retry
   policy; `tests/lattice_test.bash` by itself runs only the fast core-ledger
-  group.
+  group. Its in-process commands have a 15-second response deadline, while
+  direct selection probes use the same structured timeout-custody format.
   Before model contact, Upkeeper emits a deterministic `task.profile` log line
   with the task grade, validation grade, prompt scope, prompt pass, review-module
   action, selected-path evidence, and final effort. Routine low-risk docs,

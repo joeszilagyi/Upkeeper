@@ -121,8 +121,93 @@ EOF
     fail "blocked review comment override was $override"
 }
 
+test_issue_comment_actuator_requires_typed_action_record() {
+  local action draft_file posted_file rc
+
+  reset_issue_workflow_env
+  CODEX_ISSUE_WORKFLOW_STAGE=comment
+  CODEX_ISSUE_FIX_NUMBER=651
+  RUN_SELECTED_REVIEW_PATH=Upkeeper
+  draft_file="$TEST_TMP_ROOT/comment-action.md"
+  posted_file="$TEST_TMP_ROOT/comment-posted.md"
+  RUN_ISSUE_WORKFLOW_COMMENT_FILE="$draft_file"
+  mkdir -p "$TEST_TMP_ROOT/bin"
+  cat >"$TEST_TMP_ROOT/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == issue && "${2:-}" == comment && "${3:-}" == 651 && "${4:-}" == --body-file ]]
+cp -- "$5" "$UPKEEPER_TEST_POSTED_FILE"
+EOF
+  chmod +x "$TEST_TMP_ROOT/bin/gh"
+  PATH="$TEST_TMP_ROOT/bin:$PATH"
+  UPKEEPER_TEST_POSTED_FILE="$posted_file"
+  export UPKEEPER_TEST_POSTED_FILE
+
+  printf 'Upkeeper ChimneySweep proposal:\n\nValidated action.\n' >"$draft_file"
+  action="$(upkeeper_issue_workflow_comment_action_json WORK_DONE 0 unchanged "$RUN_SELECTED_REVIEW_PATH")" ||
+    fail "valid comment action record was not created"
+  jq -e '
+    .schema_version == "upkeeper.issue_comment_action.v1" and
+    .issue_number == "651" and .stage == "comment" and
+    .accepted_status == "WORK_DONE" and .codex_exit == 0 and
+    .source_guard_outcome == "unchanged" and .selected_target == "Upkeeper" and
+    (.draft_path_hash | test("^path-hmac-sha256:[0-9a-f]{64}$")) and
+    (.draft_sha256 | test("^[0-9a-f]{64}$"))
+  ' <<<"$action" >/dev/null || fail "valid comment action record omitted required bindings"
+  upkeeper_issue_workflow_post_comment "$action" WORK_DONE 0 unchanged "$RUN_SELECTED_REVIEW_PATH" ||
+    fail "valid typed comment action was not posted"
+  cmp -s "$draft_file" "$posted_file" || fail "valid typed comment action posted wrong body"
+
+  if upkeeper_issue_workflow_comment_action_json "" 0 unchanged "$RUN_SELECTED_REVIEW_PATH" >/dev/null; then
+    fail "comment action builder accepted missing status"
+  fi
+  if upkeeper_issue_workflow_comment_action_json WORK_DONE 0 violation "$RUN_SELECTED_REVIEW_PATH" >/dev/null; then
+    fail "comment action builder accepted source mutation violation"
+  fi
+
+  rm -f -- "$posted_file"
+  printf 'tampered after action creation\n' >>"$draft_file"
+  set +e
+  upkeeper_issue_workflow_post_comment "$action" WORK_DONE 0 unchanged "$RUN_SELECTED_REVIEW_PATH"
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 && ! -e "$posted_file" ]] || fail "comment actuator accepted altered draft content"
+  printf 'Upkeeper ChimneySweep proposal:\n\nValidated action.\n' >"$draft_file"
+
+  RUN_SELECTED_REVIEW_PATH=other-target
+  set +e
+  upkeeper_issue_workflow_post_comment "$action" WORK_DONE 0 unchanged "$RUN_SELECTED_REVIEW_PATH"
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 && ! -e "$posted_file" ]] || fail "comment actuator accepted wrong selected target"
+  RUN_SELECTED_REVIEW_PATH=Upkeeper
+
+  set +e
+  upkeeper_issue_workflow_post_comment '{}' WORK_DONE 0 unchanged "$RUN_SELECTED_REVIEW_PATH"
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 && ! -e "$posted_file" ]] || fail "comment actuator accepted invalid action record"
+
+  action="$(jq -c '.source_guard_outcome="violation"' <<<"$action")"
+  set +e
+  upkeeper_issue_workflow_post_comment "$action" WORK_DONE 0 unchanged "$RUN_SELECTED_REVIEW_PATH"
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 && ! -e "$posted_file" ]] || fail "comment actuator accepted mutation-violation action"
+
+  printf 'Wrong comment prefix.\n' >"$draft_file"
+  action="$(upkeeper_issue_workflow_comment_action_json WORK_DONE 0 unchanged "$RUN_SELECTED_REVIEW_PATH")" ||
+    fail "wrong-prefix fixture action record was not created"
+  set +e
+  upkeeper_issue_workflow_post_comment "$action" WORK_DONE 0 unchanged "$RUN_SELECTED_REVIEW_PATH"
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 && ! -e "$posted_file" ]] || fail "comment actuator accepted wrong prefix"
+}
+
 test_review_stage_prompt_includes_latest_proposal_and_read_only_validation_rule
 test_review_stage_prompt_fails_closed_without_proposal_context
 test_review_stage_blocked_comment_maps_to_blocked_status_override
+test_issue_comment_actuator_requires_typed_action_record
 
 printf 'issue_workflow_review_contract_test: ok\n'

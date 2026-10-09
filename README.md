@@ -330,7 +330,11 @@ bodies/comments before launch, Codex receives only that issue packet, and GitHub
 side effects stay wrapper-owned. In staged mode, the comment and review stages
 also force backend Codex into a read-only repo sandbox and require the proposed
 issue comment to be emitted in a final-message draft block that the wrapper
-extracts after validation. Backend Codex launches do not inherit GitHub token
+extracts after validation. Before posting, the wrapper validates an
+`upkeeper.issue_comment_action.v1` record that binds the issue/stage, draft path
+and content hashes, accepted status, backend exit, unchanged-source result, and
+selected target. Missing or mismatched action evidence blocks the GitHub write.
+Backend Codex launches do not inherit GitHub token
 variables, use an empty per-run `gh` config directory, and have direct `gh`,
 `curl`, `wget`, and `hub` commands shadowed by blocker stubs. The combined
 default and the apply stage may edit source, but still do not contact GitHub

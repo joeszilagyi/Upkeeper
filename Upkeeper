@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.38
+## Version: v1.2.39
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.38"
+UPKEEPER_VERSION="v1.2.39"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -6447,6 +6447,7 @@ main() {
   local last_message_file
   local source_mutation_guard_before=""
   local source_mutation_guard_mode=""
+  local source_mutation_guard_outcome="not_required"
   local -a backend_mode_args=()
   local backend_mode_summary=""
   ensure_run_tmp_dir
@@ -6473,8 +6474,10 @@ main() {
   if upkeeper_source_mutation_guard_enabled; then
     source_mutation_guard_mode="$(upkeeper_source_mutation_guard_mode)"
     if source_mutation_guard_before="$(upkeeper_source_mutation_fingerprint)"; then
+      source_mutation_guard_outcome="pending"
       log_line "INFO" "source_mutation_guard.baseline mode=$source_mutation_guard_mode source_fingerprint=$source_mutation_guard_before"
     else
+      source_mutation_guard_outcome="unavailable"
       log_line "WARN" "source_mutation_guard.baseline mode=$source_mutation_guard_mode source_fingerprint=unavailable"
       source_mutation_guard_before=""
     fi
@@ -6815,21 +6818,29 @@ PY
       fi
     fi
   fi
-  if upkeeper_source_mutation_guard_enabled && [[ -n "$source_mutation_guard_before" ]]; then
-    local source_mutation_guard_after
-    if source_mutation_guard_after="$(upkeeper_source_mutation_fingerprint)"; then
-      if [[ "$source_mutation_guard_after" != "$source_mutation_guard_before" ]]; then
-        local source_mutation_guard_reason="SOURCE_MUTATION_GUARD_VIOLATION"
-        if [[ "$source_mutation_guard_mode" == "bug_report_only" ]]; then
-          source_mutation_guard_reason="BUG_REPORT_ONLY_MUTATION_VIOLATION"
-        elif [[ "$source_mutation_guard_mode" == "audit_only" ]]; then
-          source_mutation_guard_reason="AUDIT_ONLY_MUTATION_VIOLATION"
+  if upkeeper_source_mutation_guard_enabled; then
+    if [[ -n "$source_mutation_guard_before" ]]; then
+      local source_mutation_guard_after
+      if source_mutation_guard_after="$(upkeeper_source_mutation_fingerprint)"; then
+        if [[ "$source_mutation_guard_after" != "$source_mutation_guard_before" ]]; then
+          local source_mutation_guard_reason="SOURCE_MUTATION_GUARD_VIOLATION"
+          source_mutation_guard_outcome="violation"
+          if [[ "$source_mutation_guard_mode" == "bug_report_only" ]]; then
+            source_mutation_guard_reason="BUG_REPORT_ONLY_MUTATION_VIOLATION"
+          elif [[ "$source_mutation_guard_mode" == "audit_only" ]]; then
+            source_mutation_guard_reason="AUDIT_ONLY_MUTATION_VIOLATION"
+          fi
+          log_line "ERROR" "source_mutation_guard.violation mode=$source_mutation_guard_mode before=$source_mutation_guard_before after=$source_mutation_guard_after codex_exit=$codex_exit status_marker=${status_marker:-missing}"
+          finish_cycle 3 "$source_mutation_guard_reason" ERROR "mode=$source_mutation_guard_mode codex_exit=$codex_exit status_marker=${status_marker:-missing}"
         fi
-        log_line "ERROR" "source_mutation_guard.violation mode=$source_mutation_guard_mode before=$source_mutation_guard_before after=$source_mutation_guard_after codex_exit=$codex_exit status_marker=${status_marker:-missing}"
-        finish_cycle 3 "$source_mutation_guard_reason" ERROR "mode=$source_mutation_guard_mode codex_exit=$codex_exit status_marker=${status_marker:-missing}"
+        source_mutation_guard_outcome="unchanged"
+        log_line "INFO" "source_mutation_guard.source_unchanged mode=$source_mutation_guard_mode source_fingerprint=$source_mutation_guard_after"
+      else
+        source_mutation_guard_outcome="unavailable"
+        log_line "WARN" "source_mutation_guard.source_unchanged mode=$source_mutation_guard_mode source_fingerprint=unavailable"
       fi
-      log_line "INFO" "source_mutation_guard.source_unchanged mode=$source_mutation_guard_mode source_fingerprint=$source_mutation_guard_after"
     else
+      source_mutation_guard_outcome="unavailable"
       log_line "WARN" "source_mutation_guard.source_unchanged mode=$source_mutation_guard_mode source_fingerprint=unavailable"
     fi
   fi
@@ -6837,10 +6848,16 @@ PY
   prompt_pass_enforce_coverage_status "$last_message_file" "$codex_exit"
 
   if upkeeper_issue_workflow_comment_stage_enabled; then
-    if upkeeper_issue_workflow_post_comment; then
+    local issue_workflow_action_json=""
+    local issue_workflow_action_status="${status_marker:-}"
+    local issue_workflow_review_decision=""
+    local issue_workflow_status_override=""
+    if ! upkeeper_issue_workflow_materialize_comment_draft; then
+      log_line "ERROR" "issue.workflow_comment.action_blocked stage=$(shell_quote "${CODEX_ISSUE_WORKFLOW_STAGE:-unknown}") number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}") reason=draft_materialization_failed"
+      status_marker="BLOCKED"
+      status_marker_source="issue_workflow_comment_failed"
+    else
       if [[ "${CODEX_ISSUE_WORKFLOW_STAGE:-}" == "review" ]]; then
-        local issue_workflow_review_decision=""
-        local issue_workflow_status_override=""
         if IFS=$'\t' read -r issue_workflow_review_decision issue_workflow_status_override < <(
           upkeeper_issue_workflow_status_marker_override "${CODEX_ISSUE_WORKFLOW_STAGE:-}" "${RUN_ISSUE_WORKFLOW_COMMENT_FILE:-}" 2>/dev/null || true
         ); then
@@ -6850,22 +6867,38 @@ PY
           log_line "INFO" "issue.workflow_comment.review_decision stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") decision=$issue_workflow_review_decision number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
         fi
         if [[ "$issue_workflow_status_override" == "BLOCKED" ]]; then
-          status_marker="$issue_workflow_status_override"
-          status_marker_source="issue_workflow_review_decision"
-          log_line "WARN" "issue.workflow_comment.review_blocked stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}") action=map_cycle_to_blocked"
+          issue_workflow_action_status="$issue_workflow_status_override"
         fi
       fi
-      if [[ "${status_marker:-}" == "BLOCKED" ]]; then
-        if [[ "$status_marker_source" == "issue_workflow_review_decision" ]]; then
-          log_line "INFO" "issue.workflow_comment.status_preserved marker=$status_marker stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") reason=review_comment_declared_blocked"
-        else
+
+      if issue_workflow_action_json="$(upkeeper_issue_workflow_comment_action_json \
+        "$issue_workflow_action_status" "$codex_exit" "$source_mutation_guard_outcome" \
+        "${RUN_SELECTED_REVIEW_PATH:-}")" && \
+        upkeeper_issue_workflow_post_comment "$issue_workflow_action_json" \
+          "$issue_workflow_action_status" "$codex_exit" "$source_mutation_guard_outcome" \
+          "${RUN_SELECTED_REVIEW_PATH:-}"; then
+        if [[ "$issue_workflow_status_override" == "BLOCKED" ]]; then
+          status_marker="BLOCKED"
+          status_marker_source="issue_workflow_review_decision"
+          log_line "WARN" "issue.workflow_comment.review_blocked stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}") action=map_validated_action_to_blocked"
+        elif [[ "${status_marker:-}" == "BLOCKED" ]]; then
           status_marker_source="issue_workflow_comment_relay"
           log_line "INFO" "issue.workflow_comment.status_preserved marker=$status_marker stage=$(shell_quote "$CODEX_ISSUE_WORKFLOW_STAGE") reason=comment_stage_did_not_mutate_source"
         fi
+      else
+        if [[ -z "$issue_workflow_action_json" ]]; then
+          log_line_parts "ERROR" \
+            "issue.workflow_comment.action_blocked" \
+            " stage=$(shell_quote "${CODEX_ISSUE_WORKFLOW_STAGE:-unknown}")" \
+            " number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")" \
+            " reason=action_record_build_failed" \
+            " accepted_status=$(shell_quote "${issue_workflow_action_status:-missing}")" \
+            " codex_exit=$codex_exit" \
+            " source_guard_outcome=$(shell_quote "$source_mutation_guard_outcome")"
+        fi
+        status_marker="BLOCKED"
+        status_marker_source="issue_workflow_comment_failed"
       fi
-    else
-      status_marker="BLOCKED"
-      status_marker_source="issue_workflow_comment_failed"
     fi
   fi
 

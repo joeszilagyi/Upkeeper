@@ -89,5 +89,9 @@ grep -Fq 'Report selected validation gate' "$ROOT_DIR/.github/workflows/ci.yml" 
   fail "CI does not expose its selected validation gate"
 grep -Fq "steps.scope.outputs.validation_gate == 'full'" "$ROOT_DIR/.github/workflows/ci.yml" ||
   fail "CI does not couple full validation to the classifier gate"
+if command -v ruby >/dev/null 2>&1; then
+  ruby -e 'require "yaml"; YAML.load_file(ARGV.fetch(0))' "$ROOT_DIR/.github/workflows/ci.yml" ||
+    fail "CI workflow is not valid YAML"
+fi
 
 printf 'change_scope_test: ok\n'

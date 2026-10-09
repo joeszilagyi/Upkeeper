@@ -80,7 +80,8 @@ jobs:
 
       - name: Report selected validation gate
         shell: bash
-        run: printf 'CI validation gate: %s\n' "${{ steps.scope.outputs.validation_gate }}"
+        run: |
+          printf 'CI validation gate: %s\n' "${{ steps.scope.outputs.validation_gate }}"
 
       - name: Parallel local gates
         if: steps.scope.outputs.docs_only != '1'

@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: repository-scoped parallel worker leases:
+	1. Global parallel-worker registry claims now compare normalized repository roots before applying renewal, issue-number, or target-file conflicts, so unrelated repositories cannot block or overwrite one another.
+	2. Explicit release is repository-scoped as well, while legacy records with missing or unusable root scope remain conservatively global.
+	3. Decode-corrupt, schema-invalid, and wrong-shape registries now fail closed with stable reason codes and remain unchanged instead of being replaced by an empty lease set.
+
 2026-10-08: rotation-safe quota session enumeration:
 	1. Quota session discovery now guards per-file metadata reads and directory walking so a concurrently rotated JSONL path cannot escape as a traceback.
 	2. Readable snapshots remain eligible when another candidate disappears, while the JSON result reports a bounded scan-error count.

@@ -3,9 +3,32 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #656: Rotation-Safe Quota Session Enumeration
+## Issue #657: Repository-Scoped Parallel Worker Leases
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- scope lease renewal, issue conflicts, target conflicts, and release to one
+  normalized repository root
+- allow unrelated repositories to share the global per-user registry safely
+- preserve corrupt registry evidence and fail closed
+
+Constraints:
+- retain global conflict behavior for legacy records with no usable root
+- do not rewrite decode-corrupt or structurally invalid registry files
+- expose stable reason codes without leaking registry contents
+- no live backend Codex validation
+
+Validation:
+- same worker/issue in two roots creates distinct leases without overwriting
+- same-root issue conflicts and root-scoped release remain enforced
+- decode-corrupt and valid-JSON/wrong-shape registries return blocked status and
+  remain byte-for-byte unchanged
+- focused lease test, complete unit suite, and quick/full repository validation
+
+## Issue #656: Rotation-Safe Quota Session Enumeration
+
+Status: complete; merged in PR #833
 
 Goal:
 - keep quota evaluation alive when Codex rotates a session during enumeration

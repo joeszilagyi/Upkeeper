@@ -26,6 +26,12 @@ SCHEMA = 1
 DEFAULT_TTL_SECONDS = 4 * 60 * 60
 
 
+class RegistryError(Exception):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 def now_epoch(args: argparse.Namespace) -> int:
     if getattr(args, "now_epoch", None) is not None:
         return int(args.now_epoch)
@@ -64,14 +70,15 @@ def read_json(path: pathlib.Path) -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {"schema": SCHEMA, "leases": []}
-    except (OSError, json.JSONDecodeError):
-        return {"schema": SCHEMA, "leases": []}
-    if not isinstance(data, dict):
-        return {"schema": SCHEMA, "leases": []}
+    except json.JSONDecodeError as exc:
+        raise RegistryError("registry_json_invalid") from exc
+    except OSError as exc:
+        raise RegistryError("registry_unreadable") from exc
+    if not isinstance(data, dict) or data.get("schema") != SCHEMA:
+        raise RegistryError("registry_shape_invalid")
     leases = data.get("leases")
-    if not isinstance(leases, list):
-        data["leases"] = []
-    data["schema"] = SCHEMA
+    if not isinstance(leases, list) or any(not isinstance(item, dict) for item in leases):
+        raise RegistryError("registry_shape_invalid")
     return data
 
 
@@ -136,6 +143,18 @@ def repo_branch(root: pathlib.Path) -> str:
 
 def normalize_root(path: pathlib.Path) -> pathlib.Path:
     return path.expanduser().resolve(strict=False)
+
+
+def lease_matches_root(item: dict[str, Any], root: pathlib.Path) -> bool:
+    stored_root = stable(item.get("root"))
+    if not stored_root:
+        # Legacy or malformed unscoped records remain globally conflicting;
+        # never let missing scope silently weaken coordination.
+        return True
+    try:
+        return normalize_root(pathlib.Path(stored_root)) == root
+    except (OSError, ValueError):
+        return True
 
 
 def validate_worker_worktree(root: pathlib.Path, worktree: pathlib.Path) -> tuple[bool, str]:
@@ -211,6 +230,8 @@ def command_claim(args: argparse.Namespace) -> int:
         worker_id = stable(args.worker_id)
         current = None
         for item in active_leases(data, now):
+            if not lease_matches_root(item, root):
+                continue
             if stable(item.get("worker_id")) == worker_id and stable(item.get("issue_number")) == issue_number:
                 current = item
                 continue
@@ -288,12 +309,15 @@ def command_claim(args: argparse.Namespace) -> int:
 
 
 def command_release(args: argparse.Namespace) -> int:
+    root = normalize_root(pathlib.Path(args.root))
     now = now_epoch(args)
     state_root = pathlib.Path(args.state_root)
     with locked_registry(state_root) as data:
         expire_stale(data, now)
         for item in data.get("leases", []):
             if not isinstance(item, dict) or item.get("status") != "active":
+                continue
+            if not lease_matches_root(item, root):
                 continue
             if stable(item.get("worker_id")) != stable(args.worker_id):
                 continue
@@ -394,7 +418,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str]) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except RegistryError as exc:
+        print_kv({"lease_status": "blocked", "reason": exc.reason})
+        return 4
 
 
 if __name__ == "__main__":

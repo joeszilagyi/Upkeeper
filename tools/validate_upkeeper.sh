@@ -3074,6 +3074,10 @@ check_backlog_parallel_leases_contract() {
     fail "parallel backlog lease helper does not expose deterministic conflict reasons"
   grep -Fq "target_file" tools/backlog_parallel_leases.py ||
     fail "parallel backlog lease helper does not lease predicted target files"
+  grep -Fq "lease_matches_root(item, root)" tools/backlog_parallel_leases.py ||
+    fail "parallel backlog lease conflicts are not repository-scoped"
+  grep -Fq 'RegistryError("registry_json_invalid")' tools/backlog_parallel_leases.py ||
+    fail "parallel backlog lease registry corruption does not fail closed"
   grep -Fq "Status: accepted" docs/decisions/0002-parallel-backlog-workers.md ||
     fail "parallel backlog worker decision is not accepted"
   grep -Fq "This decision closes the research/design slice from issue #367" docs/decisions/0002-parallel-backlog-workers.md ||

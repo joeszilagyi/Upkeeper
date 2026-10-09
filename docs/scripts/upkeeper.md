@@ -342,9 +342,14 @@ Important:
     of letting already-known obligations starve later PAGE alerts.
     `tools/backlog_parallel_leases.py` is the local no-backend lease primitive
     for future isolated parallel backlog workers. It records worker issue and
-    predicted-target ownership under the backlog state root, rejects duplicate
-    issue or target claims, rejects using the main checkout as a worker worktree,
-    supports TTL expiry/release, and prints a compact worker status table. It
+    predicted-target ownership under the backlog state root. Renewal, issue,
+    target, and release matching are scoped to the normalized repository root,
+    so one global per-user registry can coordinate unrelated repositories.
+    Legacy unscoped leases remain globally conflicting. Decode-corrupt or
+    structurally invalid registries fail closed without being rewritten. The
+    helper rejects duplicate same-repository issue or target claims, rejects
+    using the main checkout as a worker worktree, supports TTL expiry/release,
+    and prints a compact worker status table. It
     does not launch Codex or create PRs; live parallel worker supervision remains
     opt-in future behavior built on this lease contract.
     For broader local evidence sweeps outside the backlog loop,

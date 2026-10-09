@@ -3,9 +3,36 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #668: Registry-Derived Lattice Planned Passes
+## Issue #669: Stable Repeatable Obligation Identity
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- make wrapper/control-plane failure obligations stable by failure class,
+  reason, scope, target, and repair target instead of by cycle/run
+- retain each source cycle and run as bounded occurrence evidence
+- make created versus updated-existing publication visible to operators
+
+Verified defect:
+- only five hardcoded terminal reasons used stable identities
+- all other repeatable failures included cycle and run identity in the record id,
+  producing duplicate open records until later reconciliation
+
+Constraints:
+- per-run identity is exception-only; no current terminal reason requires it
+- repository identity remains part of the hashed record id
+- distinct reasons, targets, scopes, and repair targets must not coalesce
+- legacy duplicate reconciliation remains unchanged as a safety net
+
+Validation:
+- separate cycle ids and run hashes for the same BLOCKED target update one open
+  record, increment its count, and preserve first/latest occurrence evidence
+- distinct target and reason fixtures retain separate records
+- operator logs distinguish `created` from `updated_existing`
+
+## Issue #668: Registry-Derived Lattice Planned Passes
+
+Status: complete; merged in PR #843
 
 Goal:
 - derive pass-result planned coverage from the active Python pass registry

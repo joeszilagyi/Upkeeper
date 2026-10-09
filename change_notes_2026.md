@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-09: stable repeatable automation-obligation identity:
+	1. Wrapper and control-plane terminal failures now default to repository-scoped stable obligation IDs keyed by failure class, reason, scope, target, and repair target instead of cycle/run IDs.
+	2. Repeated failures update one open record, increment its occurrence count, preserve first/latest source evidence plus a bounded 50-entry observation history, and log whether publication created or updated the record.
+	3. Per-run identity is now an explicit exception-only policy with no current terminal reasons; legacy duplicate reconciliation remains available for old records.
+
 2026-10-09: registry-derived Lattice planned-pass coverage:
 	1. Pass-result planned coverage now comes from a `planned-passes` projection of the authoritative Python pass registry instead of separate Bash base lists and P24-P30 case mappings.
 	2. The registry preserves the exact default and all-pass repertoires and appends only selected active module passes; reserved, unwired P31 is explicitly rejected.

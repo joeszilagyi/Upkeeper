@@ -2557,6 +2557,7 @@ check_automation_obligation_reconciliation_contract() {
   local temp_dir reconciliation_json open_count resolved_count owner_file duplicate_file selected_json
 
   log "checking automation obligation reconciliation contract"
+  validation_run_test tests/automation_obligation_identity_test.bash
   temp_dir="$(mktemp -d /tmp/upkeeper-obligation-reconcile.XXXXXX)"
   mkdir -p "$temp_dir/obligations/open"
 

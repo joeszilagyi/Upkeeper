@@ -525,6 +525,13 @@ Important:
       runtime/upkeeper-automation-ledger
     Non-zero cycle exits create unresolved automation obligations under:
       runtime/upkeeper-obligations
+    Repeatable wrapper/control-plane failures default to one stable,
+    repository-scoped identity derived from their class, reason, target scope,
+    target, and repair target. A later cycle updates that record, increments
+    its occurrence count, retains a bounded 50-entry cycle/run observation
+    history, and logs `action=updated_existing`. Per-run identity is reserved
+    for an explicit evidence-preservation allowlist; no current terminal
+    reason is on that allowlist.
     FlameOn, ChimneySweep, and future derivative launchers use the same
     Upkeeper-owned record format and only supply launcher identity and policy.
     Those launchers reconcile open obligations before normal bug-finding or

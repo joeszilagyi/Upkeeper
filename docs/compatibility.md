@@ -222,6 +222,12 @@ Future changes should preserve this operator-visible surface as far as possible:
   stale control-plane failures block fresh GitHub issue work or bug-hunting
   runs until they are repaired, resolved, or preserved as explicit obligations
   for the next run.
+- Repeatable wrapper/control-plane failures default to a stable,
+  repository-scoped obligation identity keyed by failure class, reason, target
+  scope, target, and repair target. Source cycle/run ids are observations, not
+  primary identity: repeats increment one record and retain a bounded 50-entry
+  history. Per-run identity is exception-only, and no current terminal reason
+  requires that exception.
 - A successful obligation-repair process exit is not resolution proof. The
   final response must contain one raw proof record bound to the obligation id,
   selected repair target, and canonical required-resolution digest. A repaired

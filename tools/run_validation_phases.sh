@@ -3,16 +3,20 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+# shellcheck source=/dev/null
+source "$ROOT_DIR/tools/git_diff_validation.bash"
 
 PHASES_CSV="${UPKEEPER_VALIDATION_PHASES:-shell_syntax,unit_tests,public_docs,diff_whitespace,quick_validator}"
 PHASE_JOBS="${UPKEEPER_VALIDATION_PHASE_JOBS:-auto}"
 PHASE_TIMEOUT_SECONDS="${UPKEEPER_VALIDATION_PHASE_TIMEOUT_SECONDS:-900}"
 SHOW_PASS_OUTPUT="${UPKEEPER_VALIDATION_PHASE_SHOW_PASS_OUTPUT:-0}"
 RUNNER_TMP_ROOT=""
+DIFF_BASE_REF="${UPKEEPER_VALIDATION_DIFF_BASE:-}"
+DIFF_HEAD_REF="${UPKEEPER_VALIDATION_DIFF_HEAD:-HEAD}"
 
 usage() {
   cat <<'USAGE'
-Usage: tools/run_validation_phases.sh [--phases a,b,c] [--jobs N] [--serial]
+Usage: tools/run_validation_phases.sh [--phases a,b,c] [--jobs N] [--serial] [--diff-base REF] [--diff-head REF]
 
 Run independent local validation phases with bounded parallelism and a timing
 table. Supported phases:
@@ -47,6 +51,16 @@ while [[ $# -gt 0 ]]; do
     --serial)
       PHASE_JOBS=1
       shift
+      ;;
+    --diff-base)
+      [[ -n "${2:-}" ]] || fail "--diff-base requires a value"
+      DIFF_BASE_REF="$2"
+      shift 2
+      ;;
+    --diff-head)
+      [[ -n "${2:-}" ]] || fail "--diff-head requires a value"
+      DIFF_HEAD_REF="$2"
+      shift 2
       ;;
     --help|-h)
       usage
@@ -101,7 +115,7 @@ phase_command() {
       tools/check_public_docs.sh --quick
       ;;
     diff_whitespace)
-      git diff --check
+      upkeeper_git_diff_check_whitespace "$DIFF_BASE_REF" "$DIFF_HEAD_REF" 1
       ;;
     quick_validator)
       tools/validate_upkeeper.sh --quick
@@ -127,6 +141,7 @@ run_one_phase() {
   timeout --kill-after=5s "$PHASE_TIMEOUT_SECONDS" bash -c '
     set -euo pipefail
     cd "$1"
+    source "$1/tools/git_diff_validation.bash"
     case "$2" in
       shell_syntax)
         bash -n Upkeeper ChimneySweep FlameOn Upkeeper.conf configurations/default.conf completions/*.bash lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh orchestration/*.sh
@@ -138,7 +153,7 @@ run_one_phase() {
         tools/check_public_docs.sh --quick
         ;;
       diff_whitespace)
-        git diff --check
+        upkeeper_git_diff_check_whitespace "$3" "$4" 1
         ;;
       quick_validator)
         tools/validate_upkeeper.sh --quick
@@ -148,7 +163,7 @@ run_one_phase() {
         exit 64
         ;;
     esac
-  ' bash "$ROOT_DIR" "$phase" >"$out_file" 2>&1
+  ' bash "$ROOT_DIR" "$phase" "$DIFF_BASE_REF" "$DIFF_HEAD_REF" >"$out_file" 2>&1
   rc=$?
   set -e
 

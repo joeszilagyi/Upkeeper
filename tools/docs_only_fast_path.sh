@@ -88,6 +88,8 @@ done
 
 cd "$ROOT_DIR"
 source "$ROOT_DIR/lib/upkeeper/change_scope.bash"
+# shellcheck source=/dev/null
+source "$ROOT_DIR/tools/git_diff_validation.bash"
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
   fail "not a Git worktree: $ROOT_DIR"
@@ -122,22 +124,8 @@ append_changed_paths_from_git() {
 check_diff_whitespace() {
   local base_ref="$1"
   local head_ref="$2"
-  local merge_base
 
-  if [[ -n "$base_ref" ]]; then
-    git diff --check "$base_ref" "$head_ref"
-    return 0
-  fi
-
-  if git rev-parse --verify "origin/main^{commit}" >/dev/null 2>&1; then
-    merge_base="$(git merge-base HEAD origin/main 2>/dev/null || true)"
-    if [[ -n "$merge_base" ]]; then
-      git diff --check "$merge_base" HEAD
-    fi
-  fi
-
-  git diff --check --cached
-  git diff --check
+  upkeeper_git_diff_check_whitespace "$base_ref" "$head_ref" 1
 }
 
 tmp_dir="$(mktemp -d /tmp/upkeeper-docs-only.XXXXXX)"

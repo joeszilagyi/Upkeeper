@@ -7269,3 +7269,34 @@ Validation:
 Result:
 - Added the tracked source-rights metadata policy, linked it from the public
   policy docs, and added public-doc plus quick-validator drift checks.
+
+## Committed Diff Whitespace Validation
+
+Status: implemented locally; PR pending
+
+Goal:
+- close issue #864 by making the normal CI whitespace phase inspect the
+  committed PR or push range, rather than only a clean working tree
+- retain local staged and unstaged whitespace checks for developer validation
+- share the ref-aware behavior with the existing docs-only fast path
+
+Constraints:
+- fail clearly when a caller provides an unavailable committed base or head;
+  never replace that expected range with an empty working-tree check
+- preserve the no-network, no-backend local validation contract
+- cover real Git fixtures, including committed defects, clean ranges, missing
+  revisions, and local unstaged defects
+
+Files likely touched:
+- `tools/run_validation_phases.sh`
+- `tools/docs_only_fast_path.sh`
+- `.github/workflows/ci.yml`
+- a focused shared validation helper and integration test
+- `tools/validate_upkeeper.sh`
+
+Validation:
+- focused real-Git diff-whitespace integration test
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `tools/run_tests.sh`
+- `git diff --check`
+- `tools/validate_upkeeper.sh --quick`

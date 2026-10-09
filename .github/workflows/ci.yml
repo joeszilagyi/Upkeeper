@@ -25,11 +25,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          fetch-depth: 2
+          # Push events can contain more than one commit; retain the event's
+          # before revision so committed-diff validation never falls back to
+          # an empty working-tree comparison.
+          fetch-depth: 0
 
       - name: Probe CI dependencies
         shell: bash
         run: tools/setup_ci_dependencies.sh
+
+      - name: Determine committed diff range
+        id: diff_range
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_ref=""
+          head_ref="${GITHUB_SHA}"
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            base_ref="HEAD^1"
+            head_ref="HEAD"
+          else
+            before_sha="${{ github.event.before }}"
+            if [[ "$before_sha" != "0000000000000000000000000000000000000000" ]]; then
+              base_ref="$before_sha"
+            fi
+          fi
+          printf 'base=%s\n' "$base_ref" >>"$GITHUB_OUTPUT"
+          printf 'head=%s\n' "$head_ref" >>"$GITHUB_OUTPUT"
 
       - name: Classify change scope
         id: scope
@@ -38,13 +60,8 @@ jobs:
           set -euo pipefail
           scope_args=(--classify-only)
 
-          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            scope_args+=(--base HEAD^1 --head HEAD)
-          else
-            base_sha="${{ github.event.before }}"
-            if [[ "$base_sha" != "0000000000000000000000000000000000000000" ]]; then
-              scope_args+=(--base "$base_sha" --head "${{ github.sha }}")
-            fi
+          if [[ -n "${{ steps.diff_range.outputs.base }}" ]]; then
+            scope_args+=(--base "${{ steps.diff_range.outputs.base }}" --head "${{ steps.diff_range.outputs.head }}")
           fi
 
           if scope_output="$(tools/docs_only_fast_path.sh "${scope_args[@]}")"; then
@@ -63,6 +80,8 @@ jobs:
         if: steps.scope.outputs.docs_only != '1'
         env:
           UPKEEPER_TEST_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-test-attestation.json
+          UPKEEPER_VALIDATION_DIFF_BASE: ${{ steps.diff_range.outputs.base }}
+          UPKEEPER_VALIDATION_DIFF_HEAD: ${{ steps.diff_range.outputs.head }}
         run: tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace
 
       - name: Docs-only fast path
@@ -71,13 +90,8 @@ jobs:
         run: |
           set -euo pipefail
           scope_args=(--validate)
-          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            scope_args+=(--base HEAD^1 --head HEAD)
-          else
-            base_sha="${{ github.event.before }}"
-            if [[ "$base_sha" != "0000000000000000000000000000000000000000" ]]; then
-              scope_args+=(--base "$base_sha" --head "${{ github.sha }}")
-            fi
+          if [[ -n "${{ steps.diff_range.outputs.base }}" ]]; then
+            scope_args+=(--base "${{ steps.diff_range.outputs.base }}" --head "${{ steps.diff_range.outputs.head }}")
           fi
           tools/docs_only_fast_path.sh "${scope_args[@]}"
 

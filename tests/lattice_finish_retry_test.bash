@@ -16,6 +16,12 @@ shell_quote() {
 
 log_line() {
   printf '%s %s\n' "$1" "$2" >>"$TEST_LOG"
+  if [[ -n "${ORDER_TRACE:-}" ]]; then
+    printf '%s\n' "$2" >>"$LOG_FILE"
+    if [[ "$2" == cycle.exit\ * ]]; then
+      printf 'cycle.exit\n' >>"$ORDER_TRACE"
+    fi
+  fi
 }
 
 log_line_parts() {
@@ -28,6 +34,7 @@ log_line_parts() {
 }
 
 source "$PROJECT_ROOT/lib/upkeeper/lattice.bash"
+source "$PROJECT_ROOT/lib/upkeeper/cycle_cleanup_signals.bash"
 
 lattice_warn_once() {
   WARN_REASON="${1:-}"
@@ -147,7 +154,49 @@ test_later_success_clears_existing_spool() {
   )
 }
 
+test_finish_cycle_publishes_terminal_evidence_before_ledgers() {
+  local lattice_failure
+
+  for lattice_failure in 0 1; do
+    (
+      reset_state
+      ORDER_TRACE="$TEST_TMP_ROOT/finish-order-$lattice_failure.trace"
+      : >"$ORDER_TRACE"
+
+      stop_terminal_progress_heartbeat() { :; }
+      stop_run_mark_heartbeat() { :; }
+      automation_record_cycle_finish() {
+        [[ "$1" == "7" && "$2" == "BLOCKED" && "$3" == "WARN" && "$4" == "BLOCKED" ]] ||
+          fail "automation finish received terminal fields that disagree with cycle.exit"
+        grep -Fq 'cycle.exit exit_code=7 reason=BLOCKED codex_exit=19 codex_exec_started=1' "$LOG_FILE" ||
+          fail "automation finish ran before canonical cycle.exit evidence existed"
+        printf 'automation.finish\n' >>"$ORDER_TRACE"
+      }
+      lattice_record_cycle_finish() {
+        [[ "$1" == "7" && "$2" == "BLOCKED" && "$3" == "WARN" && "$4" == "BLOCKED" ]] ||
+          fail "Lattice finish received terminal fields that disagree with cycle.exit"
+        grep -Fq 'cycle.exit exit_code=7 reason=BLOCKED codex_exit=19 codex_exec_started=1' "$LOG_FILE" ||
+          fail "Lattice finish ran before canonical cycle.exit evidence existed"
+        printf 'lattice.finish\n' >>"$ORDER_TRACE"
+        [[ "$lattice_failure" == "0" ]]
+      }
+      lattice_stop_service() { printf 'lattice.stop\n' >>"$ORDER_TRACE"; }
+      finalize_wrapper_health_state() { printf 'health.finalize\n' >>"$ORDER_TRACE"; }
+      release_active_lock() { printf 'lock.release\n' >>"$ORDER_TRACE"; }
+
+      set +e
+      (finish_cycle 7 BLOCKED WARN "codex_exit=19 codex_exec_started=1")
+      rc="$?"
+      set -e
+      [[ "$rc" == "7" ]] || fail "finish_cycle returned $rc instead of the requested terminal exit"
+      diff -u <(printf '%s\n' cycle.exit automation.finish lattice.finish lattice.stop health.finalize lock.release) "$ORDER_TRACE" ||
+        fail "terminal, automation, and Lattice finish events were emitted out of order"
+    )
+  done
+}
+
 test_failed_first_write_retries_and_records_once
 test_persistent_failure_spools_private_replay_payload
 test_later_success_clears_existing_spool
+test_finish_cycle_publishes_terminal_evidence_before_ledgers
 printf 'lattice_finish_retry_test: ok\n'

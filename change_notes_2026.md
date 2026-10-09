@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: terminal evidence before Lattice cycle finish:
+	1. `finish_cycle` now publishes the canonical `cycle.exit` line before automation-ledger and Lattice finish recording, while retaining automation-before-Lattice ordering.
+	2. The Lattice log artifact digest therefore observes the terminal exit code and reason, and a failed Lattice finish write cannot suppress the canonical terminal evidence.
+	3. Success and injected-failure regressions prove consistent terminal fields and exact `cycle.exit -> automation.finish -> lattice.finish` ordering.
+
 2026-10-08: durable root-isolated anomaly custody publication:
 	1. Finding, obligation, owner-update, and latest-audit JSON writes now flush and fsync private staging files, publish by atomic rename, and fsync the containing directory under advisory publication locks.
 	2. Existing obligation records participate in matching only when they are valid JSON objects owned by the current resolved repository root; foreign-root and corrupt collisions remain byte-for-byte intact while current evidence receives a deterministic root-scoped ID.

@@ -128,6 +128,12 @@ timeout falls back deterministically to the oldest current source-safe text
 candidate only in optional mode. Plain explicit CLI invocations made directly
 by an operator are outside the wrapper timeout policy.
 
+The wrapper publishes its canonical `cycle.exit` log line before updating the
+automation run ledger and before invoking `record-cycle-finish`. Automation
+therefore retains its prior ordering ahead of Lattice, while the Lattice log
+artifact digest always observes the terminal exit code and reason. A failed
+Lattice write cannot suppress the already-published terminal line.
+
 Cycle-finish persistence uses a success-only idempotency guard. If the first
 `record-cycle-finish` write fails, Upkeeper reports
 `lattice.finish.retry attempt=2` and makes one bounded retry. A successful first

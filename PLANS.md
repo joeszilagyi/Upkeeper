@@ -20,7 +20,7 @@ Verified defect:
 
 Constraints:
 - per-run identity is exception-only; no current terminal reason requires it
-- repository identity remains part of the hashed record id
+- repository boundaries remain enforced, including for a shared custom root
 - distinct reasons, targets, scopes, and repair targets must not coalesce
 - legacy duplicate reconciliation remains unchanged as a safety net
 

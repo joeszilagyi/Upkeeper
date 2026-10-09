@@ -5,7 +5,7 @@ Upkeeper changes. Keep entries brief and update their status before merge.
 
 ## Issue #798: Authoritative Issue-Repair Target Selection
 
-Status: implemented; local validation passed; pending PR CI
+Status: complete; merged in PR #860
 
 Goal:
 - prevent the backlog launcher from pinning a broad keyword-derived target

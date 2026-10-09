@@ -4321,12 +4321,11 @@ terminate_fallback_screen_process_groups() {
   done
 }
 
-UPKEEPER_PRECONTACT_BACKUP_SECURE_TARGET_ABS=""
+PRECONTACT_BACKUP_SECURE_TARGET_ABS=""
 
-# Keep restore hardening in the entrypoint when a selected-target-only cycle
-# cannot patch the sourced module directly. This closes symlink-parent races by
-# opening each directory component with O_NOFOLLOW and renaming via dir_fd.
-upkeeper_precontact_backup_secure_install_restored_file() {
+# Close symlink-parent races by opening each directory component with
+# O_NOFOLLOW and renaming through the verified parent directory descriptor.
+precontact_backup_secure_install_restored_file() {
   local repo_root="$1"
   local rel_path="$2"
   local override_path="${3:-}"
@@ -4334,7 +4333,7 @@ upkeeper_precontact_backup_secure_install_restored_file() {
   local mode="${5:-}"
   local result status reason target_abs
 
-  UPKEEPER_PRECONTACT_BACKUP_SECURE_TARGET_ABS=""
+  PRECONTACT_BACKUP_SECURE_TARGET_ABS=""
 
   if ! result="$(
     python3 - "$repo_root" "$rel_path" "$override_path" "$tmp_restore" "$mode" <<'PY'
@@ -4544,7 +4543,7 @@ PY
     return 1
   fi
 
-  UPKEEPER_PRECONTACT_BACKUP_SECURE_TARGET_ABS="$target_abs"
+  PRECONTACT_BACKUP_SECURE_TARGET_ABS="$target_abs"
   return 0
 }
 
@@ -4747,10 +4746,10 @@ precontact_backup_restore_by_id() {
       ;;
   esac
 
-  if ! upkeeper_precontact_backup_secure_install_restored_file "$repo_root" "$rel_path" "$restore_to" "$tmp_restore" "$mode"; then
+  if ! precontact_backup_secure_install_restored_file "$repo_root" "$rel_path" "$restore_to" "$tmp_restore" "$mode"; then
     return 1
   fi
-  target_abs="$UPKEEPER_PRECONTACT_BACKUP_SECURE_TARGET_ABS"
+  target_abs="$PRECONTACT_BACKUP_SECURE_TARGET_ABS"
 
   precontact_backup_restore_log "INFO" "precontact_backup.restore target_hmac=$(precontact_backup_path_hmac "$rel_path") path_redacted=1"
 }

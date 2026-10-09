@@ -1099,6 +1099,9 @@ Restore metadata is bound to the repository root that created the backup. The
 standalone helper rejects a backup from another repository with
 `restore_repo_identity_mismatch`. For deliberate disaster recovery only, set
 `UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_RESTORE=1` to override that guard.
+Final installation walks and rechecks repository parent components through
+directory descriptors with nofollow semantics, then publishes through the
+verified parent descriptor. Parent or final-target symlinks are rejected.
 
 `UPKEEPER_PRECONTACT_BACKUP_ROOT` may point at an operator-local vault outside
 the repository. The wrapper never includes the generated vault path in compiled

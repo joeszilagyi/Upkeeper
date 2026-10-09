@@ -698,7 +698,7 @@ test_plain_restore_and_unsafe_id() {
   if precontact_backup_restore_by_id "$backup_id" "$repo" "" "/absolute/path"; then
     fail "absolute restore destination was accepted"
   fi
-  [[ "$PRECONTACT_BACKUP_LAST_REASON" == "unsafe_restore_destination" ]] ||
+  [[ "$PRECONTACT_BACKUP_LAST_REASON" == "absolute_path" ]] ||
     fail "absolute restore destination failed as $PRECONTACT_BACKUP_LAST_REASON"
 }
 
@@ -752,9 +752,9 @@ test_standalone_restore_rejects_wrong_repo_by_default() {
     fail "explicit unsafe cross-repository restore did not restore the source bytes"
 }
 
-test_restore_temp_stays_private_until_rename() {
+test_secure_restore_preserves_recorded_mode() {
   local repo="$TEST_TMP_ROOT/restore-mode repo"
-  local selection_file backup_id tmp_mode final_mode
+  local selection_file backup_id final_mode
   make_repo "$repo"
   reset_env "$repo" restore-mode
   selection_file="$TEST_TMP_ROOT/restore-mode-selection.env"
@@ -767,20 +767,66 @@ test_restore_temp_stays_private_until_rename() {
   backup_id="$RUN_PRECONTACT_BACKUP_ID"
 
   printf 'mutated\n' >"$repo/dir/space file.sh"
-  mv() {
-    local source_path="$1"
-    if [[ "$source_path" == "--" ]]; then
-      source_path="${2:-}"
-    fi
-    tmp_mode="$(stat -Lc '%a' -- "$source_path" 2>/dev/null || printf 'missing')"
-    command mv "$@"
-  }
   precontact_backup_restore_by_id "$backup_id" "$repo" "" ""
-  unset -f mv
 
   final_mode="$(stat -Lc '%a' -- "$repo/dir/space file.sh" 2>/dev/null || printf 'missing')"
-  [[ "$tmp_mode" == "600" ]] || fail "restore temp mode was $tmp_mode, expected 600 before rename"
-  [[ "$final_mode" == "644" ]] || fail "restored target mode was $final_mode, expected 644 after rename"
+  [[ "$final_mode" == "644" ]] || fail "securely restored target mode was $final_mode, expected 644"
+}
+
+test_secure_restore_rejects_parent_swap_race() {
+  local repo="$TEST_TMP_ROOT/restore-race repo"
+  local outside="$TEST_TMP_ROOT/restore-race outside"
+  local selection_file backup_id outside_sha rc
+
+  make_repo "$repo"
+  reset_env "$repo" restore-race
+  selection_file="$TEST_TMP_ROOT/restore-race-selection.env"
+  write_selection_file "dir/space file.sh" "$selection_file"
+  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
+  precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
+  backup_id="$RUN_PRECONTACT_BACKUP_ID"
+
+  mkdir -p "$outside"
+  printf 'outside sentinel\n' >"$outside/space file.sh"
+  outside_sha="$(precontact_backup_sha256_file "$outside/space file.sh")"
+  printf 'mutated before raced restore\n' >"$repo/dir/space file.sh"
+
+  precontact_backup_sha256_file() {
+    local path="$1"
+    python3 - "$path" <<'PY'
+import hashlib
+import sys
+
+digest = hashlib.sha256()
+with open(sys.argv[1], "rb") as handle:
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+print(digest.hexdigest())
+PY
+    if [[ "$path" == "$RUN_TMP_DIR"/.upkeeper-restore.* ]]; then
+      command mv -- "$repo/dir" "$repo/dir-before-race"
+      ln -s -- "$outside" "$repo/dir"
+    fi
+  }
+
+  set +e
+  precontact_backup_restore_by_id "$backup_id" "$repo" "" ""
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 1 ]] || fail "restore parent-swap race returned $rc, expected 1"
+  [[ "$PRECONTACT_BACKUP_LAST_REASON" == "restore_parent_symlinked" ]] ||
+    fail "restore parent-swap race failed as $PRECONTACT_BACKUP_LAST_REASON"
+  [[ -L "$repo/dir" ]] || fail "restore race fixture did not swap the parent for a symlink"
+  [[ "$(python3 - "$outside/space file.sh" <<'PY'
+import hashlib
+import sys
+
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+)" == "$outside_sha" ]] || fail "restore parent-swap race overwrote the outside target"
 }
 
 test_plain_restore_temporary_directory_cleaned_on_failure() {
@@ -850,8 +896,9 @@ test_prompt_redaction_and_replacement_rule
 test_retention_prunes_only_same_path
 test_plain_restore_and_unsafe_id
 test_standalone_restore_rejects_wrong_repo_by_default
-test_restore_temp_stays_private_until_rename
+test_secure_restore_preserves_recorded_mode
 test_plain_restore_temporary_directory_cleaned_on_failure
 test_age_restore_uses_payload_metadata
+test_secure_restore_rejects_parent_swap_race
 
 printf 'precontact_backup_test: ok\n'

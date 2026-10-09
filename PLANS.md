@@ -3,9 +3,30 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #691: Bind Standalone Restore to Repository Identity
+## Issue #692: Fd-Safe Standalone Restore Installation
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- install standalone restores through verified directory descriptors
+- reject parent swaps and symlinks across destination creation and publication
+- align root and standalone restore paths on the same nofollow primitive
+
+Constraints:
+- walk and recheck parent components with `O_NOFOLLOW`
+- publish with `os.replace(..., dst_dir_fd=...)`
+- apply recorded mode through a nofollow file descriptor
+- never fall back to path-based `mkdir`, `mv`, or `chmod`
+- no live backend Codex validation
+
+Validation:
+- deterministic parent-symlink swap after hashing and before installation
+- outside-target no-mutation assertion and recorded-mode preservation
+- complete unit suite and quick/full repository validation
+
+## Issue #691: Bind Standalone Restore to Repository Identity
+
+Status: complete; merged in PR #828
 
 Goal:
 - reject a standalone pre-contact restore when its metadata belongs to another

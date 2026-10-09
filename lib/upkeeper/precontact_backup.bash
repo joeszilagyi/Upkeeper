@@ -12,6 +12,7 @@ RUN_PRECONTACT_BACKUP_SHA256=""
 RUN_PRECONTACT_BACKUP_MODE=""
 RUN_PRECONTACT_BACKUP_ENCRYPTED=""
 RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND=""
+PRECONTACT_BACKUP_SECURE_TARGET_ABS=""
 
 precontact_backup_truthy() {
   case "${1:-}" in
@@ -1106,39 +1107,6 @@ precontact_backup_find_sidecar_by_id() {
   find "$vault_root" -type f -name "${backup_id}.json" -print 2>/dev/null
 }
 
-precontact_backup_validate_restore_destination() {
-  local repo_root="$1"
-  local rel_path="$2"
-  local override_path="$3"
-
-  python3 - "$repo_root" "$rel_path" "$override_path" <<'PY'
-from pathlib import Path
-import sys
-
-repo_root, rel_path, override_path = sys.argv[1:4]
-root = Path(repo_root).resolve()
-candidate_text = override_path or rel_path
-candidate = Path(candidate_text)
-if candidate.is_absolute():
-    raise SystemExit(2)
-parts = candidate.parts
-if not parts or any(part in {"", ".", ".."} for part in parts):
-    raise SystemExit(2)
-if parts[0] in {".git", "runtime"}:
-    raise SystemExit(2)
-resolved = (root / candidate).resolve(strict=False)
-try:
-    resolved.relative_to(root)
-except ValueError:
-    raise SystemExit(2)
-if resolved.exists() and resolved.is_dir():
-    raise SystemExit(3)
-if resolved.is_symlink():
-    raise SystemExit(4)
-print(resolved)
-PY
-}
-
 precontact_backup_restore_log() {
   local level="$1"
   shift
@@ -1147,6 +1115,228 @@ precontact_backup_restore_log() {
   else
     printf '%s [%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$level" "$*" >&2
   fi
+}
+
+precontact_backup_secure_install_restored_file() {
+  local repo_root="$1"
+  local rel_path="$2"
+  local override_path="${3:-}"
+  local tmp_restore="$4"
+  local mode="${5:-}"
+  local result status reason target_abs
+
+  PRECONTACT_BACKUP_SECURE_TARGET_ABS=""
+
+  if ! result="$(
+    python3 - "$repo_root" "$rel_path" "$override_path" "$tmp_restore" "$mode" <<'PY'
+import errno
+import os
+import re
+import stat
+import sys
+from pathlib import Path
+
+repo_root, rel_path, override_path, tmp_restore, mode_text = sys.argv[1:6]
+
+
+def emit(status: str, reason: str = "", target_abs: str = "") -> None:
+    print(f"status={status}")
+    if reason:
+        print(f"reason={reason}")
+    if target_abs:
+        print(f"target_abs={target_abs}")
+
+
+candidate_text = override_path or rel_path
+candidate = Path(candidate_text)
+if candidate.is_absolute():
+    emit("error", "absolute_path")
+    raise SystemExit(0)
+
+parts = candidate.parts
+if not parts or any(part in {"", ".", ".."} for part in parts):
+    emit("error", "unsafe_relative_path")
+    raise SystemExit(0)
+if parts[0] == ".git":
+    emit("error", "git_path_rejected")
+    raise SystemExit(0)
+if parts[0] == "runtime":
+    emit("error", "runtime_path_rejected")
+    raise SystemExit(0)
+if not os.path.isfile(tmp_restore):
+    emit("error", "restore_temp_missing")
+    raise SystemExit(0)
+
+root = Path(repo_root).resolve()
+target_abs = root.joinpath(*parts)
+try:
+    target_abs.relative_to(root)
+except ValueError:
+    emit("error", "target_outside_repo")
+    raise SystemExit(0)
+
+open_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
+if nofollow_flag == 0:
+    emit("error", "restore_nofollow_unsupported")
+    raise SystemExit(0)
+
+mode_value = None
+if mode_text and re.fullmatch(r"[0-7]{3,4}", mode_text):
+    mode_value = int(mode_text, 8)
+
+dir_fd = None
+next_fd = None
+verify_dir_fd = None
+verify_next_fd = None
+target_fd = None
+
+try:
+    dir_fd = os.open(root, open_flags)
+    for part in parts[:-1]:
+        try:
+            existing_stat = os.lstat(part, dir_fd=dir_fd)
+        except FileNotFoundError:
+            existing_stat = None
+        except OSError as exc:
+            emit("error", f"restore_parent_stat_failed:{exc.__class__.__name__}")
+            raise SystemExit(0)
+
+        if existing_stat is None:
+            try:
+                os.mkdir(part, 0o700, dir_fd=dir_fd)
+            except FileExistsError:
+                pass
+            except OSError as exc:
+                emit("error", f"restore_parent_create_failed:{exc.__class__.__name__}")
+                raise SystemExit(0)
+        elif stat.S_ISLNK(existing_stat.st_mode):
+            emit("error", "restore_parent_symlinked")
+            raise SystemExit(0)
+        elif not stat.S_ISDIR(existing_stat.st_mode):
+            emit("error", "restore_parent_not_directory")
+            raise SystemExit(0)
+
+        try:
+            next_fd = os.open(part, open_flags | nofollow_flag, dir_fd=dir_fd)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                emit("error", "restore_parent_symlinked")
+            elif exc.errno == errno.ENOTDIR:
+                emit("error", "restore_parent_not_directory")
+            else:
+                emit("error", f"restore_parent_open_failed:{exc.__class__.__name__}")
+            raise SystemExit(0)
+
+        os.close(dir_fd)
+        dir_fd = next_fd
+        next_fd = None
+
+    final_name = parts[-1]
+    try:
+        target_stat = os.lstat(final_name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        target_stat = None
+    except OSError as exc:
+        emit("error", f"restore_target_stat_failed:{exc.__class__.__name__}")
+        raise SystemExit(0)
+
+    if target_stat is not None:
+        if stat.S_ISLNK(target_stat.st_mode):
+            emit("error", "symlink_target_rejected")
+            raise SystemExit(0)
+        if stat.S_ISDIR(target_stat.st_mode):
+            emit("error", "directory_target_rejected")
+            raise SystemExit(0)
+
+    try:
+        verify_dir_fd = os.open(root, open_flags)
+    except OSError as exc:
+        emit("error", f"restore_parent_root_open_failed:{exc.__class__.__name__}")
+        raise SystemExit(0)
+
+    for verify_part in parts[:-1]:
+        try:
+            verify_stat = os.lstat(verify_part, dir_fd=verify_dir_fd)
+        except FileNotFoundError:
+            emit("error", "restore_parent_disappeared")
+            raise SystemExit(0)
+        except OSError as exc:
+            emit("error", f"restore_parent_recheck_failed:{exc.__class__.__name__}")
+            raise SystemExit(0)
+
+        if stat.S_ISLNK(verify_stat.st_mode):
+            emit("error", "restore_parent_symlinked")
+            raise SystemExit(0)
+        if not stat.S_ISDIR(verify_stat.st_mode):
+            emit("error", "restore_parent_not_directory")
+            raise SystemExit(0)
+
+        try:
+            verify_next_fd = os.open(verify_part, open_flags | nofollow_flag, dir_fd=verify_dir_fd)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                emit("error", "restore_parent_symlinked")
+            elif exc.errno == errno.ENOTDIR:
+                emit("error", "restore_parent_not_directory")
+            else:
+                emit("error", f"restore_parent_reopen_failed:{exc.__class__.__name__}")
+            raise SystemExit(0)
+
+        os.close(verify_dir_fd)
+        verify_dir_fd = verify_next_fd
+        verify_next_fd = None
+
+    if (os.fstat(dir_fd).st_dev, os.fstat(dir_fd).st_ino) != (os.fstat(verify_dir_fd).st_dev, os.fstat(verify_dir_fd).st_ino):
+        emit("error", "restore_parent_race_detected")
+        raise SystemExit(0)
+
+    os.close(dir_fd)
+    dir_fd = verify_dir_fd
+    verify_dir_fd = None
+    verify_next_fd = None
+
+    os.replace(tmp_restore, final_name, dst_dir_fd=dir_fd)
+
+    if mode_value is not None:
+        try:
+            target_fd = os.open(final_name, os.O_RDONLY | nofollow_flag, dir_fd=dir_fd)
+            os.fchmod(target_fd, mode_value)
+        except OSError:
+            pass
+        finally:
+            if target_fd is not None:
+                os.close(target_fd)
+                target_fd = None
+
+    emit("ok", target_abs=str(target_abs))
+finally:
+    if target_fd is not None:
+        os.close(target_fd)
+    if next_fd is not None:
+        os.close(next_fd)
+    if verify_next_fd is not None:
+        os.close(verify_next_fd)
+    if verify_dir_fd is not None:
+        os.close(verify_dir_fd)
+    if dir_fd is not None:
+        os.close(dir_fd)
+PY
+  )"; then
+    precontact_backup_set_reason "restore_secure_install_failed"
+    return 1
+  fi
+
+  status="$(awk -F= 'index($0, "status=") == 1 { print substr($0, 8); exit }' <<<"$result")"
+  reason="$(awk -F= 'index($0, "reason=") == 1 { print substr($0, 8); exit }' <<<"$result")"
+  target_abs="$(awk -F= 'index($0, "target_abs=") == 1 { print substr($0, 12); exit }' <<<"$result")"
+  if [[ "$status" != "ok" || -z "$target_abs" ]]; then
+    precontact_backup_set_reason "${reason:-unsafe_restore_destination}"
+    return 1
+  fi
+
+  PRECONTACT_BACKUP_SECURE_TARGET_ABS="$target_abs"
+  return 0
 }
 
 precontact_backup_validate_restore_repo_identity() {
@@ -1190,7 +1380,7 @@ precontact_backup_restore_by_id() {
   local identity_path="${3:-${UPKEEPER_PRECONTACT_BACKUP_AGE_IDENTITY:-}}"
   local restore_to="${4:-}"
   local vault_root sidecars sidecar_count sidecar rel_path content_fingerprint encrypted mode
-  local target_abs target_dir tmp_restore="" artifact payload_tmp="" payload_metadata="" restored_sha
+  local target_abs tmp_restore="" artifact payload_tmp="" payload_metadata="" restored_sha
   local restore_tmp_dir=""
   local restore_tmp_dir_is_temp=0
 
@@ -1330,16 +1520,6 @@ precontact_backup_restore_by_id() {
     fi
   fi
 
-  if ! target_abs="$(precontact_backup_validate_restore_destination "$repo_root" "$rel_path" "$restore_to")"; then
-    precontact_backup_set_reason "unsafe_restore_destination"
-    return 1
-  fi
-  target_dir="$(dirname -- "$target_abs")"
-  if ! mkdir -p -- "$target_dir"; then
-    precontact_backup_set_reason "restore_parent_mkdir_failed"
-    return 1
-  fi
-
   restored_sha="$(precontact_backup_sha256_file "$tmp_restore")" || {
     precontact_backup_set_reason "restore_hash_failed"
     return 1
@@ -1358,13 +1538,10 @@ precontact_backup_restore_by_id() {
       fi
       ;;
   esac
-  if ! mv -- "$tmp_restore" "$target_abs"; then
-    precontact_backup_set_reason "restore_rename_failed"
+  if ! precontact_backup_secure_install_restored_file "$repo_root" "$rel_path" "$restore_to" "$tmp_restore" "$mode"; then
     return 1
   fi
-  if [[ "$mode" =~ ^[0-7]{3,4}$ ]]; then
-    chmod "$mode" "$target_abs" 2>/dev/null || true
-  fi
+  target_abs="$PRECONTACT_BACKUP_SECURE_TARGET_ABS"
   precontact_backup_restore_log "INFO" "precontact_backup.restore target_hmac=$(precontact_backup_path_hmac "$rel_path") path_redacted=1"
 }
 

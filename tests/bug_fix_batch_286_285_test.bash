@@ -48,7 +48,13 @@ PY
 
 run_fallback_child() {
   local token="$1"
+  local token_source="${2:-fd}"
+  local token_fd="${3-9}"
+  local inherited_token=""
   local child_out_file
+  if [[ "$token_source" == "env" ]]; then
+    inherited_token="$token"
+  fi
   child_out_file="$TEST_TMP_ROOT/fallback-child.out"
   set +e
   : >"$child_out_file"
@@ -59,7 +65,9 @@ run_fallback_child() {
   CODEX_PARENT_CYCLE_ID="$PARENT_CYCLE" \
   CODEX_FALLBACK_PARENT_PID="$PARENT_PID" \
   CODEX_FALLBACK_PARENT_START="$PARENT_START" \
-  CODEX_FALLBACK_CHAIN_TOKEN_FD=9 \
+  CODEX_FALLBACK_CHAIN_TOKEN="$inherited_token" \
+  CODEX_FALLBACK_CHAIN_TOKEN_FD="$token_fd" \
+  FALLBACK_FD_ATTACK_PATH="$TEST_TMP_ROOT/fallback-fd-attack" \
   UPROOT="$PROJECT_ROOT" \
   bash -c 'set -euo pipefail
     source "$UPROOT/lib/upkeeper/runtime_foundation.bash"
@@ -77,6 +85,11 @@ run_fallback_child() {
 
     acquire_active_lock_or_exit
     printf "active_lock_inherited=%s\n" "${ACTIVE_LOCK_ACQUIRED:-}"
+    if (true <&9) 2>/dev/null; then
+      printf "token_fd_status=open\n"
+    else
+      printf "token_fd_status=closed\n"
+    fi
     exit 0
   ' 9<<<"$token" >"$child_out_file" 2>&1
   CHILD_RC=$?
@@ -116,10 +129,23 @@ test_fallback_chain_token_is_hashed_and_required_for_inheritance() {
   run_fallback_child "$CODEX_FALLBACK_CHAIN_TOKEN"
   [[ "$CHILD_RC" -eq 0 ]] || fail "fallback child with correct token exited $CHILD_RC"
   [[ "$CHILD_OUT" == *"active_lock_inherited=0"* ]] || fail "fallback child did not inherit lock with correct token"
+  [[ "$CHILD_OUT" == *"token_fd_status=closed"* ]] || fail "numeric fallback token fd was not closed"
 
   run_fallback_child "${CODEX_FALLBACK_CHAIN_TOKEN}bad"
   [[ "$CHILD_RC" -ne 0 ]] || fail "fallback child with bad token should not inherit"
   [[ "$CHILD_OUT" == *"fallback_chain_token_mismatch"* ]] || fail "mismatch token did not report token mismatch reason"
+
+  run_fallback_child "$CODEX_FALLBACK_CHAIN_TOKEN" env ""
+  [[ "$CHILD_RC" -eq 0 ]] || fail "fallback child with inherited token and empty fd exited $CHILD_RC"
+  [[ "$CHILD_OUT" == *"active_lock_inherited=0"* ]] || fail "empty token fd disrupted inherited token"
+  [[ "$CHILD_OUT" == *"token_fd_status=open"* ]] || fail "empty token fd closed an unrelated descriptor"
+
+  rm -f -- "$TEST_TMP_ROOT/fallback-fd-attack"
+  run_fallback_child "$CODEX_FALLBACK_CHAIN_TOKEN" env '9<&-; printf exploited >"$FALLBACK_FD_ATTACK_PATH"; #'
+  [[ "$CHILD_RC" -eq 0 ]] || fail "fallback child with shell-looking fd exited $CHILD_RC"
+  [[ "$CHILD_OUT" == *"active_lock_inherited=0"* ]] || fail "shell-looking token fd disrupted inherited token"
+  [[ "$CHILD_OUT" == *"token_fd_status=open"* ]] || fail "shell-looking token fd was interpreted"
+  [[ ! -e "$TEST_TMP_ROOT/fallback-fd-attack" ]] || fail "shell-looking token fd was evaluated"
 }
 
 test_selected_target_validation_runs_when_precontact_backup_off() {

@@ -383,7 +383,10 @@ Future changes should preserve this operator-visible surface as far as possible:
   screen child/time limits, subject to exact-model quota checks, blocked by
   unsafe local evidence paths, and fully disabled only when
   `CODEX_FALLBACK_ENABLED=0`, `CODEX_FALLBACK_SCREEN_ENABLED=0`, and
-  `CODEX_POSTMORTEM_ENABLED=0` are set together.
+  `CODEX_POSTMORTEM_ENABLED=0` are set together. Active-lock inheritance keeps
+  accepting a token supplied directly or through a numeric token descriptor;
+  empty and nonnumeric descriptor values are ignored and never evaluated as
+  shell syntax.
 - `Upkeeper.log` keeps cycle/run evidence in parseable timestamped lines with
   `cycle=...`, `run_hash=...`, event names, and key-value fields.
 - Unsafe log paths fail closed before Codex launch: symlink log files,

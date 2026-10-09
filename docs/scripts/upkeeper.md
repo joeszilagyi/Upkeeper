@@ -1300,6 +1300,9 @@ orphan payloads are not valid restore ids.
 - A repo-level active lock at `runtime/upkeeper-active.lock` prevents two
   Upkeeper loops from running the same checkout concurrently; stale locks are
   reclaimed only when the recorded PID/start fingerprint no longer matches.
+  Supervised fallback children may inherit that lock with the parent token;
+  their optional token descriptor is closed only when its value is numeric,
+  without evaluating environment text as shell syntax.
   Custom `CODEX_ACTIVE_LOCK_DIR` values must stay under the checkout's
   `runtime/` tree and carry Upkeeper's ownership marker before stale cleanup can
   remove lock contents.

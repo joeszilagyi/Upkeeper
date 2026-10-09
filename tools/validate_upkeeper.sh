@@ -5746,6 +5746,11 @@ check_active_lock_incomplete_guard() {
 check_active_lock_reclaim_race() {
   log "checking serialized active-lock stale reclaim"
   validation_run_test tests/active_lock_reclaim_race_test.bash
+  grep -Fq 'exec {token_fd}<&-' lib/upkeeper/active_lock.bash ||
+    fail "active-lock fallback token descriptor does not use safe dynamic-fd close"
+  if grep -Fq 'eval "exec ${token_fd}<&-"' lib/upkeeper/active_lock.bash; then
+    fail "active-lock fallback token descriptor still uses eval"
+  fi
 
   grep -Fq 'active_lock.reclaim_lost' Upkeeper ||
     fail "runtime active-lock override missing reclaim-lost evidence"

@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: safe active-lock fallback token descriptor close:
+	1. Active-lock inheritance no longer evaluates the environment-derived fallback token descriptor as shell syntax.
+	2. Numeric descriptors close through Bash's dynamic descriptor form after token handling, while empty or nonnumeric values are ignored.
+	3. Integration coverage proves numeric close behavior and direct-token inheritance with empty and malicious-looking descriptor values without side effects.
+
 2026-10-08: backlog owner PID-reuse detection:
 	1. Stopped-loop triage now compares current-format owner PID and Linux process start ticks, preventing a recycled PID from being mistaken for the original backlog worker.
 	2. Dead and reused owners produce explicit `owner_status` and stale-owner reasons while all later restart-safety gates remain enforced.

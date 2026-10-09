@@ -3308,36 +3308,14 @@ selected_issue() {
 
 target_hint_for_issue() {
   local issue_number="$1"
-  local issue_text
 
   [[ -n "$issue_number" ]] || return 0
-  issue_text="$(gh issue view "$issue_number" --json title,body --jq '((.title // "") + "\n" + (.body // "")) | ascii_downcase')"
-  case "$issue_text" in
-    *log\ rotation*|*rotated\ log*|*plaintext\ archive*|*plaintext\ archives*|*retained\ archive*|*zip\ archive*|*upkeeper.log.*.zip*|*upkeeper.log*)
-      [[ -f lib/upkeeper/log_rotation.bash ]] && printf '%s\n' "lib/upkeeper/log_rotation.bash"
-      ;;
-    *startup_anomaly.gate_violation*|*startup-anomaly.gate-violation*|*changed_path*|*before_hash*|*after_hash*|*review.preselect*|*worktree\ hash*)
-      [[ -f lib/upkeeper/worktree_state.bash ]] && printf '%s\n' "lib/upkeeper/worktree_state.bash"
-      ;;
-    *startup\ anomaly\ state*|*unresolved\ startup\ anomaly*|*previous_cycle*|*previous_run_hash*|*unresolved\ anomaly*)
-      [[ -f lib/upkeeper/startup_anomaly_state.bash ]] && printf '%s\n' "lib/upkeeper/startup_anomaly_state.bash"
-      ;;
-    *prompt_file*|*run.start*|*prompt\ file*)
-      [[ -f Upkeeper ]] && printf '%s\n' "Upkeeper"
-      ;;
-    *runtime/upkeeper-file-manifest.json*|*upkeeper-file-manifest.json*|*file\ manifest*|*manifest\ refresh*|*manifest\ selection*)
-      [[ -f lib/upkeeper/file_manifest.bash ]] && printf '%s\n' "lib/upkeeper/file_manifest.bash"
-      ;;
-    *cycle.start*|*record-cycle-start*|*verbose\ metadata*|*operator\ and\ config\ metadata*|*config\ file*|*issue\ labels*|*include/exclude\ globs*)
-      [[ -f Upkeeper ]] && printf '%s\n' "Upkeeper"
-      ;;
-    *lattice*|*pass_result*|*pass-result*)
-      [[ -f tools/upkeeper_lattice.py ]] && printf '%s\n' "tools/upkeeper_lattice.py"
-      ;;
-    *bug-report-only*|*source_mutation_guard*|*source\ mutation\ fingerprint*|*dirty-state\ fingerprint*|*dirty\ worktree*|*untracked\ path*)
-      [[ -f lib/upkeeper/codex_io.bash ]] && printf '%s\n' "lib/upkeeper/codex_io.bash"
-      ;;
-  esac
+
+  # Do not convert broad issue keywords into --target-file pins here. The
+  # wrapper parses the selected issue's concrete repository paths and is the
+  # single authority for issue-repair target selection. A second launcher
+  # heuristic can otherwise force an unrelated file before that parser runs.
+  return 0
 }
 
 run_upkeeper_for_one_target() {

@@ -503,6 +503,13 @@ default to:
 runtime/upkeeper-lattice/backups/
 ```
 
+After either no-overwrite publication or an explicit overwrite, `backup`
+fsyncs the containing directory before reporting success. A directory open or
+fsync failure is reported with the database-unavailable exit status. Because
+that failure occurs after final-name publication, the tool conservatively
+retains the backup artifact for operator recovery but does not report it as a
+successfully durable backup.
+
 `recover` is local-only. It can rebuild from local Git history, live
 `Upkeeper.log`, local failure markers, change notes, JSONL exports, and spooled
 Lattice-unavailable recovery records. GitHub network reconciliation is Phase 2

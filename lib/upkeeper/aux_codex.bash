@@ -22,7 +22,7 @@ aux_quota_allows_run() {
   week_buffer="$(quota_week_stop_buffer_percent_for_model "$target_model")"
 
   quota_json="$(quota_state_json "$target_model")"
-  eval "$(quota_json_assignments "$quota_json" quota)"
+  quota_json_parse "$quota_json" quota || die "invalid quota snapshot JSON for auxiliary parsing"
   quota_error="$quota_error"
   if [[ -n "$quota_error" ]]; then
     log_line "WARN" "$phase_label.skip reason=quota_snapshot_unavailable target_model=$target_model error=$quota_error"

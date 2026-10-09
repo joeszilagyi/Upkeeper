@@ -1,5 +1,9 @@
 # 2026 Change Notes
 
+2026-10-09: v1.2.42 changes:
+	1. Quota, status-marker, session-diagnostic, review-summary, and pass-coverage JSON now cross into shell variables through fixed-schema NUL-delimited parsing instead of `jq @sh` source generation and `eval`.
+	2. Parser destination prefixes and field names are allowlisted, malformed JSON fails closed, and structured values plus shell metacharacters, quotes, tabs, newlines, and backslashes remain inert data.
+
 2026-10-09: v1.2.41 changes:
 	1. Fallback-token descriptor cleanup now uses one numeric-only Bash dynamic-fd helper in both the active-lock module and root entrypoint overrides.
 	2. Empty, nonnumeric, and shell-looking `CODEX_FALLBACK_CHAIN_TOKEN_FD` values are rejected without evaluation, while valid inherited-token descriptors retain their read-and-close behavior.

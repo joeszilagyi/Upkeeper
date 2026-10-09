@@ -3,9 +3,42 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #661: Canonical Lattice JSONL Import Identity
+## Issue #662: Anomaly Custody Publication Integrity
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- make every anomaly-custody JSON promotion atomic and crash-durable
+- prevent corrupt or foreign-root obligation records from being overwritten or
+  updated when their IDs collide with current-root evidence
+- make promoted, skipped, corrupt, duplicate, and foreign-root outcomes
+  operator-visible
+
+Audit result:
+- publication used atomic rename but did not fsync file contents or the parent
+  directory and did not serialize concurrent read/modify/write publishers
+- malformed records were silently ignored and could be replaced under the same
+  filename
+- fingerprint IDs were repository-independent, while existing-record matching
+  did not enforce record root, so one checkout could suppress or mutate another
+
+Constraints:
+- preserve corrupt and foreign-root evidence byte-for-byte
+- retain stable legacy IDs when they are unoccupied or already owned by the
+  current root; scope only real collisions
+- no live backend Codex validation
+
+Validation:
+- concurrent publishers retain every occurrence update and expose only complete
+  JSON
+- colliding corrupt and foreign-root records remain unchanged while current-root
+  evidence is promoted beside them
+- operator and latest-audit records distinguish all requested disposition states
+- Python compile, quick/full validator, complete unit suite, and public docs
+
+## Issue #661: Canonical Lattice JSONL Import Identity
+
+Status: complete; merged in PR #838
 
 Goal:
 - prevent missing-primary-key JSONL rows from sharing `table:None` identity

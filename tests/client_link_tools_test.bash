@@ -44,6 +44,13 @@ SH
   chmod +x "$TEST_TMP_ROOT/bin/age"
 }
 
+central_open_obligation_inventory() {
+  local open_dir="$PROJECT_ROOT/runtime/upkeeper-obligations/open"
+
+  [[ -d "$open_dir" ]] || return 0
+  find "$open_dir" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort
+}
+
 assert_local_ignores() {
   local repo="$1"
 
@@ -174,6 +181,8 @@ test_doctor_client_link_reports_no_repo_local_upkeeper_candidate() {
       CODEX_LOG_FILE_ALLOW_UNSAFE=1 \
       CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER=1 \
       CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$TEST_TMP_ROOT/startup-anomaly-state-$attempt" \
+      UPKEEPER_AUTOMATION_LEDGER_DIR="$TEST_TMP_ROOT/startup-anomaly-ledger-$attempt" \
+      UPKEEPER_OBLIGATION_DIR="$TEST_TMP_ROOT/startup-anomaly-obligations-$attempt" \
       CODEX_HOME="$TEST_TMP_ROOT/startup-anomaly-codex-home-$attempt" \
       CODEX_HOME_DIR="$TEST_TMP_ROOT/startup-anomaly-codex-home-$attempt" \
       PATH="$TEST_TMP_ROOT/bin:$PATH" \
@@ -189,10 +198,20 @@ test_doctor_client_link_reports_no_repo_local_upkeeper_candidate() {
   done
 }
 
+test_client_link_fixture_does_not_leak_central_open_obligations() {
+  local before after
+
+  before="$(central_open_obligation_inventory)"
+  test_doctor_client_link_reports_no_repo_local_upkeeper_candidate
+  after="$(central_open_obligation_inventory)"
+  [[ "$after" == "$before" ]] ||
+    fail "startup-anomaly fixture created central open obligations"
+}
+
 test_install_and_doctor_client_link
 test_install_refuses_overwrite_without_force
 test_update_requires_force_for_stale_symlink
 test_uninstall_removes_only_safe_symlink
-test_doctor_client_link_reports_no_repo_local_upkeeper_candidate
+test_client_link_fixture_does_not_leak_central_open_obligations
 
 printf 'client_link_tools_test: ok\n'

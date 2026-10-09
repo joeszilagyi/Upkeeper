@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-09: prompt-pass coverage status enforcement:
+	1. The production all-pass enforcement path now captures the coverage gate status before any logical negation can erase incomplete status 2 or unavailable status 3.
+	2. Incomplete and unavailable P1-P23 evidence reliably override an apparent `WORK_DONE` result to `BLOCKED`, while complete evidence preserves the original status.
+	3. Focused tests now invoke the same production enforcement helper used by the runtime for complete, incomplete, and unavailable cases instead of reproducing the intended logic in a miniature shell snippet.
+
 2026-10-09: bounded Lattice validation custody:
 	1. Every validator check now has a default process-tree deadline, and delegated test commands have a shorter independent deadline plus exact command announcement and timing-artifact attribution.
 	2. Direct max-cover validation probes and the test-only in-process Lattice harness now enforce command-level deadlines instead of relying solely on whole-suite timeouts.

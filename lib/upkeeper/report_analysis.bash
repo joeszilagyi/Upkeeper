@@ -477,6 +477,21 @@ prompt_pass_coverage_gate() {
   return 3
 }
 
+prompt_pass_enforce_coverage_status() {
+  local last_message_file="$1"
+  local codex_exit_value="${2:-unknown}"
+  local pass_coverage_gate_rc=0
+
+  [[ "${CODEX_PROMPT_PASS:-}" == "all" ]] || return 0
+  prompt_pass_coverage_gate "$last_message_file" 0 || pass_coverage_gate_rc=$?
+  if [[ "$pass_coverage_gate_rc" -eq 2 || "$pass_coverage_gate_rc" -eq 3 ]]; then
+    status_marker="BLOCKED"
+    status_marker_source="prompt_pass_coverage"
+    log_line "WARN" "status_marker.overridden_for_prompt_pass_coverage marker=$status_marker codex_exit=$codex_exit_value coverage_gate_rc=$pass_coverage_gate_rc"
+  fi
+  return 0
+}
+
 log_review_report_summary() {
   local last_message_file="$1"
   local status_marker_value="${2:-missing}"

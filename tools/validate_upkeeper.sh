@@ -8069,31 +8069,12 @@ EOF
 }
 
 check_prompt_pass_coverage_enforcement() {
-  local temp_dir
-
   log "checking prompt-pass coverage enforcement"
-  temp_dir="$(mktemp -d /tmp/upkeeper-pass-coverage.XXXXXX)"
-  cat >"$temp_dir/last-message.txt" <<'EOF'
-REVIEWED_CLEAN
-
-No code changes were required.
-
-UPKEEPER_LOG_REVIEW: CHECKED cycle=validation anomalies=none log_sha256=0000000000000000000000000000000000000000000000000000000000000000
-UPKEEPER_STATUS: WORK_DONE
-EOF
-
-  CODEX_TERMINAL_VERBOSITY=silent CODEX_PROMPT_PASS=all \
-    bash -lc 'cd "$1"; source ./Upkeeper; LOG_FILE="$2"; \
-      status_marker="WORK_DONE"; status_marker_source="exact"; codex_exit=0; \
-      prompt_pass_coverage_gate "$3" 0 || rc=$?; \
-      if [[ "${rc:-0}" -eq 2 || "${rc:-0}" -eq 3 ]]; then \
-        status_marker="BLOCKED"; status_marker_source="prompt_pass_coverage"; \
-      fi; \
-      printf "%s\t%s\n" "$status_marker" "$status_marker_source"' bash "$ROOT_DIR" "$temp_dir/pass-enforcement.log" "$temp_dir/last-message.txt" \
-      >"$temp_dir/pass-enforcement.out"
-  grep -Fxq $'BLOCKED\tprompt_pass_coverage' "$temp_dir/pass-enforcement.out" || fail "prompt-pass coverage enforcement did not force BLOCKED"
-
-  rm -r "$temp_dir"
+  grep -Fq 'prompt_pass_enforce_coverage_status "$last_message_file" "$codex_exit"' Upkeeper ||
+    fail "runtime no longer invokes the production prompt-pass coverage enforcement helper"
+  ! grep -Fq 'if ! prompt_pass_coverage_gate "$last_message_file" 0' Upkeeper ||
+    fail "runtime again captures a logically negated prompt-pass coverage status"
+  validation_run_test tests/prompt_pass_coverage_runtime_test.bash
 }
 
 check_log_self_review_target_boundary() {

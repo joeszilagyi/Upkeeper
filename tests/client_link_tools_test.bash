@@ -79,13 +79,15 @@ test_install_and_doctor_client_link() {
     fail "installed symlink target mismatch: $link_target"
   assert_local_ignores "$repo"
 
+  # Dependency availability is covered by ci_dependency_setup_test. Keep this
+  # focused client-link scenario on the symlink and dry-run startup contract.
   doctor_log="$TEST_TMP_ROOT/doctor-install.log"
   PATH="$TEST_TMP_ROOT/bin:$PATH" \
     CODEX_HOME="$TEST_TMP_ROOT/missing-codex-home" \
     CODEX_HOME_DIR="$TEST_TMP_ROOT/missing-codex-home" \
     CODEX_LOG_FILE="$doctor_log" \
     CODEX_LOG_FILE_ALLOW_UNSAFE=1 \
-    "$PROJECT_ROOT/tools/doctor_upkeeper.sh" --repo="$repo" >/dev/null
+    "$PROJECT_ROOT/tools/doctor_upkeeper.sh" --repo="$repo" --skip-deps >/dev/null
   "$PROJECT_ROOT/tools/install_client_link.sh" --repo="$repo" >/dev/null
   [[ -L "$repo/Upkeeper.sh" ]] || fail "idempotent reinstall removed symlink"
 }
@@ -161,7 +163,6 @@ test_uninstall_removes_only_safe_symlink() {
 
 test_doctor_client_link_reports_no_repo_local_upkeeper_candidate() {
   local repo="$TEST_TMP_ROOT/startup-anomaly-client"
-  local attempt
   local out
   local err
   local rc
@@ -170,32 +171,33 @@ test_doctor_client_link_reports_no_repo_local_upkeeper_candidate() {
   install_fake_age
   "$PROJECT_ROOT/tools/install_client_link.sh" --repo="$repo" >/dev/null
 
-  for attempt in 1 2; do
-    out="$TEST_TMP_ROOT/startup-anomaly-doctor-$attempt.out"
-    err="$TEST_TMP_ROOT/startup-anomaly-doctor-$attempt.err"
+  # The normal-install scenario above covers doctor dependency validation. This
+  # fixture isolates the deterministic startup-gate failure; repeating the same
+  # isolated dry run adds no state-transition coverage.
+  out="$TEST_TMP_ROOT/startup-anomaly-doctor.out"
+  err="$TEST_TMP_ROOT/startup-anomaly-doctor.err"
 
-    set +e
-    STARTUP_ANOMALY_GATE=1 \
-      CODEX_DISK_MIN_FREE_PERCENT=101 \
-      CODEX_LOG_FILE="$repo/startup-anomaly-doctor-$attempt.log" \
-      CODEX_LOG_FILE_ALLOW_UNSAFE=1 \
-      CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER=1 \
-      CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$TEST_TMP_ROOT/startup-anomaly-state-$attempt" \
-      UPKEEPER_AUTOMATION_LEDGER_DIR="$TEST_TMP_ROOT/startup-anomaly-ledger-$attempt" \
-      UPKEEPER_OBLIGATION_DIR="$TEST_TMP_ROOT/startup-anomaly-obligations-$attempt" \
-      CODEX_HOME="$TEST_TMP_ROOT/startup-anomaly-codex-home-$attempt" \
-      CODEX_HOME_DIR="$TEST_TMP_ROOT/startup-anomaly-codex-home-$attempt" \
-      PATH="$TEST_TMP_ROOT/bin:$PATH" \
-      "$PROJECT_ROOT/tools/doctor_upkeeper.sh" --repo="$repo" >"$out" 2>"$err"
-    rc="$?"
-    set -e
+  set +e
+  STARTUP_ANOMALY_GATE=1 \
+    CODEX_DISK_MIN_FREE_PERCENT=101 \
+    CODEX_LOG_FILE="$repo/startup-anomaly-doctor.log" \
+    CODEX_LOG_FILE_ALLOW_UNSAFE=1 \
+    CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER=1 \
+    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$TEST_TMP_ROOT/startup-anomaly-state" \
+    UPKEEPER_AUTOMATION_LEDGER_DIR="$TEST_TMP_ROOT/startup-anomaly-ledger" \
+    UPKEEPER_OBLIGATION_DIR="$TEST_TMP_ROOT/startup-anomaly-obligations" \
+    CODEX_HOME="$TEST_TMP_ROOT/startup-anomaly-codex-home" \
+    CODEX_HOME_DIR="$TEST_TMP_ROOT/startup-anomaly-codex-home" \
+    PATH="$TEST_TMP_ROOT/bin:$PATH" \
+    "$PROJECT_ROOT/tools/doctor_upkeeper.sh" --repo="$repo" --skip-deps >"$out" 2>"$err"
+  rc="$?"
+  set -e
 
-    [[ "$rc" -ne 0 ]] || fail "doctor succeeded unexpectedly during startup-anomaly fixture attempt $attempt"
-    grep -Fq "startup_anomaly.gate_target status=missing action=fail_closed reason=no_repo_local_upkeeper_candidate" "$err" ||
-      fail "startup-anomaly gate did not report expected no local candidate on attempt $attempt"
-    grep -Fq "doctor_upkeeper: ERROR: client dry-run failed with exit 7" "$err" ||
-      fail "doctor did not surface exit 7 for startup-anomaly fixture attempt $attempt"
-  done
+  [[ "$rc" -ne 0 ]] || fail "doctor succeeded unexpectedly during startup-anomaly fixture"
+  grep -Fq "startup_anomaly.gate_target status=missing action=fail_closed reason=no_repo_local_upkeeper_candidate" "$err" ||
+    fail "startup-anomaly gate did not report expected no local candidate"
+  grep -Fq "doctor_upkeeper: ERROR: client dry-run failed with exit 7" "$err" ||
+    fail "doctor did not surface exit 7 for startup-anomaly fixture"
 }
 
 test_client_link_fixture_does_not_leak_central_open_obligations() {

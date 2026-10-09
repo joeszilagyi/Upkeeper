@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-09: bounded private issue-packet validation:
+	1. The focused private issue-packet contract now has a dedicated 90-second validator deadline instead of relying on the broader ordinary-check budget.
+	2. Its quota, backup, postmortem, automation-ledger, obligation, and state roots are isolated under the contract fixture before prompt tests run.
+	3. Timeout diagnostics now name the exact check, command, cleanup, and artifact, while the timing test proves recursive cleanup terminates both a hanging child and grandchild.
+
 2026-10-09: prompt-pass coverage status enforcement:
 	1. The production all-pass enforcement path now captures the coverage gate status before any logical negation can erase incomplete status 2 or unavailable status 3.
 	2. Incomplete and unavailable P1-P23 evidence reliably override an apparent `WORK_DONE` result to `BLOCKED`, while complete evidence preserves the original status.

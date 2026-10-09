@@ -13,6 +13,7 @@ MODE="quick"
 VALIDATION_PROFILE="0"
 VALIDATION_CHECK_TIMEOUT_SECONDS="${VALIDATION_CHECK_TIMEOUT_SECONDS:-240}"
 VALIDATION_TEST_TIMEOUT_SECONDS="${VALIDATION_TEST_TIMEOUT_SECONDS:-180}"
+VALIDATION_ISSUE_FIX_PRIVATE_PACKET_TIMEOUT_SECONDS="${VALIDATION_ISSUE_FIX_PRIVATE_PACKET_TIMEOUT_SECONDS:-90}"
 VALIDATION_INTEGRATION_TIMEOUT_SECONDS="${VALIDATION_INTEGRATION_TIMEOUT_SECONDS:-300}"
 VALIDATION_FULL_TIMEOUT_SECONDS="${VALIDATION_FULL_TIMEOUT_SECONDS:-420}"
 VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS="${VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS:-600}"
@@ -197,6 +198,7 @@ trap validation_exit_handler EXIT
 for timeout_name in \
   VALIDATION_CHECK_TIMEOUT_SECONDS \
   VALIDATION_TEST_TIMEOUT_SECONDS \
+  VALIDATION_ISSUE_FIX_PRIVATE_PACKET_TIMEOUT_SECONDS \
   VALIDATION_INTEGRATION_TIMEOUT_SECONDS \
   VALIDATION_FULL_TIMEOUT_SECONDS \
   VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS; do
@@ -484,6 +486,27 @@ check_issue_fix_private_packet_contract() {
   (
     PROJECT_ROOT="$ROOT_DIR"
     TEST_TMP_ROOT="$temp_dir"
+    CODEX_HOME="$temp_dir/codex-home"
+    CODEX_POSTMORTEM_DIR="$temp_dir/postmortems"
+    UPKEEPER_PRECONTACT_BACKUP_ROOT="$temp_dir/precontact-vault"
+    UPKEEPER_AUTOMATION_LEDGER_DIR="$temp_dir/automation-ledger"
+    UPKEEPER_OBLIGATION_DIR="$temp_dir/automation-obligations"
+    UPKEEPER_QUOTA_PRIMARY_BLOCK_MARKER_DIR="$temp_dir/quota-block-markers"
+    XDG_STATE_HOME="$temp_dir/state"
+    export CODEX_HOME CODEX_POSTMORTEM_DIR UPKEEPER_PRECONTACT_BACKUP_ROOT
+    export UPKEEPER_AUTOMATION_LEDGER_DIR UPKEEPER_OBLIGATION_DIR
+    export UPKEEPER_QUOTA_PRIMARY_BLOCK_MARKER_DIR XDG_STATE_HOME
+    for fixture_path in \
+      "$CODEX_HOME" \
+      "$CODEX_POSTMORTEM_DIR" \
+      "$UPKEEPER_PRECONTACT_BACKUP_ROOT" \
+      "$UPKEEPER_AUTOMATION_LEDGER_DIR" \
+      "$UPKEEPER_OBLIGATION_DIR" \
+      "$UPKEEPER_QUOTA_PRIMARY_BLOCK_MARKER_DIR" \
+      "$XDG_STATE_HOME"; do
+      [[ "$fixture_path" == "$temp_dir"/* ]] ||
+        fail "private-packet contract inherited non-fixture state path: $fixture_path"
+    done
     source "$ROOT_DIR/tests/lib/issue_fix_private_packet_contract.bash"
     run_issue_fix_private_packet_contract_tests
   )
@@ -1172,6 +1195,8 @@ check_test_invocation_mode_contract() {
     fail "validator checks no longer have a default deadline"
   grep -Fq 'validation_run_check "test:$test_path" "$VALIDATION_TEST_TIMEOUT_SECONDS" bash "$test_path"' tools/validate_upkeeper.sh ||
     fail "delegated validator tests no longer have an independent deadline"
+  grep -Fq 'run_bounded_check issue_fix_private_packet_contract "$VALIDATION_ISSUE_FIX_PRIVATE_PACKET_TIMEOUT_SECONDS"' tools/validate_upkeeper.sh ||
+    fail "private issue-packet contract no longer has its dedicated deadline"
   grep -Fq 'lattice_test:max-cover-head' tests/lattice_test.bash ||
     fail "direct max-cover pipe no longer has command-level timeout custody"
   grep -Fq 'upkeeper.lattice-validation-timeout.v1' tests/lib/lattice_command_guard.bash ||
@@ -8693,7 +8718,7 @@ run_check embedded_behavior_table_contracts check_embedded_behavior_table_contra
 run_check log_line_source_length_contract check_log_line_source_length_contract
 run_check prompt_public_lint_contract check_prompt_public_lint_contract
 run_check fault_injection_registry_contract check_fault_injection_registry_contract
-run_check issue_fix_private_packet_contract check_issue_fix_private_packet_contract
+run_bounded_check issue_fix_private_packet_contract "$VALIDATION_ISSUE_FIX_PRIVATE_PACKET_TIMEOUT_SECONDS" check_issue_fix_private_packet_contract
 run_check authority_control_docs_contract check_authority_control_docs_contract
 run_check policy_decisions_contract check_policy_decisions_contract
 run_check schema_gated_airlock_docs_contract check_schema_gated_airlock_docs_contract

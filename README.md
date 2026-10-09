@@ -404,6 +404,10 @@ overrides can tighten those bounds. Direct Lattice selection probes also name
 their phase and exact command before execution. A timeout writes a private
 `upkeeper.lattice-validation-timeout.v1` JSONL record under ignored
 `runtime/validation-timeouts/` with the command, deadline, and cleanup result.
+The issue-fix private-packet contract has a tighter 90-second budget through
+`VALIDATION_ISSUE_FIX_PRIVATE_PACKET_TIMEOUT_SECONDS` and runs with isolated
+quota, backup, postmortem, automation-ledger, and obligation state. Validator
+timeout diagnostics name the check, exact command, cleanup, and timing artifact.
 In sequential CI phases, `tools/run_tests.sh` also writes a runner-local test
 attestation. Full validation reuses an individual passing test only when the
 Git head/tree, tracked-worktree state, environment class, test path, and test

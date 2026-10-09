@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PROJECT_ROOT/tests/lib/client_link_fixture.bash"
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-client-link-test.XXXXXX")"
 trap 'rm -r "$TEST_TMP_ROOT" 2>/dev/null || true' EXIT
 chmod 700 "$TEST_TMP_ROOT"
@@ -9,46 +10,6 @@ chmod 700 "$TEST_TMP_ROOT"
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
-}
-
-resolve_abs() {
-  python3 - "$1" <<'PY'
-from pathlib import Path
-import sys
-
-print(Path(sys.argv[1]).resolve(strict=False))
-PY
-}
-
-init_client_repo() {
-  local repo="$1"
-
-  mkdir -p "$repo"
-  chmod 700 "$repo"
-  git -C "$repo" init -q
-  git -C "$repo" config user.email "client-link-test@example.invalid"
-  git -C "$repo" config user.name "Client Link Test"
-  printf '#!/usr/bin/env bash\nprintf client-tool\\n\n' >"$repo/client-tool.sh"
-  chmod +x "$repo/client-tool.sh"
-  git -C "$repo" add client-tool.sh
-  git -C "$repo" commit -qm "add client tool"
-}
-
-install_fake_age() {
-  mkdir -p "$TEST_TMP_ROOT/bin"
-  cat >"$TEST_TMP_ROOT/bin/age" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-exit 0
-SH
-  chmod +x "$TEST_TMP_ROOT/bin/age"
-}
-
-central_open_obligation_inventory() {
-  local open_dir="$PROJECT_ROOT/runtime/upkeeper-obligations/open"
-
-  [[ -d "$open_dir" ]] || return 0
-  find "$open_dir" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort
 }
 
 assert_local_ignores() {
@@ -69,13 +30,13 @@ test_install_and_doctor_client_link() {
   local link_target
   local doctor_log
 
-  init_client_repo "$repo"
-  install_fake_age
+  client_link_init_repo "$repo"
+  client_link_install_fake_age
 
   "$PROJECT_ROOT/tools/install_client_link.sh" --repo="$repo" >/dev/null
   [[ -L "$repo/Upkeeper.sh" ]] || fail "install did not create Upkeeper.sh symlink"
-  link_target="$(resolve_abs "$repo/Upkeeper.sh")"
-  [[ "$link_target" == "$(resolve_abs "$PROJECT_ROOT/Upkeeper")" ]] ||
+  link_target="$(client_link_resolve_abs "$repo/Upkeeper.sh")"
+  [[ "$link_target" == "$(client_link_resolve_abs "$PROJECT_ROOT/Upkeeper")" ]] ||
     fail "installed symlink target mismatch: $link_target"
   assert_local_ignores "$repo"
 
@@ -96,7 +57,7 @@ test_install_refuses_overwrite_without_force() {
   local repo="$TEST_TMP_ROOT/overwrite-client"
   local rc
 
-  init_client_repo "$repo"
+  client_link_init_repo "$repo"
   printf 'old wrapper copy\n' >"$repo/Upkeeper.sh"
 
   set +e
@@ -119,7 +80,7 @@ test_update_requires_force_for_stale_symlink() {
   local stale_target="$TEST_TMP_ROOT/stale-upkeeper"
   local rc
 
-  init_client_repo "$repo"
+  client_link_init_repo "$repo"
   printf '#!/usr/bin/env bash\nexit 0\n' >"$stale_target"
   chmod +x "$stale_target"
   ln -s "$stale_target" "$repo/Upkeeper.sh"
@@ -134,7 +95,7 @@ test_update_requires_force_for_stale_symlink() {
     fail "update refusal did not explain force requirement"
 
   "$PROJECT_ROOT/tools/update_client_link.sh" --repo="$repo" --force >/dev/null
-  [[ "$(resolve_abs "$repo/Upkeeper.sh")" == "$(resolve_abs "$PROJECT_ROOT/Upkeeper")" ]] ||
+  [[ "$(client_link_resolve_abs "$repo/Upkeeper.sh")" == "$(client_link_resolve_abs "$PROJECT_ROOT/Upkeeper")" ]] ||
     fail "update --force did not point symlink at central Upkeeper"
 }
 
@@ -142,7 +103,7 @@ test_uninstall_removes_only_safe_symlink() {
   local repo="$TEST_TMP_ROOT/uninstall-client"
   local rc
 
-  init_client_repo "$repo"
+  client_link_init_repo "$repo"
   "$PROJECT_ROOT/tools/install_client_link.sh" --repo="$repo" >/dev/null
   "$PROJECT_ROOT/tools/uninstall_client_link.sh" --repo="$repo" >/dev/null
   [[ ! -e "$repo/Upkeeper.sh" && ! -L "$repo/Upkeeper.sh" ]] ||
@@ -161,59 +122,9 @@ test_uninstall_removes_only_safe_symlink() {
     fail "uninstall modified non-symlink path"
 }
 
-test_doctor_client_link_reports_no_repo_local_upkeeper_candidate() {
-  local repo="$TEST_TMP_ROOT/startup-anomaly-client"
-  local out
-  local err
-  local rc
-
-  init_client_repo "$repo"
-  install_fake_age
-  "$PROJECT_ROOT/tools/install_client_link.sh" --repo="$repo" >/dev/null
-
-  # The normal-install scenario above covers doctor dependency validation. This
-  # fixture isolates the deterministic startup-gate failure; repeating the same
-  # isolated dry run adds no state-transition coverage.
-  out="$TEST_TMP_ROOT/startup-anomaly-doctor.out"
-  err="$TEST_TMP_ROOT/startup-anomaly-doctor.err"
-
-  set +e
-  STARTUP_ANOMALY_GATE=1 \
-    CODEX_DISK_MIN_FREE_PERCENT=101 \
-    CODEX_LOG_FILE="$repo/startup-anomaly-doctor.log" \
-    CODEX_LOG_FILE_ALLOW_UNSAFE=1 \
-    CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER=1 \
-    CODEX_STARTUP_ANOMALY_GATE_STATE_DIR="$TEST_TMP_ROOT/startup-anomaly-state" \
-    UPKEEPER_AUTOMATION_LEDGER_DIR="$TEST_TMP_ROOT/startup-anomaly-ledger" \
-    UPKEEPER_OBLIGATION_DIR="$TEST_TMP_ROOT/startup-anomaly-obligations" \
-    CODEX_HOME="$TEST_TMP_ROOT/startup-anomaly-codex-home" \
-    CODEX_HOME_DIR="$TEST_TMP_ROOT/startup-anomaly-codex-home" \
-    PATH="$TEST_TMP_ROOT/bin:$PATH" \
-    "$PROJECT_ROOT/tools/doctor_upkeeper.sh" --repo="$repo" --skip-deps >"$out" 2>"$err"
-  rc="$?"
-  set -e
-
-  [[ "$rc" -ne 0 ]] || fail "doctor succeeded unexpectedly during startup-anomaly fixture"
-  grep -Fq "startup_anomaly.gate_target status=missing action=fail_closed reason=no_repo_local_upkeeper_candidate" "$err" ||
-    fail "startup-anomaly gate did not report expected no local candidate"
-  grep -Fq "doctor_upkeeper: ERROR: client dry-run failed with exit 7" "$err" ||
-    fail "doctor did not surface exit 7 for startup-anomaly fixture"
-}
-
-test_client_link_fixture_does_not_leak_central_open_obligations() {
-  local before after
-
-  before="$(central_open_obligation_inventory)"
-  test_doctor_client_link_reports_no_repo_local_upkeeper_candidate
-  after="$(central_open_obligation_inventory)"
-  [[ "$after" == "$before" ]] ||
-    fail "startup-anomaly fixture created central open obligations"
-}
-
 test_install_and_doctor_client_link
 test_install_refuses_overwrite_without_force
 test_update_requires_force_for_stale_symlink
 test_uninstall_removes_only_safe_symlink
-test_client_link_fixture_does_not_leak_central_open_obligations
 
 printf 'client_link_tools_test: ok\n'

@@ -184,6 +184,8 @@ test_plain_required_backup_succeeds() {
   bak_file="$(find "$UPKEEPER_PRECONTACT_BACKUP_ROOT" -type f -name "${RUN_PRECONTACT_BACKUP_ID}.bak" -print)"
   [[ -s "$json_file" ]] || fail "plain sidecar missing"
   [[ -s "$bak_file" ]] || fail "plain backup artifact missing"
+  [[ "$(dirname -- "$json_file")" == "$(dirname -- "$bak_file")" ]] || fail "plain backup pair was split across directories"
+  [[ "$(basename -- "$(dirname -- "$json_file")")" == "$RUN_PRECONTACT_BACKUP_ID" ]] || fail "plain backup pair was not atomically published by backup id"
 
   expected_sha="$(precontact_backup_sha256_file "$repo/dir/space file.sh")"
   expected_path_hmac="$(precontact_backup_path_hmac "dir/space file.sh")"
@@ -270,6 +272,8 @@ SH
   json_file="$(find "$UPKEEPER_PRECONTACT_BACKUP_ROOT" -type f -name "${RUN_PRECONTACT_BACKUP_ID}.json" -print)"
   age_file="$(find "$UPKEEPER_PRECONTACT_BACKUP_ROOT" -type f -name "${RUN_PRECONTACT_BACKUP_ID}.age" -print)"
   [[ -s "$age_file" ]] || fail "age artifact missing"
+  [[ "$(dirname -- "$json_file")" == "$(dirname -- "$age_file")" ]] || fail "age backup pair was split across directories"
+  [[ "$(basename -- "$(dirname -- "$json_file")")" == "$RUN_PRECONTACT_BACKUP_ID" ]] || fail "age backup pair was not atomically published by backup id"
   grep -Fq "recipient=age1testrecipient" "$record" || fail "fake age did not receive public recipient"
   ! grep -Fq "identity=" "$record" || fail "age backup requested an identity"
   jq -e '.backup_mode == "age" and .encrypted == true and .protected_from_backend == "unknown"' "$json_file" >/dev/null ||
@@ -843,7 +847,7 @@ test_plain_restore_temporary_directory_cleaned_on_failure() {
   precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
   backup_id="$RUN_PRECONTACT_BACKUP_ID"
 
-  rm -f -- "$UPKEEPER_PRECONTACT_BACKUP_ROOT"/*/*/"${backup_id}.bak"
+  find "$UPKEEPER_PRECONTACT_BACKUP_ROOT" -type f -name "${backup_id}.bak" -delete
   old_run_tmp="$RUN_TMP_DIR"
   old_tmpdir="${TMPDIR-}"
   RUN_TMP_DIR=""
@@ -869,6 +873,51 @@ test_plain_restore_temporary_directory_cleaned_on_failure() {
 
   tmp_count="$(find "$tmp_root" -maxdepth 1 -type d -name 'upkeeper-restore-*' | wc -l | tr -d ' ')"
   [[ "$tmp_count" == "0" ]] || fail "temporary restore directory not cleaned (found ${tmp_count})"
+}
+
+test_atomic_backup_pair_publication_contract() {
+  local path_dir="$TEST_TMP_ROOT/publish-pair"
+  local repo="$TEST_TMP_ROOT/publish-pair-repo"
+  local backup_id="pb-publish-pair"
+  local staged_dir="$path_dir/.${backup_id}.fixture.staging"
+  local final_dir="$path_dir/$backup_id"
+  local definition rc
+
+  mkdir -p "$staged_dir"
+  chmod 700 "$path_dir" "$staged_dir"
+  printf '{}\n' >"$staged_dir/${backup_id}.json"
+  set +e
+  precontact_backup_publish_directory "$staged_dir" "$final_dir"
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 ]] || fail "incomplete backup pair was published"
+  [[ ! -e "$final_dir" ]] || fail "incomplete backup pair became discoverable"
+  [[ -d "$staged_dir" ]] || fail "rejected incomplete pair lost staging evidence"
+
+  definition="$(declare -f precontact_backup_publish_directory)"
+  python3 - "$definition" <<'PY' || fail "durable backup publication ordering contract changed"
+import sys
+
+text = sys.argv[1]
+ordered = (
+    "os.fsync(file_fd)",
+    "os.fsync(staged_fd)",
+    "os.replace(staged_dir.name, final_dir.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)",
+    "os.fsync(parent_fd)",
+)
+positions = [text.find(token) for token in ordered]
+if any(position < 0 for position in positions) or positions != sorted(positions):
+    raise SystemExit(1)
+PY
+
+  printf 'orphan payload\n' >"$path_dir/pb-orphan.bak"
+  make_repo "$repo"
+  UPKEEPER_PRECONTACT_BACKUP_ROOT="$path_dir"
+  if precontact_backup_restore_by_id "pb-orphan" "$repo" "" ""; then
+    fail "orphan payload without a sidecar was treated as complete"
+  fi
+  [[ "$PRECONTACT_BACKUP_LAST_REASON" == "backup_id_not_unique_or_missing" ]] ||
+    fail "orphan payload failed as $PRECONTACT_BACKUP_LAST_REASON"
 }
 
 test_machine_preflight_skips_read_only_issue_stages() {
@@ -900,5 +949,6 @@ test_secure_restore_preserves_recorded_mode
 test_plain_restore_temporary_directory_cleaned_on_failure
 test_age_restore_uses_payload_metadata
 test_secure_restore_rejects_parent_swap_race
+test_atomic_backup_pair_publication_contract
 
 printf 'precontact_backup_test: ok\n'

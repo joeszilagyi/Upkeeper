@@ -1106,6 +1106,11 @@ verified parent descriptor. Parent or final-target symlinks are rejected.
 `UPKEEPER_PRECONTACT_BACKUP_ROOT` may point at an operator-local vault outside
 the repository. The wrapper never includes the generated vault path in compiled
 prompts, backup log lines, or Lattice preselect evidence.
+Each new backup is staged as a private payload-and-sidecar directory. Upkeeper
+fsyncs both files and the staging directory, atomically publishes the complete
+directory, and fsyncs its parent before reporting success. Any sync or publish
+failure fails the required pre-contact gate; incomplete staging directories and
+orphan payloads are not valid restore ids.
 
 ## Operational Notes
 

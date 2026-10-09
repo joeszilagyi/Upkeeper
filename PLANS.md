@@ -3,9 +3,32 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #692: Fd-Safe Standalone Restore Installation
+## Issue #653: Crash-Durable Atomic Pre-Contact Backup Publication
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- publish each backup payload and sidecar as one discoverable unit
+- make reported success contingent on durable file and directory metadata
+- preserve restore and retention compatibility with legacy flat backup pairs
+
+Constraints:
+- fsync both staged files and the staged directory before publication
+- atomically rename the complete staging directory into place
+- fsync the parent directory after publication and fail closed on any error
+- never expose an incomplete pair as a valid backup id
+- no live backend Codex validation
+
+Validation:
+- plain and age backup-id directory layout assertions
+- incomplete-pair rejection, orphan-payload invisibility, and missing-artifact
+  restore evidence
+- explicit file/staged-directory/rename/parent-directory ordering contract
+- complete unit suite and quick/full repository validation
+
+## Issue #692: Fd-Safe Standalone Restore Installation
+
+Status: complete; merged in PR #829
 
 Goal:
 - install standalone restores through verified directory descriptors

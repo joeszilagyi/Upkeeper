@@ -455,6 +455,10 @@ runtime/upkeeper-lattice/exports/
 
 Each exported row includes schema version, row type, row version, logical key,
 source identity, repo identity, payload, payload SHA-256, and exported epoch.
+Export redaction and identity sanitization retain the table primary key, and
+the logical key is derived from that preserved value. If a future table lacks
+a primary key, export uses a namespaced payload SHA-256 rather than a shared
+`table:None` sentinel.
 Default exports now redact raw payload fields and path-bearing fields unless the
 operator explicitly asks for disclosure with `--include-raw` and/or
 `--include-paths`. Contributor fields remain redacted unless
@@ -494,7 +498,12 @@ daemon.
 duplicate. Same logical key and a different payload hash records a conflict and
 does not silently overwrite existing facts. Raw source lines stay redacted on
 import by default; use `import-jsonl --preserve-raw` only when the destination
-raw-storage mode is intentionally `full`.
+raw-storage mode is intentionally `full`. Import recomputes the canonical
+logical key and rejects rows whose declared key differs. A row for a table with
+a missing primary key is skipped as malformed and receives a unique
+`table:sha256:<payload-hash>` conflict key, so distinct malformed rows cannot
+collapse to `table:None`. Import summaries expose `rows_skipped` separately
+from `data_conflicts`; the legacy `conflicts` count remains their total gate.
 
 `backup` uses SQLite backup support instead of blind-copying a live DB. Backups
 default to:

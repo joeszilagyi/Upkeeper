@@ -2345,6 +2345,12 @@ check_lattice_custody_policy_contract() {
     fail "Lattice backup publication does not require a parent-directory fsync"
   grep -Fq 'probe_backup_publication_directory_sync()' tools/upkeeper_lattice_core.py ||
     fail "Lattice doctor lacks backup directory-sync fault coverage"
+  grep -Fq 'canonical_jsonl_logical_key' tools/upkeeper_lattice_core.py ||
+    fail "Lattice JSONL rows do not use canonical logical keys"
+  grep -Fq '"missing_primary_key"' tools/upkeeper_lattice_core.py ||
+    fail "Lattice JSONL import does not reject missing primary keys"
+  grep -Fq 'summary.get("rows_skipped") != 2' tests/lattice_test.bash ||
+    fail "Lattice JSONL regression does not distinguish skipped rows from data conflicts"
   grep -Fq 'fsyncs the containing directory before reporting success' docs/lattice.md ||
     fail "Lattice docs omit backup directory durability policy"
   grep -Fq 'service", help="serve multiple Lattice CLI commands in one warm process"' tools/upkeeper_lattice_core.py ||

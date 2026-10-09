@@ -3,9 +3,39 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #660: Bounded Recent-Log Reads
+## Issue #661: Canonical Lattice JSONL Import Identity
 
 Status: implemented and locally validated; pending PR CI
+
+Goal:
+- prevent missing-primary-key JSONL rows from sharing `table:None` identity
+- validate declared logical keys against canonical payload identity
+- distinguish malformed/skipped rows from true stored-data conflicts in import
+  summaries
+
+Audit result:
+- current export sanitization/redaction retains every table primary key, so
+  normal exports do not currently generate `table:None`
+- externally sanitized or edited JSONL can omit the primary key, and import
+  previously trusted its declared logical key while allowing an auto-generated
+  database identity
+
+Constraints:
+- fail closed rather than inventing a replacement database primary key
+- retain unique, explainable evidence for every rejected missing-PK row
+- preserve the existing aggregate `conflicts` gate and exit behavior
+- no live backend Codex validation
+
+Validation:
+- normal exports retain their PK and canonical `table:<pk>` logical key
+- two distinct missing-PK rows are skipped, not inserted, and receive distinct
+  `table:sha256:<payload-hash>` conflict keys
+- summaries report skipped rows separately from actual existing-row conflicts
+- focused Lattice suite, complete unit suite, and quick/full validation
+
+## Issue #660: Bounded Recent-Log Reads
+
+Status: complete; merged in PR #837
 
 Goal:
 - keep stopped-loop triage memory independent of total loop-log size

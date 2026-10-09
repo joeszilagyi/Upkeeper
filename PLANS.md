@@ -47,7 +47,7 @@ Validation:
 
 ## Issue #693: Preserve Encrypted Restore Modification Time
 
-Status: implemented; local validation passed; pending PR CI
+Status: complete; merged in PR #856
 
 Goal:
 - record the selected file's nanosecond modification time in private metadata
@@ -65,6 +65,29 @@ Validation:
 - root and module installers validate and apply the optional timestamp before
   atomic rename
 - a rewritten legacy payload without `mtime_ns` still restores its bytes
+
+## Issue #696: Component-Aware Sensitive Worktree Paths
+
+Status: implemented; local validation passed; pending PR CI
+
+Goal:
+- stop classifying ordinary paths by incidental sensitive-word substrings
+- keep actual sensitive paths HMAC-only without deleting their snapshot rows
+- preserve dirty-path and delta accounting without retaining secret metadata
+
+Verified defect:
+- the classifier matched `secret`, `credential`, and `token` anywhere in the
+  normalized path, including `secretary.md`, `credentialing.md`, and
+  `tokenizer.py`
+- snapshot collection skipped every row when either rename path was classified
+  sensitive
+
+Validation:
+- the four reported false positives remain ordinary snapshot entries
+- `.env`, private-key, credential-store, and token-file fixtures remain
+  sensitive and HMAC-only
+- sensitive rows retain status/accounting but omit content metadata and file
+  inventory linkage
 
 ## Issue #688: Typed JSON-to-Shell Parsing
 

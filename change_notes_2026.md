@@ -1,5 +1,9 @@
 # 2026 Change Notes
 
+2026-10-09: v1.2.46 changes:
+	1. Lattice sensitive-path detection now uses path components and explicit secret-file token boundaries instead of arbitrary substring matching.
+	2. Sensitive dirty paths remain represented by HMAC-only `path_class='sensitive'` snapshot rows without content metadata or file linkage, while ordinary names such as `tokenizer.py` and `secretary.md` retain normal accounting.
+
 2026-10-09: v1.2.45 changes:
 	1. Encrypted pre-contact backups now record integer `mtime_ns` in private payload metadata and restore it before secure atomic installation.
 	2. Root and standalone restore paths preserve nanosecond modification time, while legacy encrypted payloads without `mtime_ns` remain restorable with prior timestamp behavior.

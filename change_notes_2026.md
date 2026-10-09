@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-09: v1.2.40 changes:
+	1. Backend Codex can no longer invoke `gh issue create`, including when issue-write opt-in is enabled; it must return the wrapper-owned local draft artifact.
+	2. Opted-in bug-report filing is now wrapper-owned and requires accepted completion, zero backend exit, unchanged-source evidence, a strict title/body/label draft, and an exact-title duplicate check.
+	3. Audit-only and non-opted-in cycles preserve the local draft without transport, while logs distinguish backend denial, wrapper policy refusal, duplicate suppression, transport failure, and successful creation.
+
 2026-10-09: v1.2.39 changes:
 	1. Staged issue comments now require a validated `upkeeper.issue_comment_action.v1` record binding issue, stage, draft path/content hashes, accepted status, backend exit, unchanged-source result, and selected target.
 	2. Missing, malformed, mismatched, nonzero-exit, or source-guard-invalid action records fail before `gh issue comment`; logs distinguish action refusal from transport failure.

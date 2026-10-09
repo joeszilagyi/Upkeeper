@@ -23,6 +23,7 @@ reset_bug_report_env() {
   UPKEEPER_AUDIT_REPORT_DIR=""
   CYCLE_ID="bug-report-only-test"
   CYCLE_RUN_HASH="hash"
+  UPKEEPER_ALLOW_GH_ISSUE_WRITE=0
   export ROOT_DIR="$PROJECT_ROOT"
 }
 
@@ -80,7 +81,7 @@ EOF
   fi
 }
 
-test_bug_report_gh_gate_blocks_issue_create_by_default_and_allows_explicit_opt_in() {
+test_backend_gh_gate_always_blocks_issue_create() {
   local real_gh stub_gh blocked_output allowed_output blocked_rc
 
   reset_bug_report_env
@@ -115,16 +116,98 @@ EOF
   blocked_rc="$?"
   set -e
   [[ "$blocked_rc" -eq 126 ]] || fail "bug-report gh gate did not block issue creation by default"
-  [[ "$blocked_output" == *"UPKEEPER_ALLOW_GH_ISSUE_WRITE=1"* ]] \
-    || fail "bug-report gh gate did not explain the explicit opt-in requirement"
+  [[ "$blocked_output" == *"backend gh issue create is always blocked"* ]] \
+    || fail "bug-report gh gate did not explain wrapper-owned filing"
 
   export UPKEEPER_ALLOW_GH_ISSUE_WRITE=1
-  allowed_output="$("$stub_gh" issue create --title example 2>&1)" \
-    || fail "bug-report gh gate did not allow explicitly opted-in issue creation"
-  [[ "$allowed_output" == *"repo_visibility=private"* ]] \
-    || fail "bug-report gh gate did not report repo visibility on explicit issue creation"
-  [[ "$allowed_output" == *"REAL_GH issue create --title example"* ]] \
-    || fail "bug-report gh gate did not forward to the real gh binary"
+  set +e
+  allowed_output="$("$stub_gh" issue create --title example 2>&1)"
+  blocked_rc="$?"
+  set -e
+  [[ "$blocked_rc" -eq 126 ]] || fail "bug-report gh gate allowed backend issue creation after wrapper opt-in"
+  [[ "$allowed_output" == *"backend gh issue create is always blocked"* ]] \
+    || fail "bug-report gh gate changed behavior when wrapper filing was enabled"
+  [[ "$allowed_output" != *"REAL_GH issue create"* ]] \
+    || fail "bug-report gh gate forwarded backend issue creation"
+}
+
+test_wrapper_bug_report_filing_honors_opt_in_and_dedupe() {
+  local wrapper_bin gh_args posted_body
+
+  reset_bug_report_env
+  wrapper_bin="$TEST_TMP_ROOT/wrapper-bin"
+  gh_args="$TEST_TMP_ROOT/wrapper-gh-args.txt"
+  posted_body="$TEST_TMP_ROOT/wrapper-posted-body.md"
+  mkdir -p "$wrapper_bin" "$RUN_TMP_DIR"
+  cat >"$wrapper_bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == issue && "${2:-}" == list ]]; then
+  printf '%s\n' "${UPKEEPER_TEST_OPEN_ISSUES_JSON:-[]}"
+  exit 0
+fi
+if [[ "${1:-}" == issue && "${2:-}" == create ]]; then
+  printf '%s\n' "$*" >"$UPKEEPER_TEST_GH_ARGS"
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == --body-file ]]; then
+      cp -- "$2" "$UPKEEPER_TEST_POSTED_BODY"
+      break
+    fi
+    shift
+  done
+  printf 'https://github.example/issues/777\n'
+  exit 0
+fi
+printf 'unexpected wrapper gh invocation: %s\n' "$*" >&2
+exit 2
+EOF
+  chmod +x "$wrapper_bin/gh"
+  PATH="$wrapper_bin:$PATH"
+  export PATH
+  export UPKEEPER_TEST_GH_ARGS="$gh_args"
+  export UPKEEPER_TEST_POSTED_BODY="$posted_body"
+  export UPKEEPER_TEST_OPEN_ISSUES_JSON='[]'
+
+  RUN_LAST_MESSAGE_FILE="$TEST_TMP_ROOT/wrapper-report-last-message.txt"
+  RUN_BUG_REPORT_DRAFT_FILE="$TEST_TMP_ROOT/wrapper-report-draft.md"
+  cat >"$RUN_LAST_MESSAGE_FILE" <<'EOF'
+UPKEEPER_BUG_REPORT_DRAFT_START
+Title: Wrapper-owned issue filing test
+Labels: bug,security
+
+## Summary
+The wrapper should own this transport.
+UPKEEPER_BUG_REPORT_DRAFT_END
+REVIEWED_AND_REPORTED
+EOF
+
+  UPKEEPER_ALLOW_GH_ISSUE_WRITE=0
+  upkeeper_bug_report_finalize WORK_DONE 0 unchanged || fail "disabled wrapper filing rejected a valid local draft"
+  [[ ! -e "$gh_args" ]] || fail "disabled wrapper filing contacted issue-create transport"
+
+  UPKEEPER_ALLOW_GH_ISSUE_WRITE=1
+  upkeeper_bug_report_finalize WORK_DONE 0 unchanged || fail "enabled wrapper filing rejected a valid draft"
+  grep -Fq 'issue create --title Wrapper-owned issue filing test --body-file' "$gh_args" ||
+    fail "wrapper issue-create transport did not receive parsed title/body"
+  grep -Fq -- '--label bug --label security' "$gh_args" || fail "wrapper issue-create transport did not receive parsed labels"
+  grep -Fq '## Summary' "$posted_body" || fail "wrapper issue-create body omitted report content"
+  if grep -Fq 'Title:' "$posted_body" || grep -Fq 'Labels:' "$posted_body"; then
+    fail "wrapper issue-create body retained draft metadata headers"
+  fi
+
+  rm -f -- "$gh_args" "$posted_body"
+  if upkeeper_bug_report_finalize BLOCKED 0 unchanged >/dev/null 2>&1; then
+    fail "wrapper filing accepted non-success runtime evidence"
+  fi
+  [[ ! -e "$gh_args" ]] || fail "runtime-evidence refusal reached issue-create transport"
+
+  export UPKEEPER_TEST_OPEN_ISSUES_JSON='[{"number":44,"title":"Wrapper-owned issue filing test"}]'
+  upkeeper_bug_report_finalize WORK_DONE 0 unchanged || fail "wrapper duplicate suppression failed"
+  [[ ! -e "$gh_args" ]] || fail "wrapper filing created an exact-title duplicate"
+  grep -Fq 'bug_report_only.issue_created transport=wrapper' "$CODEX_LOG_FILE" ||
+    fail "wrapper filing did not log successful creation transport"
+  grep -Fq 'bug_report_only.issue_write_blocked transport=wrapper' "$CODEX_LOG_FILE" ||
+    fail "wrapper filing did not log a policy/evidence refusal"
 }
 
 test_audit_only_reuses_no_fix_guard_and_runtime_report_root() {
@@ -153,7 +236,8 @@ source "$PROJECT_ROOT/Upkeeper"
 
 test_bug_report_draft_extracts_issue_ready_block
 test_bug_report_finalize_requires_draft_for_reported_outcome
-test_bug_report_gh_gate_blocks_issue_create_by_default_and_allows_explicit_opt_in
+test_backend_gh_gate_always_blocks_issue_create
+test_wrapper_bug_report_filing_honors_opt_in_and_dedupe
 test_audit_only_reuses_no_fix_guard_and_runtime_report_root
 
 printf 'bug_report_only_test: ok\n'

@@ -896,7 +896,10 @@ without fixing them. It is also accepted as `--file-bug-only` or
 `--report-bug-only`. This mode explicitly overrides the normal clean-review
 touch requirement; if Codex changes tracked source anyway, the wrapper compares
 the source mutation fingerprint from before and after the run and fails the
-cycle as a source mutation guard violation. ChimneySweep's comment and review
+cycle as a source mutation guard violation. Backend GitHub writes are always
+blocked. With `UPKEEPER_ALLOW_GH_ISSUE_WRITE=1`, only the wrapper may validate
+the required local draft, suppress an exact-title duplicate, and create the
+issue after successful runtime and unchanged-source evidence. ChimneySweep's comment and review
 issue-workflow stages use the same tracked-source mutation guard and are
 launched with a read-only backend sandbox. Their issue-comment text is carried
 back in a final-message draft block and posted by the wrapper only after the

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.39
+## Version: v1.2.40
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -374,7 +374,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.39"
+UPKEEPER_VERSION="v1.2.40"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -6902,7 +6902,7 @@ PY
     fi
   fi
 
-  if ! upkeeper_bug_report_finalize; then
+  if ! upkeeper_bug_report_finalize "${status_marker:-}" "$codex_exit" "$source_mutation_guard_outcome"; then
     status_marker="BLOCKED"
     status_marker_source="bug_report_draft_failed"
     primary_failure_classification="bug-report-draft"

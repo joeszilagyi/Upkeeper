@@ -200,6 +200,14 @@ plaintext path when the selected file contains high-confidence private-key
 material. Upkeeper records accepted plain backups as `encrypted=false` and
 `protected_from_backend=false`.
 
+Plain and age backups are published as one private backup-id directory. The
+payload and sidecar files plus staging directory are fsynced before an atomic
+directory rename, and the parent directory is fsynced before success is
+reported. Sync and publication failures fail the backup gate closed. Restore
+discovery indexes only complete sidecars, so staging remnants and orphan
+payloads cannot masquerade as successful backups; legacy flat pairs remain
+readable for recovery and retention.
+
 Age mode encrypts the backup payload to a configured public recipient. Backup
 creation uses only the public recipient; it must not request, read, log, or
 source a private age identity. The private identity is needed only for manual

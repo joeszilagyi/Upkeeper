@@ -1,5 +1,10 @@
 # 2026 Change Notes
 
+2026-10-08: crash-durable atomic pre-contact backup publication:
+	1. Plain and encrypted payloads now stage beside their sidecar in a private backup-id directory and become discoverable through one atomic directory rename, eliminating half-published pairs.
+	2. Publication strictly fsyncs both staged files and the staged directory before rename, then fsyncs the parent directory; any durability failure keeps the required backup gate fail-closed.
+	3. Restore and retention remain compatible with legacy flat pairs, while regressions cover atomic plain/age layout, incomplete-pair rejection, orphan invisibility, and publication ordering.
+
 2026-10-08: fd-safe standalone pre-contact restore publication:
 	1. Root and standalone restores now share the same installer, which walks and rechecks repository parents through directory descriptors opened with `O_NOFOLLOW`.
 	2. Restored bytes publish with `os.replace(..., dst_dir_fd=...)`, and recorded permissions are applied through a nofollow file descriptor instead of path-based `mkdir`, `mv`, and `chmod` operations.

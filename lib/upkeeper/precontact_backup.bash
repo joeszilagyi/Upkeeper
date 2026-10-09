@@ -708,6 +708,68 @@ print(digest.hexdigest())
 PY
 }
 
+precontact_backup_cleanup_staged_dir() {
+  local staged_dir="${1:-}"
+
+  [[ -n "$staged_dir" && -e "$staged_dir" ]] || return 0
+  rm -rf -- "$staged_dir"
+}
+
+# Publish the payload and its indexing sidecar with one directory rename. Every
+# file and directory sync is fail-closed so success means the complete pair has
+# reached the filesystem's durability boundary.
+precontact_backup_publish_directory() {
+  local staged_dir="$1"
+  local final_dir="$2"
+
+  python3 - "$staged_dir" "$final_dir" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+staged_dir = Path(sys.argv[1])
+final_dir = Path(sys.argv[2])
+if staged_dir.parent != final_dir.parent:
+    raise SystemExit(2)
+if final_dir.exists() or final_dir.is_symlink():
+    raise SystemExit(3)
+
+nofollow = getattr(os, "O_NOFOLLOW", 0)
+directory = getattr(os, "O_DIRECTORY", 0)
+if nofollow == 0:
+    raise SystemExit(4)
+
+staged_fd = os.open(staged_dir, os.O_RDONLY | directory | nofollow)
+parent_fd = None
+try:
+    entries = sorted(os.listdir(staged_fd))
+    backup_id = final_dir.name
+    expected_json = f"{backup_id}.json"
+    expected_payloads = {f"{backup_id}.bak", f"{backup_id}.age"}
+    if expected_json not in entries or len(expected_payloads.intersection(entries)) != 1 or len(entries) != 2:
+        raise SystemExit(5)
+
+    for entry in entries:
+        file_fd = os.open(entry, os.O_RDONLY | nofollow, dir_fd=staged_fd)
+        try:
+            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                raise SystemExit(6)
+            os.fsync(file_fd)
+        finally:
+            os.close(file_fd)
+
+    os.fsync(staged_fd)
+    parent_fd = os.open(staged_dir.parent, os.O_RDONLY | directory | nofollow)
+    os.replace(staged_dir.name, final_dir.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+    os.fsync(parent_fd)
+finally:
+    if parent_fd is not None:
+        os.close(parent_fd)
+    os.close(staged_fd)
+PY
+}
+
 precontact_backup_extract_payload() {
   local payload_file="$1"
   local restored_file="$2"
@@ -744,7 +806,7 @@ precontact_backup_create_plain() {
   local backup_id="$3"
   local metadata_file="$4"
   local content_sha="$5"
-  local tmp_bak tmp_json final_bak final_json copied_sha
+  local staged_dir="" final_dir staged_bak staged_json copied_sha
 
   if ! mkdir -p -- "$path_dir"; then
     precontact_backup_set_reason "mkdir_failed"
@@ -752,41 +814,39 @@ precontact_backup_create_plain() {
   fi
   chmod 700 "$path_dir" 2>/dev/null || true
 
-  tmp_bak="$path_dir/.${backup_id}.$$.bak.tmp"
-  tmp_json="$path_dir/.${backup_id}.$$.json.tmp"
-  final_bak="$path_dir/${backup_id}.bak"
-  final_json="$path_dir/${backup_id}.json"
-  rm -f -- "$tmp_bak" "$tmp_json"
+  if ! staged_dir="$(mktemp -d "$path_dir/.${backup_id}.XXXXXX.staging")"; then
+    precontact_backup_set_reason "staging_dir_failed"
+    return 1
+  fi
+  final_dir="$path_dir/${backup_id}"
+  staged_bak="$staged_dir/${backup_id}.bak"
+  staged_json="$staged_dir/${backup_id}.json"
 
-  if ! precontact_backup_copy_file "$target_abs" "$tmp_bak"; then
-    rm -f -- "$tmp_bak" "$tmp_json"
+  if ! precontact_backup_copy_file "$target_abs" "$staged_bak"; then
+    precontact_backup_cleanup_staged_dir "$staged_dir"
     precontact_backup_set_reason "copy_failed"
     return 1
   fi
-  if ! copied_sha="$(precontact_backup_sha256_file "$tmp_bak")"; then
-    rm -f -- "$tmp_bak" "$tmp_json"
+  if ! copied_sha="$(precontact_backup_sha256_file "$staged_bak")"; then
+    precontact_backup_cleanup_staged_dir "$staged_dir"
     precontact_backup_set_reason "copy_hash_failed"
     return 1
   fi
   if [[ "$copied_sha" != "$content_sha" ]]; then
-    rm -f -- "$tmp_bak" "$tmp_json"
+    precontact_backup_cleanup_staged_dir "$staged_dir"
     precontact_backup_set_reason "copy_hash_mismatch"
     return 1
   fi
-  if ! precontact_backup_copy_file "$metadata_file" "$tmp_json"; then
-    rm -f -- "$tmp_bak" "$tmp_json"
+  if ! precontact_backup_copy_file "$metadata_file" "$staged_json"; then
+    precontact_backup_cleanup_staged_dir "$staged_dir"
     precontact_backup_set_reason "metadata_copy_failed"
     return 1
   fi
-  chmod 600 "$tmp_bak" "$tmp_json" 2>/dev/null || true
-  if ! mv -- "$tmp_bak" "$final_bak"; then
-    rm -f -- "$tmp_bak" "$tmp_json"
-    precontact_backup_set_reason "backup_rename_failed"
-    return 1
-  fi
-  if ! mv -- "$tmp_json" "$final_json"; then
-    rm -f -- "$tmp_json"
-    precontact_backup_set_reason "metadata_rename_failed"
+  chmod 700 "$staged_dir" 2>/dev/null || true
+  chmod 600 "$staged_bak" "$staged_json" 2>/dev/null || true
+  if ! precontact_backup_publish_directory "$staged_dir" "$final_dir"; then
+    precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "backup_publish_failed"
     return 1
   fi
   return 0
@@ -798,7 +858,7 @@ precontact_backup_create_age() {
   local backup_id="$3"
   local metadata_file="$4"
   local sidecar_file="$5"
-  local tmp_age tmp_json final_age final_json payload_file payload_sha expected_fingerprint actual_fingerprint
+  local staged_dir="" final_dir staged_age staged_json payload_file payload_sha expected_fingerprint actual_fingerprint
 
   if ! mkdir -p -- "$path_dir"; then
     precontact_backup_set_reason "mkdir_failed"
@@ -806,23 +866,28 @@ precontact_backup_create_age() {
   fi
   chmod 700 "$path_dir" 2>/dev/null || true
 
+  if ! staged_dir="$(mktemp -d "$path_dir/.${backup_id}.XXXXXX.staging")"; then
+    precontact_backup_set_reason "staging_dir_failed"
+    return 1
+  fi
   if ! payload_file="$(run_mktemp precontact-backup-payload)"; then
+    precontact_backup_cleanup_staged_dir "$staged_dir"
     precontact_backup_set_reason "payload_temp_failed"
     return 1
   fi
-  tmp_age="$path_dir/.${backup_id}.$$.age.tmp"
-  tmp_json="$path_dir/.${backup_id}.$$.json.tmp"
-  final_age="$path_dir/${backup_id}.age"
-  final_json="$path_dir/${backup_id}.json"
-  rm -f -- "$tmp_age" "$tmp_json"
+  final_dir="$path_dir/${backup_id}"
+  staged_age="$staged_dir/${backup_id}.age"
+  staged_json="$staged_dir/${backup_id}.json"
 
   if ! expected_fingerprint="$(precontact_backup_content_fingerprint_field "$metadata_file")"; then
     rm -f -- "$payload_file"
+    precontact_backup_cleanup_staged_dir "$staged_dir"
     precontact_backup_set_reason "metadata_read_failed"
     return 1
   fi
   if ! payload_sha="$(precontact_backup_write_payload_and_sha "$metadata_file" "$target_abs" "$payload_file")"; then
-    rm -f -- "$payload_file" "$tmp_age" "$tmp_json"
+    rm -f -- "$payload_file"
+    precontact_backup_cleanup_staged_dir "$staged_dir"
     precontact_backup_set_reason "payload_write_failed"
     return 1
   fi
@@ -836,35 +901,32 @@ precontact_backup_create_age() {
   esac
   if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
     rm -f -- "$payload_file"
-    rm -f -- "$tmp_age" "$tmp_json"
+    precontact_backup_cleanup_staged_dir "$staged_dir"
     precontact_backup_set_reason "payload_hash_mismatch"
     return 1
   fi
-  if ! age --encrypt --recipient "$UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT" --output "$tmp_age" <"$payload_file"; then
-    rm -f -- "$payload_file" "$tmp_age" "$tmp_json"
+  if ! age --encrypt --recipient "$UPKEEPER_PRECONTACT_BACKUP_AGE_RECIPIENT" --output "$staged_age" <"$payload_file"; then
+    rm -f -- "$payload_file"
+    precontact_backup_cleanup_staged_dir "$staged_dir"
     precontact_backup_set_reason "age_failed"
     return 1
   fi
   rm -f -- "$payload_file"
-  if [[ ! -s "$tmp_age" ]]; then
-    rm -f -- "$tmp_age" "$tmp_json"
+  if [[ ! -s "$staged_age" ]]; then
+    precontact_backup_cleanup_staged_dir "$staged_dir"
     precontact_backup_set_reason "age_empty_artifact"
     return 1
   fi
-  if ! precontact_backup_copy_file "$sidecar_file" "$tmp_json"; then
-    rm -f -- "$tmp_age" "$tmp_json"
+  if ! precontact_backup_copy_file "$sidecar_file" "$staged_json"; then
+    precontact_backup_cleanup_staged_dir "$staged_dir"
     precontact_backup_set_reason "metadata_copy_failed"
     return 1
   fi
-  chmod 600 "$tmp_age" "$tmp_json" 2>/dev/null || true
-  if ! mv -- "$tmp_age" "$final_age"; then
-    rm -f -- "$tmp_age" "$tmp_json"
-    precontact_backup_set_reason "backup_rename_failed"
-    return 1
-  fi
-  if ! mv -- "$tmp_json" "$final_json"; then
-    rm -f -- "$tmp_json"
-    precontact_backup_set_reason "metadata_rename_failed"
+  chmod 700 "$staged_dir" 2>/dev/null || true
+  chmod 600 "$staged_age" "$staged_json" 2>/dev/null || true
+  if ! precontact_backup_publish_directory "$staged_dir" "$final_dir"; then
+    precontact_backup_cleanup_staged_dir "$staged_dir"
+    precontact_backup_set_reason "backup_publish_failed"
     return 1
   fi
   return 0
@@ -884,30 +946,58 @@ precontact_backup_prune_for_path() {
     python3 - "$path_dir" "$keep" <<'PY'
 import json
 from pathlib import Path
+import shutil
 import sys
 
 path_dir = Path(sys.argv[1])
 keep = int(sys.argv[2])
 rows = []
 try:
-    sidecars = list(path_dir.glob("*.json"))
+    entries = list(path_dir.iterdir())
 except OSError:
     print(0)
     raise SystemExit(0)
 
-for sidecar in sidecars:
+for entry in entries:
+    if entry.name.startswith("."):
+        continue
+    backup_id = ""
+    sidecar = None
+    layout = ""
+    if entry.is_dir():
+        backup_id = entry.name
+        sidecar = entry / f"{backup_id}.json"
+        if not sidecar.is_file():
+            continue
+        layout = "dir"
+    elif entry.is_file() and entry.suffix == ".json":
+        backup_id = entry.stem
+        sidecar = entry
+        layout = "flat"
+    else:
+        continue
     try:
         with sidecar.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, json.JSONDecodeError):
         continue
-    if sidecar.suffix != ".json":
-        continue
-    backup_id = sidecar.stem
-    rows.append((data.get("created_utc", ""), backup_id, sidecar))
+    rows.append((data.get("created_utc", ""), backup_id, sidecar, layout))
 
 deleted = 0
-for _, backup_id, sidecar in sorted(rows)[:-keep]:
+for _, backup_id, sidecar, layout in sorted(rows)[:-keep]:
+    if layout == "dir":
+        container = sidecar.parent
+        removed = 0
+        for suffix in (".json", ".bak", ".age"):
+            candidate = container / f"{backup_id}{suffix}"
+            if candidate.is_file():
+                removed += 1
+        try:
+            shutil.rmtree(container)
+            deleted += removed or 1
+        except OSError:
+            pass
+        continue
     for suffix in (".json", ".bak", ".age"):
         candidate = path_dir / f"{backup_id}{suffix}"
         try:

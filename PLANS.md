@@ -3,6 +3,47 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #716: Make Obligation Retry Cooldown State-Aware
+
+Status: implementation complete; local validation passed, PR pending
+
+Goal:
+- prevent identical blocked automation-obligation repairs from spinning while
+  allowing an immediately meaningful retry when the repair inputs change
+- replace the six-hour default with a bounded, shorter cooldown and make a
+  deferred decision understandable from normal backlog output
+
+Verified defect:
+- the selector currently treats every record with `next_retry_epoch` later
+  than now as ineligible, without comparing its repair target, current
+  branch/HEAD, relevant evidence, linked issue, or an operator-directed retry
+  context; the default delay is 21,600 seconds
+
+Plan:
+- centralize a privacy-preserving retry-state snapshot/fingerprint helper
+  shared by cooldown recording and selection; exclude mutable attempt custody
+  so recording an attempt cannot itself bypass the guard
+- store the snapshot with a cooldown, permit selection on a meaningful state
+  change or explicit override, and retain time-based deferral for an identical
+  state or legacy records lacking a snapshot
+- pass the policy through the backlog launcher, report remaining wait, ID,
+  fingerprint, and immediate-retry conditions, and document the shorter
+  default plus explicit context/override controls
+
+Validation:
+- add a fully isolated deterministic retry-state fixture covering unchanged,
+  target, branch/HEAD, evidence, override, and expired cases; prove stored
+  retry custody remains intact
+- run required syntax, focused tests, full deterministic suite, whitespace,
+  quick validation, and public-doc checks before the focused PR
+
+Completed evidence:
+- `bash -n Upkeeper lib/upkeeper/*.bash orchestration/backlog.sh tools/*.sh
+  tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf` passed
+- focused retry-state, identity, and claim fixtures; public-doc checks; full
+  71-test deterministic suite; `git diff --check`; and
+  `tools/validate_upkeeper.sh --quick` passed without backend execution
+
 ## Issue #876: Make Lattice CLI Fixture Cleanup Non-Interactive
 
 Status: complete; merged in PR #877

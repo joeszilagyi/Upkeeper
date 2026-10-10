@@ -82,7 +82,12 @@ BACKLOG_ANOMALY_CUSTODY_LINES="${BACKLOG_ANOMALY_CUSTODY_LINES:-1200}"
 BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS="${BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS:-0}"
 BACKLOG_OBLIGATION_RECONCILE="${BACKLOG_OBLIGATION_RECONCILE:-1}"
 BACKLOG_OBLIGATION_RETRY_LIMIT="${BACKLOG_OBLIGATION_RETRY_LIMIT:-3}"
-BACKLOG_OBLIGATION_RETRY_COOLDOWN_SECONDS="${BACKLOG_OBLIGATION_RETRY_COOLDOWN_SECONDS:-21600}"
+# Keep an identical blocked repair from spinning, but do not hide it for an
+# afternoon. A matching retry state waits fifteen minutes; a meaningful state
+# change or explicit operator override can retry sooner.
+BACKLOG_OBLIGATION_RETRY_COOLDOWN_SECONDS="${BACKLOG_OBLIGATION_RETRY_COOLDOWN_SECONDS:-900}"
+BACKLOG_OBLIGATION_RETRY_CONTEXT="${BACKLOG_OBLIGATION_RETRY_CONTEXT:-}"
+BACKLOG_OBLIGATION_RETRY_OVERRIDE="${BACKLOG_OBLIGATION_RETRY_OVERRIDE:-0}"
 BACKLOG_OBLIGATION_ISSUE_REPORTS="${BACKLOG_OBLIGATION_ISSUE_REPORTS:-1}"
 BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE="${BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE:-1}"
 BACKLOG_OBLIGATION_GITHUB_ISSUE_LABELS="${BACKLOG_OBLIGATION_GITHUB_ISSUE_LABELS:-bug}"
@@ -2881,6 +2886,8 @@ backlog_select_open_obligation_json() {
   ROOT_DIR="$ROOT_DIR" \
     UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
     UPKEEPER_AUTOMATION_NOW_EPOCH="${BACKLOG_TEST_NOW_EPOCH:-}" \
+    UPKEEPER_OBLIGATION_RETRY_CONTEXT="$BACKLOG_OBLIGATION_RETRY_CONTEXT" \
+    UPKEEPER_OBLIGATION_RETRY_OVERRIDE="$BACKLOG_OBLIGATION_RETRY_OVERRIDE" \
     UPKEEPER_OBLIGATION_CLAIM_OWNER_PID="${BASHPID:-$$}" \
     UPKEEPER_AUTOMATION_LAUNCHER="backlog" \
     bash -c 'source "$1"; automation_claim_open_obligation_json' bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash"
@@ -2984,6 +2991,7 @@ backlog_record_obligation_attempt() {
     UPKEEPER_OBLIGATION_DIR="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}" \
     UPKEEPER_OBLIGATION_RETRY_LIMIT="$BACKLOG_OBLIGATION_RETRY_LIMIT" \
     UPKEEPER_OBLIGATION_RETRY_COOLDOWN_SECONDS="$BACKLOG_OBLIGATION_RETRY_COOLDOWN_SECONDS" \
+    UPKEEPER_OBLIGATION_RETRY_CONTEXT="$BACKLOG_OBLIGATION_RETRY_CONTEXT" \
     UPKEEPER_AUTOMATION_NOW_EPOCH="${BACKLOG_TEST_NOW_EPOCH:-}" \
     bash -c 'source "$1"; automation_record_obligation_attempt_json "$2" "$3" "$4" "$5"' \
       bash "$ROOT_DIR/lib/upkeeper/automation_obligations.bash" "$obligation_json" "$attempt_status" "$exit_status" "$result_summary"
@@ -4597,7 +4605,15 @@ main() {
       '.next_retry_epoch // 0' \
       '.repair_target_file // .target_file // "Upkeeper"' \
       '.issue_number // ""' \
-      '.issue_title // ""'
+      '.issue_title // ""' \
+      '.cooldown_remaining_seconds // 0' \
+      '.cooldown_obligation_id // ""' \
+      '.cooldown_failure_fingerprint // ""' \
+      '.cooldown_retry_state_fingerprint // ""' \
+      '.cooldown_reason // ""' \
+      '.cooldown_retry_hint // ""' \
+      '.cooldown_bypass_reason // ""' \
+      '.cooldown_state_changes // [] | join(",")'
   )
   obligation_status="${selected_obligation_fields[0]:-clean}"
   if [[ "$obligation_status" == "foreign_root_deferred" ]]; then
@@ -4611,7 +4627,7 @@ main() {
     exit 0
   fi
   if [[ "$obligation_status" == "cooldown_deferred" ]]; then
-    log "automation obligations are cooling down after repeated blocked repair attempts: count=${selected_obligation_fields[4]:-0} next_retry_epoch=${selected_obligation_fields[5]:-0}"
+    log "automation obligation cooldown is still blocking work: id=${selected_obligation_fields[10]:-unknown} remaining_seconds=${selected_obligation_fields[9]:-0} next_retry_epoch=${selected_obligation_fields[5]:-0} failure_fingerprint=${selected_obligation_fields[11]:-unknown} retry_state_fingerprint=${selected_obligation_fields[12]:-unknown} reason=${selected_obligation_fields[13]:-unchanged_retry_state}; immediate retry requires ${selected_obligation_fields[14]:-a meaningful retry-state change or explicit operator override}"
     backlog_write_loop_disposition "blocked_external" "automation_obligation_cooldown_deferred"
     exit 0
   fi
@@ -4628,6 +4644,9 @@ main() {
     obligation_target="${selected_obligation_fields[6]:-Upkeeper}"
     obligation_issue_number="${selected_obligation_fields[7]:-}"
     obligation_issue_title="${selected_obligation_fields[8]:-}"
+    if [[ "${selected_obligation_fields[15]:-expired}" != "expired" ]]; then
+      log "automation obligation $obligation_id cooldown lifted: reason=${selected_obligation_fields[15]:-unknown} remaining_seconds=${selected_obligation_fields[16]:-0} state_changes=${selected_obligation_fields[17]:-none}"
+    fi
     issue_number="$obligation_issue_number"
     issue_title="$obligation_issue_title"
     target_hint="$obligation_target"

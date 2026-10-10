@@ -241,6 +241,14 @@ Future changes should preserve this operator-visible surface as far as possible:
   another worker; blocked/failed attempts reopen by releasing the sidecar,
   verified resolution releases after resolved publication, and dead or reused
   PID owners are recovered without changing open/resolved record compatibility.
+- Repeated blocked obligation repairs use a 900-second default cooldown only
+  while their retry-state fingerprint is unchanged. The fingerprint includes
+  the repair target/content, checkout branch/HEAD, failure/evidence and linked
+  issue identity, and optional `BACKLOG_OBLIGATION_RETRY_CONTEXT`; mutable
+  attempt custody is deliberately excluded. A changed state retries promptly,
+  while `BACKLOG_OBLIGATION_RETRY_OVERRIDE=1` is an explicit one-run operator
+  override. Existing cooldown records that predate a state snapshot retain
+  time-based deferral until they expire.
 - A successful obligation-repair process exit is not resolution proof. The
   final response must contain one raw proof record bound to the obligation id,
   selected repair target, and canonical required-resolution digest. A repaired

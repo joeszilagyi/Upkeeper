@@ -1751,7 +1751,7 @@ PY
   fi
   [[ "$(cat "$temp_dir/sleeps.log")" == $'60\n60' ]] ||
     fail "backlog launcher PR check hibernation did not sleep between pending polls"
-  grep -Fq "checks pending; holding owner lease" "$temp_dir/pr.err" ||
+  grep -Fq "checks pending; state=checks_pending holding owner lease" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check hibernation did not explain local owner hold"
   grep -Fq 'progress: checks total=1 pass=0 pending=1 fail=0 other=0; active="fake PR check"' "$temp_dir/pr.err" ||
     fail "backlog launcher PR check hibernation did not emit local progress details"
@@ -1785,12 +1785,39 @@ PY
   fi
   [[ "$(cat "$temp_dir/sleeps.log")" == $'60\n60' ]] ||
     fail "backlog launcher PR check empty-settling did not sleep between settling and pending polls"
-  grep -Fq "checks not reported yet; treating as pending/settling" "$temp_dir/pr.err" ||
-    fail "backlog launcher PR check empty state was not reported as pending/settling"
+  grep -Fq "state=checks_absent state=checks_registering" "$temp_dir/pr.err" ||
+    fail "backlog launcher PR check empty state was not reported as registering"
   grep -Fq "status=no_checks_reported_yet" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check empty state did not include no-checks progress detail"
   ! grep -Fq "checks_failed" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check empty state was misclassified as failed"
+
+  temp_dir="$VALIDATION_TMP_ROOT/backlog-pr-check-default-registration-window"
+  mkdir -p "$temp_dir"
+  if BACKLOG_SOURCE_ONLY=1 \
+    BACKLOG_STATE_ROOT="$temp_dir/state" \
+    BACKLOG_TEST_OWNER_MATCH=1 \
+    BACKLOG_TEST_NOW_EPOCH=1000 \
+    BACKLOG_TEST_FAKE_SLEEP=1 \
+    BACKLOG_TEST_SLEEP_LOG="$temp_dir/sleeps.log" \
+    BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE=no_checks \
+    BACKLOG_PR_CHECK_INTERVAL_SECONDS=60 \
+    bash -lc '
+      set -euo pipefail
+      cd "$1"
+      source ./orchestration/backlog.sh
+      write_backlog_active_owner
+      wait_for_pr_checks 398
+    ' bash "$ROOT_DIR" >"$temp_dir/pr.out" 2>"$temp_dir/pr.err"; then
+    cat "$temp_dir/pr.err" >&2
+    fail "backlog launcher default empty-check registration window did not fail closed"
+  fi
+  [[ "$(cat "$temp_dir/sleeps.log")" == $'60\n30' ]] ||
+    fail "backlog launcher default empty-check window did not cap the final sleep at 90s"
+  grep -Fq "state=checks_registering" "$temp_dir/pr.err" ||
+    fail "backlog launcher default empty-check window did not report registration state"
+  grep -Fq "checks were not reported after 90s" "$temp_dir/pr.err" ||
+    fail "backlog launcher default empty-check window did not fail at the exact 90s grace"
 
   temp_dir="$VALIDATION_TMP_ROOT/backlog-pr-check-empty-timeout"
   mkdir -p "$temp_dir"

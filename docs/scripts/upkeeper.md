@@ -207,8 +207,10 @@ Important:
     `BACKLOG_PR_CHECK_PROGRESS=0` to return to the terse pending line, or
     `BACKLOG_PR_CHECK_PROGRESS_STEPS=0` to keep the summary without the extra
     Actions job lookup. A just-created PR with no reported checks yet is treated
-    as pending/settling for `BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS` seconds
-    before it can fail closed as missing checks. Set
+    as registering for `BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS` seconds (90 by
+    default) before it fails closed as missing checks. The registration sleep
+    is capped at the remaining grace window, and an operator can set the
+    variable explicitly when an integration needs a longer window. Set
     `BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE=0` only for an intentional manual
     override.
   - Use `./orchestration/watch-pr.sh [PR_NUMBER]` for a local, no-backend PR

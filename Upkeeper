@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.49
+## Version: v1.2.50
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -420,7 +420,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.49"
+UPKEEPER_VERSION="v1.2.50"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -723,6 +723,7 @@ UPKEEPER_MODULES=(
   "active_lock.bash"
   "wrapper_health.bash"
   "progress_logging.bash"
+  "fast_path_timing.bash"
   "startup_anomaly_state.bash"
   "operator_guide.bash"
   "cycle_cleanup_signals.bash"
@@ -6162,9 +6163,14 @@ main() {
   prepare_fallback_chain_token
   acquire_active_lock_or_exit
   trap cleanup_run_temp_files EXIT
+  upkeeper_fast_path_timing_reset
+  upkeeper_fast_path_timing_start operator_guide
   ensure_operator_guide
+  upkeeper_fast_path_timing_finish operator_guide
   resolve_prompt_file
+  upkeeper_fast_path_timing_start startup_anomaly_scan
   scan_previous_run_anomalies
+  upkeeper_fast_path_timing_finish startup_anomaly_scan
   rotate_wrapper_log_if_needed
   refresh_worktree_counts
 
@@ -6198,8 +6204,11 @@ main() {
       "$loop_parent_pid" "$loop_parent_comm" "$loop_parent_start_fingerprint" \
       "$loop_parent_override" "$wrapper_start_fingerprint")"
   automation_record_cycle_start || log_line "WARN" "automation.run_record.start_failed path=$(shell_quote "${RUN_AUTOMATION_RECORD_FILE:-unknown}")"
+  upkeeper_fast_path_timing_start backup_preflight
   upkeeper_precontact_backup_hmac_key_material >/dev/null
   precontact_backup_machine_preflight_or_exit
+  upkeeper_fast_path_timing_finish backup_preflight
+  upkeeper_fast_path_timing_start issue_and_target_preflight
   resolve_issue_fix_next_or_exit
   upkeeper_bind_issue_fix_obligation_context
   if ! run_issue_docs_contract_checks; then
@@ -6207,8 +6216,13 @@ main() {
   fi
   enforce_breadcrumb_gate_or_exit
   upkeeper_preflight_explicit_target_or_exit
+  upkeeper_fast_path_timing_finish issue_and_target_preflight
+  upkeeper_fast_path_timing_start lattice_startup
   lattice_init_and_doctor_or_exit
+  upkeeper_fast_path_timing_finish lattice_startup
+  upkeeper_fast_path_timing_start lattice_cycle_start
   lattice_record_cycle_start
+  upkeeper_fast_path_timing_finish lattice_cycle_start
   start_run_mark_heartbeat
   check_disk_space_preflight
   if [[ "$STARTUP_ANOMALY_GATE" == "1" ]]; then
@@ -6220,7 +6234,9 @@ main() {
   fi
 
   enforce_primary_quota_block_marker
+  upkeeper_fast_path_timing_start file_manifest
   ensure_file_manifest_for_selection
+  upkeeper_fast_path_timing_finish file_manifest
 
   local quota_json
   quota_json="$(quota_state_json)"
@@ -6496,7 +6512,9 @@ main() {
   prepare_bug_report_draft_artifact || finish_cycle 70 BUG_REPORT_DRAFT_PREP_FAILED ERROR "codex_exec_started=0"
   trap cleanup_run_temp_files EXIT
 
+  upkeeper_fast_path_timing_start prompt_preparation
   compile_prompt "$compiled_prompt_file"
+  upkeeper_fast_path_timing_finish prompt_preparation
   if upkeeper_local_fix_lane_docs_change_is_complete; then
     finish_cycle 0 WORK_DONE INFO "codex_exec_started=0 local_fix_lane=docs_only"
   fi
@@ -6504,6 +6522,11 @@ main() {
   log_line "INFO" "run.compiled_prompt.ready $compiled_prompt_field content_hmac=$(file_blob_hash "$compiled_prompt_file") size_bytes=$(file_size_bytes "$compiled_prompt_file")"
   log_line "INFO" "run.log_self_review_required access=sanitized_helper_only path_redacted=1 target_cycle=$CYCLE_ID"
   capture_startup_anomaly_gate_baseline
+  if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
+    upkeeper_fast_path_timing_emit_summary dry_run
+  else
+    upkeeper_fast_path_timing_emit_summary backend_ready
+  fi
 
   if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
     log_line "INFO" "dry-run active; skipping codex exec"

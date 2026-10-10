@@ -66,7 +66,7 @@ Validation:
 
 ## Issue #727: Tier Recovery Reasoning Effort by Trigger
 
-Status: implementation and local validation complete; ready for focused PR
+Status: complete; merged in PR #880
 
 Goal:
 - keep fallback, postmortem reporting, and opt-in hardening from inheriting the

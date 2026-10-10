@@ -262,6 +262,35 @@ Validation:
   default; retain explicit long-interval fixture coverage as an override case
 - update the operator guide and run required full validation before PR
 
+## Issue #711: Plan Batch Validation by Affected Surface
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- avoid paying the complete local test/quick-validator cost for an explicitly
+  safe, narrow batch while preserving a fail-closed full-validation fallback
+  for every operational or uncertain change
+
+Constraints:
+- retain isolated test-state roots, failure obligations, snapshots, and the
+  required CI gate; do not use reduced local work as authority to bypass CI
+- make the plan reproducible from an explicit base/head plus staged and
+  unstaged paths; missing revisions or an empty/uncertain path set select full
+- keep control-plane, Lattice, prompt, config, test, workflow, and runtime
+  changes on the full lane until a focused contract can justify otherwise
+
+Likely files:
+- `orchestration/backlog.sh`
+- a small deterministic validation-plan helper and focused tests
+- `tools/validate_upkeeper.sh`, operator documentation, and change notes
+
+Validation:
+- deterministic path fixtures proving editorial-only selection,
+  full-lane selection for each sensitive class, and missing-range fail-closed
+  behavior
+- required syntax, full suite, diff, docs, and quick-validator commands before
+  PR
+
 ## Issue #730: Batch Lattice Candidate Git Metadata
 
 Status: in progress

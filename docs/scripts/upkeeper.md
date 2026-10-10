@@ -216,6 +216,11 @@ Important:
     variable explicitly when an integration needs a longer window. Set
     `BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE=0` only for an intentional manual
     override.
+  - Before batch merge stewardship, backlog emits a machine-readable local
+    affected-surface validation plan. Only the explicit editorial documentation
+    allowlist can use its reduced `public_docs,diff_whitespace` local lane;
+    missing revisions and all operational, configuration, prompt, test, Lattice,
+    or unknown changes retain the full local validation lane and required CI.
   - Use `./orchestration/watch-pr.sh [PR_NUMBER]` for a local, no-backend PR
     check watch outside the backlog loop. With no PR number, it infers the PR
     for the current branch. `--once` prints one timestamped state and exits,

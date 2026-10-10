@@ -5,7 +5,7 @@ Upkeeper changes. Keep entries brief and update their status before merge.
 
 ## Issue #734: Startup Control-Plane Phase Extraction
 
-Status: implementation and local validation complete; ready for focused PR
+Status: in progress; validator increment merged in PR #901
 
 Goal:
 - reduce the phase-spanning responsibility of `Upkeeper` `main()` by giving the
@@ -85,6 +85,15 @@ Limitation:
 - this is one #705 acceptance increment only. It does not claim to complete
   the remaining backlog-orchestration boundary work or establish live backend
   operation.
+
+Follow-up plan:
+- move the launcher-owned control-plane snapshot/lineage and pre-staging audit
+  wrapper into a dedicated sourced helper, while preserving its current audit
+  executable, state-root ownership, safe remediation, obligation custody, and
+  fail-closed `blockers` result at the staging boundary
+- add a focused fixture that proves the launcher still invokes the actual helper
+  command with before/after snapshot and lineage arguments, and retains a
+  nonzero blocker exit instead of proceeding to staging
 
 ## Issue #685: Wrapper-Owned Current-Cycle Log Review
 

@@ -1485,8 +1485,10 @@ check_backlog_launcher_contract() {
     [[ "$status" == "44" ]]
   ' bash "$ROOT_DIR" || fail "backlog merge path does not stop after batch validation failure"
   grep -Fq 'run_control_plane_pre_staging_audit' orchestration/backlog.sh || fail "backlog launcher does not run the control-plane audit before staging"
-  grep -Fq -- '--remediate-safe' orchestration/backlog.sh || fail "backlog launcher does not use safe control-plane remediation before staging"
-  grep -Fq -- '--fail-on blockers' orchestration/backlog.sh || fail "backlog launcher does not fail closed on control-plane staging blockers"
+  grep -Fq 'source "$SCRIPT_DIR/backlog_control_plane.bash"' orchestration/backlog.sh || fail "backlog launcher does not load the control-plane helper"
+  [[ -r orchestration/backlog_control_plane.bash ]] || fail "backlog control-plane helper is missing"
+  grep -Fq -- '--remediate-safe' orchestration/backlog_control_plane.bash || fail "backlog control-plane helper does not use safe remediation before staging"
+  grep -Fq -- '--fail-on blockers' orchestration/backlog_control_plane.bash || fail "backlog control-plane helper does not fail closed on staging blockers"
   python3 - <<'PY' || fail "backlog autoshelve no longer runs before gh/jq/rg dependency gates"
 from pathlib import Path
 
@@ -3475,6 +3477,7 @@ check_backlog_autoshelve_contract() {
   mkdir -p "$temp_dir/orchestration" "$temp_dir/lib/upkeeper" "$temp_dir/tools"
   cp orchestration/backlog.sh "$temp_dir/orchestration/backlog.sh"
   cp orchestration/backlog_phase_timing.bash "$temp_dir/orchestration/backlog_phase_timing.bash"
+  cp orchestration/backlog_control_plane.bash "$temp_dir/orchestration/backlog_control_plane.bash"
   cp lib/upkeeper/runtime_format_json.bash "$temp_dir/lib/upkeeper/runtime_format_json.bash"
   cp tools/validation_attestation_lib.bash "$temp_dir/tools/validation_attestation_lib.bash"
   chmod +x "$temp_dir/orchestration/backlog.sh"

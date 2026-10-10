@@ -139,6 +139,50 @@ Follow-up plan:
   command with before/after snapshot and lineage arguments, and retains a
   nonzero blocker exit instead of proceeding to staging
 
+## Issue #705: Lattice Warm-Service Protocol Boundary
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- give the Lattice warm-process request/response transport a narrow importable
+  owner, so the core retains command and database authority while transport
+  framing can be independently tested without a database fixture
+
+Constraints:
+- preserve the existing CLI shim, command parser, NUL-delimited request format,
+  `RC`/`OUTPUT_B64`/`END` response framing, inherited root/database/safety
+  arguments, nonzero command propagation, and service-recursion rejection
+- do not change Lattice command behavior, database schemas, timeout policy, or
+  the Bash wrapper's service lifecycle; no live backend work
+
+Plan:
+- move only the warm-service framing/dispatch loop into `tools/upkeeper_lib`,
+  with the core supplying its existing `main` executor and typed exit codes
+- add an isolated protocol regression for normal invocation, inherited safety
+  arguments, output/stderr capture, recursion rejection, malformed header, and
+  truncated NUL-delimited input; retain real CLI and import-cache checks
+- run focused protocol/Lattice checks, the full deterministic suite, and the
+  required validators before publishing a narrow incremental PR; retain #705
+  open for the remaining large-module work
+
+Implemented and validated:
+- moved the warm-process service framing and dispatch loop into
+  `upkeeper_lib.lattice_service`; the core remains the owner of command parsing,
+  command implementations, and Lattice exit-code authority through an injected
+  executor
+- added an isolated protocol regression covering argument inheritance, combined
+  output/error forwarding, a nonzero child result, service-recursion rejection,
+  malformed framing, and truncated input; the real CLI service and import-cache
+  checks continue to exercise the production boundary
+- passed Python compilation, focused protocol/CLI/core/import-cache checks,
+  public-doc checks, the 82-test deterministic suite, and real quick/full
+  no-quota validators including the local stress corpus
+
+Limitation:
+- this extracts one transport seam only. It neither splits the remaining
+  database/query/import logic from the Lattice core nor establishes live
+  production service behavior; #705 remains open for those bounded follow-ups.
+
 ## Issue #685: Wrapper-Owned Current-Cycle Log Review
 
 Status: complete; pending PR

@@ -1,5 +1,13 @@
 # 2026 Change Notes
 
+2026-10-10: pre-staging control-plane audit reuse:
+	1. Backlog now writes the paired pre-staging before/after audit snapshots in
+	   one audit process, reusing only immutable tracked-inventory and branch
+	   facts while still re-reading Git status after safe remediation.
+	2. The final policy pass remains the sole cleanup and obligation writer, so
+	   pre-remediation evidence, blocker custody, lineage, and fail-closed
+	   staging behavior are preserved.
+
 2026-10-10: state-aware obligation retry cooldown:
 	1. Repeated blocked obligation repairs now defer identical retry state for 15
 	   minutes by default rather than six hours. Target/content, checkout

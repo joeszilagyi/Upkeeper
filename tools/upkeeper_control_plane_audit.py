@@ -1221,14 +1221,41 @@ def write_lineage_records(payload: dict[str, object], decisions: list[PolicyDeci
     }
 
 
-def build_payload(args: argparse.Namespace) -> dict[str, object]:
+def audit_root(args: argparse.Namespace) -> pathlib.Path:
     root = pathlib.Path(args.root).resolve()
     if not (root / ".git").exists():
         git_top = git_text(root, ["rev-parse", "--show-toplevel"], allow_failure=True)
         if git_top:
             root = pathlib.Path(git_top).resolve()
+    return root
+
+
+def static_repository_inventory(root: pathlib.Path) -> dict[str, object]:
+    """Facts that safe remediation cannot change within one audit transaction."""
+    return {
+        "root": root,
+        "tracked_paths": tracked_paths(root),
+        "branch": branch_name(root),
+    }
+
+
+def build_payload(
+    args: argparse.Namespace,
+    static_inventory: dict[str, object] | None = None,
+) -> dict[str, object]:
+    root = audit_root(args)
+    if static_inventory is None:
+        static_inventory = static_repository_inventory(root)
+        static_inventory_reused = False
+    else:
+        static_root = static_inventory.get("root")
+        if not isinstance(static_root, pathlib.Path) or static_root != root:
+            raise SystemExit("control-plane audit: invalid static inventory root")
+        static_inventory_reused = True
     findings: list[Finding] = []
-    tracked = tracked_paths(root)
+    tracked = static_inventory.get("tracked_paths", [])
+    if not isinstance(tracked, list) or not all(isinstance(path, str) for path in tracked):
+        raise SystemExit("control-plane audit: invalid static inventory paths")
     status_records, changed, untracked = porcelain_status(root)
     inventory_tracked_paths(tracked, findings)
     inventory_untracked_paths(untracked, findings)
@@ -1246,7 +1273,8 @@ def build_payload(args: argparse.Namespace) -> dict[str, object]:
         "record_type": "upkeeper_control_plane_audit",
         "status": "clean" if not findings else "findings",
         "root": str(root),
-        "branch": branch_name(root),
+        "branch": str(static_inventory.get("branch") or "unknown"),
+        "static_inventory_reused": static_inventory_reused,
         "counts": {
             "tracked_path_count": len(tracked),
             "tracked_change_count": len(changed),
@@ -1263,6 +1291,40 @@ def build_payload(args: argparse.Namespace) -> dict[str, object]:
         "recent_log": recent_log,
         "findings": [asdict(item) for item in findings],
     }
+
+
+def attach_snapshot_metadata(payload: dict[str, object], label: str, stage: str) -> None:
+    payload["snapshot"] = {
+        "label": label or stage,
+        "stage": stage,
+        "created_at": now_local(),
+        "invariant_id": "KP-007",
+    }
+
+
+def write_pre_remediation_snapshot(
+    args: argparse.Namespace,
+    static_inventory: dict[str, object],
+) -> dict[str, object]:
+    """Write a report-only pre-remediation snapshot for one staged audit."""
+    before_args = argparse.Namespace(
+        **{
+            **vars(args),
+            "remediate_safe": False,
+            "write_obligations": False,
+            "write_lineage": False,
+        }
+    )
+    payload = build_payload(before_args, static_inventory)
+    decisions, _ = apply_policies(payload, before_args)
+    payload = decorate_payload(payload, decisions)
+    attach_snapshot_metadata(payload, "pre-staging-before", "pre-staging-before")
+    write_private_json(
+        pathlib.Path(args.pre_remediation_snapshot_out).resolve(),
+        payload,
+        force_private_parent=False,
+    )
+    return payload
 
 
 def print_text(payload: dict[str, object]) -> None:
@@ -1366,6 +1428,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--stage", default="manual", help="policy context for stable decision ids")
     parser.add_argument("--snapshot-label", default="", help="optional label stored in the audit snapshot")
     parser.add_argument("--before-snapshot", default="", help="prior audit snapshot used to compute a before/after delta")
+    parser.add_argument(
+        "--pre-remediation-snapshot-out",
+        default="",
+        help="write a report-only pre-remediation snapshot and reuse safe static inventory for this audit transaction",
+    )
     parser.add_argument("--snapshot-out", default="", help="write the final decorated audit payload to this JSON file")
     parser.add_argument("--finding-json", action="append", default=[], help="append external finding object/list JSON for deterministic fixtures")
     parser.add_argument("--write-lineage", action="store_true", help="write persistent closed-loop lineage records for current findings")
@@ -1387,20 +1454,22 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
-    before_snapshot = load_snapshot(args.before_snapshot) if args.before_snapshot else {}
-    payload = build_payload(args)
+    if args.before_snapshot and args.pre_remediation_snapshot_out:
+        raise SystemExit("control-plane audit: --before-snapshot and --pre-remediation-snapshot-out are mutually exclusive")
+    static_inventory: dict[str, object] | None = None
+    if args.pre_remediation_snapshot_out:
+        static_inventory = static_repository_inventory(audit_root(args))
+        before_snapshot = write_pre_remediation_snapshot(args, static_inventory)
+    else:
+        before_snapshot = load_snapshot(args.before_snapshot) if args.before_snapshot else {}
+    payload = build_payload(args, static_inventory)
     decisions, changed = apply_policies(payload, args)
     if changed:
-        payload = build_payload(args)
+        payload = build_payload(args, static_inventory)
         remaining, _ = apply_policies(payload, argparse.Namespace(**{**vars(args), "remediate_safe": False}))
         decisions.extend(remaining)
     payload = decorate_payload(payload, decisions)
-    payload["snapshot"] = {
-        "label": args.snapshot_label or args.stage,
-        "stage": args.stage,
-        "created_at": now_local(),
-        "invariant_id": "KP-007",
-    }
+    attach_snapshot_metadata(payload, args.snapshot_label, args.stage)
     add_snapshot_delta(payload, before_snapshot)
     if args.write_lineage:
         payload["lineage"] = write_lineage_records(payload, decisions, args)

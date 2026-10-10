@@ -3,9 +3,49 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #716: Make Obligation Retry Cooldown State-Aware
+## Issue #703: Reuse Control-Plane Audit Inventory During Staging
 
 Status: implementation complete; local validation passed, PR pending
+
+Goal:
+- avoid independently rebuilding the same tracked-repository and control-plane
+  inventory for the before snapshot and policy/remediation operation in one
+  staging boundary
+- retain actual post-remediation observation, before/after snapshots, lineage,
+  blocker custody, and fail-closed staging semantics
+
+Verified defect:
+- `run_control_plane_pre_staging_audit` starts the audit executable once to
+  write a before snapshot, then starts it again for remediation and the after
+  snapshot; the latter can rebuild its full payload again after safe cleanup
+- `cleanup_ephemeral_artifacts` and snapshot-only lifecycle points are separate
+  boundaries and must not be conflated with a transaction that needs a current
+  after-state observation
+
+Plan:
+- add one explicit pre-staging transaction interface in the audit owner that
+  writes the pre-remediation snapshot and evaluates/remediates within one
+  process, sharing immutable repository inventory only where it cannot be
+  invalidated by safe cleanup
+- make the backlog use that interface for the paired pre-staging snapshots;
+  leave other audit lifecycle calls explicit and current-state based
+- add an isolated invocation-count regression plus preservation coverage for
+  safe remediation, snapshot delta, obligations, and blocking failures
+
+Validation:
+- run focused audit/backlog fixtures and required syntax; then full tests,
+  diff whitespace, quick validation, and appropriate public-doc checks
+
+Completed evidence:
+- focused audit regression proves one `git ls-files -z` inventory across the
+  paired snapshot/remediation transaction and retains the KP-002 snapshot delta
+- syntax, public-doc checks, the full 71-test deterministic suite,
+  `git diff --check`, and `tools/validate_upkeeper.sh --quick` passed without
+  live backend work
+
+## Issue #716: Make Obligation Retry Cooldown State-Aware
+
+Status: complete; merged in PR #892
 
 Goal:
 - prevent identical blocked automation-obligation repairs from spinning while

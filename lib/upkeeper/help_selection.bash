@@ -739,7 +739,7 @@ Environment overrides:
   UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES Default: 12000
   CODEX_FALLBACK_ENABLED        Default: 1
   CODEX_FALLBACK_MODEL          Default: gpt-5.5
-  CODEX_FALLBACK_REASONING_EFFORT Default: high
+  CODEX_FALLBACK_REASONING_EFFORT Baseline default: high; automatic trigger policy uses low/medium when no exported override is set
   CODEX_FALLBACK_MODE           Default: CODEX_MODE
   CODEX_FALLBACK_ON_PRIMARY_QUOTA Default: 1
   CODEX_FALLBACK_ON_FAILURE     Default: 1
@@ -755,7 +755,7 @@ Environment overrides:
   CODEX_POSTMORTEM_ENABLED       Default: 1
   CODEX_POSTMORTEM_HARDENING_OPT_IN Default: 0
   CODEX_POSTMORTEM_MODEL         Default: CODEX_FALLBACK_MODEL
-  CODEX_POSTMORTEM_REASONING_EFFORT Default: medium
+  CODEX_POSTMORTEM_REASONING_EFFORT Baseline default: medium; automatic report/hardening policy uses low/medium when no exported override is set
   CODEX_POSTMORTEM_MODE          Default: CODEX_FALLBACK_MODE
   CODEX_POSTMORTEM_DIR           Default: $ROOT_DIR/runtime/journals/upkeeper-postmortems
   CODEX_OPERATOR_GUIDE_PATH      Default: docs/scripts/upkeeper.md

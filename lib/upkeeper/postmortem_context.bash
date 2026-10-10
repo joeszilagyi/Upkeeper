@@ -6,6 +6,67 @@
 # marker interpretation consistent across every artifact writer.
 # Documentation: lib/upkeeper/README.md and docs/scripts/upkeeper.md.
 
+# Print selected effort, trigger class, and reason as three tab-separated
+# fields. This policy never escalates a recovery call to xhigh by itself.
+upkeeper_recovery_effort_selection() {
+  local phase="$1"
+  local trigger="$2"
+  local detail_text="$3"
+  local configured_effort="$4"
+  local effort trigger_class reason
+
+  case "$phase" in
+    fallback)
+      if [[ "${UPKEEPER_FALLBACK_REASONING_EFFORT_EXPLICIT:-0}" == "1" ]]; then
+        printf '%s\t%s\t%s\n' "$configured_effort" "operator_override" "explicit_fallback_effort"
+        return 0
+      fi
+      case "$trigger" in
+        primary_quota_before_run|primary_quota_after_run|primary_backend_usage_limit)
+          effort="low"; trigger_class="quota_or_environment"; reason="quota_or_backend_limit_is_not_capability_evidence"
+          ;;
+        dirty_no_backend_task)
+          effort="low"; trigger_class="dirty_no_backend_task"; reason="local_worktree_state_is_not_capability_evidence"
+          ;;
+        blocked)
+          effort="medium"; trigger_class="blocked_task"; reason="blocked_work_needs_bounded_reassessment"
+          ;;
+        failure)
+          if [[ "$detail_text" == *"status_marker=missing"* || "$detail_text" == *"PRIMARY_NO_AGENT_MESSAGE"* ]]; then
+            effort="medium"; trigger_class="no_output"; reason="missing_model_output_needs_bounded_reassessment"
+          else
+            effort="high"; trigger_class="capability_failure"; reason="generic_failure_may_need_stronger_repair_reasoning"
+          fi
+          ;;
+        *)
+          effort="medium"; trigger_class="incident"; reason="unrecognized_recovery_trigger_uses_bounded_default"
+          ;;
+      esac
+      ;;
+    postmortem.report)
+      if [[ "${UPKEEPER_POSTMORTEM_REASONING_EFFORT_EXPLICIT:-0}" == "1" ]]; then
+        printf '%s\t%s\t%s\n' "$configured_effort" "operator_override" "explicit_postmortem_effort"
+      else
+        printf '%s\t%s\t%s\n' "low" "incident_report" "sanitized_incident_narration_uses_low_effort"
+      fi
+      return 0
+      ;;
+    postmortem.hardening)
+      if [[ "${UPKEEPER_POSTMORTEM_REASONING_EFFORT_EXPLICIT:-0}" == "1" ]]; then
+        printf '%s\t%s\t%s\n' "$configured_effort" "operator_override" "explicit_postmortem_effort"
+      else
+        printf '%s\t%s\t%s\n' "medium" "incident_hardening" "opt_in_hardening_uses_bounded_effort"
+      fi
+      return 0
+      ;;
+    *)
+      effort="$configured_effort"; trigger_class="unclassified"; reason="non_recovery_phase"
+      ;;
+  esac
+
+  printf '%s\t%s\t%s\n' "$effort" "$trigger_class" "$reason"
+}
+
 postmortem_incident_classification() {
   local trigger="$1"
   local child_exit="$2"

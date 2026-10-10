@@ -119,6 +119,9 @@ SH
   PROMPT_FILE=""
   INLINE_PROMPT=""
   CODEX_PROMPT_PASS=""
+  # shellcheck source=/dev/null
+  source "$PROJECT_ROOT/lib/upkeeper/postmortem_context.bash"
+  # shellcheck source=/dev/null
   source "$PROJECT_ROOT/lib/upkeeper/fallback_orchestration.bash"
 
   run_fallback_cycle "test-trigger" "none"

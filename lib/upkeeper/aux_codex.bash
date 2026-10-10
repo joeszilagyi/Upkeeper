@@ -222,6 +222,16 @@ run_aux_codex_exec() {
   local session_store_detail session_store_detail_q arg0_tmp_detail arg0_tmp_detail_q bwrap_tmp_detail bwrap_tmp_detail_q
   local first_mode_token first_mode_token_q
   local sandbox_mode extra_mode_token
+  local selected_effort selected_class selected_reason selection_fields
+
+  selection_fields="$(upkeeper_recovery_effort_selection "$phase_label" "${UPKEEPER_RECOVERY_TRIGGER:-unknown}" "${UPKEEPER_RECOVERY_DETAIL:-none}" "$effort")"
+  IFS=$'\t' read -r selected_effort selected_class selected_reason <<<"$selection_fields"
+  if [[ -z "$selected_effort" || -z "$selected_class" || -z "$selected_reason" ]]; then
+    log_line "ERROR" "$phase_label.effort_selection_invalid trigger=${UPKEEPER_RECOVERY_TRIGGER:-unknown}"
+    return 87
+  fi
+  effort="$selected_effort"
+  log_line "INFO" "$phase_label.effort_selection trigger=${UPKEEPER_RECOVERY_TRIGGER:-unknown} trigger_class=$selected_class effort=$effort reason=$selected_reason"
 
   local -a aux_mode_args=()
   first_mode_token="${aux_mode_args[0]:-}"

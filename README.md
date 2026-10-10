@@ -538,6 +538,9 @@ UPKEEPER_TASK_PROFILE_AUTO_EFFORT="1"
 UPKEEPER_TASK_PROFILE_AUTO_MODULES="1"
 UPKEEPER_PROMPT_PAYLOAD_METRICS="1"
 UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES="12000"
+# Exported recovery effort settings are explicit per-run overrides. Without
+# them, fallback is tiered by trigger and postmortem reporting/hardening uses
+# low/medium effort rather than inheriting primary xhigh effort.
 CODEX_FALLBACK_REASONING_EFFORT="high"
 CODEX_POSTMORTEM_REASONING_EFFORT="medium"
 CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL="0"

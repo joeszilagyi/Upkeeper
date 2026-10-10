@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--audit-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.46
+Version: v1.2.47
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -950,7 +950,7 @@ Environment overrides:
   UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES Default: 12000
   CODEX_FALLBACK_ENABLED        Default: 1
   CODEX_FALLBACK_MODEL          Default: gpt-5.5
-  CODEX_FALLBACK_REASONING_EFFORT Default: high
+  CODEX_FALLBACK_REASONING_EFFORT Baseline default: high; automatic trigger policy uses low/medium when no exported override is set
   CODEX_FALLBACK_MODE           Default: CODEX_MODE
   CODEX_FALLBACK_ON_PRIMARY_QUOTA Default: 1
   CODEX_FALLBACK_ON_FAILURE     Default: 1
@@ -966,7 +966,7 @@ Environment overrides:
   CODEX_POSTMORTEM_ENABLED       Default: 1
   CODEX_POSTMORTEM_HARDENING_OPT_IN Default: 0
   CODEX_POSTMORTEM_MODEL         Default: CODEX_FALLBACK_MODEL
-  CODEX_POSTMORTEM_REASONING_EFFORT Default: medium
+  CODEX_POSTMORTEM_REASONING_EFFORT Baseline default: medium; automatic report/hardening policy uses low/medium when no exported override is set
   CODEX_POSTMORTEM_MODE          Default: CODEX_FALLBACK_MODE
   CODEX_POSTMORTEM_DIR           Default: runtime/journals/upkeeper-postmortems
   CODEX_OPERATOR_GUIDE_PATH      Default: docs/scripts/upkeeper.md

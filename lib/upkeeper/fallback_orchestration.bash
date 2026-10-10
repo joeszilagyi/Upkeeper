@@ -135,6 +135,14 @@ EOF
   elif fallback_would_rediscover_dirty_block "$trigger"; then
     log_line "WARN" "fallback.skip trigger=$trigger reason=dirty_worktree_predicted_block dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT mode=normal_backend_prompt"
     child_exit=2
+  elif [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
+    log_line "INFO" "dry-run active; skipping fallback child exec trigger=$trigger target_model=$CODEX_FALLBACK_MODEL"
+    # A dry run deliberately does not launch a direct or screen child, so it
+    # cannot claim that the primary quota/failure condition was repaired. Keep
+    # the established non-success handoff result even when postmortem is opted
+    # out, rather than letting a skipped child turn a guardrail stop into a
+    # successful cycle exit.
+    child_exit=7
   elif [[ "$CODEX_FALLBACK_SCREEN_ENABLED" == "1" ]]; then
     if ! launch_screen_fallback_loop "$trigger" "$detail_text"; then
       log_line "ERROR" "fallback.screen.start failed trigger=$trigger"
@@ -145,61 +153,56 @@ EOF
     fi
   else
     log_line "INFO" "fallback.start execution_origin=primary trigger=$trigger mode=direct from_model=$source_model to_model=$CODEX_FALLBACK_MODEL effort=$selected_effort trigger_class=$selected_class detail=\"$detail_text\""
-    if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
-      log_line "INFO" "dry-run active; skipping direct fallback child exec trigger=$trigger target_model=$CODEX_FALLBACK_MODEL"
-      child_exit=0
-    else
-      local -a child_args=()
-      local child_prompt_pass=""
-      if [[ -n "$PROMPT_FILE" ]]; then
-        child_args+=(--prompt-file "$PROMPT_FILE")
-      elif [[ -n "$INLINE_PROMPT" ]]; then
-        child_args+=(--prompt "$INLINE_PROMPT")
-      fi
-      local review_module
-      for review_module in "${CODEX_REVIEW_MODULES[@]}"; do
-        child_args+=("--review-module=$review_module")
-      done
-      if [[ -n "$CODEX_TARGET_FILE" ]]; then
-        child_args+=("--target-file=$CODEX_TARGET_FILE")
-      elif [[ -n "$RUN_SELECTED_REVIEW_PATH" ]]; then
-        child_args+=("--target-file=$RUN_SELECTED_REVIEW_PATH")
-      fi
-      if child_prompt_pass="$(upkeeper_fallback_prompt_pass_for_child)"; then
-        child_args+=("--prompt-pass=$child_prompt_pass")
-      else
-        child_prompt_pass="default"
-      fi
-      upkeeper_log_fallback_prompt_pass_policy "$child_prompt_pass"
-      if upkeeper_bug_report_only_enabled; then
-        child_args+=("--bug-report-only")
-      fi
-      set +e
-      CODEX_MODEL="$CODEX_FALLBACK_MODEL" \
-      CODEX_REASONING_EFFORT="$CODEX_FALLBACK_REASONING_EFFORT" \
-      CODEX_MODE="$CODEX_FALLBACK_MODE" \
-      UPKEEPER_PROMPT_PAYLOAD_METRICS="${UPKEEPER_PROMPT_PAYLOAD_METRICS:-1}" \
-      UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES="${UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES:-12000}" \
-      CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL="${CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL:-0}" \
-      CODEX_FALLBACK_ENABLED=0 \
-      CODEX_FALLBACK_CHAIN_ACTIVE=1 \
-      CODEX_FALLBACK_PARENT_PID="$$" \
-      CODEX_FALLBACK_PARENT_START="$(process_start_fingerprint "$$")" \
-      CODEX_ATTEMPT_ROLE=fallback \
-      CODEX_PRIMARY_MODEL_CONTEXT="$source_model" \
-      CODEX_FALLBACK_TRIGGER="$trigger" \
-      CODEX_PARENT_CYCLE_ID="$CYCLE_ID" \
-      CODEX_FALLBACK_CONTRACT_PATH="$CODEX_FALLBACK_CONTRACT_PATH" \
-      CODEX_FALLBACK_CHAIN_TOKEN_FD=9 \
-      9<<<"$fallback_chain_token" \
-      CODEX_POSTMORTEM_ENABLED=0 \
-      CODEX_DISABLE_PARENT_STOP=1 \
-      CODEX_GUARDRAIL_STOP_EXIT_CODE=9 \
-      CODEX_EXECUTION_ORIGIN=direct_fallback \
-      "$SELF_INVOKE_PATH" "${child_args[@]}"
-      child_exit=$?
-      set -e
+    local -a child_args=()
+    local child_prompt_pass=""
+    if [[ -n "$PROMPT_FILE" ]]; then
+      child_args+=(--prompt-file "$PROMPT_FILE")
+    elif [[ -n "$INLINE_PROMPT" ]]; then
+      child_args+=(--prompt "$INLINE_PROMPT")
     fi
+    local review_module
+    for review_module in "${CODEX_REVIEW_MODULES[@]}"; do
+      child_args+=("--review-module=$review_module")
+    done
+    if [[ -n "$CODEX_TARGET_FILE" ]]; then
+      child_args+=("--target-file=$CODEX_TARGET_FILE")
+    elif [[ -n "$RUN_SELECTED_REVIEW_PATH" ]]; then
+      child_args+=("--target-file=$RUN_SELECTED_REVIEW_PATH")
+    fi
+    if child_prompt_pass="$(upkeeper_fallback_prompt_pass_for_child)"; then
+      child_args+=("--prompt-pass=$child_prompt_pass")
+    else
+      child_prompt_pass="default"
+    fi
+    upkeeper_log_fallback_prompt_pass_policy "$child_prompt_pass"
+    if upkeeper_bug_report_only_enabled; then
+      child_args+=("--bug-report-only")
+    fi
+    set +e
+    CODEX_MODEL="$CODEX_FALLBACK_MODEL" \
+    CODEX_REASONING_EFFORT="$CODEX_FALLBACK_REASONING_EFFORT" \
+    CODEX_MODE="$CODEX_FALLBACK_MODE" \
+    UPKEEPER_PROMPT_PAYLOAD_METRICS="${UPKEEPER_PROMPT_PAYLOAD_METRICS:-1}" \
+    UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES="${UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES:-12000}" \
+    CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL="${CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL:-0}" \
+    CODEX_FALLBACK_ENABLED=0 \
+    CODEX_FALLBACK_CHAIN_ACTIVE=1 \
+    CODEX_FALLBACK_PARENT_PID="$$" \
+    CODEX_FALLBACK_PARENT_START="$(process_start_fingerprint "$$")" \
+    CODEX_ATTEMPT_ROLE=fallback \
+    CODEX_PRIMARY_MODEL_CONTEXT="$source_model" \
+    CODEX_FALLBACK_TRIGGER="$trigger" \
+    CODEX_PARENT_CYCLE_ID="$CYCLE_ID" \
+    CODEX_FALLBACK_CONTRACT_PATH="$CODEX_FALLBACK_CONTRACT_PATH" \
+    CODEX_FALLBACK_CHAIN_TOKEN_FD=9 \
+    9<<<"$fallback_chain_token" \
+    CODEX_POSTMORTEM_ENABLED=0 \
+    CODEX_DISABLE_PARENT_STOP=1 \
+    CODEX_GUARDRAIL_STOP_EXIT_CODE=9 \
+    CODEX_EXECUTION_ORIGIN=direct_fallback \
+    "$SELF_INVOKE_PATH" "${child_args[@]}"
+    child_exit=$?
+    set -e
   fi
 
   local final_exit="$child_exit"

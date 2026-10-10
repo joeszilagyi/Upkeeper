@@ -754,9 +754,10 @@ Environment overrides:
   CODEX_FALLBACK_REASONING_EFFORT Baseline default: high; automatic trigger policy uses low/medium when no exported override is set
   CODEX_FALLBACK_MODE           Default: CODEX_MODE
   CODEX_FALLBACK_ON_PRIMARY_QUOTA Default: 1
-  CODEX_FALLBACK_ON_FAILURE     Default: 1
-  CODEX_FALLBACK_ON_BLOCKED     Default: 1
-  CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK Default: 1
+  CODEX_FALLBACK_ON_NO_OUTPUT   Default: 1; retries a primary response with no final status marker
+  CODEX_FALLBACK_ON_FAILURE     Default: 0; set 1 to retry explicit generic backend failures
+  CODEX_FALLBACK_ON_BLOCKED     Default: 0; set 1 to retry an explicit BLOCKED result
+  CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK Default: 0; set 1 to retry dirty NO_BACKEND_TASK results
   CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL Default: 0
   CODEX_FALLBACK_SCREEN_ENABLED     Default: 1
   CODEX_FALLBACK_SCREEN_POLL_SECONDS Default: 60
@@ -764,7 +765,7 @@ Environment overrides:
   CODEX_FALLBACK_SCREEN_MAX_CHILDREN Default: 1
   CODEX_FALLBACK_SCREEN_MAX_SECONDS  Default: 0
   CODEX_FALLBACK_SCREEN_STAGE_ROOT   Default: $CODEX_FALLBACK_SCREEN_STAGE_ROOT
-  CODEX_POSTMORTEM_ENABLED       Default: 1
+  CODEX_POSTMORTEM_ENABLED       Default: 0; set 1 to run a model postmortem after fallback
   CODEX_POSTMORTEM_HARDENING_OPT_IN Default: 0
   CODEX_POSTMORTEM_MODEL         Default: CODEX_FALLBACK_MODEL
   CODEX_POSTMORTEM_REASONING_EFFORT Baseline default: medium; automatic report/hardening policy uses low/medium when no exported override is set

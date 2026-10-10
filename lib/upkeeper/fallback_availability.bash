@@ -23,6 +23,49 @@ fallback_available() {
   [[ -z "$(fallback_unavailable_reason)" ]]
 }
 
+# Missing a final status after a primary model response is recoverable through
+# a bounded second attempt by default.  A nonempty terminal status instead
+# represents an explicit backend result, so generic-failure recovery remains
+# opt-in.  Keeping this decision here gives the entrypoint and focused tests
+# one policy owner rather than making an empty marker an accidental exception
+# to the broad failure switch.
+fallback_failure_trigger_enabled() {
+  local status_marker="$1"
+
+  if [[ -z "$status_marker" ]]; then
+    [[ "${CODEX_FALLBACK_ON_NO_OUTPUT:-0}" == "1" ]]
+    return
+  fi
+  [[ "${CODEX_FALLBACK_ON_FAILURE:-0}" == "1" ]]
+}
+
+# Keep trigger-to-setting authority in one place.  The caller supplies the
+# status marker only for the broad failure path, which lets a missing final
+# marker retain its separately configured recovery path without enabling an
+# automatic retry for every explicit error result.
+fallback_trigger_enabled() {
+  local trigger="$1"
+  local status_marker="${2:-}"
+
+  case "$trigger" in
+    primary_quota_before_run|primary_quota_after_run|primary_backend_usage_limit)
+      [[ "${CODEX_FALLBACK_ON_PRIMARY_QUOTA:-0}" == "1" ]]
+      ;;
+    dirty_no_backend_task)
+      [[ "${CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK:-0}" == "1" ]]
+      ;;
+    blocked)
+      [[ "${CODEX_FALLBACK_ON_BLOCKED:-0}" == "1" ]]
+      ;;
+    failure)
+      fallback_failure_trigger_enabled "$status_marker"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 fallback_would_rediscover_dirty_block() {
   local trigger="$1"
 

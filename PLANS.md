@@ -3,6 +3,50 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #682: Constrain Automatic Recovery Model Calls
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- stop routine blocked, dirty no-backend-task, and generic-failure outcomes from
+  silently launching a second model call or a postmortem model call by default,
+  while retaining the recovery paths that have an independently actionable
+  quota or missing-status/no-output signal
+
+Constraints:
+- preserve explicit operator/config overrides and existing primary-quota
+  recovery; do not weaken quota, custody, lock, failure-status, or evidence
+  handling
+- distinguish missing-status/no-output recovery from a generic backend failure
+  instead of relying on one broad `CODEX_FALLBACK_ON_FAILURE` switch
+- update the central/default configs, entrypoint defaults, operator help,
+  compatibility documentation, and release note as one public contract
+- use deterministic fixtures only; no live backend Codex work
+
+Plan:
+- introduce an explicit missing-status/no-output fallback gate that remains
+  enabled by default, then default generic failure, blocked, dirty no-backend,
+  and postmortem recovery to disabled
+- prove default and explicit-override policy through the sourced real entrypoint
+  and preserve the separate quota fallback behavior
+- run focused policy/config/help checks, full deterministic validation, public
+  documentation validation, and the required PR/post-merge CI gates
+
+Limitation:
+- local deterministic coverage can establish routing and default-policy
+  behavior, but cannot establish that a live secondary model would make useful
+  progress for every retained quota or missing-status recovery case.
+
+Implemented and validated:
+- centralized trigger-to-setting authority so every primary fallback call site
+  uses the same quota, missing-status, generic-failure, blocked, and dirty
+  policy; default postmortem is now opt-in
+- retained the non-success result for a dry-run fallback before either direct
+  or screen child launch, so a skipped child cannot falsely clear a quota stop
+- added real-entrypoint default/override coverage plus a screen-enabled dry-run
+  regression; passed the 81-test suite, public-doc check, and quick/full
+  no-quota validators
+
 ## Issue #734: Startup Control-Plane Phase Extraction
 
 Status: in progress; validator increment merged in PR #901

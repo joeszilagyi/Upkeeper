@@ -142,6 +142,28 @@ test_fallback_launches_use_selected_effort() {
   grep -qx 'effort=xhigh' "$RECOVERY_EFFORT_CAPTURE" || fail "explicit fallback effort was not preserved"
 }
 
+test_dry_run_fallback_retains_non_success_status_without_postmortem() {
+  local rc
+
+  prepare_fallback_fixture
+  UPKEEPER_DRY_RUN=1
+  CODEX_POSTMORTEM_ENABLED=0
+  CODEX_FALLBACK_SCREEN_ENABLED=1
+  SCREEN_FALLBACK_LAUNCHED=0
+  launch_screen_fallback_loop() { SCREEN_FALLBACK_LAUNCHED=1; }
+  : >"$RECOVERY_EFFORT_CAPTURE"
+  set +e
+  run_fallback_cycle primary_quota_before_run quota_stop
+  rc=$?
+  set -e
+  [[ "$rc" -eq 7 ]] ||
+    fail "dry-run fallback exited $rc with postmortem disabled, expected 7"
+  [[ ! -s "$RECOVERY_EFFORT_CAPTURE" ]] ||
+    fail "dry-run fallback unexpectedly launched the child"
+  [[ "$SCREEN_FALLBACK_LAUNCHED" -eq 0 ]] ||
+    fail "dry-run fallback unexpectedly launched the screen child"
+}
+
 prepare_auxiliary_fixture() {
   source "$PROJECT_ROOT/lib/upkeeper/aux_codex.bash"
 
@@ -188,5 +210,6 @@ test_auxiliary_launches_use_selected_effort() {
 
 test_selection_matrix
 test_fallback_launches_use_selected_effort
+test_dry_run_fallback_retains_non_success_status_without_postmortem
 test_auxiliary_launches_use_selected_effort
 printf 'recovery_effort_policy_test: ok\n'

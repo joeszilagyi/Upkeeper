@@ -12115,6 +12115,24 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
     with conn:
         repo_id = ensure_repository(conn, root)
         import_id = start_import(conn, repo_id, "change_notes", {"paths": [str(p) for p in paths]})
+        pending_ref_rows: list[tuple[int, int, str, int | None]] = []
+        pending_ref_keys: set[tuple[int, int | None, str, str]] = set()
+
+        def flush_pending_refs() -> None:
+            nonlocal rows_written
+            if not pending_ref_rows:
+                return
+            conn.executemany(
+                """
+                insert or ignore into change_log_file_refs(change_log_entry_id, file_id, path, confidence, source_id)
+                values (?, ?, ?, 'explicit_path', ?)
+                """,
+                pending_ref_rows,
+            )
+            rows_written += len(pending_ref_rows)
+            pending_ref_rows.clear()
+            pending_ref_keys.clear()
+
         for path in paths:
             if not path.exists():
                 continue
@@ -12199,14 +12217,15 @@ def command_import_change_notes(args: argparse.Namespace) -> int:
                     if existing_ref is not None:
                         duplicates += 1
                         continue
-                    conn.execute(
-                        """
-                        insert into change_log_file_refs(change_log_entry_id, file_id, path, confidence, source_id)
-                        values (?, ?, ?, 'explicit_path', ?)
-                        """,
-                        (entry_id, file_id, ref, source_id),
-                    )
-                    rows_written += 1
+                    ref_key = (entry_id, file_id, ref, "explicit_path")
+                    if ref_key in pending_ref_keys:
+                        duplicates += 1
+                        continue
+                    pending_ref_rows.append((entry_id, file_id, ref, source_id))
+                    pending_ref_keys.add(ref_key)
+                    if len(pending_ref_rows) >= 500:
+                        flush_pending_refs()
+        flush_pending_refs()
         finish_import(conn, import_id, "ok", rows_seen, rows_written, 0)
     print_json({"status": "ok", "rows_seen": rows_seen, "rows_written": rows_written, "duplicates": duplicates})
     return EXIT_SUCCESS

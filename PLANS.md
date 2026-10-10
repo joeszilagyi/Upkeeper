@@ -154,7 +154,7 @@ Validation:
 
 ## Issue #707: Cache Backlog Branch Identity
 
-Status: implementation and local validation complete; ready for focused PR
+Status: complete; merged in PR #884
 
 Goal:
 - avoid repeated `git rev-parse --abbrev-ref HEAD` launches during one backlog
@@ -180,6 +180,34 @@ Validation:
   guard correctness
 - run focused backlog regressions plus required syntax, full deterministic
   suite, whitespace, and quick validation before PR
+
+## Issue #708: Batch Homogeneous Lattice Import Writes
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- reduce Python-to-SQLite overhead only for importer rows whose statement shape
+  and conflict behavior can be preserved without losing source identity,
+  idempotency, privacy, or foreign-key ordering
+
+Verified defect:
+- the original issue's implementation filename is stale after the import-cache
+  split, but the live `tools/upkeeper_lattice_core.py` import commands still
+  contain no `executemany` calls; some high-volume loops are homogeneous while
+  others require per-row ids and conflict handling
+
+Plan:
+- identify one high-volume insert path that needs no immediate `lastrowid` or
+  per-row branch, batch it in bounded groups, and leave identity-sensitive
+  source/cycle/file/import paths alone
+- use real Lattice import fixtures to compare row counts, idempotency, privacy,
+  and conflict outcomes before considering a broader importer change
+
+Validation:
+- add a deterministic batch-count or SQLite connection fixture that exercises
+  production importer behavior rather than source text alone
+- run focused Lattice import coverage plus the required full local validation
+  before opening a PR
 
 ## Issue #730: Batch Lattice Candidate Git Metadata
 

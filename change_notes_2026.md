@@ -1,5 +1,13 @@
 # 2026 Change Notes
 
+2026-10-09: batched Lattice change-note references:
+	1. Change-note imports now group homogeneous file-reference insertions into
+	   bounded SQLite batches while retaining per-record identity, path safety,
+	   idempotency, and duplicate accounting.
+	2. Source records, change-log entries, file identity resolution, and all
+	   conflict-sensitive importer paths remain individually validated before a
+	   reference enters a batch.
+
 2026-10-09: cached backlog branch identity:
 	1. A backlog iteration now resolves its current branch once for stable
 	   ownership, hibernation, notice, retry, and publication paths instead of

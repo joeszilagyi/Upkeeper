@@ -5,7 +5,7 @@ Upkeeper changes. Keep entries brief and update their status before merge.
 
 ## Issue #876: Make Lattice CLI Fixture Cleanup Non-Interactive
 
-Status: implementation and local validation complete; ready for focused PR
+Status: complete; merged in PR #877
 
 Goal:
 - keep the serial Lattice CLI integration fixture within its existing 45-second
@@ -30,6 +30,39 @@ Validation:
   45-second CLI wrapper completes without input after the repair
 - run focused Lattice coverage, the full deterministic suite, syntax,
   whitespace, and quick validation without increasing any deadline
+
+## Issue #728: Remove Remaining Sourced-Module Function Shadow
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- remove the remaining real `precontact_backup_hmac_text` entrypoint override
+  so the pre-contact backup module owns its public HMAC behavior
+- remove stale #728 allowlist debt now that the status-session function is
+  already module-owned
+
+Verified defect:
+- the architecture lint finds a real, allowlisted duplicate
+  `precontact_backup_hmac_text`: the module is sourced first, then `Upkeeper`
+  replaces it to cache a parent-process fallback redaction key; this makes
+  runtime behavior depend on load order
+- `resolved_status_marker_from_analysis` is no longer duplicated, but remains
+  needlessly listed in the transitional allowlist
+
+Plan:
+- move the pre-contact-specific fallback-key cache and HMAC implementation
+  into `lib/upkeeper/precontact_backup.bash`, preserving stable HMAC values
+  when the redaction key cannot be persisted
+- remove the root override and both obsolete allowlist entries
+- make the architecture regression prove the sourced entrypoint and direct
+  module load expose the same `precontact_backup_hmac_text` implementation
+
+Validation:
+- run the focused architecture and pre-contact backup regressions plus the
+  existing entrypoint HMAC self-test
+- run required syntax, deterministic test suite, diff whitespace, and quick
+  validation before opening the focused PR
+
 
 ## Issue #730: Batch Lattice Candidate Git Metadata
 

@@ -50,4 +50,21 @@ grep -Fq 'REPORT function-shadow' "$TEST_TMP_ROOT/pass.out" ||
 grep -Fq 'SUMMARY architecture_findings=' "$TEST_TMP_ROOT/pass.out" ||
   fail "architecture report summary missing"
 
+tools/check_architecture.py --allowlist config/architecture_lint_allowlist.tsv \
+  Upkeeper lib/upkeeper/*.bash >"$TEST_TMP_ROOT/repository.out"
+! grep -Fq 'function-shadow' "$TEST_TMP_ROOT/repository.out" ||
+  fail "repository still has a sourced-module function shadow"
+
+entrypoint_precontact_hmac="$({
+  cd "$ROOT_DIR"
+  UPKEEPER_CONFIG_DISABLE=1 UPKEEPER_LOCAL_ENV_DISABLE=1 \
+    bash -c 'source ./Upkeeper; declare -f precontact_backup_hmac_text'
+})"
+module_precontact_hmac="$({
+  cd "$ROOT_DIR"
+  bash -c 'source ./lib/upkeeper/precontact_backup.bash; declare -f precontact_backup_hmac_text'
+})"
+[[ "$entrypoint_precontact_hmac" == "$module_precontact_hmac" ]] ||
+  fail "entrypoint and module expose different pre-contact HMAC implementations"
+
 printf 'architecture_lint_test: ok\n'

@@ -907,7 +907,7 @@ enforce_startup_anomaly_gate_target_or_exit() {
   finish_cycle 7 STARTUP_ANOMALY_REQUIRES_CENTRAL_UPKEEPER WARN "codex_exec_started=0 implementation=$(shell_quote "$SELF_PATH") root=$(shell_quote "$ROOT_DIR")"
 }
 
-preselect_review_target() {
+upkeeper_preselect_review_target_base() {
   python3 - "$ROOT_DIR" "$SELF_PATH" "$CODEX_UPKEEPER_SELF_REVIEW_AFTER_DAYS" "$STARTUP_ANOMALY_GATE" "$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER" "$CODEX_TARGET_FILE" "$CODEX_TOOL_FAILURE_QUEUE_DIR" "$CODEX_TOOL_FAILURE_QUEUE_ENABLED" "$CODEX_TOOL_FAILURE_QUEUE_BYPASS" "$CODEX_SELECTION_SOURCE" "$CODEX_FILE_MANIFEST_PATH" "$CODEX_SELECTION_ORDER" "${CODEX_SELECT_UNTRACKED:-1}" "$CODEX_TARGET_ROOT" "$CODEX_TARGET_MAX_DEPTH" "$CODEX_SELECTION_INCLUDE_GLOBS" "$CODEX_SELECTION_EXCLUDE_GLOBS" "$CODEX_SELECTION_REVIEW_MODULES" "$CODEX_SELECTION_RANDOM_SEED" "$CODEX_MAX_COVER_MODE" "$UPKEEPER_LATTICE_ENABLED" "$UPKEEPER_LATTICE_SELECTION_MODE" "$(lattice_tool_path)" "$UPKEEPER_LATTICE_DB" "$UPKEEPER_LATTICE_SQLITE_JOURNAL_MODE" "$CODEX_UPKEEPER_IGNORE_FILE" "$(lattice_command_timeout_seconds)" <<'PY'
 import datetime
 import errno
@@ -1878,6 +1878,91 @@ else:
     print("failure_queue_selected=0")
 print(f"selection_basis={selection_basis}")
 PY
+}
+
+# Keep failure-queue selection validation with the selector it protects.  The
+# entrypoint formerly cloned the preceding function with declare/sed/eval and
+# overrode it locally, which made this ownership boundary hard to inspect.
+preselect_review_target() {
+  local original_output="" rc selection_mode="" failure_queue_selected="" failure_marker_path="" marker_meta="" marker_status=""
+  local marker_reason="" marker_target="" fallback_output="" original_bypass=""
+  local selected_target="" selected_target_normalized=""
+  local secure_queue_result="" secure_queue_status="" secure_queue_reason=""
+
+  # The selector remains usable in focused tests and standalone tooling that
+  # intentionally source this module without the optional failure queue or the
+  # entrypoint's prompt-output helpers.
+  if ! declare -F tool_failure_queue_active_for_selection >/dev/null 2>&1 || \
+    ! declare -F upkeeper_preselect_output_field >/dev/null 2>&1 || \
+    ! declare -F upkeeper_emit_canonical_preselect_output >/dev/null 2>&1; then
+    upkeeper_preselect_review_target_base
+    return
+  fi
+
+  if tool_failure_queue_active_for_selection; then
+    secure_queue_result="$(upkeeper_tool_failure_queue_prepare_secure_dirs)"
+    secure_queue_status="$(upkeeper_preselect_output_field status "$secure_queue_result")"
+    if [[ "$secure_queue_status" != "ok" ]]; then
+      secure_queue_reason="$(upkeeper_preselect_output_field reason "$secure_queue_result")"
+      log_line "WARN" "tool_failure_queue.selection_disabled reason=$(shell_quote "${secure_queue_reason:-unknown}") queue_dir=$(shell_quote "$CODEX_TOOL_FAILURE_QUEUE_DIR")"
+      original_bypass="${CODEX_TOOL_FAILURE_QUEUE_BYPASS:-0}"
+      CODEX_TOOL_FAILURE_QUEUE_BYPASS=1
+    fi
+  fi
+
+  set +e
+  original_output="$(upkeeper_preselect_review_target_base)"
+  rc=$?
+  set -e
+  if [[ -n "$original_bypass" ]]; then
+    CODEX_TOOL_FAILURE_QUEUE_BYPASS="$original_bypass"
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    printf '%s' "$original_output"
+    return "$rc"
+  fi
+  [[ -n "$original_output" ]] || return 0
+
+  selection_mode="$(upkeeper_preselect_output_field selection_mode "$original_output")"
+  failure_queue_selected="$(upkeeper_preselect_output_field failure_queue_selected "$original_output")"
+
+  if [[ "$selection_mode" == "failure_queue" && "$failure_queue_selected" == "1" ]]; then
+    failure_marker_path="$(upkeeper_preselect_output_field failure_marker_path "$original_output")"
+    marker_meta="$(upkeeper_tool_failure_queue_validate_selected_marker "$failure_marker_path")"
+    marker_status="$(upkeeper_preselect_output_field status "$marker_meta")"
+    if [[ "$marker_status" == "ok" ]]; then
+      marker_target="$(upkeeper_preselect_output_field target_path "$marker_meta")"
+      selected_target="$(upkeeper_preselect_output_field path "$original_output")"
+      selected_target_normalized=""
+      if ! selected_target_normalized="$(upkeeper_tool_failure_queue_normalize_target "$selected_target")"; then
+        marker_status="unsafe"
+        marker_reason="selected_target_invalid_for_marker"
+      elif [[ "$marker_target" != "$selected_target_normalized" ]]; then
+        marker_status="unsafe"
+        marker_reason="marker_target_mismatch"
+      fi
+    fi
+    if [[ "$marker_status" != "ok" ]]; then
+      marker_reason="${marker_reason:-$(upkeeper_preselect_output_field reason "$marker_meta")}"
+      log_line "WARN" "tool_failure_queue.selection_ignored reason=$(shell_quote "${marker_reason:-unknown}") queue_dir=$(shell_quote "$CODEX_TOOL_FAILURE_QUEUE_DIR") marker_path=$(shell_quote "${failure_marker_path:-unknown}")"
+      original_bypass="${CODEX_TOOL_FAILURE_QUEUE_BYPASS:-0}"
+      CODEX_TOOL_FAILURE_QUEUE_BYPASS=1
+      set +e
+      fallback_output="$(upkeeper_preselect_review_target_base)"
+      rc=$?
+      set -e
+      CODEX_TOOL_FAILURE_QUEUE_BYPASS="$original_bypass"
+      if [[ "$rc" -ne 0 ]]; then
+        printf '%s' "$fallback_output"
+        return "$rc"
+      fi
+      [[ -n "$fallback_output" ]] || return 0
+      original_output="$fallback_output"
+      marker_meta=""
+    fi
+  fi
+
+  upkeeper_emit_canonical_preselect_output "$original_output" "$marker_meta"
 }
 
 append_preselected_review_target() {

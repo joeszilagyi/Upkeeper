@@ -2584,7 +2584,7 @@ PY
 }
 
 # Keep these hardening overrides in the root entrypoint so startup-anomaly runs
-# can tighten auxiliary postmortem behavior without patching paired modules.
+# can tighten model-backed postmortem hardening without patching paired modules.
 upkeeper_postmortem_hardening_enabled() {
   # Auxiliary hardening writes must stay behind an explicit operator opt-in for
   # every call path, including direct validator fixtures that source Upkeeper.
@@ -2601,43 +2601,72 @@ upkeeper_postmortem_private_artifact_state() {
   fi
 }
 
-compile_postmortem_report_prompt() {
-  local compiled_file="$1"
+postmortem_context_field() {
+  local context_path="$1"
+  local field_name="$2"
+  local fallback="${3:-unknown}"
+  local value
+
+  value="$(awk -v field_name="$field_name" '
+    index($0, field_name ": ") == 1 {
+      print substr($0, length(field_name) + 3)
+      exit
+    }
+  ' "$context_path" 2>/dev/null || true)"
+  upkeeper_prompt_safe_inline_value "$value" "$fallback"
+}
+
+write_deterministic_postmortem_report() {
+  local report_path="$1"
   local context_path="$2"
-  local report_path="$3"
+  local cycle_id trigger detail classification child_exit primary_status primary_exit
+  local fallback_status fallback_marker fallback_exit dirty_paths tracked_paths untracked_paths
+  local primary_model fallback_model hardening_opt_in
 
-  cat >"$compiled_file" <<EOF
-You are operating inside the git repository at $ROOT_DIR.
+  cycle_id="$(postmortem_context_field "$context_path" incident_cycle_id "$CYCLE_ID")"
+  trigger="$(postmortem_context_field "$context_path" incident_trigger unknown)"
+  detail="$(postmortem_context_field "$context_path" incident_detail none)"
+  classification="$(postmortem_context_field "$context_path" incident_classification unknown)"
+  child_exit="$(postmortem_context_field "$context_path" fallback_child_exit unknown)"
+  primary_status="$(postmortem_context_field "$context_path" primary_status_marker missing)"
+  primary_exit="$(postmortem_context_field "$context_path" primary_codex_exit unknown)"
+  fallback_status="$(postmortem_context_field "$context_path" fallback_current_child_status unknown)"
+  fallback_marker="$(postmortem_context_field "$context_path" fallback_child_status_marker missing)"
+  fallback_exit="$(postmortem_context_field "$context_path" fallback_last_cycle_exit_code unknown)"
+  dirty_paths="$(postmortem_context_field "$context_path" dirty_paths unknown)"
+  tracked_paths="$(postmortem_context_field "$context_path" tracked_modified_paths unknown)"
+  untracked_paths="$(postmortem_context_field "$context_path" untracked_paths unknown)"
+  primary_model="$(postmortem_context_field "$context_path" primary_model unknown)"
+  fallback_model="$(postmortem_context_field "$context_path" fallback_model unknown)"
+  hardening_opt_in="$(postmortem_context_field "$context_path" postmortem_hardening_opt_in 0)"
 
-This is a post-mortem analysis pass for an Upkeeper incident.
+  cat >"$report_path" <<EOF
+# Upkeeper Postmortem
+## Incident Summary
+Cycle $cycle_id entered fallback handling for trigger $trigger. The deterministic incident classification is $classification.
 
-What this run must do:
-- read the sanitized incident context at $context_path
-- use only that sanitized context as incident evidence
-- write or replace the markdown report at $report_path
-- do not inspect any other local files, logs, transcripts, session artifacts, or runtime directories in this phase
-- do not implement code changes in this phase except creating or updating the report file itself
-- keep the report actionable, concrete, and specific to the local repo and wrapper behavior
-
-Report requirements:
-- use exactly these top-level headings in this order:
-  1. # Upkeeper Postmortem
-  2. ## Incident Summary
-  3. ## Observed Signals
-  4. ## Root Cause Hypotheses
-  5. ## Action Plan
-  6. ## Hardening Targets
-  7. ## Relaunch Checklist
-- under Action Plan, include flat checklist bullets with the smallest safe next actions first
-- under Hardening Targets, call out wrapper/logging/prompt/guardrail fixes separately from repo-lane fixes when relevant
-- treat any raw transcripts, logs, session artifacts, and filesystem paths as operator-only evidence that is intentionally excluded from the sanitized context
-
-Response marker requirements:
-- the final response must end with one marker line exactly as plain text
-- do not wrap the marker in Markdown, backticks, a code fence, quotes, bullets, or trailing punctuation
-- if the report file was written successfully, the final line must be exactly: CODEX_POSTMORTEM_STATUS: REPORT_WRITTEN
-- if you are blocked, the final line must be exactly: CODEX_POSTMORTEM_STATUS: BLOCKED
+The sanitized incident detail is: $detail. The recorded fallback child exit is $child_exit.
+## Observed Signals
+- Primary model: $primary_model; primary status marker: $primary_status; primary Codex exit: $primary_exit.
+- Fallback model: $fallback_model; child status: $fallback_status; child marker: $fallback_marker; last fallback exit: $fallback_exit.
+- Repository snapshot: dirty paths=$dirty_paths; tracked modified paths=$tracked_paths; untracked paths=$untracked_paths.
+- Private evidence retained for operator review: sanitized incident context, incident log, primary last-message metadata, and incident bug record.
+## Root Cause Hypotheses
+- The wrapper classified this incident as $classification from the sanitized primary and fallback status fields above.
+- Confirm the private evidence before treating the classification as a final root cause or changing repository behavior.
+## Action Plan
+- [ ] Review the private incident context, incident log, and bug record for this cycle.
+- [ ] Address the trigger $trigger and any failed primary or fallback status indicated above.
+- [ ] Re-run the bounded recovery path only after the relevant guardrails and repository state are healthy.
+## Hardening Targets
+- Wrapper/logging/prompt/guardrail: retain deterministic incident reporting and keep any model-backed hardening behind explicit operator opt-in.
+- Repo-lane: make the smallest verified change directly supported by the private incident evidence.
+## Relaunch Checklist
+- [ ] Confirm the original trigger has been addressed or explicitly accepted by the operator.
+- [ ] Confirm repository state and required recovery guardrails are healthy.
+- [ ] Confirm whether model-backed hardening is required; current opt-in value: $hardening_opt_in.
 EOF
+  postmortem_set_private_file_mode "$report_path"
 }
 
 compile_postmortem_hardening_prompt() {
@@ -2922,9 +2951,9 @@ run_postmortem_sequence() {
   POSTMORTEM_SEQUENCE_STATUS="not_run"
 
   local pm_root report_path context_path incident_log_path bug_record_path primary_last_message_metadata
-  local report_prompt_file report_last_message hardening_prompt_file hardening_last_message
-  local report_last_message_private hardening_last_message_private
-  local report_exit report_marker hardening_exit hardening_marker
+  local hardening_prompt_file hardening_last_message
+  local hardening_last_message_private
+  local hardening_exit hardening_marker
   local incident_classification errexit_was_set
   local report_path_log_field bug_record_path_log_field
 
@@ -2934,7 +2963,6 @@ run_postmortem_sequence() {
   incident_log_path="$pm_root/incident-log.txt"
   bug_record_path="$pm_root/bug-record.md"
   primary_last_message_metadata="$pm_root/primary-last-message.meta"
-  report_last_message_private="$pm_root/postmortem.report-last-message.txt"
   hardening_last_message_private="$pm_root/postmortem.hardening-last-message.txt"
 
   report_path_log_field="$(upkeeper_path_hmac "$report_path")"
@@ -2979,93 +3007,33 @@ EOF
     return 7
   fi
 
-  ensure_run_tmp_dir
-  report_prompt_file="$(run_mktemp postmortem-report-prompt)"
-  report_last_message="$(run_mktemp postmortem-report-last-message)"
-  hardening_prompt_file="$(run_mktemp postmortem-hardening-prompt)"
-  hardening_last_message="$(run_mktemp postmortem-hardening-last-message)"
-
-  compile_postmortem_report_prompt "$report_prompt_file" "$context_path" "$report_path"
-  errexit_was_set=0
-  [[ $- == *e* ]] && errexit_was_set=1
-  set +e
-  run_aux_codex_exec "postmortem.report" "$CODEX_POSTMORTEM_MODEL" "$CODEX_POSTMORTEM_REASONING_EFFORT" "$CODEX_POSTMORTEM_MODE" "$report_prompt_file" "$report_last_message"
-  report_exit=$?
-  if [[ "$errexit_was_set" -eq 1 ]]; then
-    set -e
-  else
-    set +e
-  fi
-  copy_postmortem_private_artifact "$report_last_message" "$report_last_message_private"
-  report_marker="$(parse_postmortem_marker "$report_last_message")"
+  write_deterministic_postmortem_report "$report_path" "$context_path"
   log_line_parts "INFO" \
-    "postmortem.report.finish exit_code=$report_exit" \
-    " marker=${report_marker:-missing}" \
+    "postmortem.report.finish mode=local exit_code=0" \
+    " marker=REPORT_WRITTEN" \
     " report_path=$report_path_log_field path_redacted=1" \
     " report_exists=$([[ -e "$report_path" ]] && printf 1 || printf 0)" \
     " report_nonempty=$([[ -s "$report_path" ]] && printf 1 || printf 0)"
 
-  if [[ "$report_exit" -eq 86 ]]; then
-    POSTMORTEM_SEQUENCE_STATUS="report_quota_skipped"
-    write_quota_skipped_postmortem_report "$report_path" "$trigger" "$detail_text" "$child_exit" "postmortem.report" "$CODEX_POSTMORTEM_MODEL"
-    log_line "WARN" "postmortem.report skipped reason=quota_guardrail exit_code=$report_exit marker=${report_marker:-missing} report_path=$report_path_log_field path_redacted=1"
-    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
-    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
-    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
-    return 7
-  fi
-
-  if [[ "$report_exit" -eq 87 ]]; then
-    local report_environment_detail report_environment_reason
-    report_environment_detail="$(awk '/^detail: / { sub(/^detail: /, ""); print; exit }' "$report_last_message" || true)"
-    if [[ -z "$report_environment_detail" ]]; then
-      report_environment_detail="unknown"
-    fi
-    report_environment_reason="$(awk '/^reason: / { sub(/^reason: /, ""); print; exit }' "$report_last_message" || true)"
-    if [[ -z "$report_environment_reason" ]]; then
-      report_environment_reason="local Codex runtime is not writable"
-    fi
-    POSTMORTEM_SEQUENCE_STATUS="report_environment_skipped"
-    write_environment_skipped_postmortem_report "$report_path" "$trigger" "$detail_text" "$child_exit" "postmortem.report" "$CODEX_POSTMORTEM_MODEL" "$report_environment_detail"
-    log_line_parts "WARN" \
-      "postmortem.report skipped reason=local_codex_runtime_unwritable" \
-      " environment_reason=$(shell_quote "$report_environment_reason")" \
-      " exit_code=$report_exit marker=${report_marker:-missing}" \
-      " report_path=$report_path_log_field path_redacted=1"
-    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
-    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
-    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
-    return 7
-  fi
-
-  if [[ "$report_exit" -ne 0 || "$report_marker" != "REPORT_WRITTEN" || ! -s "$report_path" ]]; then
-    POSTMORTEM_SEQUENCE_STATUS="report_failed"
-    log_line "ERROR" "postmortem.report failed exit_code=$report_exit marker=${report_marker:-missing} expected_marker=REPORT_WRITTEN report_path=$report_path_log_field path_redacted=1"
-    postmortem_set_private_file_mode "$report_path"
-    write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
-    emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
-    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
-    return 8
-  fi
-
-  postmortem_set_private_file_mode "$report_path"
   if ! upkeeper_postmortem_hardening_enabled; then
     POSTMORTEM_SEQUENCE_STATUS="report_only_opt_in_required"
     cat >>"$report_path" <<'EOF'
 
 ## Hardening Outcome
 - No auxiliary hardening Codex pass was launched because postmortem hardening is disabled by default.
-- This cycle kept the auxiliary postmortem run report-only and limited trusted incident evidence to the sanitized context file.
+- This cycle kept the postmortem sequence report-only and limited trusted incident evidence to the sanitized context file.
 - After operator review of the report and private evidence, rerun with `CODEX_POSTMORTEM_HARDENING_OPT_IN=1` for an explicit hardening follow-up if it is still warranted.
 EOF
     postmortem_set_private_file_mode "$report_path"
     log_line "INFO" "postmortem.hardening skipped reason=operator_opt_in_required report_path=$report_path_log_field path_redacted=1"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
-    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
     return "$child_exit"
   fi
 
+  ensure_run_tmp_dir
+  hardening_prompt_file="$(run_mktemp postmortem-hardening-prompt)"
+  hardening_last_message="$(run_mktemp postmortem-hardening-last-message)"
   compile_postmortem_hardening_prompt \
     "$hardening_prompt_file" \
     "$context_path" \
@@ -3095,7 +3063,7 @@ EOF
     postmortem_set_private_file_mode "$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
-    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    rm -f "$hardening_prompt_file" "$hardening_last_message"
     return 7
   fi
 
@@ -3111,7 +3079,7 @@ EOF
     postmortem_set_private_file_mode "$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
-    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    rm -f "$hardening_prompt_file" "$hardening_last_message"
     return 7
   fi
 
@@ -3121,7 +3089,7 @@ EOF
     postmortem_set_private_file_mode "$report_path"
     write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
     emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
-    rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+    rm -f "$hardening_prompt_file" "$hardening_last_message"
     return 8
   fi
 
@@ -3129,7 +3097,7 @@ EOF
   postmortem_set_private_file_mode "$report_path"
   write_postmortem_bug_record "$bug_record_path" "$trigger" "$detail_text" "$child_exit" "$POSTMORTEM_SEQUENCE_STATUS" "$report_path" "$context_path" "$incident_log_path"
   emit_postmortem_summary "$report_path" "$trigger" "$POSTMORTEM_SEQUENCE_STATUS"
-  rm -f "$report_prompt_file" "$report_last_message" "$hardening_prompt_file" "$hardening_last_message"
+  rm -f "$hardening_prompt_file" "$hardening_last_message"
   return "$child_exit"
 }
 

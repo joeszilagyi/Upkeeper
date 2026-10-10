@@ -6120,7 +6120,7 @@ check_fallback_postmortem_guardrail_contract() {
     fail "operator guide missing fallback guardrail contract"
   grep -Fq "CODEX_POSTMORTEM_HARDENING_OPT_IN" docs/scripts/upkeeper.md ||
     fail "operator guide missing postmortem hardening opt-in"
-  grep -Fq "keeps hardening report-only unless CODEX_POSTMORTEM_HARDENING_OPT_IN=1" docs/scripts/upkeeper.md ||
+  grep -Fq "model-backed hardening remains disabled unless CODEX_POSTMORTEM_HARDENING_OPT_IN=1" docs/scripts/upkeeper.md ||
     fail "operator guide does not state hardening is opt-in"
   grep -Fq "CODEX_FALLBACK_ENABLED=0 CODEX_FALLBACK_SCREEN_ENABLED=0 CODEX_POSTMORTEM_ENABLED=0" docs/scripts/upkeeper.md ||
     fail "operator guide missing full recovery disablement command"
@@ -7668,7 +7668,7 @@ check_postmortem_sequence_marker_contract() {
   log "checking postmortem sequence marker contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-postmortem-sequence.XXXXXX)"
 
-  for case_name in report_missing_marker hardening_missing_marker report_and_hardening_success; do
+  for case_name in report_only_local hardening_missing_marker report_and_hardening_success; do
     case_dir="$temp_dir/$case_name"
     mkdir -p "$case_dir/tmp"
 
@@ -7686,7 +7686,7 @@ check_postmortem_sequence_marker_contract() {
         case_dir="$2"
         case_name="$3"
 
-        if [[ "$case_name" == "report_missing_marker" ]]; then
+        if [[ "$case_name" == "report_only_local" ]]; then
           export CODEX_POSTMORTEM_HARDENING_OPT_IN=0
         else
           export CODEX_POSTMORTEM_HARDENING_OPT_IN=1
@@ -7715,36 +7715,9 @@ check_postmortem_sequence_marker_contract() {
           local prompt_path="$5"
           local last_message_path="$6"
 
+          echo "$phase_label" >>"$case_dir/aux-calls.txt"
+
           case "$phase_label:$case_name" in
-            postmortem.report:report_missing_marker)
-              {
-                printf "# Upkeeper Postmortem\n"
-                printf "## Incident Summary\n"
-                printf "Report fixture without required marker.\n"
-              } >"$POSTMORTEM_REPORT_PATH"
-              printf "report fixture omitted required marker\n" >"$last_message_path"
-              return 0
-              ;;
-            postmortem.report:report_and_hardening_success)
-              {
-                printf "# Upkeeper Postmortem\n"
-                printf "## Incident Summary\n"
-                printf "Report fixture with complete markers.\n"
-                printf "## Action Plan\n"
-                printf "No outstanding action items.\n"
-              } >"$POSTMORTEM_REPORT_PATH"
-              printf "CODEX_POSTMORTEM_STATUS: REPORT_WRITTEN\n" >"$last_message_path"
-              return 0
-              ;;
-            postmortem.report:hardening_missing_marker)
-              {
-                printf "# Upkeeper Postmortem\n"
-                printf "## Incident Summary\n"
-                printf "Report fixture with required marker.\n"
-              } >"$POSTMORTEM_REPORT_PATH"
-              printf "CODEX_POSTMORTEM_STATUS: REPORT_WRITTEN\n" >"$last_message_path"
-              return 0
-              ;;
             postmortem.hardening:hardening_missing_marker)
               cp "$prompt_path" "$case_dir/hardening-prompt.txt"
               printf "hardening fixture omitted required marker\n" >"$last_message_path"
@@ -7773,16 +7746,16 @@ check_postmortem_sequence_marker_contract() {
     fi
 
     rc="$(tr -d '[:space:]' <"$case_dir/rc.txt")"
-    if [[ "$case_name" == "report_and_hardening_success" ]]; then
+    if [[ "$case_name" == "report_only_local" || "$case_name" == "report_and_hardening_success" ]]; then
       [[ "$rc" == "0" ]] || fail "$case_name exited $rc, expected 0"
     else
       [[ "$rc" == "8" ]] || fail "$case_name exited $rc, expected 8"
     fi
 
     case "$case_name" in
-      report_missing_marker)
-        expected_status="report_failed"
-        expected_log="postmortem.report failed exit_code=0 marker=missing expected_marker=REPORT_WRITTEN"
+      report_only_local)
+        expected_status="report_only_opt_in_required"
+        expected_log="postmortem.report.finish mode=local exit_code=0 marker=REPORT_WRITTEN"
         ;;
       hardening_missing_marker)
         expected_status="hardening_failed"
@@ -7790,7 +7763,7 @@ check_postmortem_sequence_marker_contract() {
         ;;
       report_and_hardening_success)
         expected_status="complete"
-        expected_log="postmortem.report.finish exit_code=0 marker=REPORT_WRITTEN"
+        expected_log="postmortem.report.finish mode=local exit_code=0 marker=REPORT_WRITTEN"
         ;;
       *)
         fail "unknown marker contract case: $case_name"
@@ -7799,18 +7772,31 @@ check_postmortem_sequence_marker_contract() {
 
     grep -Fxq "$expected_status" "$case_dir/status.txt" || fail "$case_name status was not $expected_status"
     grep -Fq "$expected_log" "$case_dir/Upkeeper.log" || fail "$case_name did not log expected marker failure"
-    if grep -Fq "Report fixture" "$case_dir/sequence.out"; then
-      fail "$case_name postmortem summary leaked raw report prose"
-    fi
     grep -Fq "report_sha256:" "$case_dir/sequence.out" || fail "$case_name postmortem summary did not emit report metadata"
     pm_root="$case_dir/postmortems/validation-$case_name"
+    report_path="$pm_root/postmortem.md"
+    for expected_heading in \
+      '# Upkeeper Postmortem' \
+      '## Incident Summary' \
+      '## Observed Signals' \
+      '## Root Cause Hypotheses' \
+      '## Action Plan' \
+      '## Hardening Targets' \
+      '## Relaunch Checklist'; do
+      grep -Fxq "$expected_heading" "$report_path" || fail "$case_name local report omitted $expected_heading"
+    done
+    grep -Fq 'deterministic incident classification' "$report_path" || fail "$case_name report did not use local incident classification"
+    if [[ -s "$case_dir/aux-calls.txt" ]] && grep -Fxq 'postmortem.report' "$case_dir/aux-calls.txt"; then
+      fail "$case_name invoked an auxiliary postmortem.report call"
+    fi
     [[ "$(stat -c %a "$pm_root")" == "700" ]] || fail "$case_name postmortem root permissions were not private"
     [[ "$(stat -c %a "$pm_root/incident-context.txt")" == "600" ]] || fail "$case_name incident context permissions were not private"
     [[ "$(stat -c %a "$pm_root/incident-log.txt")" == "600" ]] || fail "$case_name incident log permissions were not private"
     [[ "$(stat -c %a "$pm_root/bug-record.md")" == "600" ]] || fail "$case_name bug record permissions were not private"
     [[ "$(stat -c %a "$pm_root/primary-last-message.meta")" == "600" ]] || fail "$case_name primary last-message metadata permissions were not private"
-    if [[ "$case_name" != "report_missing_marker" ]]; then
+    if [[ "$case_name" != "report_only_local" ]]; then
       [[ -s "$case_dir/hardening-prompt.txt" ]] || fail "$case_name did not preserve the hardening prompt for validation"
+      grep -Fxq 'postmortem.hardening' "$case_dir/aux-calls.txt" || fail "$case_name did not invoke the opted-in hardening phase"
       grep -Fq "Deterministic post-mortem report summary:" "$case_dir/hardening-prompt.txt" || fail "$case_name hardening prompt did not include deterministic report summary"
       grep -Fq "report_present=1" "$case_dir/hardening-prompt.txt" || fail "$case_name hardening prompt did not include report presence"
       grep -Fq "report_sha256=" "$case_dir/hardening-prompt.txt" || fail "$case_name hardening prompt did not include report digest"
@@ -7824,6 +7810,9 @@ check_postmortem_sequence_marker_contract() {
       if grep -Fq "read the existing post-mortem report at" "$case_dir/hardening-prompt.txt"; then
         fail "$case_name hardening prompt still instructs reading the untrusted report"
       fi
+    else
+      [[ ! -s "$case_dir/aux-calls.txt" ]] || fail "$case_name invoked auxiliary Codex despite hardening being disabled"
+      grep -Fq 'No auxiliary hardening Codex pass was launched' "$report_path" || fail "$case_name report did not record the hardening opt-in boundary"
     fi
   done
 

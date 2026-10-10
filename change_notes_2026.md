@@ -1,5 +1,14 @@
 # 2026 Change Notes
 
+## v1.2.48 changes: Preserve explicit primary reasoning effort through task profiling
+
+- Routine task profiles continue to lower the repository's `xhigh`
+  compatibility baseline before backend contact, but an operator-provided
+  `CODEX_REASONING_EFFORT` from the environment, a named trusted config, or a
+  private local env file now remains authoritative. The task-profile log names
+  whether the effort came from the profile, an operator override, a model
+  override, or disabled automatic sizing.
+
 2026-10-10: validation phase attestation reuse:
 	1. Per-bug, batch, merge-steward, and CI phase runners can now retain private
 	   `upkeeper.validation-attestation.v1` proof of successful selected checks,

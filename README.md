@@ -564,7 +564,10 @@ selected path and recovery context. The profile is logged as `task.profile`,
 can lower routine docs/test/tool/config and other routine mechanical work from
 the default maximum effort, records a validation grade, prompt scope, and
 prompt-pass scope, and can prune
-config-sourced review modules for lean low-risk runs. Prompt compilation logs
+config-sourced review modules for lean low-risk runs. An exported
+`CODEX_REASONING_EFFORT`, a named config's explicit effort, or a local env
+file's explicit effort remains an operator override; the built-in `xhigh`
+compatibility baseline alone is not treated as an override. Prompt compilation logs
 per-section payload metrics so doctrine, module, target, issue, and control
 blocks have visible byte/token estimates before backend contact. Explicit model
 overrides, explicit review-module CLI flags, and high-risk

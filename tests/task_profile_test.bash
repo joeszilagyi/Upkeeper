@@ -10,7 +10,25 @@ source lib/upkeeper/postmortem_context.bash
 source lib/upkeeper/fallback_orchestration.bash
 
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-task-profile-test.XXXXXX")"
-trap 'rm -rf -- "$TEST_TMP_ROOT"' EXIT
+TEST_CONFIG_PARENT="${XDG_STATE_HOME:-$HOME/.local/state}"
+TEST_CONFIG_PARENT_CREATED="0"
+TEST_CONFIG_ROOT=""
+TEST_CONFIG_FILE=""
+
+cleanup() {
+  rm -f -- "$LOG_FILE"
+  rmdir -- "$TEST_TMP_ROOT" 2>/dev/null || true
+  if [[ -n "$TEST_CONFIG_FILE" ]]; then
+    rm -f -- "$TEST_CONFIG_FILE"
+  fi
+  if [[ -n "$TEST_CONFIG_ROOT" ]]; then
+    rmdir -- "$TEST_CONFIG_ROOT" 2>/dev/null || true
+  fi
+  if [[ "$TEST_CONFIG_PARENT_CREATED" == "1" ]]; then
+    rmdir -- "$TEST_CONFIG_PARENT" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
 
 LOG_FILE="$TEST_TMP_ROOT/upkeeper.log"
 
@@ -38,6 +56,7 @@ reset_profile_state() {
   UPKEEPER_TASK_PROFILE_PROMPT_SCOPE=""
   UPKEEPER_TASK_PROFILE_PROMPT_PASS=""
   UPKEEPER_TASK_PROFILE_PROMPT_PASS_SCOPE=""
+  UPKEEPER_PRIMARY_REASONING_EFFORT_EXPLICIT="0"
   CODEX_REVIEW_MODULES_FROM_CONFIG="0"
   CODEX_REVIEW_MODULES_CLI_OVERRIDE="0"
   CODEX_REVIEW_MODULES=()
@@ -75,6 +94,13 @@ reset_profile_state
 CODEX_MODEL_OVERRIDE_APPLIED="1"
 upkeeper_apply_task_profile "tests/task_profile_test.bash"
 assert_eq "xhigh" "$CODEX_REASONING_EFFORT" "model override should preserve explicit effort"
+
+reset_profile_state
+UPKEEPER_PRIMARY_REASONING_EFFORT_EXPLICIT="1"
+CODEX_REASONING_EFFORT="high"
+upkeeper_apply_task_profile "docs/scripts/upkeeper.md"
+assert_eq "high" "$CODEX_REASONING_EFFORT" "operator-selected effort should survive automatic profile"
+grep -Fq "effort_source=operator_override" "$LOG_FILE" || fail "operator-selected effort was not logged"
 
 reset_profile_state
 CODEX_REVIEW_MODULES=(p24)
@@ -124,5 +150,36 @@ CODEX_PROMPT_PASS="all"
 CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL="1"
 fallback_pass="$(upkeeper_fallback_prompt_pass_for_child)"
 assert_eq "all" "$fallback_pass" "fallback explicit all inheritance"
+
+if [[ ! -d "$TEST_CONFIG_PARENT" ]]; then
+  mkdir -p -- "$TEST_CONFIG_PARENT"
+  chmod 700 "$TEST_CONFIG_PARENT"
+  TEST_CONFIG_PARENT_CREATED="1"
+fi
+TEST_CONFIG_ROOT="$(mktemp -d "$TEST_CONFIG_PARENT/upkeeper-task-profile-config.XXXXXX")"
+chmod 700 "$TEST_CONFIG_ROOT"
+TEST_CONFIG_FILE="$TEST_CONFIG_ROOT/profile.conf"
+printf '%s\n' 'CODEX_REASONING_EFFORT="high"' >"$TEST_CONFIG_FILE"
+chmod 600 "$TEST_CONFIG_FILE"
+configured_output="$({
+  env -u CODEX_REASONING_EFFORT \
+    -u UPKEEPER_PRIMARY_REASONING_EFFORT_EXPLICIT \
+    UPKEEPER_CONFIG_FILE="$TEST_CONFIG_FILE" \
+    UPKEEPER_LOCAL_ENV_DISABLE=1 \
+    CODEX_LOG_FILE="$TEST_CONFIG_ROOT/Upkeeper.log" \
+    bash -c '
+      source "$1/Upkeeper"
+      CODEX_ATTEMPT_ROLE=primary
+      CODEX_FALLBACK_TRIGGER=""
+      UPKEEPER_TASK_PROFILE_GRADE=""
+      UPKEEPER_TASK_PROFILE_VALIDATION_GRADE=""
+      UPKEEPER_TASK_PROFILE_PROMPT_SCOPE=""
+      UPKEEPER_TASK_PROFILE_PROMPT_PASS=""
+      UPKEEPER_TASK_PROFILE_PROMPT_PASS_SCOPE=""
+      upkeeper_apply_task_profile "docs/scripts/upkeeper.md"
+      printf "%s\\t%s\\n" "$CODEX_REASONING_EFFORT" "$UPKEEPER_PRIMARY_REASONING_EFFORT_EXPLICIT"
+    ' bash "$ROOT_DIR"
+} 2>&1)" || fail "entrypoint configuration fixture failed: $configured_output"
+assert_eq $'high\t1' "$configured_output" "named config effort should be preserved through entrypoint profile"
 
 printf 'task_profile_test: ok\n'

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.47
+## Version: v1.2.48
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -44,6 +44,16 @@ UPKEEPER_LOCAL_ENV_DISABLE="${UPKEEPER_LOCAL_ENV_DISABLE:-0}"
 UPKEEPER_LOCAL_ENV_LOADED="0"
 UPKEEPER_LOCAL_ENV_SOURCE="none"
 UPKEEPER_LOCAL_ENV_SOURCE_HASH="none"
+# The default config establishes a compatibility baseline of xhigh, but it is
+# not an operator-selected effort.  Preserve a value that was exported before
+# the default is loaded, and values deliberately set in a named config or
+# local env file, so automatic task profiles do not silently discard an
+# explicit one-cycle or scheduled-profile choice.
+if [[ -v CODEX_REASONING_EFFORT ]]; then
+  UPKEEPER_PRIMARY_REASONING_EFFORT_EXPLICIT="1"
+else
+  UPKEEPER_PRIMARY_REASONING_EFFORT_EXPLICIT="0"
+fi
 # Preserve whether an operator supplied these values before the built-in config
 # establishes compatibility defaults. Recovery policy uses this provenance to
 # keep an exported effort setting as an intentional one-cycle override.
@@ -178,6 +188,27 @@ upkeeper_config_parse_assignment_value() {
   upkeeper_config_expand_safe_value "$raw_value" "$context"
 }
 
+upkeeper_config_records_explicit_primary_effort() {
+  local file_path="$1"
+  local file_label="$2"
+  local variable_name="$3"
+
+  [[ "$variable_name" == "CODEX_REASONING_EFFORT" ]] || return 1
+  # The repository's built-in `:="..."` default is only a baseline. A named
+  # trusted profile and the private local env file are operator intent.
+  [[ "$file_label" == "local env file" || "$file_path" != "$UPKEEPER_CONFIG_DEFAULT_FILE" ]]
+}
+
+upkeeper_config_record_assignment_provenance() {
+  local file_path="$1"
+  local file_label="$2"
+  local variable_name="$3"
+
+  if upkeeper_config_records_explicit_primary_effort "$file_path" "$file_label" "$variable_name"; then
+    UPKEEPER_PRIMARY_REASONING_EFFORT_EXPLICIT="1"
+  fi
+}
+
 upkeeper_load_assignment_file() {
   local file_path="$1"
   local file_label="$2"
@@ -202,6 +233,7 @@ upkeeper_load_assignment_file() {
       if ! [[ -v "$variable_name" ]] || [[ -z "${!variable_name-}" ]]; then
         parsed_value="$(upkeeper_config_parse_assignment_value "$raw_value" "$value_context")"
         printf -v "$variable_name" '%s' "$parsed_value"
+        upkeeper_config_record_assignment_provenance "$file_path" "$file_label" "$variable_name"
       fi
       continue
     fi
@@ -220,6 +252,7 @@ upkeeper_load_assignment_file() {
 
     parsed_value="$(upkeeper_config_parse_assignment_value "$raw_value" "$value_context")"
     printf -v "$variable_name" '%s' "$parsed_value"
+    upkeeper_config_record_assignment_provenance "$file_path" "$file_label" "$variable_name"
     [[ "$export_requested" == "1" ]] && export "$variable_name"
   done < "$file_path"
   return 0
@@ -387,7 +420,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.47"
+UPKEEPER_VERSION="v1.2.48"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"

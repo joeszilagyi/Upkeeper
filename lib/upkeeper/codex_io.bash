@@ -696,7 +696,7 @@ upkeeper_task_profile_prompt_pass_scope_for_grade() {
 
 upkeeper_apply_task_profile() {
   local selected_path="${1:-}"
-  local grade source validation prompt_scope prompt_pass prompt_pass_scope effort_before effort_after modules_before modules_after modules_action evidence
+  local grade source validation prompt_scope prompt_pass prompt_pass_scope effort_before effort_after effort_source modules_before modules_after modules_action evidence
   local log_message
 
   upkeeper_task_profile_truthy "${UPKEEPER_TASK_PROFILE_ENABLED:-1}" || return 0
@@ -716,6 +716,7 @@ upkeeper_apply_task_profile() {
   prompt_pass_scope="${UPKEEPER_TASK_PROFILE_PROMPT_PASS_SCOPE:-$(upkeeper_task_profile_prompt_pass_scope_for_grade "$grade" "$prompt_pass")}"
   effort_before="${CODEX_REASONING_EFFORT:-unknown}"
   effort_after="$effort_before"
+  effort_source="preserved"
   modules_before="$(review_modules_csv)"
   modules_action="kept"
 
@@ -724,9 +725,18 @@ upkeeper_apply_task_profile() {
   UPKEEPER_TASK_PROFILE_PROMPT_PASS="$prompt_pass"
   UPKEEPER_TASK_PROFILE_PROMPT_PASS_SCOPE="$prompt_pass_scope"
 
-  if upkeeper_task_profile_truthy "${UPKEEPER_TASK_PROFILE_AUTO_EFFORT:-1}" && [[ "${CODEX_MODEL_OVERRIDE_APPLIED:-0}" != "1" ]]; then
+  if upkeeper_task_profile_truthy "${UPKEEPER_TASK_PROFILE_AUTO_EFFORT:-1}" &&
+    [[ "${CODEX_MODEL_OVERRIDE_APPLIED:-0}" != "1" ]] &&
+    [[ "${UPKEEPER_PRIMARY_REASONING_EFFORT_EXPLICIT:-0}" != "1" ]]; then
     effort_after="$(upkeeper_task_profile_effort_for_grade "$grade")"
     CODEX_REASONING_EFFORT="$effort_after"
+    effort_source="task_profile"
+  elif [[ "${CODEX_MODEL_OVERRIDE_APPLIED:-0}" == "1" ]]; then
+    effort_source="model_override"
+  elif [[ "${UPKEEPER_PRIMARY_REASONING_EFFORT_EXPLICIT:-0}" == "1" ]]; then
+    effort_source="operator_override"
+  elif ! upkeeper_task_profile_truthy "${UPKEEPER_TASK_PROFILE_AUTO_EFFORT:-1}"; then
+    effort_source="auto_effort_disabled"
   fi
 
   if upkeeper_task_profile_truthy "${UPKEEPER_TASK_PROFILE_AUTO_MODULES:-1}" &&
@@ -742,7 +752,7 @@ upkeeper_apply_task_profile() {
   evidence="selected_path=$(shell_quote "$(upkeeper_task_profile_normalized_path "$selected_path")")"
   log_message="task.profile grade=$grade source=$source validation=$validation"
   log_message+=" prompt_scope=$prompt_scope prompt_pass=$prompt_pass prompt_pass_scope=$prompt_pass_scope"
-  log_message+=" effort_before=$effort_before effort_after=$CODEX_REASONING_EFFORT"
+  log_message+=" effort_before=$effort_before effort_after=$CODEX_REASONING_EFFORT effort_source=$effort_source"
   log_message+=" modules_before=$(shell_quote "$modules_before")"
   log_message+=" modules_after=$(shell_quote "$modules_after")"
   log_message+=" modules_action=$modules_action $evidence"

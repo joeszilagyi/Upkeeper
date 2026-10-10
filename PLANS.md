@@ -99,6 +99,31 @@ Validation:
 - run required syntax, the full deterministic suite, whitespace check, and
   quick validator; inspect operator docs/help and synchronize version notes
 
+## Issue #725: Batch Selected-Target Backup Metadata
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- remove repeated Python interpreter launches from selected-target pre-contact
+  backup metadata collection without weakening backup privacy or durability
+
+Verified defect:
+- the selected-target path separately launches Python for file SHA-256,
+  content/path/repository HMACs, repository realpath, derivation SHA, and file
+  metadata, despite all values being one snapshot of the target and cycle inputs
+
+Plan:
+- establish one structured metadata helper for selected-target backup creation
+- preserve hash/HMAC namespaces, redacted output, and metadata fields; leave
+  age encryption and restore-validation boundaries unchanged
+- measure actual Python-launch count in a deterministic selected-target fixture
+
+Validation:
+- retain existing plain/age/restore/redaction/mode/mtime coverage and add real
+  selected-target launch-count and helper-failure regression coverage
+- run required syntax, full deterministic suite, whitespace, and quick
+  validation before PR
+
 ## Issue #730: Batch Lattice Candidate Git Metadata
 
 Status: in progress

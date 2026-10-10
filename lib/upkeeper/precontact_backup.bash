@@ -146,6 +146,87 @@ print(
 PY
 }
 
+# Collect the selected target's related immutable inputs in one interpreter.
+# NUL-delimited fields preserve repository paths containing whitespace or tabs;
+# Bash cannot store NUL itself, but mapfile can safely split the stream before
+# assigning the individual values below.
+precontact_backup_collect_target_metadata() {
+  local target_abs="$1"
+  local rel_path="$2"
+  local repo_root="$3"
+  local created_utc="$4"
+  local cycle_id="$5"
+  local cycle_run_hash="$6"
+  local key
+  local -a fields=()
+
+  # Existing selected-target calls derive HMACs through command substitutions;
+  # preserve that per-attempt scope so a caller changing its redaction key does
+  # not inherit a prior attempt's cache.
+  key="$(upkeeper_precontact_backup_hmac_key_material)"
+  mapfile -d '' -t fields < <(
+    python3 - "$target_abs" "$rel_path" "$repo_root" "$created_utc" "$cycle_id" "$cycle_run_hash" "$key" <<'PY'
+from datetime import datetime, timezone
+import hashlib
+import hmac
+from pathlib import Path
+import stat
+import sys
+
+target_raw, rel_path, repo_root_raw, created_utc, cycle_id, cycle_run_hash, key = sys.argv[1:]
+target = Path(target_raw)
+repo_root = Path(repo_root_raw).expanduser().resolve(strict=False)
+
+digest = hashlib.sha256()
+with target.open("rb") as handle:
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+content_sha = digest.hexdigest()
+
+def hmac_text(namespace, value):
+    material = f"precontact_backup.{namespace}\0{value}".encode("utf-8", "surrogateescape")
+    return hmac.new(key.encode("utf-8", "surrogateescape"), material, hashlib.sha256).hexdigest()
+
+content_hmac = f"content-hmac-sha256:{hmac_text('content', content_sha)}"
+path_key = hmac_text("path", rel_path)
+path_hmac = f"path-hmac-sha256:{path_key}"
+repo_real = str(repo_root)
+repo_hmac = hmac_text("repo", repo_real)
+derivation_sha = hashlib.sha256(
+    f"{content_hmac}|{path_hmac}|{cycle_id}|{cycle_run_hash}|{created_utc}".encode("utf-8", "surrogateescape")
+).hexdigest()
+st = target.stat()
+mtime = datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat().replace("+00:00", "Z")
+fields = (
+    content_sha,
+    content_hmac,
+    path_key,
+    repo_real,
+    repo_hmac,
+    derivation_sha,
+    str(st.st_size),
+    format(stat.S_IMODE(st.st_mode), "o"),
+    mtime,
+    str(st.st_mtime_ns),
+)
+for value in fields:
+    sys.stdout.buffer.write(value.encode("utf-8", "surrogateescape") + b"\0")
+PY
+  )
+
+  [[ "${#fields[@]}" -eq 10 ]] || return 1
+  PRECONTACT_BACKUP_METADATA_CONTENT_SHA="${fields[0]}"
+  PRECONTACT_BACKUP_METADATA_CONTENT_HMAC="${fields[1]}"
+  PRECONTACT_BACKUP_METADATA_PATH_KEY="${fields[2]}"
+  PRECONTACT_BACKUP_METADATA_REPO_REAL="${fields[3]}"
+  PRECONTACT_BACKUP_METADATA_REPO_HMAC="${fields[4]}"
+  PRECONTACT_BACKUP_METADATA_DERIVATION_SHA="${fields[5]}"
+  PRECONTACT_BACKUP_METADATA_SIZE_BYTES="${fields[6]}"
+  PRECONTACT_BACKUP_METADATA_MODE="${fields[7]}"
+  PRECONTACT_BACKUP_METADATA_MTIME="${fields[8]}"
+  PRECONTACT_BACKUP_METADATA_MTIME_NS="${fields[9]}"
+}
+
 precontact_backup_json_field() {
   local json_path="$1"
   local field="$2"
@@ -1119,23 +1200,24 @@ precontact_backup_selected_target_or_exit() {
   fi
 
   target_abs="$PRECONTACT_BACKUP_VALIDATED_ABS_PATH"
-  if ! content_sha="$(precontact_backup_sha256_file "$target_abs")"; then
-    precontact_backup_fail_or_continue "$rel_path" "target_hash_failed" 0
+  created_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  compact_utc="$(date -u '+%Y%m%dT%H%M%SZ')"
+  if ! precontact_backup_collect_target_metadata "$target_abs" "$rel_path" "$ROOT_DIR" "$created_utc" "$CYCLE_ID" "$CYCLE_RUN_HASH"; then
+    precontact_backup_fail_or_continue "$rel_path" "target_metadata_failed" 0
     return 0
   fi
   if [[ "$resolved_mode" == "plain" ]] && ! precontact_backup_validate_plaintext_target_content "$target_abs"; then
     precontact_backup_fail_or_continue "$rel_path" "${PRECONTACT_BACKUP_LAST_REASON:-plaintext_content_rejected}" 0
     return 0
   fi
-  content_hmac="$(precontact_backup_content_hmac "$content_sha")"
-  path_key="$(precontact_backup_hmac_text path "$rel_path")"
+  content_sha="$PRECONTACT_BACKUP_METADATA_CONTENT_SHA"
+  content_hmac="$PRECONTACT_BACKUP_METADATA_CONTENT_HMAC"
+  path_key="$PRECONTACT_BACKUP_METADATA_PATH_KEY"
   path_hmac="path-hmac-sha256:$path_key"
-  repo_real="$(precontact_backup_realpath "$ROOT_DIR")"
-  repo_hmac="$(precontact_backup_hmac_text repo "$repo_real")"
+  repo_real="$PRECONTACT_BACKUP_METADATA_REPO_REAL"
+  repo_hmac="$PRECONTACT_BACKUP_METADATA_REPO_HMAC"
   repo_key="repo-hmac-$repo_hmac"
-  created_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  compact_utc="$(date -u '+%Y%m%dT%H%M%SZ')"
-  derivation_sha="$(precontact_backup_sha256_text "$content_hmac|$path_hmac|$CYCLE_ID|$CYCLE_RUN_HASH|$created_utc")"
+  derivation_sha="$PRECONTACT_BACKUP_METADATA_DERIVATION_SHA"
   backup_id="pb-${compact_utc}-${derivation_sha:0:32}"
   path_dir="$PRECONTACT_BACKUP_RESOLVED_ROOT/$repo_key/path-hmac-$path_key"
 
@@ -1145,8 +1227,10 @@ precontact_backup_selected_target_or_exit() {
   fi
   chmod 700 "$PRECONTACT_BACKUP_RESOLVED_ROOT" "$PRECONTACT_BACKUP_RESOLVED_ROOT/$repo_key" "$path_dir" 2>/dev/null || true
 
-  file_metadata="$(precontact_backup_file_metadata "$target_abs")"
-  IFS=$'\t' read -r size_bytes mode_text mtime_text mtime_ns_text <<<"$file_metadata"
+  size_bytes="$PRECONTACT_BACKUP_METADATA_SIZE_BYTES"
+  mode_text="$PRECONTACT_BACKUP_METADATA_MODE"
+  mtime_text="$PRECONTACT_BACKUP_METADATA_MTIME"
+  mtime_ns_text="$PRECONTACT_BACKUP_METADATA_MTIME_NS"
   selected_git_status="$(precontact_backup_selection_field "$selection_file" "git_status")"
   selected_worktree_hash="$(precontact_backup_selection_field "$selection_file" "worktree_hash")"
   selection_basis="$(precontact_backup_selection_field "$selection_file" "selection_basis")"

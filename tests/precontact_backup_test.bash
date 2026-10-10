@@ -1082,6 +1082,61 @@ test_machine_preflight_skips_read_only_issue_stages() {
   precontact_backup_machine_preflight_or_exit
 }
 
+test_selected_target_metadata_batches_python_launches() {
+  local repo="$TEST_TMP_ROOT/batched-metadata repo"
+  local selection_file launch_log launch_count
+
+  make_repo "$repo"
+  reset_env "$repo" batched-metadata
+  selection_file="$TEST_TMP_ROOT/batched-metadata-selection.env"
+  launch_log="$TEST_TMP_ROOT/batched-metadata-python-launches.log"
+  write_selection_file "dir/space file.sh" "$selection_file"
+  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
+
+  python3() {
+    printf '%s\n' "$*" >>"$launch_log"
+    command python3 "$@"
+  }
+  precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
+  unset -f python3
+
+  launch_count="$(wc -l <"$launch_log" | tr -d ' ')"
+  # Target validation, the allowed plain-content scan, sidecar construction,
+  # copy verification, publication, and pruning remain independent boundaries.
+  # The former six-call metadata snapshot is one call, reducing this full plain
+  # path from sixteen launches to a fixed maximum of eleven.
+  [[ "$launch_count" -le 11 ]] || {
+    sed 's/^/python-launch: /' "$launch_log" >&2
+    fail "selected-target backup launched $launch_count Python helpers, expected at most 11"
+  }
+}
+
+test_selected_target_metadata_helper_fails_closed() {
+  local repo="$TEST_TMP_ROOT/batched-metadata-failure repo"
+  local selection_file rc
+
+  make_repo "$repo"
+  reset_env "$repo" batched-metadata-failure
+  selection_file="$TEST_TMP_ROOT/batched-metadata-failure-selection.env"
+  write_selection_file "dir/space file.sh" "$selection_file"
+  UPKEEPER_PRECONTACT_BACKUP_MODE=plain
+  UPKEEPER_PRECONTACT_BACKUP_REQUIRE_ENCRYPTED=0
+  UPKEEPER_PRECONTACT_BACKUP_ALLOW_UNSAFE_PLAINTEXT=1
+  set +e
+  (
+    precontact_backup_collect_target_metadata() { return 1; }
+    precontact_backup_selected_target_or_exit "dir/space file.sh" "$selection_file"
+  )
+  rc=$?
+  set -e
+
+  [[ "$rc" -eq 7 ]] || fail "metadata helper failure exited $rc, expected 7"
+  grep -Fq 'reason=target_metadata_failed' "$FINISH_CAPTURE" ||
+    fail "metadata helper failure did not retain target_metadata_failed"
+}
+
 test_cleanup_removes_read_only_fixture() {
   local fixture_dir fixture_file
 
@@ -1105,6 +1160,8 @@ case "${UPKEEPER_PRECONTACT_TEST_GROUP:-core}" in
     test_age_create_rejects_stale_payload_when_target_mutates_after_metadata
     test_machine_preflight_blocks_before_issue_selection
     test_machine_preflight_skips_read_only_issue_stages
+    test_selected_target_metadata_batches_python_launches
+    test_selected_target_metadata_helper_fails_closed
     test_required_encrypted_mode_fails_closed
     test_default_auto_mode_fails_closed_without_age
     test_plain_mode_requires_explicit_unsafe_override

@@ -731,7 +731,7 @@ Environment overrides:
     path restore is worth exposing the repo-relative path in plaintext metadata.
   CODEX_FILE_MANIFEST_MAX_AGE_SECONDS Default: 300
   CODEX_MODEL                   Default: gpt-5.3-codex-spark
-  CODEX_REASONING_EFFORT        Default: xhigh
+  CODEX_REASONING_EFFORT        Baseline default: xhigh; task profiles lower it for routine work unless an exported, named-config, or local-env value explicitly overrides it
   CODEX_MODE                    Default: --sandbox workspace-write
   CODEX_EXEC_TIMEOUT_SECONDS    Default: 7200
   CODEX_EXEC_TIMEOUT_KILL_AFTER_SECONDS Default: 10

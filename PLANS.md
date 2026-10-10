@@ -3,6 +3,55 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #684: Preserve Explicit Primary Reasoning-Effort Overrides
+
+Status: complete; pending PR
+
+Goal:
+- retain the existing deterministic task profile that lowers the built-in
+  `xhigh` baseline for routine work, while ensuring a deliberate primary
+  effort from an environment, named config, or local env file is never silently
+  replaced before backend contact
+
+Verified defect:
+- `upkeeper_apply_task_profile` correctly runs before prompt compilation and
+  backend contact, but it currently replaces any direct `CODEX_REASONING_EFFORT`
+  value unless a `--model-override` was used; the config loader does not retain
+  provenance that distinguishes a named profile from `Upkeeper.conf`'s baseline
+
+Plan:
+- carry explicit-effort provenance from startup and trusted config loading into
+  the shared task-profile owner, treating only the built-in default as
+  profile-adjustable
+- log the effort decision source and cover both the direct profile decision and
+  an actual sourced-entrypoint named-config fixture without backend work
+- update generated help, public compatibility guidance, and current change
+  notes; retain automatic low/medium/high/xhigh classification for values that
+  were only defaults
+
+Validation:
+- run the focused profile regression and public-doc checks; then required shell
+  syntax, full deterministic suite, whitespace check, and quick validator
+
+Completed implementation:
+- recorded explicit primary-effort provenance before the default config loads
+  and when trusted named/local configuration assigns `CODEX_REASONING_EFFORT`;
+  the repository default remains a compatibility baseline, not an implicit
+  operator override
+- made the shared profile owner preserve that provenance and log
+  `effort_source=task_profile|operator_override|model_override|auto_effort_disabled`
+  alongside the before/after effort
+- added a sourced-entrypoint named-config fixture under a private state-root
+  temporary directory, proving the real trusted config loader and profile
+  retain a deliberate `high` setting for an otherwise docs-only target
+
+Validation evidence:
+- required shell syntax, focused task-profile regression, public-doc checks,
+  `git diff --check`, the complete 73-test deterministic suite, and
+  `tools/validate_upkeeper.sh --quick` passed with no backend model execution
+- the quick validator's slowest existing check was the autoshelve contract at
+  about 71 seconds; no timeout or validation policy was changed
+
 ## Issue #715: Expand Validation Artifact Reuse Beyond Unit Tests
 
 Status: complete; merged in PR #894

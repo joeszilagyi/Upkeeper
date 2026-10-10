@@ -291,6 +291,38 @@ Validation:
 - required syntax, full suite, diff, docs, and quick-validator commands before
   PR
 
+## Issue #724: Remove Remaining Hot-Path Logging Subshells
+
+Status: implementation and local validation complete; ready for focused PR
+
+Verified current state:
+- issue #706 already replaced routine `date` timestamp generation in
+  `runtime_foundation.bash` with Bash `printf '%(...)T'` and preserves a tested
+  compatibility fallback, so the timestamp portion of this report is stale
+- `log_kv()` still nests `log_kv_value()` in command substitution, while
+  structured call sites commonly compose fields through command substitution
+
+Goal:
+- introduce assignment-style, builtin quoting/key-value helpers and migrate the
+  demonstrably hot structured-log construction path without changing the log
+  schema or weakening control-character protection
+
+Constraints:
+- retain exact `%q` semantics, invalid-key normalization, timestamp formats,
+  compatibility fallback, and existing secure log-write behavior
+- measure command/subshell avoidance with a deterministic test or benchmark;
+  do not make speculative bulk edits across hundreds of unrelated log sites
+
+Likely files:
+- `lib/upkeeper/runtime_foundation.bash`
+- focused runtime/data-protection tests, validation contracts, docs, notes
+
+Validation:
+- deterministic tests for empty/control-character/special values, invalid keys,
+  timestamp compatibility, schema identity, and assignment helper behavior
+- required syntax, full suite, diff, docs, and quick-validator commands before
+  PR
+
 ## Issue #730: Batch Lattice Candidate Git Metadata
 
 Status: in progress

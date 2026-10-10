@@ -1,5 +1,13 @@
 # 2026 Change Notes
 
+2026-10-09: responsive PR-check polling:
+	1. Backlog required-check polling now defaults to 15 seconds, while retaining
+	   the explicit `BACKLOG_PR_CHECK_INTERVAL_SECONDS` operator override for
+	   constrained GitHub environments.
+	2. Pending and registration logs name the state, elapsed time, next polling
+	   delay, and reason so wait behavior is observable without weakening the
+	   bounded timeout or required-check authority.
+
 2026-10-09: bounded PR-check registration:
 	1. A newly published backlog PR now has a 90-second default check-registration
 	   window instead of an unconditional five-minute empty-check grace.

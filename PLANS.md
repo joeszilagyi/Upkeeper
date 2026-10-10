@@ -211,7 +211,7 @@ Validation:
 
 ## Issue #709: Tighten PR Check Registration Grace
 
-Status: implementation and local validation complete; ready for focused PR
+Status: complete; merged in PR #886
 
 Goal:
 - reduce the unconditional five-minute no-check registration wait without
@@ -236,6 +236,31 @@ Validation:
   behavior unaffected by registration handling
 - update the operator guide for the changed default and run required full
   validation before PR
+
+## Issue #710: Tighten PR Check Polling Cadence
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- reduce avoidable post-green idle time in the required PR-check gate without
+  creating an unbounded GitHub API polling loop or weakening the CI authority
+
+Verified defect:
+- normal pending-check polling defaults to 60 seconds even after #709 narrowed
+  empty registration, so a check that completes just after a poll can still
+  add nearly a minute to a trivial repair
+
+Plan:
+- choose a shorter documented default with the existing explicit environment
+  override retained; preserve the registration-window clipping introduced by
+  #709 and all timeout/custody behavior
+- make pending logs and fake-clock tests prove the new cadence and maximum
+  detection delay instead of merely asserting a config literal
+
+Validation:
+- update deterministic pending/pass and empty-registration tests for the new
+  default; retain explicit long-interval fixture coverage as an override case
+- update the operator guide and run required full validation before PR
 
 ## Issue #730: Batch Lattice Candidate Git Metadata
 

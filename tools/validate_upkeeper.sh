@@ -1738,7 +1738,6 @@ PY
     BACKLOG_TEST_FAKE_SLEEP=1 \
     BACKLOG_TEST_SLEEP_LOG="$temp_dir/sleeps.log" \
     BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE=pending,pending,pass \
-    BACKLOG_PR_CHECK_INTERVAL_SECONDS=60 \
     bash -lc '
       set -euo pipefail
       cd "$1"
@@ -1749,17 +1748,17 @@ PY
     cat "$temp_dir/pr.err" >&2
     fail "backlog launcher PR check hibernation fake-clock check failed"
   fi
-  [[ "$(cat "$temp_dir/sleeps.log")" == $'60\n60' ]] ||
-    fail "backlog launcher PR check hibernation did not sleep between pending polls"
-  grep -Fq "checks pending; state=checks_pending holding owner lease" "$temp_dir/pr.err" ||
-    fail "backlog launcher PR check hibernation did not explain local owner hold"
+  [[ "$(cat "$temp_dir/sleeps.log")" == $'15\n15' ]] ||
+    fail "backlog launcher PR check polling did not use the responsive default cadence"
+  grep -Fq "checks pending; state=checks_pending elapsed=0s next_poll_seconds=15 reason=ci_pending holding owner lease" "$temp_dir/pr.err" ||
+    fail "backlog launcher PR check polling did not identify state, elapsed time, cadence, and reason"
   grep -Fq 'progress: checks total=1 pass=0 pending=1 fail=0 other=0; active="fake PR check"' "$temp_dir/pr.err" ||
     fail "backlog launcher PR check hibernation did not emit local progress details"
   grep -Fq "owner heartbeat: state=waiting_on_pr_checks" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check hibernation did not refresh owner heartbeat"
   grep -Fq "detail=plane=github waiting_for=pr_checks" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check hibernation did not label the GitHub wait plane"
-  grep -Fq "wait_elapsed_seconds=120" "$temp_dir/pr.err" ||
+  grep -Fq "wait_elapsed_seconds=30" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check hibernation did not report elapsed wait time"
 
   temp_dir="$VALIDATION_TMP_ROOT/backlog-pr-check-empty-settling"
@@ -1787,6 +1786,8 @@ PY
     fail "backlog launcher PR check empty-settling did not sleep between settling and pending polls"
   grep -Fq "state=checks_absent state=checks_registering" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check empty state was not reported as registering"
+  grep -Fq "elapsed=0s next_poll_seconds=60 grace=300s reason=checks_registering" "$temp_dir/pr.err" ||
+    fail "backlog launcher PR check registration did not identify elapsed time, cadence, and reason"
   grep -Fq "status=no_checks_reported_yet" "$temp_dir/pr.err" ||
     fail "backlog launcher PR check empty state did not include no-checks progress detail"
   ! grep -Fq "checks_failed" "$temp_dir/pr.err" ||
@@ -1801,7 +1802,6 @@ PY
     BACKLOG_TEST_FAKE_SLEEP=1 \
     BACKLOG_TEST_SLEEP_LOG="$temp_dir/sleeps.log" \
     BACKLOG_TEST_PR_CHECK_STATUS_SEQUENCE=no_checks \
-    BACKLOG_PR_CHECK_INTERVAL_SECONDS=60 \
     bash -lc '
       set -euo pipefail
       cd "$1"
@@ -1812,7 +1812,7 @@ PY
     cat "$temp_dir/pr.err" >&2
     fail "backlog launcher default empty-check registration window did not fail closed"
   fi
-  [[ "$(cat "$temp_dir/sleeps.log")" == $'60\n30' ]] ||
+  [[ "$(cat "$temp_dir/sleeps.log")" == $'15\n15\n15\n15\n15\n15' ]] ||
     fail "backlog launcher default empty-check window did not cap the final sleep at 90s"
   grep -Fq "state=checks_registering" "$temp_dir/pr.err" ||
     fail "backlog launcher default empty-check window did not report registration state"

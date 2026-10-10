@@ -206,8 +206,11 @@ Important:
     evidence is written under the local backlog state root. Set
     `BACKLOG_PR_CHECK_PROGRESS=0` to return to the terse pending line, or
     `BACKLOG_PR_CHECK_PROGRESS_STEPS=0` to keep the summary without the extra
-    Actions job lookup. A just-created PR with no reported checks yet is treated
-    as registering for `BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS` seconds (90 by
+    Actions job lookup. Pending checks are polled every 15 seconds by default;
+    set `BACKLOG_PR_CHECK_INTERVAL_SECONDS` explicitly for a slower cadence in
+    a constrained GitHub environment. A just-created PR with no reported
+    checks yet is treated as registering for
+    `BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS` seconds (90 by
     default) before it fails closed as missing checks. The registration sleep
     is capped at the remaining grace window, and an operator can set the
     variable explicitly when an integration needs a longer window. Set

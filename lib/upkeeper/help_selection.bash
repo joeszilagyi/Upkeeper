@@ -312,9 +312,16 @@ Important:
   - The backlog launcher hibernates by default when its quota preflight sees a
     stop-level quota state or an active primary quota block marker. It prints
     the blocked bucket, reset time, wake time, branch, and recent activity when
-    available, sleeps locally without backend model work until the reset grace
-    passes, then lets the next backlog cycle retry. Set
-    BACKLOG_QUOTA_HIBERNATE=0 to restore one-cycle deferral instead.
+    available, sleeps locally without backend model work, then lets the next
+    backlog cycle recheck fresh quota evidence before any backend retry. The
+    default reset grace is 5 seconds; set
+    BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS=0 for an immediate recheck or set an
+    explicit larger grace for a provider that needs it. Local branch/owner
+    checks poll every 15 seconds by default and every 5 seconds in the final
+    30-second reset window; these checks do not query the quota provider. Set
+    BACKLOG_QUOTA_HIBERNATE=0 to restore one-cycle deferral instead, or set
+    BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS to fail closed when a wait exceeds the
+    operator's maximum (0 keeps the existing unbounded-wait behavior).
   - If the backend exits before any agent message and says the selected model hit
     a usage limit, Upkeeper records that reset time as a hard local quota marker
     instead of opening a target repair obligation for a missing status marker.

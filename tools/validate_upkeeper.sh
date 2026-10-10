@@ -3332,6 +3332,10 @@ check_backlog_quota_hibernation_contract() {
     fail "backlog quota hibernation did not report the wake time"
   grep -Fq "quota hibernation complete" "$temp_dir/hibernate.err" ||
     fail "backlog quota hibernation did not report completion"
+  grep -Fq "grace_seconds=60" "$temp_dir/hibernate.err" ||
+    fail "backlog quota hibernation did not report configured reset grace"
+  grep -Fq "poll_seconds=600" "$temp_dir/hibernate.err" ||
+    fail "backlog quota hibernation did not report configured local poll cadence"
 
   if ! BACKLOG_SOURCE_ONLY=1 \
     BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS=60 \
@@ -3432,6 +3436,7 @@ EOF
     fail "hard backend usage-limit marker did not drive quota hibernation"
 
   validation_run_test tests/backlog_stale_quota_obligation_test.bash
+  validation_run_test tests/backlog_quota_hibernation_test.bash
 
   rm -r "$temp_dir"
 }

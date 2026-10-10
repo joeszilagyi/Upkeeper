@@ -68,8 +68,11 @@ BACKLOG_ACTIVE_ATTACH_LINES="${BACKLOG_ACTIVE_ATTACH_LINES:-20}"
 BACKLOG_STDIO_AUTODETACHED="${BACKLOG_STDIO_AUTODETACHED:-0}"
 BACKLOG_STDIO_WATCHED="${BACKLOG_STDIO_WATCHED:-0}"
 BACKLOG_QUOTA_HIBERNATE="${BACKLOG_QUOTA_HIBERNATE:-1}"
-BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS="${BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS:-60}"
-BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS="${BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS:-60}"
+# Quota reset epochs are an opportunity to refresh local evidence, not a reason
+# to defer the next safe preflight by an additional minute.  Keep a small grace
+# for provider clock propagation, while allowing an explicit zero-grace retry.
+BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS="${BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS:-5}"
+BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS="${BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS:-15}"
 BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS="${BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS:-0}"
 BACKLOG_QUOTA_GUARDRAIL_BYPASS="${BACKLOG_QUOTA_GUARDRAIL_BYPASS:-1}"
 BACKLOG_QUOTA_COOLDOWN_BYPASS="${BACKLOG_QUOTA_COOLDOWN_BYPASS:-1}"
@@ -756,6 +759,17 @@ backlog_positive_integer_or_default() {
   fi
 }
 
+backlog_nonnegative_integer_or_default() {
+  local value="$1"
+  local default_value="$2"
+
+  if backlog_nonnegative_integer "$value"; then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "$default_value"
+  fi
+}
+
 backlog_format_duration_seconds() {
   local seconds="$1"
 
@@ -946,12 +960,29 @@ backlog_hibernation_branch_upstream_missing() {
   return 0
 }
 
+backlog_quota_hibernation_poll_seconds() {
+  local remaining_seconds="$1"
+  local configured_poll_seconds="$2"
+
+  backlog_nonnegative_integer "$remaining_seconds" || return 1
+  configured_poll_seconds="$(backlog_positive_integer_or_default "$configured_poll_seconds" 15)"
+
+  # The final reset window is where branch retirement and owner progress are
+  # most useful to an operator. This remains local-only: it never polls quota
+  # or a remote service while hibernating.
+  if [[ "$remaining_seconds" -le 30 && "$configured_poll_seconds" -gt 5 ]]; then
+    printf '%s\n' 5
+  else
+    printf '%s\n' "$configured_poll_seconds"
+  fi
+}
+
 backlog_hibernate_until_epoch() {
   local blocked_until_epoch="$1"
   local blocked_bucket="$2"
   local reason="$3"
   local source="$4"
-  local grace poll max_sleep now_epoch wait_start_epoch wake_epoch wait_seconds chunk
+  local grace poll max_sleep now_epoch wait_start_epoch wake_epoch wait_seconds chunk remaining_seconds
   local blocked_until_text wake_text
   local branch summary log_file
 
@@ -969,14 +1000,14 @@ backlog_hibernate_until_epoch() {
   fi
   wait_start_epoch="$now_epoch"
 
-  grace="$(backlog_positive_integer_or_default "$BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS" 60)"
-  poll="$(backlog_positive_integer_or_default "$BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS" 60)"
+  grace="$(backlog_nonnegative_integer_or_default "$BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS" 5)"
+  poll="$(backlog_positive_integer_or_default "$BACKLOG_QUOTA_HIBERNATE_POLL_SECONDS" 15)"
   max_sleep="${BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS:-0}"
   backlog_nonnegative_integer "$max_sleep" || max_sleep=0
   wake_epoch=$((blocked_until_epoch + grace))
 
   if [[ "$wake_epoch" -le "$now_epoch" ]]; then
-    log "quota preflight: quota block already expired bucket=$blocked_bucket wake=$(backlog_format_epoch "$wake_epoch"); retrying this cycle"
+    log "quota preflight: quota block already expired bucket=$blocked_bucket reset=$(backlog_format_epoch "$blocked_until_epoch") grace_seconds=$grace wake=$(backlog_format_epoch "$wake_epoch") action=recheck_quota_now"
     return 0
   fi
   if backlog_hibernation_branch_upstream_missing; then
@@ -995,12 +1026,12 @@ backlog_hibernate_until_epoch() {
   log_file="${BACKLOG_LOOP_LOG_FILE:-$(backlog_state_root)/loop.log}"
   summary="$(backlog_recent_log_summary "$log_file" 2>/dev/null || true)"
   if [[ -n "$summary" ]]; then
-    log "quota preflight: quota blocked bucket=$blocked_bucket until=$blocked_until_text wake=$wake_text wait_seconds=$wait_seconds branch=$branch recent_activity=$summary source=$source reason=$reason"
+    log "quota preflight: quota blocked bucket=$blocked_bucket until=$blocked_until_text grace_seconds=$grace wake=$wake_text wait_seconds=$wait_seconds poll_seconds=$poll branch=$branch recent_activity=$summary source=$source reason=$reason"
   else
-    log "quota preflight: quota blocked bucket=$blocked_bucket until=$blocked_until_text wake=$wake_text wait_seconds=$wait_seconds branch=$branch source=$source reason=$reason"
+    log "quota preflight: quota blocked bucket=$blocked_bucket until=$blocked_until_text grace_seconds=$grace wake=$wake_text wait_seconds=$wait_seconds poll_seconds=$poll branch=$branch source=$source reason=$reason"
   fi
   backlog_update_active_owner_heartbeat "quota_hibernating" \
-    "$(backlog_wait_detail_since quota quota_reset "$wait_start_epoch" "bucket=$blocked_bucket" "wake=$wake_text" "source=$source" "reason=$reason")" \
+    "$(backlog_wait_detail_since quota quota_reset "$wait_start_epoch" "bucket=$blocked_bucket" "reset=$blocked_until_text" "grace_seconds=$grace" "wake=$wake_text" "source=$source" "reason=$reason")" \
     "" "quota_wait_until_verified"
 
   while true; do
@@ -1009,12 +1040,13 @@ backlog_hibernate_until_epoch() {
     if backlog_hibernation_branch_upstream_missing; then
       return 3
     fi
-    chunk=$((wake_epoch - now_epoch))
-    if [[ "$chunk" -gt "$poll" ]]; then
-      chunk="$poll"
+    remaining_seconds=$((wake_epoch - now_epoch))
+    chunk="$(backlog_quota_hibernation_poll_seconds "$remaining_seconds" "$poll")" || return 4
+    if [[ "$chunk" -gt "$remaining_seconds" ]]; then
+      chunk="$remaining_seconds"
     fi
     backlog_update_active_owner_heartbeat "quota_hibernating" \
-      "$(backlog_wait_detail_since quota quota_reset "$wait_start_epoch" "bucket=$blocked_bucket" "wake=$wake_text" "sleep=${chunk}s" "source=$source" "reason=$reason")" \
+      "$(backlog_wait_detail_since quota quota_reset "$wait_start_epoch" "bucket=$blocked_bucket" "reset=$blocked_until_text" "grace_seconds=$grace" "wake=$wake_text" "remaining=${remaining_seconds}s" "next_local_check=${chunk}s" "source=$source" "reason=$reason")" \
       "" "quota_wait_until_verified"
     backlog_sleep_seconds "$chunk"
   done

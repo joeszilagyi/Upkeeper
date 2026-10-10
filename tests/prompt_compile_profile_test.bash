@@ -130,4 +130,22 @@ grep -Fq 'review.prompt_section section=default_review' "$LOG_FILE" ||
 grep -Fq 'review.prompt_payload final_bytes=' "$LOG_FILE" ||
   fail "prompt payload summary was not logged"
 
+UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_STATUS="ok"
+UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_ANOMALIES="none"
+UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_SHA256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+clean_compiled_file="$TEST_TMP_ROOT/clean-compiled.md"
+compile_prompt "$clean_compiled_file"
+grep -Fq 'source=wrapper_pre_backend_snapshot' "$clean_compiled_file" ||
+  fail "clean wrapper-owned log snapshot was not emitted"
+grep -Fq 'log_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$clean_compiled_file" ||
+  fail "clean wrapper-owned log digest was not preserved"
+! grep -Fq 'UPKEEPER_INTERNAL_CURRENT_CYCLE_LOG_REVIEW=1' "$clean_compiled_file" ||
+  fail "clean wrapper-owned log snapshot still requested a backend helper command"
+
+UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_ANOMALIES="listed"
+anomalous_compiled_file="$TEST_TMP_ROOT/anomalous-compiled.md"
+compile_prompt "$anomalous_compiled_file"
+grep -Fq 'UPKEEPER_INTERNAL_CURRENT_CYCLE_LOG_REVIEW=1' "$anomalous_compiled_file" ||
+  fail "anomalous wrapper evidence did not retain the sanitized helper command"
+
 printf 'prompt_compile_profile_test: ok\n'

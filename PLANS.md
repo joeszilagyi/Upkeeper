@@ -3,6 +3,46 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #685: Wrapper-Owned Current-Cycle Log Review
+
+Status: complete; pending PR
+
+Goal:
+- stop making clean backend cycles spend a tool command to read/hash deterministic
+  current-cycle wrapper evidence, while retaining the strict parseable
+  `UPKEEPER_LOG_REVIEW` compatibility marker and anomaly escalation path
+
+Constraints:
+- generate review evidence in the wrapper immediately before backend contact;
+  never disclose raw logs, raw paths, or unredacted runtime state in the prompt
+- preserve the existing strict final-marker parser and startup-anomaly custody;
+  only anomalous or unavailable wrapper evidence may ask the backend to inspect
+  the sanitized helper output
+- use deterministic fixtures and no live backend validation
+
+Plan:
+- make one wrapper-owned compact review snapshot (status, anomaly class, and
+  digest) available to the prompt compiler and the final-marker verifier
+- make clean snapshots instruct the model to reuse supplied values without a
+  helper command; keep the sanitized helper as an explicit anomalous/fail-safe
+  inspection path
+- add focused clean/anomalous/compiler/parser regressions before the full suite
+
+Implemented and validated:
+- added one wrapper-owned pre-backend sanitized snapshot and made its compact
+  anomaly/digest fields available to both the prompt and the strict final-marker
+  verifier
+- clean snapshots now omit the model helper command; anomalous or unavailable
+  snapshots retain it, and mismatched/anomaly-class-inconsistent markers remain
+  rejected
+- passed focused compiler/parser/negative checks, the private no-backend probe,
+  public-doc checks, `tools/run_tests.sh` (78/78), and the quick validator
+
+Limitation:
+- this proves local deterministic prompt and marker behavior only; it does not
+  establish a live backend's cache or tool-use behavior, which remains outside
+  no-quota validation
+
 ## Issue #704: No-Backend Fast-Path Budget and Regression Guard
 
 Status: complete; pending PR

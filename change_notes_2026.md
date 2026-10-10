@@ -1,5 +1,13 @@
 # 2026 Change Notes
 
+## v1.2.52 changes: Constrain automatic recovery model calls
+
+- Automatic recovery now remains enabled only for primary quota and a missing
+  final status marker. Generic backend failure, explicit `BLOCKED`, dirty
+  `NO_BACKEND_TASK`, and postmortem model calls default to off, while their
+  existing environment/configuration switches remain available for an explicit
+  one-run or profile opt-in.
+
 ## v1.2.51 changes: Keep clean current-cycle log review wrapper-owned
 
 - The wrapper now provides a sanitized clean current-cycle review digest before

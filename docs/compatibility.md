@@ -434,13 +434,15 @@ Future changes should preserve this operator-visible surface as far as possible:
   cleanly; postmortem failures still propagate as recovery failures.
 - Fallback and postmortem guardrails are part of the stable operator surface:
   fallback is primary-only, disabled inside fallback children, bounded by
-  screen child/time limits, subject to exact-model quota checks, blocked by
-  unsafe local evidence paths, and fully disabled only when
-  `CODEX_FALLBACK_ENABLED=0`, `CODEX_FALLBACK_SCREEN_ENABLED=0`, and
-  `CODEX_POSTMORTEM_ENABLED=0` are set together. Active-lock inheritance keeps
-  accepting a token supplied directly or through a numeric token descriptor;
-  empty and nonnumeric descriptor values are ignored and never evaluated as
-  shell syntax.
+  screen child/time limits, subject to exact-model quota checks, and blocked by
+  unsafe local evidence paths. Defaults retain primary-quota and missing-final-
+  status recovery only; generic failure, explicit `BLOCKED`, dirty
+  `NO_BACKEND_TASK`, and postmortem model work require their documented opt-in
+  settings. Set `CODEX_FALLBACK_ENABLED=0` and
+  `CODEX_FALLBACK_SCREEN_ENABLED=0` to disable all remaining recovery model
+  work. Active-lock inheritance keeps accepting a token supplied directly or
+  through a numeric token descriptor; empty and nonnumeric descriptor values
+  are ignored and never evaluated as shell syntax.
 - `Upkeeper.log` keeps cycle/run evidence in parseable timestamped lines with
   `cycle=...`, `run_hash=...`, event names, and key-value fields.
 - Unsafe log paths fail closed before Codex launch: symlink log files,

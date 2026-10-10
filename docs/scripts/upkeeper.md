@@ -15,7 +15,7 @@ Path examples below are normalized to repo-relative or environment-based paths.
 Usage: Upkeeper [--help] [--version] [--status] [--doctor] [--last-run] [--open-failures] [--quota-status] [--json-status] [--config-file=PATH] [--no-config] [--prompt-file FILE] [--prompt TEXT] [--review-module=p24|p25|p26|p27|p28|p29|p30] [--review-modules=p24,p25,p26,p27,p28,p29,p30] [--p24] [--p25] [--p26] [--p27] [--p28] [--p29] [--p30] [--model-override=5.5_xhigh|5.3-codex-spark_xhigh] [--target-file=PATH] [--target-root=PATH] [--target-depth=N] [--selection-source=manifest|enumerate] [--selection-order=oldest|newest|random] [--select-untracked[=0|1]] [--tracked-only] [--refresh-manifest] [--manifest-file=PATH] [--allow-unsafe-manifest-path] [--include-glob=PATTERN] [--include-globs=a,b] [--exclude-glob=PATTERN] [--exclude-globs=a,b] [--selection-review-modules=p24,p25,p26,p27,p28,p29,p30] [--ignore-failure-queue] [--backup-queue] [--prompt-pass=all] [--max-cover] [--bug-report-only] [--audit-only] [--fix-next-issue] [--fix-issue=NUMBER] [--issue-workflow-stage=comment|review|apply]
 
 One-cycle Codex backend worker with quota guardrails.
-Version: v1.2.51
+Version: v1.2.52
 
 Each invocation:
   1. Reads the latest Codex rate-limit snapshot from $CODEX_HOME/sessions.
@@ -85,11 +85,15 @@ Loop stop semantics:
     CODEX_FALLBACK_SCREEN_CONTINUOUS=1 and raise CODEX_FALLBACK_SCREEN_MAX_CHILDREN
     to opt into bounded multi-child fallback; CODEX_FALLBACK_SCREEN_MAX_SECONDS
     can add a wall-clock bound
-  - by default, a fallback event also triggers a scripted post-mortem report
-    pass, keeps hardening report-only unless CODEX_POSTMORTEM_HARDENING_OPT_IN=1,
-    and propagates the fallback child outcome unless the post-mortem/report or
-    opted-in hardening path itself fails
-  - disable all recovery model work with
+  - by default, fallback is limited to primary-quota and missing-final-status
+    recovery; generic failure, explicit BLOCKED, dirty NO_BACKEND_TASK, and
+    post-mortem model work require their respective explicit opt-ins
+  - enable a scripted post-mortem report with CODEX_POSTMORTEM_ENABLED=1;
+    keeps hardening report-only unless CODEX_POSTMORTEM_HARDENING_OPT_IN=1,
+    and a post-mortem/report or opted-in hardening failure still propagates
+  - disable all remaining recovery model work with
+    CODEX_FALLBACK_ENABLED=0 CODEX_FALLBACK_SCREEN_ENABLED=0
+  - an explicit full recovery shutdown also accepts
     CODEX_FALLBACK_ENABLED=0 CODEX_FALLBACK_SCREEN_ENABLED=0 CODEX_POSTMORTEM_ENABLED=0
   - post-mortem report completion logs `postmortem.report.finish` with the
     report child exit, parsed marker, report path, and file existence state
@@ -975,9 +979,10 @@ Environment overrides:
   CODEX_FALLBACK_REASONING_EFFORT Baseline default: high; automatic trigger policy uses low/medium when no exported override is set
   CODEX_FALLBACK_MODE           Default: CODEX_MODE
   CODEX_FALLBACK_ON_PRIMARY_QUOTA Default: 1
-  CODEX_FALLBACK_ON_FAILURE     Default: 1
-  CODEX_FALLBACK_ON_BLOCKED     Default: 1
-  CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK Default: 1
+  CODEX_FALLBACK_ON_NO_OUTPUT   Default: 1; retries a primary response with no final status marker
+  CODEX_FALLBACK_ON_FAILURE     Default: 0; set 1 to retry explicit generic backend failures
+  CODEX_FALLBACK_ON_BLOCKED     Default: 0; set 1 to retry an explicit BLOCKED result
+  CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK Default: 0; set 1 to retry dirty NO_BACKEND_TASK results
   CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL Default: 0
   CODEX_FALLBACK_SCREEN_ENABLED     Default: 1
   CODEX_FALLBACK_SCREEN_POLL_SECONDS Default: 60
@@ -985,7 +990,7 @@ Environment overrides:
   CODEX_FALLBACK_SCREEN_MAX_CHILDREN Default: 1
   CODEX_FALLBACK_SCREEN_MAX_SECONDS  Default: 0
   CODEX_FALLBACK_SCREEN_STAGE_ROOT   Default: ${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/tmp/fallback-screen
-  CODEX_POSTMORTEM_ENABLED       Default: 1
+  CODEX_POSTMORTEM_ENABLED       Default: 0; set 1 to run a model postmortem after fallback
   CODEX_POSTMORTEM_HARDENING_OPT_IN Default: 0
   CODEX_POSTMORTEM_MODEL         Default: CODEX_FALLBACK_MODEL
   CODEX_POSTMORTEM_REASONING_EFFORT Baseline default: medium; automatic report/hardening policy uses low/medium when no exported override is set

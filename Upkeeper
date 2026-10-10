@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.51
+## Version: v1.2.52
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -420,7 +420,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.51"
+UPKEEPER_VERSION="v1.2.52"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -502,9 +502,10 @@ CODEX_FALLBACK_MODEL="${CODEX_FALLBACK_MODEL:-gpt-5.5}"
 CODEX_FALLBACK_REASONING_EFFORT="${CODEX_FALLBACK_REASONING_EFFORT:-high}"
 CODEX_FALLBACK_MODE="${CODEX_FALLBACK_MODE:-$CODEX_MODE_STRING}"
 CODEX_FALLBACK_ON_PRIMARY_QUOTA="${CODEX_FALLBACK_ON_PRIMARY_QUOTA:-1}"
-CODEX_FALLBACK_ON_FAILURE="${CODEX_FALLBACK_ON_FAILURE:-1}"
-CODEX_FALLBACK_ON_BLOCKED="${CODEX_FALLBACK_ON_BLOCKED:-1}"
-CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK="${CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK:-1}"
+CODEX_FALLBACK_ON_NO_OUTPUT="${CODEX_FALLBACK_ON_NO_OUTPUT:-1}"
+CODEX_FALLBACK_ON_FAILURE="${CODEX_FALLBACK_ON_FAILURE:-0}"
+CODEX_FALLBACK_ON_BLOCKED="${CODEX_FALLBACK_ON_BLOCKED:-0}"
+CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK="${CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK:-0}"
 CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL="${CODEX_FALLBACK_INHERIT_PROMPT_PASS_ALL:-0}"
 CODEX_FALLBACK_SCREEN_ENABLED="${CODEX_FALLBACK_SCREEN_ENABLED:-1}"
 CODEX_FALLBACK_SCREEN_POLL_SECONDS="${CODEX_FALLBACK_SCREEN_POLL_SECONDS:-60}"
@@ -512,7 +513,7 @@ CODEX_FALLBACK_SCREEN_CONTINUOUS="${CODEX_FALLBACK_SCREEN_CONTINUOUS:-0}"
 CODEX_FALLBACK_SCREEN_MAX_CHILDREN="${CODEX_FALLBACK_SCREEN_MAX_CHILDREN:-1}"
 CODEX_FALLBACK_SCREEN_MAX_SECONDS="${CODEX_FALLBACK_SCREEN_MAX_SECONDS:-0}"
 CODEX_FALLBACK_SCREEN_STAGE_ROOT="${CODEX_FALLBACK_SCREEN_STAGE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/tmp/fallback-screen}"
-CODEX_POSTMORTEM_ENABLED="${CODEX_POSTMORTEM_ENABLED:-1}"
+CODEX_POSTMORTEM_ENABLED="${CODEX_POSTMORTEM_ENABLED:-0}"
 CODEX_POSTMORTEM_MODEL="${CODEX_POSTMORTEM_MODEL:-$CODEX_FALLBACK_MODEL}"
 CODEX_POSTMORTEM_REASONING_EFFORT="${CODEX_POSTMORTEM_REASONING_EFFORT:-medium}"
 CODEX_POSTMORTEM_MODE="${CODEX_POSTMORTEM_MODE:-$CODEX_FALLBACK_MODE}"
@@ -6525,7 +6526,7 @@ main() {
       finish_cycle 4 QUOTA_STALE_SNAPSHOT_STOP_FAILED ERROR "codex_exec_started=0"
     fi
     write_primary_quota_blocked_marker "$stop_reason"
-    if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
+    if [[ "$CODEX_ATTEMPT_ROLE" == "primary" ]] && fallback_trigger_enabled "primary_quota_before_run" && fallback_available; then
       local fallback_exit=0
       run_locked_fallback_cycle "primary_quota_before_run" "$(quota_public_stop_reason "$stop_reason")" || fallback_exit=$?
       finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=primary_quota_before_run final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=$(upkeeper_path_hmac "${POSTMORTEM_REPORT_PATH:-}") path_redacted=1"
@@ -7157,7 +7158,7 @@ PY
         "$quota_session_transition_fields"
       write_primary_quota_blocked_marker "$post_run_stop_reason codex_exit=$codex_exit status_marker=missing session_end_state=$session_end_state classification=$primary_failure_classification" "after_run"
     fi
-    if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
+    if [[ "$CODEX_ATTEMPT_ROLE" == "primary" ]] && fallback_trigger_enabled "primary_quota_after_run" && fallback_available; then
       local fallback_exit=0
       run_locked_fallback_cycle "primary_quota_after_run" "$(quota_public_stop_reason "$post_run_stop_reason") codex_exit=$codex_exit status_marker=${status_marker:-missing} session_end_state=$session_end_state classification=$primary_failure_classification" || fallback_exit=$?
       if [[ "$primary_failure_classification" == "PRIMARY_NO_AGENT_MESSAGE_AFTER_QUOTA_EXHAUSTION" ]]; then
@@ -7191,7 +7192,7 @@ PY
       ;;
     NO_BACKEND_TASK)
       if [[ "$DIRTY_PATH_COUNT" -gt 0 ]]; then
-        if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_DIRTY_NO_BACKEND_TASK" == "1" ]] && fallback_available; then
+        if [[ "$CODEX_ATTEMPT_ROLE" == "primary" ]] && fallback_trigger_enabled "dirty_no_backend_task" && fallback_available; then
           local fallback_exit=0
           run_locked_fallback_cycle "dirty_no_backend_task" "dirty_paths=$DIRTY_PATH_COUNT tracked_modified_paths=$TRACKED_MODIFIED_PATH_COUNT untracked_paths=$UNTRACKED_PATH_COUNT" || fallback_exit=$?
           finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=dirty_no_backend_task final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=$(upkeeper_path_hmac "${POSTMORTEM_REPORT_PATH:-}") path_redacted=1"
@@ -7207,7 +7208,7 @@ PY
       finish_cycle 5 NO_BACKEND_TASK INFO "stop_outer_loop=1 codex_exit=$codex_exit"
       ;;
     BLOCKED)
-      if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_BLOCKED" == "1" ]] && fallback_available; then
+      if [[ "$CODEX_ATTEMPT_ROLE" == "primary" ]] && fallback_trigger_enabled "blocked" && fallback_available; then
         local fallback_exit=0
         run_locked_fallback_cycle "blocked" "codex_exit=$codex_exit" || fallback_exit=$?
         finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=blocked final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=$(upkeeper_path_hmac "${POSTMORTEM_REPORT_PATH:-}") path_redacted=1"
@@ -7221,7 +7222,7 @@ PY
         ensure_codex_bwrap_tmp_writable_or_exit "after_run" "1"
       fi
       if [[ "$backend_usage_limit_detected" == "1" ]]; then
-        if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_PRIMARY_QUOTA" == "1" ]] && fallback_available; then
+        if [[ "$CODEX_ATTEMPT_ROLE" == "primary" ]] && fallback_trigger_enabled "primary_backend_usage_limit" && fallback_available; then
           local fallback_exit=0
           run_locked_fallback_cycle "primary_backend_usage_limit" "target_model=$CODEX_MODEL codex_exit=$codex_exit status_marker=${status_marker:-missing} session_end_state=$session_end_state blocked_until_epoch=$backend_usage_limit_reset_epoch" || fallback_exit=$?
           finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=primary_backend_usage_limit final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=$(upkeeper_path_hmac "${POSTMORTEM_REPORT_PATH:-}") path_redacted=1"
@@ -7233,7 +7234,7 @@ PY
         log_line "ERROR" "codex exited non-zero without transcript output"
         finish_cycle 3 CODEX_EXEC_EMPTY_TRANSCRIPT ERROR "codex_exit=$codex_exit transcript=$(shell_quote "$(upkeeper_path_hmac "$RUN_TRANSCRIPT_FILE")") path_redacted=1 transcript_bytes=$run_transcript_bytes transcript_lines=$run_transcript_lines"
       fi
-      if [[ "$CODEX_ATTEMPT_ROLE" == "primary" && "$CODEX_FALLBACK_ON_FAILURE" == "1" ]] && fallback_available; then
+      if [[ "$CODEX_ATTEMPT_ROLE" == "primary" ]] && fallback_trigger_enabled "failure" "$status_marker" && fallback_available; then
         local fallback_exit=0
         run_locked_fallback_cycle "failure" "codex_exit=$codex_exit session_end_state=$session_end_state status_marker=${status_marker:-missing} status_marker_source=$status_marker_source" || fallback_exit=$?
         finish_cycle "$fallback_exit" FALLBACK_CHAIN_EXIT INFO "trigger=failure final_exit=$fallback_exit target_model=$CODEX_FALLBACK_MODEL postmortem_status=$POSTMORTEM_SEQUENCE_STATUS report_path=$(upkeeper_path_hmac "${POSTMORTEM_REPORT_PATH:-}") path_redacted=1"

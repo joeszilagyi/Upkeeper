@@ -8,6 +8,7 @@ UPKEEPER_IMPLEMENTATION_DIR="$ROOT_DIR"
 source "$ROOT_DIR/lib/upkeeper/review_modules.bash"
 source "$ROOT_DIR/tools/validation_timing_lib.bash"
 source "$ROOT_DIR/tools/test_attestation_lib.bash"
+source "$ROOT_DIR/tools/validation_mode_checks.bash"
 
 MODE="quick"
 VALIDATION_PROFILE="0"
@@ -5214,31 +5215,8 @@ check_client_link_tools_contract() {
 check_validation_mode_boundary_contract() {
   log "checking validation mode boundary contract"
 
-  python3 - "$ROOT_DIR/tools/validate_upkeeper.sh" <<'PY' || fail "validation mode boundary contract is not enforced"
-from pathlib import Path
-import sys
-
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-quick_exit = text.rindex('\nif [[ "$MODE" == "quick" ]]; then')
-full_gate = text.rindex('\nif [[ "$MODE" == "full" ]]; then')
-heavy_checks = [
-    "review_module_flags",
-    "config_file_support",
-    "cycle_start_log_contract",
-    "file_manifest_selection",
-    "tool_failure_queue",
-    "lattice_contract",
-]
-for name in heavy_checks:
-    marker = f"run_bounded_check {name}"
-    pos = text.index(marker)
-    if pos < quick_exit:
-        raise SystemExit(f"{name} runs before quick exit")
-    if pos > full_gate:
-        raise SystemExit(f"{name} is not in the integration block before full-only extras")
-if 'fail "check $name exceeded ${timeout_seconds}s timeout"' not in text:
-    raise SystemExit("bounded timeout failure diagnostic missing")
-PY
+  bash "$ROOT_DIR/tests/validation_mode_checks_test.bash" ||
+    fail "validation mode boundary contract is not enforced"
 }
 
 check_wrapper_contract_tests() {
@@ -8918,48 +8896,18 @@ if [[ "$MODE" == "smoke" ]]; then
   exit 0
 fi
 
+case "$MODE" in
+  quick|full)
+    ;;
+  *)
+    fail "validation mode dispatch rejected mode=$MODE"
+    ;;
+esac
+run_validation_mode_checks "$MODE"
+
 if [[ "$MODE" == "quick" ]]; then
-  validation_timing_record_skip integration_checks mode_quick tools/validate_upkeeper.sh --full
   log "$MODE validation passed"
   exit 0
-fi
-
-run_bounded_check review_module_flags "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_review_module_flags
-run_bounded_check config_file_support "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_config_file_support
-run_bounded_check gitignore_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_gitignore_contract
-run_bounded_check force_added_gitignored_target_selection "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_force_added_gitignored_target_selection
-run_bounded_check symlink_target_selection_guard "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_symlink_target_selection_guard
-run_bounded_check cycle_start_log_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_cycle_start_log_contract
-run_bounded_check log_path_symlink_guard "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_log_path_symlink_guard
-run_bounded_check custom_log_path_rotation_boundary "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_custom_log_path_rotation_boundary
-run_bounded_check disk_preflight_log_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_disk_preflight_log_contract
-run_bounded_check disk_preflight_prompt_note_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_disk_preflight_prompt_note_contract
-run_bounded_check arg0_tmp_cleanup_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_arg0_tmp_cleanup_contract
-run_bounded_check automation_obligation_framework "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_automation_obligation_framework
-run_bounded_check session_store_preflight_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_session_store_preflight_contract
-run_bounded_check bwrap_tmp_preflight_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_bwrap_tmp_preflight_contract
-run_bounded_check wrapper_health_log_quoting "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_wrapper_health_log_quoting
-run_bounded_check operator_guide_bootstrap_race "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_operator_guide_bootstrap_race
-run_bounded_check active_lock_incomplete_guard "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_active_lock_incomplete_guard
-run_bounded_check quota_fallback_exit_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_quota_fallback_exit_contract
-run_bounded_check file_manifest_selection "$VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS" check_file_manifest_selection
-run_bounded_check issue_workflow_comment_relay "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_issue_workflow_comment_relay
-run_bounded_check issue_workflow_backend_mode_contract "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_issue_workflow_backend_mode_contract
-run_bounded_check genie_protocol_backend_boundary "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_genie_protocol_backend_boundary
-run_bounded_check prompt_pass_coverage_enforcement "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_prompt_pass_coverage_enforcement
-run_bounded_check log_self_review_target_boundary "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_log_self_review_target_boundary
-run_bounded_check tool_failure_queue "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_tool_failure_queue
-run_bounded_check lattice_contract "$VALIDATION_FULL_TIMEOUT_SECONDS" check_lattice_contract
-run_bounded_check fallback_artifact_helpers "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_fallback_artifact_helpers
-
-if [[ "$MODE" == "full" ]]; then
-  run_bounded_check central_dry_runs "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_central_dry_runs
-  run_bounded_check symlinked_client "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_symlinked_client
-  run_bounded_check missing_module_failure "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_missing_module_failure
-  run_bounded_check missing_prompt_failure "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_missing_prompt_failure
-  run_bounded_check empty_transcript_failure "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_empty_transcript_failure
-  run_bounded_check fault_injection_first_scenarios "$VALIDATION_INTEGRATION_TIMEOUT_SECONDS" check_fault_injection_first_scenarios
-  run_bounded_check stress_corpus_harness "$VALIDATION_FULL_TIMEOUT_SECONDS" check_stress_corpus_harness
 fi
 
 log "$MODE validation passed"

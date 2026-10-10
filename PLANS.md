@@ -3,6 +3,47 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #705: Validator Mode-Boundary Extraction
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- remove the validator's brittle self-source `rindex` inspection of the quick
+  and full mode blocks, while preserving exactly which integration and full-only
+  checks run in each validation mode
+
+Constraints:
+- retain quick, smoke, full, dependency, source-contract, and architecture
+  behavior; do not turn any required validation into a warning or skip a gate
+- keep the mode ownership executable and independently testable without running
+  the entire validator or a live backend
+- make this a narrow #705 increment; the remaining backlog-orchestration and
+  large-entrypoint extraction work stays separately tracked
+
+Plan:
+- move integration/full-only check dispatch into a focused sourced helper whose
+  only dependency is the validator's existing bounded-check/timing interface
+- replace source-position inspection with a hermetic dispatcher regression that
+  records actual requested checks for quick and full modes, including an
+  unsupported-mode failure case
+- run focused tests, syntax checks, the full deterministic suite, and quick and
+  full validators; retain #705 open after this incremental PR
+
+Implemented and validated:
+- extracted the 27 integration and seven full-only checks into the small
+  executable dispatcher, leaving the validator as its timeout/timing/check
+  implementation owner
+- replaced brittle source-position parsing with a hermetic dispatcher test that
+  proves quick skips, full ordering/timeouts, unsupported modes, and immediate
+  propagation of a bounded-check failure
+- passed focused syntax/test checks, `tools/run_tests.sh` (79/79), public-doc
+  checks, and real `tools/validate_upkeeper.sh --quick` and `--full` runs
+
+Limitation:
+- this is one #705 acceptance increment only. It does not claim to complete
+  the remaining backlog-orchestration boundary work or establish live backend
+  operation.
+
 ## Issue #685: Wrapper-Owned Current-Cycle Log Review
 
 Status: complete; pending PR

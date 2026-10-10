@@ -5,6 +5,8 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 # shellcheck source=/dev/null
 source "$ROOT_DIR/tools/git_diff_validation.bash"
+# shellcheck source=/dev/null
+source "$ROOT_DIR/tools/validation_attestation_lib.bash"
 
 PHASES_CSV="${UPKEEPER_VALIDATION_PHASES:-shell_syntax,unit_tests,public_docs,diff_whitespace,quick_validator}"
 PHASE_JOBS="${UPKEEPER_VALIDATION_PHASE_JOBS:-auto}"
@@ -13,10 +15,11 @@ SHOW_PASS_OUTPUT="${UPKEEPER_VALIDATION_PHASE_SHOW_PASS_OUTPUT:-0}"
 RUNNER_TMP_ROOT=""
 DIFF_BASE_REF="${UPKEEPER_VALIDATION_DIFF_BASE:-}"
 DIFF_HEAD_REF="${UPKEEPER_VALIDATION_DIFF_HEAD:-HEAD}"
+ATTESTATION_FILE="${UPKEEPER_VALIDATION_ATTESTATION_FILE:-}"
 
 usage() {
   cat <<'USAGE'
-Usage: tools/run_validation_phases.sh [--phases a,b,c] [--jobs N] [--serial] [--diff-base REF] [--diff-head REF]
+Usage: tools/run_validation_phases.sh [--phases a,b,c] [--jobs N] [--serial] [--diff-base REF] [--diff-head REF] [--attestation FILE]
 
 Run independent local validation phases with bounded parallelism and a timing
 table. Supported phases:
@@ -62,6 +65,11 @@ while [[ $# -gt 0 ]]; do
       DIFF_HEAD_REF="$2"
       shift 2
       ;;
+    --attestation)
+      [[ -n "${2:-}" ]] || fail "--attestation requires a value"
+      ATTESTATION_FILE="$2"
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -100,6 +108,12 @@ done
 [[ "${#PHASES[@]}" -gt 0 ]] || fail "no validation phases selected"
 
 RUNNER_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-validation-phases.XXXXXX")"
+RUN_START_US="${EPOCHREALTIME:-}"
+if [[ -n "$RUN_START_US" ]]; then
+  RUN_START_US="${RUN_START_US/./}"
+else
+  RUN_START_US="$(date +%s%6N)"
+fi
 
 phase_command() {
   local phase="$1"
@@ -119,6 +133,28 @@ phase_command() {
       ;;
     quick_validator)
       tools/validate_upkeeper.sh --quick
+      ;;
+  esac
+}
+
+phase_command_text() {
+  local phase="$1"
+
+  case "$phase" in
+    shell_syntax)
+      printf '%s\n' 'bash -n Upkeeper ChimneySweep FlameOn Upkeeper.conf configurations/default.conf completions/*.bash lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh orchestration/*.sh'
+      ;;
+    unit_tests)
+      printf '%s\n' 'tools/run_tests.sh'
+      ;;
+    public_docs)
+      printf '%s\n' 'tools/check_public_docs.sh --quick'
+      ;;
+    diff_whitespace)
+      printf 'upkeeper_git_diff_check_whitespace %q %q 1\n' "$DIFF_BASE_REF" "$DIFF_HEAD_REF"
+      ;;
+    quick_validator)
+      printf '%s\n' 'tools/validate_upkeeper.sh --quick'
       ;;
   esac
 }
@@ -198,14 +234,48 @@ wait_for_slot() {
 
 printf 'run_validation_phases: start phases=%s jobs=%s timeout=%ss\n' "$PHASES_CSV" "$PHASE_JOBS" "$PHASE_TIMEOUT_SECONDS"
 
+command_spec="$RUNNER_TMP_ROOT/expected-commands.tsv"
+for phase in "${PHASES[@]}"; do
+  printf '%s\t%s\n' "$phase" "$(phase_command_text "$phase")" >>"$command_spec"
+done
+if [[ -n "$ATTESTATION_FILE" ]]; then
+  if upkeeper_validation_attestation_load "$ROOT_DIR" "$ATTESTATION_FILE" "$command_spec"; then
+    printf 'validation_reused command=tools/run_validation_phases.sh artifact=%s reason=%s\n' \
+      "$ATTESTATION_FILE" "$UPKEEPER_VALIDATION_ATTESTATION_REASON"
+    index=0
+    for phase in "${PHASES[@]}"; do
+      index=$((index + 1))
+      printf 'PHASE %s status=reused rc=0 elapsed=0.000s\n' "$phase"
+    done
+    printf 'run_validation_phases: ok\n'
+    exit 0
+  fi
+  printf 'validation_reuse_rejected command=tools/run_validation_phases.sh artifact=%s reason=%s action=rerun\n' \
+    "$ATTESTATION_FILE" "$UPKEEPER_VALIDATION_ATTESTATION_REASON"
+else
+  printf 'validation_rerun command=tools/run_validation_phases.sh reason=no_attestation\n'
+fi
+
 index=0
+defer_quick_validator=0
 for phase in "${PHASES[@]}"; do
   index=$((index + 1))
   printf '%s\n' "$phase" >"$RUNNER_TMP_ROOT/$index.phase"
+  if [[ "$phase" == "quick_validator" && -n "${UPKEEPER_TEST_ATTESTATION_FILE:-}" &&
+        " ${PHASES[*]} " == *" unit_tests "* ]]; then
+    defer_quick_validator="$index"
+    continue
+  fi
   wait_for_slot
   run_one_phase "$phase" "$index" &
 done
 wait || true
+
+if [[ "$defer_quick_validator" != "0" ]]; then
+  phase="$(<"$RUNNER_TMP_ROOT/$defer_quick_validator.phase")"
+  printf 'validation_rerun command=tools/validate_upkeeper.sh reason=await_unit_test_attestation\n'
+  run_one_phase "$phase" "$defer_quick_validator"
+fi
 
 overall_rc=0
 index=0
@@ -230,6 +300,23 @@ for phase in "${PHASES[@]}"; do
 done
 
 if [[ "$overall_rc" -eq 0 ]]; then
+  result_spec="$RUNNER_TMP_ROOT/passed-phases.tsv"
+  index=0
+  for phase in "${PHASES[@]}"; do
+    index=$((index + 1))
+    IFS=$'\t' read -r _ result_phase status rc elapsed_us _ <"$RUNNER_TMP_ROOT/$index.result"
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "$result_phase" "$(phase_command_text "$result_phase")" "$status" "$rc" "$((elapsed_us / 1000))" >>"$result_spec"
+  done
+  if [[ -n "$ATTESTATION_FILE" ]]; then
+    run_start_us="${RUN_START_US:-0}"
+    if [[ "$run_start_us" =~ ^[0-9]+$ && "$run_start_us" -gt 0 ]]; then
+      duration_ms="$(( ($(date +%s%6N) - run_start_us) / 1000 ))"
+    else
+      duration_ms=0
+    fi
+    upkeeper_validation_attestation_write "$ROOT_DIR" "$ATTESTATION_FILE" "$result_spec" "$duration_ms"
+  fi
   printf 'run_validation_phases: ok\n'
 else
   printf 'run_validation_phases: failed rc=%s\n' "$overall_rc" >&2

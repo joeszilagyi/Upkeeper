@@ -1296,6 +1296,13 @@ orphan payloads are not valid restore ids.
   `UPKEEPER_TEST_ATTESTATION_FILE`, but only after matching Git head/tree, a
   clean tracked tree, environment class, and every recorded test hash. Missing
   or mismatched evidence is logged and rerun normally. Full
+  phase-gate evidence uses the separate
+  `UPKEEPER_VALIDATION_ATTESTATION_FILE` schema. Backlog records it under its
+  private local state root and CI uses runner temporary storage; a later gate
+  reuses it only after exact command, successful-exit, bounded-age, Git
+  head/tree, complete tracked-input-hash, environment, and tool-version
+  checks. Any mismatch is logged as `validation_reuse_rejected` and executes
+  the normal deterministic gate.
   validation uses bounded dry-runs under
   validator-owned quota/cooldown bypasses plus a local fake `codex` binary; it
   does not launch real backend work, and quota-specific contract tests use their

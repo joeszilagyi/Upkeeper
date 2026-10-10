@@ -7,6 +7,8 @@ SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "$SCRIPT_SOURCE")"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 source "$ROOT_DIR/lib/upkeeper/runtime_format_json.bash"
+# shellcheck source=/dev/null
+source "$ROOT_DIR/tools/validation_attestation_lib.bash"
 if [[ -r "$ROOT_DIR/lib/upkeeper/change_scope.bash" ]]; then
   source "$ROOT_DIR/lib/upkeeper/change_scope.bash"
 else
@@ -1340,6 +1342,18 @@ backlog_validation_authority_file() {
   local pr_number="$1"
 
   printf '%s/pr-%s.tsv\n' "$(backlog_validation_authority_dir)" "$pr_number"
+}
+
+backlog_validation_attestation_file() {
+  local scope="$1"
+  local state_root attestation_dir
+
+  [[ "$scope" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  state_root="$(backlog_state_root)"
+  attestation_dir="$state_root/validation-attestations"
+  mkdir -p -- "$attestation_dir"
+  chmod 700 -- "$state_root" "$attestation_dir" 2>/dev/null || true
+  printf '%s/%s.%s.json\n' "$attestation_dir" "$(backlog_branch_key)" "$scope"
 }
 
 backlog_changed_paths_for_head() {
@@ -3976,31 +3990,53 @@ run_batch_validation_phase() {
 run_per_bug_validation() {
   local issue_number="${1:-}"
   local target_hint="${2:-}"
-  local validation_start
+  local validation_start attestation_path phase_spec phase_command duration_ms validation_rc
 
   [[ "${BACKLOG_SKIP_LOCAL_VALIDATION:-0}" == "1" ]] && return 0
 
   validation_start="$SECONDS"
+  attestation_path="$(backlog_validation_attestation_file "per-bug-${issue_number:-none}")" || return $?
+  phase_spec="$(mktemp "$(dirname -- "$attestation_path")/.per-bug-phase.XXXXXX")" || return $?
+  phase_command="$(printf 'orchestration/backlog.sh run_per_bug_validation issue=%q target=%q' "${issue_number:-none}" "${target_hint:-none}")"
+  printf 'per_bug_validation\t%s\n' "$phase_command" >"$phase_spec"
+  if upkeeper_validation_attestation_load "$ROOT_DIR" "$attestation_path" "$phase_spec" "orchestration/backlog.sh:per-bug"; then
+    log "validation_reused command=per_bug_validation issue=${issue_number:-none} artifact=$attestation_path reason=$UPKEEPER_VALIDATION_ATTESTATION_REASON"
+    rm -f -- "$phase_spec"
+    return 0
+  fi
+  if [[ -f "$attestation_path" ]]; then
+    log "validation_reuse_rejected command=per_bug_validation issue=${issue_number:-none} artifact=$attestation_path reason=$UPKEEPER_VALIDATION_ATTESTATION_REASON action=rerun"
+  else
+    log "validation_rerun command=per_bug_validation issue=${issue_number:-none} reason=no_attestation"
+  fi
   backlog_update_active_owner_heartbeat "validating" \
     "$(backlog_wait_detail local_validation per_bug_validation "issue=${issue_number:-none}" "target=${target_hint:-none}" "expected=syntax_compile_source_contract_diff_checks")" \
     "" "owner_pid_start_cwd_verified"
   log "per-bug validation: bash syntax"
-  bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || return $?
-  run_changed_python_compile_validation || return $?
-  run_focused_issue_validation "$issue_number" "$target_hint" || return $?
-  run_changed_source_contract_validation || return $?
+  bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || { validation_rc=$?; rm -f -- "$phase_spec"; return "$validation_rc"; }
+  run_changed_python_compile_validation || { validation_rc=$?; rm -f -- "$phase_spec"; return "$validation_rc"; }
+  run_focused_issue_validation "$issue_number" "$target_hint" || { validation_rc=$?; rm -f -- "$phase_spec"; return "$validation_rc"; }
+  run_changed_source_contract_validation || { validation_rc=$?; rm -f -- "$phase_spec"; return "$validation_rc"; }
   log "per-bug validation: diff whitespace"
-  git diff --check || return $?
+  git diff --check || { validation_rc=$?; rm -f -- "$phase_spec"; return "$validation_rc"; }
+  duration_ms="$(( (SECONDS - validation_start) * 1000 ))"
+  printf 'per_bug_validation\t%s\tpass\t0\t%s\n' "$phase_command" "$duration_ms" >"$phase_spec.result"
+  upkeeper_validation_attestation_write "$ROOT_DIR" "$attestation_path" "$phase_spec.result" "$duration_ms" "orchestration/backlog.sh:per-bug" || { validation_rc=$?; rm -f -- "$phase_spec" "$phase_spec.result"; return "$validation_rc"; }
+  rm -f -- "$phase_spec" "$phase_spec.result"
   log "per-bug validation: complete in $((SECONDS - validation_start))s"
 }
 
 run_batch_validation() {
-  local validation_start rc validation_root plan_path selected_phases classification reason
+  local validation_start rc validation_root plan_path selected_phases classification reason attestation_path
 
   [[ "${BACKLOG_SKIP_LOCAL_VALIDATION:-0}" == "1" ]] && return 0
 
   validation_start="$SECONDS"
   validation_root="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-backlog-batch-validation.XXXXXX")"
+  attestation_path="$(backlog_validation_attestation_file batch)" || {
+    rm -rf -- "$validation_root"
+    return 1
+  }
   record_control_plane_snapshot "batch-validation-before"
   backlog_update_active_owner_heartbeat "validating" \
     "$(backlog_wait_detail local_validation batch_validation "expected=affected_surface_plan")" \
@@ -4009,6 +4045,8 @@ run_batch_validation() {
     export UPKEEPER_OBLIGATION_DIR="$validation_root/automation-obligations"
     export CODEX_TOOL_FAILURE_QUEUE_DIR="$validation_root/tool-failure-queue"
     export CODEX_TRANSCRIPT_DIR="$validation_root/transcripts"
+    export UPKEEPER_TEST_ATTESTATION_FILE="$validation_root/test-attestation.json"
+    export UPKEEPER_VALIDATION_ATTESTATION_FILE="$attestation_path"
     plan_path="$validation_root/validation-plan.json"
     run_batch_validation_phase "batch_validation.plan" "affected-surface validation plan" \
       tools/plan_batch_validation.sh --output "$plan_path" || exit $?
@@ -4019,7 +4057,7 @@ run_batch_validation() {
       printf 'batch validation plan did not select any phases\n' >&2
       exit 1
     }
-    log "batch validation: plan classification=$classification reason=$reason phases=$selected_phases manifest=$plan_path"
+    log "batch validation: plan classification=$classification reason=$reason phases=$selected_phases manifest=$plan_path attestation=$attestation_path"
     run_batch_validation_phase "batch_validation.parallel_local_gates" "parallel local gates" \
       tools/run_validation_phases.sh --phases "$selected_phases"
   ) || {

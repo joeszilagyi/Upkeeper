@@ -3,9 +3,56 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #715: Expand Validation Artifact Reuse Beyond Unit Tests
+
+Status: implementation complete; final local validation in progress
+
+Goal:
+- extend the existing fail-closed same-tree unit-test attestation into an
+  explicit validation artifact that can safely explain reuse or rerun decisions
+  at the backlog's per-bug, batch, and merge boundaries
+- retain fresh validation whenever the command, tracked tree, environment, or
+  trusted artifact state does not match
+
+Verified current state:
+- `tools/test_attestation_lib.bash` already safely attests a successful
+  `tools/run_tests.sh` execution and `tools/validate_upkeeper.sh` can reuse
+  individual test results on the same clean tree/environment
+- `orchestration/backlog.sh` still independently invokes per-bug and batch
+  validation without producing or consuming a broader manifest for its
+  command/phase decisions, so #715 is not closed by the existing #713 work
+
+Plan:
+- inspect the existing attestation ownership and add the smallest compatible
+  manifest capability needed for backlog-owned validation phases rather than a
+  parallel format
+- key reusable proof to command, selected phase set, tracked tree, environment,
+  tool identities, and relevant changed paths; reject missing, stale, changed,
+  or untrusted proof with an explicit reason
+- add deterministic backlog fixtures for valid reuse and the required rejection
+  cases, then document the local-evidence boundary and operator logs
+
+Validation:
+- run focused attestation/backlog tests, required syntax and docs checks, full
+  deterministic suite, whitespace, and quick validation before PR
+
+Completed implementation:
+- added one private `upkeeper.validation-attestation.v1` owner for phase-level
+  proof rather than extending the incompatible per-test row format; it records
+  successful command phases, exit status, durations, UTC timestamp, Git
+  head/tree, complete tracked and untracked input hashes, environment class,
+  and tool versions
+- batch and merge-steward invocation now share a branch-local state-root
+  artifact, per-bug validation records/reuses its own scoped proof, and CI
+  supplies only runner-temporary evidence; missing or unsafe proof cannot skip
+  a gate and reports `validation_rerun` or `validation_reuse_rejected`
+- added isolated regression coverage for valid runner reuse and fail-closed
+  stale-head, command, environment, and broader-input mismatches; updated
+  copied backlog fixtures so their controlled roots retain the new dependency
+
 ## Issue #703: Reuse Control-Plane Audit Inventory During Staging
 
-Status: implementation complete; local validation passed, PR pending
+Status: complete; merged in PR #893
 
 Goal:
 - avoid independently rebuilding the same tracked-repository and control-plane

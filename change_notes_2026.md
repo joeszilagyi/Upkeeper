@@ -1,5 +1,12 @@
 # 2026 Change Notes
 
+2026-10-10: hot-path structured logging:
+	1. Structured key/value logging now has assignment-style `%q` helpers, so
+	   callers can prepare safe fields without creating command-substitution
+	   subshells.
+	2. Prompt-ready and run-start records use the assignment path while retaining
+	   their field names, shell-quoted values, and redacted transcript identity.
+
 2026-10-09: batch validation planning:
 	1. Backlog batch validation now emits a machine-readable affected-surface plan
 	   before it runs checks, including its revisions, paths, selected/skipped

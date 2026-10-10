@@ -22,6 +22,19 @@ test_log_kv_encodes_control_characters() {
   [[ "$encoded" == prompt_file=* ]] || fail "log_kv did not preserve the field name"
 }
 
+test_log_kv_assignment_preserves_schema_without_subshell_output() {
+  local encoded empty invalid legacy
+
+  source "$PROJECT_ROOT/lib/upkeeper/runtime_foundation.bash"
+  log_kv_assign encoded prompt_file $'path with spaces\nnewline'
+  legacy="$(log_kv prompt_file $'path with spaces\nnewline')"
+  log_kv_assign empty empty ''
+  log_kv_assign invalid 'bad key' value
+  [[ "$encoded" == "$legacy" && "$encoded" != *$'\n'* ]] || fail "assignment helper changed quoted value semantics"
+  [[ "$empty" == 'empty='* ]] || fail "assignment helper changed empty value semantics"
+  [[ "$invalid" == 'invalid_key='* ]] || fail "assignment helper changed invalid-key normalization"
+}
+
 test_log_line_parts_concatenates_exact_message() {
   local output
 
@@ -130,6 +143,7 @@ JSON
 }
 
 test_log_kv_encodes_control_characters
+test_log_kv_assignment_preserves_schema_without_subshell_output
 test_log_line_parts_concatenates_exact_message
 test_prompt_file_rejects_control_characters
 test_startup_state_prompt_summary_is_redacted

@@ -100,16 +100,30 @@ log_kv_value() {
   printf '%q' "${1:-}"
 }
 
+log_kv_value_assign() {
+  local destination="$1"
+
+  printf -v "$destination" '%q' "${2:-}"
+}
+
+log_kv_assign() {
+  local destination="$1"
+  local key="$2"
+  local value="${3:-}"
+
+  case "$key" in
+    ''|*[!A-Za-z0-9_.-]*) key="invalid_key" ;;
+  esac
+  printf -v "$destination" '%s=%q' "$key" "$value"
+}
+
 log_kv() {
   local key="$1"
   local value="${2:-}"
+  local rendered
 
-  case "$key" in
-    ''|*[!A-Za-z0-9_.-]*)
-      key="invalid_key"
-      ;;
-  esac
-  printf '%s=%s' "$key" "$(log_kv_value "$value")"
+  log_kv_assign rendered "$key" "$value"
+  printf '%s' "$rendered"
 }
 
 log_line_parts() {

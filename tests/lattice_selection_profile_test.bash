@@ -25,6 +25,7 @@ assert data["candidate_count"] > 0, data
 assert data["eligible_count"] > 0, data
 assert data["subprocess_run_count"] >= 0, data
 assert data["subprocess_check_output_count"] >= 0, data
+assert data["git_hash_object_count"] == 1, data
 assert data["repo_git_info_count"] <= data["budget"]["max_repo_git_info"], data
 assert data["pass_result_hmac_key_count"] == 1, data
 assert data["max_cover_sql_count"] <= data["budget"]["max_max_cover_sql"], data
@@ -32,6 +33,7 @@ assert "wall_ms" in data and data["wall_ms"] >= 0, data
 assert data["budget"]["max_repo_git_info"] == 2, data
 assert data["budget"]["max_pass_result_hmac_key"] == 1, data
 assert data["budget"]["max_max_cover_sql"] == 2, data
+assert data["budget"]["max_git_hash_object"] == 1, data
 assert data["budget"]["enforced"] is True, data
 PY
 

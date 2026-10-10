@@ -3,6 +3,31 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #730: Batch Lattice Candidate Git Metadata
+
+Status: in progress
+
+Goal:
+- remove per-eligible-candidate Git process launches from max-cover metadata
+  collection while preserving source safety, status, and hash semantics
+
+Verified defect:
+- candidate enumeration already batches path, status, and HEAD-blob discovery,
+  but `selected_git_metadata()` still invokes `git hash-object` for every
+  eligible candidate
+
+Plan:
+- classify candidates first, hash only eligible non-symlink paths in bounded
+  Git argument batches, then construct the existing row metadata from those
+  results
+- preserve argv-based handling for paths containing newlines and fall back to
+  the established single-path behavior only for a failed batch
+
+Validation:
+- measure real selection subprocess count before and after in the deterministic
+  profile, including newline-path and unavailable-file behavior
+- run focused Lattice tests plus full repository validation before PR
+
 ## Issue #731: Batch Lattice Max-Cover Coverage Queries
 
 Status: implementation and local validation complete; awaiting PR CI

@@ -3544,6 +3544,9 @@ PY
     batch_validation.parallel_local_gates)
       printf '%s\n' "tools/run_validation_phases.sh"
       ;;
+    batch_validation.plan)
+      printf '%s\n' "orchestration/backlog.sh"
+      ;;
     *)
       printf '%s\n' "orchestration/backlog.sh"
       ;;
@@ -3962,7 +3965,7 @@ run_per_bug_validation() {
 }
 
 run_batch_validation() {
-  local validation_start rc validation_root
+  local validation_start rc validation_root plan_path selected_phases classification reason
 
   [[ "${BACKLOG_SKIP_LOCAL_VALIDATION:-0}" == "1" ]] && return 0
 
@@ -3970,14 +3973,25 @@ run_batch_validation() {
   validation_root="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-backlog-batch-validation.XXXXXX")"
   record_control_plane_snapshot "batch-validation-before"
   backlog_update_active_owner_heartbeat "validating" \
-    "$(backlog_wait_detail local_validation batch_validation "expected=syntax_tests_docs_diff_quick_validator")" \
+    "$(backlog_wait_detail local_validation batch_validation "expected=affected_surface_plan")" \
     "" "owner_pid_start_cwd_verified"
   (
     export UPKEEPER_OBLIGATION_DIR="$validation_root/automation-obligations"
     export CODEX_TOOL_FAILURE_QUEUE_DIR="$validation_root/tool-failure-queue"
     export CODEX_TRANSCRIPT_DIR="$validation_root/transcripts"
+    plan_path="$validation_root/validation-plan.json"
+    run_batch_validation_phase "batch_validation.plan" "affected-surface validation plan" \
+      tools/plan_batch_validation.sh --output "$plan_path" || exit $?
+    selected_phases="$(jq -r '.selected_phases | join(",")' "$plan_path")"
+    classification="$(jq -r '.classification' "$plan_path")"
+    reason="$(jq -r '.reason' "$plan_path")"
+    [[ -n "$selected_phases" && "$selected_phases" != "null" ]] || {
+      printf 'batch validation plan did not select any phases\n' >&2
+      exit 1
+    }
+    log "batch validation: plan classification=$classification reason=$reason phases=$selected_phases manifest=$plan_path"
     run_batch_validation_phase "batch_validation.parallel_local_gates" "parallel local gates" \
-      tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace,quick_validator
+      tools/run_validation_phases.sh --phases "$selected_phases"
   ) || {
       rc="$?"
       rm -rf -- "$validation_root"

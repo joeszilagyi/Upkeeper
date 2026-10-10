@@ -3157,10 +3157,12 @@ SH
 
 check_backlog_batch_validation_obligation_contract() {
   log "checking backlog batch-validation obligation contract"
+  grep -Fq 'tools/plan_batch_validation.sh --output "$plan_path"' orchestration/backlog.sh ||
+    fail "backlog batch validation does not create an affected-surface plan"
   grep -Fq 'run_batch_validation_phase "batch_validation.parallel_local_gates"' orchestration/backlog.sh ||
     fail "backlog batch validation does not route parallel local gate failures through the obligation wrapper"
-  grep -Fq 'tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace,quick_validator' orchestration/backlog.sh ||
-    fail "backlog batch validation does not include the quick validator in the parallel local gate"
+  grep -Fq 'tools/run_validation_phases.sh --phases "$selected_phases"' orchestration/backlog.sh ||
+    fail "backlog batch validation does not run the plan-selected local gates"
   grep -Fq 'batch_validation.parallel_local_gates)' orchestration/backlog.sh ||
     fail "backlog batch validation owner hint does not classify the parallel local gate"
   grep -Fq 'backlog_open_batch_validation_obligation' orchestration/backlog.sh ||
@@ -3177,6 +3179,7 @@ check_backlog_batch_validation_obligation_contract() {
     fail "ChimneySweep test does not guard against inherited live obligation state"
   grep -Fq 'second identical validation failure reran command' tests/backlog_batch_validation_obligation_test.bash ||
     fail "batch-validation obligation test does not prove retry guard avoids rerunning the failed command"
+  validation_run_test tests/batch_validation_plan_test.bash
   validation_run_test tests/backlog_batch_validation_obligation_test.bash
 }
 

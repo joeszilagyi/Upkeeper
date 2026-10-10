@@ -1,5 +1,14 @@
 # 2026 Change Notes
 
+2026-10-09: batch validation planning:
+	1. Backlog batch validation now emits a machine-readable affected-surface plan
+	   before it runs checks, including its revisions, paths, selected/skipped
+	   phases, and local validation inputs.
+	2. Only the existing explicit editorial-docs allowlist may omit the broad
+	   local test and quick-validator phases; missing, empty, unknown, runtime,
+	   Lattice, prompt, configuration, test, and control-plane path sets fail
+	   closed to the full lane.
+
 2026-10-09: responsive PR-check polling:
 	1. Backlog required-check polling now defaults to 15 seconds, while retaining
 	   the explicit `BACKLOG_PR_CHECK_INTERVAL_SECONDS` operator override for

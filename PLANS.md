@@ -5,7 +5,7 @@ Upkeeper changes. Keep entries brief and update their status before merge.
 
 ## Issue #715: Expand Validation Artifact Reuse Beyond Unit Tests
 
-Status: implementation complete; final local validation in progress
+Status: complete; merged in PR #894
 
 Goal:
 - extend the existing fail-closed same-tree unit-test attestation into an
@@ -49,6 +49,15 @@ Completed implementation:
 - added isolated regression coverage for valid runner reuse and fail-closed
   stale-head, command, environment, and broader-input mismatches; updated
   copied backlog fixtures so their controlled roots retain the new dependency
+
+Validation evidence:
+- local syntax, public-doc, whitespace, focused attestation fixtures, and the
+  complete 73-test deterministic suite passed; `tools/validate_upkeeper.sh
+  --quick` passed
+- PR #894 passed phase gates, full validation, and CodeQL at head
+  `09df7281aae107f37a0b7fc71ae69ff35dc1d690`; merged main commit
+  `89f6c55c115e502adc98b7f3228cf9480151cdf2` then passed separate push-to-main
+  CI and CodeQL verification
 
 ## Issue #703: Reuse Control-Plane Audit Inventory During Staging
 

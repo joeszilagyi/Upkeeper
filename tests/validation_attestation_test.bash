@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/tools/validation_attestation_lib.bash"
+# The fixture must construct its baseline in a known local environment even
+# when the surrounding test runner is CI, then prove a CI consumer is refused.
+unset CI
 
 TEST_ROOT="$(mktemp -d /tmp/upkeeper-validation-attestation.XXXXXX)"
 TEST_ARTIFACT_ROOT="$(mktemp -d /tmp/upkeeper-validation-attestation-artifact.XXXXXX)"

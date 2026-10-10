@@ -543,6 +543,35 @@ PY
 EOF
   lattice import-change-notes "$TEST_TMP_ROOT/change_notes_2026.md" >$TEST_TMP_ROOT/lattice-notes.json
   assert_sql_value "1" "select count(*) from change_log_entries where version='vtest'"
+  {
+    printf '# 2026 Change Notes\n\n2026-05-10: vbatch changes:\n'
+    for item_number in $(seq 1 501); do
+      if [[ "$item_number" == "1" ]]; then
+        printf '\t%s. Batched `README.md`, duplicate `README.md`, and `tests/example.txt` reference.\n' "$item_number"
+      else
+        printf '\t%s. Batched `README.md` and `tests/example.txt` reference.\n' "$item_number"
+      fi
+    done
+  } >"$TEST_TMP_ROOT/change_notes_batch.md"
+  lattice import-change-notes "$TEST_TMP_ROOT/change_notes_batch.md" >"$TEST_TMP_ROOT/lattice-notes-batch.json"
+  assert_sql_value "501" "select count(*) from change_log_entries where version='vbatch'"
+  assert_sql_value "1002" "select count(*) from change_log_file_refs join change_log_entries using(change_log_entry_id) where version='vbatch'"
+  python3 - "$TEST_TMP_ROOT/lattice-notes-batch.json" <<'PY' || fail "batched change-note import did not preserve write accounting"
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["status"] == "ok", data
+assert data["rows_seen"] == 501, data
+assert data["rows_written"] == 1503, data
+assert data["duplicates"] >= 1, data
+PY
+  lattice import-change-notes "$TEST_TMP_ROOT/change_notes_batch.md" >"$TEST_TMP_ROOT/lattice-notes-batch-repeat.json"
+  python3 - "$TEST_TMP_ROOT/lattice-notes-batch-repeat.json" <<'PY' || fail "repeated batched change-note import was not idempotent"
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["status"] == "ok", data
+assert data["rows_written"] == 0, data
+assert data["duplicates"] >= 1003, data
+PY
   cat >"$TEST_TMP_ROOT/change_notes_2026_malicious.md" <<'EOF'
 # 2026 Change Notes
 

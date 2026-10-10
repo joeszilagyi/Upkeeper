@@ -291,6 +291,47 @@ Validation:
 - required syntax, full suite, diff, docs, and quick-validator commands before
   PR
 
+## Issue #717: Make Quota Hibernation Prompt at the Reset Boundary
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- remove the unconditional one-minute post-reset hibernation tax while keeping
+  quota protection, local-only waiting, and operator-visible custody intact
+
+Verified defect:
+- `backlog_hibernate_until_epoch()` defaults both the reset grace and local
+  wake/branch-check poll interval to 60 seconds; a known reset therefore waits
+  until `reset + 60` even though the next preflight can safely re-evaluate
+  fresh quota evidence before any backend work
+- its existing final `min(remaining,poll)` chunk avoids oversleeping a chosen
+  wake epoch, but it does not make the one-minute grace explicit, configurable
+  down to zero, or suitably responsive near the boundary
+
+Plan:
+- use a small, explicitly documented default grace and shorter bounded polling,
+  with a tighter local check cadence near the reset boundary; preserve the
+  configured maximum-wait guard, hard usage-limit behavior, branch-retired
+  exit, and no-backend hibernation semantics
+- make logs and owner heartbeat evidence state the reset, grace, next local
+  check, and final recheck timing in ordinary operator language
+- extend deterministic fake-clock coverage for immediate/near reset, explicit
+  zero grace, invalid configuration fallback, branch retirement, and both
+  marker and snapshot callers without querying a live quota provider
+
+Likely files:
+- `orchestration/backlog.sh`
+- focused quota-hibernation regression coverage and validation contracts
+- `lib/upkeeper/help_selection.bash`, `docs/scripts/upkeeper.md`,
+  `docs/compatibility.md`, `change_notes_2026.md`, and this plan
+
+Validation:
+- demonstrate the old 60-second default grace under a fake clock, then prove
+  the new configured/default boundary timings, exact exit status, and retained
+  branch/maximum-wait safeguards
+- run required syntax, deterministic suite, whitespace, public-doc checks,
+  quick validator, and the focused no-backend quota tests before PR
+
 ## Issue #724: Remove Remaining Hot-Path Logging Subshells
 
 Status: implementation and local validation complete; ready for focused PR

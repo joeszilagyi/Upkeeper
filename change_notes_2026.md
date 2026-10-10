@@ -1,5 +1,14 @@
 # 2026 Change Notes
 
+2026-10-10: prompt quota-reset hibernation:
+	1. Backlog quota hibernation now uses a five-second reset grace instead of
+	   imposing an unconditional extra minute before the next local quota
+	   preflight; operators may set the grace to zero for an immediate recheck.
+	2. Local branch/owner checks poll every 15 seconds by default and every five
+	   seconds during the final 30-second reset window, with clear reset, grace,
+	   wake, and next-check evidence while preserving the existing fail-closed
+	   maximum-wait and branch-retirement safeguards.
+
 2026-10-10: hot-path structured logging:
 	1. Structured key/value logging now has assignment-style `%q` helpers, so
 	   callers can prepare safe fields without creating command-substitution

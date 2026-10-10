@@ -196,7 +196,13 @@ Future changes should preserve this operator-visible surface as far as possible:
   backlog branch's upstream ref disappears after another worktree merges or
   deletes the PR branch, hibernation exits cleanly with
   `action=exit_for_merged_or_deleted_branch` instead of holding a retired branch
-  until quota reset.
+  until quota reset. The default reset grace is 5 seconds and may be set to
+  zero with `BACKLOG_QUOTA_HIBERNATE_GRACE_SECONDS=0` when immediate fresh
+  preflight evidence is appropriate; local branch/owner checks use a 15-second
+  cadence, tightened to 5 seconds during the final 30 seconds. These local
+  checks do not query the provider. `BACKLOG_QUOTA_HIBERNATE_MAX_SECONDS`
+  remains an operator-configured fail-closed cap (0 preserves unbounded
+  waiting).
 - `ChimneySweep` owns pre-model issue ranking for repair automation: clean
   actionable queues exit 25, security issues outrank data-integrity issues,
   data-integrity issues outrank the general queue, and the selected issue is

@@ -3,6 +3,30 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #731: Batch Lattice Max-Cover Coverage Queries
+
+Status: implementation and local validation complete; awaiting PR CI
+
+Goal:
+- replace per-candidate file-ID and pass-coverage SQL lookups in max-cover
+  selection with bounded set-based queries while preserving ranking output
+
+Verified defect:
+- `annotate_max_cover_scores()` calls `file_id_for_path()` and
+  `pass_coverage_counts_for_file()` once per eligible candidate, creating an
+  N-plus-one SQLite query pattern
+
+Plan:
+- collect eligible candidate paths once, resolve file identities in a bounded
+  `IN` query, and fetch grouped coverage counts for those identities
+- annotate rows from in-memory maps and add a real query-count regression that
+  compares mixed covered/uncovered scoring against the existing contract
+
+Validation:
+- reproduce the pre-change query shape in an isolated Lattice fixture
+- exercise output/ranking, missing-file, covered, and uncovered paths, then
+  run focused Lattice tests and repository validation before PR
+
 ## Issue #729: Cache Lattice Pass-Result HMAC Key Per Selection Query
 
 Status: implementation and local validation complete; awaiting PR CI

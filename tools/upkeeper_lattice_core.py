@@ -14231,13 +14231,97 @@ def pass_coverage_counts_for_file(conn: sqlite3.Connection, repo_id: int, file_i
     return counts
 
 
+MAX_COVER_QUERY_CHUNK_SIZE = 500
+
+
+def max_cover_file_ids_for_paths(conn: sqlite3.Connection, repo_id: int, paths: list[str]) -> dict[str, int]:
+    """Resolve current file identities in bounded set queries.
+
+    This preserves ``file_id_for_path`` precedence: a current path wins, and a
+    historical path alias is considered only when no current path matches.
+    """
+    resolved: dict[str, int] = {}
+    for offset in range(0, len(paths), MAX_COVER_QUERY_CHUNK_SIZE):
+        chunk = paths[offset : offset + MAX_COVER_QUERY_CHUNK_SIZE]
+        if not chunk:
+            continue
+        values = ", ".join("(?)" for _ in chunk)
+        rows = conn.execute(
+            f"""
+            with candidate_paths(path) as (values {values}),
+            direct_matches as (
+              select c.path, f.file_id,
+                     row_number() over (
+                       partition by c.path
+                       order by case when f.canonical_path <> c.path then 0 else 1 end, f.file_id
+                     ) as rank
+              from candidate_paths c
+              join files f on f.repo_id=? and f.current_path=c.path
+            ),
+            alias_matches as (
+              select c.path, f.file_id,
+                     row_number() over (
+                       partition by c.path
+                       order by case when f.current_path=c.path then 0 else 1 end,
+                                f.last_seen_epoch desc, f.file_id
+                     ) as rank
+              from candidate_paths c
+              join file_paths p on p.path=c.path
+              join files f on f.file_id=p.file_id and f.repo_id=?
+            )
+            select c.path, coalesce(d.file_id, a.file_id) as file_id
+            from candidate_paths c
+            left join direct_matches d on d.path=c.path and d.rank=1
+            left join alias_matches a on a.path=c.path and a.rank=1
+            """,
+            (*chunk, repo_id, repo_id),
+        )
+        for row in rows:
+            if row["file_id"] is not None:
+                resolved[str(row["path"])] = int(row["file_id"])
+    return resolved
+
+
+def max_cover_pass_coverage_counts(conn: sqlite3.Connection, repo_id: int, file_ids: set[int]) -> dict[int, dict[str, int]]:
+    counts_by_file: dict[int, dict[str, int]] = {}
+    sorted_file_ids = sorted(file_ids)
+    for offset in range(0, len(sorted_file_ids), MAX_COVER_QUERY_CHUNK_SIZE):
+        chunk = sorted_file_ids[offset : offset + MAX_COVER_QUERY_CHUNK_SIZE]
+        if not chunk:
+            continue
+        placeholders = ", ".join("?" for _ in chunk)
+        for row in conn.execute(
+            f"""
+            select file_id, pass_code,
+              sum(
+                case
+                  when outcome in ('clean','fixed','regression_found','not_applicable','blocked') then 1
+                  when attempted=1 then 1
+                  else 0
+                end
+              ) as covered_count
+            from file_pass_runs
+            where repo_id=? and file_id in ({placeholders})
+            group by file_id, pass_code
+            """,
+            (repo_id, *chunk),
+        ):
+            file_id = int(row["file_id"])
+            counts_by_file.setdefault(file_id, {})[normalize_pass_code(str(row["pass_code"]))] = int(row["covered_count"] or 0)
+    return counts_by_file
+
+
 def annotate_max_cover_scores(conn: sqlite3.Connection, repo_id: int, rows: list[dict[str, Any]]) -> None:
     registry_order = {item["pass_code"]: i for i, item in enumerate(PASS_REGISTRY)}
+    eligible_paths = [stored_rel_path(external_rel_path(str(row["path"]))) for row in rows if row["candidate_state"] == "eligible"]
+    file_ids_by_path = max_cover_file_ids_for_paths(conn, repo_id, eligible_paths)
+    coverage_by_file = max_cover_pass_coverage_counts(conn, repo_id, set(file_ids_by_path.values()))
     for row in rows:
         if row["candidate_state"] != "eligible":
             continue
-        file_id = file_id_for_path(conn, repo_id, row["path"])
-        counts = pass_coverage_counts_for_file(conn, repo_id, file_id)
+        file_id = file_ids_by_path.get(stored_rel_path(external_rel_path(str(row["path"]))))
+        counts = {item["pass_code"]: 0 for item in PASS_REGISTRY if item.get("active", True)}
+        counts.update(coverage_by_file.get(file_id or -1, {}))
         unrun = sorted(
             (pass_code for pass_code, count in counts.items() if count == 0),
             key=lambda code: registry_order.get(code, 999_999),

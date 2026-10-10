@@ -99,6 +99,35 @@ def count_repo_git_info_calls(lattice: Any):
         core_module.pass_result_hmac_key = original_pass_result_hmac_key
 
 
+@contextlib.contextmanager
+def count_max_cover_sql(lattice: Any):
+    core_module = sys.modules[lattice.pass_result_hmac_key.__module__]
+    counts = {"max_cover_sql": 0}
+    original_connect_checked = core_module.connect_checked
+
+    def traced_connect_checked(*args: Any, **kwargs: Any) -> Any:
+        conn = original_connect_checked(*args, **kwargs)
+
+        def trace(statement: str) -> None:
+            normalized = " ".join(statement.lower().split())
+            if (
+                normalized.startswith("with candidate_paths")
+                or normalized.startswith("select file_id from files")
+                or normalized.startswith("select f.file_id from file_paths")
+                or (normalized.startswith("select file_id, pass_code") and " from file_pass_runs " in normalized)
+            ):
+                counts["max_cover_sql"] += 1
+
+        conn.set_trace_callback(trace)
+        return conn
+
+    core_module.connect_checked = traced_connect_checked
+    try:
+        yield counts
+    finally:
+        core_module.connect_checked = original_connect_checked
+
+
 def run_lattice(lattice: Any, argv: list[str]) -> tuple[int, str]:
     stdout = io.StringIO()
     with contextlib.redirect_stdout(stdout):
@@ -122,6 +151,18 @@ def profile_selection(args: argparse.Namespace) -> dict[str, Any]:
                 "output": init_output[-500:],
             }
 
+        start_rc, start_output = run_lattice(
+            lattice,
+            [
+                "--root", str(repo), "--db", str(db), "record-cycle-start",
+                "--cycle-id", "profile-cycle", "--run-hash", "profile-run",
+                "--execution-origin", "profile", "--model", "profile", "--effort", "low",
+                "--mode", "profile", "--config-file", "profile.conf", "--dirty-path-count", "0", "--dry-run", "1",
+            ],
+        )
+        if start_rc != 0:
+            return {"operation": "selection-candidates", "status": "record_start_failed", "rc": start_rc, "output": start_output[-500:]}
+
         query_argv = [
             "--root",
             str(repo),
@@ -134,7 +175,7 @@ def profile_selection(args: argparse.Namespace) -> dict[str, Any]:
             "--format",
             "jsonl",
         ]
-        with count_lattice_subprocesses(lattice) as counts, count_repo_git_info_calls(lattice) as identity_counts:
+        with count_lattice_subprocesses(lattice) as counts, count_repo_git_info_calls(lattice) as identity_counts, count_max_cover_sql(lattice) as sql_counts:
             start = time.perf_counter()
             rc, output = run_lattice(lattice, query_argv)
             elapsed_ms = int(round((time.perf_counter() - start) * 1000))
@@ -151,12 +192,14 @@ def profile_selection(args: argparse.Namespace) -> dict[str, Any]:
             "subprocess_check_output_count": counts["check_output"],
             "repo_git_info_count": identity_counts["repo_git_info"],
             "pass_result_hmac_key_count": identity_counts["pass_result_hmac_key"],
+            "max_cover_sql_count": sql_counts["max_cover_sql"],
             "budget": {
                 "max_wall_ms": args.max_wall_ms,
                 "max_subprocess_run": args.max_subprocess_run,
                 "max_subprocess_check_output": args.max_subprocess_check_output,
                 "max_repo_git_info": args.max_repo_git_info,
                 "max_pass_result_hmac_key": args.max_pass_result_hmac_key,
+                "max_max_cover_sql": args.max_max_cover_sql,
                 "enforced": args.enforce,
             },
         }
@@ -171,6 +214,8 @@ def profile_selection(args: argparse.Namespace) -> dict[str, Any]:
             over_budget.append("repo_git_info_count")
         if result["pass_result_hmac_key_count"] > args.max_pass_result_hmac_key:
             over_budget.append("pass_result_hmac_key_count")
+        if result["max_cover_sql_count"] > args.max_max_cover_sql:
+            over_budget.append("max_cover_sql_count")
         result["over_budget"] = over_budget
         return result
 
@@ -183,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-subprocess-check-output", type=int, default=30)
     parser.add_argument("--max-repo-git-info", type=int, default=2)
     parser.add_argument("--max-pass-result-hmac-key", type=int, default=1)
+    parser.add_argument("--max-max-cover-sql", type=int, default=2)
     parser.add_argument("--enforce", action="store_true", help="fail when measured values exceed the current report budget")
     args = parser.parse_args(argv)
 

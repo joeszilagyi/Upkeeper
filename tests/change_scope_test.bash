@@ -75,6 +75,7 @@ operational_authority="$(BACKLOG_SOURCE_ONLY=1 bash -c '
 fallback_root="$TEST_ROOT/backlog-fallback"
 mkdir -p "$fallback_root/orchestration" "$fallback_root/lib/upkeeper" "$fallback_root/tools"
 cp "$ROOT_DIR/orchestration/backlog.sh" "$fallback_root/orchestration/backlog.sh"
+cp "$ROOT_DIR/orchestration/backlog_phase_timing.bash" "$fallback_root/orchestration/backlog_phase_timing.bash"
 cp "$ROOT_DIR/lib/upkeeper/runtime_format_json.bash" "$fallback_root/lib/upkeeper/runtime_format_json.bash"
 cp "$ROOT_DIR/tools/validation_attestation_lib.bash" "$fallback_root/tools/validation_attestation_lib.bash"
 fallback_authority="$(BACKLOG_SOURCE_ONLY=1 bash -c '

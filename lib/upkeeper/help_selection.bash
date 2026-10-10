@@ -742,6 +742,7 @@ Environment overrides:
   UPKEEPER_TASK_PROFILE_ENABLED Default: 1
   UPKEEPER_TASK_PROFILE_AUTO_EFFORT Default: 1
   UPKEEPER_TASK_PROFILE_AUTO_MODULES Default: 1
+  UPKEEPER_LOCAL_FIX_LANE_ENABLED Default: 1; lets an explicitly selected issue with an already-applied authorized editorial diff complete locally only after the docs-only validation gate passes. Mixed, empty, inferred, unsafe, dry-run, or failed-validation cases still escalate.
   UPKEEPER_PROMPT_PAYLOAD_METRICS Default: 1
   UPKEEPER_LEAN_TARGET_BLOCK_MAX_BYTES Default: 12000
   CODEX_FALLBACK_ENABLED        Default: 1

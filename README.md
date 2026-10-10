@@ -580,6 +580,14 @@ primary/fallback/postmortem chains unless
 `CODEX_MODEL_CONTACT_BUDGET_BYPASS=1` is set for a deliberate manual
 escalation.
 
+For issue repair, the local-fix lane is deliberately narrower than the task
+profile: only an explicitly selected issue whose authorized target and every
+already-applied changed path are in the editorial allowlist can enter it. When
+the shared docs-only gate passes, Upkeeper records `WORK_DONE` without a model
+call. A path classification alone never authorizes a source edit; mixed paths,
+empty diffs, inferred targets, security/data-integrity/control-plane labels,
+dry runs, and a failed local gate retain the normal backend escalation.
+
 Selection is also configurable. The default is a local manifest-backed oldest
 eligible file rotation; scheduled profiles can narrow that rotation without
 adding another wrapper script:

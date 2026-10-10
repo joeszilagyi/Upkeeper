@@ -3,6 +3,63 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #719: Fail-Closed Local Trivial-Fix Lane
+
+Status: complete; pending PR
+
+Goal:
+- prevent ordinary issue repair from unconditionally crossing the backend
+  boundary when the selected issue provides enough trusted, deterministic
+  evidence for a bounded local check or a no-backend completion
+
+Constraints:
+- preserve wrapper-owned issue selection, machine-health-first preflights,
+  Lattice evidence, required backup/authority boundaries, and full backend
+  escalation for uncertainty, safety/data-integrity/control-plane work
+- do not let labels alone authorize a source edit or change a target; local
+  successes must be concrete validator outcomes with retained reason evidence
+
+Plan:
+- map the issue packet, preselection, and cycle-finalization boundaries to find
+  one shared classification owner before any Codex launch
+- add a conservative local-only allowlist for proven docs/check cases and an
+  explicit unknown/unsafe escalation path; retain profile-selected lower effort
+  when a model is still needed
+- exercise actual no-backend completion, failed/ambiguous local proof, and
+  safety-sensitive escalation with private fixtures; document the lane and its
+  non-goals
+
+Validation:
+- use focused deterministic fixtures first, then the required shell syntax,
+  full suite, whitespace, public docs, and quick validator without backend work
+
+Implemented so far:
+- added a narrowly scoped local-fix owner after selected-target prompt setup and
+  before backend launch; it accepts only an explicitly authorized target in an
+  already-applied docs-only diff that contains no sensitive control-plane labels
+  and passes the shared docs gate
+- all other path/diff states deliberately return to the existing model path;
+  the local test covers safe completion plus inferred-target, security,
+  mixed-path, empty-diff, failed-validation, dry-run, and disabled-lane
+  rejection
+
+Validation completed:
+- `bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf`
+- `bash tests/local_fix_lane_test.bash`
+- `tools/check_public_docs.sh --quick`
+- `tools/run_tests.sh` (74/74 passed)
+- `tools/validate_upkeeper.sh --quick`
+- `git diff --check`
+
+Limitations:
+- this is an intentionally narrow completion lane for an explicitly selected,
+  already-applied editorial target; it does not treat an inferred target,
+  labels, or a documentation check as general proof that arbitrary issue prose
+  has been semantically resolved
+- no formatter or syntax fixer is introduced because this checkout has no
+  established deterministic repair tool for those source classes; those
+  model-needed classes continue to use the existing task-profile effort policy
+
 ## Issue #684: Preserve Explicit Primary Reasoning-Effort Overrides
 
 Status: complete; pending PR

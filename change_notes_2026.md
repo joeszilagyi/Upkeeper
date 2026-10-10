@@ -1,5 +1,13 @@
 # 2026 Change Notes
 
+## v1.2.49 changes: Add fail-closed docs local-fix completion
+
+- An explicitly selected issue can now complete without backend model work only
+  when its authorized target is part of an already-applied editorial-only diff
+  and the shared docs-only validation gate succeeds. Empty, mixed, inferred,
+  safety-sensitive, dry-run, and failed-validation cases still enter the
+  ordinary backend path with explicit local evidence.
+
 ## v1.2.48 changes: Preserve explicit primary reasoning effort through task profiling
 
 - Routine task profiles continue to lower the repository's `xhigh`

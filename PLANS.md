@@ -89,6 +89,50 @@ Limitation:
   finish the remaining entrypoint, embedded-Python, or large-module work in
   #734, nor does it establish live backend behavior.
 
+## Issue #734: Preselect Owner Boundary
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- remove the entrypoint's runtime clone-and-override of target selection so the
+  selector and its optional failure-queue validation have explicit, inspectable
+  ownership in `help_selection.bash`
+
+Constraints:
+- preserve the public selector name, standalone selector use in focused tests,
+  target-selection output, failure status/output propagation, canonical
+  failure-queue metadata, and all existing queue safety checks
+- do not change selection policy, queue custody, prompt behavior, or backend
+  contact; no live backend work
+
+Plan:
+- rename the large Python-backed selector implementation to an explicit module
+  base and keep its queue-aware public wrapper adjacent to it
+- remove the entrypoint `declare -f | sed | eval` clone and its local override
+- add a sourced-real-entrypoint regression proving the base/public boundary,
+  canonical output, and failure propagation; retain existing standalone
+  selection, timeout, backup, and architecture tests
+
+Implemented and validated:
+- renamed the Python-backed selector implementation to
+  `upkeeper_preselect_review_target_base` and moved the queue-aware public
+  selector wrapper into `help_selection.bash`, eliminating the entrypoint's
+  runtime `declare -f | sed | eval` clone and local override
+- preserved standalone module use: when the optional queue/output helpers are
+  deliberately absent, the public selector delegates directly to the base
+  implementation; when the entrypoint has loaded them, it retains canonical
+  output and failure-queue validation
+- added a sourced-real-entrypoint boundary regression for the explicit base,
+  public output, absence of the cloned implementation, and failure-output/exit
+  propagation; passed focused selection/timeout/backup/architecture tests, all
+  83 deterministic tests, public-doc checks, and quick/full no-quota
+  validators including the local stress corpus
+
+Limitation:
+- this removes one ownership-opaque selection seam only. The large embedded
+  selector and the remaining entrypoint phase/function boundaries are still
+  tracked in #734; no live backend behavior is established.
+
 ## Issue #705: Validator Mode-Boundary Extraction
 
 Status: implementation and local validation complete; ready for focused PR

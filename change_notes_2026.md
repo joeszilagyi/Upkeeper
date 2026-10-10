@@ -1,5 +1,13 @@
 # 2026 Change Notes
 
+2026-10-09: cached backlog branch identity:
+	1. A backlog iteration now resolves its current branch once for stable
+	   ownership, hibernation, notice, retry, and publication paths instead of
+	   repeatedly spawning the same Git branch query.
+	2. Checkout, branch-creation, autoshelve-reset, merge-cleanup, and immediate
+	   push-guard paths explicitly refresh or invalidate that cache; the separate
+	   owner-heartbeat process continues to read Git freshly for custody safety.
+
 2026-10-09: zero-fork runtime timestamps:
 	1. Routine log, terminal, progress, and run-mark timestamp helpers now use
 	   Bash builtins and epoch special variables instead of spawning `date(1)`

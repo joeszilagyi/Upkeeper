@@ -126,7 +126,7 @@ Validation:
 
 ## Issue #706: Remove Per-Log-Line `date` Forks
 
-Status: implementation and local validation complete; ready for focused PR
+Status: complete; merged in PR #883
 
 Goal:
 - remove the `date(1)` process launch from the central timestamp helpers used
@@ -151,6 +151,35 @@ Validation:
 - exercise the explicit fallback boundary with a controlled `date` fixture,
   then run required syntax, focused regression, full deterministic suite,
   whitespace, and quick validation before PR
+
+## Issue #707: Cache Backlog Branch Identity
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- avoid repeated `git rev-parse --abbrev-ref HEAD` launches during one backlog
+  iteration without allowing owner records, retry state, autoshelving, or push
+  guards to use a branch value after Git has changed it
+
+Verified defect:
+- the source has independent branch-resolution calls in hibernation, ownership,
+  notices, deferred/retry paths, autoshelving, push guards, and publication;
+  several occur in ordinary stable-branch control flow
+
+Plan:
+- make one explicit mutable branch-identity cache owned by the backlog launcher
+  and use assignment-style refreshes so command substitutions cannot discard
+  cache updates
+- invalidate it immediately after every checkout, branch creation, reset, and
+  merge-cleanup branch transition; retain direct fresh reads where an invariant
+  requires one
+
+Validation:
+- add an isolated Git fixture with a counting Git wrapper to prove stable reuse
+  and post-transition refresh, including detached/unknown fallback and push
+  guard correctness
+- run focused backlog regressions plus required syntax, full deterministic
+  suite, whitespace, and quick validation before PR
 
 ## Issue #730: Batch Lattice Candidate Git Metadata
 

@@ -3,7 +3,13 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-precontact-test.XXXXXX")"
-trap 'rm -r "$TEST_TMP_ROOT" 2>/dev/null || true' EXIT
+
+cleanup() {
+  # This exact root is created by mktemp above. Backup fixtures can contain
+  # read-only files, so terminal cleanup must never wait for confirmation.
+  rm -rf -- "$TEST_TMP_ROOT" 2>/dev/null || true
+}
+trap cleanup EXIT
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -1076,26 +1082,55 @@ test_machine_preflight_skips_read_only_issue_stages() {
   precontact_backup_machine_preflight_or_exit
 }
 
-test_plain_required_backup_succeeds
-test_age_mode_uses_public_recipient_only
-test_age_create_rejects_stale_payload_when_target_mutates_after_metadata
-test_machine_preflight_blocks_before_issue_selection
-test_machine_preflight_skips_read_only_issue_stages
-test_required_encrypted_mode_fails_closed
-test_default_auto_mode_fails_closed_without_age
-test_plain_mode_requires_explicit_unsafe_override
-test_plain_mode_rejects_private_key_content
-test_unsafe_target_rejection
-test_precontact_backup_validate_root_secure_private_dir
-test_prompt_redaction_and_replacement_rule
-test_retention_prunes_only_same_path
-test_plain_restore_and_unsafe_id
-test_restore_by_id_handles_newline_vault_and_duplicate_sidecars
-test_standalone_restore_rejects_wrong_repo_by_default
-test_secure_restore_preserves_recorded_mode
-test_plain_restore_temporary_directory_cleaned_on_failure
-test_age_restore_uses_payload_metadata
-test_secure_restore_rejects_parent_swap_race
-test_atomic_backup_pair_publication_contract
+test_cleanup_removes_read_only_fixture() {
+  local fixture_dir fixture_file
+
+  fixture_dir="$TEST_TMP_ROOT/cleanup-read-only"
+  fixture_file="$fixture_dir/read-only-backup"
+  mkdir -p -- "$fixture_dir"
+  printf 'fixture\n' >"$fixture_file"
+  chmod 444 -- "$fixture_file"
+  if [[ -n "${UPKEEPER_PRECONTACT_TEST_CLEANUP_ROOT_RECORD:-}" ]]; then
+    printf '%s\n' "$TEST_TMP_ROOT" >"$UPKEEPER_PRECONTACT_TEST_CLEANUP_ROOT_RECORD"
+  fi
+  if [[ "${UPKEEPER_PRECONTACT_TEST_CLEANUP_FAIL:-0}" == "1" ]]; then
+    return 1
+  fi
+}
+
+case "${UPKEEPER_PRECONTACT_TEST_GROUP:-core}" in
+  core)
+    test_plain_required_backup_succeeds
+    test_age_mode_uses_public_recipient_only
+    test_age_create_rejects_stale_payload_when_target_mutates_after_metadata
+    test_machine_preflight_blocks_before_issue_selection
+    test_machine_preflight_skips_read_only_issue_stages
+    test_required_encrypted_mode_fails_closed
+    test_default_auto_mode_fails_closed_without_age
+    test_plain_mode_requires_explicit_unsafe_override
+    test_plain_mode_rejects_private_key_content
+    test_unsafe_target_rejection
+    test_precontact_backup_validate_root_secure_private_dir
+    test_prompt_redaction_and_replacement_rule
+    test_retention_prunes_only_same_path
+    test_plain_restore_and_unsafe_id
+    test_restore_by_id_handles_newline_vault_and_duplicate_sidecars
+    test_standalone_restore_rejects_wrong_repo_by_default
+    test_secure_restore_preserves_recorded_mode
+    test_plain_restore_temporary_directory_cleaned_on_failure
+    test_age_restore_uses_payload_metadata
+    test_secure_restore_rejects_parent_swap_race
+    test_atomic_backup_pair_publication_contract
+    ;;
+  cleanup)
+    test_cleanup_removes_read_only_fixture
+    ;;
+  cleanup-failure)
+    UPKEEPER_PRECONTACT_TEST_CLEANUP_FAIL=1 test_cleanup_removes_read_only_fixture
+    ;;
+  *)
+    fail "unknown UPKEEPER_PRECONTACT_TEST_GROUP=${UPKEEPER_PRECONTACT_TEST_GROUP}"
+    ;;
+esac
 
 printf 'precontact_backup_test: ok\n'

@@ -1393,7 +1393,11 @@ check_backlog_launcher_contract() {
   grep -Fq 'backlog_open_stale_quota_obligation' orchestration/backlog.sh || fail "backlog launcher does not record stale quota evidence obligations"
   grep -Fq 'recorded_non_perfect_health=1' tests/backlog_stale_quota_obligation_test.bash || fail "stale quota obligation test does not assert non-perfect health output"
   grep -Fq 'BACKLOG_OBLIGATION_RETRY_LIMIT="${BACKLOG_OBLIGATION_RETRY_LIMIT:-3}"' orchestration/backlog.sh || fail "backlog launcher does not define obligation retry limit"
+  grep -Fq 'BACKLOG_OBLIGATION_RETRY_COOLDOWN_SECONDS="${BACKLOG_OBLIGATION_RETRY_COOLDOWN_SECONDS:-900}"' orchestration/backlog.sh || fail "backlog launcher does not use the bounded obligation retry cooldown default"
+  grep -Fq 'automation_obligation_retry_state_json' lib/upkeeper/automation_obligations.bash || fail "automation obligations do not share retry-state capture"
+  [[ -f lib/upkeeper/automation_obligation_retry_state.py ]] || fail "automation obligation retry-state helper is missing"
   grep -Fq 'cooldown_deferred' orchestration/backlog.sh || fail "backlog launcher does not stop fresh issue work while every obligation is cooling down"
+  grep -Fq 'immediate retry requires' orchestration/backlog.sh || fail "backlog launcher does not explain how to lift an obligation cooldown"
   grep -Fq 'BACKLOG_OBLIGATION_ISSUE_REPORTS="${BACKLOG_OBLIGATION_ISSUE_REPORTS:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default obligation issue reports on"
   grep -Fq 'BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE="${BACKLOG_OBLIGATION_GITHUB_ISSUE_WRITE:-1}"' orchestration/backlog.sh || fail "backlog launcher does not default obligation GitHub issue filing on"
   grep -Fq 'BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS="${BACKLOG_ANOMALY_CUSTODY_MAX_FINDINGS:-0}"' orchestration/backlog.sh || fail "backlog launcher still caps anomaly custody findings by default"
@@ -2634,6 +2638,7 @@ check_automation_obligation_reconciliation_contract() {
   log "checking automation obligation reconciliation contract"
   validation_run_test tests/automation_obligation_claim_test.bash
   validation_run_test tests/automation_obligation_identity_test.bash
+  validation_run_test tests/automation_obligation_retry_state_test.bash
   temp_dir="$(mktemp -d /tmp/upkeeper-obligation-reconcile.XXXXXX)"
   mkdir -p "$temp_dir/obligations/open"
 

@@ -1,5 +1,15 @@
 # 2026 Change Notes
 
+2026-10-10: state-aware obligation retry cooldown:
+	1. Repeated blocked obligation repairs now defer identical retry state for 15
+	   minutes by default rather than six hours. Target/content, checkout
+	   branch/HEAD, repair evidence, linked issue, and an optional retry-context
+	   change make a prompt retry eligible without resetting custody counters.
+	2. Deferred backlog output now names the obligation, remaining wait, failure
+	   and retry-state fingerprints, and the condition for a prompt retry;
+	   `BACKLOG_OBLIGATION_RETRY_OVERRIDE=1` remains an explicit operator control
+	   for one invocation.
+
 2026-10-10: prompt quota-reset hibernation:
 	1. Backlog quota hibernation now uses a five-second reset grace instead of
 	   imposing an unconditional extra minute before the next local quota

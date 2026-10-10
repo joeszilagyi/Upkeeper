@@ -645,6 +645,8 @@ custody_fields = (
     "next_retry_epoch",
     "cooldown_attempt_limit",
     "cooldown_reason",
+    "cooldown_retry_state",
+    "cooldown_retry_state_fingerprint",
     "issue_number",
     "issue_title",
     "issue_url",
@@ -1213,6 +1215,7 @@ import os
 import pathlib
 import secrets
 import stat
+import subprocess
 import sys
 import time
 
@@ -1431,15 +1434,114 @@ def retry_epoch(item):
     return safe_int(item.get("next_retry_epoch"), 0)
 
 
-def cooldown_summary(items):
-    retry_epochs = [retry_epoch(item) for item in items if retry_epoch(item) > now_epoch]
-    next_retry_epoch = min(retry_epochs) if retry_epochs else 0
+retry_state_script = root_dir / "lib" / "upkeeper" / "automation_obligation_retry_state.py"
+retry_override = os.environ.get("UPKEEPER_OBLIGATION_RETRY_OVERRIDE", "").strip().lower() in {"1", "true", "yes", "on"}
+retry_hint = (
+    "change the repair target, checkout branch or HEAD, repair evidence, linked issue, "
+    "or UPKEEPER_OBLIGATION_RETRY_CONTEXT; an operator may set "
+    "UPKEEPER_OBLIGATION_RETRY_OVERRIDE=1"
+)
+
+
+def retry_state_for(item):
+    if not retry_state_script.is_file():
+        return {}
+    try:
+        result = subprocess.run(
+            [sys.executable, str(retry_state_script), "--root", str(root_dir)],
+            input=json.dumps(item, separators=(",", ":")),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if result.returncode:
+        return {}
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def changed_retry_state_fields(before, after):
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return []
+    names = {
+        "target_file": "target file",
+        "repair_target_file": "repair target",
+        "repair_target_sha256": "repair target content",
+        "repository_branch": "checkout branch",
+        "repository_head": "checkout HEAD",
+        "failure_fingerprint": "failure fingerprint",
+        "reason": "failure classification",
+        "issue_number": "linked issue",
+        "issue_title_sha256": "linked issue title",
+        "evidence_sha256": "repair evidence",
+        "required_resolution_sha256": "required resolution",
+        "retry_context": "retry context",
+    }
+    return [label for field, label in names.items() if before.get(field) != after.get(field)]
+
+
+def cooldown_decision(item):
+    next_epoch = retry_epoch(item)
+    if next_epoch <= now_epoch:
+        return {"deferred": False, "reason": "expired"}
+    remaining = max(0, next_epoch - now_epoch)
+    if retry_override:
+        return {
+            "deferred": False,
+            "reason": "operator_override",
+            "remaining_seconds": remaining,
+        }
+    stored_fingerprint = str(item.get("cooldown_retry_state_fingerprint", "") or "")
+    stored_state = item.get("cooldown_retry_state")
+    if not stored_fingerprint or not isinstance(stored_state, dict):
+        return {
+            "deferred": True,
+            "reason": "legacy_state_unavailable",
+            "remaining_seconds": remaining,
+            "state_changes": [],
+        }
+    current = retry_state_for(item)
+    if current.get("status") == "ok" and str(current.get("fingerprint", "")) != stored_fingerprint:
+        return {
+            "deferred": False,
+            "reason": "retry_state_changed",
+            "remaining_seconds": remaining,
+            "state_changes": changed_retry_state_fields(stored_state, current.get("state")),
+            "retry_state_fingerprint": str(current.get("fingerprint", "")),
+        }
+    return {
+        "deferred": True,
+        "reason": "unchanged_retry_state",
+        "remaining_seconds": remaining,
+        "state_changes": [],
+        "retry_state_fingerprint": stored_fingerprint,
+    }
+
+
+def cooldown_summary(items, decisions):
+    deferred_items = [item for item in items if decisions[str(item.get("_path", ""))].get("deferred")]
+    next_item = min(deferred_items, key=retry_epoch)
+    next_retry_epoch = retry_epoch(next_item)
+    decision = decisions[str(next_item.get("_path", ""))]
     return {
         "status": "cooldown_deferred",
         "open_count": len(items),
         "deferred_foreign_root_count": foreign_root_count,
-        "cooldown_deferred_count": len(items),
+        "cooldown_deferred_count": len(deferred_items),
         "next_retry_epoch": next_retry_epoch,
+        "cooldown_remaining_seconds": max(0, next_retry_epoch - now_epoch),
+        "cooldown_obligation_id": str(next_item.get("id", "")),
+        "cooldown_failure_fingerprint": str(next_item.get("fingerprint", "")),
+        "cooldown_retry_state_fingerprint": str(next_item.get("cooldown_retry_state_fingerprint", "")),
+        "cooldown_reason": str(decision.get("reason", "unchanged_retry_state")),
+        "cooldown_retry_hint": retry_hint,
     }
 
 
@@ -1513,10 +1615,11 @@ if not selectable_items:
     )
     raise SystemExit(0)
 
-cooldown_items = [item for item in selectable_items if retry_epoch(item) > now_epoch]
-eligible_items = [item for item in selectable_items if retry_epoch(item) <= now_epoch]
+cooldown_decisions = {str(item.get("_path", "")): cooldown_decision(item) for item in selectable_items}
+cooldown_items = [item for item in selectable_items if cooldown_decisions[str(item.get("_path", ""))].get("deferred")]
+eligible_items = [item for item in selectable_items if not cooldown_decisions[str(item.get("_path", ""))].get("deferred")]
 if not eligible_items:
-    summary = cooldown_summary(selectable_items)
+    summary = cooldown_summary(selectable_items, cooldown_decisions)
     summary["claimed_deferred_count"] = len(active_claim_ids)
     summary["stale_claims_recovered"] = stale_claims_recovered
     print(json.dumps(summary, separators=(",", ":")))
@@ -1639,6 +1742,7 @@ result = {
     "issue_number": str(selected.get("issue_number", "")),
     "issue_title": str(selected.get("issue_title", "")),
     "reason": str(selected.get("reason", "")),
+    "fingerprint": str(selected.get("fingerprint", "")),
     "run_record": str(selected.get("run_record", "")),
     "transcript": str(selected.get("transcript", "")),
     "evidence": selected.get("evidence", {}),
@@ -1646,6 +1750,10 @@ result = {
     "repair_attempt_count": str(selected.get("repair_attempt_count", "")),
     "blocked_attempt_count": str(selected.get("blocked_attempt_count", "")),
     "next_retry_epoch": str(selected.get("next_retry_epoch", "")),
+    "cooldown_bypass_reason": str(cooldown_decisions[str(selected.get("_path", ""))].get("reason", "")),
+    "cooldown_remaining_seconds": cooldown_decisions[str(selected.get("_path", ""))].get("remaining_seconds", 0),
+    "cooldown_state_changes": cooldown_decisions[str(selected.get("_path", ""))].get("state_changes", []),
+    "cooldown_retry_state_fingerprint": cooldown_decisions[str(selected.get("_path", ""))].get("retry_state_fingerprint", ""),
     "claim_path": claim_path,
     "claim_token": claim_token,
     "claim_owner_pid": str(claim_record.get("owner_pid", "")),
@@ -1915,6 +2023,13 @@ PY
   printf '%s' "$prompt_path"
 }
 
+automation_obligation_retry_state_json() {
+  local obligation_json="$1"
+
+  printf '%s' "$obligation_json" |
+    python3 "$ROOT_DIR/lib/upkeeper/automation_obligation_retry_state.py" --root "$ROOT_DIR"
+}
+
 automation_record_obligation_attempt_json() {
   local obligation_json="$1"
   local attempt_status="$2"
@@ -1922,7 +2037,7 @@ automation_record_obligation_attempt_json() {
   local result_summary="${4:-}"
   local attempt_limit="${UPKEEPER_OBLIGATION_RETRY_LIMIT:-3}"
   local cooldown_seconds="${UPKEEPER_OBLIGATION_RETRY_COOLDOWN_SECONDS:-21600}"
-  local output
+  local output retry_state_json
   local -a claim_fields=()
 
   mapfile -d '' -t claim_fields < <(
@@ -1931,13 +2046,16 @@ automation_record_obligation_attempt_json() {
   if [[ -n "${claim_fields[0]:-}${claim_fields[1]:-}" ]]; then
     automation_release_obligation_claim_json "$obligation_json" verify >/dev/null || return 1
   fi
+  retry_state_json="$(automation_obligation_retry_state_json "$obligation_json")" ||
+    retry_state_json='{"status":"unavailable"}'
   output="$(python3 - \
     "$obligation_json" \
     "$attempt_status" \
     "$exit_status" \
     "$result_summary" \
     "$attempt_limit" \
-    "$cooldown_seconds" <<'PY'
+    "$cooldown_seconds" \
+    "$retry_state_json" <<'PY'
 import datetime as dt
 import json
 import os
@@ -1952,7 +2070,8 @@ import time
     result_summary,
     attempt_limit_raw,
     cooldown_seconds_raw,
-) = sys.argv[1:7]
+    retry_state_raw,
+) = sys.argv[1:8]
 
 
 def safe_int(value, default=0):
@@ -2001,6 +2120,13 @@ except json.JSONDecodeError:
     print(json.dumps({"status": "invalid_json"}, separators=(",", ":")))
     raise SystemExit(0)
 
+try:
+    retry_state = json.loads(retry_state_raw)
+except json.JSONDecodeError:
+    retry_state = {}
+if not isinstance(retry_state, dict):
+    retry_state = {}
+
 path_text = str(selected.get("path") or "").strip()
 if not path_text:
     print(json.dumps({"status": "missing_path"}, separators=(",", ":")))
@@ -2040,6 +2166,12 @@ if attempt_status == "blocked" and blocked_count >= limit and cooldown_seconds >
     data["selection_state"] = "cooldown"
     data["cooldown_reason"] = "repeated_blocked_repair_attempts"
     data["cooldown_attempt_limit"] = limit
+    if retry_state.get("status") == "ok" and isinstance(retry_state.get("state"), dict):
+        data["cooldown_retry_state"] = retry_state["state"]
+        data["cooldown_retry_state_fingerprint"] = str(retry_state.get("fingerprint", ""))
+    else:
+        data["cooldown_retry_state"] = {}
+        data["cooldown_retry_state_fingerprint"] = ""
     cooldown_applied = True
 
 write_json(path, data)
@@ -2052,6 +2184,7 @@ print(
             "blocked_attempt_count": blocked_count,
             "cooldown_applied": cooldown_applied,
             "next_retry_epoch": next_retry_epoch,
+            "cooldown_retry_state_fingerprint": str(data.get("cooldown_retry_state_fingerprint", "")),
         },
         separators=(",", ":"),
     )

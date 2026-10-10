@@ -54,12 +54,15 @@ def load_lattice_module(root: Path) -> Any:
 
 @contextlib.contextmanager
 def count_lattice_subprocesses(lattice: Any):
-    counts = {"run": 0, "check_output": 0}
+    counts = {"run": 0, "check_output": 0, "git_hash_object": 0}
     original_run = lattice.subprocess.run
     original_check_output = lattice.subprocess.check_output
 
     def counted_run(*args: Any, **kwargs: Any) -> Any:
         counts["run"] += 1
+        command = args[0] if args else kwargs.get("args", [])
+        if isinstance(command, (list, tuple)) and "hash-object" in command:
+            counts["git_hash_object"] += 1
         return original_run(*args, **kwargs)
 
     def counted_check_output(*args: Any, **kwargs: Any) -> Any:
@@ -190,6 +193,7 @@ def profile_selection(args: argparse.Namespace) -> dict[str, Any]:
             "wall_ms": elapsed_ms,
             "subprocess_run_count": counts["run"],
             "subprocess_check_output_count": counts["check_output"],
+            "git_hash_object_count": counts["git_hash_object"],
             "repo_git_info_count": identity_counts["repo_git_info"],
             "pass_result_hmac_key_count": identity_counts["pass_result_hmac_key"],
             "max_cover_sql_count": sql_counts["max_cover_sql"],
@@ -197,6 +201,7 @@ def profile_selection(args: argparse.Namespace) -> dict[str, Any]:
                 "max_wall_ms": args.max_wall_ms,
                 "max_subprocess_run": args.max_subprocess_run,
                 "max_subprocess_check_output": args.max_subprocess_check_output,
+                "max_git_hash_object": args.max_git_hash_object,
                 "max_repo_git_info": args.max_repo_git_info,
                 "max_pass_result_hmac_key": args.max_pass_result_hmac_key,
                 "max_max_cover_sql": args.max_max_cover_sql,
@@ -210,6 +215,8 @@ def profile_selection(args: argparse.Namespace) -> dict[str, Any]:
             over_budget.append("subprocess_run_count")
         if result["subprocess_check_output_count"] > args.max_subprocess_check_output:
             over_budget.append("subprocess_check_output_count")
+        if result["git_hash_object_count"] > args.max_git_hash_object:
+            over_budget.append("git_hash_object_count")
         if result["repo_git_info_count"] > args.max_repo_git_info:
             over_budget.append("repo_git_info_count")
         if result["pass_result_hmac_key_count"] > args.max_pass_result_hmac_key:
@@ -226,6 +233,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-wall-ms", type=int, default=5000)
     parser.add_argument("--max-subprocess-run", type=int, default=100)
     parser.add_argument("--max-subprocess-check-output", type=int, default=30)
+    parser.add_argument("--max-git-hash-object", type=int, default=1)
     parser.add_argument("--max-repo-git-info", type=int, default=2)
     parser.add_argument("--max-pass-result-hmac-key", type=int, default=1)
     parser.add_argument("--max-max-cover-sql", type=int, default=2)

@@ -456,6 +456,8 @@ def selected_git_metadata(
     git_status: str | None = None,
     head_blob: str | None = None,
     include_worktree_hash: bool = True,
+    worktree_hash: str | None = None,
+    worktree_hash_provided: bool = False,
 ) -> dict[str, str]:
     rel_path = operational_rel_path(rel_path)
     meta: dict[str, str] = {}
@@ -469,7 +471,7 @@ def selected_git_metadata(
     status = git_status if git_status is not None else git_porcelain_status_for_path(root, rel_path)
     meta["git_status"] = stored_git_status_code(status) if status else "clean"
     if include_worktree_hash:
-        raw_worktree_hash = git_output(root, ["hash-object", "--", rel_path], "missing")
+        raw_worktree_hash = worktree_hash if worktree_hash_provided else git_output(root, ["hash-object", "--", rel_path], "missing")
     else:
         raw_worktree_hash = "unavailable"
     if head_blob is not None:
@@ -490,6 +492,32 @@ def selected_git_metadata(
     meta["head_blob"] = raw_head_blob
     meta["worktree_hash"] = raw_worktree_hash
     return meta
+
+
+GIT_HASH_OBJECT_BATCH_SIZE = 256
+
+
+def git_worktree_hash_map(root: Path, paths: list[str]) -> dict[str, str]:
+    """Hash candidate paths in bounded argv batches without path re-parsing."""
+    hashes: dict[str, str] = {}
+    for offset in range(0, len(paths), GIT_HASH_OBJECT_BATCH_SIZE):
+        chunk = paths[offset : offset + GIT_HASH_OBJECT_BATCH_SIZE]
+        if not chunk:
+            continue
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(root), "hash-object", "--", *chunk],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except (OSError, UnicodeEncodeError, UnicodeError, ValueError):
+            continue
+        values = decode_git_output(result.stdout).splitlines()
+        if result.returncode != 0 or len(values) != len(chunk):
+            continue
+        hashes.update(zip(chunk, values))
+    return hashes
 
 
 def split_csv(raw: str) -> list[str]:
@@ -850,7 +878,7 @@ def live_candidate_rows(
     git_ignored = git_ignored_paths(root, paths) if inside else set()
     text_reason_cache: dict[str, tuple[os.stat_result | None, str]] = {}
     stat_cache: dict[str, tuple[os.stat_result | None, str]] = {}
-    rows = []
+    candidates = []
     for rel in paths:
         reason = ""
         state = "eligible"
@@ -891,6 +919,12 @@ def live_candidate_rows(
                         reason = "unsupported_extension"
         if reason:
             state = "excluded"
+        candidates.append((rel, state, reason, st))
+
+    eligible_paths = [rel for rel, state, reason, _st in candidates if state == "eligible" and reason != "symlink"]
+    worktree_hashes = git_worktree_hash_map(root, eligible_paths) if inside else {}
+    rows = []
+    for rel, state, reason, st in candidates:
         if reason == "symlink":
             meta = {
                 "git_status": "symlink",
@@ -905,6 +939,8 @@ def live_candidate_rows(
                 git_status=git_status_map.get(rel, ""),
                 head_blob=head_blob_map.get(rel),
                 include_worktree_hash=(state == "eligible"),
+                worktree_hash=worktree_hashes.get(rel),
+                worktree_hash_provided=rel in worktree_hashes,
             )
         rows.append(
             {

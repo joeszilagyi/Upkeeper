@@ -75,6 +75,30 @@ def count_lattice_subprocesses(lattice: Any):
         lattice.subprocess.check_output = original_check_output
 
 
+@contextlib.contextmanager
+def count_repo_git_info_calls(lattice: Any):
+    core_module = sys.modules[lattice.pass_result_hmac_key.__module__]
+    counts = {"repo_git_info": 0, "pass_result_hmac_key": 0}
+    original_repo_git_info = core_module.repo_git_info
+    original_pass_result_hmac_key = core_module.pass_result_hmac_key
+
+    def counted_repo_git_info(*args: Any, **kwargs: Any) -> Any:
+        counts["repo_git_info"] += 1
+        return original_repo_git_info(*args, **kwargs)
+
+    def counted_pass_result_hmac_key(*args: Any, **kwargs: Any) -> Any:
+        counts["pass_result_hmac_key"] += 1
+        return original_pass_result_hmac_key(*args, **kwargs)
+
+    core_module.repo_git_info = counted_repo_git_info
+    core_module.pass_result_hmac_key = counted_pass_result_hmac_key
+    try:
+        yield counts
+    finally:
+        core_module.repo_git_info = original_repo_git_info
+        core_module.pass_result_hmac_key = original_pass_result_hmac_key
+
+
 def run_lattice(lattice: Any, argv: list[str]) -> tuple[int, str]:
     stdout = io.StringIO()
     with contextlib.redirect_stdout(stdout):
@@ -110,7 +134,7 @@ def profile_selection(args: argparse.Namespace) -> dict[str, Any]:
             "--format",
             "jsonl",
         ]
-        with count_lattice_subprocesses(lattice) as counts:
+        with count_lattice_subprocesses(lattice) as counts, count_repo_git_info_calls(lattice) as identity_counts:
             start = time.perf_counter()
             rc, output = run_lattice(lattice, query_argv)
             elapsed_ms = int(round((time.perf_counter() - start) * 1000))
@@ -125,10 +149,14 @@ def profile_selection(args: argparse.Namespace) -> dict[str, Any]:
             "wall_ms": elapsed_ms,
             "subprocess_run_count": counts["run"],
             "subprocess_check_output_count": counts["check_output"],
+            "repo_git_info_count": identity_counts["repo_git_info"],
+            "pass_result_hmac_key_count": identity_counts["pass_result_hmac_key"],
             "budget": {
                 "max_wall_ms": args.max_wall_ms,
                 "max_subprocess_run": args.max_subprocess_run,
                 "max_subprocess_check_output": args.max_subprocess_check_output,
+                "max_repo_git_info": args.max_repo_git_info,
+                "max_pass_result_hmac_key": args.max_pass_result_hmac_key,
                 "enforced": args.enforce,
             },
         }
@@ -139,6 +167,10 @@ def profile_selection(args: argparse.Namespace) -> dict[str, Any]:
             over_budget.append("subprocess_run_count")
         if result["subprocess_check_output_count"] > args.max_subprocess_check_output:
             over_budget.append("subprocess_check_output_count")
+        if result["repo_git_info_count"] > args.max_repo_git_info:
+            over_budget.append("repo_git_info_count")
+        if result["pass_result_hmac_key_count"] > args.max_pass_result_hmac_key:
+            over_budget.append("pass_result_hmac_key_count")
         result["over_budget"] = over_budget
         return result
 
@@ -149,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-wall-ms", type=int, default=5000)
     parser.add_argument("--max-subprocess-run", type=int, default=100)
     parser.add_argument("--max-subprocess-check-output", type=int, default=30)
+    parser.add_argument("--max-repo-git-info", type=int, default=2)
+    parser.add_argument("--max-pass-result-hmac-key", type=int, default=1)
     parser.add_argument("--enforce", action="store_true", help="fail when measured values exceed the current report budget")
     args = parser.parse_args(argv)
 

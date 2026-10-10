@@ -3,6 +3,33 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #729: Cache Lattice Pass-Result HMAC Key Per Selection Query
+
+Status: implementation and local validation complete; awaiting PR CI
+
+Goal:
+- stop `selection-candidates --mode max-cover` from deriving the same
+  repository-scoped pass-result HMAC key once for each candidate hash
+- preserve the existing key derivation, override-key behavior, and redacted
+  output values without introducing a stale process-global repository cache
+
+Verified defect:
+- `live_candidate_paths()` HMACs both the worktree hash and the HEAD blob for
+  each candidate, and each `content_value_hmac()` call derives its key through
+  `repo_git_info()`, which invokes several Git commands
+
+Plan:
+- derive the key once at the candidate-query boundary and pass it explicitly to
+  the HMAC helper for each row
+- extend the deterministic selection profiler to count repository-identity
+  derivations during the actual query and enforce a constant bound
+
+Validation:
+- capture the pre-change profile, then prove the actual max-cover query derives
+  the HMAC key once while retaining candidates and redacted hash output
+- run focused profile and Lattice tests, syntax checks, full deterministic
+  tests, and repository validation before PR
+
 ## Issue #798: Authoritative Issue-Repair Target Selection
 
 Status: complete; merged in PR #860

@@ -970,6 +970,13 @@ local green validation while CI runs asynchronously. Configuration, tests,
 tools, prompts, operational documentation, source, and unknown paths still
 block on PR checks before more work stacks on the branch.
 
+Each completed backlog job also records a private phase-timing summary. It
+distinguishes local model and validation time from external CI/PR/quota waits,
+selects a configurable trivial, normal, or broad budget from the existing task
+class, and identifies the dominant phase. Exceeding a budget creates a durable
+local obligation only when local work itself exceeds the budget; external wait
+time is retained as explanation rather than misclassified as a local failure.
+
 For an explicit one-cycle Upkeeper self-review with all built-in P1-P23 passes,
 use equals-form operator flags:
 

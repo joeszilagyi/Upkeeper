@@ -179,9 +179,13 @@ Important:
     block names the target file or selection mode, why this cycle is doing that
     work, and the expected outcome. When the invocation finishes that job and is
     about to return to the outer sleep/next invocation, it prints the matching
-    local-only block with the target, outcome, start time, end time, runtime, and
-    final disposition. Set `BACKLOG_JOB_SUMMARY=0` to disable these local
-    summary blocks.
+    local-only block with the target, outcome, start time, end time, runtime,
+    final disposition, and a phase timing summary. The summary separates local
+    model/validation work from external CI and quota waiting, uses configurable
+    trivial/normal/broad budgets, and retains private local evidence. A budget
+    breach opens an obligation only when avoidable local time exceeds the
+    budget; external pending time remains explanatory evidence. Set
+    `BACKLOG_JOB_SUMMARY=0` to disable these local summary blocks.
   - If an issue-targeted backlog pass exits successfully but leaves no tracked
     changes, the launcher defers that issue for the current backlog branch before
     returning to the outer loop. This keeps a no-op or already-addressed issue

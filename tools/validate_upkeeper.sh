@@ -3473,6 +3473,7 @@ check_backlog_autoshelve_contract() {
   temp_dir="$(mktemp -d /tmp/upkeeper-backlog-autoshelve.XXXXXX)"
   mkdir -p "$temp_dir/orchestration" "$temp_dir/lib/upkeeper" "$temp_dir/tools"
   cp orchestration/backlog.sh "$temp_dir/orchestration/backlog.sh"
+  cp orchestration/backlog_phase_timing.bash "$temp_dir/orchestration/backlog_phase_timing.bash"
   cp lib/upkeeper/runtime_format_json.bash "$temp_dir/lib/upkeeper/runtime_format_json.bash"
   cp tools/validation_attestation_lib.bash "$temp_dir/tools/validation_attestation_lib.bash"
   chmod +x "$temp_dir/orchestration/backlog.sh"

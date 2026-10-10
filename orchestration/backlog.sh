@@ -9,6 +9,8 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/lib/upkeeper/runtime_format_json.bash"
 # shellcheck source=/dev/null
 source "$ROOT_DIR/tools/validation_attestation_lib.bash"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/backlog_phase_timing.bash"
 if [[ -r "$ROOT_DIR/lib/upkeeper/change_scope.bash" ]]; then
   source "$ROOT_DIR/lib/upkeeper/change_scope.bash"
 else
@@ -701,6 +703,7 @@ backlog_emit_job_start_summary() {
   local reason="$2"
   local expected="$3"
 
+  backlog_phase_timing_reset
   backlog_job_summary_enabled || return 0
   BACKLOG_JOB_START_EPOCH="$(backlog_now_epoch 2>/dev/null || date '+%s')"
   BACKLOG_JOB_START_TIME="$(backlog_timestamp)"
@@ -724,6 +727,9 @@ backlog_emit_job_finish_summary() {
   local disposition="$2"
   local end_epoch end_time runtime
 
+  if ! backlog_phase_timing_emit_summary; then
+    : # A reported budget breach must not suppress the job's terminal summary.
+  fi
   backlog_job_summary_enabled || return 0
   end_epoch="$(backlog_now_epoch 2>/dev/null || date '+%s')"
   end_time="$(backlog_timestamp)"
@@ -741,6 +747,9 @@ backlog_emit_job_finish_summary() {
   backlog_job_summary_text_line "start time: ${BACKLOG_JOB_START_TIME:-unknown}"
   backlog_job_summary_text_line "end time: $end_time"
   backlog_job_summary_text_line "run time: $runtime"
+  if [[ -n "${BACKLOG_PHASE_TIMING_LAST_SUMMARY:-}" ]]; then
+    backlog_job_summary_text_line "phase timing: $BACKLOG_PHASE_TIMING_LAST_SUMMARY"
+  fi
   backlog_job_summary_text_line "final disposition: $disposition"
   backlog_job_summary_blank_line
   backlog_job_summary_bar_line
@@ -993,16 +1002,20 @@ backlog_hibernate_until_epoch() {
   local blocked_until_text wake_text
   local branch summary log_file
 
+  backlog_phase_timing_start quota_hibernation
   if [[ "$BACKLOG_QUOTA_HIBERNATE" != "1" ]]; then
     log "quota preflight: quota blocked bucket=$blocked_bucket; hibernation disabled; deferring this cycle"
+    backlog_phase_timing_finish quota_hibernation deferred || true
     return 3
   fi
   if ! backlog_nonnegative_integer "$blocked_until_epoch" || [[ "$blocked_until_epoch" -le 0 ]]; then
     log "quota preflight: hibernation unavailable; invalid blocked_until_epoch=${blocked_until_epoch:-missing} source=$source"
+    backlog_phase_timing_finish quota_hibernation invalid || true
     return 4
   fi
   if ! now_epoch="$(backlog_now_epoch)"; then
     log "quota preflight: hibernation unavailable; invalid current time source=$source"
+    backlog_phase_timing_finish quota_hibernation invalid || true
     return 4
   fi
   wait_start_epoch="$now_epoch"
@@ -1015,15 +1028,18 @@ backlog_hibernate_until_epoch() {
 
   if [[ "$wake_epoch" -le "$now_epoch" ]]; then
     log "quota preflight: quota block already expired bucket=$blocked_bucket reset=$(backlog_format_epoch "$blocked_until_epoch") grace_seconds=$grace wake=$(backlog_format_epoch "$wake_epoch") action=recheck_quota_now"
+    backlog_phase_timing_finish quota_hibernation expired || true
     return 0
   fi
   if backlog_hibernation_branch_upstream_missing; then
+    backlog_phase_timing_finish quota_hibernation branch_retired || true
     return 3
   fi
 
   wait_seconds=$((wake_epoch - now_epoch))
   if [[ "$max_sleep" -gt 0 && "$wait_seconds" -gt "$max_sleep" ]]; then
     log "quota preflight: hibernation unavailable; wait_seconds=$wait_seconds exceeds max=$max_sleep bucket=$blocked_bucket source=$source"
+    backlog_phase_timing_finish quota_hibernation max_exceeded || true
     return 4
   fi
 
@@ -1042,13 +1058,20 @@ backlog_hibernate_until_epoch() {
     "" "quota_wait_until_verified"
 
   while true; do
-    now_epoch="$(backlog_now_epoch)" || return 4
+    if ! now_epoch="$(backlog_now_epoch)"; then
+      backlog_phase_timing_finish quota_hibernation invalid || true
+      return 4
+    fi
     [[ "$now_epoch" -lt "$wake_epoch" ]] || break
     if backlog_hibernation_branch_upstream_missing; then
+      backlog_phase_timing_finish quota_hibernation branch_retired || true
       return 3
     fi
     remaining_seconds=$((wake_epoch - now_epoch))
-    chunk="$(backlog_quota_hibernation_poll_seconds "$remaining_seconds" "$poll")" || return 4
+    if ! chunk="$(backlog_quota_hibernation_poll_seconds "$remaining_seconds" "$poll")"; then
+      backlog_phase_timing_finish quota_hibernation invalid || true
+      return 4
+    fi
     if [[ "$chunk" -gt "$remaining_seconds" ]]; then
       chunk="$remaining_seconds"
     fi
@@ -1059,6 +1082,7 @@ backlog_hibernate_until_epoch() {
   done
 
   log "quota preflight: quota hibernation complete; next backlog cycle may retry without backend work"
+  backlog_phase_timing_finish quota_hibernation deferred || true
   return 3
 }
 
@@ -2444,6 +2468,7 @@ prepare_backlog_runtime_env() {
   export BACKLOG_REASONING_EFFORT_CLASS="$effort_class"
   export BACKLOG_REASONING_EFFORT_SOURCE="$effort_source"
   export BACKLOG_REASONING_EFFORT_REASON="$effort_reason"
+  backlog_phase_timing_set_class "$effort_class"
   log "reasoning effort selected context=$context_kind target=${job_target:-none} effort=$effort_selected class=$effort_class source=$effort_source reason=$(backlog_disposition_sanitize "$effort_reason")"
 
   state_root="$(backlog_state_root)"
@@ -2489,6 +2514,7 @@ backlog_run_upkeeper_capture() {
   output_file="$(mktemp "$state_root/logs/upkeeper-child.XXXXXX.log")"
   chmod 600 "$output_file" 2>/dev/null || true
   BACKLOG_LAST_UPKEEPER_OUTPUT_FILE="$output_file"
+  backlog_phase_timing_start model
 
   had_errexit=0
   case "$-" in
@@ -2507,8 +2533,10 @@ backlog_run_upkeeper_capture() {
     set +e
   fi
   if [[ "$status" -eq 0 && "$tee_status" -ne 0 ]]; then
+    backlog_phase_timing_finish model "$tee_status" || true
     return "$tee_status"
   fi
+  backlog_phase_timing_finish model "$status" || true
   return "$status"
 }
 
@@ -3215,7 +3243,12 @@ backlog_ensure_local_branch_pushed() {
   fi
 
   log "local branch push guard branch=$branch pr=$pr_number local_ahead=$local_ahead context=$context action=push_before_pr_checks"
-  if ! git push origin "HEAD:$branch" >/dev/null; then
+  backlog_phase_timing_start push
+  if git push origin "HEAD:$branch" >/dev/null; then
+    backlog_phase_timing_finish push pass || true
+  else
+    status="$?"
+    backlog_phase_timing_finish push "$status" || true
     log "local branch push guard blocked branch=$branch pr=$pr_number local_ahead=$local_ahead context=$context reason=push_failed action=stop_before_pr_checks"
     return 1
   fi
@@ -4079,25 +4112,37 @@ commit_and_push_changes() {
   local publish_pr_after_push="${5:-0}"
   local message
   local branch published_pr_number body_file status
+  local validation_rc=0
 
   BACKLOG_LAST_PUBLISHED_PR_INFO=""
 
   cleanup_ephemeral_artifacts || return $?
   has_worktree_changes || return 1
+  backlog_phase_timing_start local_validation
   case "$BACKLOG_PER_BUG_VALIDATION_MODE" in
     none)
       log "per-bug validation: skipped by BACKLOG_PER_BUG_VALIDATION_MODE=none"
       ;;
     light)
-      run_per_bug_validation "$issue_number" "$target_hint" || return $?
+      if run_per_bug_validation "$issue_number" "$target_hint"; then
+        :
+      else
+        validation_rc="$?"
+      fi
       ;;
     full)
-      run_batch_validation || return $?
+      if run_batch_validation; then
+        :
+      else
+        validation_rc="$?"
+      fi
       ;;
     *)
       fail "unsupported BACKLOG_PER_BUG_VALIDATION_MODE: $BACKLOG_PER_BUG_VALIDATION_MODE"
       ;;
   esac
+  backlog_phase_timing_finish local_validation "$validation_rc" || true
+  [[ "$validation_rc" -eq 0 ]] || return "$validation_rc"
   cleanup_ephemeral_artifacts || return $?
   run_control_plane_pre_staging_audit || return $?
   log "staging tracked changes"
@@ -4123,8 +4168,16 @@ commit_and_push_changes() {
   [[ "$publish_pr_after_push" == "1" ]] || return 0
 
   log "pushing branch updates plane=git waiting_for=push branch=$branch"
-  git push -u origin "HEAD:$branch" || return $?
+  backlog_phase_timing_start push
+  if git push -u origin "HEAD:$branch"; then
+    backlog_phase_timing_finish push pass || true
+  else
+    status="$?"
+    backlog_phase_timing_finish push "$status" || true
+    return "$status"
+  fi
   log "creating backlog PR plane=github waiting_for=create_pull_request branch=$branch"
+  backlog_phase_timing_start ci_registration
   body_file="$(mktemp "${TMPDIR:-/tmp}/upkeeper-backlog-pr-body.XXXXXX")"
   backlog_batch_pr_body >"$body_file"
   if gh pr create \
@@ -4136,10 +4189,12 @@ commit_and_push_changes() {
   else
     status="$?"
     rm -f "$body_file"
+    backlog_phase_timing_finish ci_registration "$status" || true
     return "$status"
   fi
   rm -f "$body_file"
   published_pr_number="$(gh pr view --json number --jq '.number')"
+  backlog_phase_timing_finish ci_registration pass || true
   BACKLOG_LAST_PUBLISHED_PR_INFO="$published_pr_number"$'\t'"$branch"
   backlog_log_pr_watch_hint "$published_pr_number"
   return 0
@@ -4334,6 +4389,7 @@ wait_for_pr_checks() {
   local pr_number="$1"
   local interval timeout_seconds empty_grace_seconds start_epoch now_epoch elapsed status output status_rc progress sleep_seconds remaining_grace
 
+  backlog_phase_timing_start ci_pending
   log "waiting for PR #$pr_number checks"
   interval="$(backlog_positive_integer_or_default "$BACKLOG_PR_CHECK_INTERVAL_SECONDS" 15)"
   timeout_seconds="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-1800}"
@@ -4359,6 +4415,7 @@ wait_for_pr_checks() {
           "$(backlog_wait_detail_since github pr_checks "$start_epoch" "pr=$pr_number" "phase=checks_passed")" \
           "$pr_number" "pass"
         log "PR #$pr_number checks passed"
+        backlog_phase_timing_finish ci_pending pass || true
         return 0
         ;;
       2)
@@ -4369,6 +4426,7 @@ wait_for_pr_checks() {
           progress="$BACKLOG_PR_CHECKS_PROGRESS_SUMMARY"
           backlog_record_pr_check_timeout "$pr_number" "$elapsed" "$timeout_seconds" "$output" "$progress"
           log "PR #$pr_number checks still pending after ${elapsed}s; state=checks_pending owner remains healthy but configured timeout is ${timeout_seconds}s"
+          backlog_phase_timing_finish ci_pending pending_timeout || true
           return 2
         fi
         backlog_update_active_owner_heartbeat "waiting_on_pr_checks" \
@@ -4391,6 +4449,7 @@ wait_for_pr_checks() {
           backlog_record_pr_check_timeout "$pr_number" "$elapsed" "$timeout_seconds" "$output" "$progress"
           log "PR #$pr_number checks were not reported after ${elapsed}s; configured timeout is ${timeout_seconds}s"
           printf '%s\n' "$output" >&2
+          backlog_phase_timing_finish ci_pending registration_timeout || true
           return 2
         fi
         if [[ "$empty_grace_seconds" -le 0 || "$elapsed" -ge "$empty_grace_seconds" ]]; then
@@ -4399,6 +4458,7 @@ wait_for_pr_checks() {
             "$pr_number" "fail"
           log "PR #$pr_number checks were not reported after ${elapsed}s; state=checks_absent configured empty-check grace is ${empty_grace_seconds}s"
           printf '%s\n' "$output" >&2
+          backlog_phase_timing_finish ci_pending absent || true
           return 1
         fi
         remaining_grace=$((empty_grace_seconds - elapsed))
@@ -4423,6 +4483,7 @@ wait_for_pr_checks() {
           "$pr_number" "fail"
         log "PR #$pr_number checks failed; state=checks_failed"
         printf '%s\n' "$output" >&2
+        backlog_phase_timing_finish ci_pending failed || true
         return 1
         ;;
     esac
@@ -4550,7 +4611,14 @@ merge_and_clean() {
     return "$status"
   }
   log "merging PR #$pr_number: plane=github waiting_for=merge branch=$branch"
-  CODEX_ALLOW_PR_MERGE="$pr_number" gh pr merge "$pr_number" --merge --delete-branch
+  backlog_phase_timing_start merge
+  if CODEX_ALLOW_PR_MERGE="$pr_number" gh pr merge "$pr_number" --merge --delete-branch; then
+    backlog_phase_timing_finish merge pass || true
+  else
+    local merge_status="$?"
+    backlog_phase_timing_finish merge "$merge_status" || true
+    return "$merge_status"
+  fi
   log "syncing local main after PR #$pr_number: plane=git waiting_for=checkout_pull_prune"
   git checkout main >/dev/null
   git pull --ff-only origin main

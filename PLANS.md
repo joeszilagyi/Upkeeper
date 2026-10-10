@@ -3,6 +3,51 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #718: Per-Fix Wall-Clock Budget and Phase Evidence
+
+Status: complete; pending PR
+
+Goal:
+- make the whole issue-repair path observable as a bounded sequence of local,
+  external, and waiting phases instead of treating individually reasonable
+  waits as invisible aggregate cost
+
+Constraints:
+- do not lower or skip existing validation, quota, obligation, or PR gates to
+  meet a time target; distinguish external pending time from local regression
+- use the backlog's injectable clock and private state roots so tests do not
+  sleep, call a live backend, or modify operator state
+
+Plan:
+- map existing job summaries and time-aware paths to establish one phase-timing
+  owner rather than duplicate elapsed-time arithmetic in validation, PR, and
+  quota code
+- record ordinary-language phase summary and configured class budget for issue
+  work, preserving the current low/medium/high/xhigh task classification
+- create a durable, deduplicated obligation only for an avoidable local budget
+  breach; external CI pending, quota hibernation, and cooldown remain explicit
+  external reasons rather than synthetic failures
+- add fake-clock coverage for passing and breached budgets plus pending CI,
+  registration grace, quota hibernation, and cooldown defer evidence
+
+Implemented and validated:
+- added one backlog phase-timing owner that records model, local validation,
+  push, PR registration/pending checks, merge, and quota-hibernation elapsed
+  time; external waiting is explicitly separated from local elapsed time
+- class budgets follow the existing task classes, retain a private per-job TSV
+  evidence record, and open/update an obligation only when local time—not
+  external waiting—exceeds the selected budget
+- added fake-clock regression coverage for summary math, local breach evidence
+  and obligation creation, and external-CI exclusion; updated isolated launcher
+  fixtures to include the new sibling module
+- passed syntax, focused tests, public-doc checks, `tools/run_tests.sh`
+  (75/75), `tools/validate_upkeeper.sh --quick`, and `git diff --check`
+
+Limitation:
+- phase evidence observes the launcher workflow but does not authorize a retry,
+  skip a required gate, or identify a performance improvement by itself; the
+  resulting obligation remains ordinary evidence-backed repair work
+
 ## Issue #719: Fail-Closed Local Trivial-Fix Lane
 
 Status: complete; pending PR

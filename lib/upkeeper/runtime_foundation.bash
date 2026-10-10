@@ -1,9 +1,37 @@
+upkeeper_printf_time_supported() {
+  ((BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 2)))
+}
+
+upkeeper_epoch_realtime_supported() {
+  [[ -n "${EPOCHREALTIME:-}" ]]
+}
+
+upkeeper_epoch_seconds_supported() {
+  [[ -n "${EPOCHSECONDS:-}" ]]
+}
+
+epoch_now_seconds() {
+  if upkeeper_epoch_seconds_supported; then
+    printf '%s\n' "$EPOCHSECONDS"
+  else
+    date '+%s'
+  fi
+}
+
 timestamp_now() {
-  date '+%Y-%m-%dT%H:%M:%S%z'
+  if upkeeper_printf_time_supported; then
+    printf '%(%Y-%m-%dT%H:%M:%S%z)T\n' -1
+  else
+    date '+%Y-%m-%dT%H:%M:%S%z'
+  fi
 }
 
 terminal_timestamp_now() {
-  date '+%Y-%m-%dT%H:%M:%S'
+  if upkeeper_printf_time_supported; then
+    printf '%(%Y-%m-%dT%H:%M:%S)T\n' -1
+  else
+    date '+%Y-%m-%dT%H:%M:%S'
+  fi
 }
 
 terminal_strip_column_timezone() {
@@ -18,11 +46,22 @@ terminal_strip_column_timezone() {
 
 epoch_now_fraction() {
   local now
-  now="$(date '+%s.%N' 2>/dev/null || true)"
+
+  if upkeeper_epoch_realtime_supported; then
+    now="$EPOCHREALTIME"
+  elif upkeeper_epoch_seconds_supported; then
+    now="$(epoch_now_seconds)"
+  else
+    now="$(date '+%s.%N' 2>/dev/null || true)"
+  fi
   if [[ "$now" =~ ^[0-9]+\.[0-9]+$ ]]; then
     printf '%.5f\n' "$now"
   else
-    date '+%s'
+    if [[ "$now" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "$now"
+    else
+      date '+%s'
+    fi
   fi
 }
 

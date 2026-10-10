@@ -183,7 +183,7 @@ Validation:
 
 ## Issue #708: Batch Homogeneous Lattice Import Writes
 
-Status: implementation and local validation complete; ready for focused PR
+Status: complete; merged in PR #885
 
 Goal:
 - reduce Python-to-SQLite overhead only for importer rows whose statement shape
@@ -208,6 +208,34 @@ Validation:
   production importer behavior rather than source text alone
 - run focused Lattice import coverage plus the required full local validation
   before opening a PR
+
+## Issue #709: Tighten PR Check Registration Grace
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- reduce the unconditional five-minute no-check registration wait without
+  bypassing the fail-closed PR gate or confusing absent, registering, pending,
+  and failed check states
+
+Verified defect:
+- normal backlog PR-check waits default to a 300-second empty response grace;
+  the effective delay can be longer because the 60-second poll is not clipped
+  to the grace deadline
+
+Plan:
+- set a defensible shorter registration default and cap each empty-state sleep
+  by the remaining registration window
+- preserve the global timeout, existing explicit override, owner custody, and
+  failed-check stop behavior while naming registration state distinctly in
+  durable logs
+
+Validation:
+- extend the fake-clock PR-check tests for empty-then-present success, a
+  permanently empty failure at the exact bounded grace, and pending/pass
+  behavior unaffected by registration handling
+- update the operator guide for the changed default and run required full
+  validation before PR
 
 ## Issue #730: Batch Lattice Candidate Git Metadata
 

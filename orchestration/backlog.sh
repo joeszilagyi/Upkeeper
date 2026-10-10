@@ -43,7 +43,7 @@ BACKLOG_REASONING_EFFORT_OVERRIDE="${BACKLOG_REASONING_EFFORT_OVERRIDE:-}"
 BACKLOG_IGNORE_FAILURE_QUEUE="${BACKLOG_IGNORE_FAILURE_QUEUE:-1}"
 BACKLOG_PR_CHECK_TIMEOUT_SECONDS="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-1800}"
 BACKLOG_PR_CHECK_INTERVAL_SECONDS="${BACKLOG_PR_CHECK_INTERVAL_SECONDS:-60}"
-BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS="${BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS:-300}"
+BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS="${BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS:-90}"
 BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE="${BACKLOG_PR_CHECK_GATE_BEFORE_NEXT_ISSUE:-1}"
 BACKLOG_PR_CHECK_PROGRESS="${BACKLOG_PR_CHECK_PROGRESS:-1}"
 BACKLOG_PR_CHECK_PROGRESS_STEPS="${BACKLOG_PR_CHECK_PROGRESS_STEPS:-1}"
@@ -4247,14 +4247,14 @@ backlog_record_pr_check_timeout() {
 
 wait_for_pr_checks() {
   local pr_number="$1"
-  local interval timeout_seconds empty_grace_seconds start_epoch now_epoch elapsed status output status_rc progress
+  local interval timeout_seconds empty_grace_seconds start_epoch now_epoch elapsed status output status_rc progress sleep_seconds remaining_grace
 
   log "waiting for PR #$pr_number checks"
   interval="$(backlog_positive_integer_or_default "$BACKLOG_PR_CHECK_INTERVAL_SECONDS" 60)"
   timeout_seconds="${BACKLOG_PR_CHECK_TIMEOUT_SECONDS:-1800}"
   backlog_nonnegative_integer "$timeout_seconds" || timeout_seconds=1800
-  empty_grace_seconds="${BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS:-300}"
-  backlog_nonnegative_integer "$empty_grace_seconds" || empty_grace_seconds=300
+  empty_grace_seconds="${BACKLOG_PR_CHECK_EMPTY_GRACE_SECONDS:-90}"
+  backlog_nonnegative_integer "$empty_grace_seconds" || empty_grace_seconds=90
   start_epoch="$(backlog_now_epoch)" || start_epoch=0
 
   while true; do
@@ -4283,7 +4283,7 @@ wait_for_pr_checks() {
         if [[ "$timeout_seconds" -gt 0 && "$elapsed" -ge "$timeout_seconds" ]]; then
           progress="$BACKLOG_PR_CHECKS_PROGRESS_SUMMARY"
           backlog_record_pr_check_timeout "$pr_number" "$elapsed" "$timeout_seconds" "$output" "$progress"
-          log "PR #$pr_number checks still pending after ${elapsed}s; owner remains healthy but configured timeout is ${timeout_seconds}s"
+          log "PR #$pr_number checks still pending after ${elapsed}s; state=checks_pending owner remains healthy but configured timeout is ${timeout_seconds}s"
           return 2
         fi
         backlog_update_active_owner_heartbeat "waiting_on_pr_checks" \
@@ -4291,9 +4291,9 @@ wait_for_pr_checks() {
           "$pr_number" "pending"
         progress="$BACKLOG_PR_CHECKS_PROGRESS_SUMMARY"
         if [[ -n "$progress" ]]; then
-          log "PR #$pr_number checks pending; holding owner lease; progress: $progress; checking again in ${interval}s"
+          log "PR #$pr_number checks pending; state=checks_pending holding owner lease; progress: $progress; checking again in ${interval}s"
         else
-          log "PR #$pr_number checks pending; holding owner lease and checking again in ${interval}s"
+          log "PR #$pr_number checks pending; state=checks_pending holding owner lease and checking again in ${interval}s"
         fi
         backlog_sleep_seconds "$interval"
         ;;
@@ -4312,25 +4312,31 @@ wait_for_pr_checks() {
           backlog_update_active_owner_heartbeat "waiting_on_pr_checks" \
             "$(backlog_wait_detail_since github pr_checks "$start_epoch" "pr=$pr_number" "phase=checks_absent_timeout" "elapsed=${elapsed}s")" \
             "$pr_number" "fail"
-          log "PR #$pr_number checks were not reported after ${elapsed}s; configured empty-check grace is ${empty_grace_seconds}s"
+          log "PR #$pr_number checks were not reported after ${elapsed}s; state=checks_absent configured empty-check grace is ${empty_grace_seconds}s"
           printf '%s\n' "$output" >&2
           return 1
         fi
+        remaining_grace=$((empty_grace_seconds - elapsed))
+        sleep_seconds="$interval"
+        if [[ "$sleep_seconds" -gt "$remaining_grace" ]]; then
+          sleep_seconds="$remaining_grace"
+        fi
         backlog_update_active_owner_heartbeat "waiting_on_pr_checks" \
-          "$(backlog_wait_detail_since github pr_checks "$start_epoch" "pr=$pr_number" "phase=checks_settling" "elapsed=${elapsed}s" "next_check=${interval}s")" \
+          "$(backlog_wait_detail_since github pr_checks "$start_epoch" "pr=$pr_number" "phase=checks_registering" "elapsed=${elapsed}s" "next_check=${sleep_seconds}s")" \
           "$pr_number" "pending"
         progress="$BACKLOG_PR_CHECKS_PROGRESS_SUMMARY"
         if [[ -n "$progress" ]]; then
-          log "PR #$pr_number checks not reported yet; treating as pending/settling for up to ${empty_grace_seconds}s; progress: $progress; checking again in ${interval}s"
+          log "PR #$pr_number checks not reported yet; state=checks_absent state=checks_registering grace=${empty_grace_seconds}s progress: $progress; checking again in ${sleep_seconds}s"
         else
-          log "PR #$pr_number checks not reported yet; treating as pending/settling for up to ${empty_grace_seconds}s; checking again in ${interval}s"
+          log "PR #$pr_number checks not reported yet; state=checks_absent state=checks_registering grace=${empty_grace_seconds}s; checking again in ${sleep_seconds}s"
         fi
-        backlog_sleep_seconds "$interval"
+        backlog_sleep_seconds "$sleep_seconds"
         ;;
       *)
         backlog_update_active_owner_heartbeat "waiting_on_pr_checks" \
           "$(backlog_wait_detail_since github pr_checks "$start_epoch" "pr=$pr_number" "phase=checks_failed")" \
           "$pr_number" "fail"
+        log "PR #$pr_number checks failed; state=checks_failed"
         printf '%s\n' "$output" >&2
         return 1
         ;;

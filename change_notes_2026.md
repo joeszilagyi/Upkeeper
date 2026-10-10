@@ -1,5 +1,12 @@
 # 2026 Change Notes
 
+2026-10-09: bounded PR-check registration:
+	1. A newly published backlog PR now has a 90-second default check-registration
+	   window instead of an unconditional five-minute empty-check grace.
+	2. Registration sleeps are clipped to the remaining window, absent,
+	   registering, pending, and failed check states are explicit, and the global
+	   PR timeout plus operator override remain unchanged.
+
 2026-10-09: batched Lattice change-note references:
 	1. Change-note imports now group homogeneous file-reference insertions into
 	   bounded SQLite batches while retaining per-record identity, path safety,

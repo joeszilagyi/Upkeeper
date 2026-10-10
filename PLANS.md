@@ -33,7 +33,7 @@ Validation:
 
 ## Issue #728: Remove Remaining Sourced-Module Function Shadow
 
-Status: implementation and local validation complete; ready for focused PR
+Status: complete; merged in PR #878
 
 Goal:
 - remove the remaining real `precontact_backup_hmac_text` entrypoint override
@@ -63,6 +63,41 @@ Validation:
 - run required syntax, deterministic test suite, diff whitespace, and quick
   validation before opening the focused PR
 
+
+## Issue #727: Tier Recovery Reasoning Effort by Trigger
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- keep fallback, postmortem reporting, and opt-in hardening from inheriting the
+  primary `xhigh` effort while choosing lower effort for known non-capability
+  recovery paths
+- retain an explicit operator override and deterministic, no-backend regression
+  coverage
+
+Verified defect:
+- #794 changed the static fallback/postmortem defaults to `high`/`medium`, but
+  every fallback trigger still uses the same fallback effort and every
+  postmortem phase still uses the same postmortem effort; no runtime record
+  names the selected trigger class or policy reason
+
+Plan:
+- add one shared trigger-to-effort policy in the postmortem/fallback ownership
+  layer, with distinct quota/environment, dirty/no-backend, blocked, no-output,
+  capability-failure, report, and opt-in-hardening behavior
+- apply it to the actual direct and detached-screen fallback child and centrally
+  at the auxiliary postmortem execution boundary, so root compatibility wrappers
+  cannot bypass the policy
+- preserve explicit environment effort settings, document the automatic-policy
+  behavior, and record selected effort, trigger class, and reason before every
+  recovery model call
+
+Validation:
+- use fake child and auxiliary-Codex fixtures to prove the real launch argument
+  changes for quota, generic failure, blocked, no-output, report, hardening,
+  and explicit-override paths without launching Codex
+- run required syntax, the full deterministic suite, whitespace check, and
+  quick validator; inspect operator docs/help and synchronize version notes
 
 ## Issue #730: Batch Lattice Candidate Git Metadata
 

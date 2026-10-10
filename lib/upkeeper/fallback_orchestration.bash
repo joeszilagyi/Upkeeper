@@ -50,9 +50,23 @@ run_fallback_cycle() {
   local detail_text="${*:-none}"
   local child_exit=0
   local source_model="$CODEX_MODEL"
+  local selected_effort selected_class selected_reason selection_fields
+  local configured_effort="$CODEX_FALLBACK_REASONING_EFFORT"
+  local previous_recovery_trigger="${UPKEEPER_RECOVERY_TRIGGER:-}"
+  local had_previous_recovery_trigger="0"
   local fallback_contract_path
   local bwrap_tmp_detail bwrap_tmp_detail_q
   local fallback_chain_token
+  [[ -v UPKEEPER_RECOVERY_TRIGGER ]] && had_previous_recovery_trigger="1"
+  selection_fields="$(upkeeper_recovery_effort_selection fallback "$trigger" "$detail_text" "$configured_effort")"
+  IFS=$'\t' read -r selected_effort selected_class selected_reason <<<"$selection_fields"
+  [[ -n "$selected_effort" && -n "$selected_class" && -n "$selected_reason" ]] || {
+    log_line "ERROR" "fallback.effort_selection_invalid trigger=$trigger"
+    return 8
+  }
+  CODEX_FALLBACK_REASONING_EFFORT="$selected_effort"
+  UPKEEPER_RECOVERY_TRIGGER="$trigger"
+  log_line "INFO" "fallback.effort_selection trigger=$trigger trigger_class=$selected_class effort=$selected_effort reason=$selected_reason"
   fallback_chain_token="$(generate_fallback_chain_token)"
 
   fallback_contract_path="${CODEX_POSTMORTEM_DIR:-${ROOT_DIR:-$PWD}/runtime/journals/upkeeper-postmortems}/$CYCLE_ID/fallback-$CYCLE_RUN_HASH.contract"
@@ -130,7 +144,7 @@ EOF
       child_exit="${FALLBACK_SCREEN_EXIT_CODE:-8}"
     fi
   else
-    log_line "INFO" "fallback.start execution_origin=primary trigger=$trigger mode=direct from_model=$source_model to_model=$CODEX_FALLBACK_MODEL detail=\"$detail_text\""
+    log_line "INFO" "fallback.start execution_origin=primary trigger=$trigger mode=direct from_model=$source_model to_model=$CODEX_FALLBACK_MODEL effort=$selected_effort trigger_class=$selected_class detail=\"$detail_text\""
     if [[ "$UPKEEPER_DRY_RUN" == "1" ]]; then
       log_line "INFO" "dry-run active; skipping direct fallback child exec trigger=$trigger target_model=$CODEX_FALLBACK_MODEL"
       child_exit=0
@@ -205,5 +219,11 @@ EOF
     " report_path=${POSTMORTEM_REPORT_PATH:-none}" \
     " screen_session=${FALLBACK_SCREEN_SESSION_NAME:-none}"
   refresh_postmortem_incident_log "${POSTMORTEM_INCIDENT_LOG_PATH:-}"
+  CODEX_FALLBACK_REASONING_EFFORT="$configured_effort"
+  if [[ "$had_previous_recovery_trigger" == "1" ]]; then
+    UPKEEPER_RECOVERY_TRIGGER="$previous_recovery_trigger"
+  else
+    unset UPKEEPER_RECOVERY_TRIGGER
+  fi
   return "$final_exit"
 }

@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # shellcheck source=/dev/null
+source "$ROOT_DIR/lib/upkeeper/postmortem_context.bash"
+# shellcheck source=/dev/null
 source "$ROOT_DIR/lib/upkeeper/aux_codex.bash"
 
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-aux-codex.XXXXXX")"

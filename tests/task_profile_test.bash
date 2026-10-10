@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 source lib/upkeeper/review_modules.bash
 source lib/upkeeper/codex_io.bash
+source lib/upkeeper/postmortem_context.bash
 source lib/upkeeper/fallback_orchestration.bash
 
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-task-profile-test.XXXXXX")"

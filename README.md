@@ -1072,12 +1072,15 @@ tracks candidate scenarios with stable ids and priority fields.
 ./Upkeeper --p24 --p25 --p26 --p27 --p28 --p29 --p30
 ```
 
-Before the primary Codex response emits its final marker, the prompt now requires
-a current-cycle `Upkeeper.log` review and a machine-readable acknowledgment:
-`UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id> anomalies=none|listed`. If that
-review exposes a concrete central wrapper or prompt defect while running in this
-repo, Codex may apply the smallest safe self-repair immediately and report it as
-a log self-repair.
+Before the primary Codex response emits its final marker, the wrapper creates a
+sanitized current-cycle snapshot and the prompt requires a machine-readable
+acknowledgment: `UPKEEPER_LOG_REVIEW: CHECKED cycle=<cycle_id>
+anomalies=none|listed`. A clean wrapper-owned snapshot supplies its digest
+directly, so the backend need not spend a tool call hashing or reading logs.
+Anomalous or unavailable snapshots retain the sanitized helper inspection path.
+If that review exposes a concrete central wrapper or prompt defect while running
+in this repo, Codex may apply the smallest safe self-repair immediately and
+report it as a log self-repair.
 
 The prompt also asks for additive `UPKEEPER_PASS_RESULT` lines for each P* pass
 that was actually applied or explicitly found not applicable. For

@@ -641,7 +641,9 @@ terminal_emit_review_finale() {
 current_cycle_log_review_present() {
   local last_message_file="$1"
   [[ -f "$last_message_file" ]] || return 1
-  python3 - "$last_message_file" "$CYCLE_ID" "$LOG_FILE" "$STARTUP_ANOMALY_REASONS" <<'PY'
+  python3 - "$last_message_file" "$CYCLE_ID" "$LOG_FILE" "$STARTUP_ANOMALY_REASONS" \
+    "${UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_ANOMALIES:-}" \
+    "${UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_SHA256:-}" <<'PY'
 import hashlib
 import re
 import sys
@@ -650,6 +652,8 @@ try:
     current_cycle = sys.argv[2]
     log_path = sys.argv[3]
     reasons = sys.argv[4]
+    snapshot_anomalies = sys.argv[5]
+    snapshot_sha = sys.argv[6]
     text = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read()
 except OSError:
     raise SystemExit(1)
@@ -657,6 +661,11 @@ except OSError:
 anomalies_expectation = "none"
 if reasons and reasons != "unknown":
     anomalies_expectation = "listed"
+snapshot_valid = (
+    snapshot_anomalies in {"none", "listed"}
+    and bool(re.fullmatch(r"[0-9a-f]{64}", snapshot_sha))
+    and snapshot_anomalies == anomalies_expectation
+)
 
 cycle_pattern = re.compile(r"\bcycle={}\b".format(re.escape(current_cycle)))
 cycle_log_lines = []
@@ -721,6 +730,13 @@ if marker_index == -1 or not match:
     raise SystemExit(1)
 if status_index != -1 and marker_index > status_index:
     raise SystemExit(1)
+
+if (
+    snapshot_valid
+    and match.group(2) == snapshot_anomalies
+    and match.group(3) == snapshot_sha
+):
+    raise SystemExit(0)
 
 if (
     match.group(1) == current_cycle

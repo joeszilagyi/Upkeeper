@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.50
+## Version: v1.2.51
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -420,7 +420,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.50"
+UPKEEPER_VERSION="v1.2.51"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -688,6 +688,9 @@ UPKEEPER_LATTICE_WARNED="0"
 UPKEEPER_LATTICE_FINISH_RECORDED="0"
 UPKEEPER_LATTICE_FINISH_SPOOL_PATH=""
 LATTICE_LAST_OUTPUT=""
+UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_STATUS="not_prepared"
+UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_ANOMALIES=""
+UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_SHA256=""
 CODEX_ISSUE_FIX_NUMBER="${CODEX_ISSUE_FIX_NUMBER:-}"
 CODEX_ISSUE_FIX_TITLE="${CODEX_ISSUE_FIX_TITLE:-}"
 CODEX_ISSUE_FIX_URL="${CODEX_ISSUE_FIX_URL:-}"
@@ -1541,19 +1544,26 @@ current_cycle_log_review_present() {
 
   [[ -f "$last_message_file" ]] || return 1
 
-  python3 - "$last_message_file" "$current_cycle" "$log_path" "$reasons" <<'PY'
+  python3 - "$last_message_file" "$current_cycle" "$log_path" "$reasons" \
+    "${UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_ANOMALIES:-}" \
+    "${UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_SHA256:-}" <<'PY'
 import hashlib
 import re
 import shlex
 import sys
 
 try:
-    message_path, current_cycle, log_path, reasons = sys.argv[1:5]
+    message_path, current_cycle, log_path, reasons, snapshot_anomalies, snapshot_digest = sys.argv[1:7]
     text = open(message_path, "r", encoding="utf-8", errors="replace").read()
 except OSError:
     raise SystemExit(1)
 
 anomalies_expectation = "listed" if reasons and reasons != "unknown" else "none"
+snapshot_valid = (
+    snapshot_anomalies in {"none", "listed"}
+    and bool(re.fullmatch(r"[0-9a-f]{64}", snapshot_digest))
+    and snapshot_anomalies == anomalies_expectation
+)
 cycle_fragment = f"cycle={current_cycle} "
 status_pattern = re.compile(r"^UPKEEPER_STATUS: (WORK_DONE|NO_CHANGES|NO_BACKEND_TASK|BLOCKED)$")
 review_pattern = re.compile(
@@ -1692,6 +1702,16 @@ if review_match.group(1) != current_cycle:
 
 review_anomalies = review_match.group(2)
 review_digest = review_match.group(3)
+
+# A clean pre-backend snapshot is wrapper-generated deterministic evidence.
+# It avoids asking the model to spend a tool call on a raw or sanitized log,
+# while the parser still requires the one strict, adjacent final marker.
+if (
+    snapshot_valid
+    and review_anomalies == snapshot_anomalies
+    and review_digest == snapshot_digest
+):
+    raise SystemExit(0)
 
 # The model calls the sanitized helper before the wrapper appends run.finish,
 # cycle.summary, and cycle.exit lines. Accept the digest for any real helper
@@ -3371,6 +3391,33 @@ if sanitized_text:
     print(sanitized_text)
 print("sanitized_log_end")
 PY
+}
+
+upkeeper_prepare_current_cycle_log_review() {
+  local output rc status anomalies digest
+
+  UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_STATUS="unavailable"
+  UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_ANOMALIES="listed"
+  UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_SHA256=""
+  set +e
+  output="$(upkeeper_emit_sanitized_current_cycle_log_review 2>/dev/null)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    log_line "WARN" "current_cycle_log_review.snapshot status=unavailable reason=helper_failed action=allow_sanitized_backend_inspection"
+    return 1
+  fi
+  status="$(sed -n 's/^status=//p' <<<"$output" | head -n 1)"
+  anomalies="$(sed -n 's/^anomalies=//p' <<<"$output" | head -n 1)"
+  digest="$(sed -n 's/^log_sha256=//p' <<<"$output" | head -n 1)"
+  if [[ "$status" != "ok" || ! "$anomalies" =~ ^(none|listed)$ || ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+    log_line "WARN" "current_cycle_log_review.snapshot status=unavailable reason=invalid_helper_output action=allow_sanitized_backend_inspection"
+    return 1
+  fi
+  UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_STATUS="ok"
+  UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_ANOMALIES="$anomalies"
+  UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_SHA256="$digest"
+  log_line "INFO" "current_cycle_log_review.snapshot status=ok anomalies=$anomalies digest_available=1 action=wrapper_provided"
 }
 
 direct_parent_details() {
@@ -6513,6 +6560,7 @@ main() {
   trap cleanup_run_temp_files EXIT
 
   upkeeper_fast_path_timing_start prompt_preparation
+  upkeeper_prepare_current_cycle_log_review || true
   compile_prompt "$compiled_prompt_file"
   upkeeper_fast_path_timing_finish prompt_preparation
   if upkeeper_local_fix_lane_docs_change_is_complete; then

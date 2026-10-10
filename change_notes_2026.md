@@ -1,5 +1,12 @@
 # 2026 Change Notes
 
+## v1.2.51 changes: Keep clean current-cycle log review wrapper-owned
+
+- The wrapper now provides a sanitized clean current-cycle review digest before
+  backend contact, so the model can emit the compatible acknowledgment without
+  a log-reading or hashing tool call. Anomalous or unavailable evidence still
+  explicitly requests the existing sanitized helper review.
+
 ## v1.2.50 changes: Add no-backend fast-path timing evidence
 
 - Upkeeper now records a bounded pre-model timing summary for the existing

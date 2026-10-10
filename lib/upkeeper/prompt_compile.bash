@@ -395,15 +395,27 @@ append_preselected_review_target_scoped() {
 append_current_cycle_log_review_prompt() {
   local compiled_file="$1"
   local helper_command="./${SCRIPT_NAME:-Upkeeper}"
+  local snapshot_status="${UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_STATUS:-unavailable}"
+  local snapshot_anomalies="${UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_ANOMALIES:-listed}"
+  local snapshot_digest="${UPKEEPER_CURRENT_CYCLE_LOG_REVIEW_SHA256:-}"
 
   {
     printf '\nCurrent-cycle log self-review -- required final task before your final response:\n'
-    printf -- '- After all selected-file review work, edits, touches, and verification are complete, inspect this cycle'\''s wrapper state through the wrapper-provided sanitized helper instead of the raw log file.\n'
     printf -- '- Raw wrapper logs, raw log paths, prompt paths, transcript paths, and runtime control paths are withheld from the model by default.\n'
     printf -- '- Current cycle id: `%s`\n' "$CYCLE_ID"
-    printf -- '- Preferred command: `UPKEEPER_INTERNAL_CURRENT_CYCLE_LOG_REVIEW=1 UPKEEPER_INTERNAL_CURRENT_CYCLE_ID=%s %s`\n' "$CYCLE_ID" "$helper_command"
-    printf -- '- Review only the helper output for the current cycle. Do not inspect raw wrapper log files directly unless the operator explicitly changes this contract.\n'
-    printf -- '- Check the helper output for wrapper/prompt/logging defects, unexpected ERROR/WARN lines, parser misses, environment preflight surprises, previous_run.anomaly lines, disk.preflight warnings, missing or irregular --MARK-- continuity, and any command failure from your own tool output that still needs explanation or correction.\n'
+    if [[ "$snapshot_status" == "ok" && "$snapshot_anomalies" == "none" && "$snapshot_digest" =~ ^[0-9a-f]{64}$ ]]; then
+      printf '\nWRAPPER_CURRENT_CYCLE_LOG_REVIEW\n'
+      printf 'source=wrapper_pre_backend_snapshot\n'
+      printf 'anomalies=none\n'
+      printf 'log_sha256=%s\n' "$snapshot_digest"
+      printf -- '- The wrapper independently produced this sanitized, clean current-cycle snapshot immediately before backend contact. Do not run a log-review command or inspect raw log files for this clean case.\n'
+      printf -- '- Reuse its exact `anomalies=none` and `log_sha256` values in the required final acknowledgment.\n'
+    else
+      printf -- '- Inspect this cycle'\''s wrapper state through the wrapper-provided sanitized helper; wrapper evidence was anomalous or unavailable, so backend review is required for this exception.\n'
+      printf -- '- Preferred command: `UPKEEPER_INTERNAL_CURRENT_CYCLE_LOG_REVIEW=1 UPKEEPER_INTERNAL_CURRENT_CYCLE_ID=%s %s`\n' "$CYCLE_ID" "$helper_command"
+      printf -- '- Review only the helper output for the current cycle. Do not inspect raw wrapper log files directly unless the operator explicitly changes this contract.\n'
+      printf -- '- Check the helper output for wrapper/prompt/logging defects, unexpected ERROR/WARN lines, parser misses, environment preflight surprises, previous_run.anomaly lines, disk.preflight warnings, missing or irregular --MARK-- continuity, and any command failure from your own tool output that still needs explanation or correction.\n'
+    fi
     printf -- '- If `startup_anomaly.gate` or `WRAPPER_STARTUP_ANOMALIES` is active, do not touch unrelated non-Upkeeper-suite files; the gate must be checked or remediated first.\n'
     printf -- '- If the helper output exposes a concrete Upkeeper wrapper/prompt/logging defect for the preselected file path, report it as a complete finding in your final response.\n'
     printf -- '- If the helper output exposes a concrete Upkeeper wrapper/prompt/logging defect outside the selected target path, leave that file unchanged in this cycle and report BLOCKED with the affected repo-relative path plus enough detail for a follow-up wrapper-selected run.\n'
@@ -412,7 +424,7 @@ append_current_cycle_log_review_prompt() {
     printf -- '- If this is a symlinked client repo and the defect belongs to central Upkeeper behavior, do not patch a copied client wrapper; report the central fix needed unless the central Upkeeper checkout is the current repo.\n'
     printf -- '- If a suspicious line was expected negative-test output, say so briefly. If a one-off shell command failed, rerun the corrected check or state why it is irrelevant before final status.\n'
     printf -- '- Include exactly one machine-readable acknowledgment line before the final UPKEEPER_STATUS marker.\n'
-    printf -- '- The helper prints `anomalies=<none|listed>` and `log_sha256=<64-hex>` for the sanitized current-cycle review view. Reuse those exact values when emitting `UPKEEPER_LOG_REVIEW`.\n'
+    printf -- '- For anomalous/unavailable wrapper evidence, the helper prints `anomalies=<none|listed>` and `log_sha256=<64-hex>` for the sanitized current-cycle review view. Reuse those exact values when emitting `UPKEEPER_LOG_REVIEW`.\n'
     printf -- '- If the helper fails, report that failure in the human-readable log review summary and use `anomalies=listed`.\n'
     printf -- '- If no anomalies were found, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle=%s anomalies=none log_sha256=<64 hex digest>`\n' "$CYCLE_ID"
     printf -- '- If anomalies were found or expected anomaly signals were present, write exactly: `UPKEEPER_LOG_REVIEW: CHECKED cycle=%s anomalies=listed log_sha256=<64 hex digest>`\n' "$CYCLE_ID"

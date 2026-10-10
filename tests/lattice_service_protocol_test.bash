@@ -6,6 +6,7 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 python3 - "$ROOT_DIR" <<'PY'
 import base64
 import io
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -105,6 +106,20 @@ rc = lattice_service.run_service(
 )
 assert rc == 0
 assert responses(writer.getvalue()) == [(2, "upkeeper_lattice: invalid service header: bad header"), (0, "")]
+
+# Exercise the production shim -> core -> extracted transport boundary, rather
+# than proving only the directly imported helper's behavior.
+result = subprocess.run(
+    [sys.executable, f"{root}/tools/upkeeper_lattice.py", "--root", root, "service"],
+    input=b"CMD 1\nplanned-passes\0SHUTDOWN\n",
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    check=False,
+)
+assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+production = responses(result.stdout)
+assert production[0][0] == 0 and "P1" in production[0][1], production
+assert production[1] == (0, ""), production
 PY
 
 printf 'lattice_service_protocol_test: ok\n'

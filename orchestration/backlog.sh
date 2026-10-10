@@ -113,6 +113,27 @@ BACKLOG_LAST_UPKEEPER_OUTPUT_FILE=""
 BACKLOG_FAILURE_OBLIGATION_RECORDED=0
 BACKLOG_WRAPPER_FAILURE_OBLIGATION_ID=""
 BACKLOG_WRAPPER_FAILURE_OBLIGATION_PATH=""
+BACKLOG_GIT_BRANCH_CACHE=""
+BACKLOG_GIT_BRANCH_CACHE_VALID=0
+
+backlog_invalidate_git_branch_cache() {
+  BACKLOG_GIT_BRANCH_CACHE=""
+  BACKLOG_GIT_BRANCH_CACHE_VALID=0
+}
+
+backlog_refresh_git_branch_cache() {
+  [[ "$BACKLOG_GIT_BRANCH_CACHE_VALID" == "1" ]] && return 0
+
+  BACKLOG_GIT_BRANCH_CACHE="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  BACKLOG_GIT_BRANCH_CACHE_VALID=1
+}
+
+backlog_assign_cached_git_branch() {
+  local destination="$1"
+
+  backlog_refresh_git_branch_cache
+  printf -v "$destination" '%s' "$BACKLOG_GIT_BRANCH_CACHE"
+}
 
 backlog_timestamp() {
   date '+%Y-%m-%dT%H:%M:%S'
@@ -967,7 +988,7 @@ backlog_hibernate_until_epoch() {
 
   blocked_until_text="$(backlog_format_epoch "$blocked_until_epoch")"
   wake_text="$(backlog_format_epoch "$wake_epoch")"
-  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  backlog_assign_cached_git_branch branch
   log_file="${BACKLOG_LOOP_LOG_FILE:-$(backlog_state_root)/loop.log}"
   summary="$(backlog_recent_log_summary "$log_file" 2>/dev/null || true)"
   if [[ -n "$summary" ]]; then
@@ -1012,7 +1033,7 @@ backlog_open_stale_quota_obligation() {
   chmod 700 "$obligation_root" "$open_dir" 2>/dev/null || true
 
   now="$(date '+%Y-%m-%dT%H:%M:%S%z')"
-  branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
+  backlog_assign_cached_git_branch branch_name
   payload="$(
     python3 - \
       "$ROOT_DIR" \
@@ -1656,6 +1677,8 @@ backlog_update_active_owner_heartbeat() {
 
   backlog_current_process_owns_file || return 0
   owner_file="$(backlog_active_owner_file)"
+  # The heartbeat runs in its own process. Do not use the parent loop's cache:
+  # a branch transition between ticks must be reflected in the custody record.
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || backlog_owner_field "$owner_file" branch 2>/dev/null || printf 'unknown')"
   log_file="$(backlog_owner_field "$owner_file" log_file 2>/dev/null || printf '%s/loop.log' "$(backlog_state_root)")"
   backlog_write_owner_record "$owner_file" "$$" "$BACKLOG_ACTIVE_OWNER_START_TICKS" "$branch" "$log_file" "$state" "$detail" "$pr_number" "$check_status" || return 0
@@ -1743,7 +1766,7 @@ write_backlog_active_owner() {
 
   owner_file="$(backlog_active_owner_file)"
   log_file="${BACKLOG_LOOP_LOG_FILE:-$(backlog_state_root)/loop.log}"
-  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  backlog_assign_cached_git_branch branch
   start_ticks="$(backlog_process_start_ticks "$$")"
   BACKLOG_ACTIVE_OWNER_START_TICKS="$start_ticks"
 
@@ -1822,7 +1845,7 @@ print_stdio_watch_notice() {
   local log_file="$1"
   local branch summary
 
-  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  backlog_assign_cached_git_branch branch
   summary="$(backlog_recent_log_summary "$log_file")"
 
   backlog_notice "interactive stdin detected; keeping output in this terminal and mirroring to $log_file"
@@ -1837,7 +1860,7 @@ print_stdio_detach_notice() {
   local log_file="$1"
   local branch summary
 
-  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  backlog_assign_cached_git_branch branch
   summary="$(backlog_recent_log_summary "$log_file")"
 
   backlog_notice "interactive stdio detected; redirecting this run to $log_file"
@@ -1995,7 +2018,8 @@ redirect_interactive_stdio() {
 }
 
 backlog_branch_key() {
-  git rev-parse --abbrev-ref HEAD | tr '/:' '__'
+  backlog_refresh_git_branch_cache
+  printf '%s\n' "$BACKLOG_GIT_BRANCH_CACHE" | tr '/:' '__'
 }
 
 deferred_issue_file() {
@@ -2310,7 +2334,7 @@ autoshelve_dirty_worktree_if_enabled() {
     fi
   done
 
-  current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  backlog_assign_cached_git_branch current_branch
   current_head="$(git rev-parse HEAD 2>/dev/null || printf '')"
   [[ -n "$current_head" ]] || fail "cannot autoshelve dirty worktree without a current HEAD"
   shelve_branch="$(autoshelve_next_branch_name)"
@@ -2324,6 +2348,7 @@ autoshelve_dirty_worktree_if_enabled() {
   shelved_summary="$(git rev-parse --short HEAD 2>/dev/null || printf 'unknown')"
   git checkout "$current_branch" >/dev/null
   git reset --hard "$current_head" >/dev/null
+  backlog_invalidate_git_branch_cache
   require_clean_worktree
   if [[ "$has_control_plane" == "1" ]]; then
     autoshelve_apply_control_plane_from_shelve "$current_head" "$shelved_commit" "$shelve_branch" "$current_branch" "${promote_paths[@]}"
@@ -3054,7 +3079,7 @@ current_backlog_pr() {
     return 0
   fi
 
-  current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  backlog_assign_cached_git_branch current_branch
   if [[ "$current_branch" == "$BACKLOG_BRANCH_PREFIX"* ]]; then
     printf '\t%s\n' "$current_branch"
   fi
@@ -3088,6 +3113,7 @@ checkout_backlog_branch() {
       log "branch sync: plane=git waiting_for=create_branch branch=$branch action=local_only_until_first_publish"
     fi
   fi
+  backlog_invalidate_git_branch_cache
 }
 
 backlog_ensure_local_branch_pushed() {
@@ -3102,7 +3128,8 @@ backlog_ensure_local_branch_pushed() {
     *) return 0 ;;
   esac
 
-  current_branch="$(git rev-parse --abbrev-ref HEAD)"
+  backlog_invalidate_git_branch_cache
+  backlog_assign_cached_git_branch current_branch
   if [[ "$current_branch" != "$branch" ]]; then
     log "local branch push guard blocked branch=$branch current_branch=$current_branch context=$context reason=wrong_branch action=stop_before_pr_checks"
     return 1
@@ -3160,6 +3187,7 @@ open_backlog_pr() {
   branch="${BACKLOG_BRANCH_PREFIX}$(date +%Y%m%d-%H%M%S)"
   log "opening new backlog batch plane=git waiting_for=create_branch branch=$branch"
   git checkout -b "$branch" >/dev/null
+  backlog_invalidate_git_branch_cache
   log "opening new backlog batch branch=$branch stays local until the first real tracked fix"
   printf '\t%s\n' "$branch"
 }
@@ -3735,7 +3763,7 @@ backlog_record_batch_validation_retry_marker() {
   mkdir -p -- "$marker_dir" || return 0
   chmod 700 "$marker_dir" 2>/dev/null || true
   now="$(date '+%Y-%m-%dT%H:%M:%S%z')"
-  branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
+  backlog_assign_cached_git_branch branch_name
   head="$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' unknown)"
   fingerprint="$(backlog_batch_validation_retry_fingerprint "$phase" "$command_text" "$branch_name" "$head")"
   python3 - \
@@ -3816,7 +3844,7 @@ backlog_batch_validation_repeated_failure() {
   marker_path="$(backlog_batch_validation_retry_path "$phase")"
   [[ -f "$marker_path" ]] || return 1
   marker_json="$(<"$marker_path")"
-  branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
+  backlog_assign_cached_git_branch branch_name
   head="$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' unknown)"
   mapfile -d '' -t marker_fields < <(
     json_fields_nul \
@@ -3860,7 +3888,7 @@ backlog_clear_batch_validation_retry_marker() {
   marker_path="$(backlog_batch_validation_retry_path "$phase")"
   [[ -f "$marker_path" ]] || return 0
   marker_json="$(<"$marker_path")"
-  branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '%s\n' unknown)"
+  backlog_assign_cached_git_branch branch_name
   head="$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' unknown)"
   mapfile -d '' -t marker_fields < <(
     json_fields_nul \
@@ -3999,7 +4027,7 @@ commit_and_push_changes() {
   fi
   log "committing: $message plane=git waiting_for=commit"
   git commit -m "$message" || return $?
-  branch="$(git rev-parse --abbrev-ref HEAD)"
+  backlog_assign_cached_git_branch branch
   if [[ -n "$pr_number" ]]; then
     log "pushing branch updates plane=git waiting_for=push branch=$branch pr=$pr_number"
     backlog_ensure_local_branch_pushed "$pr_number" "$branch" "post_commit_publish" || return $?
@@ -4436,6 +4464,7 @@ merge_and_clean() {
   git checkout main >/dev/null
   git pull --ff-only origin main
   git fetch --prune origin
+  backlog_invalidate_git_branch_cache
   clear_deferred_issues
   if git show-ref --verify --quiet "refs/heads/$branch"; then
     git branch -d "$branch" >/dev/null || true
@@ -4462,6 +4491,8 @@ main() {
   trap 'stop_backlog_owner_heartbeat; clear_backlog_active_owner' EXIT
 
   require_command git
+  backlog_invalidate_git_branch_cache
+  backlog_refresh_git_branch_cache
   autoshelve_dirty_worktree_if_enabled
   require_clean_worktree
 

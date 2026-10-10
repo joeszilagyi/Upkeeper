@@ -64,7 +64,7 @@ start_terminal_progress_heartbeat() {
       wait "$progress_sleep_pid" || exit 0
       progress_sleep_pid=""
 
-      now_epoch="$(date '+%s')"
+      now_epoch="$(epoch_now_seconds)"
       if [[ "$started_epoch" =~ ^[0-9]+$ && "$now_epoch" =~ ^[0-9]+$ ]]; then
         elapsed_seconds=$((now_epoch - started_epoch))
       else

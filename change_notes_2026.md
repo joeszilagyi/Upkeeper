@@ -1,5 +1,12 @@
 # 2026 Change Notes
 
+2026-10-09: zero-fork runtime timestamps:
+	1. Routine log, terminal, progress, and run-mark timestamp helpers now use
+	   Bash builtins and epoch special variables instead of spawning `date(1)`
+	   for each current-time value on supported Bash runtimes.
+	2. Timestamp shape, timezone offsets, and five-place fractional epoch output
+	   are preserved; older runtimes retain the previous `date` fallback.
+
 2026-10-09: conservative CI change classification:
 	1. The reduced CI path is now restricted to an explicit editorial allowlist: README, dated change notes, and the roadmap, PRD, and known-issues pages.
 	2. Prompts, operational documentation, configuration, tests, tools, workflows, policy files, and unknown paths now receive the full deterministic CI gate; CI logs the selected gate explicitly.

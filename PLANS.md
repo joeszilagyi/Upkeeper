@@ -101,7 +101,7 @@ Validation:
 
 ## Issue #725: Batch Selected-Target Backup Metadata
 
-Status: implementation and local validation complete; ready for focused PR
+Status: complete; merged in PR #882
 
 Goal:
 - remove repeated Python interpreter launches from selected-target pre-contact
@@ -123,6 +123,34 @@ Validation:
   selected-target launch-count and helper-failure regression coverage
 - run required syntax, full deterministic suite, whitespace, and quick
   validation before PR
+
+## Issue #706: Remove Per-Log-Line `date` Forks
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- remove the `date(1)` process launch from the central timestamp helpers used
+  for every log line and terminal timestamp, while retaining byte-compatible
+  timestamp and epoch output on supported Bash runtimes
+
+Verified defect:
+- `timestamp_now`, `terminal_timestamp_now`, and `epoch_now_fraction` each
+  execute external `date`; `log_line` calls the first helper for every record
+  and terminal/progress output calls the others repeatedly
+
+Plan:
+- use Bash's `printf '%(... )T'` and epoch special variables on supported
+  runtimes, with a contained compatibility fallback only when those facilities
+  are unavailable
+- retain the existing timestamp shapes, timezone offset, five-place fractional
+  epoch contract, and progress/log error paths
+
+Validation:
+- make a deterministic runtime test poison `date` and prove the supported
+  helpers and `log_line` continue to emit valid output without using it
+- exercise the explicit fallback boundary with a controlled `date` fixture,
+  then run required syntax, focused regression, full deterministic suite,
+  whitespace, and quick validation before PR
 
 ## Issue #730: Batch Lattice Candidate Git Metadata
 

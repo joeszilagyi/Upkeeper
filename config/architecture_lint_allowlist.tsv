@@ -1,3 +1,1 @@
 # name	owner_issue	note
-resolved_status_marker_from_analysis	#728	root wrapper currently adds status-session compatibility behavior; migrate to module hook
-precontact_backup_hmac_text	#728	root wrapper currently adds HMAC compatibility behavior; migrate to module-owned implementation

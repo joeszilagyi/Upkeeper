@@ -927,43 +927,6 @@ upkeeper_operator_status_process_inventory() {
   fi
 }
 
-# Pre-contact backup computes related HMACs from command substitutions. Keep a
-# parent-process key so those subshells do not generate inconsistent fallbacks
-# when the persistent redaction key cannot be written.
-UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="${UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE:-}"
-
-upkeeper_precontact_backup_hmac_key_material() {
-  if [[ -n "$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE" ]]; then
-    printf '%s' "$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE"
-    return 0
-  fi
-
-  if declare -F upkeeper_redaction_key_material >/dev/null 2>&1; then
-    UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="$(upkeeper_redaction_key_material)"
-  else
-    UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="${UPKEEPER_REDACTION_KEY:-precontact-backup-test-key}"
-  fi
-  printf '%s' "$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE"
-}
-
-precontact_backup_hmac_text() {
-  local namespace="$1"
-  local value="$2"
-  local key
-
-  upkeeper_precontact_backup_hmac_key_material >/dev/null
-  key="$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE"
-  python3 - "$key" "precontact_backup.$namespace" "$value" <<'PY' 2>/dev/null || printf 'unknown'
-import hashlib
-import hmac
-import sys
-
-key, namespace, value = sys.argv[1:4]
-material = f"{namespace}\0{value}".encode("utf-8", "surrogateescape")
-print(hmac.new(key.encode("utf-8", "surrogateescape"), material, hashlib.sha256).hexdigest())
-PY
-}
-
 upkeeper_live_output_false_positive_error_echo() {
   local line="$1"
   local payload

@@ -13,6 +13,10 @@ RUN_PRECONTACT_BACKUP_MODE=""
 RUN_PRECONTACT_BACKUP_ENCRYPTED=""
 RUN_PRECONTACT_BACKUP_PROTECTED_FROM_BACKEND=""
 PRECONTACT_BACKUP_SECURE_TARGET_ABS=""
+# Pre-contact backup computes related HMACs from command substitutions. Keep a
+# module-owned parent-process key so those subshells do not generate
+# inconsistent fallbacks when the persistent redaction key cannot be written.
+UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="${UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE:-}"
 
 precontact_backup_truthy() {
   case "${1:-}" in
@@ -67,17 +71,27 @@ print(hashlib.sha256(sys.argv[1].encode("utf-8", "surrogateescape")).hexdigest()
 PY
 }
 
+upkeeper_precontact_backup_hmac_key_material() {
+  if [[ -n "$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE" ]]; then
+    printf '%s' "$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE"
+    return 0
+  fi
+
+  if declare -F upkeeper_redaction_key_material >/dev/null 2>&1; then
+    UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="$(upkeeper_redaction_key_material)"
+  else
+    UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE="${UPKEEPER_REDACTION_KEY:-precontact-backup-test-key}"
+  fi
+  printf '%s' "$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE"
+}
+
 precontact_backup_hmac_text() {
   local namespace="$1"
   local value="$2"
   local key
 
-  if declare -F upkeeper_hmac_sha256_text >/dev/null 2>&1; then
-    upkeeper_hmac_sha256_text "precontact_backup.$namespace" "$value"
-    return 0
-  fi
-
-  key="${UPKEEPER_REDACTION_KEY:-precontact-backup-test-key}"
+  upkeeper_precontact_backup_hmac_key_material >/dev/null
+  key="$UPKEEPER_PRECONTACT_BACKUP_HMAC_KEY_CACHE"
   python3 - "$key" "precontact_backup.$namespace" "$value" <<'PY' 2>/dev/null || printf 'unknown'
 import hashlib
 import hmac

@@ -3,6 +3,39 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #697: Local Deterministic Postmortem Reports
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- stop the enabled postmortem-report path from spending an auxiliary Codex call
+  to narrate incident evidence that the wrapper already writes locally
+
+Constraints:
+- preserve private `0700`/`0600` evidence handling, report hash-only summary
+  emission, incident context/log/bug-record creation, failure-status
+  propagation, and the fixed report-heading contract
+- retain model-backed hardening only behind the existing explicit operator
+  opt-in; do not introduce live-backend validation
+
+Implemented and validated:
+- replaced the live `postmortem.report` auxiliary invocation with a
+  deterministic writer that expands the sanitized incident context into the
+  fixed report headings and preserves private artifact handling
+- kept `postmortem.hardening` as the only auxiliary phase and only after the
+  existing opt-in gate; updated config/help/operator/security text to distinguish
+  local reporting from model-backed hardening
+- strengthened the real-entrypoint postmortem sequence integration fixture to
+  prove the local report’s headings, incident classification, hash summary,
+  private permissions, absence of a report auxiliary call, and opted-in
+  hardening behavior; public-doc checks, the 83-test suite, and quick/full
+  deterministic validation (including the local stress corpus) passed
+
+Limitation:
+- deterministic tests establish local report generation and routing but do not
+  establish that an opted-in live hardening model run will recommend or apply a
+  useful change for every incident.
+
 ## Issue #682: Constrain Automatic Recovery Model Calls
 
 Status: implementation and local validation complete; ready for focused PR

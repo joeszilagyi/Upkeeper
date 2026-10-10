@@ -87,20 +87,20 @@ Loop stop semantics:
     can add a wall-clock bound
   - by default, fallback is limited to primary-quota and missing-final-status
     recovery; generic failure, explicit BLOCKED, dirty NO_BACKEND_TASK, and
-    post-mortem model work require their respective explicit opt-ins
-  - enable a scripted post-mortem report with CODEX_POSTMORTEM_ENABLED=1;
-    keeps hardening report-only unless CODEX_POSTMORTEM_HARDENING_OPT_IN=1,
-    and a post-mortem/report or opted-in hardening failure still propagates
+    model-backed post-mortem hardening require their respective explicit opt-ins
+  - enable a deterministic local post-mortem report with CODEX_POSTMORTEM_ENABLED=1;
+    it uses sanitized incident evidence without an auxiliary Codex call, while
+    model-backed hardening remains disabled unless CODEX_POSTMORTEM_HARDENING_OPT_IN=1
   - disable all remaining recovery model work with
     CODEX_FALLBACK_ENABLED=0 CODEX_FALLBACK_SCREEN_ENABLED=0
   - an explicit full recovery shutdown also accepts
     CODEX_FALLBACK_ENABLED=0 CODEX_FALLBACK_SCREEN_ENABLED=0 CODEX_POSTMORTEM_ENABLED=0
-  - post-mortem report completion logs `postmortem.report.finish` with the
-    report child exit, parsed marker, report path, and file existence state
-  - auxiliary post-mortem and hardening Codex calls use their own exact-model
-    quota preflight and are skipped, with a shell-written report, when no
-    current bucket can make a decision or a current bucket is projected below
-    threshold
+  - post-mortem report completion logs `postmortem.report.finish` with
+    `mode=local`, the fixed completion marker, a redacted report path, and file
+    existence state
+  - model-backed post-mortem hardening uses its own exact-model quota preflight
+    and is skipped while preserving the local report when no current bucket can
+    make a decision or a current bucket is projected below threshold
   - live primary and auxiliary Codex calls also preflight the local session store;
     missing $CODEX_HOME/sessions directories are created private, while
     read-only, symlinked, wrong-owner, non-directory, or group/other-writable
@@ -990,10 +990,10 @@ Environment overrides:
   CODEX_FALLBACK_SCREEN_MAX_CHILDREN Default: 1
   CODEX_FALLBACK_SCREEN_MAX_SECONDS  Default: 0
   CODEX_FALLBACK_SCREEN_STAGE_ROOT   Default: ${XDG_STATE_HOME:-$HOME/.local/state}/upkeeper/backlog/tmp/fallback-screen
-  CODEX_POSTMORTEM_ENABLED       Default: 0; set 1 to run a model postmortem after fallback
+  CODEX_POSTMORTEM_ENABLED       Default: 0; set 1 to write a deterministic local report after fallback
   CODEX_POSTMORTEM_HARDENING_OPT_IN Default: 0
   CODEX_POSTMORTEM_MODEL         Default: CODEX_FALLBACK_MODEL
-  CODEX_POSTMORTEM_REASONING_EFFORT Baseline default: medium; automatic report/hardening policy uses low/medium when no exported override is set
+  CODEX_POSTMORTEM_REASONING_EFFORT Baseline default: medium; used only by opted-in model-backed hardening unless exported for that run
   CODEX_POSTMORTEM_MODE          Default: CODEX_FALLBACK_MODE
   CODEX_POSTMORTEM_DIR           Default: runtime/journals/upkeeper-postmortems
   CODEX_OPERATOR_GUIDE_PATH      Default: docs/scripts/upkeeper.md

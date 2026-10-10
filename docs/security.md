@@ -546,9 +546,10 @@ CODEX_FALLBACK_ENABLED=0 CODEX_FALLBACK_SCREEN_ENABLED=0 CODEX_POSTMORTEM_ENABLE
 
 Fallback spend is bounded by the exact-model quota preflights, cooldown markers,
 single-shot defaults, child-count/time limits, and recursive fallback disablement
-inside fallback children. Postmortem and hardening phases run their own
-exact-model quota checks and write shell-only reports when they are skipped by
-quota or local-environment guardrails.
+inside fallback children. The enabled postmortem report is written locally from
+sanitized incident evidence. Only explicitly opted-in model-backed hardening
+runs its own exact-model quota checks; a quota or local-environment block keeps
+the local report and skips hardening.
 
 Fallback evidence is separated from primary evidence under private per-cycle
 postmortem directories such as `runtime/journals/upkeeper-postmortems/<cycle>/`.

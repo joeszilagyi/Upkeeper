@@ -2139,17 +2139,7 @@ run_control_plane_pre_staging_audit() {
   obligation_root="${BACKLOG_OBLIGATION_DIR:-$ROOT_DIR/runtime/upkeeper-obligations}"
   before_snapshot="$(control_plane_snapshot_path pre-staging-before 2>/dev/null || true)"
   if [[ -n "$before_snapshot" ]]; then
-    "$ROOT_DIR/tools/upkeeper_control_plane_audit.py" \
-      --root "$ROOT_DIR" \
-      --no-default-log \
-      --no-runtime \
-      --stage pre-staging-before \
-      --snapshot-label pre-staging-before \
-      --snapshot-out "$before_snapshot" \
-      --write-lineage \
-      --lineage-root "$(control_plane_lineage_root)" \
-      --fail-on never >/dev/null 2>&1 || true
-    [[ -s "$before_snapshot" ]] && before_args=(--before-snapshot "$before_snapshot")
+    before_args=(--pre-remediation-snapshot-out "$before_snapshot")
   fi
   after_snapshot="$(control_plane_snapshot_path pre-staging-after 2>/dev/null || true)"
   [[ -n "$after_snapshot" ]] && after_args=(--snapshot-out "$after_snapshot")

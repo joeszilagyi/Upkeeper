@@ -187,6 +187,46 @@ test_before_after_snapshot_delta_resolves_safe_cleanup() {
     fail "after snapshot file did not preserve resolved invariant delta"
 }
 
+test_pre_remediation_transaction_reuses_static_inventory() {
+  local repo="$TEST_TMP_ROOT/pre-remediation-transaction"
+  local before_snapshot="$TEST_TMP_ROOT/pre-remediation-before.json"
+  local after_snapshot="$TEST_TMP_ROOT/pre-remediation-after.json"
+  local fake_bin="$TEST_TMP_ROOT/pre-remediation-bin"
+  local git_log="$TEST_TMP_ROOT/pre-remediation-git.log"
+  local real_git
+
+  make_repo "$repo"
+  printf 'scratch\n' >"$repo/\$db"
+  real_git="$(command -v git)"
+  mkdir -p "$fake_bin"
+  cat >"$fake_bin/git" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$UPKEEPER_AUDIT_GIT_LOG"
+exec "$UPKEEPER_AUDIT_REAL_GIT" "$@"
+SH
+  chmod +x "$fake_bin/git"
+  set +e
+  PATH="$fake_bin:$PATH" \
+    UPKEEPER_AUDIT_GIT_LOG="$git_log" \
+    UPKEEPER_AUDIT_REAL_GIT="$real_git" \
+    "$PROJECT_ROOT/tools/upkeeper_control_plane_audit.py" \
+      --root "$repo" --no-default-log --no-runtime --json --remediate-safe \
+      --pre-remediation-snapshot-out "$before_snapshot" \
+      --snapshot-out "$after_snapshot" --fail-on never \
+      >"$TEST_TMP_ROOT/out.txt" 2>"$TEST_TMP_ROOT/err.txt"
+  AUDIT_RC="$?"
+  set -e
+  AUDIT_OUT="$(cat "$TEST_TMP_ROOT/out.txt")"
+  AUDIT_ERR="$(cat "$TEST_TMP_ROOT/err.txt")"
+  [[ "$AUDIT_RC" -eq 0 ]] || fail "pre-remediation transaction exited $AUDIT_RC output=$AUDIT_OUT stderr=$AUDIT_ERR"
+  [[ ! -e "$repo/\$db" ]] || fail "pre-remediation transaction did not clean safe artifact"
+  [[ "$(grep -Fxc 'ls-files -z' "$git_log")" == "1" ]] || fail "pre-remediation transaction rebuilt tracked inventory"
+  jq -e '.snapshot.label == "pre-staging-before" and .counts.finding_count == 1' "$before_snapshot" >/dev/null ||
+    fail "pre-remediation snapshot did not preserve the observed finding"
+  jq -e '(.static_inventory_reused == true) and (.snapshot_delta.before_finding_count == 1) and (.snapshot_delta.after_finding_count == 0) and (.snapshot_delta.resolved_invariants | index("KP-002"))' "$after_snapshot" >/dev/null ||
+    fail "pre-remediation transaction did not preserve after-state delta with reused inventory"
+}
+
 test_blocker_writes_obligation_before_stage() {
   local repo="$TEST_TMP_ROOT/write-obligation"
   local obligation_root="$TEST_TMP_ROOT/write-obligation-state"
@@ -315,6 +355,7 @@ test_tracked_local_evidence_is_anomaly
 test_untracked_root_scratch_and_runtime_inventory
 test_remediate_safe_cleans_only_safe_artifacts
 test_before_after_snapshot_delta_resolves_safe_cleanup
+test_pre_remediation_transaction_reuses_static_inventory
 test_blocker_writes_obligation_before_stage
 test_unknown_root_artifact_is_unsafe_unknown
 test_existing_obligations_do_not_block_pre_staging_policy

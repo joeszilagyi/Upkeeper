@@ -2460,6 +2460,8 @@ check_control_plane_audit_contract() {
     fail "control-plane audit does not define unknown-class promotion invariant"
   grep -Fq -- "--snapshot-out" tools/upkeeper_control_plane_audit.py ||
     fail "control-plane audit does not write before/after snapshots"
+  grep -Fq -- "--pre-remediation-snapshot-out" tools/upkeeper_control_plane_audit.py orchestration/backlog.sh tests/control_plane_audit_test.bash ||
+    fail "pre-staging audit does not reuse one transaction for its before snapshot"
   grep -Fq -- "--write-lineage" tools/upkeeper_control_plane_audit.py ||
     fail "control-plane audit does not write closed-loop lineage records"
   grep -Fq -- "--finding-json" tools/upkeeper_control_plane_audit.py tests/control_plane_audit_test.bash ||

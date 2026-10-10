@@ -3,7 +3,7 @@ set -euo pipefail
 
 ## Upkeeper operator.
 ##
-## Version: v1.2.48
+## Version: v1.2.49
 ##
 ## Version policy:
 ## - Any future behavioral, documentation, default, or portability change to
@@ -420,7 +420,7 @@ LOG_ARCHIVE_GLOB="$LOG_FILE_NAME.*.zip"
 #
 # Built-in defaults are resolved after the selected config file is sourced.
 # Operator CLI flags are parsed later and remain one-cycle overrides.
-UPKEEPER_VERSION="v1.2.48"
+UPKEEPER_VERSION="v1.2.49"
 UPKEEPER_MODEL_OVERRIDE="${UPKEEPER_MODEL_OVERRIDE:-}"
 UPKEEPER_TARGET_FILE="${UPKEEPER_TARGET_FILE:-}"
 UPKEEPER_PROMPT_PASS="${UPKEEPER_PROMPT_PASS:-}"
@@ -756,6 +756,7 @@ UPKEEPER_MODULES=(
   "precontact_backup.bash"
   "prompt_pruning.bash"
   "prompt_compile.bash"
+  "local_fix_lane.bash"
   "process_control.bash"
 
   # Fallback, postmortem, and status-session helpers.
@@ -6496,6 +6497,9 @@ main() {
   trap cleanup_run_temp_files EXIT
 
   compile_prompt "$compiled_prompt_file"
+  if upkeeper_local_fix_lane_docs_change_is_complete; then
+    finish_cycle 0 WORK_DONE INFO "codex_exec_started=0 local_fix_lane=docs_only"
+  fi
   log_kv_assign compiled_prompt_field path "$compiled_prompt_file"
   log_line "INFO" "run.compiled_prompt.ready $compiled_prompt_field content_hmac=$(file_blob_hash "$compiled_prompt_file") size_bytes=$(file_size_bytes "$compiled_prompt_file")"
   log_line "INFO" "run.log_self_review_required access=sanitized_helper_only path_redacted=1 target_cycle=$CYCLE_ID"

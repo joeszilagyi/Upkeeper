@@ -6161,6 +6161,90 @@ upkeeper_internal_active_lock_self_test() {
   return 0
 }
 
+upkeeper_run_startup_control_plane_preflight() {
+  local details
+  local direct_parent_pid direct_parent_comm direct_parent_summary
+  local wrapper_start_fingerprint direct_parent_start_fingerprint
+  local loop_parent_pid loop_parent_comm loop_parent_summary loop_parent_override
+  local loop_parent_start_fingerprint
+
+  normalize_guardrail_thresholds
+  check_central_wrapper_health_or_exit
+  prepare_fallback_chain_token
+  acquire_active_lock_or_exit
+  trap cleanup_run_temp_files EXIT
+  upkeeper_fast_path_timing_reset
+  upkeeper_fast_path_timing_start operator_guide
+  ensure_operator_guide
+  upkeeper_fast_path_timing_finish operator_guide
+  resolve_prompt_file
+  upkeeper_fast_path_timing_start startup_anomaly_scan
+  scan_previous_run_anomalies
+  upkeeper_fast_path_timing_finish startup_anomaly_scan
+  rotate_wrapper_log_if_needed
+  refresh_worktree_counts
+
+  if details="$(direct_parent_details)"; then
+    IFS=$'\t' read -r direct_parent_pid direct_parent_comm direct_parent_summary <<<"$details"
+  else
+    direct_parent_pid="unknown"
+    direct_parent_comm="unknown"
+    direct_parent_summary="unknown"
+  fi
+  wrapper_start_fingerprint="$(process_start_fingerprint "$$")"
+  direct_parent_start_fingerprint="$(process_start_fingerprint "$direct_parent_pid")"
+
+  if details="$(parent_shell_details)"; then
+    IFS=$'\t' read -r loop_parent_pid loop_parent_comm loop_parent_summary loop_parent_override <<<"$details"
+  else
+    loop_parent_pid="unknown"
+    loop_parent_comm="unknown"
+    loop_parent_summary="unknown"
+    loop_parent_override="0"
+  fi
+  loop_parent_start_fingerprint="$(process_start_fingerprint "$loop_parent_pid")"
+
+  log_line_parts "INFO" \
+    "$(cycle_start_log_message \
+      "$direct_parent_pid" "$direct_parent_comm" "$direct_parent_start_fingerprint" \
+      "$loop_parent_pid" "$loop_parent_comm" "$loop_parent_start_fingerprint" \
+      "$loop_parent_override" "$wrapper_start_fingerprint")"
+  automation_record_cycle_start || log_line "WARN" "automation.run_record.start_failed path=$(shell_quote "${RUN_AUTOMATION_RECORD_FILE:-unknown}")"
+  upkeeper_fast_path_timing_start backup_preflight
+  upkeeper_precontact_backup_hmac_key_material >/dev/null
+  precontact_backup_machine_preflight_or_exit
+  upkeeper_fast_path_timing_finish backup_preflight
+  upkeeper_fast_path_timing_start issue_and_target_preflight
+  resolve_issue_fix_next_or_exit
+  upkeeper_bind_issue_fix_obligation_context
+  if ! run_issue_docs_contract_checks; then
+    finish_cycle 70 ISSUE_FIX_DOCS_CONTRACT_CHECK_FAILED ERROR "codex_exec_started=0 number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
+  fi
+  enforce_breadcrumb_gate_or_exit
+  upkeeper_preflight_explicit_target_or_exit
+  upkeeper_fast_path_timing_finish issue_and_target_preflight
+  upkeeper_fast_path_timing_start lattice_startup
+  lattice_init_and_doctor_or_exit
+  upkeeper_fast_path_timing_finish lattice_startup
+  upkeeper_fast_path_timing_start lattice_cycle_start
+  lattice_record_cycle_start
+  upkeeper_fast_path_timing_finish lattice_cycle_start
+  start_run_mark_heartbeat
+  check_disk_space_preflight
+  if [[ "$STARTUP_ANOMALY_GATE" == "1" ]]; then
+    log_line "WARN" "startup_anomaly.gate status=active reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") force_upkeeper=$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER action=block_normal_selection_until_upkeeper_suite_checked"
+    if ! write_startup_anomaly_gate_state "unresolved" "active_at_startup"; then
+      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=0"
+    fi
+    enforce_startup_anomaly_gate_target_or_exit
+  fi
+
+  enforce_primary_quota_block_marker
+  upkeeper_fast_path_timing_start file_manifest
+  ensure_file_manifest_for_selection
+  upkeeper_fast_path_timing_finish file_manifest
+}
+
 # Main cycle.
 #
 # Order matters:
@@ -6205,85 +6289,7 @@ main() {
     upkeeper_internal_active_lock_self_test
     return $?
   fi
-  normalize_guardrail_thresholds
-  check_central_wrapper_health_or_exit
-  prepare_fallback_chain_token
-  acquire_active_lock_or_exit
-  trap cleanup_run_temp_files EXIT
-  upkeeper_fast_path_timing_reset
-  upkeeper_fast_path_timing_start operator_guide
-  ensure_operator_guide
-  upkeeper_fast_path_timing_finish operator_guide
-  resolve_prompt_file
-  upkeeper_fast_path_timing_start startup_anomaly_scan
-  scan_previous_run_anomalies
-  upkeeper_fast_path_timing_finish startup_anomaly_scan
-  rotate_wrapper_log_if_needed
-  refresh_worktree_counts
-
-  local direct_parent_pid direct_parent_comm direct_parent_summary
-  if details="$(direct_parent_details)"; then
-    IFS=$'\t' read -r direct_parent_pid direct_parent_comm direct_parent_summary <<<"$details"
-  else
-    direct_parent_pid="unknown"
-    direct_parent_comm="unknown"
-    direct_parent_summary="unknown"
-  fi
-  local wrapper_start_fingerprint direct_parent_start_fingerprint
-  wrapper_start_fingerprint="$(process_start_fingerprint "$$")"
-  direct_parent_start_fingerprint="$(process_start_fingerprint "$direct_parent_pid")"
-
-  local loop_parent_pid loop_parent_comm loop_parent_summary loop_parent_override
-  if details="$(parent_shell_details)"; then
-    IFS=$'\t' read -r loop_parent_pid loop_parent_comm loop_parent_summary loop_parent_override <<<"$details"
-  else
-    loop_parent_pid="unknown"
-    loop_parent_comm="unknown"
-    loop_parent_summary="unknown"
-    loop_parent_override="0"
-  fi
-  local loop_parent_start_fingerprint
-  loop_parent_start_fingerprint="$(process_start_fingerprint "$loop_parent_pid")"
-
-  log_line_parts "INFO" \
-    "$(cycle_start_log_message \
-      "$direct_parent_pid" "$direct_parent_comm" "$direct_parent_start_fingerprint" \
-      "$loop_parent_pid" "$loop_parent_comm" "$loop_parent_start_fingerprint" \
-      "$loop_parent_override" "$wrapper_start_fingerprint")"
-  automation_record_cycle_start || log_line "WARN" "automation.run_record.start_failed path=$(shell_quote "${RUN_AUTOMATION_RECORD_FILE:-unknown}")"
-  upkeeper_fast_path_timing_start backup_preflight
-  upkeeper_precontact_backup_hmac_key_material >/dev/null
-  precontact_backup_machine_preflight_or_exit
-  upkeeper_fast_path_timing_finish backup_preflight
-  upkeeper_fast_path_timing_start issue_and_target_preflight
-  resolve_issue_fix_next_or_exit
-  upkeeper_bind_issue_fix_obligation_context
-  if ! run_issue_docs_contract_checks; then
-    finish_cycle 70 ISSUE_FIX_DOCS_CONTRACT_CHECK_FAILED ERROR "codex_exec_started=0 number=$(shell_quote "${CODEX_ISSUE_FIX_NUMBER:-unknown}")"
-  fi
-  enforce_breadcrumb_gate_or_exit
-  upkeeper_preflight_explicit_target_or_exit
-  upkeeper_fast_path_timing_finish issue_and_target_preflight
-  upkeeper_fast_path_timing_start lattice_startup
-  lattice_init_and_doctor_or_exit
-  upkeeper_fast_path_timing_finish lattice_startup
-  upkeeper_fast_path_timing_start lattice_cycle_start
-  lattice_record_cycle_start
-  upkeeper_fast_path_timing_finish lattice_cycle_start
-  start_run_mark_heartbeat
-  check_disk_space_preflight
-  if [[ "$STARTUP_ANOMALY_GATE" == "1" ]]; then
-    log_line "WARN" "startup_anomaly.gate status=active reasons=$(shell_quote "${STARTUP_ANOMALY_REASONS:-unknown}") force_upkeeper=$CODEX_STARTUP_ANOMALY_FORCE_UPKEEPER action=block_normal_selection_until_upkeeper_suite_checked"
-    if ! write_startup_anomaly_gate_state "unresolved" "active_at_startup"; then
-      finish_cycle 7 STARTUP_ANOMALY_STATE_UNWRITABLE ERROR "codex_exec_started=0"
-    fi
-    enforce_startup_anomaly_gate_target_or_exit
-  fi
-
-  enforce_primary_quota_block_marker
-  upkeeper_fast_path_timing_start file_manifest
-  ensure_file_manifest_for_selection
-  upkeeper_fast_path_timing_finish file_manifest
+  upkeeper_run_startup_control_plane_preflight
 
   local quota_json
   quota_json="$(quota_state_json)"

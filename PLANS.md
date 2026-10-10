@@ -3,6 +3,48 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #734: Startup Control-Plane Phase Extraction
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- reduce the phase-spanning responsibility of `Upkeeper` `main()` by giving the
+  post-argument startup control plane one named owner without changing its
+  safety, custody, or target-selection sequence
+
+Constraints:
+- preserve the existing early operator/self-test exits, active-lock ownership,
+  timing boundaries, cycle-start evidence, encrypted-backup preflight,
+  issue/obligation binding, Lattice initialization, anomaly gate, quota marker,
+  and manifest ordering
+- retain `main()` as orchestration rather than moving control-plane policy into
+  an unrelated helper; use local state only where it was not an intentional
+  cross-phase input
+- prove the actual dry-run/validator paths remain intact; no live backend use
+
+Plan:
+- extract the contiguous startup control-plane sequence after early argument
+  handling and before quota snapshot parsing into one named entrypoint helper
+- add a focused contract that verifies the phase boundary and its required
+  ordering, complemented by existing real wrapper dry-run coverage
+- run focused, full deterministic, and validator checks, then retain #734 open
+  for the remaining `main()` and large-function work
+
+Implemented and validated:
+- extracted the contiguous startup control-plane sequence into
+  `upkeeper_run_startup_control_plane_preflight`, retaining early command and
+  self-test exits in `main()` and keeping all original timing/custody calls in
+  their original order
+- added a focused dependency-stubbed phase test that records and proves the
+  critical lock, evidence, backup, issue, Lattice, quota, and manifest order
+- passed focused syntax/phase checks, the real private no-backend probe, the
+  full 80-test suite, public-doc checks, and real quick/full validation runs
+
+Limitation:
+- this reduces `main()` by one control-plane phase only. It does not claim to
+  finish the remaining entrypoint, embedded-Python, or large-module work in
+  #734, nor does it establish live backend behavior.
+
 ## Issue #705: Validator Mode-Boundary Extraction
 
 Status: implementation and local validation complete; ready for focused PR

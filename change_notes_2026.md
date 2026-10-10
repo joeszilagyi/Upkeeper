@@ -1,5 +1,15 @@
 # 2026 Change Notes
 
+## v1.2.50 changes: Add no-backend fast-path timing evidence
+
+- Upkeeper now records a bounded pre-model timing summary for the existing
+  operator-guide, anomaly, backup/target, Lattice, manifest, and prompt
+  boundaries. A normal cycle warns when the configurable local budget is
+  exceeded but does not skip or weaken any required gate.
+- `tools/measure_upkeeper_noop_path.sh` exercises the real wrapper through an
+  isolated dry-run fixture, reports Python/Lattice/control-plane subprocess
+  counts, proves no backend launch, and can fail an explicit regression budget.
+
 ## v1.2.49 changes: Add fail-closed docs local-fix completion
 
 - An explicitly selected issue can now complete without backend model work only

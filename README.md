@@ -206,6 +206,15 @@ launching backend Codex or running broad validation. Treat a clean no-op path
 that takes more than about 10 seconds as pressure to simplify the scripted
 checks.
 
+`tools/measure_upkeeper_noop_path.sh` is the deterministic, no-backend
+regression probe for that contract. It runs a symlinked wrapper in a private
+temporary Git fixture, reports aggregate pre-model timing plus Python, Lattice,
+and control-plane-audit subprocess counts, and fails an explicit budget without
+using an operator's state or launching Codex. The ordinary wrapper records the
+same phase summary in its local log; `UPKEEPER_FAST_PATH_TIMING_BUDGET_MS`
+defaults to 10,000 milliseconds and warns rather than suppressing a required
+gate when exceeded.
+
 The north star is the same discipline as the oxygen-mask rule on a flight:
 secure the system that does the helping before it tries to help anything else.
 Upkeeper should not work a fresh project bug while its own automation layer is

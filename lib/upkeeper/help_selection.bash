@@ -809,6 +809,8 @@ Environment overrides:
   CODEX_SESSION_SCAN_LIMIT      Default: 200
   CODEX_LOG_FILE                Default: $ROOT_DIR/Upkeeper.log
   UPKEEPER_DRY_RUN           Default: 0
+  UPKEEPER_FAST_PATH_TIMING_ENABLED Default: 1
+  UPKEEPER_FAST_PATH_TIMING_BUDGET_MS Default: 10000
 
 Exit codes:
   0  One cycle completed, dry-run completed, or the loop was stopped on quota guardrails

@@ -3,9 +3,59 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
-## Issue #718: Per-Fix Wall-Clock Budget and Phase Evidence
+## Issue #704: No-Backend Fast-Path Budget and Regression Guard
 
 Status: complete; pending PR
+
+Goal:
+- make the actual wrapper's isolated dry-run path observable as one bounded,
+  pre-model sequence, so individually reasonable local gates cannot silently
+  turn a healthy no-backend run into an expensive startup
+
+Constraints:
+- preserve the required startup, backup, Lattice, anomaly, manifest, quota,
+  and target-selection checks; a budget observation may warn or make the
+  dedicated probe fail, but must not skip a gate or contact a backend
+- run the regression fixture through a symlinked central wrapper with private
+  HOME/XDG, ledger, obligation, backup, Lattice, log, and lock roots; it must
+  never use operator state or invoke live Codex
+
+Plan:
+- add one small module that records elapsed pre-model phases with an injectable
+  clock for deterministic unit coverage and emits a clear aggregate summary
+- time the existing anomaly, backup/target, Lattice startup/record, manifest,
+  and prompt-preparation boundaries without duplicating their policy decisions
+- add a standalone probe that makes a temporary Git fixture, instruments real
+  Python process launches, executes `UPKEEPER_DRY_RUN=1`, verifies no backend
+  launch, and enforces a configurable overall budget
+- retain the measurement as evidence only in ordinary cycles; the probe is the
+  explicit regression gate for a budget breach
+
+Validation:
+- use the module's fake-clock test for phase math and warning behavior, then
+  exercise the real symlinked wrapper probe for its private state and no-backend
+  invariant before the full required shell validation suite
+
+Implemented and validated:
+- added one pre-model timing owner with an aggregate 10-second default budget
+  and named anomaly, backup/target, Lattice, manifest, and prompt boundaries;
+  ordinary cycles retain all gates and only log a visible warning on a breach
+- added an explicit isolated probe that runs the real wrapper in dry-run mode,
+  verifies the dry-run completion/no-backend invariant, and reports actual
+  Python, Lattice, and control-plane-audit subprocess counts
+- passed fake-clock timing coverage, the real within-budget probe, its forced
+  over-budget failure, public-document checks, the full 77-test suite, and the
+  required quick validator
+
+Limitation:
+- the probe is a deterministic fixture-level workflow integration check, not
+  authorization for real Codex execution or evidence of a live operator cycle;
+  the ordinary budget warning deliberately records pressure without changing
+  required validation or safety policy
+
+## Issue #718: Per-Fix Wall-Clock Budget and Phase Evidence
+
+Status: complete; merged in PR #898
 
 Goal:
 - make the whole issue-repair path observable as a bounded sequence of local,

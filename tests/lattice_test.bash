@@ -16,7 +16,9 @@ LATTICE_HARNESS_TIMEOUT_ARTIFACT="$LATTICE_TEST_TIMEOUT_ARTIFACT"
 
 cleanup() {
   lattice_harness_stop
-  rm -r "$TEST_TMP_ROOT" 2>/dev/null || true
+  # Fixture Git objects are intentionally mode 0444. This exact mktemp-owned
+  # root must therefore be removed non-interactively when the test has a TTY.
+  rm -rf -- "$TEST_TMP_ROOT" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -2858,9 +2860,24 @@ if int(row[0]) != 0:
 PY
 }
 
-lattice_harness_start "$TEST_TMP_ROOT/inprocess-harness"
+test_cleanup_removes_read_only_fixture() {
+  local fixture_dir fixture_file
+
+  fixture_dir="$TEST_TMP_ROOT/cleanup-read-only"
+  fixture_file="$fixture_dir/read-only-object"
+  mkdir -p -- "$fixture_dir"
+  printf 'fixture\n' >"$fixture_file"
+  chmod 444 -- "$fixture_file"
+  if [[ -n "${LATTICE_TEST_CLEANUP_ROOT_RECORD:-}" ]]; then
+    printf '%s\n' "$TEST_TMP_ROOT" >"$LATTICE_TEST_CLEANUP_ROOT_RECORD"
+  fi
+}
 
 test_group="${UPKEEPER_LATTICE_TEST_GROUP:-core}"
+if [[ "$test_group" != "cleanup" ]]; then
+  lattice_harness_start "$TEST_TMP_ROOT/inprocess-harness"
+fi
+
 case "$test_group" in
   core)
     test_repository_identity_survives_origin_url_change
@@ -2877,6 +2894,9 @@ case "$test_group" in
   cli-integration)
     test_lattice_validator_contract
     test_lattice_cli_contracts
+    ;;
+  cleanup)
+    test_cleanup_removes_read_only_fixture
     ;;
   wrapper-integration)
     test_wrapper_required_policy

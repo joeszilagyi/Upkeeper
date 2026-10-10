@@ -3,6 +3,34 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #876: Make Lattice CLI Fixture Cleanup Non-Interactive
+
+Status: implementation and local validation complete; ready for focused PR
+
+Goal:
+- keep the serial Lattice CLI integration fixture within its existing 45-second
+  deadline when its test-owned Git repository contains read-only object files
+- preserve all Lattice assertions, fixture permissions, and timeout budgets
+
+Verified defect:
+- `tests/lattice_test.bash` prints successful CLI-integration assertions, then
+  its EXIT trap invokes `rm -r` on an `mktemp` root that contains mode-0444 Git
+  object fixtures; on a terminal this suppresses an interactive confirmation
+  prompt and waits for input until the outer deadline expires
+
+Plan:
+- make cleanup non-interactive while retaining the exact test-owned temporary
+  root as its only deletion target
+- run the CLI group through a pseudo-terminal in its existing wrapper so the
+  regression exercises the formerly blocking prompt path
+- keep cleanup/reaping behavior intact for both passing and failing groups
+
+Validation:
+- reproduce the prior terminal cleanup timeout, then show the existing
+  45-second CLI wrapper completes without input after the repair
+- run focused Lattice coverage, the full deterministic suite, syntax,
+  whitespace, and quick validation without increasing any deadline
+
 ## Issue #730: Batch Lattice Candidate Git Metadata
 
 Status: in progress

@@ -87,6 +87,7 @@ jobs:
         if: steps.scope.outputs.docs_only != '1'
         env:
           UPKEEPER_TEST_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-test-attestation.json
+          UPKEEPER_VALIDATION_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-validation-attestation.json
           UPKEEPER_VALIDATION_DIFF_BASE: ${{ steps.diff_range.outputs.base }}
           UPKEEPER_VALIDATION_DIFF_HEAD: ${{ steps.diff_range.outputs.head }}
         run: tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace

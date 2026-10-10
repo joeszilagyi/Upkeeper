@@ -19,6 +19,7 @@ git -C "$repo" config user.email "upkeeper-test@example.invalid"
 mkdir -p "$repo/tools"
 cp "$ROOT_DIR/tools/git_diff_validation.bash" "$repo/tools/"
 cp "$ROOT_DIR/tools/run_validation_phases.sh" "$repo/tools/"
+cp "$ROOT_DIR/tools/validation_attestation_lib.bash" "$repo/tools/"
 
 run_fixture_phase() {
   (

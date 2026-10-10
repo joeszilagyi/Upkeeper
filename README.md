@@ -423,6 +423,13 @@ In sequential CI phases, `tools/run_tests.sh` also writes a runner-local test
 attestation. Full validation reuses an individual passing test only when the
 Git head/tree, tracked-worktree state, environment class, test path, and test
 content hash all still match; standalone and mismatched runs execute normally.
+`tools/run_validation_phases.sh` additionally accepts a private
+`UPKEEPER_VALIDATION_ATTESTATION_FILE` proof for an entire selected phase set.
+It accepts that proof only when its commands, successful exits, bounded age,
+Git head/tree, complete tracked-input hashes, environment class, and tool
+versions all still match; otherwise it logs why it reruns. Backlog keeps these
+artifacts under its local state root, while CI keeps them in runner-local
+temporary storage rather than committing them.
 The full validation mode remains the broad deterministic local integration gate
 without real backend Codex work. It runs bounded Upkeeper dry-run startup
 checks under validator-owned quota/cooldown bypasses, then uses a local fake

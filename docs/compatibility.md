@@ -602,6 +602,14 @@ Future changes should preserve this operator-visible surface as far as possible:
   `UPKEEPER_TEST_ATTESTATION_FILE`. Reuse requires the same Git head/tree,
   clean tracked state, environment class, passing status, and exact test blob;
   standalone or mismatched runs retain normal execution.
+- Batch, merge-steward, per-bug, and CI phase selection may exchange private
+  schema `upkeeper.validation-attestation.v1` evidence through
+  `UPKEEPER_VALIDATION_ATTESTATION_FILE`. The consumer requires an exact
+  selected command set with successful status, a bounded timestamp age, equal
+  Git head/tree, complete tracked-input hashes, environment class, and tool
+  versions. Missing, malformed, stale, changed, cross-environment, or
+  permissions-unsafe evidence is rejected with a reason and rerun; artifacts
+  remain in local backlog state or CI runner temporary storage.
 - Merge-steward cleanup for already-green backlog PRs remains local and
   no-backend. `tools/backlog_merge_steward.py` emits `merge_ready=yes|no`, a
   reason, and a next action, refuses unsafe PR/check/worktree states, and uses

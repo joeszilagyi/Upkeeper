@@ -1,5 +1,16 @@
 # 2026 Change Notes
 
+2026-10-10: validation phase attestation reuse:
+	1. Per-bug, batch, merge-steward, and CI phase runners can now retain private
+	   `upkeeper.validation-attestation.v1` proof of successful selected checks,
+	   including commands, exits, durations, timestamp, Git identity, complete
+	   tracked-input hashes, environment class, and tool versions.
+	2. Consumers reuse only exact, fresh, same-environment proof and explicitly
+	   report reuse, rejection, or rerun. Backlog artifacts remain under its
+	   private state root and CI artifacts remain runner-local, never tracked.
+	3. Regression fixtures cover valid reuse and fail-closed stale-head,
+	   changed-command, cross-environment, and broader-change cases.
+
 2026-10-10: pre-staging control-plane audit reuse:
 	1. Backlog now writes the paired pre-staging before/after audit snapshots in
 	   one audit process, reusing only immutable tracked-inventory and branch

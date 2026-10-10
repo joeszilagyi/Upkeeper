@@ -1211,6 +1211,24 @@ check_test_invocation_mode_contract() {
     fail "agent contract no longer shows the shared test runner"
 }
 
+check_validation_attestation_contract() {
+  log "checking validation attestation contract"
+  [[ -r tools/validation_attestation_lib.bash ]] ||
+    fail "validation attestation library is missing"
+  grep -Fq 'upkeeper.validation-attestation.v1' tools/validation_attestation_lib.bash ||
+    fail "validation attestation schema is missing"
+  grep -Fq 'upkeeper_validation_attestation_load' tools/run_validation_phases.sh ||
+    fail "validation phase runner does not consume attestations"
+  grep -Fq 'UPKEEPER_VALIDATION_ATTESTATION_FILE' orchestration/backlog.sh ||
+    fail "backlog batch validation does not supply a local attestation path"
+  grep -Fq 'validation_reuse_rejected' orchestration/backlog.sh ||
+    fail "per-bug validation does not explain rejected proof"
+  grep -Fq 'UPKEEPER_VALIDATION_ATTESTATION_FILE' .github/workflows/ci.yml ||
+    fail "CI does not keep validation evidence in runner-local storage"
+  validation_run_test tests/validation_attestation_test.bash
+  validation_run_test tests/validation_phase_runner_test.bash
+}
+
 check_time_budget_contract() {
   log "checking time budget contract"
   validation_run_test tests/lattice_validation_timeout_test.bash
@@ -3453,9 +3471,10 @@ check_backlog_autoshelve_contract() {
 
   log "checking backlog dirty-worktree autoshelve contract"
   temp_dir="$(mktemp -d /tmp/upkeeper-backlog-autoshelve.XXXXXX)"
-  mkdir -p "$temp_dir/orchestration" "$temp_dir/lib/upkeeper"
+  mkdir -p "$temp_dir/orchestration" "$temp_dir/lib/upkeeper" "$temp_dir/tools"
   cp orchestration/backlog.sh "$temp_dir/orchestration/backlog.sh"
   cp lib/upkeeper/runtime_format_json.bash "$temp_dir/lib/upkeeper/runtime_format_json.bash"
+  cp tools/validation_attestation_lib.bash "$temp_dir/tools/validation_attestation_lib.bash"
   chmod +x "$temp_dir/orchestration/backlog.sh"
 
   (
@@ -8850,6 +8869,7 @@ run_check after_action_review_contract check_after_action_review_contract
 run_check client_link_tools_contract check_client_link_tools_contract
 run_check validation_mode_boundary_contract check_validation_mode_boundary_contract
 run_check test_invocation_mode_contract check_test_invocation_mode_contract
+run_check validation_attestation_contract check_validation_attestation_contract
 run_check time_budget_contract check_time_budget_contract
 run_check architecture_lint_contract check_architecture_lint_contract
 run_check contract_manifest_contract check_contract_manifest_contract

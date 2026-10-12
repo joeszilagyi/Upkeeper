@@ -208,7 +208,7 @@ for timeout_name in \
     fail "$timeout_name must be a positive integer (got: $timeout_value)"
 done
 
-VALIDATION_TMP_ROOT="$(mktemp -d /tmp/upkeeper-validate.XXXXXX)"
+VALIDATION_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-validate.XXXXXX")"
 VALIDATION_ACTIVE_LOCK_TOKEN="upkeeper-validate-active-locks/${VALIDATION_TMP_ROOT##*/}.$$"
 VALIDATION_ACTIVE_LOCK_ROOT="$ROOT_DIR/runtime/$VALIDATION_ACTIVE_LOCK_TOKEN"
 export CODEX_POSTMORTEM_DIR="$VALIDATION_TMP_ROOT/postmortems"
@@ -1125,22 +1125,8 @@ check_source_rights_metadata_contract() {
 }
 
 check_syntax() {
-  local module
-
   log "checking Bash syntax"
-  bash -n Upkeeper
-  bash -n FlameOn
-  bash -n ChimneySweep
-  bash -n Upkeeper.conf
-  bash -n configurations/default.conf
-  bash -n completions/*.bash
-  for module in lib/upkeeper/*.bash; do
-    bash -n "$module"
-  done
-  bash -n tools/*.sh
-  bash -n tests/*.bash
-  bash -n testruns/*.sh
-  bash -n orchestration/*.sh
+  bash tools/check_shell_syntax.sh || return $?
   python3 - <<'PY'
 from pathlib import Path
 

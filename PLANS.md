@@ -3,6 +3,32 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #909: Individually Parse Shell Validation Inputs
+
+Status: bounded candidate in development; no merge or issue closure authorized.
+Parent: [safety acceptance program #915](https://github.com/joeszilagyi/Upkeeper/issues/915).
+
+Contract recorded in #909 before production edits: parse every intended shell
+input without execution; explicit filename, missing-file, symlink and empty-group
+policy; fail with the relevant filename through actual phase/validator callers;
+valid source passes and non-first malformed inputs fail. Correct the docs checker
+and active recipes together. Preserve original historical validation records.
+
+Scope: one small syntax inventory/runner; phase command/dispatcher/identity,
+validator, backlog per-bug gate and explicit launcher-example caller; regressions,
+AGENTS and active docs recipes. Minimal #914 support is the validator's initial
+temporary root honoring TMPDIR, so early-failure probes remain private.
+
+Validation: isolated mutations in the four #909 paths; direct parser, actual
+serial/parallel phase and validator syntax timing; regression against baseline
+and candidate; fresh pinned full suite/quick/full validators, public docs and
+explicit base-to-head whitespace. Record every failed or unavailable gate. No
+reusable attestation, model contact, operator-state fixture or live launcher run.
+
+Non-goals: #715 attestation identity, #910 completion architecture, broad #914
+fixture conversion, recovery, admin settings, #907, any client maintenance, and
+resumption of the prior GOAL. Candidate stays draft for separate review.
+
 ## Issue #682: Constrain Automatic Recovery Model Calls
 
 Status: implementation and local validation complete; ready for focused PR

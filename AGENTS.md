@@ -40,11 +40,21 @@ For shell/runtime changes in `Upkeeper`, `lib/upkeeper`, `tools`, `tests`,
 `testruns`, config files, or launcher examples:
 
 ```sh
-bash -n Upkeeper lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf
+bash tools/check_shell_syntax.sh
 tools/run_tests.sh
 git diff --check
 tools/validate_upkeeper.sh --quick
 ```
+
+The syntax runner parses each file separately without executing it, including
+tracked and nonignored new `.sh`, `.bash`, and `.conf` files and the three root
+entrypoints. Nested helpers are included. It requires a Git checkout; missing
+tracked files, required anchors, empty required groups, nonregular inputs and
+symlinks (including parent symlinks) fail closed. Intentional staged deletions
+leave the inventory except for required anchors/groups. Names containing spaces,
+newlines or leading dashes are supported. `--files FILE ...` is a strict explicit
+subset for launcher examples; an empty list or unmatched literal glob fails.
+Do not use `bash -n first second`: Bash only parses the first script argument.
 
 For docs, prompt, help, release-note, README, AGENTS, compatibility, security,
 or public documentation policy changes:

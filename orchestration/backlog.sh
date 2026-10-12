@@ -3973,7 +3973,7 @@ run_per_bug_validation() {
     "$(backlog_wait_detail local_validation per_bug_validation "issue=${issue_number:-none}" "target=${target_hint:-none}" "expected=syntax_compile_source_contract_diff_checks")" \
     "" "owner_pid_start_cwd_verified"
   log "per-bug validation: bash syntax"
-  bash -n Upkeeper ChimneySweep FlameOn lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh Upkeeper.conf configurations/default.conf orchestration/backlog.sh || { validation_rc=$?; rm -f -- "$phase_spec"; return "$validation_rc"; }
+  bash tools/check_shell_syntax.sh || { validation_rc=$?; rm -f -- "$phase_spec"; return "$validation_rc"; }
   run_changed_python_compile_validation || { validation_rc=$?; rm -f -- "$phase_spec"; return "$validation_rc"; }
   run_focused_issue_validation "$issue_number" "$target_hint" || { validation_rc=$?; rm -f -- "$phase_spec"; return "$validation_rc"; }
   run_changed_source_contract_validation || { validation_rc=$?; rm -f -- "$phase_spec"; return "$validation_rc"; }

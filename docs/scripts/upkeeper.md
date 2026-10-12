@@ -1424,12 +1424,12 @@ orphan payloads are not valid restore ids.
   Responses that report `REVIEWED_AND_FIXED` also emit `review.fix_details`
   lines so later commits can recover the bug, fix, and verification details.
 - Tracked launchers live under `launcher_examples/`. Validate them with
-  `bash -n launcher_examples/*.sh` and their own dry-run knobs before changing
+  `bash tools/check_shell_syntax.sh --files launcher_examples/*.sh` and their own dry-run knobs before changing
   loop behavior.
 - Tracked local test launchers live under `testruns/`. They provide ready-made
   cycles for all-pass P-module runs, documentation-focused P26 loops, manifest
   refresh dry-runs, and enumerate/random selector dry-runs. Validate them with
-  `bash -n testruns/*.sh` before changing loop behavior.
+  `bash tools/check_shell_syntax.sh --files testruns/*.sh` before changing loop behavior.
 - Log continuity is now script-visible before Codex starts: `previous_run.scan`,
   `previous_run.anomaly_summary`, `previous_run.anomaly_detail`,
   `disk.preflight`, and `--MARK--` lines are primary evidence for follow-up

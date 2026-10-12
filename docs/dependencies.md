@@ -49,7 +49,7 @@ dependency-setup timing so CI latency stays visible. Outside the explicit
 editorial-docs allowlist, the workflow runs full validation:
 
 ```sh
-bash -n Upkeeper Upkeeper.conf configurations/default.conf lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh
+bash tools/check_shell_syntax.sh
 tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace
 tools/run_tests.sh
 tools/check_public_docs.sh --quick

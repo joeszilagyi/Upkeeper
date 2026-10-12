@@ -4912,7 +4912,7 @@ run_issue_96_docs_contract_checks() {
   if ! issue_96_docs_contract_check_command "stress_corpus_help" ./tools/stress_upkeeper_corpus.sh --local --help; then
     check_rc=1
   fi
-  if ! issue_96_docs_contract_check_command "launcher_examples_bash_syntax" bash -n launcher_examples/*.sh; then
+  if ! issue_96_docs_contract_check_command "launcher_examples_bash_syntax" bash "$UPKEEPER_IMPLEMENTATION_DIR/tools/check_shell_syntax.sh" --files launcher_examples/*.sh; then
     check_rc=1
   fi
 

@@ -3,7 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 umask 077
-TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-shell-syntax.XXXXXX")"
+# The real docs/wrapper callers reject a checkout below world-writable /tmp.
+# Use the checkout's ignored runtime tree, without changing its permissions or
+# touching other runtime evidence. The checkout itself must have trusted parents.
+[[ ! -L "$ROOT_DIR/runtime" ]] || { printf 'fixture runtime root is a symlink\n' >&2; exit 1; }
+mkdir -p "$ROOT_DIR/runtime"
+TEST_ROOT="$(mktemp -d "$ROOT_DIR/runtime/shell-syntax.XXXXXX")"
 finish() {
   local rc=$?
   if [[ "$rc" == 0 ]]; then

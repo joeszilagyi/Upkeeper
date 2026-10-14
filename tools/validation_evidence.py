@@ -41,7 +41,7 @@ ENV_INPUTS = ('CI', 'UPKEEPER_TEST_JOBS', 'UPKEEPER_TEST_TIMEOUT_SECONDS',
               'VALIDATION_INTEGRATION_TIMEOUT_SECONDS', 'VALIDATION_FULL_TIMEOUT_SECONDS',
               'VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS')
 TOOLS = ('bash', 'git', 'python3', 'jq', 'timeout', 'bwrap', 'age', 'screen',
-         'awk', 'sed', 'find', 'sort', 'zip', 'script')
+         'awk', 'sed', 'find', 'sort', 'zip', 'script', 'stat')
 
 
 class Blocked(Exception):
@@ -114,6 +114,9 @@ def conditions():
     return {'values': values, 'tools': tools, 'packages': digest(packages.read_bytes()),
             'kernel': platform.release(), 'machine': platform.machine(),
             'cpu_affinity': sorted(os.sched_getaffinity(0)),
+            'scratch_filesystem': subprocess.check_output(
+                ['/usr/bin/stat', '-f', '-c', '%T', tempfile.gettempdir()],
+                env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}).decode().strip(),
             'python': sys.version, 'isolation': POLICY, 'locale': 'C.UTF-8'}
 
 

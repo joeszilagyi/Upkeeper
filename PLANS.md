@@ -3,6 +3,216 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Safety Acceptance Program: Bounded Publication and First Repair
+
+Status (2026-10-11): reconciliation complete; tracking published; #909 candidate
+authorized for a separate draft PR. No merge, administration change, issue
+closure, client maintenance or resumption of the previous GOAL is authorized.
+
+Coordination: [parent #915](https://github.com/joeszilagyi/Upkeeper/issues/915).
+That tracker and its children contain the current acceptance checklists and
+native implementation dependencies. This is a sanitized derivative of the
+local reconciliation, not a replacement history or a publication of private
+fixtures, logs, credentials or home-directory inventories.
+
+### Revision and Evidence Boundaries
+
+Reviewed main remains `daa4dd53bc59d4ad33c91b84648af2595e79fea1`, tree
+`26adc31b59dcb25034b0e6bf68a74d10b95a99ad`. The original audit baseline was
+`d73251c2696871cba2441b12730e4be084504e56`. The preserved, unmerged #907
+candidate `009c91744197688bd824dcaf4ad0894770534efa` is separate from this
+publication and the #909 repair. The original local planning commit
+`0eb34a3b89dac3429f4f68c1c310a16bc954f339` remains unchanged and unpushed.
+
+A model status, schema-valid record, generic check, pushed commit, merged PR and
+independently verified requirement are different facts. The available evidence
+does not certify unattended production correctness or a default sandbox escape.
+
+| Finding | Reconciled result / scope | Owning issue |
+|---|---|---|
+| Main merge protection | Effective main rules empty; ruleset has no matching ref/check requirement. Successful CI is not enforcement. | [#908](https://github.com/joeszilagyi/Upkeeper/issues/908) |
+| Syntax gate | Non-first malformed scripts fail direct parsing but pass actual phase dispatch. Validator catches some categories individually or in later checks. | [#909](https://github.com/joeszilagyi/Upkeeper/issues/909) |
+| Execution/evidence identity | Both actual test and phase producers/consumers accept end-stamped evidence for an unexecuted failing revision in barrier fixtures. | [#715](https://github.com/joeszilagyi/Upkeeper/issues/715) |
+| Completion acceptance | Real wrapper accepts wrong-file/no-verification and worker exit 42 with WORK_DONE. | [#910](https://github.com/joeszilagyi/Upkeeper/issues/910) |
+| Read-only evidence | Actual helper and wrapper miss untracked mutation; collection-error injection returns success-like evidence. | [#679](https://github.com/joeszilagyi/Upkeeper/issues/679) |
+| Local docs completion | Real wrapper with deliberately green generic checker accepts an unrelated prior edit while issue expectation fails; unchanged real docs gate did not complete successfully. | [#683](https://github.com/joeszilagyi/Upkeeper/issues/683), [#698](https://github.com/joeszilagyi/Upkeeper/issues/698), #910 |
+| Issue custody | #805 cited repair does not implement completion proof; #734 genuine partial work was closed; #781 claimed implementation absent in available history. | [#805](https://github.com/joeszilagyi/Upkeeper/issues/805), [#734](https://github.com/joeszilagyi/Upkeeper/issues/734), [#781](https://github.com/joeszilagyi/Upkeeper/issues/781) |
+| Opt-in recovery | Real direct child rejects mismatched token before worker; generated contract separately invokes log_line before definition. Screen coverage remains unmet. | [#911](https://github.com/joeszilagyi/Upkeeper/issues/911) |
+| Effective capabilities | Ambient-config/worker/checker authority requires conformance evidence; no default sandbox escape demonstrated. | [#912](https://github.com/joeszilagyi/Upkeeper/issues/912) |
+| Latest main health | Source can advance after PR checks without exact resulting-main custody; current main is green, cancellation alone is not a defect. | [#913](https://github.com/joeszilagyi/Upkeeper/issues/913) |
+| Fixture containment | #797 repair remains; later fixture splitting narrows older criticism. Stronger content/identity and positive-private-artifact checks remain. | [#914](https://github.com/joeszilagyi/Upkeeper/issues/914) |
+| Earlier whitespace / classification | Repairs present and focused regressions passed; no reopening or duplicate repair. | #864, #866 (historical, resolved) |
+
+### Requirement Ownership and Implementation Order
+
+1. **Operator administration, separately:** #908 blocks merging/resumption, not
+   isolated #909 development. Do not wait on admin permission to prepare a draft.
+2. **First code checkpoint:** #909, plus only the private fixture support needed
+   from #914. Fix actual syntax callers, not just a source-pattern assertion.
+3. **Evidence:** #715 follows #909. #679 can proceed independently. #912 integrates
+   those corrected boundaries and protects the checker/policy/evidence.
+4. **Recovery:** #911 repairs authenticated child wiring/serialization while
+   preserving opt-in defaults. Acceptance/authority are release integration
+   requirements, not a circular dependency on recovery implementation.
+5. **Acceptance:** #910 integrates #715/#679/#912/#911 across every exit path.
+   #683/#698 use that decision, not a second generic-check completion framework.
+6. **Custody:** #913 consumes sound evidence and records exact-main/superseded
+   health; #805 then integrates main health with issue-specific acceptance.
+7. **Independent proof and lifecycle:** #133 clean-checkout infrastructure and
+   #134 risk policy; #229 distinguishes design, enabled, enforced and independently
+   verified safeguards. A writer testing its own modified checker is not enough.
+8. **Deferred:** #135 bounded private evidence, #687 validated drafts, #136 brokered
+   publication and #686 batching retain privacy and truthful completion. #781
+   bounded cache follows evidence/acceptance; historic PASS is not permanent proof.
+   #681/#734/#705 ownership simplification remains partial and narrowly scoped.
+9. **Later experiments:** [#916](https://github.com/joeszilagyi/Upkeeper/issues/916)
+   finite adversarial self-maintenance evaluation, then
+   [#917](https://github.com/joeszilagyi/Upkeeper/issues/917) small unrelated-client
+   pilot. Each requires separate owner authorization; neither runs in this task.
+
+Other open backlog remains accounted for but outside this checkpoint:
+#32, #51, #142, #227, #231, #332, #333, #334, #337, #677, #680, #697 and #699.
+No issue-count target or empty-queue success criterion is imposed.
+
+Deferred verification has explicit ownership: full suite/full validator and
+independent clean-checkout proof (#133); unchanged real docs gate (#698); bounded
+real-age production encrypt/decrypt/restore and state containment (#914); actual
+screen recovery (#911); effective authority (#912). An unavailable environment,
+timeout or failed check is not PASS and is not automatically a new product bug.
+
+### Smallest First Slice: #909
+
+Before editing, record these acceptance requirements in the issue body:
+
+- Individually parse each intended shell entrypoint, launcher, module, test,
+  tool, completion and shell configuration without executing it.
+- Define filename, required-file, symlink and empty-group behavior; preserve
+  parser status and useful file diagnostics through real callers.
+- Independently break `testruns/manifest_refresh_dry_run.sh`,
+  `lib/upkeeper/codex_io.bash`, `tests/validation_attestation_test.bash`, and
+  `configurations/default.conf`; compare direct parsing, actual serial/normal
+  phase dispatch and validator behavior. Some baseline validator cases already
+  fail correctly; record syntax-phase results separately from later failures.
+- Correct `tools/check_public_docs.sh`'s faulty literal-command assertion and
+  the active AGENTS/documentation recipes. Do not erase historical evidence.
+- Commit regressions using actual production entrypoints, prove intended failure
+  on pre-repair source and pass on the candidate. No helper-name grep as proof.
+
+Primary files: `tools/check_shell_syntax.sh` (new small shared runner),
+`tools/run_validation_phases.sh`, `tools/validate_upkeeper.sh`,
+`tools/check_public_docs.sh`, syntax callers in `orchestration/backlog.sh` and
+`Upkeeper`, `tests/shell_syntax_validation_test.bash`, AGENTS and active recipes.
+No attestation, fallback, acceptance-framework or broad fixture refactor.
+
+Reproduction in separate private disposable copies of the reviewed revision:
+
+```sh
+# Repeat independently for each path above; never mutate the owner's checkout.
+printf '\nif then\n' >> testruns/manifest_refresh_dry_run.sh
+bash -n testruns/manifest_refresh_dry_run.sh
+bash tools/run_validation_phases.sh --phases shell_syntax --serial
+bash tools/run_validation_phases.sh --phases shell_syntax --jobs 2
+bash tools/validate_upkeeper.sh --smoke --profile
+```
+
+Expected: direct parser fails and production syntax checks fail with the path.
+Observed baseline: direct parser 2 and both phase modes 0 in all four probes.
+The actual validator catches malformed module/config at syntax; the malformed
+test is caught later despite a false-green syntax phase; the launcher smoke run
+passes. Record logs/timing without publishing private fixture material.
+
+Candidate verification commands (after implementation, not claims already made):
+
+```sh
+bash tests/shell_syntax_validation_test.bash
+bash tools/run_validation_phases.sh --phases shell_syntax --serial
+bash tools/run_validation_phases.sh --phases shell_syntax --jobs 2
+tools/check_public_docs.sh --quick
+tools/run_tests.sh --jobs 2
+tools/validate_upkeeper.sh --quick --profile
+tools/validate_upkeeper.sh --full --profile
+git diff --check daa4dd53bc59d4ad33c91b84648af2595e79fea1 HEAD
+```
+
+Use a fresh pinned private checkout with no attestation inputs, controlled
+HOME/XDG/CODEX/GH/state/obligation/ledger/backup/log/lock/temp roots, fake/blocked
+transports and no network. Retain first failures, bounded reruns and real exits.
+Record identity before/after, toolchain and actual execution; those fingerprints
+alone are not a solution to #715 concurrent-change races. Review candidate diff
+for omitted inputs, weakened gates, unsafe cleanup and unrelated edits.
+
+### Operator Administration Proposal — Not Applied
+
+Current read-back: effective main rules empty; ruleset 16041986 active but
+`ref_name.include=[]`. Actual successful check names on main are
+`Local validation`, `Analyze (actions)` and `Analyze (python)`, produced by
+GitHub Actions integration/app **15368**. Successful check runs do not enforce
+themselves. Administrative authorization is absent for this session; the
+repository reports admin capability, but no write capability was exercised.
+
+Proposed exact additions after owner review:
+
+```json
+{
+  "conditions": {
+    "ref_name": {"include": ["refs/heads/main"], "exclude": []}
+  },
+  "required_status_checks_rule": {
+    "type": "required_status_checks",
+    "parameters": {
+      "strict_required_status_checks_policy": true,
+      "do_not_enforce_on_create": false,
+      "required_status_checks": [
+        {"context": "Local validation", "integration_id": 15368},
+        {"context": "Analyze (actions)", "integration_id": 15368},
+        {"context": "Analyze (python)", "integration_id": 15368}
+      ]
+    }
+  },
+  "bypass_actors": []
+}
+```
+
+This is a configuration proposal fragment, **not** a complete API request or
+applied rule. Retain deletion/non-fast-forward and existing review policy.
+The dormant linear-history requirement conflicts with `gh pr merge --merge`.
+The original proposal preserved merge commits by removing that nonmatching
+rule; alternatively the owner may choose squash/rebase and compatible tested
+automation. No strategy has been chosen in this checkpoint.
+
+Use a non-bypass automation identity without routine administrative rule-edit
+authority. In an owner-approved controlled test, prove missing/failing/stale-base/
+wrong-revision checks reject ordinary merges; re-read all applicable inherited
+rules, effective main rules and actual producer identities. Never use unsafe
+production merges, admin bypass, force push or empty-check fallback as proof.
+Producer binding alone does not protect workflows/checkers from candidate edits
+(#912/#133 own that boundary).
+
+### Proposed Next Checkpoint and Explicit Stop
+
+Finish #909 candidate tests and publish a draft for separate review, then stop.
+After separate authorization, the next finite implementation checkpoint is
+#715 execution-time identity and/or #679 read-only evidence correctness with
+their existing acceptance matrices, not unrestricted backlog consumption.
+
+Automatic merging/self-maintenance must remain off until #908 enforcement,
+#909 validation, #715 identity, #679/#912 authority, #911 recovery, #910 final
+acceptance, #805 completion custody and #913 main health have protected proof;
+#133/#134/#229 define independent proof/lifecycle and #914 closes containment
+gaps. Remaining failed/unrun release gates stay explicit owner-held blockers.
+The old GOAL is not resumed by a draft PR, green CI or this plan.
+
+Later #916 must include known defects, no-change cases, false statuses, unrelated
+edits, stale evidence, partial completion, interruption and recovery, with checks
+outside the worker's write authority. Report repairs, regressions, false positives,
+correct no-ops, cost, intervention and recovery. Only then consider #917's small
+owner-approved client pilot with protected behavior and tested restoration.
+
+Sources: [issue dependencies](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-issue-dependencies),
+[repository rules API](https://docs.github.com/en/rest/repos/rules),
+[closing keywords](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests).
+Use plain issue references for partial work and verify actual state afterward.
+
 ## Issue #682: Constrain Automatic Recovery Model Calls
 
 Status: implementation and local validation complete; ready for focused PR

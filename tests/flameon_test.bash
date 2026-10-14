@@ -153,6 +153,8 @@ sys.path.insert(0, sys.argv[1] + '/tests/lib')
 from shell_syntax_fixture import import_tree
 import_tree(sys.argv[1], sys.argv[2])
 PY
+  git -C "$fixture_root" init -q
+  git -C "$fixture_root" add -A
   artifact="$fixture_root/flameon-control-plane-guard-fixture.log"
   [[ ! -e "$artifact" ]] || fail "guard fixture already exists: $artifact"
   obligation_dir="$TEST_TMP_ROOT/flameon-control-plane-obligations"

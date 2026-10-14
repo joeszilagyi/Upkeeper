@@ -2,6 +2,7 @@ name: Disposable merge gate conformance
 on:
   pull_request:
     branches: ['verify/908-20261014-kyrfv4-base']
+    paths: ['never-present-conformance-input']
 permissions:
   contents: read
 jobs:

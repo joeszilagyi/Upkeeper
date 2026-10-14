@@ -185,7 +185,8 @@ class Fixture:
         for name in ('/etc/ld.so.cache', '/etc/localtime', '/etc/passwd', '/etc/group',
                      '/etc/os-release', '/etc/alternatives', '/var/lib/dpkg/status'):
             if Path(name).exists(): command += ['--ro-bind', name, name]
-        return command + ['--dev', '/dev', '--proc', '/proc', '--bind', str(self.root),
+        return command + ['--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp',
+                          '--tmpfs', '/run', '--bind', str(self.root),
                           str(self.root), *mounts, '--chdir', str(self.repo), '--', *self.command]
 
     def filesystem_change(self):

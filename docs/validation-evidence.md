@@ -55,6 +55,11 @@ intentional source mutation. The original checkout may advance during a run;
 the completed result still belongs only to the pinned revision. Hashing the
 live tree before and after is not the snapshot mechanism.
 
+The launcher-contamination and manifest-selection fixtures import independent
+child copies before deliberately adding source-root files. This narrow change
+keeps their existing behavioral assertions compatible with read-only validation;
+it is not a repository-wide fixture-containment certification.
+
 `upkeeper.validation-evidence.v2` binds the entire Git input, exact command and
 arguments, requested scope and test inventory, resolved diff context, schema
 and isolation policy, runner/checker versions through the Git tree, and bounded

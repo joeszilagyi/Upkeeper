@@ -1,4 +1,4 @@
-"""File operations for shell_syntax_validation_test only (Linux/Python stdlib).
+"""File operations for private validation fixtures (Linux/Python stdlib).
 
 No inherited links, hardlink copies, or pathname check followed by a truncating
 open. Directory descriptors pin each parent; final opens use O_NOFOLLOW and are

@@ -125,8 +125,23 @@ test_missing_expected_runner_command_fails_closed() {
     fail "helper attempted apt-get even though an expected runner command was missing"
 }
 
+test_only_missing_isolation_dependency_is_installed() {
+  local stdout_file="$TEST_TMP_ROOT/isolation.out" stderr_file="$TEST_TMP_ROOT/isolation.err"
+  rm -rf "$TEST_TMP_ROOT/bin" "$TEST_TMP_ROOT/logs"
+  setup_fake_runner
+  write_passthrough_tool runner-bash
+  write_passthrough_tool age-fixture
+  run_helper "$stdout_file" "$stderr_file" "runner-bash" \
+    "age-fixture,bwrap-fixture" "age-fixture,bubblewrap-fixture" "bwrap-fixture" ||
+    fail 'targeted isolation dependency installation failed'
+  grep -Fxq 'apt-get install -y --no-install-recommends bubblewrap-fixture' "$TEST_TMP_ROOT/logs/apt.log" ||
+    fail 'isolation setup did not install only the missing package'
+  [[ ! -s "$stderr_file" ]] || fail 'isolation setup produced unexpected stderr'
+}
+
 test_no_install_when_runner_and_installable_commands_exist
 test_missing_installable_command_triggers_targeted_install
 test_missing_expected_runner_command_fails_closed
+test_only_missing_isolation_dependency_is_installed
 
 printf 'ci_dependency_setup_test: ok\n'

@@ -4839,7 +4839,7 @@ check_dependency_guidance_contract() {
     fail "dependency docs missing shared CI dependency helper"
   grep -Fq "expected stock commands" docs/dependencies.md ||
     fail "dependency docs missing CI expected-runner command probe description"
-  grep -Fq 'installs only missing nonstandard tools such as `age`' docs/dependencies.md ||
+  grep -Fq 'installs only missing nonstandard tools `age` and `bubblewrap`' docs/dependencies.md ||
     fail "dependency docs missing targeted CI install policy"
 }
 

@@ -29,6 +29,21 @@ Non-goals: #715 attestation identity, #910 completion architecture, broad #914
 fixture conversion, recovery, admin settings, #907, any client maintenance, and
 resumption of the prior GOAL. Candidate stays draft for separate review.
 
+Fixture correction (2026-10-14): the reviewed `1febed73` test imported symlinks
+with `cp -P` and mutated through them before checking syntax. Keep production
+syntax behavior unchanged. Add one fixture-only Python helper for non-following
+directory-relative import and mutation, independent exclusive file copies, and
+hardlink/nonregular rejection at mutation. Import tracked/staged source only,
+not arbitrary untracked private files. Retain deliberately created negative
+symlinks inside the completed fixture. A bounded preparation-only entrypoint
+lets containment tests exercise the real setup without nested full-suite runs.
+Prove absolute/relative/parent/dangling links, missing/unreadable/nonregular
+inputs, pre-existing destinations, independent copies, failure before restore,
+and a controlled replacement at the open boundary. This is not protection from
+arbitrary same-user interference; checkouts/helpers are exclusively owned for
+the run. Validate both distinct old baselines, fresh full checks, and final CI;
+request a separate read-only review before handoff. No #715 implementation.
+
 ## Issue #682: Constrain Automatic Recovery Model Calls
 
 Status: implementation and local validation complete; ready for focused PR

@@ -2,6 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+PREPARE_ONLY=0
+case "${1:-}" in
+  '') [[ $# == 0 ]] || exit 2 ;;
+  --prepare-only) [[ $# == 1 ]] || exit 2; PREPARE_ONLY=1 ;;
+  *) printf 'unsupported fixture argument: %s\n' "$1" >&2; exit 2 ;;
+esac
+FIXTURE_FILES="$ROOT_DIR/tests/lib/shell_syntax_fixture.py"
 umask 077
 # The real docs/wrapper callers reject a checkout below world-writable /tmp.
 # Use the checkout's ignored runtime tree, without changing its permissions or
@@ -11,24 +18,26 @@ mkdir -p "$ROOT_DIR/runtime"
 TEST_ROOT="$(mktemp -d "$ROOT_DIR/runtime/shell-syntax.XXXXXX")"
 finish() {
   local rc=$?
-  if [[ "$rc" == 0 ]]; then
+  if [[ "$rc" == 0 && "$PREPARE_ONLY" == 0 ]]; then
     rm -r -- "$TEST_ROOT"
-  else
+  elif [[ "$rc" != 0 ]]; then
     printf 'shell_syntax_validation_test: retained failure evidence: %s\n' "$TEST_ROOT" >&2
   fi
 }
 trap finish EXIT
 fail() { printf 'shell_syntax_validation_test: ERROR: %s\n' "$*" >&2; exit 1; }
 
-# Copy source only, never .git/config, ignored runtime evidence or credentials.
+# Import tracked/staged source only. Reject links before any mutation and make
+# independent regular copies; do not import untracked private files or .git.
 repo="$TEST_ROOT/repo"
-mkdir -p "$repo"
-git -C "$ROOT_DIR" ls-files -z --cached --others --exclude-standard >"$TEST_ROOT/paths"
-while IFS= read -r -d '' path; do
-  [[ -e "$ROOT_DIR/$path" || -L "$ROOT_DIR/$path" ]] || continue
-  mkdir -p -- "$repo/$(dirname -- "$path")"
-  cp -P -- "$ROOT_DIR/$path" "$repo/$path"
-done <"$TEST_ROOT/paths"
+python3 "$FIXTURE_FILES" import "$ROOT_DIR" "$repo"
+if [[ "$PREPARE_ONLY" == 1 ]]; then
+  # Bounded containment tests inspect this private preparation without invoking
+  # the syntax scenarios recursively. Their outer test owns final cleanup.
+  printf 'fixture_prepared=%s\n' "$repo"
+  exit 0
+fi
+fixture_file() { python3 "$FIXTURE_FILES" "$1" "$repo" "$2"; }
 
 mkdir -p "$TEST_ROOT"/{home,state,cache,config,codex,gh,obligations,ledger,backups,logs,locks,tmp,bin}
 for command_name in codex gh; do
@@ -64,8 +73,8 @@ expect_bad() {
 # a mock of the syntax gate. The baseline phase exits 0 at the first case.
 for path in testruns/manifest_refresh_dry_run.sh lib/upkeeper/codex_io.bash \
   tests/validation_attestation_test.bash configurations/default.conf; do
-  cp -- "$path" "$TEST_ROOT/original"
-  printf '\nif then\n' >>"$path"
+  fixture_file read "$path" >"$TEST_ROOT/original"
+  printf '\nif then\n' | fixture_file append "$path"
   expect_bad "$path" bash -n "$path"
   expect_bad "$path" bash tools/run_validation_phases.sh --phases shell_syntax --serial
   expect_bad "$path" bash tools/run_validation_phases.sh --phases shell_syntax --jobs 2
@@ -73,7 +82,7 @@ for path in testruns/manifest_refresh_dry_run.sh lib/upkeeper/codex_io.bash \
     expect_bad "$path" bash tools/validate_upkeeper.sh "$mode" --profile
     grep -Fq 'check=syntax status=fail' "$TEST_ROOT/output" || fail "validator failed later instead of syntax: $path $mode"
   done
-  cp -- "$TEST_ROOT/original" "$path"
+  fixture_file replace "$path" <"$TEST_ROOT/original"
 done
 
 run bash tools/run_validation_phases.sh --phases shell_syntax --serial
@@ -83,8 +92,8 @@ run bash tools/check_public_docs.sh --quick
 # Exercise the real backlog per-bug function without starting its launcher.
 # Only unrelated heartbeat/compile/focused gates are test doubles; the actual
 # syntax caller and its status propagation remain unchanged.
-cp testruns/manifest_refresh_dry_run.sh "$TEST_ROOT/original"
-printf '\nif then\n' >>testruns/manifest_refresh_dry_run.sh
+fixture_file read testruns/manifest_refresh_dry_run.sh >"$TEST_ROOT/original"
+printf '\nif then\n' | fixture_file append testruns/manifest_refresh_dry_run.sh
 expect_bad testruns/manifest_refresh_dry_run.sh bash -c '
   BACKLOG_SOURCE_ONLY=1 source orchestration/backlog.sh
   backlog_validation_attestation_file() { printf "%s/proof.json\n" "$TMPDIR"; }
@@ -94,11 +103,11 @@ expect_bad testruns/manifest_refresh_dry_run.sh bash -c '
   run_changed_source_contract_validation() { :; }
   run_per_bug_validation 909 testruns/manifest_refresh_dry_run.sh
 '
-cp "$TEST_ROOT/original" testruns/manifest_refresh_dry_run.sh
+fixture_file replace testruns/manifest_refresh_dry_run.sh <"$TEST_ROOT/original"
 
 # The wrapper's explicit launcher-example caller parses every supplied file.
 # Other issue-96 checks are not run: this is caller integration, not a live run.
-printf 'if then\n' >launcher_examples/zz-syntax.sh
+printf 'if then\n' | fixture_file create launcher_examples/zz-syntax.sh
 rc=0
 run bash -c '
   source ./Upkeeper
@@ -114,17 +123,17 @@ rm launcher_examples/zz-syntax.sh
 
 # A new non-first tool, nested helper, completion and named config are inputs.
 for path in tools/zz-syntax.sh tests/lib/zz-syntax.bash completions/zz-syntax.bash configurations/zz-syntax.conf; do
-  printf 'if then\n' >"$path"
+  printf 'if then\n' | fixture_file create "$path"
   expect_bad "$path" bash tools/run_validation_phases.sh --phases shell_syntax --serial
   rm -- "$path"
 done
 
 # Unusual names and parse-without-execution, including a leading dash.
 for path in 'tests/space name.bash' $'tests/line\nbreak.bash' '-leading.sh'; do
-  printf 'touch "$HOME/SHOULD_NOT_EXECUTE"\n' >"$path"
+  printf 'touch "$HOME/SHOULD_NOT_EXECUTE"\n' | fixture_file create "$path"
   run bash tools/check_shell_syntax.sh
   [[ ! -e "$TEST_ROOT/home/SHOULD_NOT_EXECUTE" ]] || fail 'syntax check executed source'
-  printf 'if then\n' >>"$path"
+  printf 'if then\n' | fixture_file append "$path"
   rc=0
   run bash tools/run_validation_phases.sh --phases shell_syntax --serial >"$TEST_ROOT/output" 2>&1 || rc=$?
   [[ "$rc" == 2 ]] || fail 'unusual-name syntax error was missed'

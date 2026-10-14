@@ -6269,11 +6269,24 @@ EOF
   rm -r "$temp_dir"
 }
 
-check_file_manifest_selection() {
+check_file_manifest_selection() (
   local temp_dir manifest_path output rc lattice_db_path unsafe_manifest_path untracked_candidate untracked_name
 
   log "checking file manifest selection"
-  temp_dir="$(mktemp -d /tmp/upkeeper-file-manifest.XXXXXX)"
+  temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-file-manifest.XXXXXX")"
+  # Selection needs a deliberately untracked source file. Keep that mutation
+  # in an independent child checkout, never in the pinned validation input.
+  python3 - "$ROOT_DIR" "$temp_dir/repo" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + '/tests/lib')
+from shell_syntax_fixture import import_tree
+import_tree(sys.argv[1], sys.argv[2])
+PY
+  local ROOT_DIR="$temp_dir/repo"
+  local UPKEEPER_IMPLEMENTATION_DIR="$ROOT_DIR"
+  git -C "$ROOT_DIR" init -q
+  git -C "$ROOT_DIR" add -A
+  cd -- "$ROOT_DIR"
   manifest_path="runtime/upkeeper-file-manifest-validation-${temp_dir##*/}.json"
   unsafe_manifest_path="$temp_dir/unsafe-manifest.json"
   lattice_db_path="runtime/upkeeper-lattice/file-manifest-${temp_dir##*/}.sqlite3"
@@ -6712,8 +6725,9 @@ JSON
   rm -f "$manifest_path" "$manifest_path".tmp
   rm -f "$lattice_db_path" "$lattice_db_path-journal" "$lattice_db_path-wal" "$lattice_db_path-shm"
   rm -f "$untracked_candidate"
+  cd -- "$temp_dir/.."
   rm -r "$temp_dir"
-}
+)
 
 check_tool_failure_queue() {
   local temp_dir transcript addressed_transcript clean_transcript marker_path open_count resolved_count marker_id tool_failure_queue_signing_key

@@ -187,6 +187,18 @@ def main():
     assert ' executed ' in f.run(extra={'UPKEEPER_VALIDATION_NO_REUSE': '1'})
     assert ' executed ' in f.run(extra={'UPKEEPER_TEST_TIMEOUT_SECONDS': '179'})
     assert ' executed ' in f.run(args=f.command + ['--jobs', '2'])
+    # Change the actual tool bytes visible to producer AND execution, without
+    # touching the host installation or fabricating an eligible record.
+    assert ' executed ' in f.run()
+    altered = f.root/'jq-altered'
+    altered.write_bytes(Path('/usr/bin/jq').read_bytes() + b'\nfixture-toolchain-change\n')
+    altered.chmod(0o700)
+    altered_command = ['bwrap', '--die-with-parent', '--ro-bind', '/', '/',
+                       '--bind', str(f.root), str(f.root),
+                       '--ro-bind', str(altered), '/usr/bin/jq', '--', *f.command]
+    assert ' executed ' in f.run(args=altered_command)
+    assert ' reused ' in f.run(args=altered_command)
+    assert ' executed ' in f.run()
     runner = 'tools/run_tests.sh'
     f.write(runner, (f.repo/runner).read_text() + '\n# Changed checker version.\n'); f.commit()
     assert ' executed ' in f.run()

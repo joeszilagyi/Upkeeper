@@ -143,14 +143,22 @@ test_flameon_stops_on_operator_action_required_obligation() {
 }
 
 test_flameon_control_plane_guard_blocks_unknown_root_artifact() {
-  local output rc obligation_dir artifact
+  local output rc obligation_dir artifact fixture_root
 
-  artifact="$ROOT_DIR/flameon-control-plane-guard-fixture.log"
+  # The negative case belongs in its own writable child, not the pinned source.
+  fixture_root="$TEST_TMP_ROOT/control-plane-copy"
+  python3 - "$ROOT_DIR" "$fixture_root" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + '/tests/lib')
+from shell_syntax_fixture import import_tree
+import_tree(sys.argv[1], sys.argv[2])
+PY
+  artifact="$fixture_root/flameon-control-plane-guard-fixture.log"
   [[ ! -e "$artifact" ]] || fail "guard fixture already exists: $artifact"
   obligation_dir="$TEST_TMP_ROOT/flameon-control-plane-obligations"
   printf 'unexpected local evidence\n' >"$artifact"
   set +e
-  output="$(UPKEEPER_OBLIGATION_DIR="$obligation_dir" FLAMEON_DRY_RUN=1 "$ROOT_DIR/FlameOn" --silent 2>&1)"
+  output="$(UPKEEPER_OBLIGATION_DIR="$obligation_dir" FLAMEON_DRY_RUN=1 "$fixture_root/FlameOn" --silent 2>&1)"
   rc=$?
   set -e
   rm -f -- "$artifact"

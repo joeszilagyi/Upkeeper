@@ -57,7 +57,8 @@ class Fixture:
                     'GIT_CONFIG_GLOBAL': '/dev/null', 'LANG': 'C.UTF-8', 'UPKEEPER_TEST_JOBS': '1'}
         for name in ('codex', 'gh'):
             p = self.root/'bin'/name
-            p.write_text('#!/bin/sh\nexit 97\n'); p.chmod(0o700)
+            p.write_text('#!/bin/sh\nprintf unexpected >>"${FIXTURE_TRANSPORT_MARKER:?}"\nexit 97\n'); p.chmod(0o700)
+        self.env['FIXTURE_TRANSPORT_MARKER'] = str(self.root/'unexpected-transport')
         self.command = (['bash', 'tools/run_tests.sh', '--serial'] if kind == 'tests' else
                         ['bash', 'tools/run_validation_phases.sh', '--phases', 'unit_tests', '--serial'])
         self.key = 'UPKEEPER_TEST_ATTESTATION_FILE' if kind == 'tests' else 'UPKEEPER_VALIDATION_ATTESTATION_FILE'
@@ -87,6 +88,7 @@ class Fixture:
                                 text=True, capture_output=True, timeout=90)
         (self.root / ('run-' + str(time.time_ns()) + '.log')).write_text(result.stdout + result.stderr)
         assert result.returncode == expected, (result.returncode, expected, result.stdout, result.stderr, self.root)
+        assert not (self.root/'unexpected-transport').exists(), 'unexpected transport call'
         return result.stdout + result.stderr
 
     def race(self, revert=False, interrupt=False, publication_fail=False):
@@ -152,6 +154,7 @@ class Fixture:
                 self.write('tests/b.bash', '#!/bin/bash\nexit 0\n'); self.commit()
                 result = self.run(expected=42)
                 assert 'reuse-rejected' in result and ' executed ' in result
+                assert not self.artifact.exists(), 'failed new candidate retained current PASS'
         finally:
             if proc.poll() is None:
                 os.killpg(proc.pid, signal.SIGKILL); proc.wait()
@@ -184,6 +187,10 @@ def main():
     f = Fixture(args.source, args.kind)
     assert ' executed ' in f.run()
     assert ' reused ' in f.run()
+    # Ambient Git redirection cannot silently choose a different candidate.
+    assert ' reused ' in f.run(extra={'GIT_DIR': '/not-a-repository',
+                                     'GIT_WORK_TREE': '/not-a-worktree',
+                                     'GIT_INDEX_FILE': '/not-an-index'})
     assert ' executed ' in f.run(extra={'UPKEEPER_VALIDATION_NO_REUSE': '1'})
     assert ' executed ' in f.run(extra={'UPKEEPER_TEST_TIMEOUT_SECONDS': '179'})
     assert ' executed ' in f.run(args=f.command + ['--jobs', '2'])

@@ -173,6 +173,26 @@ class Fixture:
         self.artifact.write_text(json.dumps(envelope))
         assert 'reuse-rejected' in self.run()
 
+    def filesystem_change(self):
+        filesystem = subprocess.check_output(
+            ['stat', '-f', '-c', '%T', str(self.root/'tmp')], text=True).strip()
+        if filesystem == 'tmpfs':
+            print('storage-change case not applicable: fixture already on tmpfs; run --filesystem-only on disk-backed scratch')
+            return
+        self.write('tests/a.bash', '''#!/bin/bash
+if [[ "$(stat -f -c %T "$TMPDIR")" == tmpfs ]]; then exit 42; fi
+printf executed >>runtime/count
+'''); self.commit()
+        assert ' executed ' in self.run()
+        changed = ['bwrap', '--die-with-parent', '--ro-bind', '/', '/',
+                   '--dev', '/dev', '--proc', '/proc',
+                   '--bind', str(self.root), str(self.root),
+                   '--tmpfs', str(self.root/'tmp'), '--', *self.command]
+        result = self.run(expected=42, args=changed)
+        assert 'reuse-rejected' in result and ' executed ' in result
+        assert not self.artifact.exists()
+        print('actual disk-to-tmpfs identity regression: passed')
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -180,7 +200,11 @@ def main():
     parser.add_argument('--source', type=Path, default=SOURCE)
     parser.add_argument('--legacy', action='store_true')
     parser.add_argument('--race-only', action='store_true')
+    parser.add_argument('--filesystem-only', action='store_true')
     args = parser.parse_args()
+    if args.filesystem_only:
+        Fixture(args.source, args.kind).filesystem_change()
+        return
     if args.legacy or args.race_only:
         Fixture(args.source, args.kind, args.legacy).race()
         return
@@ -258,6 +282,7 @@ printf executed >>runtime/count
     Fixture(args.source, args.kind).race(revert=True)
     Fixture(args.source, args.kind).race(interrupt=True)
     Fixture(args.source, args.kind).race(publication_fail=True)
+    Fixture(args.source, args.kind).filesystem_change()
     # Publication's atomic boundary is tested separately from the real-process
     # interruption above. A simulated interrupted rename must leave no partial
     # destination; no PASS record is fabricated for a positive consumer.

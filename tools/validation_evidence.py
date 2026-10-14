@@ -113,6 +113,7 @@ def conditions():
         raise Blocked('unsupported toolchain manifest (requires dpkg status)')
     return {'values': values, 'tools': tools, 'packages': digest(packages.read_bytes()),
             'kernel': platform.release(), 'machine': platform.machine(),
+            'cpu_affinity': sorted(os.sched_getaffinity(0)),
             'python': sys.version, 'isolation': POLICY, 'locale': 'C.UTF-8'}
 
 

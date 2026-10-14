@@ -194,7 +194,7 @@ def main():
     altered.write_bytes(Path('/usr/bin/jq').read_bytes() + b'\nfixture-toolchain-change\n')
     altered.chmod(0o700)
     altered_command = ['bwrap', '--die-with-parent', '--ro-bind', '/', '/',
-                       '--dev', '/dev',
+                       '--dev', '/dev', '--proc', '/proc',
                        '--bind', str(f.root), str(f.root),
                        '--ro-bind', str(altered), '/usr/bin/jq', '--', *f.command]
     assert ' executed ' in f.run(args=altered_command)

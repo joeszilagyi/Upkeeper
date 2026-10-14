@@ -61,6 +61,7 @@ and isolation policy, runner/checker versions through the Git tree, and bounded
 execution conditions. The conditions include fixed locale/path policy, explicit
 test/phase timeout and concurrency settings, selected validator budgets, system
 tool hashes, Python/kernel/machine identity, and the installed-package manifest.
+CPU affinity is included because automatic concurrency uses the available CPUs.
 The complete allowlist is `ENV_INPUTS` in `tools/validation_evidence.py`; no
 ambient environment dump is saved. Other environment variables are not inherited
 by the checks. System toolchain administration is assumed quiescent during the

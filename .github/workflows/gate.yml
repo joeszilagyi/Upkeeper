@@ -1,0 +1,28 @@
+name: Disposable merge gate conformance
+on:
+  pull_request:
+    branches: ['verify/908-20261014-kyrfv4-base']
+permissions:
+  contents: read
+jobs:
+  local:
+    name: Local validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: |
+          printf "Harmless conformance check executed\n"
+  actions:
+    name: Analyze (actions)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: |
+          printf "Harmless conformance check executed\n"
+  python:
+    name: Analyze (python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: |
+          printf "Harmless conformance check executed\n"

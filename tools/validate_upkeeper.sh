@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 TOOLS_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 ROOT_DIR="$(cd -- "$TOOLS_DIR/.." && pwd)"
+if [[ -n "${UPKEEPER_TEST_ATTESTATION_FILE:-}" ]]; then
+  source "$ROOT_DIR/tools/validation_attestation_lib.bash"
+  upkeeper_validation_evidence_dispatch "$ROOT_DIR" validator "$UPKEEPER_TEST_ATTESTATION_FILE" "$@"
+fi
 UPKEEPER_IMPLEMENTATION_DIR="$ROOT_DIR"
 source "$ROOT_DIR/lib/upkeeper/review_modules.bash"
 source "$ROOT_DIR/tools/validation_timing_lib.bash"
@@ -1202,9 +1206,9 @@ check_validation_attestation_contract() {
   log "checking validation attestation contract"
   [[ -r tools/validation_attestation_lib.bash ]] ||
     fail "validation attestation library is missing"
-  grep -Fq 'upkeeper.validation-attestation.v1' tools/validation_attestation_lib.bash ||
+  grep -Fq 'upkeeper.validation-evidence.v2' tools/validation_evidence.py ||
     fail "validation attestation schema is missing"
-  grep -Fq 'upkeeper_validation_attestation_load' tools/run_validation_phases.sh ||
+  grep -Fq 'upkeeper_validation_evidence_dispatch' tools/run_validation_phases.sh ||
     fail "validation phase runner does not consume attestations"
   grep -Fq 'UPKEEPER_VALIDATION_ATTESTATION_FILE' orchestration/backlog.sh ||
     fail "backlog batch validation does not supply a local attestation path"

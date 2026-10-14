@@ -1,5 +1,17 @@
 # 2026 Change Notes
 
+## Pending review: Pinned validation evidence
+
+- Reusable unit, phase and validator results bind a committed Git snapshot and
+  exact request before execution. Inputs execute from independent read-only
+  mounts with private writable scratch; old end-stamped records cannot skip
+  checks. Dirty/staged/untracked runs remain available without certification.
+- Whole-request reuse replaces unsafe partial test reuse. Private authenticated
+  records bind command, inventory, conditions and toolchain; failed/interrupted
+  work does not publish PASS. `UPKEEPER_VALIDATION_NO_REUSE=1` forces execution.
+  Linux/bubblewrap support and a trusted reviewed producer are explicit
+  requirements, not independent proof of a candidate's semantic correctness.
+
 ## Pending review: Per-file shell syntax validation
 
 - Shell validation parses each intended input individually, including nested

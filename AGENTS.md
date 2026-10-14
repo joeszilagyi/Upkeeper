@@ -86,6 +86,12 @@ tools/stress_upkeeper_corpus.sh --local
 The full validator and stress corpus must remain no-quota local validation.
 They should not launch real backend Codex work.
 
+For validation-evidence changes, force fresh execution with
+`UPKEEPER_VALIDATION_NO_REUSE=1` and private evidence/state roots. Test eligible
+reuse separately. Follow [validation evidence](docs/validation-evidence.md):
+dirty-worktree checks are diagnostic, legacy records are ineligible, and a
+candidate's own checker is not independent acceptance evidence.
+
 ## Done Criteria
 
 - The patch is scoped to the requested behavior or documentation change.

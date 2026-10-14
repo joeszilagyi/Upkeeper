@@ -16,6 +16,21 @@ RUNNER_TMP_ROOT=""
 DIFF_BASE_REF="${UPKEEPER_VALIDATION_DIFF_BASE:-}"
 DIFF_HEAD_REF="${UPKEEPER_VALIDATION_DIFF_HEAD:-HEAD}"
 ATTESTATION_FILE="${UPKEEPER_VALIDATION_ATTESTATION_FILE:-}"
+EVIDENCE_ARGS=()
+# The output location is not a validation argument. All actual check arguments
+# and diff references are pinned by the shared execution owner.
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == --attestation ]]; then
+    [[ -n "${2:-}" ]] || { printf 'missing --attestation value\n' >&2; exit 2; }
+    ATTESTATION_FILE="$2"
+    shift 2
+  else
+    EVIDENCE_ARGS+=("$1")
+    shift
+  fi
+done
+set -- "${EVIDENCE_ARGS[@]}"
+upkeeper_validation_evidence_dispatch "$ROOT_DIR" phases "$ATTESTATION_FILE" "$@"
 
 usage() {
   cat <<'USAGE'

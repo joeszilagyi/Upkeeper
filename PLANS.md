@@ -3,6 +3,47 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+## Issue #715: Pinned Validation Execution and Evidence
+
+Status (2026-10-14): implementation checkpoint; both old real-producer races
+reproduced on `23b23c9111267bd92efd5c619a69f1677a207850`. A passed test was
+changed and committed while a second test waited; both consumers accepted the
+new failing revision. Direct execution of that revision returned 42.
+
+Contract recorded before production edits:
+
+- Capture a committed Git object identity before execution, not an end-state
+  worktree fingerprint. Preserve history and explicit diff revisions.
+- Execute independent read-only copies of those objects, with separate writable
+  scratch. Refuse reusable certification for dirty/staged/untracked candidates,
+  unsupported objects, unavailable isolation, or failed identity collection.
+  Ordinary non-reusable diagnostic validation remains available.
+- Replace the two end-stamping authorities with one execution owner. Bind whole
+  input, exact command/scope, producer/checker policy, bounded environment and
+  toolchain. Conservative whole-request reuse is preferable to unsafe partial
+  reuse; delegated validator tests must never trust the legacy records.
+- Keep evidence outside the check subprocess, authenticate records within a
+  private producer-owned store, and publish bounded records atomically without
+  following links. Failed/interrupted execution cannot publish PASS.
+- Prove both barrier races, source-only changes, change/revert, dirty states,
+  changed conditions and diff context, malformed/legacy/conflicting/incomplete
+  records, replay, interruption/publication failure, and read-only inputs.
+  Prove actual execution and eligible reuse with counters, including real phase
+  and validator paths. Retain syntax and containment regressions.
+
+Likely files: both attestation libraries, test/phase/validator entrypoints,
+backlog's validation callers, directly necessary CI dependency wiring, focused
+regressions, validation documentation and this plan. No runtime worker authority,
+task-acceptance, recovery, or broader fixture refactor. Linux isolation support
+and trusted producer/storage assumptions will be explicit; a private directory
+alone is not claimed to defeat arbitrary hostile same-account interference.
+
+Fresh acceptance uses `UPKEEPER_VALIDATION_NO_REUSE=1`, focused regressions,
+real phase/validator paths, full deterministic tests, quick/full validators,
+public docs, explicit-range whitespace, exact-head PR CI and separate review.
+Reuse-positive cases run separately. Publish a draft only; do not merge #715,
+resume the old GOAL, or take another backlog issue.
+
 ## Issue #909: Individually Parse Shell Validation Inputs
 
 Status: bounded candidate in development; no merge or issue closure authorized.

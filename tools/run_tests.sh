@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 source "$ROOT_DIR/tools/test_attestation_lib.bash"
+if [[ -n "${UPKEEPER_TEST_ATTESTATION_FILE:-}" ]]; then
+  source "$ROOT_DIR/tools/validation_attestation_lib.bash"
+  upkeeper_validation_evidence_dispatch "$ROOT_DIR" tests "$UPKEEPER_TEST_ATTESTATION_FILE" "$@"
+fi
 
 TEST_JOBS="${UPKEEPER_TEST_JOBS:-auto}"
 TEST_TIMEOUT_SECONDS="${UPKEEPER_TEST_TIMEOUT_SECONDS:-180}"
@@ -55,7 +59,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-mapfile -t TESTS < <(find tests -maxdepth 1 -type f -name '*.bash' | sort)
+mapfile -d '' -t TESTS < <(find tests -maxdepth 1 -type f -name '*.bash' -print0 | sort -z)
 [[ "${#TESTS[@]}" -gt 0 ]] || fail "no tests/*.bash files found"
 
 if [[ "$TEST_JOBS" == "auto" ]]; then

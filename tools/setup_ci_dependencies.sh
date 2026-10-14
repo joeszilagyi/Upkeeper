@@ -2,8 +2,8 @@
 set -euo pipefail
 
 EXPECTED_RUNNER_COMMANDS_CSV="${UPKEEPER_CI_EXPECTED_RUNNER_COMMANDS:-bash timeout find awk git grep jq python3 script sed zip}"
-INSTALLABLE_COMMANDS_CSV="${UPKEEPER_CI_INSTALLABLE_COMMANDS:-age}"
-INSTALLABLE_PACKAGES_CSV="${UPKEEPER_CI_INSTALLABLE_PACKAGES:-age}"
+INSTALLABLE_COMMANDS_CSV="${UPKEEPER_CI_INSTALLABLE_COMMANDS:-age,bwrap}"
+INSTALLABLE_PACKAGES_CSV="${UPKEEPER_CI_INSTALLABLE_PACKAGES:-age,bubblewrap}"
 SUDO_BIN="${UPKEEPER_CI_SUDO_BIN:-sudo}"
 APT_GET_BIN="${UPKEEPER_CI_APT_GET_BIN:-apt-get}"
 
@@ -13,7 +13,8 @@ Usage: tools/setup_ci_dependencies.sh
 
 Probe the GitHub Actions ubuntu-latest runner for stock commands, fail clearly
 if expected runner tools are absent, and install only missing nonstandard
-packages such as age.
+packages age and bubblewrap. Reusable validation requires working unprivileged
+namespaces; this helper does not change host security policy to enable them.
 USAGE
 }
 

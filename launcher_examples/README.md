@@ -8,7 +8,7 @@ file, not in a launcher.
 Validate examples before publishing changes:
 
 ```sh
-bash -n launcher_examples/*.sh
+bash tools/check_shell_syntax.sh --files launcher_examples/*.sh
 launcher_examples/spark_5.3_burn_out_xhigh.sh --help
 UPKEEPER_LOOP_DRY_RUN=1 launcher_examples/spark_5.3_burn_out_xhigh.sh
 ```

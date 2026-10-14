@@ -1,5 +1,17 @@
 # 2026 Change Notes
 
+## Pending review: Per-file shell syntax validation
+
+- Shell validation parses each intended input individually, including nested
+  helpers and launcher examples, with explicit missing-file, symlink and empty
+  group failures. Phase, validator and backlog callers share the same runner;
+  public documentation validation executes the real syntax phase. This repairs
+  syntax coverage only, not attestation identity or independent task acceptance.
+- Syntax regression fixtures reject inherited links before import and use
+  independent regular copies and non-following mutation opens. Containment
+  regressions check external sentinel identity even when a test fails before
+  restoration; intentionally created checker-negative symlinks remain covered.
+
 ## v1.2.52 changes: Constrain automatic recovery model calls
 
 - Automatic recovery now remains enabled only for primary quota and a missing

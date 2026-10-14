@@ -120,7 +120,7 @@ phase_command() {
 
   case "$phase" in
     shell_syntax)
-      bash -n Upkeeper ChimneySweep FlameOn Upkeeper.conf configurations/default.conf completions/*.bash lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh orchestration/*.sh
+      bash tools/check_shell_syntax.sh
       ;;
     unit_tests)
       tools/run_tests.sh
@@ -142,7 +142,7 @@ phase_command_text() {
 
   case "$phase" in
     shell_syntax)
-      printf '%s\n' 'bash -n Upkeeper ChimneySweep FlameOn Upkeeper.conf configurations/default.conf completions/*.bash lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh orchestration/*.sh'
+      printf '%s\n' 'bash tools/check_shell_syntax.sh'
       ;;
     unit_tests)
       printf '%s\n' 'tools/run_tests.sh'
@@ -180,7 +180,7 @@ run_one_phase() {
     source "$1/tools/git_diff_validation.bash"
     case "$2" in
       shell_syntax)
-        bash -n Upkeeper ChimneySweep FlameOn Upkeeper.conf configurations/default.conf completions/*.bash lib/upkeeper/*.bash tools/*.sh tests/*.bash testruns/*.sh orchestration/*.sh
+        bash tools/check_shell_syntax.sh
         ;;
       unit_tests)
         tools/run_tests.sh

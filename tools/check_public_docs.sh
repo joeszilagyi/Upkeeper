@@ -177,7 +177,10 @@ grep -Fq "tools/setup_ci_dependencies.sh" .github/workflows/ci.yml || fail "CI w
 grep -Fq "scope_args=(--validate)" .github/workflows/ci.yml || fail "CI workflow does not validate docs-only changes through the helper"
 grep -Fq "tools/check_public_docs.sh --quick" tools/run_validation_phases.sh || fail "validation phase runner does not run public docs check"
 grep -Fq "tools/run_tests.sh" tools/run_validation_phases.sh || fail "validation phase runner does not run unit tests"
-grep -Fq "bash -n Upkeeper ChimneySweep FlameOn" tools/run_validation_phases.sh || fail "validation phase runner does not syntax-check launchers"
+# Exercise the documented production gate, not a grep for an unsound recipe.
+env -u UPKEEPER_VALIDATION_ATTESTATION_FILE \
+  bash tools/run_validation_phases.sh --phases shell_syntax --serial ||
+  fail "documented shell syntax phase failed"
 grep -Fq "UPKEEPER_CI_INSTALLABLE_COMMANDS" tools/setup_ci_dependencies.sh || fail "CI dependency helper does not expose the installable-command contract"
 grep -Fq "age" tools/setup_ci_dependencies.sh || fail "CI dependency helper does not cover age for full-burn launcher dependency coverage"
 grep -Fq "tools/stress_upkeeper_corpus.sh --local" README.md || fail "README does not document the local stress corpus command"

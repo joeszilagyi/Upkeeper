@@ -3,6 +3,53 @@
 This file captures active or recently completed implementation plans for complex
 Upkeeper changes. Keep entries brief and update their status before merge.
 
+Current checkpoint (2026-10-14): the owner authorized the bounded #908 main
+protection change, protected merge-commit integration of #918 then #919, and a
+draft-only #715 repair. Earlier authorization limits below remain historical
+records. This does not resume the prior GOAL or authorize #715 integration,
+other backlog work, client maintenance, or changes to #907.
+
+## Issue #909: Individually Parse Shell Validation Inputs
+
+Status: bounded candidate in development; no merge or issue closure authorized.
+Parent: [safety acceptance program #915](https://github.com/joeszilagyi/Upkeeper/issues/915).
+
+Contract recorded in #909 before production edits: parse every intended shell
+input without execution; explicit filename, missing-file, symlink and empty-group
+policy; fail with the relevant filename through actual phase/validator callers;
+valid source passes and non-first malformed inputs fail. Correct the docs checker
+and active recipes together. Preserve original historical validation records.
+
+Scope: one small syntax inventory/runner; phase command/dispatcher/identity,
+validator, backlog per-bug gate and explicit launcher-example caller; regressions,
+AGENTS and active docs recipes. Minimal #914 support is the validator's initial
+temporary root honoring TMPDIR, so early-failure probes remain private.
+
+Validation: isolated mutations in the four #909 paths; direct parser, actual
+serial/parallel phase and validator syntax timing; regression against baseline
+and candidate; fresh pinned full suite/quick/full validators, public docs and
+explicit base-to-head whitespace. Record every failed or unavailable gate. No
+reusable attestation, model contact, operator-state fixture or live launcher run.
+
+Non-goals: #715 attestation identity, #910 completion architecture, broad #914
+fixture conversion, recovery, admin settings, #907, any client maintenance, and
+resumption of the prior GOAL. Candidate stays draft for separate review.
+
+Fixture correction (2026-10-14): the reviewed `1febed73` test imported symlinks
+with `cp -P` and mutated through them before checking syntax. Keep production
+syntax behavior unchanged. Add one fixture-only Python helper for non-following
+directory-relative import and mutation, independent exclusive file copies, and
+hardlink/nonregular rejection at mutation. Import tracked/staged source only,
+not arbitrary untracked private files. Retain deliberately created negative
+symlinks inside the completed fixture. A bounded preparation-only entrypoint
+lets containment tests exercise the real setup without nested full-suite runs.
+Prove absolute/relative/parent/dangling links, missing/unreadable/nonregular
+inputs, pre-existing destinations, independent copies, failure before restore,
+and a controlled replacement at the open boundary. This is not protection from
+arbitrary same-user interference; checkouts/helpers are exclusively owned for
+the run. Validate both distinct old baselines, fresh full checks, and final CI;
+request a separate read-only review before handoff. No #715 implementation.
+
 ## Safety Acceptance Program: Bounded Publication and First Repair
 
 Status (2026-10-11): reconciliation complete; tracking published; #909 candidate

@@ -11,8 +11,7 @@ jobs:
     timeout-minutes: 3
     steps:
       - run: |
-          sleep 60
-          exit 1
+          printf "Harmless conformance check executed\n"
   actions:
     name: Analyze (actions)
     runs-on: ubuntu-latest

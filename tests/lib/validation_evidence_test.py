@@ -173,6 +173,21 @@ class Fixture:
         self.artifact.write_text(json.dumps(envelope))
         assert 'reuse-rejected' in self.run()
 
+    def overlay(self, mounts):
+        # Own the namespace's ancestors; a host-root bind makes root-owned
+        # directories appear unmapped under ordinary unprivileged user maps.
+        command = ['bwrap', '--die-with-parent', '--unshare-net', '--tmpfs', '/',
+                   '--ro-bind', '/usr', '/usr']
+        for name in ('bin', 'sbin', 'lib', 'lib64'):
+            path = Path('/')/name
+            if path.is_symlink(): command += ['--symlink', os.readlink(path), '/' + name]
+            elif path.exists(): command += ['--ro-bind', str(path), str(path)]
+        for name in ('/etc/ld.so.cache', '/etc/localtime', '/etc/passwd', '/etc/group',
+                     '/etc/os-release', '/etc/alternatives', '/var/lib/dpkg/status'):
+            if Path(name).exists(): command += ['--ro-bind', name, name]
+        return command + ['--dev', '/dev', '--proc', '/proc', '--bind', str(self.root),
+                          str(self.root), *mounts, '--chdir', str(self.repo), '--', *self.command]
+
     def filesystem_change(self):
         filesystem = subprocess.check_output(
             ['stat', '-f', '-c', '%T', str(self.root/'tmp')], text=True).strip()
@@ -184,10 +199,7 @@ if [[ "$(stat -f -c %T "$TMPDIR")" == tmpfs ]]; then exit 42; fi
 printf executed >>runtime/count
 '''); self.commit()
         assert ' executed ' in self.run()
-        changed = ['bwrap', '--die-with-parent', '--ro-bind', '/', '/',
-                   '--dev', '/dev', '--proc', '/proc',
-                   '--bind', str(self.root), str(self.root),
-                   '--tmpfs', str(self.root/'tmp'), '--', *self.command]
+        changed = self.overlay(['--tmpfs', str(self.root/'tmp')])
         result = self.run(expected=42, args=changed)
         assert 'reuse-rejected' in result and ' executed ' in result
         assert not self.artifact.exists()
@@ -224,10 +236,7 @@ def main():
     altered = f.root/'jq-altered'
     altered.write_bytes(Path('/usr/bin/jq').read_bytes() + b'\nfixture-toolchain-change\n')
     altered.chmod(0o700)
-    altered_command = ['bwrap', '--die-with-parent', '--ro-bind', '/', '/',
-                       '--dev', '/dev', '--proc', '/proc',
-                       '--bind', str(f.root), str(f.root),
-                       '--ro-bind', str(altered), '/usr/bin/jq', '--', *f.command]
+    altered_command = f.overlay(['--ro-bind', str(altered), '/usr/bin/jq'])
     assert ' executed ' in f.run(args=altered_command)
     assert ' reused ' in f.run(args=altered_command)
     assert ' executed ' in f.run()

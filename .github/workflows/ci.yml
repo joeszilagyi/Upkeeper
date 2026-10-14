@@ -86,6 +86,7 @@ jobs:
       - name: Parallel local gates
         if: steps.scope.outputs.docs_only != '1'
         env:
+          TMPDIR: ${{ runner.temp }}
           UPKEEPER_TEST_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-test-attestation.json
           UPKEEPER_VALIDATION_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-validation-attestation.json
           UPKEEPER_VALIDATION_DIFF_BASE: ${{ steps.diff_range.outputs.base }}
@@ -106,7 +107,7 @@ jobs:
       - name: Full validation
         if: steps.scope.outputs.validation_gate == 'full'
         env:
-          UPKEEPER_VALIDATION_TIMING_FILE: ${{ runner.temp }}/upkeeper-validation-timing.jsonl
+          TMPDIR: ${{ runner.temp }}
           UPKEEPER_TEST_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-test-attestation.json
         run: tools/validate_upkeeper.sh --full --profile
 
@@ -115,5 +116,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: validation-timing-${{ github.job }}
-          path: ${{ runner.temp }}/upkeeper-validation-timing.jsonl
+          # Only diagnostic timing rows, never private evidence custody keys.
+          path: ${{ runner.temp }}/upkeeper-pinned-validation-*/output/runtime/validation-timing/*.jsonl
           if-no-files-found: ignore

@@ -107,6 +107,8 @@ previous-record name, so failure/interruption cannot leave it appearing current.
 Failed checks or publication cannot generate PASS. Private scratch/failure
 evidence is retained at the printed path; it is not a public artifact bundle.
 Do not publish keys or scratch wholesale.
+Pinned validators keep their timing output inside that scratch tree rather than
+accepting an ambient host output path. CI uploads only those timing rows.
 
 Diagnostics distinguish `executed`, `reused`, `reuse-rejected`, `passed`,
 `failed`, and `blocked`. A cache rejection is not a test failure; a successful

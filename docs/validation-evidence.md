@@ -61,6 +61,8 @@ and isolation policy, runner/checker versions through the Git tree, and bounded
 execution conditions. The conditions include fixed locale/path policy, explicit
 test/phase timeout and concurrency settings, selected validator budgets, system
 tool hashes, Python/kernel/machine identity, and the installed-package manifest.
+Hashes also bind the small mounted system-file set (including timezone and
+loader configuration); their contents are not serialized into the record.
 CPU affinity is included because automatic concurrency uses the available CPUs.
 The scratch filesystem type is also bound; memory-backed fixture validation
 does not establish persistence across power loss on a deployment filesystem.

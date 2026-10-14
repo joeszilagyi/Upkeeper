@@ -42,6 +42,8 @@ ENV_INPUTS = ('CI', 'UPKEEPER_TEST_JOBS', 'UPKEEPER_TEST_TIMEOUT_SECONDS',
               'VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS')
 TOOLS = ('bash', 'git', 'python3', 'jq', 'timeout', 'bwrap', 'age', 'screen',
          'awk', 'sed', 'find', 'sort', 'zip', 'script', 'stat')
+SYSTEM_FILES = ('/etc/ld.so.cache', '/etc/localtime', '/etc/passwd', '/etc/group',
+                '/etc/os-release', '/var/lib/dpkg/status')
 
 
 class Blocked(Exception):
@@ -112,6 +114,8 @@ def conditions():
     if not packages.is_file():
         raise Blocked('unsupported toolchain manifest (requires dpkg status)')
     return {'values': values, 'tools': tools, 'packages': digest(packages.read_bytes()),
+            'system_files': {name: digest(Path(name).read_bytes()) if Path(name).exists()
+                             else 'unavailable' for name in SYSTEM_FILES},
             'kernel': platform.release(), 'machine': platform.machine(),
             'cpu_affinity': sorted(os.sched_getaffinity(0)),
             'scratch_filesystem': subprocess.check_output(
@@ -395,8 +399,7 @@ def execute(root, request, scratch):
             command += ['--symlink', os.readlink(path), '/' + name]
         elif path.exists():
             command += ['--ro-bind', str(path), str(path)]
-    for name in ('/etc/ld.so.cache', '/etc/localtime', '/etc/passwd', '/etc/group',
-                 '/etc/os-release', '/etc/alternatives', '/var/lib/dpkg/status'):
+    for name in (*SYSTEM_FILES, '/etc/alternatives'):
         if Path(name).exists():
             command += ['--ro-bind', name, name]
     command += ['--dev', '/dev', '--proc', '/proc', '--tmpfs', '/run',

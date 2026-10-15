@@ -16,7 +16,7 @@ concurrency:
 jobs:
   local-validation:
     name: Local validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     # Start with Ubuntu. Add macos-latest after GNU/BSD portability issues are
@@ -29,10 +29,15 @@ jobs:
           # before revision so committed-diff validation never falls back to
           # an empty working-tree comparison.
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Probe CI dependencies
         shell: bash
         run: tools/setup_ci_dependencies.sh
+
+      - name: Probe unprivileged validation isolation
+        shell: bash
+        run: bash tools/probe_validation_isolation.sh
 
       - name: Determine committed diff range
         id: diff_range

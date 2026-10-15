@@ -19,6 +19,37 @@ open. #715 is based on that verified main and remains draft-only.
 
 ## Issue #715: Pinned Validation Execution and Evidence
 
+Checkpoint 1 (2026-10-15), requirements revision
+`4b3480af7d8dbbf36ddd43e36fa1a135c4fbeb60`: finish the existing draft #922,
+not the broader acceptance roadmap. The requirements are an isolated-development
+target, not installed operational authority. CI 38649614103 failed before
+validation at Bubblewrap network-namespace setup; its cause is not yet proved.
+
+Bounded strategy: retain that log; run a harmless namespace probe on the current
+Ubuntu 24.04 runner, then at most one officially supported newer runner if the
+observed restriction cannot be corrected without changing host policy. Each
+probe has a 30-second bound; at most two diagnostic configurations and one
+final full CI attempt, plus one evidence-driven corrective attempt if needed.
+Never relax networking, host policy, required checks, or unprivileged execution.
+
+Intended files: CI workflow/setup, the existing execution owner and evidence
+regressions, validation documentation and this entry. Preserve Git-object
+acquisition, read-only source, separate scratch/custody, explicit dirty refusal,
+both real producer/consumer paths, disk-versus-tmpfs identity and useful reuse.
+Add actual boundary probes for source operations, test-owned secret/output
+canaries, an otherwise reachable controlled network receiver, descendant
+termination, and complete versus interrupted publication where coverage lacks.
+
+Verification: both attestation scripts, phase runner regression, both actual
+filesystem-condition cases, syntax/containment and changed callers; real serial
+and parallel phases; pinned full unit suite and full validator with
+`UPKEEPER_VALIDATION_NO_REUSE=1`; quick/smoke/docs and explicit-range whitespace;
+fresh exact-revision CI and separate read-only review. Positive reuse remains
+enabled in dedicated cases. Record entrypoints, observers, actual effects and
+limitations against the pinned ICV/ICM requirements. Stop with a tested draft
+or a specific unmet gate; no merge, issue closure, authority installation,
+checkpoint 2, #907/#924 changes or old-GOAL resumption.
+
 Status (2026-10-14): implementation checkpoint; both old real-producer races
 reproduced on `23b23c9111267bd92efd5c619a69f1677a207850`. A passed test was
 changed and committed while a second test waited; both consumers accepted the

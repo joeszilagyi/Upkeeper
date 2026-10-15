@@ -78,4 +78,5 @@ if grep -Fq 'unexpected successful dispatch' <<<"$failure_output"; then
   fail "bounded-check failure was masked by later dispatch"
 fi
 
+python3 "$ROOT_DIR/tests/lib/validator_tool_contract_test.py"
 printf 'validation_mode_checks_test: ok\n'

@@ -9,6 +9,9 @@
   Newer hosted configurations failed; a bounded compatibility attempt selects
   still-supported Ubuntu 22.04 with a documented pre-retirement migration date.
   No host protection or required test is weakened to hide a platform blocker.
+  Canonical-path ripgrep preparation and explicit search-error rejection prevent
+  a missing tool from skipping a validator scan; multi-file JSON assertions
+  retain their predicates while avoiding older jq's input-order exit behavior.
 
 - Reusable unit, phase and validator results bind a committed Git snapshot and
   exact request before execution. Inputs execute from independent read-only

@@ -118,7 +118,7 @@ test_missing_expected_runner_command_fails_closed() {
   set -e
 
   [[ "$rc" -ne 0 ]] || fail "helper succeeded even though an expected runner command was missing"
-  grep -Fq "expected ubuntu-latest command(s) missing: runner-jq" "$stderr_file" ||
+  grep -Fq "expected Ubuntu runner command(s) missing: runner-jq" "$stderr_file" ||
     fail "helper did not report the missing runner command clearly"
   [[ ! -s "$stdout_file" ]] || fail "helper emitted stdout before failing on missing runner command"
   [[ ! -s "$TEST_TMP_ROOT/logs/apt.log" ]] ||
@@ -139,9 +139,36 @@ test_only_missing_isolation_dependency_is_installed() {
   [[ ! -s "$stderr_file" ]] || fail 'isolation setup produced unexpected stderr'
 }
 
+test_default_pinned_search_dependency_is_installed() {
+  local stdout_file="$TEST_TMP_ROOT/search.out" stderr_file="$TEST_TMP_ROOT/search.err"
+  rm -rf "$TEST_TMP_ROOT/bin" "$TEST_TMP_ROOT/logs"
+  setup_fake_runner
+  write_passthrough_tool runner-bash
+  write_passthrough_tool age
+  write_passthrough_tool bwrap
+  # No host PATH: a search tool outside the executor's supported tool path
+  # must not satisfy preparation. Only the fake package transport can add rg.
+  write_fake_tool "$TEST_TMP_ROOT/bin/cat" '#!/bin/sh
+exec /bin/cat "$@"'
+  write_fake_tool "$TEST_TMP_ROOT/bin/chmod" '#!/bin/sh
+exec /bin/chmod "$@"'
+  (
+    export PATH="$TEST_TMP_ROOT/bin"
+    export UPKEEPER_CI_EXPECTED_RUNNER_COMMANDS=runner-bash
+    unset UPKEEPER_CI_INSTALLABLE_COMMANDS UPKEEPER_CI_INSTALLABLE_PACKAGES
+    export FAKE_INSTALL_COMMAND_NAME=rg
+    /bin/bash "$PROJECT_ROOT/tools/setup_ci_dependencies.sh"
+  ) >"$stdout_file" 2>"$stderr_file" || fail 'default pinned search preparation failed'
+  grep -Fxq 'apt-get install -y --no-install-recommends ripgrep' "$TEST_TMP_ROOT/logs/apt.log" ||
+    fail 'default preparation omitted missing pinned ripgrep dependency'
+  [[ -x "$TEST_TMP_ROOT/bin/rg" ]] || fail 'search dependency was not installed'
+  [[ ! -s "$stderr_file" ]] || fail 'search setup produced unexpected stderr'
+}
+
 test_no_install_when_runner_and_installable_commands_exist
 test_missing_installable_command_triggers_targeted_install
 test_missing_expected_runner_command_fails_closed
 test_only_missing_isolation_dependency_is_installed
+test_default_pinned_search_dependency_is_installed
 
 printf 'ci_dependency_setup_test: ok\n'

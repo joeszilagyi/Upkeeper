@@ -378,7 +378,7 @@ require_supported_platform() {
 
 require_commands() {
   local command_name
-  for command_name in bash chmod cp date diff find git grep jq ln mkdir mktemp ps python3 rm sed sleep sort touch tr uname wc; do
+  for command_name in bash chmod cp date diff find git grep jq ln mkdir mktemp ps python3 rg rm sed sleep sort touch tr uname wc; do
     require_command "$command_name"
   done
 }
@@ -1970,10 +1970,12 @@ LOG
     fail "prior-run anomaly custody opened duplicate local automation obligations"
   [[ "$(jq -s '[.[] | select(.evidence.kind == "previous_run_anomaly_summary")] | length' "$temp_dir"/obligations/open/*.json)" == "1" ]] ||
     fail "prior-run anomaly custody did not collapse repeated previous-run summaries to one owner"
-  jq -e 'select(.kind == "prior_run_anomaly") | select(.issue_number == "") | select(.owner_issue_number == "418") | select(.specific_issue_required == true) | select(.evidence.normalized_excerpt | contains("unexpected.wrapper.failure"))' \
+  # Evaluate one Boolean over the complete set. jq 1.6's streaming -e status
+  # depends on the last input, even if an earlier input matched the predicate.
+  jq -e -s '[.[] | select(.kind == "prior_run_anomaly") | select(.issue_number == "") | select(.owner_issue_number == "418") | select(.specific_issue_required == true) | select(.evidence.normalized_excerpt | contains("unexpected.wrapper.failure"))] | length > 0' \
     "$temp_dir"/obligations/open/*.json >/dev/null ||
     fail "prior-run anomaly custody obligation did not require a specific issue beyond the umbrella"
-  jq -e 'select(.evidence.normalized_excerpt | contains("operator_guide.stale")) | select(.summary | contains("operator_guide.stale warning")) | select(.issue_title == "High priority bug: prior-run operator_guide.stale warning needs repair for Upkeeper") | select(.issue_title_basis == "prior_run_anomaly_signal")' \
+  jq -e -s '[.[] | select(.evidence.normalized_excerpt | contains("operator_guide.stale")) | select(.summary | contains("operator_guide.stale warning")) | select(.issue_title == "High priority bug: prior-run operator_guide.stale warning needs repair for Upkeeper") | select(.issue_title_basis == "prior_run_anomaly_signal")] | length > 0' \
     "$temp_dir"/obligations/open/*.json >/dev/null ||
     fail "prior-run anomaly custody did not create a descriptive operator-guide warning issue title"
 
@@ -4839,7 +4841,7 @@ check_dependency_guidance_contract() {
     fail "dependency docs missing shared CI dependency helper"
   grep -Fq "expected stock commands" docs/dependencies.md ||
     fail "dependency docs missing CI expected-runner command probe description"
-  grep -Fq 'installs only missing nonstandard tools `age` and `bubblewrap`' docs/dependencies.md ||
+  grep -Fq 'installs only missing tools `age`, `bubblewrap` and `ripgrep`' docs/dependencies.md ||
     fail "dependency docs missing targeted CI install policy"
 }
 
@@ -5213,12 +5215,16 @@ check_validation_mode_boundary_contract() {
 }
 
 check_wrapper_contract_tests() {
+  local search_status
   log "checking focused wrapper contract tests"
   validation_run_test tests/wrapper_contract_test.bash
   validation_run_test tests/json_fields_test.bash
   if rg -q '_(assignments)\(|eval "\$\((quota_json|status_marker_analysis|session_diagnostics|review_summary|review_pass_coverage)' \
     Upkeeper lib/upkeeper tests/wrapper_contract_test.bash; then
     fail "JSON-to-shell assignment source generation or eval consumer was reintroduced"
+  else
+    search_status=$?
+    [[ "$search_status" -eq 1 ]] || fail "JSON-to-shell source scan failed: rg exit=$search_status"
   fi
   grep -Fq '## Remaining `eval` Boundaries' docs/security.md ||
     fail "security documentation does not account for remaining production eval boundaries"

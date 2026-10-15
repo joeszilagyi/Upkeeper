@@ -42,7 +42,7 @@ ENV_INPUTS = ('CI', 'UPKEEPER_TEST_JOBS', 'UPKEEPER_TEST_TIMEOUT_SECONDS',
               'VALIDATION_INTEGRATION_TIMEOUT_SECONDS', 'VALIDATION_FULL_TIMEOUT_SECONDS',
               'VALIDATION_FILE_MANIFEST_TIMEOUT_SECONDS')
 TOOLS = ('bash', 'git', 'python3', 'jq', 'timeout', 'bwrap', 'age', 'screen',
-         'awk', 'sed', 'find', 'sort', 'zip', 'script', 'stat')
+         'awk', 'sed', 'find', 'sort', 'zip', 'script', 'stat', 'rg')
 SYSTEM_FILES = ('/etc/ld.so.cache', '/etc/localtime', '/etc/passwd', '/etc/group',
                 '/etc/os-release', '/var/lib/dpkg/status')
 ISOLATION_FILES = ('/proc/sys/kernel/unprivileged_userns_clone',

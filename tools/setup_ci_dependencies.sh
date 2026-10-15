@@ -2,8 +2,8 @@
 set -euo pipefail
 
 EXPECTED_RUNNER_COMMANDS_CSV="${UPKEEPER_CI_EXPECTED_RUNNER_COMMANDS:-bash timeout find awk git grep jq python3 script sed zip}"
-INSTALLABLE_COMMANDS_CSV="${UPKEEPER_CI_INSTALLABLE_COMMANDS:-age,bwrap}"
-INSTALLABLE_PACKAGES_CSV="${UPKEEPER_CI_INSTALLABLE_PACKAGES:-age,bubblewrap}"
+INSTALLABLE_COMMANDS_CSV="${UPKEEPER_CI_INSTALLABLE_COMMANDS:-age,bwrap,rg}"
+INSTALLABLE_PACKAGES_CSV="${UPKEEPER_CI_INSTALLABLE_PACKAGES:-age,bubblewrap,ripgrep}"
 SUDO_BIN="${UPKEEPER_CI_SUDO_BIN:-sudo}"
 APT_GET_BIN="${UPKEEPER_CI_APT_GET_BIN:-apt-get}"
 
@@ -11,9 +11,9 @@ usage() {
   cat <<'USAGE'
 Usage: tools/setup_ci_dependencies.sh
 
-Probe the GitHub Actions ubuntu-latest runner for stock commands, fail clearly
+Probe the selected GitHub Actions Ubuntu runner for stock commands, fail clearly
 if expected runner tools are absent, and install only missing nonstandard
-packages age and bubblewrap. Reusable validation requires working unprivileged
+packages age, bubblewrap and ripgrep. Reusable validation requires working unprivileged
 namespaces; this helper does not change host security policy to enable them.
 USAGE
 }
@@ -87,7 +87,7 @@ main() {
     fi
   done
   if [[ "$missing_expected" -ne 0 ]]; then
-    fail "expected ubuntu-latest command(s) missing: ${missing_expected_commands[*]}; runner image drift is explicit and CI will not fall back to a blanket apt install"
+    fail "expected Ubuntu runner command(s) missing: ${missing_expected_commands[*]}; runner image drift is explicit and CI will not fall back to a blanket apt install"
   fi
 
   for index in "${!installable_commands[@]}"; do

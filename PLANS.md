@@ -60,6 +60,12 @@ This deliberately revises the newer-image preference above, not the run budget
 or isolation boundary. Retire this temporary selection before the first
 2027-03-23 brownout; compatibility still requires the actual final CI result.
 No further platform permutations are planned in this checkpoint.
+That corrective run 38786998188 passed all 86 tests but failed full validation:
+missing canonical-path ripgrep and older jq streaming exit semantics require
+narrow setup/assertion compatibility corrections. One final same-image run
+will verify those observed causes; this is not another platform permutation.
+Preserve every original JSON predicate, reject search errors, test actual
+filters/guard and required installation, and retain the failed run.
 Final preflight checks nesting before the broad suite. Separate review found a post-rename
 directory-flush error leaving reusable PASS; pending intent and quarantine now
 make that failure ineligible, with real producer/consumer restart regressions.

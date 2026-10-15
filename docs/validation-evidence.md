@@ -186,6 +186,16 @@ This selection must pass the same outer/nested preflight, fresh complete suite,
 actual boundary regressions and full validator; an available image or a passing
 preflight alone is not compatibility proof. Exact results belong to the tested
 head/merge revision on the PR. A future image drift fails closed.
+Run 38786998188 passed the actual 86-test phase, then exposed two tool-path
+portability gaps: `rg` was unavailable in the restricted path, and the validator
+used streaming `jq -e` for two existential multi-file assertions. Preparation
+now installs missing ripgrep in the canonical path and its bytes enter the
+identity; the validator rejects search errors. The JSON assertions aggregate
+the unchanged predicates into one Boolean, avoiding
+[older jq's last-input exit behavior](https://github.com/jqlang/jq/pull/1697).
+Both file orders and missing/malformed/partial records are exercised with the
+actual production filters. Neither a search invocation failure nor missing
+required JSON evidence is treated as success.
 No security-policy change, root candidate execution, namespace removal or
 unconfined fallback is permitted. If this final bounded attempt fails, another
 environment decision is required, not waived verification.

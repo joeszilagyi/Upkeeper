@@ -36,7 +36,9 @@ jobs:
 
       - name: Probe CI dependencies
         shell: bash
-        run: tools/setup_ci_dependencies.sh
+        # Match the executor's tool path; host-only tools are not dependencies
+        # available inside its namespace. Package preparation stays outside it.
+        run: env PATH=/usr/bin:/bin tools/setup_ci_dependencies.sh
 
       - name: Probe unprivileged validation isolation
         shell: bash

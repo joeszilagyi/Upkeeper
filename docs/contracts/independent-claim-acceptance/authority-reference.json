@@ -1,0 +1,91 @@
+{
+  "document_type": "reference_inventory",
+  "inventory_version": "upkeeper.authority-reference.draft.1",
+  "status": "UNADOPTED_REVIEW_INVENTORY",
+  "repository_source": "joeszilagyi/Upkeeper",
+  "source_path": "docs/contracts/independent-claim-acceptance",
+  "source_basis_commit": "cf55c4513c476d304656bcb93d2f74acc1529a6d",
+  "interpretation": "Exact-byte transfer inventory only. This is not an adoption, runtime grant, conformance result or authenticated owner decision. A null source_revision identifies a newly authored file by its bytes and Git blob, not by a nonexistent prior commit.",
+  "files": [
+    {
+      "path": "CONTRACT.md",
+      "role": "governing_requirements",
+      "media_type": "text/markdown; charset=utf-8",
+      "bytes": 40830,
+      "sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "git_blob_sha1": "92c118101b2a97aa51f7dcb7129ea13b8040612c",
+      "mode": "100644",
+      "source_revision": "cf55c4513c476d304656bcb93d2f74acc1529a6d"
+    },
+    {
+      "path": "ACCEPTANCE-MATRIX.md",
+      "role": "required_conformance_scenarios",
+      "media_type": "text/markdown; charset=utf-8",
+      "bytes": 62093,
+      "sha256": "2aa1beac6c63619399a8c15606fe1cdc773a670c7bb2b30a06dde316034a6579",
+      "git_blob_sha1": "b8b239e9008df93c7893b8dc8911c7d0b63e5d49",
+      "mode": "100644",
+      "source_revision": "cf55c4513c476d304656bcb93d2f74acc1529a6d"
+    },
+    {
+      "path": "DATA-CONTRACT.md",
+      "role": "data_semantics",
+      "media_type": "text/markdown; charset=utf-8",
+      "bytes": 29121,
+      "sha256": "5cd79edc19614e65068362da9d8b4758b7d690d41bcf91b2ac88d3adad57d5c9",
+      "git_blob_sha1": "0310c2fb1d0973cd605e6ee12433a5a3995a3c4b",
+      "mode": "100644",
+      "source_revision": "cf55c4513c476d304656bcb93d2f74acc1529a6d"
+    },
+    {
+      "path": "verification-spec.json",
+      "role": "data_profile_and_traceability",
+      "media_type": "application/json",
+      "bytes": 25609,
+      "sha256": "fbbf285b33622d82919fd482fe5d51900a8935bb98c78d4fd283b9bf70ddf80c",
+      "git_blob_sha1": "02aed7730f3729bf0c5723aa13233e292e329ea5",
+      "mode": "100644",
+      "source_revision": "cf55c4513c476d304656bcb93d2f74acc1529a6d"
+    },
+    {
+      "path": "verification.schema.json",
+      "role": "structural_schema",
+      "media_type": "application/json",
+      "bytes": 54264,
+      "sha256": "90762cde6094272fc93eadc3a059303e25dafadf8fdfb6189790aad6b1e3cf6c",
+      "git_blob_sha1": "1079368cb7f3e95745288711cf251a42e65d70dd",
+      "mode": "100644",
+      "source_revision": "cf55c4513c476d304656bcb93d2f74acc1529a6d"
+    },
+    {
+      "path": "verification-examples.json",
+      "role": "synthetic_nonoperational_examples",
+      "media_type": "application/json",
+      "bytes": 92209,
+      "sha256": "785d6e40c9b3233174642cb3c06b81a86409f44f6084e7d1468610a11f553d41",
+      "git_blob_sha1": "84e4b6d72da3e929091bde671e8529d188221881",
+      "mode": "100644",
+      "source_revision": "cf55c4513c476d304656bcb93d2f74acc1529a6d"
+    },
+    {
+      "path": "AUTHORITY-DEPLOYMENT.md",
+      "role": "proposed_deployment_profile",
+      "media_type": "text/markdown; charset=utf-8",
+      "bytes": 35085,
+      "sha256": "09bdc985dab1c55818acdd23b142ad3d77b546865fba3f854c73c14dd6498482",
+      "git_blob_sha1": "ae1d00dfa1bea49a427c5b5a40606672b9567096",
+      "mode": "100644",
+      "source_revision": null
+    }
+  ],
+  "excluded_from_inventory": [
+    "authority-reference.json",
+    "AUTHORITY-READINESS.md"
+  ],
+  "excluded_meaning": "The inventory cannot hash itself. Readiness is an informational setup record, never loaded as authority. Owner adoption must independently pin this inventory and all actual reference-policy/checker/observer/actuator dependencies needed by its approved scope.",
+  "runtime_artifacts_included": false,
+  "owner_approval_included": false,
+  "authority_location": null,
+  "actual_worker_principal": null,
+  "adoption_ref": null
+}

@@ -1,0 +1,1321 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:upkeeper:verification-data:v1-draft.1",
+  "title": "Derived verification record/data shapes; not authority or runtime conformance",
+  "description": "Use DATA-CONTRACT.md for cross-record and trust semantics. Reject duplicate keys/invalid tokens before schema validation. All $refs are local.",
+  "oneOf": [{"$ref": "#/$defs/record"}, {"$ref": "#/$defs/specification"}, {"$ref": "#/$defs/examples"}],
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\\s\\S])", "maxLength": 128},
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}(?![\\s\\S])", "maxLength": 64},
+    "time": {"type": "string", "format": "date-time", "pattern": "Z(?![\\s\\S])", "maxLength": 40},
+    "ids": {"type": "array", "items": {"$ref": "#/$defs/id"}, "minItems": 0, "maxItems": 4096, "uniqueItems": true},
+    "texts": {"type": "array", "items": {"$ref": "#/$defs/text"}, "minItems": 0, "maxItems": 4096, "uniqueItems": true},
+    "artifact": {
+      "type": "object",
+      "properties": {"sha256": {"$ref": "#/$defs/sha256"}, "media_type": {"$ref": "#/$defs/text"}},
+      "required": ["sha256", "media_type"],
+      "additionalProperties": false
+    },
+    "record_ref": {
+      "type": "object",
+      "properties": {"id": {"$ref": "#/$defs/id"}, "sha256": {"$ref": "#/$defs/sha256"}},
+      "required": ["id", "sha256"],
+      "additionalProperties": false
+    },
+    "refs": {"type": "array", "items": {"$ref": "#/$defs/record_ref"}, "minItems": 0, "maxItems": 4096, "uniqueItems": true},
+    "nref": {"anyOf": [{"$ref": "#/$defs/record_ref"}, {"type": "null"}]},
+    "nartifact": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+    "resource": {
+      "type": "object",
+      "properties": {
+        "repository_id": {"$ref": "#/$defs/id"},
+        "kind": {"enum": ["SOURCE", "SCRATCH", "EVIDENCE", "REFERENCE", "TRACKER", "REMOTE", "CONTROL"]},
+        "target_id": {"$ref": "#/$defs/id"}
+      },
+      "required": ["repository_id", "kind", "target_id"],
+      "additionalProperties": false
+    },
+    "interval": {
+      "type": "object",
+      "properties": {
+        "clock_id": {"$ref": "#/$defs/id"},
+        "epoch_id": {"$ref": "#/$defs/id"},
+        "start_tick": {"$ref": "#/$defs/uint"},
+        "end_tick": {"$ref": "#/$defs/uint"}
+      },
+      "required": ["clock_id", "epoch_id", "start_tick", "end_tick"],
+      "additionalProperties": false
+    },
+    "validity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {"kind": {"const": "UTC_WINDOW"}, "not_before": {"$ref": "#/$defs/time"}, "expires_at": {"$ref": "#/$defs/time"}},
+          "required": ["kind", "not_before", "expires_at"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {"const": "MONOTONIC_LEASE"},
+            "clock_id": {"$ref": "#/$defs/id"},
+            "epoch_id": {"$ref": "#/$defs/id"},
+            "not_before_tick": {"$ref": "#/$defs/uint"},
+            "expires_tick": {"$ref": "#/$defs/uint"}
+          },
+          "required": ["kind", "clock_id", "epoch_id", "not_before_tick", "expires_tick"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "duration_ticks": {"$ref": "#/$defs/uint"},
+        "clock_id": {"$ref": "#/$defs/id"},
+        "max_model_contacts": {"$ref": "#/$defs/uint"},
+        "max_attempts": {"$ref": "#/$defs/uint"},
+        "max_observation_bytes": {"$ref": "#/$defs/uint"},
+        "max_retained_bytes": {"$ref": "#/$defs/uint"},
+        "max_public_writes": {"$ref": "#/$defs/uint"}
+      },
+      "required": ["duration_ticks", "clock_id", "max_model_contacts", "max_attempts", "max_observation_bytes", "max_retained_bytes", "max_public_writes"],
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "mode": {"enum": ["READ_ONLY", "CANDIDATE_WRITE", "DIAGNOSTIC", "ADMINISTRATIVE"]},
+        "resources": {"type": "array", "items": {"$ref": "#/$defs/resource"}, "minItems": 1, "maxItems": 4096},
+        "writable_resources": {"type": "array", "items": {"$ref": "#/$defs/resource"}, "minItems": 0, "maxItems": 4096},
+        "prohibited_effects": {"$ref": "#/$defs/texts"},
+        "profile_id": {"$ref": "#/$defs/id"},
+        "policy_artifact": {"$ref": "#/$defs/artifact"}
+      },
+      "required": ["mode", "resources", "writable_resources", "prohibited_effects", "profile_id", "policy_artifact"],
+      "additionalProperties": false
+    },
+    "obligation_state": {"enum": ["SATISFIED", "VIOLATED", "UNKNOWN", "PENDING_REVIEW", "NOT_APPLICABLE"]},
+    "disposition": {"enum": ["ACCEPTED", "REJECTED", "BLOCKED", "REVIEW_REQUIRED", "CANCELLED", "NO_CHANGE_VERIFIED"]},
+    "task_kind": {"enum": ["REPAIR", "DISCOVERY", "NO_CHANGE", "ADMINISTRATIVE", "SALVAGE"]},
+    "action_kind": {"enum": ["START_ATTEMPT", "APPLY_CANDIDATE", "MERGE_CANDIDATE", "RESOLVE_ISSUE", "PUBLISH_REPORT", "EXTERNAL_EFFECT", "SAFE_STOP"]},
+    "assurance": {"enum": ["OBSERVED_EXECUTION", "TESTED_CONTRACT", "ENFORCED_INVARIANT", "OTHER_EXPLICITLY_SUPPORTED"]},
+    "reason": {
+      "type": "object",
+      "properties": {"code": {"$ref": "#/$defs/id"}, "message": {"$ref": "#/$defs/text"}, "related_ids": {"$ref": "#/$defs/ids"}},
+      "required": ["code", "message", "related_ids"],
+      "additionalProperties": false
+    },
+    "reasons": {"type": "array", "items": {"$ref": "#/$defs/reason"}, "minItems": 1, "maxItems": 4096},
+    "obligation_key": {
+      "type": "object",
+      "properties": {"id": {"$ref": "#/$defs/id"}, "version": {"$ref": "#/$defs/id"}},
+      "required": ["id", "version"],
+      "additionalProperties": false
+    },
+    "method": {
+      "type": "object",
+      "properties": {
+        "kind": {"enum": ["AUTOMATED", "HUMAN", "UNDETERMINED"]},
+        "checker": {"$ref": "#/$defs/nartifact"},
+        "parameters": {"$ref": "#/$defs/nartifact"},
+        "expected": {"$ref": "#/$defs/nartifact"},
+        "required_observations": {"$ref": "#/$defs/ids"},
+        "completion_predicate": {"$ref": "#/$defs/text"}
+      },
+      "required": ["kind", "checker", "parameters", "expected", "required_observations", "completion_predicate"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"enum": ["AUTOMATED", "HUMAN"]}}},
+          "then": {"properties": {"checker": {"$ref": "#/$defs/artifact"}, "expected": {"$ref": "#/$defs/artifact"}}}
+        }
+      ]
+    },
+    "obligation": {
+      "type": "object",
+      "properties": {
+        "key": {"$ref": "#/$defs/obligation_key"},
+        "required": {"type": "boolean"},
+        "property": {"$ref": "#/$defs/text"},
+        "scope": {"$ref": "#/$defs/artifact"},
+        "applicability_rule": {"$ref": "#/$defs/artifact"},
+        "method": {"$ref": "#/$defs/method"},
+        "deadline": {"$ref": "#/$defs/validity"},
+        "requirement_ids": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^ICV-(00[1-9]|0[1-4][0-9]|050)(?![\\s\\S])"},
+          "minItems": 1,
+          "maxItems": 50,
+          "uniqueItems": true
+        }
+      },
+      "required": ["key", "required", "property", "scope", "applicability_rule", "method", "deadline", "requirement_ids"],
+      "additionalProperties": false
+    },
+    "evaluation": {
+      "type": "object",
+      "properties": {
+        "obligation": {"$ref": "#/$defs/obligation_key"},
+        "state": {"$ref": "#/$defs/obligation_state"},
+        "evaluation_method": {"enum": ["AUTOMATED", "HUMAN", "NONE"]},
+        "evidence_refs": {"$ref": "#/$defs/refs"},
+        "applicability_refs": {"$ref": "#/$defs/refs"},
+        "limitations": {"$ref": "#/$defs/texts"},
+        "reasons": {"$ref": "#/$defs/reasons"}
+      },
+      "required": ["obligation", "state", "evaluation_method", "evidence_refs", "applicability_refs", "limitations", "reasons"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"enum": ["SATISFIED", "VIOLATED"]}}},
+          "then": {
+            "properties": {
+              "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/record_ref"}, "minItems": 1, "maxItems": 4096, "uniqueItems": true},
+              "evaluation_method": {"enum": ["AUTOMATED", "HUMAN"]}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"state": {"const": "NOT_APPLICABLE"}}},
+          "then": {
+            "properties": {
+              "applicability_refs": {"type": "array", "items": {"$ref": "#/$defs/record_ref"}, "minItems": 1, "maxItems": 4096, "uniqueItems": true}
+            }
+          }
+        }
+      ]
+    },
+    "claim": {
+      "type": "object",
+      "properties": {
+        "claim_id": {"$ref": "#/$defs/id"},
+        "statement": {"$ref": "#/$defs/text"},
+        "obligation_ids": {"$ref": "#/$defs/ids"},
+        "status": {"enum": ["SUPPORTED", "CONTRADICTED", "UNVERIFIED"]},
+        "assurance": {"anyOf": [{"$ref": "#/$defs/assurance"}, {"type": "null"}]},
+        "scope": {"$ref": "#/$defs/artifact"},
+        "limitations": {"$ref": "#/$defs/texts"}
+      },
+      "required": ["claim_id", "statement", "obligation_ids", "status", "assurance", "scope", "limitations"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "SUPPORTED"}}},
+          "then": {
+            "properties": {
+              "obligation_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}, "minItems": 1, "maxItems": 4096, "uniqueItems": true},
+              "assurance": {"$ref": "#/$defs/assurance"}
+            }
+          }
+        }
+      ]
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "execution_id": {"$ref": "#/$defs/id"},
+        "command": {"$ref": "#/$defs/artifact"},
+        "conditions": {"$ref": "#/$defs/artifact"},
+        "requested_check_ids": {"$ref": "#/$defs/ids"},
+        "completed_check_ids": {"$ref": "#/$defs/ids"},
+        "interval": {"$ref": "#/$defs/interval"},
+        "exit_code": {"anyOf": [{"type": "integer", "minimum": -2147483648, "maximum": 4294967295}, {"type": "null"}]},
+        "completion": {"enum": ["COMPLETED", "FAILED", "INTERRUPTED", "NOT_RUN"]}
+      },
+      "required": ["execution_id", "command", "conditions", "requested_check_ids", "completed_check_ids", "interval", "exit_code", "completion"],
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "STATE_INSPECTION",
+            "PROCESS_RESULT",
+            "CHECK_RESULT",
+            "INPUT_READ",
+            "PREDICATE_RESULT",
+            "HANDLER_INVOCATION",
+            "SEND_ATTEMPT",
+            "RECEIPT",
+            "COMMITTED_STATE",
+            "BOUNDARY_DENIAL",
+            "OBSERVER_HEALTH",
+            "OWNER_JUDGMENT",
+            "REMOTE_READBACK"
+          ]
+        },
+        "operation_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "sender_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "receiver_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "payload": {"$ref": "#/$defs/nartifact"},
+        "predecessors": {"$ref": "#/$defs/refs"}
+      },
+      "required": ["kind", "operation_id", "sender_id", "receiver_id", "payload", "predecessors"],
+      "additionalProperties": false
+    },
+    "observation_value": {
+      "type": "object",
+      "properties": {
+        "availability": {"enum": ["OBSERVED", "UNAVAILABLE"]},
+        "coverage": {"enum": ["COMPLETE_FOR_PREDICATE", "PARTIAL", "UNAVAILABLE"]},
+        "result": {"$ref": "#/$defs/nartifact"},
+        "interval": {"$ref": "#/$defs/interval"},
+        "limitations": {"$ref": "#/$defs/texts"}
+      },
+      "required": ["availability", "coverage", "result", "interval", "limitations"],
+      "additionalProperties": false,
+      "allOf": [
+        {"if": {"properties": {"availability": {"const": "OBSERVED"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/artifact"}}}},
+        {"if": {"properties": {"availability": {"const": "UNAVAILABLE"}}}, "then": {"properties": {"result": {"type": "null"}}}}
+      ]
+    },
+    "hold_scope": {
+      "type": "object",
+      "properties": {
+        "task_ids": {"$ref": "#/$defs/ids"},
+        "resources": {"type": "array", "items": {"$ref": "#/$defs/resource"}, "minItems": 0, "maxItems": 4096},
+        "actions": {"type": "array", "items": {"$ref": "#/$defs/action_kind"}, "minItems": 0, "maxItems": 4096, "uniqueItems": true},
+        "shared_boundary_ids": {"$ref": "#/$defs/ids"}
+      },
+      "required": ["task_ids", "resources", "actions", "shared_boundary_ids"],
+      "additionalProperties": false
+    },
+    "artifact_binding": {
+      "type": "object",
+      "properties": {"role": {"$ref": "#/$defs/id"}, "artifact": {"$ref": "#/$defs/artifact"}},
+      "required": ["role", "artifact"],
+      "additionalProperties": false
+    },
+    "adoption_payload": {
+      "type": "object",
+      "properties": {
+        "owner_id": {"$ref": "#/$defs/id"},
+        "adopted_artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact_binding"}, "minItems": 1, "maxItems": 64},
+        "scope": {"$ref": "#/$defs/scope"},
+        "reference_policy": {"$ref": "#/$defs/artifact"},
+        "effective_epoch": {"$ref": "#/$defs/uint"},
+        "validity": {"$ref": "#/$defs/validity"},
+        "authorization_evidence": {"$ref": "#/$defs/artifact"}
+      },
+      "required": ["owner_id", "adopted_artifacts", "scope", "reference_policy", "effective_epoch", "validity", "authorization_evidence"],
+      "additionalProperties": false
+    },
+    "work_authorization_payload": {
+      "type": "object",
+      "properties": {
+        "adoption_ref": {"$ref": "#/$defs/record_ref"},
+        "task_id": {"$ref": "#/$defs/id"},
+        "kind": {"$ref": "#/$defs/task_kind"},
+        "baseline": {"$ref": "#/$defs/artifact"},
+        "repository_id": {"$ref": "#/$defs/id"},
+        "scope": {"$ref": "#/$defs/scope"},
+        "obligation_set_ref": {"$ref": "#/$defs/nref"},
+        "budget": {"$ref": "#/$defs/budget"},
+        "validity": {"$ref": "#/$defs/validity"},
+        "revocation_epoch": {"$ref": "#/$defs/uint"},
+        "delegation_policy": {"$ref": "#/$defs/artifact"}
+      },
+      "required": [
+        "adoption_ref",
+        "task_id",
+        "kind",
+        "baseline",
+        "repository_id",
+        "scope",
+        "obligation_set_ref",
+        "budget",
+        "validity",
+        "revocation_epoch",
+        "delegation_policy"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"enum": ["REPAIR", "NO_CHANGE", "ADMINISTRATIVE", "SALVAGE"]}}},
+          "then": {"properties": {"obligation_set_ref": {"$ref": "#/$defs/record_ref"}}}
+        }
+      ]
+    },
+    "obligation_set_payload": {
+      "type": "object",
+      "properties": {
+        "task_id": {"$ref": "#/$defs/id"},
+        "version": {"$ref": "#/$defs/id"},
+        "profile_id": {"$ref": "#/$defs/id"},
+        "obligations": {"type": "array", "items": {"$ref": "#/$defs/obligation"}, "minItems": 1, "maxItems": 4096},
+        "approval_evidence": {"$ref": "#/$defs/artifact"}
+      },
+      "required": ["task_id", "version", "profile_id", "obligations", "approval_evidence"],
+      "additionalProperties": false
+    },
+    "candidate_payload": {
+      "type": "object",
+      "properties": {
+        "task_id": {"$ref": "#/$defs/id"},
+        "attempt_id": {"$ref": "#/$defs/id"},
+        "repository_id": {"$ref": "#/$defs/id"},
+        "baseline": {"$ref": "#/$defs/artifact"},
+        "source_snapshot": {"$ref": "#/$defs/artifact"},
+        "input_manifest": {"$ref": "#/$defs/artifact"},
+        "capture_policy": {"enum": ["COMMITTED_OBJECTS", "COHERENT_DIRTY_SNAPSHOT"]},
+        "capture_evidence": {"$ref": "#/$defs/artifact"},
+        "limitations": {"$ref": "#/$defs/texts"}
+      },
+      "required": [
+        "task_id",
+        "attempt_id",
+        "repository_id",
+        "baseline",
+        "source_snapshot",
+        "input_manifest",
+        "capture_policy",
+        "capture_evidence",
+        "limitations"
+      ],
+      "additionalProperties": false
+    },
+    "attempt_result_payload": {
+      "type": "object",
+      "properties": {
+        "task_id": {"$ref": "#/$defs/id"},
+        "work_ref": {"$ref": "#/$defs/record_ref"},
+        "attempt_id": {"$ref": "#/$defs/id"},
+        "worker_id": {"$ref": "#/$defs/id"},
+        "candidate_ref": {"$ref": "#/$defs/nref"},
+        "execution": {"$ref": "#/$defs/execution"},
+        "worker_claim": {"anyOf": [{"$ref": "#/$defs/text"}, {"type": "null"}]},
+        "state": {"enum": ["SUCCEEDED", "FAILED", "INTERRUPTED", "NOT_STARTED"]}
+      },
+      "required": ["task_id", "work_ref", "attempt_id", "worker_id", "candidate_ref", "execution", "worker_claim", "state"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "SUCCEEDED"}}},
+          "then": {"properties": {"execution": {"properties": {"completion": {"const": "COMPLETED"}, "exit_code": {"const": 0}}}}}
+        }
+      ]
+    },
+    "observation_payload": {
+      "type": "object",
+      "properties": {
+        "task_id": {"$ref": "#/$defs/id"},
+        "attempt_id": {"$ref": "#/$defs/id"},
+        "candidate_ref": {"$ref": "#/$defs/nref"},
+        "input": {"$ref": "#/$defs/artifact"},
+        "obligation_set_ref": {"$ref": "#/$defs/nref"},
+        "obligation": {"anyOf": [{"$ref": "#/$defs/obligation_key"}, {"type": "null"}]},
+        "method": {"$ref": "#/$defs/artifact"},
+        "measurement_scope": {"$ref": "#/$defs/artifact"},
+        "execution": {"$ref": "#/$defs/execution"},
+        "event": {"$ref": "#/$defs/event"},
+        "observation": {"$ref": "#/$defs/observation_value"}
+      },
+      "required": [
+        "task_id",
+        "attempt_id",
+        "candidate_ref",
+        "input",
+        "obligation_set_ref",
+        "obligation",
+        "method",
+        "measurement_scope",
+        "execution",
+        "event",
+        "observation"
+      ],
+      "additionalProperties": false
+    },
+    "assessment_payload": {
+      "type": "object",
+      "properties": {
+        "task_id": {"$ref": "#/$defs/id"},
+        "attempt_ref": {"$ref": "#/$defs/nref"},
+        "work_ref": {"$ref": "#/$defs/nref"},
+        "candidate_ref": {"$ref": "#/$defs/nref"},
+        "obligation_set_ref": {"$ref": "#/$defs/nref"},
+        "kind": {"$ref": "#/$defs/task_kind"},
+        "context": {
+          "type": "object",
+          "properties": {
+            "cancellation": {"enum": ["CLEAR", "VERIFIED", "UNKNOWN"]},
+            "governing": {"enum": ["ESTABLISHED", "INVALID", "UNKNOWN"]},
+            "verifier": {"enum": ["ESTABLISHED", "INVALID", "UNKNOWN"]},
+            "subject": {"enum": ["ESTABLISHED", "INVALID", "UNKNOWN"]},
+            "evidence_refs": {"$ref": "#/$defs/refs"}
+          },
+          "required": ["cancellation", "governing", "verifier", "subject", "evidence_refs"],
+          "additionalProperties": false
+        },
+        "evaluations": {"type": "array", "items": {"$ref": "#/$defs/evaluation"}, "minItems": 0, "maxItems": 4096},
+        "claims": {"type": "array", "items": {"$ref": "#/$defs/claim"}, "minItems": 0, "maxItems": 4096},
+        "disposition": {"$ref": "#/$defs/disposition"},
+        "reasons": {"$ref": "#/$defs/reasons"},
+        "limitations": {"$ref": "#/$defs/texts"}
+      },
+      "required": [
+        "task_id",
+        "attempt_ref",
+        "work_ref",
+        "candidate_ref",
+        "obligation_set_ref",
+        "kind",
+        "context",
+        "evaluations",
+        "claims",
+        "disposition",
+        "reasons",
+        "limitations"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"disposition": {"enum": ["ACCEPTED", "NO_CHANGE_VERIFIED"]}}},
+          "then": {
+            "properties": {
+              "work_ref": {"$ref": "#/$defs/record_ref"},
+              "obligation_set_ref": {"$ref": "#/$defs/record_ref"},
+              "evaluations": {"type": "array", "items": {"$ref": "#/$defs/evaluation"}, "minItems": 1, "maxItems": 4096},
+              "context": {
+                "properties": {
+                  "cancellation": {"const": "CLEAR"},
+                  "governing": {"const": "ESTABLISHED"},
+                  "verifier": {"const": "ESTABLISHED"},
+                  "subject": {"const": "ESTABLISHED"}
+                }
+              }
+            }
+          }
+        },
+        {"if": {"properties": {"disposition": {"const": "NO_CHANGE_VERIFIED"}}}, "then": {"properties": {"kind": {"const": "NO_CHANGE"}}}},
+        {
+          "if": {"properties": {"kind": {"enum": ["REPAIR", "SALVAGE"]}, "disposition": {"const": "ACCEPTED"}}},
+          "then": {"properties": {"candidate_ref": {"$ref": "#/$defs/record_ref"}}}
+        }
+      ]
+    },
+    "action_authorization_payload": {
+      "type": "object",
+      "properties": {
+        "task_id": {"$ref": "#/$defs/id"},
+        "work_ref": {"$ref": "#/$defs/nref"},
+        "action": {"$ref": "#/$defs/action_kind"},
+        "actuator_id": {"$ref": "#/$defs/id"},
+        "resource": {"$ref": "#/$defs/resource"},
+        "subject": {"$ref": "#/$defs/artifact"},
+        "acceptance_ref": {"$ref": "#/$defs/nref"},
+        "policy": {"$ref": "#/$defs/artifact"},
+        "precondition_set_ref": {"$ref": "#/$defs/nref"},
+        "precondition_assessment_ref": {"$ref": "#/$defs/nref"},
+        "budget": {"$ref": "#/$defs/budget"},
+        "validity": {"$ref": "#/$defs/validity"},
+        "revocation_epoch": {"$ref": "#/$defs/uint"},
+        "idempotency_key": {"$ref": "#/$defs/id"},
+        "max_effects": {"const": 1}
+      },
+      "required": [
+        "task_id",
+        "work_ref",
+        "action",
+        "actuator_id",
+        "resource",
+        "subject",
+        "acceptance_ref",
+        "policy",
+        "precondition_set_ref",
+        "precondition_assessment_ref",
+        "budget",
+        "validity",
+        "revocation_epoch",
+        "idempotency_key",
+        "max_effects"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"action": {"enum": ["APPLY_CANDIDATE", "MERGE_CANDIDATE", "RESOLVE_ISSUE"]}}},
+          "then": {"properties": {"acceptance_ref": {"$ref": "#/$defs/record_ref"}, "work_ref": {"$ref": "#/$defs/record_ref"}}}
+        },
+        {
+          "if": {"properties": {"action": {"not": {"const": "SAFE_STOP"}}}},
+          "then": {
+            "properties": {
+              "work_ref": {"$ref": "#/$defs/record_ref"},
+              "precondition_set_ref": {"$ref": "#/$defs/record_ref"},
+              "precondition_assessment_ref": {"$ref": "#/$defs/record_ref"}
+            }
+          }
+        }
+      ]
+    },
+    "action_receipt_payload": {
+      "type": "object",
+      "properties": {
+        "action_ref": {"$ref": "#/$defs/record_ref"},
+        "operation_id": {"$ref": "#/$defs/id"},
+        "outcome": {"enum": ["CONFIRMED", "FAILED", "OUTCOME_UNKNOWN"]},
+        "result": {"$ref": "#/$defs/nartifact"},
+        "observation_refs": {"$ref": "#/$defs/refs"},
+        "previous_receipt_ref": {"$ref": "#/$defs/nref"},
+        "reasons": {"$ref": "#/$defs/reasons"}
+      },
+      "required": ["action_ref", "operation_id", "outcome", "result", "observation_refs", "previous_receipt_ref", "reasons"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"outcome": {"enum": ["CONFIRMED", "FAILED"]}}},
+          "then": {
+            "properties": {
+              "observation_refs": {"type": "array", "items": {"$ref": "#/$defs/record_ref"}, "minItems": 1, "maxItems": 4096, "uniqueItems": true}
+            }
+          }
+        },
+        {"if": {"properties": {"outcome": {"const": "CONFIRMED"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/artifact"}}}}
+      ]
+    },
+    "unresolved_condition_payload": {
+      "type": "object",
+      "properties": {
+        "condition_id": {"$ref": "#/$defs/id"},
+        "task_id": {"$ref": "#/$defs/id"},
+        "subject": {"$ref": "#/$defs/nartifact"},
+        "obligation_set_ref": {"$ref": "#/$defs/nref"},
+        "obligation": {"anyOf": [{"$ref": "#/$defs/obligation_key"}, {"type": "null"}]},
+        "assessment_ref": {"$ref": "#/$defs/nref"},
+        "kind": {"enum": ["REQUIRED_UNKNOWN", "REQUIRED_VIOLATED", "PENDING_REVIEW", "CUSTODY_FAILURE", "AUTHORITY_FAILURE", "COVERAGE_GAP"]},
+        "hold_scope": {"$ref": "#/$defs/hold_scope"},
+        "evidence_refs": {"$ref": "#/$defs/refs"},
+        "permitted_next_step": {"$ref": "#/$defs/text"},
+        "reasons": {"$ref": "#/$defs/reasons"}
+      },
+      "required": [
+        "condition_id",
+        "task_id",
+        "subject",
+        "obligation_set_ref",
+        "obligation",
+        "assessment_ref",
+        "kind",
+        "hold_scope",
+        "evidence_refs",
+        "permitted_next_step",
+        "reasons"
+      ],
+      "additionalProperties": false
+    },
+    "condition_resolution_payload": {
+      "type": "object",
+      "properties": {
+        "condition_ref": {"$ref": "#/$defs/record_ref"},
+        "resolution": {"enum": ["EVIDENCE_SATISFIED", "REQUIREMENT_CHANGED", "REQUIREMENT_WITHDRAWN"]},
+        "authorization_ref": {"$ref": "#/$defs/record_ref"},
+        "subject_mapping": {"$ref": "#/$defs/artifact"},
+        "evidence_refs": {"$ref": "#/$defs/refs"},
+        "new_assessment_ref": {"$ref": "#/$defs/nref"},
+        "new_obligation_set_ref": {"$ref": "#/$defs/nref"},
+        "reasons": {"$ref": "#/$defs/reasons"}
+      },
+      "required": [
+        "condition_ref",
+        "resolution",
+        "authorization_ref",
+        "subject_mapping",
+        "evidence_refs",
+        "new_assessment_ref",
+        "new_obligation_set_ref",
+        "reasons"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"resolution": {"const": "EVIDENCE_SATISFIED"}}},
+          "then": {
+            "properties": {
+              "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/record_ref"}, "minItems": 1, "maxItems": 4096, "uniqueItems": true},
+              "new_assessment_ref": {"$ref": "#/$defs/record_ref"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"resolution": {"enum": ["REQUIREMENT_CHANGED", "REQUIREMENT_WITHDRAWN"]}}},
+          "then": {"properties": {"new_obligation_set_ref": {"$ref": "#/$defs/record_ref"}}}
+        }
+      ]
+    },
+    "coverage_gap_payload": {
+      "type": "object",
+      "properties": {
+        "task_id": {"$ref": "#/$defs/id"},
+        "property": {"$ref": "#/$defs/text"},
+        "scope": {"$ref": "#/$defs/artifact"},
+        "coverage_class": {"enum": ["PROTECTED_CHECKS", "WORKER_ONLY_CHECKS", "NO_ADEQUATE_METHOD"]},
+        "available_evidence_refs": {"$ref": "#/$defs/refs"},
+        "missing_coverage": {"$ref": "#/$defs/text"},
+        "automation_consequence": {"$ref": "#/$defs/text"},
+        "condition_ref": {"$ref": "#/$defs/nref"}
+      },
+      "required": [
+        "task_id",
+        "property",
+        "scope",
+        "coverage_class",
+        "available_evidence_refs",
+        "missing_coverage",
+        "automation_consequence",
+        "condition_ref"
+      ],
+      "additionalProperties": false
+    },
+    "custody_checkpoint_payload": {
+      "type": "object",
+      "properties": {
+        "store_id": {"$ref": "#/$defs/id"},
+        "epoch": {"$ref": "#/$defs/id"},
+        "sequence": {"$ref": "#/$defs/uint"},
+        "previous_checkpoint_ref": {"$ref": "#/$defs/nref"},
+        "record_inventory": {"$ref": "#/$defs/artifact"},
+        "unresolved_inventory": {"$ref": "#/$defs/artifact"},
+        "initialization_authorization_ref": {"$ref": "#/$defs/nref"},
+        "durability_scope": {"$ref": "#/$defs/text"}
+      },
+      "required": [
+        "store_id",
+        "epoch",
+        "sequence",
+        "previous_checkpoint_ref",
+        "record_inventory",
+        "unresolved_inventory",
+        "initialization_authorization_ref",
+        "durability_scope"
+      ],
+      "additionalProperties": false
+    },
+    "case_result_payload": {
+      "type": "object",
+      "properties": {
+        "case_id": {"type": "string", "pattern": "^ICM-(00[1-9]|0[1-4][0-9]|05[0-2])(?![\\s\\S])"},
+        "variant_id": {"$ref": "#/$defs/id"},
+        "scope": {"$ref": "#/$defs/artifact"},
+        "candidate_ref": {"$ref": "#/$defs/nref"},
+        "matrix": {"$ref": "#/$defs/artifact"},
+        "invocation": {"$ref": "#/$defs/artifact"},
+        "expected": {"$ref": "#/$defs/artifact"},
+        "actual": {"$ref": "#/$defs/nartifact"},
+        "result": {"enum": ["PASS", "FAIL", "BLOCKED", "NOT_RUN", "EXCLUDED_BY_APPROVED_SCOPE"]},
+        "real_components": {"$ref": "#/$defs/ids"},
+        "test_doubles": {"$ref": "#/$defs/ids"},
+        "observations": {"$ref": "#/$defs/refs"},
+        "effects": {"$ref": "#/$defs/refs"},
+        "limitations": {"$ref": "#/$defs/texts"}
+      },
+      "required": [
+        "case_id",
+        "variant_id",
+        "scope",
+        "candidate_ref",
+        "matrix",
+        "invocation",
+        "expected",
+        "actual",
+        "result",
+        "real_components",
+        "test_doubles",
+        "observations",
+        "effects",
+        "limitations"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"result": {"enum": ["PASS", "FAIL"]}}},
+          "then": {
+            "properties": {
+              "actual": {"$ref": "#/$defs/artifact"},
+              "observations": {"type": "array", "items": {"$ref": "#/$defs/record_ref"}, "minItems": 1, "maxItems": 4096, "uniqueItems": true}
+            }
+          }
+        }
+      ]
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "document_type": {"const": "record"},
+        "schema_version": {"const": "upkeeper.verification-data.v1-draft.1"},
+        "record_type": {
+          "enum": [
+            "adoption",
+            "work_authorization",
+            "obligation_set",
+            "candidate",
+            "attempt_result",
+            "observation",
+            "assessment",
+            "action_authorization",
+            "action_receipt",
+            "unresolved_condition",
+            "condition_resolution",
+            "coverage_gap",
+            "custody_checkpoint",
+            "case_result"
+          ]
+        },
+        "record_id": {"$ref": "#/$defs/id"},
+        "realm": {"$ref": "#/$defs/id"},
+        "issuer_id": {"$ref": "#/$defs/id"},
+        "issued_at": {"$ref": "#/$defs/time"},
+        "contract_sha256": {"$ref": "#/$defs/sha256"},
+        "privacy": {"enum": ["PRIVATE", "RESTRICTED", "PUBLIC_SAFE"]},
+        "payload": {"type": "object"}
+      },
+      "required": ["document_type", "schema_version", "record_type", "record_id", "realm", "issuer_id", "issued_at", "contract_sha256", "privacy", "payload"],
+      "additionalProperties": false,
+      "allOf": [
+        {"if": {"properties": {"record_type": {"const": "adoption"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/adoption_payload"}}}},
+        {
+          "if": {"properties": {"record_type": {"const": "work_authorization"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/work_authorization_payload"}}}
+        },
+        {
+          "if": {"properties": {"record_type": {"const": "obligation_set"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/obligation_set_payload"}}}
+        },
+        {
+          "if": {"properties": {"record_type": {"const": "candidate"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/candidate_payload"}}}
+        },
+        {
+          "if": {"properties": {"record_type": {"const": "attempt_result"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/attempt_result_payload"}}}
+        },
+        {
+          "if": {"properties": {"record_type": {"const": "observation"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/observation_payload"}}}
+        },
+        {
+          "if": {"properties": {"record_type": {"const": "assessment"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/assessment_payload"}}}
+        },
+        {
+          "if": {"properties": {"record_type": {"const": "action_authorization"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/action_authorization_payload"}}}
+        },
+        {
+          "if": {"properties": {"record_type": {"const": "action_receipt"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/action_receipt_payload"}}}
+        },
+        {
+          "if": {"properties": {"record_type": {"const": "unresolved_condition"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/unresolved_condition_payload"}}}
+        },
+        {
+          "if": {"properties": {"record_type": {"const": "condition_resolution"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/condition_resolution_payload"}}}
+        },
+        {
+          "if": {"properties": {"record_type": {"const": "coverage_gap"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/coverage_gap_payload"}}}
+        },
+        {
+          "if": {"properties": {"record_type": {"const": "custody_checkpoint"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/custody_checkpoint_payload"}}}
+        },
+        {
+          "if": {"properties": {"record_type": {"const": "case_result"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/case_result_payload"}}}
+        }
+      ]
+    },
+    "source_binding": {
+      "type": "object",
+      "properties": {
+        "path": {"enum": ["CONTRACT.md", "ACCEPTANCE-MATRIX.md"]},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "git_blob_sha1": {"type": "string", "pattern": "^[0-9a-f]{40}(?![\\s\\S])"}
+      },
+      "required": ["path", "sha256", "git_blob_sha1"],
+      "additionalProperties": false
+    },
+    "requirement_entry": {
+      "type": "object",
+      "properties": {
+        "id": {"$ref": "#/$defs/icv_id"},
+        "title": {"$ref": "#/$defs/text"},
+        "case_ids": {"type": "array", "items": {"$ref": "#/$defs/icm_id"}, "minItems": 1, "maxItems": 52, "uniqueItems": true}
+      },
+      "required": ["id", "title", "case_ids"],
+      "additionalProperties": false
+    },
+    "case_entry": {
+      "type": "object",
+      "properties": {
+        "id": {"$ref": "#/$defs/icm_id"},
+        "title": {"$ref": "#/$defs/text"},
+        "requirement_ids": {"type": "array", "items": {"$ref": "#/$defs/icv_id"}, "minItems": 1, "maxItems": 50, "uniqueItems": true}
+      },
+      "required": ["id", "title", "requirement_ids"],
+      "additionalProperties": false
+    },
+    "specification": {
+      "type": "object",
+      "properties": {
+        "document_type": {"const": "specification"},
+        "schema_version": {"const": "upkeeper.verification-data.v1-draft.1"},
+        "status": {"const": "UNADOPTED_SPECIFICATION"},
+        "basis": {"type": "array", "items": {"$ref": "#/$defs/source_binding"}, "minItems": 2, "maxItems": 2, "uniqueItems": true},
+        "data_contract": {"const": "DATA-CONTRACT.md"},
+        "record_schema": {"const": "verification.schema.json"},
+        "example_suite": {"const": "verification-examples.json"},
+        "limits": {
+          "type": "object",
+          "properties": {
+            "record_bytes": {"$ref": "#/$defs/uint"},
+            "json_depth": {"$ref": "#/$defs/uint"},
+            "array_items": {"$ref": "#/$defs/uint"},
+            "string_codepoints": {"$ref": "#/$defs/uint"},
+            "integer_max": {"$ref": "#/$defs/uint"}
+          },
+          "required": ["record_bytes", "json_depth", "array_items", "string_codepoints", "integer_max"],
+          "additionalProperties": false
+        },
+        "parse_policy": {
+          "type": "object",
+          "properties": {
+            "encoding": {"$ref": "#/$defs/text"},
+            "object_keys": {"$ref": "#/$defs/text"},
+            "numbers": {"$ref": "#/$defs/text"},
+            "references": {"$ref": "#/$defs/text"},
+            "defaults": {"$ref": "#/$defs/text"},
+            "timestamps": {"$ref": "#/$defs/text"},
+            "digests": {"$ref": "#/$defs/text"}
+          },
+          "required": ["encoding", "object_keys", "numbers", "references", "defaults", "timestamps", "digests"],
+          "additionalProperties": false
+        },
+        "record_types": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "adoption",
+              "work_authorization",
+              "obligation_set",
+              "candidate",
+              "attempt_result",
+              "observation",
+              "assessment",
+              "action_authorization",
+              "action_receipt",
+              "unresolved_condition",
+              "condition_resolution",
+              "coverage_gap",
+              "custody_checkpoint",
+              "case_result"
+            ]
+          },
+          "minItems": 14,
+          "maxItems": 14,
+          "uniqueItems": true
+        },
+        "obligation_states": {"const": ["SATISFIED", "VIOLATED", "UNKNOWN", "PENDING_REVIEW", "NOT_APPLICABLE"]},
+        "task_dispositions": {"const": ["ACCEPTED", "REJECTED", "BLOCKED", "REVIEW_REQUIRED", "CANCELLED", "NO_CHANGE_VERIFIED"]},
+        "action_outcomes": {"const": ["CONFIRMED", "FAILED", "OUTCOME_UNKNOWN"]},
+        "required_input_order": {"$ref": "#/$defs/texts"},
+        "decision_rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {"id": {"$ref": "#/$defs/id"}, "when": {"$ref": "#/$defs/id"}, "outcome": {"$ref": "#/$defs/disposition"}},
+            "required": ["id", "when", "outcome"],
+            "additionalProperties": false
+          },
+          "minItems": 7,
+          "maxItems": 7
+        },
+        "action_rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {"kind": {"$ref": "#/$defs/action_kind"}, "acceptance": {"$ref": "#/$defs/id"}, "required_properties": {"$ref": "#/$defs/ids"}},
+            "required": ["kind", "acceptance", "required_properties"],
+            "additionalProperties": false
+          },
+          "minItems": 7,
+          "maxItems": 7
+        },
+        "common_action_properties": {"$ref": "#/$defs/ids"},
+        "lifecycle_rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {"id": {"$ref": "#/$defs/id"}, "rule": {"$ref": "#/$defs/text"}},
+            "required": ["id", "rule"],
+            "additionalProperties": false
+          },
+          "minItems": 9,
+          "maxItems": 9
+        },
+        "profile_parameters": {
+          "const": {
+            "F-C": {
+              "selected_baseline_hex": "62726f6b656e0a",
+              "selected_expected_hex": "66697865640a",
+              "other_expected_hex": "70726573657276650a",
+              "writable_paths": ["selected.txt"],
+              "required_obligations": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+              "external_effects_authorized": false
+            },
+            "F-H": {
+              "route": "/account",
+              "heading_selector": "h1#account-heading",
+              "heading_count": 1,
+              "anchor_count": 1,
+              "baseline_text": "Acount",
+              "expected_innerText": "Account",
+              "expected_anchor_path": "/profile",
+              "preserved_route": "/help",
+              "preserved_markup": "<p id=\"help\">Help stays unchanged.</p>",
+              "scripts_allowed": false,
+              "runtime_bindings_required": ["renderer", "locale", "viewport", "document_ready", "finite_deadline", "preserved_DOM_text_snapshot"],
+              "required_obligations": ["H-text", "H-link", "H-preserve", "H-scope", "H-render"]
+            },
+            "F-X": {
+              "input_object_keys": ["mode", "value"],
+              "required_keys": ["value"],
+              "mode_type": "string when present",
+              "mode_match": "xyz",
+              "mode_normalization": "none",
+              "value_token": "JSON integer token with decoded integer 0..255; exclude Boolean, decimal and exponent forms",
+              "min_value": 0,
+              "max_value": 255,
+              "operation_id": "op-A",
+              "handler_id": "H",
+              "receiver_id": "sink-A",
+              "expected_decoded_payload": {"operation": "op-A", "value": 7},
+              "deadline_ticks": 100,
+              "automatic_retry_before_reconciliation": false,
+              "required_obligations": ["X-input", "X-condition", "X-handler", "X-payload", "X-receipt", "X-state", "X-preserve", "X-no-delivery"],
+              "applicability": "positive delivery requires handler/payload/receipt/state; absent or different mode requires no-delivery; invalid input requires INVALID_INPUT and no-delivery; preservation always applies",
+              "negative_observation_end": "worker termination plus drained/cancelled owned pending deliveries and declared receiver boundary",
+              "persistence_claim": "process-restart only when separately required; not power loss"
+            }
+          }
+        },
+        "requirements": {"type": "array", "items": {"$ref": "#/$defs/requirement_entry"}, "minItems": 50, "maxItems": 50},
+        "cases": {"type": "array", "items": {"$ref": "#/$defs/case_entry"}, "minItems": 52, "maxItems": 52},
+        "not_established": {"$ref": "#/$defs/texts"}
+      },
+      "required": [
+        "document_type",
+        "schema_version",
+        "status",
+        "basis",
+        "data_contract",
+        "record_schema",
+        "example_suite",
+        "limits",
+        "parse_policy",
+        "record_types",
+        "obligation_states",
+        "task_dispositions",
+        "action_outcomes",
+        "required_input_order",
+        "decision_rules",
+        "action_rules",
+        "common_action_properties",
+        "lifecycle_rules",
+        "profile_parameters",
+        "requirements",
+        "cases",
+        "not_established"
+      ],
+      "additionalProperties": false
+    },
+    "data_vector": {
+      "type": "object",
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "case_ids": {"type": "array", "items": {"$ref": "#/$defs/icm_id"}, "minItems": 1, "maxItems": 52, "uniqueItems": true},
+        "layer": {"enum": ["DECISION", "PROFILE_INPUT", "ACTION_BINDING", "RECORD_RELATION", "LIFECYCLE"]},
+        "input": {"type": "object"},
+        "expected": {"type": "object"},
+        "template_id": {"$ref": "#/$defs/id"},
+        "changes": {"type": "array", "items": {"$ref": "#/$defs/mutation"}, "minItems": 0, "maxItems": 32}
+      },
+      "required": ["id", "case_ids", "layer", "expected"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"layer": {"const": "DECISION"}}},
+          "then": {
+            "properties": {
+              "input": {"$ref": "#/$defs/decision_input"},
+              "expected": {
+                "type": "object",
+                "properties": {"disposition": {"$ref": "#/$defs/disposition"}},
+                "required": ["disposition"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"layer": {"const": "PROFILE_INPUT"}}},
+          "then": {
+            "properties": {
+              "input": {
+                "type": "object",
+                "properties": {"profile": {"const": "F-X"}, "utf8_hex": {"type": "string", "pattern": "^(?:[0-9a-f]{2})*(?![\\s\\S])", "maxLength": 4096}},
+                "required": ["profile", "utf8_hex"],
+                "additionalProperties": false
+              },
+              "expected": {
+                "type": "object",
+                "properties": {
+                  "application_outcome": {"enum": ["DELIVERY_REQUIRED", "NO_DELIVERY", "INVALID_INPUT"]},
+                  "value": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 255}, {"type": "null"}]}
+                },
+                "required": ["application_outcome", "value"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"layer": {"const": "RECORD_RELATION"}}},
+          "then": {
+            "properties": {
+              "input": {"$ref": "#/$defs/relation_input"},
+              "expected": {
+                "type": "object",
+                "properties": {"classification": {"enum": ["SCHEMA_REJECT", "RELATION_REJECT", "RELATION_CONSISTENT"]}, "reason": {"$ref": "#/$defs/id"}},
+                "required": ["classification", "reason"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"layer": {"const": "ACTION_BINDING"}}},
+          "then": {
+            "properties": {
+              "input": {"$ref": "#/$defs/action_input"},
+              "expected": {
+                "type": "object",
+                "properties": {"permission": {"enum": ["MATCHES_RECORDED_BINDING", "DENIED"]}},
+                "required": ["permission"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"layer": {"const": "LIFECYCLE"}}},
+          "then": {
+            "properties": {
+              "input": {"$ref": "#/$defs/lifecycle_input"},
+              "expected": {
+                "type": "object",
+                "properties": {
+                  "open_ids": {"$ref": "#/$defs/ids"},
+                  "continuation": {"enum": ["RECHECK_REMAINING", "BLOCKED"]},
+                  "resolved_as": {"enum": ["NONE", "SATISFIED_CURRENT_SCOPE", "SUPERSEDED_NOT_SATISFIED"]},
+                  "effect_outcome": {"anyOf": [{"enum": ["CONFIRMED", "OUTCOME_UNKNOWN"]}, {"type": "null"}]}
+                },
+                "required": ["open_ids", "continuation", "resolved_as", "effect_outcome"],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      ],
+      "oneOf": [
+        {"required": ["input"], "not": {"anyOf": [{"required": ["template_id"]}, {"required": ["changes"]}]}},
+        {"required": ["template_id", "changes"], "not": {"required": ["input"]}}
+      ]
+    },
+    "examples": {
+      "type": "object",
+      "properties": {
+        "document_type": {"const": "examples"},
+        "schema_version": {"const": "upkeeper.verification-data.v1-draft.1"},
+        "status": {"const": "SYNTHETIC_NOT_AUTHENTICATED"},
+        "realm": {"const": "EXAMPLE-NOT-ADOPTED"},
+        "records": {"type": "array", "items": {"$ref": "#/$defs/record"}, "minItems": 14, "maxItems": 4096},
+        "vectors": {"type": "array", "items": {"$ref": "#/$defs/data_vector"}, "minItems": 1, "maxItems": 4096},
+        "external_assumptions": {"$ref": "#/$defs/texts"},
+        "fixture_artifacts": {"type": "array", "items": {"$ref": "#/$defs/fixture_artifact"}, "minItems": 1, "maxItems": 4096},
+        "input_templates": {"type": "array", "items": {"$ref": "#/$defs/fixture_input_template"}, "minItems": 3, "maxItems": 3}
+      },
+      "required": [
+        "document_type",
+        "schema_version",
+        "status",
+        "realm",
+        "records",
+        "vectors",
+        "external_assumptions",
+        "fixture_artifacts",
+        "input_templates"
+      ],
+      "additionalProperties": false
+    },
+    "vector_context": {
+      "type": "object",
+      "properties": {
+        "cancellation": {"enum": ["CLEAR", "VERIFIED", "UNKNOWN"]},
+        "governing": {"enum": ["ESTABLISHED", "INVALID", "UNKNOWN"]},
+        "verifier": {"enum": ["ESTABLISHED", "INVALID", "UNKNOWN"]},
+        "subject": {"enum": ["ESTABLISHED", "INVALID", "UNKNOWN"]}
+      },
+      "required": ["cancellation", "governing", "verifier", "subject"],
+      "additionalProperties": false
+    },
+    "vector_definition": {
+      "type": "object",
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "version": {"$ref": "#/$defs/id"},
+        "required": {"type": "boolean"},
+        "method": {"enum": ["AUTOMATED", "HUMAN", "UNDETERMINED"]}
+      },
+      "required": ["id", "version", "required", "method"],
+      "additionalProperties": false
+    },
+    "vector_evaluation": {
+      "type": "object",
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "version": {"$ref": "#/$defs/id"},
+        "state": {"$ref": "#/$defs/obligation_state"},
+        "method": {"enum": ["AUTOMATED", "HUMAN", "NONE"]},
+        "applicability": {"enum": ["PROVED", "UNESTABLISHED"]}
+      },
+      "required": ["id", "version", "state", "method", "applicability"],
+      "additionalProperties": false
+    },
+    "decision_input": {
+      "type": "object",
+      "properties": {
+        "context": {"$ref": "#/$defs/vector_context"},
+        "kind": {"$ref": "#/$defs/task_kind"},
+        "definitions": {"type": "array", "items": {"$ref": "#/$defs/vector_definition"}, "minItems": 0, "maxItems": 4096},
+        "evaluations": {"type": "array", "items": {"$ref": "#/$defs/vector_evaluation"}, "minItems": 0, "maxItems": 4096}
+      },
+      "required": ["context", "kind", "definitions", "evaluations"],
+      "additionalProperties": false
+    },
+    "mutation": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "array", "items": {"$ref": "#/$defs/id"}, "minItems": 1, "maxItems": 16},
+        "operation": {"enum": ["SET", "DELETE"]},
+        "value": {}
+      },
+      "required": ["path", "operation"],
+      "additionalProperties": false,
+      "allOf": [{"if": {"properties": {"operation": {"const": "SET"}}}, "then": {"required": ["value"]}}]
+    },
+    "relation_input": {
+      "type": "object",
+      "properties": {"record_id": {"$ref": "#/$defs/id"}, "changes": {"type": "array", "items": {"$ref": "#/$defs/mutation"}, "minItems": 1, "maxItems": 10}},
+      "required": ["record_id", "changes"],
+      "additionalProperties": false
+    },
+    "action_input": {
+      "type": "object",
+      "properties": {
+        "authorization_id": {"$ref": "#/$defs/id"},
+        "actual_action": {"$ref": "#/$defs/action_kind"},
+        "actual_actuator_id": {"$ref": "#/$defs/id"},
+        "actual_resource": {"$ref": "#/$defs/resource"},
+        "actual_subject": {"$ref": "#/$defs/artifact"},
+        "now": {"$ref": "#/$defs/time"},
+        "current_epoch": {"$ref": "#/$defs/uint"},
+        "reserved_elsewhere": {"type": "boolean"},
+        "unresolved_effect": {"type": "boolean"}
+      },
+      "required": [
+        "authorization_id",
+        "actual_action",
+        "actual_actuator_id",
+        "actual_resource",
+        "actual_subject",
+        "now",
+        "current_epoch",
+        "reserved_elsewhere",
+        "unresolved_effect"
+      ],
+      "additionalProperties": false
+    },
+    "lifecycle_input": {
+      "type": "object",
+      "properties": {
+        "open_ids": {"$ref": "#/$defs/ids"},
+        "event": {
+          "enum": [
+            "RESTART",
+            "TIMER",
+            "NEW_ATTEMPT",
+            "CACHE",
+            "TRACKER_CLOSED",
+            "COMPACTION",
+            "STORE_LOST",
+            "RESOLVE",
+            "WITHDRAW",
+            "KNOWN_EFFECT_CUSTODY_FAILURE",
+            "UNKNOWN_EFFECT"
+          ]
+        },
+        "target_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "resolution_authorized": {"type": "boolean"},
+        "resolution_retained": {"type": "boolean"},
+        "subject_matches": {"type": "boolean"}
+      },
+      "required": ["open_ids", "event", "target_id", "resolution_authorized", "resolution_retained", "subject_matches"],
+      "additionalProperties": false
+    },
+    "fixture_artifact": {
+      "type": "object",
+      "properties": {
+        "artifact": {"$ref": "#/$defs/artifact"},
+        "source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {"kind": {"const": "UTF8"}, "text": {"$ref": "#/$defs/text"}},
+              "required": ["kind", "text"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {"const": "BUNDLE_FILE"},
+                "path": {"enum": ["CONTRACT.md", "ACCEPTANCE-MATRIX.md", "verification.schema.json", "verification-spec.json", "DATA-CONTRACT.md"]}
+              },
+              "required": ["kind", "path"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["artifact", "source"],
+      "additionalProperties": false
+    },
+    "icv_id": {"type": "string", "pattern": "^ICV-(00[1-9]|0[1-4][0-9]|050)(?![\\s\\S])"},
+    "icm_id": {"type": "string", "pattern": "^ICM-(00[1-9]|0[1-4][0-9]|05[0-2])(?![\\s\\S])"},
+    "fixture_input_template": {
+      "type": "object",
+      "properties": {"id": {"$ref": "#/$defs/id"}, "layer": {"enum": ["DECISION", "ACTION_BINDING", "LIFECYCLE"]}, "input": {"type": "object"}},
+      "required": ["id", "layer", "input"],
+      "additionalProperties": false,
+      "allOf": [
+        {"if": {"properties": {"layer": {"const": "DECISION"}}}, "then": {"properties": {"input": {"$ref": "#/$defs/decision_input"}}}},
+        {"if": {"properties": {"layer": {"const": "ACTION_BINDING"}}}, "then": {"properties": {"input": {"$ref": "#/$defs/action_input"}}}},
+        {"if": {"properties": {"layer": {"const": "LIFECYCLE"}}}, "then": {"properties": {"input": {"$ref": "#/$defs/lifecycle_input"}}}}
+      ]
+    }
+  }
+}

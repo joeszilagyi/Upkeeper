@@ -1,6 +1,6 @@
 # Upkeeper Independent Claim Verification and Acceptance Contract
 
-**Status:** Draft 2. Not adopted or operationally enforced by publication.
+**Status:** Draft 3. Not adopted or operationally enforced by publication.
 
 ## 1. Purpose and scope
 
@@ -220,6 +220,8 @@ Before a new automated attempt, the controller MUST check scope, applicable depe
 
 A required false or unknown condition MUST prevent the dependent acceptance or action even when its cause is unknown. The system MUST retain the failure scope, subject, evidence, and permitted next step as a durable record when the required store is available. If that store fails, it MUST stop dependent actions, retain an emergency diagnostic where safely possible, and report the recording failure. Explanations and postmortems do not satisfy the original obligation. Remediation remains separately bounded work.
 
+An unresolved required condition MUST remain unresolved across process exit, restart, retry, cache lookup, rescheduling, and evidence-retention operations. It may be resolved only by a retained, authorized resolution that identifies the condition and supplies applicable evidence that it is now satisfied, or explicitly records an approved change or withdrawal of the requirement. A changed or withdrawn requirement MUST NOT be reported as satisfied under its earlier version. Expiry of a retry timer, a new attempt identifier, an issue-state change, or deletion of a record cannot by itself clear the condition. Missing required custody MUST be treated as uncertainty, not a newly clean state. The scope of the resulting hold remains governed by ICV-040; independently authorized remediation may collect the evidence needed to resolve it.
+
 ### ICV-042: Make no-change outcomes meaningful
 
 `NO_CHANGE_VERIFIED` MUST state the checked scope, freshness, and established reason that no change is required or no eligible work exists. It MUST NOT imply absence of every possible defect. An inaccessible queue is not empty; all-blocked work is not a repaired queue. Known deferred work remains visible. A healthy no-change path SHOULD avoid model calls, unnecessary source touches, and repeated broad validation when appropriate protected evidence is already available.
@@ -252,11 +254,13 @@ Reports MUST distinguish source inspection, structural checks, synthetic model e
 
 ### ICV-049: Bound costs without weakening acceptance
 
-The authorized profile MUST bound execution, model contact, retries, observation volume, retention, and public writes. If those limits prevent required verification, the result is blocked or review-required rather than a fabricated pass. Valid reuse MAY reduce cost. A conservative whole-request reuse policy is acceptable; finer dependency caching is optional. Proportional verification and simple local mechanisms SHOULD be preferred when they establish the same required properties.
+The authorized profile MUST bound execution, model contact, retries, observation volume, retention, and public writes. If those limits leave an approved required check unperformed or incomplete, that obligation is `UNKNOWN` and acceptance is `BLOCKED`. A separate request for additional resources or a revised scope may require owner review; it does not change the unperformed check into a passed check or a human-judged substitute. Valid reuse MAY reduce cost. A conservative whole-request reuse policy is acceptable; finer dependency caching is optional. Proportional verification and simple local mechanisms SHOULD be preferred when they establish the same required properties.
 
 ### ICV-050: State conformance by property and operating scope
 
 A deployment MUST map each applicable requirement to its enforcing component, actual entrypoints, supported environment, verification cases, and evidence. It MUST distinguish specified, implemented, tested, enforced, and known-nonconformant states. Partial implementation may support a narrower independently authorized mode, but MUST NOT be advertised as coverage of excluded or unguarded modes. Publication of this contract or its test plan does not establish any implementation's conformance.
+
+When authorized work identifies a material behavior or claimed capability without adequate acceptance coverage, the deployment MUST retain a coverage-gap entry identifying the property, relevant scope, available evidence, and consequence for permitted automation. The entry MUST distinguish protected acceptance checks, worker-proposed or worker-controlled checks, and absence of an adequate evaluation method. Discovery of a gap does not require a separate issue for every function or an exhaustive inventory of unexamined software. Building coverage is separately authorized work; discovering, recording, or omitting a gap cannot establish that the uncovered behavior is correct.
 
 ## 10. Minimum decision and action records
 
@@ -271,6 +275,8 @@ The same transport envelope may hold several records, but their distinct origin 
 ## 11. Illustrative acceptance cases
 
 These examples demonstrate the requirements. They are not a replacement for a particular application's approved acceptance profile or evidence that the example tests have run.
+
+[ACCEPTANCE-MATRIX.md](ACCEPTANCE-MATRIX.md) specifies the corresponding conformance scenarios, controlled fixture profiles, expected observations, prohibited effects, and retained evidence. It derives from this contract and does not independently adopt requirements or establish that its scenarios have been executed. A claimed narrower implementation must declare and enforce exclusions rather than silently skip an applicable scenario.
 
 ### 11.1 Visible HTML correction
 

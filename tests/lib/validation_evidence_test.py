@@ -246,10 +246,11 @@ sys.exit(result)
                 assert ' reused ' in self.run(), 'complete publication not recovered'
             else:
                 assert 'controlled publisher blocked:' in output
-                assert (self.store/'.proof.json.pending').is_file()
+                pending = (self.store/'.proof.json.pending').is_file()
                 result = self.run()
+                assert ' reused ' not in result, 'OLD DEFECT: real consumer reused known failed publication'
                 assert 'reuse-rejected' in result and ' executed ' in result, result
-                assert ' reused ' not in result, 'known failed publication reused'
+                assert pending, 'failed publication did not retain its intent'
         print('actual publication/restart boundaries: passed kind=' + self.kind)
 
 
@@ -286,6 +287,12 @@ def main():
     altered_command = f.overlay(['--ro-bind', str(altered), '/usr/bin/jq'])
     assert ' executed ' in f.run(args=altered_command)
     assert ' reused ' in f.run(args=altered_command)
+    assert ' executed ' in f.run()
+    # Setup failure cannot leave the earlier result current. Only this private
+    # overlay sees /usr/bin/false in place of the sandbox launcher.
+    denied_setup = f.overlay(['--ro-bind', '/usr/bin/false', '/usr/bin/bwrap'])
+    assert 'failed' in f.run(expected=1, args=denied_setup)
+    assert not f.artifact.exists(), 'failed isolation retained current PASS'
     assert ' executed ' in f.run()
     runner = 'tools/run_tests.sh'
     f.write(runner, (f.repo/runner).read_text() + '\n# Changed checker version.\n'); f.commit()

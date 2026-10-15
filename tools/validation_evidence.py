@@ -45,6 +45,11 @@ TOOLS = ('bash', 'git', 'python3', 'jq', 'timeout', 'bwrap', 'age', 'screen',
          'awk', 'sed', 'find', 'sort', 'zip', 'script', 'stat')
 SYSTEM_FILES = ('/etc/ld.so.cache', '/etc/localtime', '/etc/passwd', '/etc/group',
                 '/etc/os-release', '/var/lib/dpkg/status')
+ISOLATION_FILES = ('/proc/sys/kernel/unprivileged_userns_clone',
+                   '/proc/sys/kernel/apparmor_restrict_unprivileged_userns',
+                   '/proc/sys/user/max_user_namespaces',
+                   '/sys/module/apparmor/parameters/enabled',
+                   '/etc/apparmor.d/bwrap-userns-restrict')
 
 
 class Blocked(Exception):
@@ -114,7 +119,19 @@ def conditions():
     packages = Path('/var/lib/dpkg/status')
     if not packages.is_file():
         raise Blocked('unsupported toolchain manifest (requires dpkg status)')
+    def visible_identity(name):
+        try:
+            return digest(Path(name).read_bytes())
+        except OSError:
+            return 'unavailable'
+    status = Path('/proc/self/status').read_text().splitlines()
+    capabilities = {line.split(':', 1)[0]: line.split(':', 1)[1].strip()
+                    for line in status if line.startswith(('CapInh:', 'CapPrm:', 'CapEff:',
+                                                           'CapBnd:', 'CapAmb:', 'NoNewPrivs:', 'Seccomp:'))}
     return {'values': values, 'tools': tools, 'packages': digest(packages.read_bytes()),
+            'isolation_host': {'visible_policy': {p: visible_identity(p) for p in ISOLATION_FILES},
+                               'security_label': visible_identity('/proc/self/attr/current'),
+                               'capabilities': capabilities},
             'system_files': {name: digest(Path(name).read_bytes()) if Path(name).exists()
                              else 'unavailable' for name in SYSTEM_FILES},
             'kernel': platform.release(), 'machine': platform.machine(),

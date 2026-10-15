@@ -2,6 +2,13 @@
 
 ## Pending review: Pinned validation evidence
 
+- Checkpoint 1 retains failed publication intent and rejects reuse after a known
+  directory-flush failure, including failed quarantine. Real boundary probes
+  cover private canaries, a reachable controlled receiver and child teardown.
+  CI now diagnoses outer/nested unprivileged isolation before expensive gates.
+  Both tested hosted configurations remain incompatible with required execution;
+  no host protection or required test is weakened to hide that blocker.
+
 - Reusable unit, phase and validator results bind a committed Git snapshot and
   exact request before execution. Inputs execute from independent read-only
   mounts with private writable scratch; old end-stamped records cannot skip

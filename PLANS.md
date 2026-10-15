@@ -50,6 +50,16 @@ limitations against the pinned ICV/ICM requirements. Stop with a tested draft
 or a specific unmet gate; no merge, issue closure, authority installation,
 checkpoint 2, #907/#924 changes or old-GOAL resumption.
 
+Observed checkpoint results: fresh Ubuntu 24.04 run 38785050769 reproduces
+the pre-validation loopback denial. Supported Ubuntu 26.04 run 38785175279
+passes outer setup but fails actual nested evidence tests. The finite platform
+matrix is exhausted; compatibility is not established. Final preflight now
+checks nesting before the broad suite. Separate review found a post-rename
+directory-flush error leaving reusable PASS; pending intent and quarantine now
+make that failure ineligible, with real producer/consumer restart regressions.
+Local focused checks pass on an intermediate revision; final-revision broad
+validation and review are separate gates recorded on #922, never inferred here.
+
 Status (2026-10-14): implementation checkpoint; both old real-producer races
 reproduced on `23b23c9111267bd92efd5c619a69f1677a207850`. A passed test was
 changed and committed while a second test waited; both consumers accepted the

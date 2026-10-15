@@ -69,6 +69,11 @@ tool hashes, Python/kernel/machine identity, and the installed-package manifest.
 Hashes also bind the small mounted system-file set (including timezone and
 loader configuration); their contents are not serialized into the record.
 CPU affinity is included because automatic concurrency uses the available CPUs.
+Visible namespace-policy files, the supervising process's security label and
+effective capability/seccomp state are also identified without publishing their
+contents. Unavailable diagnostics are recorded as unavailable, not evidence
+that a host restriction is absent. These observations do not authenticate an
+administrator or establish a complete host security-policy inventory.
 The scratch filesystem type is also bound; memory-backed fixture validation
 does not establish persistence across power loss on a deployment filesystem.
 The complete allowlist is `ENV_INPUTS` in `tools/validation_evidence.py`; no
@@ -115,6 +120,65 @@ Do not publish keys or scratch wholesale.
 Pinned validators keep their timing output inside that scratch tree rather than
 accepting an ambient host output path. CI uploads only those timing rows.
 
+A durable pending-publication marker precedes passing bytes. A known final
+directory-flush error quarantines the new record; even if quarantine fails,
+the pending marker prevents reuse. A later fresh execution preserves the old
+intent and publishes its own result. A complete flushed record whose caller
+dies before acknowledgement can be recovered by the real consumer. An intent
+left after interruption may conservatively require fresh execution. These are
+process-crash and syscall-failure tests, not power-loss durability certification.
+
 Diagnostics distinguish `executed`, `reused`, `reuse-rejected`, `passed`,
 `failed`, and `blocked`. A cache rejection is not a test failure; a successful
 shell exit from some other command is not reusable evidence.
+
+## Checkpoint 1: execution and CI boundary
+
+The isolated-development requirements are pinned to
+[revision 4b3480af](https://github.com/joeszilagyi/Upkeeper/tree/4b3480af7d8dbbf36ddd43e36fa1a135c4fbeb60/docs/contracts/independent-claim-acceptance).
+They are not installed operational authority. This implementation retains its
+existing evidence representation, not the complete fourteen-record runtime
+profile. Evidence is a scoped command-execution result, not task acceptance,
+action permission, issue completion or a declaration of whole-contract conformance.
+
+| Scoped cases | Actual boundary and observations |
+| --- | --- |
+| ICM-013/014 | Both attestation tests invoke real unit/phase producers and consumers with FIFO barriers, old/new Git subjects, exit-42 controls and edit/revert cases. Git objects and read-only mounts establish acquisition/stability, not equal endpoint hashes. |
+| ICM-015/016 | Real consumers refuse dirty inputs; counters distinguish execution/reuse; source, command, checker, environment, tool and diff changes invalidate evidence. `--filesystem-only` must run on disk to establish disk-to-tmpfs rejection. |
+| ICM-017/018/019/022 | Actual store rejects malformed, conflicting, legacy, wrong-subject, wrong-origin and incomplete evidence. Signed negative mutations are test-only fault injections; positive records always come from real execution. No Lattice row is accepted as proof. |
+| ICM-021/025 | Actual publication faults and fresh consumer restarts distinguish preserved failed attempts, incomplete intent and complete unacknowledged publication. |
+| ICM-023/024 | Existing syntax-fixture containment tests inspect external object content and identity; the new execution-boundary test checks source operations, private canaries, writable scratch and detached-child teardown. |
+| ICM-030/038/041/052 | Fixed execution bounds, explicit failure propagation, exact PR/merge-test identities and honest unrun/blocked reporting. Local execution cannot replace failed hosted verification. No merge/continuation action is enabled by these tests. |
+
+`tests/validation_execution_boundary_test.bash` runs both real evidence paths.
+Its controlled TCP receiver acknowledges positive controls before and after the
+candidate's denied connection; the receiver's actual received messages are
+checked. Test-owned secret/key/source contents and nanosecond identity metadata
+are compared, and a detached child must lose its held FIFO before supervisor
+completion. This directly tests local IPv4 and named-path/process boundaries;
+it does not claim an exhaustive external-network protocol or hostile-host audit.
+The private namespace has no host network route, host socket mount or inherited
+credential environment. PATH stubs are additional tripwires, not confinement.
+
+CI uses the ordinary unprivileged pull-request job, read-only GitHub permission,
+no persisted checkout credential and separately bounded package installation.
+It forces fresh outer evidence execution, with passing-test output enabled;
+dedicated positive reuse cases still test reuse. Required check names are unchanged.
+The harmless 30-second preflight requires both outer and nested namespaces.
+
+Compatibility remains blocked on the tested hosted images: Ubuntu 24.04 image
+20261012.334.1 / bubblewrap 0.9.0 denied loopback setup in run 38785050769;
+supported Ubuntu 26.04 image 20261012.163.1 / bubblewrap 0.11.1 started the outer
+namespace but denied nested execution in run 38785175279. The latter reached
+real tests and failed three evidence tests; it was not a green compatibility
+result. AppArmor restriction settings were observed, but those observations
+alone do not establish the complete causal policy chain. The workflow selects
+the newer image explicitly and fails early if its required boundary is unavailable.
+No security-policy change, root candidate execution, namespace removal or
+unconfined fallback is permitted. The next decision requires an authorized
+environment supporting the same boundary, not waived verification.
+
+Platform references: [supported runner images](https://github.com/actions/runner-images),
+[Bubblewrap security model](https://github.com/containers/bubblewrap), and
+[GitHub secure workflow use](https://docs.github.com/en/actions/reference/security/secure-use).
+Supported image availability does not by itself establish executor compatibility.

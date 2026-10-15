@@ -1,0 +1,1879 @@
+{
+  "document_type": "examples",
+  "schema_version": "upkeeper.verification-data.v1-draft.1",
+  "status": "SYNTHETIC_NOT_AUTHENTICATED",
+  "realm": "EXAMPLE-NOT-ADOPTED",
+  "records": [
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "adoption",
+      "record_id": "adoption",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-owner",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "owner_id": "fixture-owner",
+        "adopted_artifacts": [
+          {
+            "role": "contract",
+            "artifact": {"sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa", "media_type": "text/markdown"}
+          },
+          {
+            "role": "matrix",
+            "artifact": {"sha256": "2aa1beac6c63619399a8c15606fe1cdc773a670c7bb2b30a06dde316034a6579", "media_type": "text/markdown"}
+          },
+          {
+            "role": "data-schema",
+            "artifact": {"sha256": "90762cde6094272fc93eadc3a059303e25dafadf8fdfb6189790aad6b1e3cf6c", "media_type": "application/json"}
+          },
+          {
+            "role": "data-spec",
+            "artifact": {"sha256": "fbbf285b33622d82919fd482fe5d51900a8935bb98c78d4fd283b9bf70ddf80c", "media_type": "application/json"}
+          },
+          {
+            "role": "data-semantics",
+            "artifact": {"sha256": "5cd79edc19614e65068362da9d8b4758b7d690d41bcf91b2ac88d3adad57d5c9", "media_type": "text/markdown"}
+          }
+        ],
+        "scope": {
+          "mode": "CANDIDATE_WRITE",
+          "resources": [{"repository_id": "fixture-repo", "kind": "SOURCE", "target_id": "candidate-selected"}],
+          "writable_resources": [{"repository_id": "fixture-repo", "kind": "SOURCE", "target_id": "candidate-selected"}],
+          "prohibited_effects": ["No production or public effects."],
+          "profile_id": "F-C",
+          "policy_artifact": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"}
+        },
+        "reference_policy": {"sha256": "10c39a96cd8dbbf77986d83aad8740f08729c8786234596ee97258f4dc963d5e", "media_type": "text/plain"},
+        "effective_epoch": 1,
+        "validity": {"kind": "UTC_WINDOW", "not_before": "2026-10-15T00:00:00Z", "expires_at": "2026-10-15T01:00:00Z"},
+        "authorization_evidence": {"sha256": "55b609eeb00f1b5fa504eb4c718057dd03b40246aa8e1b230c50e99ad3b8a8cd", "media_type": "text/plain"}
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "obligation_set",
+      "record_id": "fc-set",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-owner",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "version": "1",
+        "profile_id": "F-C",
+        "obligations": [
+          {
+            "key": {"id": "C-result", "version": "1"},
+            "required": true,
+            "property": "selected.txt bytes are fixed\\n",
+            "scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+            "applicability_rule": {"sha256": "ae8622cb521722d119974e9917ae0c29a8225420672b44a1d8c4bf4515573b7f", "media_type": "text/plain"},
+            "method": {
+              "kind": "AUTOMATED",
+              "checker": {"sha256": "bf324ec0dad5ee9050f8c42380c273a43fd07fe372dd94e62622a155883fd9a3", "media_type": "text/plain"},
+              "parameters": {"sha256": "72320a0701a276c36923afe2b58ca0b6891524c6b58840eba32bdf9a19c7ccdd", "media_type": "text/plain"},
+              "expected": {"sha256": "0730276645b90884f3283a90f728929e310b91be159a7d662c15e133f24a624b", "media_type": "application/json"},
+              "required_observations": ["C-result"],
+              "completion_predicate": "selected.txt bytes are fixed\\n"
+            },
+            "deadline": {"kind": "UTC_WINDOW", "not_before": "2026-10-15T00:00:00Z", "expires_at": "2026-10-15T01:00:00Z"},
+            "requirement_ids": ["ICV-009", "ICV-029"]
+          },
+          {
+            "key": {"id": "C-preserve", "version": "1"},
+            "required": true,
+            "property": "other.txt and owner sentinels unchanged",
+            "scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+            "applicability_rule": {"sha256": "ae8622cb521722d119974e9917ae0c29a8225420672b44a1d8c4bf4515573b7f", "media_type": "text/plain"},
+            "method": {
+              "kind": "AUTOMATED",
+              "checker": {"sha256": "bf324ec0dad5ee9050f8c42380c273a43fd07fe372dd94e62622a155883fd9a3", "media_type": "text/plain"},
+              "parameters": {"sha256": "72320a0701a276c36923afe2b58ca0b6891524c6b58840eba32bdf9a19c7ccdd", "media_type": "text/plain"},
+              "expected": {"sha256": "c58e1cdbef60321aef244ab261af32ef3cdcf8d3bf81191fee571a2fa1f26aca", "media_type": "application/json"},
+              "required_observations": ["C-preserve"],
+              "completion_predicate": "other.txt and owner sentinels unchanged"
+            },
+            "deadline": {"kind": "UTC_WINDOW", "not_before": "2026-10-15T00:00:00Z", "expires_at": "2026-10-15T01:00:00Z"},
+            "requirement_ids": ["ICV-009", "ICV-029"]
+          },
+          {
+            "key": {"id": "C-scope", "version": "1"},
+            "required": true,
+            "property": "only authorized candidate resource changed",
+            "scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+            "applicability_rule": {"sha256": "ae8622cb521722d119974e9917ae0c29a8225420672b44a1d8c4bf4515573b7f", "media_type": "text/plain"},
+            "method": {
+              "kind": "AUTOMATED",
+              "checker": {"sha256": "bf324ec0dad5ee9050f8c42380c273a43fd07fe372dd94e62622a155883fd9a3", "media_type": "text/plain"},
+              "parameters": {"sha256": "72320a0701a276c36923afe2b58ca0b6891524c6b58840eba32bdf9a19c7ccdd", "media_type": "text/plain"},
+              "expected": {"sha256": "593b57f28defe5979d9145b10f930582a32a9a5c31398978483feacab79d77cb", "media_type": "application/json"},
+              "required_observations": ["C-scope"],
+              "completion_predicate": "only authorized candidate resource changed"
+            },
+            "deadline": {"kind": "UTC_WINDOW", "not_before": "2026-10-15T00:00:00Z", "expires_at": "2026-10-15T01:00:00Z"},
+            "requirement_ids": ["ICV-009", "ICV-029"]
+          },
+          {
+            "key": {"id": "C-attempt", "version": "1"},
+            "required": true,
+            "property": "supervisor observed worker exit 0",
+            "scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+            "applicability_rule": {"sha256": "ae8622cb521722d119974e9917ae0c29a8225420672b44a1d8c4bf4515573b7f", "media_type": "text/plain"},
+            "method": {
+              "kind": "AUTOMATED",
+              "checker": {"sha256": "bf324ec0dad5ee9050f8c42380c273a43fd07fe372dd94e62622a155883fd9a3", "media_type": "text/plain"},
+              "parameters": {"sha256": "72320a0701a276c36923afe2b58ca0b6891524c6b58840eba32bdf9a19c7ccdd", "media_type": "text/plain"},
+              "expected": {"sha256": "1575fcbd6a8d39131af2e41f6da3e11de5be726e7281e383d03500e0ae5d2f2f", "media_type": "application/json"},
+              "required_observations": ["C-attempt"],
+              "completion_predicate": "supervisor observed worker exit 0"
+            },
+            "deadline": {"kind": "UTC_WINDOW", "not_before": "2026-10-15T00:00:00Z", "expires_at": "2026-10-15T01:00:00Z"},
+            "requirement_ids": ["ICV-009", "ICV-029"]
+          }
+        ],
+        "approval_evidence": {"sha256": "10c39a96cd8dbbf77986d83aad8740f08729c8786234596ee97258f4dc963d5e", "media_type": "text/plain"}
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "work_authorization",
+      "record_id": "work",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-owner",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "adoption_ref": {"id": "adoption", "sha256": "2e79afae035debba901446ef696f3d761d95b15ececa5bf56f2cec0047c277c4"},
+        "task_id": "T-C",
+        "kind": "REPAIR",
+        "baseline": {"sha256": "7ec8a0dc5c1760f7d059e4789124deac467acdb6dce09160d4df692d4c172fba", "media_type": "text/plain"},
+        "repository_id": "fixture-repo",
+        "scope": {
+          "mode": "CANDIDATE_WRITE",
+          "resources": [{"repository_id": "fixture-repo", "kind": "SOURCE", "target_id": "candidate-selected"}],
+          "writable_resources": [{"repository_id": "fixture-repo", "kind": "SOURCE", "target_id": "candidate-selected"}],
+          "prohibited_effects": ["No production or public effects."],
+          "profile_id": "F-C",
+          "policy_artifact": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"}
+        },
+        "obligation_set_ref": {"id": "fc-set", "sha256": "0e35b49efa2f35e409d3474fa01f19f6f5b61161c223abaf38b432588d98b34e"},
+        "budget": {
+          "duration_ticks": 100,
+          "clock_id": "fixture-clock",
+          "max_model_contacts": 0,
+          "max_attempts": 1,
+          "max_observation_bytes": 65536,
+          "max_retained_bytes": 65536,
+          "max_public_writes": 0
+        },
+        "validity": {"kind": "UTC_WINDOW", "not_before": "2026-10-15T00:00:00Z", "expires_at": "2026-10-15T01:00:00Z"},
+        "revocation_epoch": 1,
+        "delegation_policy": {"sha256": "10c39a96cd8dbbf77986d83aad8740f08729c8786234596ee97258f4dc963d5e", "media_type": "text/plain"}
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "candidate",
+      "record_id": "candidate",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-supervisor",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "attempt_id": "attempt-1",
+        "repository_id": "fixture-repo",
+        "baseline": {"sha256": "7ec8a0dc5c1760f7d059e4789124deac467acdb6dce09160d4df692d4c172fba", "media_type": "text/plain"},
+        "source_snapshot": {"sha256": "0078d2f22d22b36b16054f99c9d27b45f2919ba66d87c67c2a8c113ffda798a2", "media_type": "text/plain"},
+        "input_manifest": {"sha256": "11a2ba4eb718f773299084dc897862d3ba1391e6ec2840f1842652a37c7eb9c9", "media_type": "text/plain"},
+        "capture_policy": "COMMITTED_OBJECTS",
+        "capture_evidence": {"sha256": "14b641f7df008cb176ea8e37d2e22ba6ef815dfdb1a7e6c00e23135ff4e1676d", "media_type": "text/plain"},
+        "limitations": ["No real source execution is asserted."]
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "attempt_result",
+      "record_id": "attempt",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-supervisor",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "work_ref": {"id": "work", "sha256": "8a8735690aad63fb323fcfb859852c0b4808480610d492d3731a1f40b7c4c874"},
+        "attempt_id": "attempt-1",
+        "worker_id": "fixture-worker",
+        "candidate_ref": {"id": "candidate", "sha256": "64cb1a877d823bb40d1aa23e87942f62baac8c866a74ae9406cc1e0d5ecc7007"},
+        "execution": {
+          "execution_id": "execution-1",
+          "command": {"sha256": "1f467527e3ef97cbbb1dba1510281c7c12b93f3380c20070ac05270ba0248705", "media_type": "text/plain"},
+          "conditions": {"sha256": "c2f68acc5f5d70ad252db48b4ea996a25444e66f18a6b20e5d3c51a3b89bfc59", "media_type": "text/plain"},
+          "requested_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "completed_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "interval": {"clock_id": "fixture-clock", "epoch_id": "fixture-epoch", "start_tick": 0, "end_tick": 10},
+          "exit_code": 0,
+          "completion": "COMPLETED"
+        },
+        "worker_claim": "WORK_DONE",
+        "state": "SUCCEEDED"
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "observation",
+      "record_id": "obs-C-result",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-observer",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "attempt_id": "attempt-1",
+        "candidate_ref": {"id": "candidate", "sha256": "64cb1a877d823bb40d1aa23e87942f62baac8c866a74ae9406cc1e0d5ecc7007"},
+        "input": {"sha256": "0078d2f22d22b36b16054f99c9d27b45f2919ba66d87c67c2a8c113ffda798a2", "media_type": "text/plain"},
+        "obligation_set_ref": {"id": "fc-set", "sha256": "0e35b49efa2f35e409d3474fa01f19f6f5b61161c223abaf38b432588d98b34e"},
+        "obligation": {"id": "C-result", "version": "1"},
+        "method": {"sha256": "bf324ec0dad5ee9050f8c42380c273a43fd07fe372dd94e62622a155883fd9a3", "media_type": "text/plain"},
+        "measurement_scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+        "execution": {
+          "execution_id": "execution-1",
+          "command": {"sha256": "1f467527e3ef97cbbb1dba1510281c7c12b93f3380c20070ac05270ba0248705", "media_type": "text/plain"},
+          "conditions": {"sha256": "c2f68acc5f5d70ad252db48b4ea996a25444e66f18a6b20e5d3c51a3b89bfc59", "media_type": "text/plain"},
+          "requested_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "completed_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "interval": {"clock_id": "fixture-clock", "epoch_id": "fixture-epoch", "start_tick": 0, "end_tick": 10},
+          "exit_code": 0,
+          "completion": "COMPLETED"
+        },
+        "event": {"kind": "CHECK_RESULT", "operation_id": null, "sender_id": null, "receiver_id": null, "payload": null, "predecessors": []},
+        "observation": {
+          "availability": "OBSERVED",
+          "coverage": "COMPLETE_FOR_PREDICATE",
+          "result": {"sha256": "0c3071418e6356e614898c84ed064ca95e88551bc0811b534bdf1952ecdae534", "media_type": "text/plain"},
+          "interval": {"clock_id": "fixture-clock", "epoch_id": "fixture-epoch", "start_tick": 0, "end_tick": 10},
+          "limitations": ["Synthetic record; no authentic observation."]
+        }
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "observation",
+      "record_id": "obs-C-preserve",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-observer",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "attempt_id": "attempt-1",
+        "candidate_ref": {"id": "candidate", "sha256": "64cb1a877d823bb40d1aa23e87942f62baac8c866a74ae9406cc1e0d5ecc7007"},
+        "input": {"sha256": "0078d2f22d22b36b16054f99c9d27b45f2919ba66d87c67c2a8c113ffda798a2", "media_type": "text/plain"},
+        "obligation_set_ref": {"id": "fc-set", "sha256": "0e35b49efa2f35e409d3474fa01f19f6f5b61161c223abaf38b432588d98b34e"},
+        "obligation": {"id": "C-preserve", "version": "1"},
+        "method": {"sha256": "bf324ec0dad5ee9050f8c42380c273a43fd07fe372dd94e62622a155883fd9a3", "media_type": "text/plain"},
+        "measurement_scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+        "execution": {
+          "execution_id": "execution-1",
+          "command": {"sha256": "1f467527e3ef97cbbb1dba1510281c7c12b93f3380c20070ac05270ba0248705", "media_type": "text/plain"},
+          "conditions": {"sha256": "c2f68acc5f5d70ad252db48b4ea996a25444e66f18a6b20e5d3c51a3b89bfc59", "media_type": "text/plain"},
+          "requested_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "completed_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "interval": {"clock_id": "fixture-clock", "epoch_id": "fixture-epoch", "start_tick": 0, "end_tick": 10},
+          "exit_code": 0,
+          "completion": "COMPLETED"
+        },
+        "event": {"kind": "CHECK_RESULT", "operation_id": null, "sender_id": null, "receiver_id": null, "payload": null, "predecessors": []},
+        "observation": {
+          "availability": "OBSERVED",
+          "coverage": "COMPLETE_FOR_PREDICATE",
+          "result": {"sha256": "301cd2869d2924f75e591bf982a3da45fdac17b62d490b3e2879c75008d646ef", "media_type": "text/plain"},
+          "interval": {"clock_id": "fixture-clock", "epoch_id": "fixture-epoch", "start_tick": 0, "end_tick": 10},
+          "limitations": ["Synthetic record; no authentic observation."]
+        }
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "observation",
+      "record_id": "obs-C-scope",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-observer",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "attempt_id": "attempt-1",
+        "candidate_ref": {"id": "candidate", "sha256": "64cb1a877d823bb40d1aa23e87942f62baac8c866a74ae9406cc1e0d5ecc7007"},
+        "input": {"sha256": "0078d2f22d22b36b16054f99c9d27b45f2919ba66d87c67c2a8c113ffda798a2", "media_type": "text/plain"},
+        "obligation_set_ref": {"id": "fc-set", "sha256": "0e35b49efa2f35e409d3474fa01f19f6f5b61161c223abaf38b432588d98b34e"},
+        "obligation": {"id": "C-scope", "version": "1"},
+        "method": {"sha256": "bf324ec0dad5ee9050f8c42380c273a43fd07fe372dd94e62622a155883fd9a3", "media_type": "text/plain"},
+        "measurement_scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+        "execution": {
+          "execution_id": "execution-1",
+          "command": {"sha256": "1f467527e3ef97cbbb1dba1510281c7c12b93f3380c20070ac05270ba0248705", "media_type": "text/plain"},
+          "conditions": {"sha256": "c2f68acc5f5d70ad252db48b4ea996a25444e66f18a6b20e5d3c51a3b89bfc59", "media_type": "text/plain"},
+          "requested_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "completed_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "interval": {"clock_id": "fixture-clock", "epoch_id": "fixture-epoch", "start_tick": 0, "end_tick": 10},
+          "exit_code": 0,
+          "completion": "COMPLETED"
+        },
+        "event": {"kind": "CHECK_RESULT", "operation_id": null, "sender_id": null, "receiver_id": null, "payload": null, "predecessors": []},
+        "observation": {
+          "availability": "OBSERVED",
+          "coverage": "COMPLETE_FOR_PREDICATE",
+          "result": {"sha256": "21463e4e77fdfbc0208ca99be77922d2b5f9cf7287556310ad15e188ec31ce3f", "media_type": "text/plain"},
+          "interval": {"clock_id": "fixture-clock", "epoch_id": "fixture-epoch", "start_tick": 0, "end_tick": 10},
+          "limitations": ["Synthetic record; no authentic observation."]
+        }
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "observation",
+      "record_id": "obs-C-attempt",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-observer",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "attempt_id": "attempt-1",
+        "candidate_ref": {"id": "candidate", "sha256": "64cb1a877d823bb40d1aa23e87942f62baac8c866a74ae9406cc1e0d5ecc7007"},
+        "input": {"sha256": "0078d2f22d22b36b16054f99c9d27b45f2919ba66d87c67c2a8c113ffda798a2", "media_type": "text/plain"},
+        "obligation_set_ref": {"id": "fc-set", "sha256": "0e35b49efa2f35e409d3474fa01f19f6f5b61161c223abaf38b432588d98b34e"},
+        "obligation": {"id": "C-attempt", "version": "1"},
+        "method": {"sha256": "bf324ec0dad5ee9050f8c42380c273a43fd07fe372dd94e62622a155883fd9a3", "media_type": "text/plain"},
+        "measurement_scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+        "execution": {
+          "execution_id": "execution-1",
+          "command": {"sha256": "1f467527e3ef97cbbb1dba1510281c7c12b93f3380c20070ac05270ba0248705", "media_type": "text/plain"},
+          "conditions": {"sha256": "c2f68acc5f5d70ad252db48b4ea996a25444e66f18a6b20e5d3c51a3b89bfc59", "media_type": "text/plain"},
+          "requested_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "completed_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "interval": {"clock_id": "fixture-clock", "epoch_id": "fixture-epoch", "start_tick": 0, "end_tick": 10},
+          "exit_code": 0,
+          "completion": "COMPLETED"
+        },
+        "event": {"kind": "CHECK_RESULT", "operation_id": null, "sender_id": null, "receiver_id": null, "payload": null, "predecessors": []},
+        "observation": {
+          "availability": "OBSERVED",
+          "coverage": "COMPLETE_FOR_PREDICATE",
+          "result": {"sha256": "c8cab6080c85e17a96335bd1a06766bcc0ae76e59b597cc30ae39d03a388126e", "media_type": "text/plain"},
+          "interval": {"clock_id": "fixture-clock", "epoch_id": "fixture-epoch", "start_tick": 0, "end_tick": 10},
+          "limitations": ["Synthetic record; no authentic observation."]
+        }
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "assessment",
+      "record_id": "assessment",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-acceptance",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "attempt_ref": {"id": "attempt", "sha256": "8137b23387905131d9334f00f312ed2701f54d068f696ab62a7239f8b14dfd0d"},
+        "work_ref": {"id": "work", "sha256": "8a8735690aad63fb323fcfb859852c0b4808480610d492d3731a1f40b7c4c874"},
+        "candidate_ref": {"id": "candidate", "sha256": "64cb1a877d823bb40d1aa23e87942f62baac8c866a74ae9406cc1e0d5ecc7007"},
+        "obligation_set_ref": {"id": "fc-set", "sha256": "0e35b49efa2f35e409d3474fa01f19f6f5b61161c223abaf38b432588d98b34e"},
+        "kind": "REPAIR",
+        "context": {
+          "cancellation": "CLEAR",
+          "governing": "ESTABLISHED",
+          "verifier": "ESTABLISHED",
+          "subject": "ESTABLISHED",
+          "evidence_refs": [
+            {"id": "obs-C-result", "sha256": "0eef15af0321388abc9d9a11155fc58ae724184b45929e111c8984744d67fd00"},
+            {"id": "obs-C-preserve", "sha256": "494db2389f31794bd05d916986433ccaf27591fe70b8f345c9d33b37566a7077"},
+            {"id": "obs-C-scope", "sha256": "bd2b641387001399cbdac84627123a1da496ac329b68e0918f5e32a4c443e20a"},
+            {"id": "obs-C-attempt", "sha256": "8ce9aece9e5d5bce84fd5f69e12827bedeb79171fb0d7715939efafca4d39135"}
+          ]
+        },
+        "evaluations": [
+          {
+            "obligation": {"id": "C-result", "version": "1"},
+            "state": "SATISFIED",
+            "evaluation_method": "AUTOMATED",
+            "evidence_refs": [{"id": "obs-C-result", "sha256": "0eef15af0321388abc9d9a11155fc58ae724184b45929e111c8984744d67fd00"}],
+            "applicability_refs": [],
+            "limitations": [],
+            "reasons": [{"code": "FIXTURE_PREDICATE", "message": "Synthetic data example: FIXTURE_PREDICATE", "related_ids": ["C-result"]}]
+          },
+          {
+            "obligation": {"id": "C-preserve", "version": "1"},
+            "state": "SATISFIED",
+            "evaluation_method": "AUTOMATED",
+            "evidence_refs": [{"id": "obs-C-preserve", "sha256": "494db2389f31794bd05d916986433ccaf27591fe70b8f345c9d33b37566a7077"}],
+            "applicability_refs": [],
+            "limitations": [],
+            "reasons": [{"code": "FIXTURE_PREDICATE", "message": "Synthetic data example: FIXTURE_PREDICATE", "related_ids": ["C-preserve"]}]
+          },
+          {
+            "obligation": {"id": "C-scope", "version": "1"},
+            "state": "SATISFIED",
+            "evaluation_method": "AUTOMATED",
+            "evidence_refs": [{"id": "obs-C-scope", "sha256": "bd2b641387001399cbdac84627123a1da496ac329b68e0918f5e32a4c443e20a"}],
+            "applicability_refs": [],
+            "limitations": [],
+            "reasons": [{"code": "FIXTURE_PREDICATE", "message": "Synthetic data example: FIXTURE_PREDICATE", "related_ids": ["C-scope"]}]
+          },
+          {
+            "obligation": {"id": "C-attempt", "version": "1"},
+            "state": "SATISFIED",
+            "evaluation_method": "AUTOMATED",
+            "evidence_refs": [{"id": "obs-C-attempt", "sha256": "8ce9aece9e5d5bce84fd5f69e12827bedeb79171fb0d7715939efafca4d39135"}],
+            "applicability_refs": [],
+            "limitations": [],
+            "reasons": [{"code": "FIXTURE_PREDICATE", "message": "Synthetic data example: FIXTURE_PREDICATE", "related_ids": ["C-attempt"]}]
+          }
+        ],
+        "claims": [
+          {
+            "claim_id": "claim-1",
+            "statement": "F-C predicates hold in this synthetic data example only.",
+            "obligation_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+            "status": "SUPPORTED",
+            "assurance": "TESTED_CONTRACT",
+            "scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+            "limitations": ["Not an actual runtime result."]
+          }
+        ],
+        "disposition": "ACCEPTED",
+        "reasons": [{"code": "FIXTURE_EXPECTATIONS_ONLY", "message": "Synthetic data example: FIXTURE_EXPECTATIONS_ONLY", "related_ids": []}],
+        "limitations": ["No authentication or actual acceptance is established."]
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "obligation_set",
+      "record_id": "pre-set",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-owner",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "version": "1",
+        "profile_id": "F-C-apply-preflight",
+        "obligations": [
+          {
+            "key": {"id": "P-apply", "version": "1"},
+            "required": true,
+            "property": "Owner-state baseline, actor, scope, hold, budget and one-operation application permission match now.",
+            "scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+            "applicability_rule": {"sha256": "ae8622cb521722d119974e9917ae0c29a8225420672b44a1d8c4bf4515573b7f", "media_type": "text/plain"},
+            "method": {
+              "kind": "AUTOMATED",
+              "checker": {"sha256": "bf324ec0dad5ee9050f8c42380c273a43fd07fe372dd94e62622a155883fd9a3", "media_type": "text/plain"},
+              "parameters": {"sha256": "72320a0701a276c36923afe2b58ca0b6891524c6b58840eba32bdf9a19c7ccdd", "media_type": "text/plain"},
+              "expected": {"sha256": "9c0fa23aad7ab8f09edd877c338e368bae0f7203417de442dd192bfbe13ec544", "media_type": "application/json"},
+              "required_observations": ["P-apply"],
+              "completion_predicate": "Owner-state baseline, actor, scope, hold, budget and one-operation application permission match now."
+            },
+            "deadline": {"kind": "UTC_WINDOW", "not_before": "2026-10-15T00:00:00Z", "expires_at": "2026-10-15T01:00:00Z"},
+            "requirement_ids": ["ICV-009", "ICV-029"]
+          }
+        ],
+        "approval_evidence": {"sha256": "10c39a96cd8dbbf77986d83aad8740f08729c8786234596ee97258f4dc963d5e", "media_type": "text/plain"}
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "work_authorization",
+      "record_id": "pre-work",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-owner",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "adoption_ref": {"id": "adoption", "sha256": "2e79afae035debba901446ef696f3d761d95b15ececa5bf56f2cec0047c277c4"},
+        "task_id": "T-C",
+        "kind": "ADMINISTRATIVE",
+        "baseline": {"sha256": "7ec8a0dc5c1760f7d059e4789124deac467acdb6dce09160d4df692d4c172fba", "media_type": "text/plain"},
+        "repository_id": "fixture-repo",
+        "scope": {
+          "mode": "READ_ONLY",
+          "resources": [{"repository_id": "fixture-repo", "kind": "SOURCE", "target_id": "candidate-selected"}],
+          "writable_resources": [],
+          "prohibited_effects": ["No production or public effects."],
+          "profile_id": "F-C",
+          "policy_artifact": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"}
+        },
+        "obligation_set_ref": {"id": "pre-set", "sha256": "90618638265b8a0f0cf4b26c8e020e21ee41f4b76d88b1e9c00d32e47a0fbc85"},
+        "budget": {
+          "duration_ticks": 100,
+          "clock_id": "fixture-clock",
+          "max_model_contacts": 0,
+          "max_attempts": 1,
+          "max_observation_bytes": 65536,
+          "max_retained_bytes": 65536,
+          "max_public_writes": 0
+        },
+        "validity": {"kind": "UTC_WINDOW", "not_before": "2026-10-15T00:00:00Z", "expires_at": "2026-10-15T01:00:00Z"},
+        "revocation_epoch": 1,
+        "delegation_policy": {"sha256": "10c39a96cd8dbbf77986d83aad8740f08729c8786234596ee97258f4dc963d5e", "media_type": "text/plain"}
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "observation",
+      "record_id": "pre-obs",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-observer",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "attempt_id": "attempt-1",
+        "candidate_ref": {"id": "candidate", "sha256": "64cb1a877d823bb40d1aa23e87942f62baac8c866a74ae9406cc1e0d5ecc7007"},
+        "input": {"sha256": "0078d2f22d22b36b16054f99c9d27b45f2919ba66d87c67c2a8c113ffda798a2", "media_type": "text/plain"},
+        "obligation_set_ref": {"id": "pre-set", "sha256": "90618638265b8a0f0cf4b26c8e020e21ee41f4b76d88b1e9c00d32e47a0fbc85"},
+        "obligation": {"id": "P-apply", "version": "1"},
+        "method": {"sha256": "bf324ec0dad5ee9050f8c42380c273a43fd07fe372dd94e62622a155883fd9a3", "media_type": "text/plain"},
+        "measurement_scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+        "execution": {
+          "execution_id": "execution-1",
+          "command": {"sha256": "1f467527e3ef97cbbb1dba1510281c7c12b93f3380c20070ac05270ba0248705", "media_type": "text/plain"},
+          "conditions": {"sha256": "c2f68acc5f5d70ad252db48b4ea996a25444e66f18a6b20e5d3c51a3b89bfc59", "media_type": "text/plain"},
+          "requested_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "completed_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "interval": {"clock_id": "fixture-clock", "epoch_id": "fixture-epoch", "start_tick": 0, "end_tick": 10},
+          "exit_code": 0,
+          "completion": "COMPLETED"
+        },
+        "event": {"kind": "CHECK_RESULT", "operation_id": null, "sender_id": null, "receiver_id": null, "payload": null, "predecessors": []},
+        "observation": {
+          "availability": "OBSERVED",
+          "coverage": "COMPLETE_FOR_PREDICATE",
+          "result": {"sha256": "11bf6ca778745291099bd5b21bae18cd913a0bf2931a56aa2b664ac79ef2789f", "media_type": "text/plain"},
+          "interval": {"clock_id": "fixture-clock", "epoch_id": "fixture-epoch", "start_tick": 0, "end_tick": 10},
+          "limitations": ["Synthetic record; no authentic observation."]
+        }
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "assessment",
+      "record_id": "pre-assessment",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-acceptance",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "attempt_ref": null,
+        "work_ref": {"id": "pre-work", "sha256": "f61beeb95c72d03086654353a0edb76e6f88072d8638978303a93cb10ca5f7de"},
+        "candidate_ref": {"id": "candidate", "sha256": "64cb1a877d823bb40d1aa23e87942f62baac8c866a74ae9406cc1e0d5ecc7007"},
+        "obligation_set_ref": {"id": "pre-set", "sha256": "90618638265b8a0f0cf4b26c8e020e21ee41f4b76d88b1e9c00d32e47a0fbc85"},
+        "kind": "ADMINISTRATIVE",
+        "context": {
+          "cancellation": "CLEAR",
+          "governing": "ESTABLISHED",
+          "verifier": "ESTABLISHED",
+          "subject": "ESTABLISHED",
+          "evidence_refs": [{"id": "pre-obs", "sha256": "4e3139575dce4ab2c1daecaa91381ab54775eb38b5f0198e5573e9a3747de209"}]
+        },
+        "evaluations": [
+          {
+            "obligation": {"id": "P-apply", "version": "1"},
+            "state": "SATISFIED",
+            "evaluation_method": "AUTOMATED",
+            "evidence_refs": [{"id": "pre-obs", "sha256": "4e3139575dce4ab2c1daecaa91381ab54775eb38b5f0198e5573e9a3747de209"}],
+            "applicability_refs": [],
+            "limitations": [],
+            "reasons": [{"code": "FIXTURE_PREDICATE", "message": "Synthetic data example: FIXTURE_PREDICATE", "related_ids": ["P-apply"]}]
+          }
+        ],
+        "claims": [],
+        "disposition": "ACCEPTED",
+        "reasons": [{"code": "FIXTURE_PREFLIGHT", "message": "Synthetic data example: FIXTURE_PREFLIGHT", "related_ids": []}],
+        "limitations": ["Not actual use-time permission."]
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "action_authorization",
+      "record_id": "apply-action",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-authorizer",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "work_ref": {"id": "work", "sha256": "8a8735690aad63fb323fcfb859852c0b4808480610d492d3731a1f40b7c4c874"},
+        "action": "APPLY_CANDIDATE",
+        "actuator_id": "fixture-apply",
+        "resource": {"repository_id": "fixture-repo", "kind": "SOURCE", "target_id": "candidate-selected"},
+        "subject": {"sha256": "0078d2f22d22b36b16054f99c9d27b45f2919ba66d87c67c2a8c113ffda798a2", "media_type": "text/plain"},
+        "acceptance_ref": {"id": "assessment", "sha256": "69c9b3e4ac37663b8601462d99fff8a340f40fc739f3216ed0ba2cc9fe016711"},
+        "policy": {"sha256": "10c39a96cd8dbbf77986d83aad8740f08729c8786234596ee97258f4dc963d5e", "media_type": "text/plain"},
+        "precondition_set_ref": {"id": "pre-set", "sha256": "90618638265b8a0f0cf4b26c8e020e21ee41f4b76d88b1e9c00d32e47a0fbc85"},
+        "precondition_assessment_ref": {"id": "pre-assessment", "sha256": "862ae327bd746140e80a591dc3984e80cd00993b215222ca3e4f4f2e093cb45c"},
+        "budget": {
+          "duration_ticks": 100,
+          "clock_id": "fixture-clock",
+          "max_model_contacts": 0,
+          "max_attempts": 1,
+          "max_observation_bytes": 65536,
+          "max_retained_bytes": 65536,
+          "max_public_writes": 0
+        },
+        "validity": {"kind": "UTC_WINDOW", "not_before": "2026-10-15T00:00:00Z", "expires_at": "2026-10-15T01:00:00Z"},
+        "revocation_epoch": 1,
+        "idempotency_key": "apply-once",
+        "max_effects": 1
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "observation",
+      "record_id": "effect-obs",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-observer",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "attempt_id": "attempt-1",
+        "candidate_ref": {"id": "candidate", "sha256": "64cb1a877d823bb40d1aa23e87942f62baac8c866a74ae9406cc1e0d5ecc7007"},
+        "input": {"sha256": "0078d2f22d22b36b16054f99c9d27b45f2919ba66d87c67c2a8c113ffda798a2", "media_type": "text/plain"},
+        "obligation_set_ref": null,
+        "obligation": null,
+        "method": {"sha256": "bf324ec0dad5ee9050f8c42380c273a43fd07fe372dd94e62622a155883fd9a3", "media_type": "text/plain"},
+        "measurement_scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+        "execution": {
+          "execution_id": "execution-1",
+          "command": {"sha256": "1f467527e3ef97cbbb1dba1510281c7c12b93f3380c20070ac05270ba0248705", "media_type": "text/plain"},
+          "conditions": {"sha256": "c2f68acc5f5d70ad252db48b4ea996a25444e66f18a6b20e5d3c51a3b89bfc59", "media_type": "text/plain"},
+          "requested_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "completed_check_ids": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+          "interval": {"clock_id": "fixture-clock", "epoch_id": "fixture-epoch", "start_tick": 0, "end_tick": 10},
+          "exit_code": 0,
+          "completion": "COMPLETED"
+        },
+        "event": {
+          "kind": "REMOTE_READBACK",
+          "operation_id": "apply-once",
+          "sender_id": "fixture-apply",
+          "receiver_id": "fixture-owner-destination",
+          "payload": {"sha256": "0078d2f22d22b36b16054f99c9d27b45f2919ba66d87c67c2a8c113ffda798a2", "media_type": "text/plain"},
+          "predecessors": []
+        },
+        "observation": {
+          "availability": "OBSERVED",
+          "coverage": "COMPLETE_FOR_PREDICATE",
+          "result": {"sha256": "a51c08801d86eadcd258d21a2d9a9cb24dfad1b6e4ffe02416c9056fa354aaa6", "media_type": "text/plain"},
+          "interval": {"clock_id": "fixture-clock", "epoch_id": "fixture-epoch", "start_tick": 0, "end_tick": 10},
+          "limitations": ["Synthetic record; no authentic observation."]
+        }
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "action_receipt",
+      "record_id": "receipt",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-apply",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "action_ref": {"id": "apply-action", "sha256": "37a33ad87d4dff8b344a50b55ac90ba8ed2e6adec1edfee24601ee5ac1c97f50"},
+        "operation_id": "apply-once",
+        "outcome": "CONFIRMED",
+        "result": {"sha256": "0078d2f22d22b36b16054f99c9d27b45f2919ba66d87c67c2a8c113ffda798a2", "media_type": "text/plain"},
+        "observation_refs": [{"id": "effect-obs", "sha256": "42544a947e6ffce76a0b03b23211cb0cee577b0c60ca364632023aadf3886a9c"}],
+        "previous_receipt_ref": null,
+        "reasons": [{"code": "SYNTHETIC_EFFECT_ONLY", "message": "Synthetic data example: SYNTHETIC_EFFECT_ONLY", "related_ids": []}]
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "unresolved_condition",
+      "record_id": "condition",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-custodian",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "condition_id": "condition-O1",
+        "task_id": "T-C",
+        "subject": {"sha256": "0078d2f22d22b36b16054f99c9d27b45f2919ba66d87c67c2a8c113ffda798a2", "media_type": "text/plain"},
+        "obligation_set_ref": {"id": "fc-set", "sha256": "0e35b49efa2f35e409d3474fa01f19f6f5b61161c223abaf38b432588d98b34e"},
+        "obligation": {"id": "C-result", "version": "1"},
+        "assessment_ref": null,
+        "kind": "REQUIRED_UNKNOWN",
+        "hold_scope": {
+          "task_ids": ["T-C"],
+          "resources": [{"repository_id": "fixture-repo", "kind": "SOURCE", "target_id": "candidate-selected"}],
+          "actions": ["APPLY_CANDIDATE"],
+          "shared_boundary_ids": []
+        },
+        "evidence_refs": [],
+        "permitted_next_step": "Obtain applicable protected result and retain a specific authorized resolution.",
+        "reasons": [{"code": "FIXTURE_PENDING_OBSERVATION", "message": "Synthetic data example: FIXTURE_PENDING_OBSERVATION", "related_ids": []}]
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "condition_resolution",
+      "record_id": "resolution",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-custodian",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "condition_ref": {"id": "condition", "sha256": "8dac0b1acd6eb833a6dbe239467abeb8e098e80b7997b8fdb189b05b22cd4005"},
+        "resolution": "EVIDENCE_SATISFIED",
+        "authorization_ref": {"id": "work", "sha256": "8a8735690aad63fb323fcfb859852c0b4808480610d492d3731a1f40b7c4c874"},
+        "subject_mapping": {"sha256": "cfe675eddbc066a1d0900e994880f2216caadb240f270843084291a0a5ea08c6", "media_type": "text/plain"},
+        "evidence_refs": [{"id": "obs-C-result", "sha256": "0eef15af0321388abc9d9a11155fc58ae724184b45929e111c8984744d67fd00"}],
+        "new_assessment_ref": {"id": "assessment", "sha256": "69c9b3e4ac37663b8601462d99fff8a340f40fc739f3216ed0ba2cc9fe016711"},
+        "new_obligation_set_ref": null,
+        "reasons": [{"code": "FIXTURE_SPECIFIC_RESOLUTION", "message": "Synthetic data example: FIXTURE_SPECIFIC_RESOLUTION", "related_ids": []}]
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "coverage_gap",
+      "record_id": "gap",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-custodian",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "task_id": "T-C",
+        "property": "An additional untested behavior outside F-C needs acceptance criteria.",
+        "scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+        "coverage_class": "WORKER_ONLY_CHECKS",
+        "available_evidence_refs": [],
+        "missing_coverage": "No independently approved outcome for the additional behavior.",
+        "automation_consequence": "No automatic acceptance of that additional claim; F-C scope remains explicit.",
+        "condition_ref": null
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "custody_checkpoint",
+      "record_id": "checkpoint",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-custodian",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "store_id": "fixture-store",
+        "epoch": "store-epoch-1",
+        "sequence": 0,
+        "previous_checkpoint_ref": null,
+        "record_inventory": {"sha256": "309f6b4cbd2ad84939b110aadd0c640641ce3026b6a5d5a206c0414ed30f4892", "media_type": "text/plain"},
+        "unresolved_inventory": {"sha256": "f8a1e13ed0479726021f2b8b58790c81d5ff35f1f73ece2bb7ec4b298a402af1", "media_type": "text/plain"},
+        "initialization_authorization_ref": {"id": "adoption", "sha256": "2e79afae035debba901446ef696f3d761d95b15ececa5bf56f2cec0047c277c4"},
+        "durability_scope": "Synthetic process-restart mapping only, not power-loss proof."
+      }
+    },
+    {
+      "document_type": "record",
+      "schema_version": "upkeeper.verification-data.v1-draft.1",
+      "record_type": "case_result",
+      "record_id": "case-result",
+      "realm": "EXAMPLE-NOT-ADOPTED",
+      "issuer_id": "fixture-test-driver",
+      "issued_at": "2026-10-15T00:00:00Z",
+      "contract_sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "privacy": "PRIVATE",
+      "payload": {
+        "case_id": "ICM-001",
+        "variant_id": "data-shapes-only",
+        "scope": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+        "candidate_ref": {"id": "candidate", "sha256": "64cb1a877d823bb40d1aa23e87942f62baac8c866a74ae9406cc1e0d5ecc7007"},
+        "matrix": {"sha256": "2aa1beac6c63619399a8c15606fe1cdc773a670c7bb2b30a06dde316034a6579", "media_type": "text/markdown"},
+        "invocation": {"sha256": "c494c3e853a63094eb83e834ae4ace7131e8076f5a3b90d28067758c1eb4e267", "media_type": "text/plain"},
+        "expected": {"sha256": "37f4ff4df495c26e60500db0084801a4fbc4a0718dfe6e921f1ca1ce515b0173", "media_type": "text/plain"},
+        "actual": null,
+        "result": "NOT_RUN",
+        "real_components": [],
+        "test_doubles": ["all-example-records"],
+        "observations": [],
+        "effects": [],
+        "limitations": ["Representation example, explicitly NOT_RUN against Upkeeper."]
+      }
+    }
+  ],
+  "vectors": [
+    {
+      "id": "VD-001",
+      "case_ids": ["ICM-001"],
+      "layer": "DECISION",
+      "expected": {"disposition": "ACCEPTED"},
+      "template_id": "decision-valid",
+      "changes": []
+    },
+    {
+      "id": "VD-002",
+      "case_ids": ["ICM-039"],
+      "layer": "DECISION",
+      "expected": {"disposition": "NO_CHANGE_VERIFIED"},
+      "template_id": "decision-valid",
+      "changes": [{"path": ["kind"], "operation": "SET", "value": "NO_CHANGE"}]
+    },
+    {
+      "id": "VD-003",
+      "case_ids": ["ICM-031"],
+      "layer": "DECISION",
+      "expected": {"disposition": "CANCELLED"},
+      "template_id": "decision-valid",
+      "changes": [{"path": ["context", "cancellation"], "operation": "SET", "value": "VERIFIED"}]
+    },
+    {
+      "id": "VD-004",
+      "case_ids": ["ICM-019"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [{"path": ["context", "cancellation"], "operation": "SET", "value": "UNKNOWN"}]
+    },
+    {
+      "id": "VD-005",
+      "case_ids": ["ICM-009"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [{"path": ["context", "governing"], "operation": "SET", "value": "INVALID"}]
+    },
+    {
+      "id": "VD-006",
+      "case_ids": ["ICM-009"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [{"path": ["context", "governing"], "operation": "SET", "value": "UNKNOWN"}]
+    },
+    {
+      "id": "VD-007",
+      "case_ids": ["ICM-009"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [{"path": ["context", "verifier"], "operation": "SET", "value": "INVALID"}]
+    },
+    {
+      "id": "VD-008",
+      "case_ids": ["ICM-009"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [{"path": ["context", "verifier"], "operation": "SET", "value": "UNKNOWN"}]
+    },
+    {
+      "id": "VD-009",
+      "case_ids": ["ICM-009"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [{"path": ["context", "subject"], "operation": "SET", "value": "INVALID"}]
+    },
+    {
+      "id": "VD-010",
+      "case_ids": ["ICM-009"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [{"path": ["context", "subject"], "operation": "SET", "value": "UNKNOWN"}]
+    },
+    {
+      "id": "VD-011",
+      "case_ids": ["ICM-002"],
+      "layer": "DECISION",
+      "expected": {"disposition": "REJECTED"},
+      "template_id": "decision-valid",
+      "changes": [
+        {
+          "path": ["evaluations"],
+          "operation": "SET",
+          "value": [
+            {"id": "C-result", "version": "1", "state": "VIOLATED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-preserve", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-scope", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-attempt", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VD-012",
+      "case_ids": ["ICM-045"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [
+        {
+          "path": ["evaluations"],
+          "operation": "SET",
+          "value": [
+            {"id": "C-result", "version": "1", "state": "UNKNOWN", "method": "NONE", "applicability": "UNESTABLISHED"},
+            {"id": "C-preserve", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-scope", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-attempt", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VD-013",
+      "case_ids": ["ICM-003"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [
+        {
+          "path": ["evaluations"],
+          "operation": "SET",
+          "value": [
+            {"id": "C-result", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-preserve", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-scope", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VD-014",
+      "case_ids": ["ICM-004"],
+      "layer": "DECISION",
+      "expected": {"disposition": "REVIEW_REQUIRED"},
+      "template_id": "decision-valid",
+      "changes": [
+        {
+          "path": ["definitions"],
+          "operation": "SET",
+          "value": [
+            {"id": "C-result", "version": "1", "required": true, "method": "HUMAN"},
+            {"id": "C-preserve", "version": "1", "required": true, "method": "AUTOMATED"},
+            {"id": "C-scope", "version": "1", "required": true, "method": "AUTOMATED"},
+            {"id": "C-attempt", "version": "1", "required": true, "method": "AUTOMATED"}
+          ]
+        },
+        {
+          "path": ["evaluations"],
+          "operation": "SET",
+          "value": [
+            {"id": "C-result", "version": "1", "state": "PENDING_REVIEW", "method": "NONE", "applicability": "UNESTABLISHED"},
+            {"id": "C-preserve", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-scope", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-attempt", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VD-015",
+      "case_ids": ["ICM-031"],
+      "layer": "DECISION",
+      "expected": {"disposition": "REJECTED"},
+      "template_id": "decision-valid",
+      "changes": [
+        {
+          "path": ["evaluations"],
+          "operation": "SET",
+          "value": [
+            {"id": "C-result", "version": "1", "state": "VIOLATED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-preserve", "version": "1", "state": "UNKNOWN", "method": "NONE", "applicability": "UNESTABLISHED"},
+            {"id": "C-scope", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-attempt", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VD-016",
+      "case_ids": ["ICM-031"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [
+        {
+          "path": ["definitions"],
+          "operation": "SET",
+          "value": [
+            {"id": "C-result", "version": "1", "required": true, "method": "HUMAN"},
+            {"id": "C-preserve", "version": "1", "required": true, "method": "AUTOMATED"},
+            {"id": "C-scope", "version": "1", "required": true, "method": "AUTOMATED"},
+            {"id": "C-attempt", "version": "1", "required": true, "method": "AUTOMATED"}
+          ]
+        },
+        {
+          "path": ["evaluations"],
+          "operation": "SET",
+          "value": [
+            {"id": "C-result", "version": "1", "state": "PENDING_REVIEW", "method": "NONE", "applicability": "UNESTABLISHED"},
+            {"id": "C-preserve", "version": "1", "state": "UNKNOWN", "method": "NONE", "applicability": "UNESTABLISHED"},
+            {"id": "C-scope", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-attempt", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VD-017",
+      "case_ids": ["ICM-003"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [
+        {
+          "path": ["evaluations"],
+          "operation": "SET",
+          "value": [
+            {"id": "C-result", "version": "1", "state": "NOT_APPLICABLE", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-preserve", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-scope", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-attempt", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VD-018",
+      "case_ids": ["ICM-003"],
+      "layer": "DECISION",
+      "expected": {"disposition": "ACCEPTED"},
+      "template_id": "decision-valid",
+      "changes": [
+        {
+          "path": ["evaluations"],
+          "operation": "SET",
+          "value": [
+            {"id": "C-result", "version": "1", "state": "NOT_APPLICABLE", "method": "AUTOMATED", "applicability": "PROVED"},
+            {"id": "C-preserve", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-scope", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-attempt", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VD-019",
+      "case_ids": ["ICM-050"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [
+        {
+          "path": ["evaluations"],
+          "operation": "SET",
+          "value": [
+            {"id": "C-result", "version": "1", "state": "SATISFIED", "method": "HUMAN", "applicability": "UNESTABLISHED"},
+            {"id": "C-preserve", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-scope", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-attempt", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VD-020",
+      "case_ids": ["ICM-018"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [
+        {
+          "path": ["evaluations"],
+          "operation": "SET",
+          "value": [
+            {"id": "C-result", "version": "old", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-preserve", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-scope", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-attempt", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VD-021",
+      "case_ids": ["ICM-017"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [
+        {
+          "path": ["evaluations"],
+          "operation": "SET",
+          "value": [
+            {"id": "C-result", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-preserve", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-scope", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-attempt", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+            {"id": "C-result", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VD-022",
+      "case_ids": ["ICM-003"],
+      "layer": "DECISION",
+      "expected": {"disposition": "BLOCKED"},
+      "template_id": "decision-valid",
+      "changes": [{"path": ["definitions"], "operation": "SET", "value": []}, {"path": ["evaluations"], "operation": "SET", "value": []}]
+    },
+    {
+      "id": "VD-023",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a222c2276616c7565223a377d"},
+      "expected": {"application_outcome": "DELIVERY_REQUIRED", "value": 7}
+    },
+    {
+      "id": "VD-024",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b2276616c7565223a377d"},
+      "expected": {"application_outcome": "NO_DELIVERY", "value": null}
+    },
+    {
+      "id": "VD-025",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2258595a222c2276616c7565223a377d"},
+      "expected": {"application_outcome": "NO_DELIVERY", "value": null}
+    },
+    {
+      "id": "VD-026",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a20222c2276616c7565223a377d"},
+      "expected": {"application_outcome": "NO_DELIVERY", "value": null}
+    },
+    {
+      "id": "VD-027",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a22222c2276616c7565223a377d"},
+      "expected": {"application_outcome": "NO_DELIVERY", "value": null}
+    },
+    {
+      "id": "VD-028",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a222c2276616c7565223a307d"},
+      "expected": {"application_outcome": "DELIVERY_REQUIRED", "value": 0}
+    },
+    {
+      "id": "VD-029",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a222c2276616c7565223a3235357d"},
+      "expected": {"application_outcome": "DELIVERY_REQUIRED", "value": 255}
+    },
+    {
+      "id": "VD-030",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a6e756c6c2c2276616c7565223a377d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-031",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a747275652c2276616c7565223a377d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-032",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a372c2276616c7565223a377d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-033",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a5b5d2c2276616c7565223a377d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-034",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a7b7d2c2276616c7565223a377d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-035",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a222c2276616c7565223a747275657d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-036",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a222c2276616c7565223a372e307d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-037",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a222c2276616c7565223a372e357d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-038",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a222c2276616c7565223a3765307d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-039",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a222c2276616c7565223a2d317d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-040",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a222c2276616c7565223a3235367d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-041",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a227d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-042",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a222c2276616c7565223a372c2276616c7565223a387d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-043",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a222c2276616c7565223a372c226578747261223a307d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-044",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "5b375d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-045",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b2276616c7565223a"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-046",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "7b226d6f6465223a2278797a222c2276616c7565223a4e614e7d"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-047",
+      "case_ids": ["ICM-044"],
+      "layer": "PROFILE_INPUT",
+      "input": {"profile": "F-X", "utf8_hex": "ff"},
+      "expected": {"application_outcome": "INVALID_INPUT", "value": null}
+    },
+    {
+      "id": "VD-048",
+      "case_ids": ["ICM-002"],
+      "layer": "RECORD_RELATION",
+      "input": {"record_id": "attempt", "changes": [{"path": ["payload", "execution", "exit_code"], "operation": "SET", "value": 42}]},
+      "expected": {"classification": "SCHEMA_REJECT", "reason": "FAILED_WORKER_AS_SUCCESS"}
+    },
+    {
+      "id": "VD-049",
+      "case_ids": ["ICM-003"],
+      "layer": "RECORD_RELATION",
+      "input": {"record_id": "assessment", "changes": [{"path": ["payload", "evaluations"], "operation": "SET", "value": []}]},
+      "expected": {"classification": "SCHEMA_REJECT", "reason": "EMPTY_ACCEPTED_RESULTS"}
+    },
+    {
+      "id": "VD-050",
+      "case_ids": ["ICM-017"],
+      "layer": "RECORD_RELATION",
+      "input": {"record_id": "assessment", "changes": [{"path": ["payload", "trusted"], "operation": "SET", "value": true}]},
+      "expected": {"classification": "SCHEMA_REJECT", "reason": "UNKNOWN_FIELD"}
+    },
+    {
+      "id": "VD-051",
+      "case_ids": ["ICM-017"],
+      "layer": "RECORD_RELATION",
+      "input": {"record_id": "work", "changes": [{"path": ["schema_version"], "operation": "SET", "value": "old"}]},
+      "expected": {"classification": "SCHEMA_REJECT", "reason": "UNKNOWN_VERSION"}
+    },
+    {
+      "id": "VD-052",
+      "case_ids": ["ICM-009"],
+      "layer": "RECORD_RELATION",
+      "input": {"record_id": "work", "changes": [{"path": ["payload", "adoption_ref"], "operation": "DELETE"}]},
+      "expected": {"classification": "SCHEMA_REJECT", "reason": "MISSING_AUTHORITY"}
+    },
+    {
+      "id": "VD-053",
+      "case_ids": ["ICM-036"],
+      "layer": "RECORD_RELATION",
+      "input": {"record_id": "receipt", "changes": [{"path": ["payload", "result"], "operation": "SET", "value": null}]},
+      "expected": {"classification": "SCHEMA_REJECT", "reason": "CONFIRMED_WITHOUT_RESULT"}
+    },
+    {
+      "id": "VD-054",
+      "case_ids": ["ICM-018"],
+      "layer": "RECORD_RELATION",
+      "input": {"record_id": "assessment", "changes": [{"path": ["payload", "task_id"], "operation": "SET", "value": "other-task"}]},
+      "expected": {"classification": "RELATION_REJECT", "reason": "TASK_MISMATCH"}
+    },
+    {
+      "id": "VD-055",
+      "case_ids": ["ICM-018"],
+      "layer": "RECORD_RELATION",
+      "input": {
+        "record_id": "assessment",
+        "changes": [
+          {
+            "path": ["payload", "candidate_ref"],
+            "operation": "SET",
+            "value": {"id": "work", "sha256": "8a8735690aad63fb323fcfb859852c0b4808480610d492d3731a1f40b7c4c874"}
+          }
+        ]
+      },
+      "expected": {"classification": "RELATION_REJECT", "reason": "WRONG_REFERENCE_KIND"}
+    },
+    {
+      "id": "VD-056",
+      "case_ids": ["ICM-033"],
+      "layer": "RECORD_RELATION",
+      "input": {"record_id": "work", "changes": [{"path": ["payload", "validity", "expires_at"], "operation": "SET", "value": "2026-10-14T00:00:00Z"}]},
+      "expected": {"classification": "RELATION_REJECT", "reason": "INVALID_TIME_WINDOW"}
+    },
+    {
+      "id": "VD-057",
+      "case_ids": ["ICM-031"],
+      "layer": "RECORD_RELATION",
+      "input": {"record_id": "assessment", "changes": [{"path": ["payload", "evaluations", "0", "state"], "operation": "SET", "value": "VIOLATED"}]},
+      "expected": {"classification": "RELATION_REJECT", "reason": "DISPOSITION_MISMATCH"}
+    },
+    {
+      "id": "VD-058",
+      "case_ids": ["ICM-050"],
+      "layer": "RECORD_RELATION",
+      "input": {
+        "record_id": "assessment",
+        "changes": [{"path": ["payload", "evaluations", "0", "evaluation_method"], "operation": "SET", "value": "HUMAN"}]
+      },
+      "expected": {"classification": "RELATION_REJECT", "reason": "METHOD_MISMATCH"}
+    },
+    {
+      "id": "VD-059",
+      "case_ids": ["ICM-003"],
+      "layer": "RECORD_RELATION",
+      "input": {"record_id": "assessment", "changes": [{"path": ["payload", "evaluations", "0", "state"], "operation": "SET", "value": "NOT_APPLICABLE"}]},
+      "expected": {"classification": "SCHEMA_REJECT", "reason": "MISSING_APPLICABILITY"}
+    },
+    {
+      "id": "VD-060",
+      "case_ids": ["ICM-028"],
+      "layer": "RECORD_RELATION",
+      "input": {"record_id": "checkpoint", "changes": [{"path": ["payload", "sequence"], "operation": "SET", "value": 1}]},
+      "expected": {"classification": "RELATION_REJECT", "reason": "MISSING_PREDECESSOR"}
+    },
+    {
+      "id": "VD-061",
+      "case_ids": ["ICM-026"],
+      "layer": "RECORD_RELATION",
+      "input": {"record_id": "condition", "changes": [{"path": ["payload", "resolved"], "operation": "SET", "value": true}]},
+      "expected": {"classification": "SCHEMA_REJECT", "reason": "MUTABLE_RESOLUTION_FLAG"}
+    },
+    {
+      "id": "VD-062",
+      "case_ids": ["ICM-035"],
+      "layer": "RECORD_RELATION",
+      "input": {"record_id": "receipt", "changes": [{"path": ["payload", "operation_id"], "operation": "SET", "value": "other-write"}]},
+      "expected": {"classification": "RELATION_REJECT", "reason": "OPERATION_MISMATCH"}
+    },
+    {
+      "id": "VD-063",
+      "case_ids": ["ICM-032"],
+      "layer": "ACTION_BINDING",
+      "expected": {"permission": "MATCHES_RECORDED_BINDING"},
+      "template_id": "action-valid",
+      "changes": []
+    },
+    {
+      "id": "VD-064",
+      "case_ids": ["ICM-033"],
+      "layer": "ACTION_BINDING",
+      "expected": {"permission": "DENIED"},
+      "template_id": "action-valid",
+      "changes": [{"path": ["actual_action"], "operation": "SET", "value": "MERGE_CANDIDATE"}]
+    },
+    {
+      "id": "VD-065",
+      "case_ids": ["ICM-033"],
+      "layer": "ACTION_BINDING",
+      "expected": {"permission": "DENIED"},
+      "template_id": "action-valid",
+      "changes": [{"path": ["actual_actuator_id"], "operation": "SET", "value": "other-actor"}]
+    },
+    {
+      "id": "VD-066",
+      "case_ids": ["ICM-033"],
+      "layer": "ACTION_BINDING",
+      "expected": {"permission": "DENIED"},
+      "template_id": "action-valid",
+      "changes": [{"path": ["actual_resource", "repository_id"], "operation": "SET", "value": "other-repo"}]
+    },
+    {
+      "id": "VD-067",
+      "case_ids": ["ICM-033"],
+      "layer": "ACTION_BINDING",
+      "expected": {"permission": "DENIED"},
+      "template_id": "action-valid",
+      "changes": [{"path": ["actual_subject", "sha256"], "operation": "SET", "value": "54ce1343fc8cd4825b326a3212f593c8d9189e758a452b50472cfbacf8840052"}]
+    },
+    {
+      "id": "VD-068",
+      "case_ids": ["ICM-033"],
+      "layer": "ACTION_BINDING",
+      "expected": {"permission": "DENIED"},
+      "template_id": "action-valid",
+      "changes": [{"path": ["now"], "operation": "SET", "value": "2026-10-15T01:00:00Z"}]
+    },
+    {
+      "id": "VD-069",
+      "case_ids": ["ICM-033"],
+      "layer": "ACTION_BINDING",
+      "expected": {"permission": "DENIED"},
+      "template_id": "action-valid",
+      "changes": [{"path": ["current_epoch"], "operation": "SET", "value": 2}]
+    },
+    {
+      "id": "VD-070",
+      "case_ids": ["ICM-033"],
+      "layer": "ACTION_BINDING",
+      "expected": {"permission": "DENIED"},
+      "template_id": "action-valid",
+      "changes": [{"path": ["reserved_elsewhere"], "operation": "SET", "value": true}]
+    },
+    {
+      "id": "VD-071",
+      "case_ids": ["ICM-033"],
+      "layer": "ACTION_BINDING",
+      "expected": {"permission": "DENIED"},
+      "template_id": "action-valid",
+      "changes": [{"path": ["unresolved_effect"], "operation": "SET", "value": true}]
+    },
+    {
+      "id": "VD-072",
+      "case_ids": ["ICM-026", "ICM-028"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O1", "O2"], "continuation": "BLOCKED", "resolved_as": "NONE", "effect_outcome": null},
+      "template_id": "condition-open",
+      "changes": []
+    },
+    {
+      "id": "VD-073",
+      "case_ids": ["ICM-026", "ICM-028"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O1", "O2"], "continuation": "BLOCKED", "resolved_as": "NONE", "effect_outcome": null},
+      "template_id": "condition-open",
+      "changes": [{"path": ["event"], "operation": "SET", "value": "TIMER"}]
+    },
+    {
+      "id": "VD-074",
+      "case_ids": ["ICM-026", "ICM-028"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O1", "O2"], "continuation": "BLOCKED", "resolved_as": "NONE", "effect_outcome": null},
+      "template_id": "condition-open",
+      "changes": [{"path": ["event"], "operation": "SET", "value": "NEW_ATTEMPT"}]
+    },
+    {
+      "id": "VD-075",
+      "case_ids": ["ICM-026", "ICM-028"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O1", "O2"], "continuation": "BLOCKED", "resolved_as": "NONE", "effect_outcome": null},
+      "template_id": "condition-open",
+      "changes": [{"path": ["event"], "operation": "SET", "value": "CACHE"}]
+    },
+    {
+      "id": "VD-076",
+      "case_ids": ["ICM-026", "ICM-028"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O1", "O2"], "continuation": "BLOCKED", "resolved_as": "NONE", "effect_outcome": null},
+      "template_id": "condition-open",
+      "changes": [{"path": ["event"], "operation": "SET", "value": "TRACKER_CLOSED"}]
+    },
+    {
+      "id": "VD-077",
+      "case_ids": ["ICM-026", "ICM-028"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O1", "O2"], "continuation": "BLOCKED", "resolved_as": "NONE", "effect_outcome": null},
+      "template_id": "condition-open",
+      "changes": [{"path": ["event"], "operation": "SET", "value": "COMPACTION"}]
+    },
+    {
+      "id": "VD-078",
+      "case_ids": ["ICM-026", "ICM-028"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O1", "O2"], "continuation": "BLOCKED", "resolved_as": "NONE", "effect_outcome": null},
+      "template_id": "condition-open",
+      "changes": [{"path": ["event"], "operation": "SET", "value": "STORE_LOST"}]
+    },
+    {
+      "id": "VD-079",
+      "case_ids": ["ICM-027"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O2"], "continuation": "BLOCKED", "resolved_as": "SATISFIED_CURRENT_SCOPE", "effect_outcome": null},
+      "template_id": "condition-open",
+      "changes": [
+        {"path": ["event"], "operation": "SET", "value": "RESOLVE"},
+        {"path": ["target_id"], "operation": "SET", "value": "O1"},
+        {"path": ["resolution_authorized"], "operation": "SET", "value": true},
+        {"path": ["resolution_retained"], "operation": "SET", "value": true},
+        {"path": ["subject_matches"], "operation": "SET", "value": true}
+      ]
+    },
+    {
+      "id": "VD-080",
+      "case_ids": ["ICM-027"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O1", "O2"], "continuation": "BLOCKED", "resolved_as": "NONE", "effect_outcome": null},
+      "template_id": "condition-open",
+      "changes": [
+        {"path": ["event"], "operation": "SET", "value": "RESOLVE"},
+        {"path": ["target_id"], "operation": "SET", "value": "O1"},
+        {"path": ["resolution_retained"], "operation": "SET", "value": true},
+        {"path": ["subject_matches"], "operation": "SET", "value": true}
+      ]
+    },
+    {
+      "id": "VD-081",
+      "case_ids": ["ICM-027"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O1", "O2"], "continuation": "BLOCKED", "resolved_as": "NONE", "effect_outcome": null},
+      "template_id": "condition-open",
+      "changes": [
+        {"path": ["event"], "operation": "SET", "value": "RESOLVE"},
+        {"path": ["target_id"], "operation": "SET", "value": "O1"},
+        {"path": ["resolution_authorized"], "operation": "SET", "value": true},
+        {"path": ["subject_matches"], "operation": "SET", "value": true}
+      ]
+    },
+    {
+      "id": "VD-082",
+      "case_ids": ["ICM-027"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O1", "O2"], "continuation": "BLOCKED", "resolved_as": "NONE", "effect_outcome": null},
+      "template_id": "condition-open",
+      "changes": [
+        {"path": ["event"], "operation": "SET", "value": "RESOLVE"},
+        {"path": ["target_id"], "operation": "SET", "value": "O1"},
+        {"path": ["resolution_authorized"], "operation": "SET", "value": true},
+        {"path": ["resolution_retained"], "operation": "SET", "value": true}
+      ]
+    },
+    {
+      "id": "VD-083",
+      "case_ids": ["ICM-027"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O2"], "continuation": "BLOCKED", "resolved_as": "SUPERSEDED_NOT_SATISFIED", "effect_outcome": null},
+      "template_id": "condition-open",
+      "changes": [
+        {"path": ["event"], "operation": "SET", "value": "WITHDRAW"},
+        {"path": ["target_id"], "operation": "SET", "value": "O1"},
+        {"path": ["resolution_authorized"], "operation": "SET", "value": true},
+        {"path": ["resolution_retained"], "operation": "SET", "value": true},
+        {"path": ["subject_matches"], "operation": "SET", "value": true}
+      ]
+    },
+    {
+      "id": "VD-084",
+      "case_ids": ["ICM-036", "ICM-049"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O1", "O2"], "continuation": "BLOCKED", "resolved_as": "NONE", "effect_outcome": "CONFIRMED"},
+      "template_id": "condition-open",
+      "changes": [{"path": ["event"], "operation": "SET", "value": "KNOWN_EFFECT_CUSTODY_FAILURE"}]
+    },
+    {
+      "id": "VD-085",
+      "case_ids": ["ICM-036", "ICM-049"],
+      "layer": "LIFECYCLE",
+      "expected": {"open_ids": ["O1", "O2"], "continuation": "BLOCKED", "resolved_as": "NONE", "effect_outcome": "OUTCOME_UNKNOWN"},
+      "template_id": "condition-open",
+      "changes": [{"path": ["event"], "operation": "SET", "value": "UNKNOWN_EFFECT"}]
+    }
+  ],
+  "external_assumptions": [
+    "All issuers, observation values and current clocks in these examples are synthetic.",
+    "No private key, valid production approval, installed reference or actual boundary observation is supplied.",
+    "Record refs bind exact fixture bytes; correct hashes do not make the fixture true.",
+    "Data-vector success never stands in for executing any real ICM case."
+  ],
+  "fixture_artifacts": [
+    {
+      "artifact": {"sha256": "a5d83aa975c014dab70730ae581ec95927b92dc8a4b39759923b5887680f8299", "media_type": "text/plain"},
+      "source": {
+        "kind": "UTF8",
+        "text": "Fixture-only scope: independent candidate selected.txt may change; owner workspace and other.txt must be preserved."
+      }
+    },
+    {
+      "artifact": {"sha256": "7ec8a0dc5c1760f7d059e4789124deac467acdb6dce09160d4df692d4c172fba", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "selected.txt=broken\\n; other.txt=preserve\\n"}
+    },
+    {
+      "artifact": {"sha256": "10c39a96cd8dbbf77986d83aad8740f08729c8786234596ee97258f4dc963d5e", "media_type": "text/plain"},
+      "source": {
+        "kind": "UTF8",
+        "text": "Fixture-only policy with no authentic authority: preserve F-C predicates; allow only the controlled application after independent preflight. Evidence-backed resolution of this task condition is delegated only in the fixture. No operational use."
+      }
+    },
+    {
+      "artifact": {"sha256": "bf324ec0dad5ee9050f8c42380c273a43fd07fe372dd94e62622a155883fd9a3", "media_type": "text/plain"},
+      "source": {
+        "kind": "UTF8",
+        "text": "Fixture checker definition: compare exact F-C bytes and scope; use independent supervisor exit; no worker-modifiable expected answers."
+      }
+    },
+    {
+      "artifact": {"sha256": "0c3071418e6356e614898c84ed064ca95e88551bc0811b534bdf1952ecdae534", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "fixed\n"}
+    },
+    {
+      "artifact": {"sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa", "media_type": "text/markdown"},
+      "source": {"kind": "BUNDLE_FILE", "path": "CONTRACT.md"}
+    },
+    {
+      "artifact": {"sha256": "2aa1beac6c63619399a8c15606fe1cdc773a670c7bb2b30a06dde316034a6579", "media_type": "text/markdown"},
+      "source": {"kind": "BUNDLE_FILE", "path": "ACCEPTANCE-MATRIX.md"}
+    },
+    {
+      "artifact": {"sha256": "90762cde6094272fc93eadc3a059303e25dafadf8fdfb6189790aad6b1e3cf6c", "media_type": "application/json"},
+      "source": {"kind": "BUNDLE_FILE", "path": "verification.schema.json"}
+    },
+    {
+      "artifact": {"sha256": "fbbf285b33622d82919fd482fe5d51900a8935bb98c78d4fd283b9bf70ddf80c", "media_type": "application/json"},
+      "source": {"kind": "BUNDLE_FILE", "path": "verification-spec.json"}
+    },
+    {
+      "artifact": {"sha256": "5cd79edc19614e65068362da9d8b4758b7d690d41bcf91b2ac88d3adad57d5c9", "media_type": "text/markdown"},
+      "source": {"kind": "BUNDLE_FILE", "path": "DATA-CONTRACT.md"}
+    },
+    {
+      "artifact": {"sha256": "55b609eeb00f1b5fa504eb4c718057dd03b40246aa8e1b230c50e99ad3b8a8cd", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "No authentic owner adoption: assume authorized fixture roles only for a local representation exercise."}
+    },
+    {
+      "artifact": {"sha256": "ae8622cb521722d119974e9917ae0c29a8225420672b44a1d8c4bf4515573b7f", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "Required for every F-C repair instance."}
+    },
+    {
+      "artifact": {"sha256": "72320a0701a276c36923afe2b58ca0b6891524c6b58840eba32bdf9a19c7ccdd", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "F-C controlled values from Acceptance Matrix Draft 1."}
+    },
+    {
+      "artifact": {"sha256": "0730276645b90884f3283a90f728929e310b91be159a7d662c15e133f24a624b", "media_type": "application/json"},
+      "source": {"kind": "UTF8", "text": "{\"bytes_hex\": \"66697865640a\"}"}
+    },
+    {
+      "artifact": {"sha256": "c58e1cdbef60321aef244ab261af32ef3cdcf8d3bf81191fee571a2fa1f26aca", "media_type": "application/json"},
+      "source": {"kind": "UTF8", "text": "{\"other_bytes_hex\": \"70726573657276650a\", \"owner_sentinels\": \"UNCHANGED\"}"}
+    },
+    {
+      "artifact": {"sha256": "593b57f28defe5979d9145b10f930582a32a9a5c31398978483feacab79d77cb", "media_type": "application/json"},
+      "source": {"kind": "UTF8", "text": "{\"writable_resource\": \"candidate-selected\"}"}
+    },
+    {
+      "artifact": {"sha256": "1575fcbd6a8d39131af2e41f6da3e11de5be726e7281e383d03500e0ae5d2f2f", "media_type": "application/json"},
+      "source": {"kind": "UTF8", "text": "{\"worker_exit\": 0}"}
+    },
+    {
+      "artifact": {"sha256": "0078d2f22d22b36b16054f99c9d27b45f2919ba66d87c67c2a8c113ffda798a2", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "selected.txt=fixed\\n; other.txt=preserve\\n"}
+    },
+    {
+      "artifact": {"sha256": "11a2ba4eb718f773299084dc897862d3ba1391e6ec2840f1842652a37c7eb9c9", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "Fixture-only captured object inventory with regular independent files; no real checkout was executed."}
+    },
+    {
+      "artifact": {"sha256": "14b641f7df008cb176ea8e37d2e22ba6ef815dfdb1a7e6c00e23135ff4e1676d", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "Synthetic coherent-capture description, not an actual isolation observation."}
+    },
+    {
+      "artifact": {"sha256": "1f467527e3ef97cbbb1dba1510281c7c12b93f3380c20070ac05270ba0248705", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "Fixture command identity only, not executed."}
+    },
+    {
+      "artifact": {"sha256": "c2f68acc5f5d70ad252db48b4ea996a25444e66f18a6b20e5d3c51a3b89bfc59", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "Fixture conditions: isolated subject assumed for data consistency only."}
+    },
+    {
+      "artifact": {"sha256": "301cd2869d2924f75e591bf982a3da45fdac17b62d490b3e2879c75008d646ef", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "preserve\n"}
+    },
+    {
+      "artifact": {"sha256": "21463e4e77fdfbc0208ca99be77922d2b5f9cf7287556310ad15e188ec31ce3f", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "candidate-selected only"}
+    },
+    {
+      "artifact": {"sha256": "c8cab6080c85e17a96335bd1a06766bcc0ae76e59b597cc30ae39d03a388126e", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "worker exit 0"}
+    },
+    {
+      "artifact": {"sha256": "9c0fa23aad7ab8f09edd877c338e368bae0f7203417de442dd192bfbe13ec544", "media_type": "application/json"},
+      "source": {
+        "kind": "UTF8",
+        "text": "{\"precondition\": \"Owner-state baseline, actor, scope, hold, budget and one-operation application permission match now.\"}"
+      }
+    },
+    {
+      "artifact": {"sha256": "11bf6ca778745291099bd5b21bae18cd913a0bf2931a56aa2b664ac79ef2789f", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "Synthetic preconditions currently established; no actual owner workspace inspected."}
+    },
+    {
+      "artifact": {"sha256": "a51c08801d86eadcd258d21a2d9a9cb24dfad1b6e4ffe02416c9056fa354aaa6", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "Synthetic controlled destination contains fixed\\n; no real action was performed."}
+    },
+    {
+      "artifact": {"sha256": "cfe675eddbc066a1d0900e994880f2216caadb240f270843084291a0a5ea08c6", "media_type": "text/plain"},
+      "source": {
+        "kind": "UTF8",
+        "text": "Fixture O1 maps to C-result of this exact candidate/set and is resolved only by applicable retained observation."
+      }
+    },
+    {
+      "artifact": {"sha256": "309f6b4cbd2ad84939b110aadd0c640641ce3026b6a5d5a206c0414ed30f4892", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "Fixture inventory only; no authenticated store or actual persistence."}
+    },
+    {
+      "artifact": {"sha256": "f8a1e13ed0479726021f2b8b58790c81d5ff35f1f73ece2bb7ec4b298a402af1", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "Fixture condition O1 history with separately linked resolution; no global clean assertion."}
+    },
+    {
+      "artifact": {"sha256": "c494c3e853a63094eb83e834ae4ace7131e8076f5a3b90d28067758c1eb4e267", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "No Upkeeper case invocation in this example."}
+    },
+    {
+      "artifact": {"sha256": "37f4ff4df495c26e60500db0084801a4fbc4a0718dfe6e921f1ca1ce515b0173", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "Real boundary execution needed for ICM-001."}
+    },
+    {
+      "artifact": {"sha256": "54ce1343fc8cd4825b326a3212f593c8d9189e758a452b50472cfbacf8840052", "media_type": "text/plain"},
+      "source": {"kind": "UTF8", "text": "different candidate"}
+    }
+  ],
+  "input_templates": [
+    {
+      "id": "decision-valid",
+      "layer": "DECISION",
+      "input": {
+        "context": {"cancellation": "CLEAR", "governing": "ESTABLISHED", "verifier": "ESTABLISHED", "subject": "ESTABLISHED"},
+        "kind": "REPAIR",
+        "definitions": [
+          {"id": "C-result", "version": "1", "required": true, "method": "AUTOMATED"},
+          {"id": "C-preserve", "version": "1", "required": true, "method": "AUTOMATED"},
+          {"id": "C-scope", "version": "1", "required": true, "method": "AUTOMATED"},
+          {"id": "C-attempt", "version": "1", "required": true, "method": "AUTOMATED"}
+        ],
+        "evaluations": [
+          {"id": "C-result", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+          {"id": "C-preserve", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+          {"id": "C-scope", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"},
+          {"id": "C-attempt", "version": "1", "state": "SATISFIED", "method": "AUTOMATED", "applicability": "UNESTABLISHED"}
+        ]
+      }
+    },
+    {
+      "id": "action-valid",
+      "layer": "ACTION_BINDING",
+      "input": {
+        "authorization_id": "apply-action",
+        "actual_action": "APPLY_CANDIDATE",
+        "actual_actuator_id": "fixture-apply",
+        "actual_resource": {"repository_id": "fixture-repo", "kind": "SOURCE", "target_id": "candidate-selected"},
+        "actual_subject": {"sha256": "0078d2f22d22b36b16054f99c9d27b45f2919ba66d87c67c2a8c113ffda798a2", "media_type": "text/plain"},
+        "now": "2026-10-15T00:05:00Z",
+        "current_epoch": 1,
+        "reserved_elsewhere": false,
+        "unresolved_effect": false
+      }
+    },
+    {
+      "id": "condition-open",
+      "layer": "LIFECYCLE",
+      "input": {
+        "open_ids": ["O1", "O2"],
+        "event": "RESTART",
+        "target_id": null,
+        "resolution_authorized": false,
+        "resolution_retained": false,
+        "subject_matches": false
+      }
+    }
+  ]
+}

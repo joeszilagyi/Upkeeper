@@ -1,0 +1,526 @@
+{
+  "document_type": "specification",
+  "schema_version": "upkeeper.verification-data.v1-draft.1",
+  "status": "UNADOPTED_SPECIFICATION",
+  "basis": [
+    {
+      "path": "CONTRACT.md",
+      "sha256": "feb9c1957438d5e7d5f95b74fda683d3ecc3f43cc009a7dd694b1577a048acfa",
+      "git_blob_sha1": "92c118101b2a97aa51f7dcb7129ea13b8040612c"
+    },
+    {
+      "path": "ACCEPTANCE-MATRIX.md",
+      "sha256": "2aa1beac6c63619399a8c15606fe1cdc773a670c7bb2b30a06dde316034a6579",
+      "git_blob_sha1": "b8b239e9008df93c7893b8dc8911c7d0b63e5d49"
+    }
+  ],
+  "data_contract": "DATA-CONTRACT.md",
+  "record_schema": "verification.schema.json",
+  "example_suite": "verification-examples.json",
+  "limits": {"record_bytes": 1048576, "json_depth": 32, "array_items": 4096, "string_codepoints": 4096, "integer_max": 9007199254740991},
+  "parse_policy": {
+    "encoding": "UTF-8 without BOM; reject malformed Unicode and unpaired surrogates",
+    "object_keys": "reject duplicates after escape decoding; reject unknown fields at schema boundary",
+    "numbers": "integer tokens only in record metadata; reject decimal/exponent/nonfinite/Boolean coercion",
+    "references": "resolve only through approved local adapters; no implicit file/URL/eval/remote schema access",
+    "defaults": "none for authority fields; unavailable facts have explicit states/nullability",
+    "timestamps": "RFC3339 UTC Z, verified format and ordered within a common clock domain",
+    "digests": "SHA-256 of exact retained bytes; not proof of origin or adoption"
+  },
+  "record_types": [
+    "adoption",
+    "work_authorization",
+    "obligation_set",
+    "candidate",
+    "attempt_result",
+    "observation",
+    "assessment",
+    "action_authorization",
+    "action_receipt",
+    "unresolved_condition",
+    "condition_resolution",
+    "coverage_gap",
+    "custody_checkpoint",
+    "case_result"
+  ],
+  "obligation_states": ["SATISFIED", "VIOLATED", "UNKNOWN", "PENDING_REVIEW", "NOT_APPLICABLE"],
+  "task_dispositions": ["ACCEPTED", "REJECTED", "BLOCKED", "REVIEW_REQUIRED", "CANCELLED", "NO_CHANGE_VERIFIED"],
+  "action_outcomes": ["CONFIRMED", "FAILED", "OUTCOME_UNKNOWN"],
+  "required_input_order": [
+    "Authenticate governing context and protected current cancellation/hold state.",
+    "Resolve the approved required obligation inventory and exact subject.",
+    "Validate reference kinds, versions, measurement scope, provenance, completeness, contradictions and freshness.",
+    "Normalize required evaluations; absent results are UNKNOWN, missing criteria PENDING_REVIEW.",
+    "Apply decision rules in order while retaining all reasons.",
+    "Retain the decision; independently recheck action permission and actual use-time preconditions.",
+    "Observe the effect and reconcile custody or uncertain external outcomes before dependent continuation."
+  ],
+  "decision_rules": [
+    {"id": "D1", "when": "verified_cancellation", "outcome": "CANCELLED"},
+    {"id": "D2", "when": "context_invalid_or_unestablished", "outcome": "BLOCKED"},
+    {"id": "D3", "when": "any_required_violation", "outcome": "REJECTED"},
+    {"id": "D4", "when": "any_required_unknown", "outcome": "BLOCKED"},
+    {"id": "D5", "when": "any_required_pending_review", "outcome": "REVIEW_REQUIRED"},
+    {"id": "D6", "when": "complete_satisfied_or_validly_inapplicable_no_change", "outcome": "NO_CHANGE_VERIFIED"},
+    {"id": "D7", "when": "complete_satisfied_or_validly_inapplicable_other", "outcome": "ACCEPTED"}
+  ],
+  "action_rules": [
+    {
+      "kind": "START_ATTEMPT",
+      "acceptance": "not_required_for_future_attempt",
+      "required_properties": ["active_work_scope", "current_dependency_health_hold_and_budget", "authorized_worker_and_workspace"]
+    },
+    {
+      "kind": "APPLY_CANDIDATE",
+      "acceptance": "exact_candidate_accepted",
+      "required_properties": ["owner_state_precondition", "complete_authorized_write_scope", "conditional_update"]
+    },
+    {
+      "kind": "MERGE_CANDIDATE",
+      "acceptance": "exact_candidate_accepted",
+      "required_properties": ["actual_required_checks", "non_bypass_server_protection", "exact_head_current_base", "conditional_update"]
+    },
+    {
+      "kind": "RESOLVE_ISSUE",
+      "acceptance": "issue_specific_completion_not_generic_pass",
+      "required_properties": ["approved_issue_scope", "correct_durable_state", "accurate_partial_design_or_already_fixed_class", "current_issue_identity_and_state"]
+    },
+    {
+      "kind": "PUBLISH_REPORT",
+      "acceptance": "failed_or_blocked_repair_may_be_reported",
+      "required_properties": ["separate_publication_consent", "exact_sanitized_content", "approved_destination", "accurate_claims", "bounded_write"]
+    },
+    {
+      "kind": "EXTERNAL_EFFECT",
+      "acceptance": "separate_owner_effect_profile",
+      "required_properties": ["effect_specific_scope", "observation_and_recovery_contract", "not_inferred_from_merge"]
+    },
+    {
+      "kind": "SAFE_STOP",
+      "acceptance": "not_required_for_stopped_task",
+      "required_properties": ["owner_approved_stop_policy", "bounded_owned_targets", "no_scope_expansion"]
+    }
+  ],
+  "common_action_properties": [
+    "protected_origin",
+    "correct_executor_resource_subject_and_payload",
+    "current_validity_revocation_and_budget",
+    "specific_preconditions_established",
+    "required_custody_available",
+    "single_effect_replay_control_and_uncertainty_reconciliation"
+  ],
+  "lifecycle_rules": [
+    {"id": "L1", "rule": "unresolved_condition has no mutable resolved flag; its referenced creation remains historical"},
+    {"id": "L2", "rule": "only an authenticated retained applicable condition_resolution changes the effective hold"},
+    {
+      "id": "L3",
+      "rule": "EVIDENCE_SATISFIED resolves only its condition under applicable subject/version mapping; new subject evidence is not proof the old candidate passed"
+    },
+    {"id": "L4", "rule": "REQUIREMENT_CHANGED or REQUIREMENT_WITHDRAWN is not SATISFIED under the old version"},
+    {"id": "L5", "rule": "timers, retry, queue state, new attempt ID and compaction cannot clear unresolved conditions"},
+    {
+      "id": "L6",
+      "rule": "missing/rolled-back required checkpoint or custody blocks dependent readiness; initialization needs separate protected authorization"
+    },
+    {
+      "id": "L7",
+      "rule": "CONFIRMED effect plus unretained receipt stays a confirmed observation with custody failure; dependent continuation is blocked"
+    },
+    {"id": "L8", "rule": "OUTCOME_UNKNOWN prevents potentially duplicative retry until authoritative reconciliation"},
+    {"id": "L9", "rule": "task-local hold may permit separately authorized independent work; shared-authority uncertainty blocks all dependants"}
+  ],
+  "profile_parameters": {
+    "F-C": {
+      "selected_baseline_hex": "62726f6b656e0a",
+      "selected_expected_hex": "66697865640a",
+      "other_expected_hex": "70726573657276650a",
+      "writable_paths": ["selected.txt"],
+      "required_obligations": ["C-result", "C-preserve", "C-scope", "C-attempt"],
+      "external_effects_authorized": false
+    },
+    "F-H": {
+      "route": "/account",
+      "heading_selector": "h1#account-heading",
+      "heading_count": 1,
+      "anchor_count": 1,
+      "baseline_text": "Acount",
+      "expected_innerText": "Account",
+      "expected_anchor_path": "/profile",
+      "preserved_route": "/help",
+      "preserved_markup": "<p id=\"help\">Help stays unchanged.</p>",
+      "scripts_allowed": false,
+      "runtime_bindings_required": ["renderer", "locale", "viewport", "document_ready", "finite_deadline", "preserved_DOM_text_snapshot"],
+      "required_obligations": ["H-text", "H-link", "H-preserve", "H-scope", "H-render"]
+    },
+    "F-X": {
+      "input_object_keys": ["mode", "value"],
+      "required_keys": ["value"],
+      "mode_type": "string when present",
+      "mode_match": "xyz",
+      "mode_normalization": "none",
+      "value_token": "JSON integer token with decoded integer 0..255; exclude Boolean, decimal and exponent forms",
+      "min_value": 0,
+      "max_value": 255,
+      "operation_id": "op-A",
+      "handler_id": "H",
+      "receiver_id": "sink-A",
+      "expected_decoded_payload": {"operation": "op-A", "value": 7},
+      "deadline_ticks": 100,
+      "automatic_retry_before_reconciliation": false,
+      "required_obligations": ["X-input", "X-condition", "X-handler", "X-payload", "X-receipt", "X-state", "X-preserve", "X-no-delivery"],
+      "applicability": "positive delivery requires handler/payload/receipt/state; absent or different mode requires no-delivery; invalid input requires INVALID_INPUT and no-delivery; preservation always applies",
+      "negative_observation_end": "worker termination plus drained/cancelled owned pending deliveries and declared receiver boundary",
+      "persistence_claim": "process-restart only when separately required; not power loss"
+    }
+  },
+  "requirements": [
+    {"id": "ICV-001", "title": "Explicit adoption", "case_ids": ["ICM-009", "ICM-011"]},
+    {"id": "ICV-002", "title": "One governing requirements baseline", "case_ids": ["ICM-009", "ICM-011"]},
+    {"id": "ICV-003", "title": "Bounded assurance", "case_ids": ["ICM-006", "ICM-040", "ICM-047", "ICM-051", "ICM-052"]},
+    {"id": "ICV-004", "title": "Minimal sufficient mechanisms", "case_ids": ["ICM-005", "ICM-041", "ICM-051", "ICM-052"]},
+    {"id": "ICV-005", "title": "Effective separation", "case_ids": ["ICM-007"]},
+    {"id": "ICV-006", "title": "Independent observations", "case_ids": ["ICM-002", "ICM-018", "ICM-019", "ICM-045"]},
+    {"id": "ICV-007", "title": "Complete mediation of protected actions", "case_ids": ["ICM-007", "ICM-008"]},
+    {"id": "ICV-008", "title": "Separate promotion of control changes", "case_ids": ["ICM-010", "ICM-011"]},
+    {
+      "id": "ICV-009",
+      "title": "Establish requirements before acceptance-directed work",
+      "case_ids": ["ICM-001", "ICM-004", "ICM-005", "ICM-040", "ICM-042", "ICM-050"]
+    },
+    {
+      "id": "ICV-010",
+      "title": "Bound the attempt",
+      "case_ids": ["ICM-005", "ICM-008", "ICM-015", "ICM-029", "ICM-030", "ICM-032", "ICM-039", "ICM-046"]
+    },
+    {
+      "id": "ICV-011",
+      "title": "Preserve obligation identity and applicability",
+      "case_ids": ["ICM-003", "ICM-010", "ICM-027", "ICM-031", "ICM-037", "ICM-044"]
+    },
+    {
+      "id": "ICV-012",
+      "title": "Cover behavior and handoffs",
+      "case_ids": ["ICM-001", "ICM-006", "ICM-040", "ICM-042", "ICM-043", "ICM-044", "ICM-045", "ICM-051"]
+    },
+    {"id": "ICV-013", "title": "Handle missing or subjective criteria explicitly", "case_ids": ["ICM-004", "ICM-040", "ICM-042", "ICM-050"]},
+    {
+      "id": "ICV-014",
+      "title": "Preserve failed attempts and unsupported claims",
+      "case_ids": ["ICM-002", "ICM-006", "ICM-012", "ICM-019", "ICM-031", "ICM-034", "ICM-037"]
+    },
+    {"id": "ICV-015", "title": "Protect source and owner state", "case_ids": ["ICM-007", "ICM-015", "ICM-023"]},
+    {"id": "ICV-016", "title": "Acquire a coherent candidate", "case_ids": ["ICM-013", "ICM-014", "ICM-015"]},
+    {"id": "ICV-017", "title": "Keep the identified execution inputs stable", "case_ids": ["ICM-013", "ICM-014", "ICM-024"]},
+    {
+      "id": "ICV-018",
+      "title": "Bind relevant conditions",
+      "case_ids": ["ICM-013", "ICM-014", "ICM-015", "ICM-016", "ICM-034", "ICM-038", "ICM-041", "ICM-047", "ICM-048"]
+    },
+    {"id": "ICV-019", "title": "Contain validation itself", "case_ids": ["ICM-015", "ICM-023", "ICM-024"]},
+    {"id": "ICV-020", "title": "Recheck identity at application or merge", "case_ids": ["ICM-032", "ICM-033", "ICM-037", "ICM-038"]},
+    {
+      "id": "ICV-021",
+      "title": "Identify origin and subject",
+      "case_ids": ["ICM-013", "ICM-016", "ICM-017", "ICM-018", "ICM-021", "ICM-022", "ICM-043", "ICM-046", "ICM-048"]
+    },
+    {"id": "ICV-022", "title": "Reject self-asserted trust and unsafe parsing", "case_ids": ["ICM-009", "ICM-017", "ICM-018", "ICM-019"]},
+    {
+      "id": "ICV-023",
+      "title": "Establish sufficient observation",
+      "case_ids": ["ICM-019", "ICM-020", "ICM-039", "ICM-041", "ICM-042", "ICM-043", "ICM-044", "ICM-045", "ICM-047", "ICM-051"]
+    },
+    {"id": "ICV-024", "title": "Verify required causal handoffs", "case_ids": ["ICM-018", "ICM-020", "ICM-043", "ICM-045", "ICM-046", "ICM-048"]},
+    {
+      "id": "ICV-025",
+      "title": "Distinguish attempt, receipt, and resulting state",
+      "case_ids": ["ICM-018", "ICM-020", "ICM-035", "ICM-036", "ICM-043", "ICM-044", "ICM-045", "ICM-046", "ICM-047", "ICM-049"]
+    },
+    {
+      "id": "ICV-026",
+      "title": "Preserve contradictory evidence and control reuse",
+      "case_ids": ["ICM-013", "ICM-014", "ICM-016", "ICM-021", "ICM-022", "ICM-026", "ICM-027", "ICM-048", "ICM-049"]
+    },
+    {"id": "ICV-027", "title": "Protect evidence custody", "case_ids": ["ICM-022", "ICM-025", "ICM-028", "ICM-036"]},
+    {"id": "ICV-028", "title": "Keep Lattice in its evidence role", "case_ids": ["ICM-022", "ICM-028"]},
+    {
+      "id": "ICV-029",
+      "title": "Evaluate against the approved obligation set",
+      "case_ids": ["ICM-001", "ICM-002", "ICM-003", "ICM-012", "ICM-017", "ICM-031", "ICM-042", "ICM-043", "ICM-044"]
+    },
+    {"id": "ICV-030", "title": "Use a common decision boundary", "case_ids": ["ICM-001", "ICM-002", "ICM-008", "ICM-029", "ICM-042", "ICM-045"]},
+    {"id": "ICV-031", "title": "Separate assessment, authorization, and effect", "case_ids": ["ICM-001", "ICM-012", "ICM-032", "ICM-034"]},
+    {
+      "id": "ICV-032",
+      "title": "Determine disposition without hiding failure",
+      "case_ids": ["ICM-019", "ICM-021", "ICM-030", "ICM-031", "ICM-050"]
+    },
+    {"id": "ICV-033", "title": "Prevent vacuous completion", "case_ids": ["ICM-003", "ICM-010", "ICM-031"]},
+    {
+      "id": "ICV-034",
+      "title": "Retain a decision before using it",
+      "case_ids": ["ICM-012", "ICM-021", "ICM-025", "ICM-026", "ICM-027", "ICM-028", "ICM-032", "ICM-035", "ICM-036", "ICM-037"]
+    },
+    {"id": "ICV-035", "title": "Authorize the particular action", "case_ids": ["ICM-001", "ICM-032", "ICM-033", "ICM-034", "ICM-035", "ICM-049"]},
+    {
+      "id": "ICV-036",
+      "title": "Enforce permission where the effect occurs",
+      "case_ids": ["ICM-005", "ICM-007", "ICM-008", "ICM-032", "ICM-033", "ICM-034", "ICM-046"]
+    },
+    {"id": "ICV-037", "title": "Reconcile actual action outcomes", "case_ids": ["ICM-033", "ICM-035", "ICM-036", "ICM-049"]},
+    {"id": "ICV-038", "title": "Resolve issues only on their real completion conditions", "case_ids": ["ICM-037"]},
+    {"id": "ICV-039", "title": "Establish readiness of the actual integrated result", "case_ids": ["ICM-038"]},
+    {
+      "id": "ICV-040",
+      "title": "Preserve holds and bound subsequent work",
+      "case_ids": ["ICM-008", "ICM-026", "ICM-027", "ICM-029", "ICM-033", "ICM-038", "ICM-039"]
+    },
+    {
+      "id": "ICV-041",
+      "title": "Stop without requiring a diagnosis",
+      "case_ids": ["ICM-012", "ICM-025", "ICM-026", "ICM-027", "ICM-028", "ICM-029", "ICM-030", "ICM-036", "ICM-040", "ICM-041", "ICM-049"]
+    },
+    {"id": "ICV-042", "title": "Make no-change outcomes meaningful", "case_ids": ["ICM-026", "ICM-039"]},
+    {
+      "id": "ICV-043",
+      "title": "Keep human approval honest",
+      "case_ids": ["ICM-004", "ICM-011", "ICM-027", "ICM-030", "ICM-031", "ICM-037", "ICM-050"]
+    },
+    {"id": "ICV-044", "title": "Treat irreversible effects separately", "case_ids": ["ICM-034", "ICM-046", "ICM-050"]},
+    {"id": "ICV-045", "title": "Protect the adopted reference and its selector", "case_ids": ["ICM-007", "ICM-009", "ICM-010", "ICM-028"]},
+    {"id": "ICV-046", "title": "Change authority coherently", "case_ids": ["ICM-010", "ICM-011"]},
+    {
+      "id": "ICV-047",
+      "title": "Test forbidden success and valid progress",
+      "case_ids": ["ICM-001", "ICM-023", "ICM-024", "ICM-043", "ICM-051", "ICM-052"]
+    },
+    {
+      "id": "ICV-048",
+      "title": "Report only the verification actually performed",
+      "case_ids": ["ICM-006", "ICM-020", "ICM-025", "ICM-038", "ICM-041", "ICM-047", "ICM-052"]
+    },
+    {
+      "id": "ICV-049",
+      "title": "Bound costs without weakening acceptance",
+      "case_ids": ["ICM-005", "ICM-016", "ICM-030", "ICM-039", "ICM-041", "ICM-051"]
+    },
+    {"id": "ICV-050", "title": "State conformance by property and operating scope", "case_ids": ["ICM-004", "ICM-006", "ICM-040", "ICM-052"]}
+  ],
+  "cases": [
+    {
+      "id": "ICM-001",
+      "title": "Legitimate attempt and accepted candidate",
+      "requirement_ids": ["ICV-009", "ICV-012", "ICV-029", "ICV-030", "ICV-031", "ICV-035", "ICV-047"]
+    },
+    {"id": "ICM-002", "title": "A success marker cannot override failure", "requirement_ids": ["ICV-006", "ICV-014", "ICV-029", "ICV-030"]},
+    {"id": "ICM-003", "title": "Missing checks and false non-applicability", "requirement_ids": ["ICV-011", "ICV-029", "ICV-033"]},
+    {"id": "ICM-004", "title": "Missing criteria are not missing measurements", "requirement_ids": ["ICV-009", "ICV-013", "ICV-043", "ICV-050"]},
+    {"id": "ICM-005", "title": "Bounded delegation can succeed", "requirement_ids": ["ICV-004", "ICV-009", "ICV-010", "ICV-036", "ICV-049"]},
+    {
+      "id": "ICM-006",
+      "title": "Stronger unsupported claims remain unsupported",
+      "requirement_ids": ["ICV-003", "ICV-012", "ICV-014", "ICV-048", "ICV-050"]
+    },
+    {
+      "id": "ICM-007",
+      "title": "Effective authority, not named isolation",
+      "requirement_ids": ["ICV-005", "ICV-007", "ICV-015", "ICV-036", "ICV-045"]
+    },
+    {
+      "id": "ICM-008",
+      "title": "Every supported route reaches the gate",
+      "requirement_ids": ["ICV-007", "ICV-010", "ICV-030", "ICV-036", "ICV-040"]
+    },
+    {"id": "ICM-009", "title": "Adoption cannot come from a writable mirror", "requirement_ids": ["ICV-001", "ICV-002", "ICV-022", "ICV-045"]},
+    {
+      "id": "ICM-010",
+      "title": "Candidate checker changes cannot approve themselves",
+      "requirement_ids": ["ICV-008", "ICV-011", "ICV-033", "ICV-045", "ICV-046"]
+    },
+    {
+      "id": "ICM-011",
+      "title": "Approved promotion and interrupted activation",
+      "requirement_ids": ["ICV-001", "ICV-002", "ICV-008", "ICV-043", "ICV-046"]
+    },
+    {
+      "id": "ICM-012",
+      "title": "Salvage preserves failed-attempt history",
+      "requirement_ids": ["ICV-014", "ICV-029", "ICV-031", "ICV-034", "ICV-041"]
+    },
+    {
+      "id": "ICM-013",
+      "title": "Unit evidence cannot move from A to B",
+      "requirement_ids": ["ICV-016", "ICV-017", "ICV-018", "ICV-021", "ICV-026"]
+    },
+    {
+      "id": "ICM-014",
+      "title": "Phase evidence, acquisition and change-and-revert",
+      "requirement_ids": ["ICV-016", "ICV-017", "ICV-018", "ICV-026"]
+    },
+    {
+      "id": "ICM-015",
+      "title": "Dirty inputs and owner-state preservation",
+      "requirement_ids": ["ICV-010", "ICV-015", "ICV-016", "ICV-018", "ICV-019"]
+    },
+    {"id": "ICM-016", "title": "Safe reuse and honest fresh execution", "requirement_ids": ["ICV-018", "ICV-021", "ICV-026", "ICV-049"]},
+    {"id": "ICM-017", "title": "Parsing cannot manufacture authority", "requirement_ids": ["ICV-021", "ICV-022", "ICV-029"]},
+    {
+      "id": "ICM-018",
+      "title": "Provenance and measurement scope must match",
+      "requirement_ids": ["ICV-006", "ICV-021", "ICV-022", "ICV-024", "ICV-025"]
+    },
+    {
+      "id": "ICM-019",
+      "title": "Reject optional forgery without poisoning good proof",
+      "requirement_ids": ["ICV-006", "ICV-014", "ICV-022", "ICV-023", "ICV-032"]
+    },
+    {"id": "ICM-020", "title": "Observation completeness follows the predicate", "requirement_ids": ["ICV-023", "ICV-024", "ICV-025", "ICV-048"]},
+    {
+      "id": "ICM-021",
+      "title": "Contradictions and retries stay distinguishable",
+      "requirement_ids": ["ICV-021", "ICV-026", "ICV-032", "ICV-034"]
+    },
+    {
+      "id": "ICM-022",
+      "title": "Lattice is an index, not a source of truth by label",
+      "requirement_ids": ["ICV-021", "ICV-026", "ICV-027", "ICV-028"]
+    },
+    {"id": "ICM-023", "title": "Unsafe inherited fixture objects", "requirement_ids": ["ICV-015", "ICV-019", "ICV-047"]},
+    {"id": "ICM-024", "title": "Object replacement and failure without restoration", "requirement_ids": ["ICV-017", "ICV-019", "ICV-047"]},
+    {
+      "id": "ICM-025",
+      "title": "Evidence publication interrupted at real boundaries",
+      "requirement_ids": ["ICV-027", "ICV-034", "ICV-041", "ICV-048"]
+    },
+    {
+      "id": "ICM-026",
+      "title": "Unresolved conditions survive process and queue changes",
+      "requirement_ids": ["ICV-026", "ICV-034", "ICV-040", "ICV-041", "ICV-042"]
+    },
+    {
+      "id": "ICM-027",
+      "title": "Resolution is specific, authorized and retained",
+      "requirement_ids": ["ICV-011", "ICV-026", "ICV-034", "ICV-040", "ICV-041", "ICV-043"]
+    },
+    {
+      "id": "ICM-028",
+      "title": "Lost custody is not clean initialization",
+      "requirement_ids": ["ICV-027", "ICV-028", "ICV-034", "ICV-041", "ICV-045"]
+    },
+    {
+      "id": "ICM-029",
+      "title": "Scope a hold without ignoring shared compromise",
+      "requirement_ids": ["ICV-010", "ICV-030", "ICV-040", "ICV-041"]
+    },
+    {
+      "id": "ICM-030",
+      "title": "Budget limits leave unperformed checks unknown",
+      "requirement_ids": ["ICV-010", "ICV-032", "ICV-041", "ICV-043", "ICV-049"]
+    },
+    {
+      "id": "ICM-031",
+      "title": "Combined decision conditions",
+      "requirement_ids": ["ICV-011", "ICV-014", "ICV-029", "ICV-032", "ICV-033", "ICV-043"]
+    },
+    {
+      "id": "ICM-032",
+      "title": "Assessment does not grant effects",
+      "requirement_ids": ["ICV-010", "ICV-020", "ICV-031", "ICV-034", "ICV-035", "ICV-036"]
+    },
+    {
+      "id": "ICM-033",
+      "title": "Use-time substitution, expiry and replay races",
+      "requirement_ids": ["ICV-020", "ICV-035", "ICV-036", "ICV-037", "ICV-040"]
+    },
+    {
+      "id": "ICM-034",
+      "title": "Truthful failure reporting and privacy",
+      "requirement_ids": ["ICV-014", "ICV-018", "ICV-031", "ICV-035", "ICV-036", "ICV-044"]
+    },
+    {"id": "ICM-035", "title": "Uncertain API effect before and after commit", "requirement_ids": ["ICV-025", "ICV-034", "ICV-035", "ICV-037"]},
+    {
+      "id": "ICM-036",
+      "title": "Known effect but missing retained receipt",
+      "requirement_ids": ["ICV-025", "ICV-027", "ICV-034", "ICV-037", "ICV-041"]
+    },
+    {
+      "id": "ICM-037",
+      "title": "Issue resolution follows actual completion scope",
+      "requirement_ids": ["ICV-011", "ICV-014", "ICV-020", "ICV-034", "ICV-038", "ICV-043"]
+    },
+    {
+      "id": "ICM-038",
+      "title": "Actual integrated health and valid successors",
+      "requirement_ids": ["ICV-018", "ICV-020", "ICV-039", "ICV-040", "ICV-048"]
+    },
+    {
+      "id": "ICM-039",
+      "title": "No-change is not missing or repaired work",
+      "requirement_ids": ["ICV-010", "ICV-023", "ICV-040", "ICV-042", "ICV-049"]
+    },
+    {
+      "id": "ICM-040",
+      "title": "Material coverage gaps stay visible",
+      "requirement_ids": ["ICV-003", "ICV-009", "ICV-012", "ICV-013", "ICV-041", "ICV-050"]
+    },
+    {
+      "id": "ICM-041",
+      "title": "The stop does not require a diagnosis",
+      "requirement_ids": ["ICV-004", "ICV-018", "ICV-023", "ICV-041", "ICV-048", "ICV-049"]
+    },
+    {
+      "id": "ICM-042",
+      "title": "Exact visible HTML outcomes",
+      "requirement_ids": ["ICV-009", "ICV-012", "ICV-013", "ICV-023", "ICV-029", "ICV-030"]
+    },
+    {
+      "id": "ICM-043",
+      "title": "Complete positive handoff",
+      "requirement_ids": ["ICV-012", "ICV-021", "ICV-023", "ICV-024", "ICV-025", "ICV-029", "ICV-047"]
+    },
+    {
+      "id": "ICM-044",
+      "title": "Negative and boundary handoff inputs",
+      "requirement_ids": ["ICV-011", "ICV-012", "ICV-023", "ICV-025", "ICV-029"]
+    },
+    {
+      "id": "ICM-045",
+      "title": "Unit successes cannot fill a missing handoff",
+      "requirement_ids": ["ICV-006", "ICV-012", "ICV-023", "ICV-024", "ICV-025", "ICV-030"]
+    },
+    {
+      "id": "ICM-046",
+      "title": "Exact recipient, payload and operation binding",
+      "requirement_ids": ["ICV-010", "ICV-021", "ICV-024", "ICV-025", "ICV-036", "ICV-044"]
+    },
+    {"id": "ICM-047", "title": "ACK, commit and persistence", "requirement_ids": ["ICV-003", "ICV-018", "ICV-023", "ICV-025", "ICV-048"]},
+    {"id": "ICM-048", "title": "Concurrent causal chains and replay", "requirement_ids": ["ICV-018", "ICV-021", "ICV-024", "ICV-026"]},
+    {
+      "id": "ICM-049",
+      "title": "Delivery uncertainty persists across restart",
+      "requirement_ids": ["ICV-025", "ICV-026", "ICV-035", "ICV-037", "ICV-041"]
+    },
+    {
+      "id": "ICM-050",
+      "title": "Honest human approval and external effects",
+      "requirement_ids": ["ICV-009", "ICV-013", "ICV-032", "ICV-043", "ICV-044"]
+    },
+    {
+      "id": "ICM-051",
+      "title": "Useful safety is not unconditional refusal",
+      "requirement_ids": ["ICV-003", "ICV-004", "ICV-012", "ICV-023", "ICV-047", "ICV-049"]
+    },
+    {
+      "id": "ICM-052",
+      "title": "Truthful test and conformance reporting",
+      "requirement_ids": ["ICV-003", "ICV-004", "ICV-047", "ICV-048", "ICV-050"]
+    }
+  ],
+  "not_established": [
+    "owner adoption",
+    "effective worker separation",
+    "authenticity of sample origins",
+    "runtime conformance to matrix",
+    "real actuator enforcement",
+    "arbitrary business correctness"
+  ]
+}

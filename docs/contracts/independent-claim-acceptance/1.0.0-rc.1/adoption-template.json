@@ -1,0 +1,16 @@
+{
+  "template_status": "PENDING_OWNER_ACTION_NOT_VALID_APPROVAL",
+  "contract_version": "1.0.0-rc.1",
+  "manifest_sha256": null,
+  "authority_location": null,
+  "owner_principal": null,
+  "worker_principal": null,
+  "reference_checker_ref": null,
+  "trust_policy_ref": null,
+  "approved_operating_scope": null,
+  "effective_at": null,
+  "expires_or_review_at": null,
+  "revocation_epoch": null,
+  "authorization_evidence_ref": null,
+  "note": "The owner must populate and authenticate an adoption outside worker write/admin reach. Completing this template in a candidate checkout is not approval."
+}

@@ -1,0 +1,1967 @@
+{
+  "$schema": "./verification-spec.schema.json",
+  "specification_id": "upkeeper.icvaa",
+  "version": "1.0.0-rc.1",
+  "adoption_status": "UNADOPTED",
+  "artifact_role": "normative_specification_not_observed_evidence",
+  "contract_file": "CONTRACT.md",
+  "principle": "No claim of completed work may receive greater authority than the independent evidence actually establishes.",
+  "trust_warning": "Normalized facts are computed by approved trusted adapters. Schema-valid worker-supplied values cannot authorize decisions. This file and the bundle checker are not a deployed acceptance authority.",
+  "serialization": {
+    "encoding": "UTF-8",
+    "line_endings": "LF",
+    "duplicate_object_keys": "reject_before_schema_validation",
+    "unknown_authority_fields": "reject",
+    "nonfinite_numbers": "reject",
+    "max_record_bytes": 1048576,
+    "max_nesting_depth": 32,
+    "max_array_items": 4096,
+    "max_string_characters": 16384,
+    "remote_schema_resolution": "disabled; use pinned local schema",
+    "digest": "sha256 of exact artifact bytes; not authentication",
+    "format_validation": "timestamps are validated, not accepted merely as annotations"
+  },
+  "record_schema_file": "records.schema.json",
+  "required_semantic_checks": [
+    "Authenticate the independently held adoption and trust anchors; do not trust record self-description.",
+    "Resolve references only through approved stores; validate digest, type, authorization, scope and versions.",
+    "Bind all records to request, attempt, exact candidate and checked conditions; matching strings alone are insufficient.",
+    "Derive expected obligations from approved task inventory, never returned evidence inventory.",
+    "Check evidence completeness, measurement scope, causal relationships, contradictions and freshness.",
+    "Validate deadlines and revocation against current authoritative state; expires_at must be after effective/issued time.",
+    "Human-judgment pending is distinct from missing machine evidence; pending judgment alone feeds REVIEW_REQUIRED.",
+    "A nonzero worker exit is a violation for that attempt; expected-negative child results follow preapproved test predicates.",
+    "Reject stale/inapplicable reuse and run fresh only under valid scope; preserve old historical outcomes.",
+    "Persist an authenticated decision, then separately validate an action grant at the actual actuator.",
+    "Reconcile unknown external outcomes before non-idempotent retry; verify resulting state before closure/continuation.",
+    "Verify all implemented routes and actual worker permissions before claiming an enforced invariant."
+  ],
+  "record_types": {
+    "adoption": {
+      "issuer_id": "identifier",
+      "bundle_digest": "artifact_ref",
+      "contract_version": "string",
+      "scope_ref": "artifact_ref",
+      "reference_checker_ref": "artifact_ref",
+      "trust_policy_ref": "artifact_ref",
+      "revocation_epoch": "integer",
+      "effective_at": "timestamp",
+      "expires_at": "timestamp",
+      "authentication_ref": "artifact_ref"
+    },
+    "work_authorization": {
+      "issuer_id": "identifier",
+      "request_id": "identifier",
+      "repo_ref": "repo_ref",
+      "baseline_ref": "artifact_ref",
+      "scope_ref": "artifact_ref",
+      "obligation_set_ref": "artifact_ref",
+      "permitted_actions": "action_array",
+      "budget_ref": "artifact_ref",
+      "revocation_epoch": "integer",
+      "expires_at": "timestamp",
+      "authentication_ref": "artifact_ref"
+    },
+    "obligation": {
+      "obligation_id": "identifier",
+      "requirement_ids": "requirement_array",
+      "version": "string",
+      "subject_ref": "artifact_ref",
+      "predicate_ref": "artifact_ref",
+      "applicability_ref": "artifact_ref",
+      "evidence_types": "identifier_array",
+      "checker_ref": "artifact_ref",
+      "scope_ref": "artifact_ref",
+      "deadline": "timestamp",
+      "required": "boolean"
+    },
+    "claim": {
+      "claim_id": "identifier",
+      "request_id": "identifier",
+      "subject_ref": "artifact_ref",
+      "obligation_ids": "identifier_array",
+      "statement": "string",
+      "assurance_class": "assurance",
+      "scope_ref": "artifact_ref",
+      "assumptions_ref": "artifact_ref"
+    },
+    "evidence": {
+      "evidence_id": "identifier",
+      "producer_id": "identifier",
+      "measurement_scope_ref": "artifact_ref",
+      "subject_ref": "artifact_ref",
+      "request_id": "identifier",
+      "attempt_id": "identifier",
+      "execution_ref": "validation_ref",
+      "obligation_ids": "identifier_array",
+      "observation_kind": "observation_kind",
+      "observed_at": "timestamp",
+      "interval_ref": "artifact_ref",
+      "conditions_ref": "artifact_ref",
+      "result_ref": "artifact_ref",
+      "completeness_ref": "artifact_ref",
+      "predecessor_ids": "identifier_array",
+      "authentication_ref": "artifact_ref",
+      "privacy_class": "privacy"
+    },
+    "decision": {
+      "decision_id": "identifier",
+      "request_id": "identifier",
+      "attempt_id": "identifier",
+      "subject_ref": "artifact_ref",
+      "adoption_ref": "artifact_ref",
+      "obligation_set_ref": "artifact_ref",
+      "facts": "facts",
+      "disposition": "disposition",
+      "reason_codes": "reason_array",
+      "assessment_ref": "artifact_ref",
+      "evidence_ids": "identifier_array",
+      "issued_at": "timestamp",
+      "authentication_ref": "artifact_ref"
+    },
+    "grant": {
+      "grant_id": "identifier",
+      "issuer_id": "identifier",
+      "actuator_id": "identifier",
+      "action": "action",
+      "request_id": "identifier",
+      "decision_ref": "artifact_ref",
+      "repo_ref": "repo_ref",
+      "subject_ref": "artifact_ref",
+      "preconditions_ref": "artifact_ref",
+      "policy_ref": "artifact_ref",
+      "idempotency_key": "identifier",
+      "revocation_epoch": "integer",
+      "expires_at": "timestamp",
+      "authentication_ref": "artifact_ref"
+    },
+    "receipt": {
+      "receipt_id": "identifier",
+      "grant_id": "identifier",
+      "actuator_id": "identifier",
+      "request_id": "identifier",
+      "action": "action",
+      "outcome": "receipt_outcome",
+      "resulting_subject_ref": "nullable_artifact_ref",
+      "evidence_ref": "artifact_ref",
+      "recorded_at": "timestamp",
+      "authentication_ref": "artifact_ref"
+    }
+  },
+  "assurance_classes": [
+    "OBSERVED_EXECUTION",
+    "TESTED_CONTRACT",
+    "ENFORCED_INVARIANT",
+    "FORMALLY_ESTABLISHED_PROPERTY"
+  ],
+  "obligation_states": [
+    "SATISFIED",
+    "VIOLATED",
+    "UNKNOWN",
+    "NOT_APPLICABLE"
+  ],
+  "decision_states": [
+    "CANCELLED",
+    "BLOCKED",
+    "REJECTED",
+    "REVIEW_REQUIRED",
+    "NO_CHANGE_VERIFIED",
+    "ACCEPTED"
+  ],
+  "receipt_states": [
+    "NOT_STARTED",
+    "IN_FLIGHT",
+    "CONFIRMED",
+    "FAILED",
+    "OUTCOME_UNKNOWN"
+  ],
+  "conformance_states": [
+    "NOT_IMPLEMENTED",
+    "IMPLEMENTED_UNVERIFIED",
+    "TESTED_IN_SCOPE",
+    "ENFORCED_IN_SCOPE",
+    "KNOWN_NONCONFORMANT"
+  ],
+  "normalized_decision_model": {
+    "input_domain": {
+      "tri_state_fields": [
+        "request_active",
+        "adoption_valid",
+        "authority_integrity_valid",
+        "subject_binding_valid",
+        "evidence_authenticity_valid",
+        "inventory_complete",
+        "verified_violation",
+        "observation_complete",
+        "checker_completed",
+        "required_unknown",
+        "human_judgment_resolved"
+      ],
+      "tri_state_values": [
+        "TRUE",
+        "FALSE",
+        "UNKNOWN"
+      ],
+      "boolean_fields": [
+        "is_noop"
+      ]
+    },
+    "missing_or_extra_fields": "BLOCKED before model evaluation",
+    "all_reasons_retained": true,
+    "first_matching_rule_selects_displayed_disposition": true,
+    "ordered_rules": [
+      {
+        "id": "D01",
+        "condition": {
+          "field": "request_active",
+          "equals": "FALSE"
+        },
+        "result": "CANCELLED"
+      },
+      {
+        "id": "D02",
+        "condition": {
+          "any_not_true": [
+            "request_active",
+            "adoption_valid",
+            "authority_integrity_valid",
+            "subject_binding_valid",
+            "evidence_authenticity_valid"
+          ]
+        },
+        "result": "BLOCKED"
+      },
+      {
+        "id": "D03",
+        "condition": {
+          "field": "verified_violation",
+          "equals": "TRUE"
+        },
+        "result": "REJECTED"
+      },
+      {
+        "id": "D04",
+        "condition": {
+          "any_not_true": [
+            "inventory_complete",
+            "observation_complete",
+            "checker_completed"
+          ]
+        },
+        "result": "BLOCKED"
+      },
+      {
+        "id": "D05",
+        "condition": {
+          "any_not_false": [
+            "verified_violation",
+            "required_unknown"
+          ]
+        },
+        "result": "BLOCKED"
+      },
+      {
+        "id": "D06",
+        "condition": {
+          "any_not_true": [
+            "human_judgment_resolved"
+          ]
+        },
+        "result": "REVIEW_REQUIRED"
+      },
+      {
+        "id": "D07",
+        "condition": {
+          "field": "is_noop",
+          "equals": true
+        },
+        "result": "NO_CHANGE_VERIFIED"
+      },
+      {
+        "id": "D08",
+        "condition": {
+          "always": true
+        },
+        "result": "ACCEPTED"
+      }
+    ],
+    "known_complete_positive_input": {
+      "request_active": "TRUE",
+      "adoption_valid": "TRUE",
+      "authority_integrity_valid": "TRUE",
+      "subject_binding_valid": "TRUE",
+      "evidence_authenticity_valid": "TRUE",
+      "inventory_complete": "TRUE",
+      "verified_violation": "FALSE",
+      "observation_complete": "TRUE",
+      "checker_completed": "TRUE",
+      "required_unknown": "FALSE",
+      "human_judgment_resolved": "TRUE",
+      "is_noop": false
+    },
+    "test_vectors": [
+      {
+        "id": "DV-001",
+        "changes": {},
+        "expected": "ACCEPTED"
+      },
+      {
+        "id": "DV-002",
+        "changes": {
+          "is_noop": true
+        },
+        "expected": "NO_CHANGE_VERIFIED"
+      },
+      {
+        "id": "DV-003",
+        "changes": {
+          "request_active": "FALSE"
+        },
+        "expected": "CANCELLED"
+      },
+      {
+        "id": "DV-004",
+        "changes": {
+          "request_active": "UNKNOWN"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-005",
+        "changes": {
+          "adoption_valid": "FALSE"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-006",
+        "changes": {
+          "adoption_valid": "UNKNOWN"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-007",
+        "changes": {
+          "authority_integrity_valid": "FALSE"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-008",
+        "changes": {
+          "authority_integrity_valid": "UNKNOWN"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-009",
+        "changes": {
+          "subject_binding_valid": "FALSE"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-010",
+        "changes": {
+          "subject_binding_valid": "UNKNOWN"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-011",
+        "changes": {
+          "evidence_authenticity_valid": "FALSE"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-012",
+        "changes": {
+          "evidence_authenticity_valid": "UNKNOWN"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-013",
+        "changes": {
+          "inventory_complete": "FALSE"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-014",
+        "changes": {
+          "inventory_complete": "UNKNOWN"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-015",
+        "changes": {
+          "observation_complete": "FALSE"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-016",
+        "changes": {
+          "observation_complete": "UNKNOWN"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-017",
+        "changes": {
+          "checker_completed": "FALSE"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-018",
+        "changes": {
+          "checker_completed": "UNKNOWN"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-019",
+        "changes": {
+          "human_judgment_resolved": "FALSE"
+        },
+        "expected": "REVIEW_REQUIRED"
+      },
+      {
+        "id": "DV-020",
+        "changes": {
+          "human_judgment_resolved": "UNKNOWN"
+        },
+        "expected": "REVIEW_REQUIRED"
+      },
+      {
+        "id": "DV-021",
+        "changes": {
+          "verified_violation": "TRUE"
+        },
+        "expected": "REJECTED"
+      },
+      {
+        "id": "DV-022",
+        "changes": {
+          "verified_violation": "UNKNOWN"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-023",
+        "changes": {
+          "required_unknown": "TRUE"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-024",
+        "changes": {
+          "required_unknown": "UNKNOWN"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-025",
+        "changes": {
+          "verified_violation": "TRUE",
+          "checker_completed": "FALSE"
+        },
+        "expected": "REJECTED"
+      },
+      {
+        "id": "DV-026",
+        "changes": {
+          "verified_violation": "TRUE",
+          "evidence_authenticity_valid": "FALSE"
+        },
+        "expected": "BLOCKED"
+      },
+      {
+        "id": "DV-027",
+        "changes": {
+          "request_active": "FALSE",
+          "verified_violation": "TRUE"
+        },
+        "expected": "CANCELLED"
+      },
+      {
+        "id": "DV-028",
+        "changes": {
+          "human_judgment_resolved": "FALSE",
+          "required_unknown": "TRUE"
+        },
+        "expected": "BLOCKED"
+      }
+    ]
+  },
+  "action_model": {
+    "all_actions_require": [
+      "active_work_authorization",
+      "adopted_policy_and_protected_issuer",
+      "exact_action_resource_subject_and_actuator_binding",
+      "current_preconditions_and_revocation",
+      "unexpired_grant",
+      "durable_authentic_decision",
+      "budget_available",
+      "idempotency_and_outcome_reconciliation"
+    ],
+    "action_specific_requirements": {
+      "PUBLISH_PROPOSAL": [
+        "explicit_publication_consent",
+        "privacy_sanitization_passed",
+        "accurate_assessment_label",
+        "approved_destination",
+        "bounded_write_policy"
+      ],
+      "APPLY_ACCEPTED_PATCH": [
+        "decision_ACCEPTED_for_candidate",
+        "authorized_multi_file_scope",
+        "owner_baseline_unchanged_or_independently_reconciled",
+        "exact_candidate_and_base_precondition"
+      ],
+      "MERGE_CANDIDATE": [
+        "decision_ACCEPTED_for_candidate",
+        "effective_non_bypass_merge_gate",
+        "actual_required_checks_completed",
+        "exact_head_and_current_base_precondition"
+      ],
+      "RESOLVE_ISSUE": [
+        "specific_issue_requirement_established",
+        "appropriate_durable_main_or_design_state_verified",
+        "explicit_resolution_authorization",
+        "actual_issue_state_readback"
+      ],
+      "LAUNCH_NEXT_TASK": [
+        "new_task_within_owner_scope",
+        "dependency_and_health_policy_satisfied",
+        "no_effective_hold",
+        "no_unresolved_unknown_effect_requiring_reconciliation"
+      ],
+      "EXTERNAL_EFFECT": [
+        "separately_owner_approved_effect_profile",
+        "effect_specific_requirements_established",
+        "prevention_and_recovery_policy_verified",
+        "no_inference_from_merge_permission"
+      ]
+    }
+  },
+  "requirements": [
+    {
+      "id": "ICV-001",
+      "title": "Adoption is explicit",
+      "contract_anchor": "CONTRACT.md :: ICV-001",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/229",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912",
+        "https://github.com/joeszilagyi/Upkeeper/issues/915"
+      ],
+      "case_ids": [
+        "AC-001",
+        "AC-045"
+      ]
+    },
+    {
+      "id": "ICV-002",
+      "title": "There is one normative baseline",
+      "contract_anchor": "CONTRACT.md :: ICV-002",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/229",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912",
+        "https://github.com/joeszilagyi/Upkeeper/issues/915"
+      ],
+      "case_ids": [
+        "AC-002",
+        "AC-060"
+      ]
+    },
+    {
+      "id": "ICV-003",
+      "title": "Assurance is bounded",
+      "contract_anchor": "CONTRACT.md :: ICV-003",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/134",
+        "https://github.com/joeszilagyi/Upkeeper/issues/910",
+        "https://github.com/joeszilagyi/Upkeeper/issues/916",
+        "https://github.com/joeszilagyi/Upkeeper/issues/917"
+      ],
+      "case_ids": [
+        "AC-003",
+        "AC-062"
+      ]
+    },
+    {
+      "id": "ICV-004",
+      "title": "Mechanism is not the contract",
+      "contract_anchor": "CONTRACT.md :: ICV-004",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/134",
+        "https://github.com/joeszilagyi/Upkeeper/issues/910",
+        "https://github.com/joeszilagyi/Upkeeper/issues/916",
+        "https://github.com/joeszilagyi/Upkeeper/issues/917"
+      ],
+      "case_ids": [
+        "AC-004",
+        "AC-049"
+      ]
+    },
+    {
+      "id": "ICV-005",
+      "title": "Separate controlling credentials",
+      "contract_anchor": "CONTRACT.md :: ICV-005",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/679",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912"
+      ],
+      "case_ids": [
+        "AC-001",
+        "AC-005",
+        "AC-036",
+        "AC-050"
+      ]
+    },
+    {
+      "id": "ICV-006",
+      "title": "Observe outside the claim's control",
+      "contract_anchor": "CONTRACT.md :: ICV-006",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/679",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912"
+      ],
+      "case_ids": [
+        "AC-006",
+        "AC-030"
+      ]
+    },
+    {
+      "id": "ICV-007",
+      "title": "Mediate every consequential route",
+      "contract_anchor": "CONTRACT.md :: ICV-007",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/679",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912"
+      ],
+      "case_ids": [
+        "AC-007",
+        "AC-036",
+        "AC-062"
+      ]
+    },
+    {
+      "id": "ICV-008",
+      "title": "Promote the checker separately",
+      "contract_anchor": "CONTRACT.md :: ICV-008",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/679",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912"
+      ],
+      "case_ids": [
+        "AC-008",
+        "AC-046",
+        "AC-047",
+        "AC-060"
+      ]
+    },
+    {
+      "id": "ICV-009",
+      "title": "Establish the acceptance basis first",
+      "contract_anchor": "CONTRACT.md :: ICV-009",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/910"
+      ],
+      "case_ids": [
+        "AC-009",
+        "AC-051"
+      ]
+    },
+    {
+      "id": "ICV-010",
+      "title": "Bind a bounded work authorization",
+      "contract_anchor": "CONTRACT.md :: ICV-010",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/910"
+      ],
+      "case_ids": [
+        "AC-010",
+        "AC-040"
+      ]
+    },
+    {
+      "id": "ICV-011",
+      "title": "Keep obligation identity and applicability stable",
+      "contract_anchor": "CONTRACT.md :: ICV-011",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/910"
+      ],
+      "case_ids": [
+        "AC-011",
+        "AC-034"
+      ]
+    },
+    {
+      "id": "ICV-012",
+      "title": "Cover outcomes and handoffs, not just functions",
+      "contract_anchor": "CONTRACT.md :: ICV-012",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/134",
+        "https://github.com/joeszilagyi/Upkeeper/issues/910",
+        "https://github.com/joeszilagyi/Upkeeper/issues/916",
+        "https://github.com/joeszilagyi/Upkeeper/issues/917"
+      ],
+      "case_ids": [
+        "AC-003",
+        "AC-012",
+        "AC-051",
+        "AC-052",
+        "AC-054"
+      ]
+    },
+    {
+      "id": "ICV-013",
+      "title": "Do not invent a business oracle",
+      "contract_anchor": "CONTRACT.md :: ICV-013",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/134",
+        "https://github.com/joeszilagyi/Upkeeper/issues/910",
+        "https://github.com/joeszilagyi/Upkeeper/issues/916",
+        "https://github.com/joeszilagyi/Upkeeper/issues/917"
+      ],
+      "case_ids": [
+        "AC-009",
+        "AC-013",
+        "AC-043",
+        "AC-052"
+      ]
+    },
+    {
+      "id": "ICV-014",
+      "title": "Preserve scoped claims and unsuccessful attempts",
+      "contract_anchor": "CONTRACT.md :: ICV-014",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/910"
+      ],
+      "case_ids": [
+        "AC-014",
+        "AC-038",
+        "AC-055",
+        "AC-057"
+      ]
+    },
+    {
+      "id": "ICV-015",
+      "title": "Isolate candidate writes and private material",
+      "contract_anchor": "CONTRACT.md :: ICV-015",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/679",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912"
+      ],
+      "case_ids": [
+        "AC-015",
+        "AC-020",
+        "AC-044"
+      ]
+    },
+    {
+      "id": "ICV-016",
+      "title": "Acquire a coherent snapshot",
+      "contract_anchor": "CONTRACT.md :: ICV-016",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/135",
+        "https://github.com/joeszilagyi/Upkeeper/issues/715"
+      ],
+      "case_ids": [
+        "AC-016",
+        "AC-017"
+      ]
+    },
+    {
+      "id": "ICV-017",
+      "title": "Pin what runs",
+      "contract_anchor": "CONTRACT.md :: ICV-017",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/135",
+        "https://github.com/joeszilagyi/Upkeeper/issues/715"
+      ],
+      "case_ids": [
+        "AC-016",
+        "AC-017",
+        "AC-018",
+        "AC-056"
+      ]
+    },
+    {
+      "id": "ICV-018",
+      "title": "Bind relevant execution conditions",
+      "contract_anchor": "CONTRACT.md :: ICV-018",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/135",
+        "https://github.com/joeszilagyi/Upkeeper/issues/715"
+      ],
+      "case_ids": [
+        "AC-004",
+        "AC-017",
+        "AC-018",
+        "AC-019",
+        "AC-056"
+      ]
+    },
+    {
+      "id": "ICV-019",
+      "title": "Make fixture safety independent of restoration",
+      "contract_anchor": "CONTRACT.md :: ICV-019",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/909",
+        "https://github.com/joeszilagyi/Upkeeper/issues/914"
+      ],
+      "case_ids": [
+        "AC-020",
+        "AC-021"
+      ]
+    },
+    {
+      "id": "ICV-020",
+      "title": "Verify publication subjects again",
+      "contract_anchor": "CONTRACT.md :: ICV-020",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/805",
+        "https://github.com/joeszilagyi/Upkeeper/issues/908",
+        "https://github.com/joeszilagyi/Upkeeper/issues/913"
+      ],
+      "case_ids": [
+        "AC-015",
+        "AC-022",
+        "AC-039"
+      ]
+    },
+    {
+      "id": "ICV-021",
+      "title": "Require structured provenance",
+      "contract_anchor": "CONTRACT.md :: ICV-021",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/135",
+        "https://github.com/joeszilagyi/Upkeeper/issues/715"
+      ],
+      "case_ids": [
+        "AC-006",
+        "AC-016",
+        "AC-023",
+        "AC-030",
+        "AC-053"
+      ]
+    },
+    {
+      "id": "ICV-022",
+      "title": "Reject self-asserted trust",
+      "contract_anchor": "CONTRACT.md :: ICV-022",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/135",
+        "https://github.com/joeszilagyi/Upkeeper/issues/715"
+      ],
+      "case_ids": [
+        "AC-006",
+        "AC-023",
+        "AC-024",
+        "AC-045"
+      ]
+    },
+    {
+      "id": "ICV-023",
+      "title": "Require complete observation for the claimed property",
+      "contract_anchor": "CONTRACT.md :: ICV-023",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/910",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912"
+      ],
+      "case_ids": [
+        "AC-025",
+        "AC-042",
+        "AC-054"
+      ]
+    },
+    {
+      "id": "ICV-024",
+      "title": "Bind causal handoffs",
+      "contract_anchor": "CONTRACT.md :: ICV-024",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/910",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912"
+      ],
+      "case_ids": [
+        "AC-012",
+        "AC-026",
+        "AC-027",
+        "AC-053",
+        "AC-054"
+      ]
+    },
+    {
+      "id": "ICV-025",
+      "title": "Distinguish attempt, receipt and effect",
+      "contract_anchor": "CONTRACT.md :: ICV-025",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/910",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912"
+      ],
+      "case_ids": [
+        "AC-012",
+        "AC-025",
+        "AC-027",
+        "AC-053",
+        "AC-054"
+      ]
+    },
+    {
+      "id": "ICV-026",
+      "title": "Retain contradictions and freshness",
+      "contract_anchor": "CONTRACT.md :: ICV-026",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/135",
+        "https://github.com/joeszilagyi/Upkeeper/issues/715"
+      ],
+      "case_ids": [
+        "AC-019",
+        "AC-026",
+        "AC-028",
+        "AC-033",
+        "AC-056"
+      ]
+    },
+    {
+      "id": "ICV-027",
+      "title": "Bound and protect evidence custody",
+      "contract_anchor": "CONTRACT.md :: ICV-027",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/135",
+        "https://github.com/joeszilagyi/Upkeeper/issues/715"
+      ],
+      "case_ids": [
+        "AC-029",
+        "AC-037",
+        "AC-061"
+      ]
+    },
+    {
+      "id": "ICV-028",
+      "title": "Lattice is not the judge",
+      "contract_anchor": "CONTRACT.md :: ICV-028",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/135",
+        "https://github.com/joeszilagyi/Upkeeper/issues/136"
+      ],
+      "case_ids": [
+        "AC-030"
+      ]
+    },
+    {
+      "id": "ICV-029",
+      "title": "Evaluate obligations independently",
+      "contract_anchor": "CONTRACT.md :: ICV-029",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/910"
+      ],
+      "case_ids": [
+        "AC-011",
+        "AC-014",
+        "AC-031",
+        "AC-051",
+        "AC-052",
+        "AC-053",
+        "AC-057",
+        "AC-058"
+      ]
+    },
+    {
+      "id": "ICV-030",
+      "title": "Make one authoritative acceptance decision",
+      "contract_anchor": "CONTRACT.md :: ICV-030",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/910"
+      ],
+      "case_ids": [
+        "AC-007",
+        "AC-014",
+        "AC-015",
+        "AC-031",
+        "AC-051",
+        "AC-053"
+      ]
+    },
+    {
+      "id": "ICV-031",
+      "title": "Separate assessment from permission",
+      "contract_anchor": "CONTRACT.md :: ICV-031",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/910"
+      ],
+      "case_ids": [
+        "AC-032",
+        "AC-055"
+      ]
+    },
+    {
+      "id": "ICV-032",
+      "title": "Use deterministic decision precedence",
+      "contract_anchor": "CONTRACT.md :: ICV-032",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/910"
+      ],
+      "case_ids": [
+        "AC-033"
+      ]
+    },
+    {
+      "id": "ICV-033",
+      "title": "Prevent vacuous success and convenient shrinking",
+      "contract_anchor": "CONTRACT.md :: ICV-033",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/910"
+      ],
+      "case_ids": [
+        "AC-011",
+        "AC-024",
+        "AC-034",
+        "AC-047"
+      ]
+    },
+    {
+      "id": "ICV-034",
+      "title": "Record decisions before dependent effects",
+      "contract_anchor": "CONTRACT.md :: ICV-034",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/135",
+        "https://github.com/joeszilagyi/Upkeeper/issues/136",
+        "https://github.com/joeszilagyi/Upkeeper/issues/805"
+      ],
+      "case_ids": [
+        "AC-029",
+        "AC-041",
+        "AC-061"
+      ]
+    },
+    {
+      "id": "ICV-035",
+      "title": "Grant individual actions with preconditions",
+      "contract_anchor": "CONTRACT.md :: ICV-035",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/805",
+        "https://github.com/joeszilagyi/Upkeeper/issues/908",
+        "https://github.com/joeszilagyi/Upkeeper/issues/913"
+      ],
+      "case_ids": [
+        "AC-022",
+        "AC-032",
+        "AC-035",
+        "AC-051"
+      ]
+    },
+    {
+      "id": "ICV-036",
+      "title": "Verify at the actuator",
+      "contract_anchor": "CONTRACT.md :: ICV-036",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/679",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912"
+      ],
+      "case_ids": [
+        "AC-005",
+        "AC-007",
+        "AC-022",
+        "AC-032",
+        "AC-035",
+        "AC-036",
+        "AC-044",
+        "AC-062"
+      ]
+    },
+    {
+      "id": "ICV-037",
+      "title": "Confirm actual external outcomes",
+      "contract_anchor": "CONTRACT.md :: ICV-037",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/135",
+        "https://github.com/joeszilagyi/Upkeeper/issues/136",
+        "https://github.com/joeszilagyi/Upkeeper/issues/805"
+      ],
+      "case_ids": [
+        "AC-028",
+        "AC-037",
+        "AC-061"
+      ]
+    },
+    {
+      "id": "ICV-038",
+      "title": "Bind issue closure to its real requirement",
+      "contract_anchor": "CONTRACT.md :: ICV-038",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/805",
+        "https://github.com/joeszilagyi/Upkeeper/issues/908",
+        "https://github.com/joeszilagyi/Upkeeper/issues/913"
+      ],
+      "case_ids": [
+        "AC-031",
+        "AC-038",
+        "AC-058"
+      ]
+    },
+    {
+      "id": "ICV-039",
+      "title": "Treat merged-main health separately",
+      "contract_anchor": "CONTRACT.md :: ICV-039",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/805",
+        "https://github.com/joeszilagyi/Upkeeper/issues/908",
+        "https://github.com/joeszilagyi/Upkeeper/issues/913"
+      ],
+      "case_ids": [
+        "AC-039"
+      ]
+    },
+    {
+      "id": "ICV-040",
+      "title": "Reauthorize selection and preserve holds",
+      "contract_anchor": "CONTRACT.md :: ICV-040",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/227",
+        "https://github.com/joeszilagyi/Upkeeper/issues/913"
+      ],
+      "case_ids": [
+        "AC-010",
+        "AC-039",
+        "AC-040",
+        "AC-042",
+        "AC-049",
+        "AC-059"
+      ]
+    },
+    {
+      "id": "ICV-041",
+      "title": "Stop without having to diagnose the cause",
+      "contract_anchor": "CONTRACT.md :: ICV-041",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/135",
+        "https://github.com/joeszilagyi/Upkeeper/issues/136",
+        "https://github.com/joeszilagyi/Upkeeper/issues/805"
+      ],
+      "case_ids": [
+        "AC-029",
+        "AC-033",
+        "AC-041",
+        "AC-059"
+      ]
+    },
+    {
+      "id": "ICV-042",
+      "title": "Define a useful no-op",
+      "contract_anchor": "CONTRACT.md :: ICV-042",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/227",
+        "https://github.com/joeszilagyi/Upkeeper/issues/913"
+      ],
+      "case_ids": [
+        "AC-042",
+        "AC-058"
+      ]
+    },
+    {
+      "id": "ICV-043",
+      "title": "Preserve human judgments without counterfeit proof",
+      "contract_anchor": "CONTRACT.md :: ICV-043",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/134",
+        "https://github.com/joeszilagyi/Upkeeper/issues/231"
+      ],
+      "case_ids": [
+        "AC-009",
+        "AC-013",
+        "AC-043",
+        "AC-055",
+        "AC-060"
+      ]
+    },
+    {
+      "id": "ICV-044",
+      "title": "Separate repository changes from irreversible effects",
+      "contract_anchor": "CONTRACT.md :: ICV-044",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/134",
+        "https://github.com/joeszilagyi/Upkeeper/issues/231"
+      ],
+      "case_ids": [
+        "AC-044"
+      ]
+    },
+    {
+      "id": "ICV-045",
+      "title": "Keep the authoritative copy independent",
+      "contract_anchor": "CONTRACT.md :: ICV-045",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/229",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912",
+        "https://github.com/joeszilagyi/Upkeeper/issues/915"
+      ],
+      "case_ids": [
+        "AC-001",
+        "AC-005",
+        "AC-008",
+        "AC-023",
+        "AC-045"
+      ]
+    },
+    {
+      "id": "ICV-046",
+      "title": "Fail safely during authority updates",
+      "contract_anchor": "CONTRACT.md :: ICV-046",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/229",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912",
+        "https://github.com/joeszilagyi/Upkeeper/issues/915"
+      ],
+      "case_ids": [
+        "AC-002",
+        "AC-008",
+        "AC-046",
+        "AC-060"
+      ]
+    },
+    {
+      "id": "ICV-047",
+      "title": "Test forbidden success and legitimate progress",
+      "contract_anchor": "CONTRACT.md :: ICV-047",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/134",
+        "https://github.com/joeszilagyi/Upkeeper/issues/910",
+        "https://github.com/joeszilagyi/Upkeeper/issues/916",
+        "https://github.com/joeszilagyi/Upkeeper/issues/917"
+      ],
+      "case_ids": [
+        "AC-021",
+        "AC-047",
+        "AC-062"
+      ]
+    },
+    {
+      "id": "ICV-048",
+      "title": "Preserve evidence limits and inspection history",
+      "contract_anchor": "CONTRACT.md :: ICV-048",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/134",
+        "https://github.com/joeszilagyi/Upkeeper/issues/910",
+        "https://github.com/joeszilagyi/Upkeeper/issues/916",
+        "https://github.com/joeszilagyi/Upkeeper/issues/917"
+      ],
+      "case_ids": [
+        "AC-004",
+        "AC-048",
+        "AC-050"
+      ]
+    },
+    {
+      "id": "ICV-049",
+      "title": "Bound resource use and new machinery",
+      "contract_anchor": "CONTRACT.md :: ICV-049",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/134",
+        "https://github.com/joeszilagyi/Upkeeper/issues/910",
+        "https://github.com/joeszilagyi/Upkeeper/issues/916",
+        "https://github.com/joeszilagyi/Upkeeper/issues/917"
+      ],
+      "case_ids": [
+        "AC-010",
+        "AC-019",
+        "AC-049",
+        "AC-056",
+        "AC-059"
+      ]
+    },
+    {
+      "id": "ICV-050",
+      "title": "Publish conformance by property, not by slogan",
+      "contract_anchor": "CONTRACT.md :: ICV-050",
+      "issue_refs": [
+        "https://github.com/joeszilagyi/Upkeeper/issues/229",
+        "https://github.com/joeszilagyi/Upkeeper/issues/912",
+        "https://github.com/joeszilagyi/Upkeeper/issues/915"
+      ],
+      "case_ids": [
+        "AC-048",
+        "AC-050"
+      ]
+    }
+  ],
+  "adversarial_cases": [
+    {
+      "id": "AC-001",
+      "title": "Unadopted or forged approval",
+      "requirements": [
+        "ICV-001",
+        "ICV-005",
+        "ICV-045"
+      ],
+      "expected": "BLOCKED; no operational grant.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-002",
+      "title": "Conflicting adopted artifacts",
+      "requirements": [
+        "ICV-002",
+        "ICV-046"
+      ],
+      "expected": "BLOCKED until owner-approved consistent adoption.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-003",
+      "title": "Unjustified universal claim",
+      "requirements": [
+        "ICV-003",
+        "ICV-012"
+      ],
+      "expected": "Reject the unsupported stronger claim; retain any valid narrower result.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-004",
+      "title": "Unsupported isolation mechanism",
+      "requirements": [
+        "ICV-004",
+        "ICV-018",
+        "ICV-048"
+      ],
+      "expected": "BLOCKED; no PASS.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-005",
+      "title": "Worker can change its own gate",
+      "requirements": [
+        "ICV-005",
+        "ICV-036",
+        "ICV-045"
+      ],
+      "expected": "Activation/operation blocked as nonconformant.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-006",
+      "title": "Signed repetition of worker fiction",
+      "requirements": [
+        "ICV-006",
+        "ICV-021",
+        "ICV-022"
+      ],
+      "expected": "BLOCKED for receipt obligation.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-007",
+      "title": "Alternate completion bypass",
+      "requirements": [
+        "ICV-007",
+        "ICV-030",
+        "ICV-036"
+      ],
+      "expected": "No route grants merge, issue closure or accepted completion.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-008",
+      "title": "Checker self-approval",
+      "requirements": [
+        "ICV-008",
+        "ICV-045",
+        "ICV-046"
+      ],
+      "expected": "Promotion denied; candidate remains a proposal.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-009",
+      "title": "Worker invents approved requirement",
+      "requirements": [
+        "ICV-009",
+        "ICV-013",
+        "ICV-043"
+      ],
+      "expected": "REVIEW_REQUIRED; no automatic repair acceptance.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-010",
+      "title": "Work-scope expansion",
+      "requirements": [
+        "ICV-010",
+        "ICV-040",
+        "ICV-049"
+      ],
+      "expected": "Deny the expanded action; preserve a bounded stop/review result.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-011",
+      "title": "Skipped equals not applicable",
+      "requirements": [
+        "ICV-011",
+        "ICV-029",
+        "ICV-033"
+      ],
+      "expected": "BLOCKED.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-012",
+      "title": "All functions pass but handoff fails",
+      "requirements": [
+        "ICV-012",
+        "ICV-024",
+        "ICV-025"
+      ],
+      "expected": "No end-to-end acceptance.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-013",
+      "title": "Subjective outcome masquerades as predicate",
+      "requirements": [
+        "ICV-013",
+        "ICV-043"
+      ],
+      "expected": "REVIEW_REQUIRED.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-014",
+      "title": "Nonzero worker plus WORK_DONE",
+      "requirements": [
+        "ICV-014",
+        "ICV-029",
+        "ICV-030"
+      ],
+      "expected": "REJECTED for that attempt; no automatic resolution.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-015",
+      "title": "Wrong-file repair",
+      "requirements": [
+        "ICV-015",
+        "ICV-020",
+        "ICV-030"
+      ],
+      "expected": "REJECTED; no owner-tree application.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-016",
+      "title": "Unit attestation A-to-B substitution",
+      "requirements": [
+        "ICV-016",
+        "ICV-017",
+        "ICV-021"
+      ],
+      "expected": "Old result may remain valid for old input; new input cannot reuse it.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-017",
+      "title": "Phase attestation A-to-B substitution",
+      "requirements": [
+        "ICV-016",
+        "ICV-017",
+        "ICV-018"
+      ],
+      "expected": "No evidence for the unexecuted new revision.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-018",
+      "title": "Change-and-revert or authoritative-input write",
+      "requirements": [
+        "ICV-017",
+        "ICV-018"
+      ],
+      "expected": "Original checkout changes cannot affect the pinned result; authoritative writes are denied.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-019",
+      "title": "Different conditions reuse",
+      "requirements": [
+        "ICV-018",
+        "ICV-026",
+        "ICV-049"
+      ],
+      "expected": "Reject ineligible reuse; execute fresh only under valid authorization.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-020",
+      "title": "Inherited fixture symlink",
+      "requirements": [
+        "ICV-019",
+        "ICV-015"
+      ],
+      "expected": "Reject unsafe import before mutation.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-021",
+      "title": "Hardlink, replacement or interrupted fixture",
+      "requirements": [
+        "ICV-019",
+        "ICV-047"
+      ],
+      "expected": "Only an independent private inode may change; source/sentinel remain untouched.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-022",
+      "title": "PR head or base replaced after acceptance",
+      "requirements": [
+        "ICV-020",
+        "ICV-035",
+        "ICV-036"
+      ],
+      "expected": "Actuator denies stale grant.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-023",
+      "title": "Wrong producer or trust key",
+      "requirements": [
+        "ICV-021",
+        "ICV-022",
+        "ICV-045"
+      ],
+      "expected": "BLOCKED.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-024",
+      "title": "Malformed evidence and schema tricks",
+      "requirements": [
+        "ICV-022",
+        "ICV-033"
+      ],
+      "expected": "BLOCKED before authority evaluation.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-025",
+      "title": "Dropped observations look like no effect",
+      "requirements": [
+        "ICV-023",
+        "ICV-025"
+      ],
+      "expected": "Required absence predicate UNKNOWN; BLOCKED.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-026",
+      "title": "Replay or unrelated causal chain",
+      "requirements": [
+        "ICV-024",
+        "ICV-026"
+      ],
+      "expected": "It cannot fill the current obligation.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-027",
+      "title": "Sender success or early ACK",
+      "requirements": [
+        "ICV-025",
+        "ICV-024"
+      ],
+      "expected": "No durable-effect acceptance.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-028",
+      "title": "Retry erases failure",
+      "requirements": [
+        "ICV-026",
+        "ICV-037"
+      ],
+      "expected": "Retain/reconcile both attempts and any side effects.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-029",
+      "title": "Evidence or decision store failure",
+      "requirements": [
+        "ICV-027",
+        "ICV-034",
+        "ICV-041"
+      ],
+      "expected": "BLOCKED dependent effects; no current PASS.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-030",
+      "title": "Lattice PASS laundering",
+      "requirements": [
+        "ICV-028",
+        "ICV-006",
+        "ICV-021"
+      ],
+      "expected": "BLOCKED unless approved underlying observations independently establish the fact.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-031",
+      "title": "Generic green does not fix selected issue",
+      "requirements": [
+        "ICV-029",
+        "ICV-030",
+        "ICV-038"
+      ],
+      "expected": "REJECTED; issue not resolved.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-032",
+      "title": "Accepted result has no action grant",
+      "requirements": [
+        "ICV-031",
+        "ICV-035",
+        "ICV-036"
+      ],
+      "expected": "Action denied; accepted local evidence retained.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-033",
+      "title": "Decision precedence and reasons",
+      "requirements": [
+        "ICV-032",
+        "ICV-026",
+        "ICV-041"
+      ],
+      "expected": "Displayed disposition follows normative precedence; all reasons retained.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-034",
+      "title": "Zero tests and filtered obligations",
+      "requirements": [
+        "ICV-033",
+        "ICV-011"
+      ],
+      "expected": "BLOCKED; approved administrative zero-obligation case tested separately.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-035",
+      "title": "Grant used for a different action",
+      "requirements": [
+        "ICV-035",
+        "ICV-036"
+      ],
+      "expected": "Action denied.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-036",
+      "title": "Direct privileged tool bypass",
+      "requirements": [
+        "ICV-036",
+        "ICV-007",
+        "ICV-005"
+      ],
+      "expected": "Operation denied under actual worker identity.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-037",
+      "title": "Unknown API outcome",
+      "requirements": [
+        "ICV-037",
+        "ICV-027"
+      ],
+      "expected": "OUTCOME_UNKNOWN; reconcile before potentially duplicative action.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-038",
+      "title": "Partial issue closed by keyword",
+      "requirements": [
+        "ICV-038",
+        "ICV-014"
+      ],
+      "expected": "Record and reconcile incorrect closure; keep unmet obligations visible.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-039",
+      "title": "Green PR followed by failed main",
+      "requirements": [
+        "ICV-039",
+        "ICV-020",
+        "ICV-040"
+      ],
+      "expected": "Dependent continuation blocked.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-040",
+      "title": "Paused GOAL becomes remediation",
+      "requirements": [
+        "ICV-040",
+        "ICV-010"
+      ],
+      "expected": "CANCELLED/held; no worker launch outside renewed scope.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-041",
+      "title": "Unexplained failure",
+      "requirements": [
+        "ICV-041",
+        "ICV-034"
+      ],
+      "expected": "BLOCKED and durable oversight record or emergency safe-stop diagnostic.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-042",
+      "title": "No-op false empty and true empty",
+      "requirements": [
+        "ICV-042",
+        "ICV-023",
+        "ICV-040"
+      ],
+      "expected": "Only the proven bounded empty/healthy case yields NO_CHANGE_VERIFIED.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-043",
+      "title": "Human waiver is not test proof",
+      "requirements": [
+        "ICV-043",
+        "ICV-013"
+      ],
+      "expected": "Human override remains explicit; no counterfeit machine proof.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-044",
+      "title": "Unauthorized external effect in a test",
+      "requirements": [
+        "ICV-044",
+        "ICV-015",
+        "ICV-036"
+      ],
+      "expected": "Prevent unauthorized effect at boundary.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-045",
+      "title": "Mirror and mirror hash both edited",
+      "requirements": [
+        "ICV-045",
+        "ICV-001",
+        "ICV-022"
+      ],
+      "expected": "Adopted version is unchanged; unauthorized update rejected.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-046",
+      "title": "Partial authority update or unsafe rollback",
+      "requirements": [
+        "ICV-046",
+        "ICV-008"
+      ],
+      "expected": "New dependent actions blocked or remain on the explicitly valid old revision.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-047",
+      "title": "Weakening the acceptance test",
+      "requirements": [
+        "ICV-047",
+        "ICV-008",
+        "ICV-033"
+      ],
+      "expected": "Reference comparison rejects unapproved weakening.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-048",
+      "title": "Unrun CI called independent proof",
+      "requirements": [
+        "ICV-048",
+        "ICV-050"
+      ],
+      "expected": "Required hosted gate remains unmet with accurate evidence class.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-049",
+      "title": "Budget exhausted or excessive verification machinery",
+      "requirements": [
+        "ICV-049",
+        "ICV-004",
+        "ICV-040"
+      ],
+      "expected": "Bounded stop; no false PASS or scope expansion.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-050",
+      "title": "Implementation claimed as enforcement",
+      "requirements": [
+        "ICV-050",
+        "ICV-005",
+        "ICV-048"
+      ],
+      "expected": "Publish limited conformance map; reject unsupported scope claim.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-051",
+      "title": "Valid HTML repair",
+      "requirements": [
+        "ICV-009",
+        "ICV-012",
+        "ICV-029",
+        "ICV-030",
+        "ICV-035"
+      ],
+      "expected": "ACCEPTED in rendering scope; only separately granted action may occur.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-052",
+      "title": "HTML comment or hidden text only",
+      "requirements": [
+        "ICV-012",
+        "ICV-013",
+        "ICV-029"
+      ],
+      "expected": "REJECTED if trusted rendering still shows Acount.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-053",
+      "title": "Valid xyz handoff",
+      "requirements": [
+        "ICV-021",
+        "ICV-024",
+        "ICV-025",
+        "ICV-029",
+        "ICV-030"
+      ],
+      "expected": "ACCEPTED for observed/tested domain only.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-054",
+      "title": "Negative xyz case and bad payload",
+      "requirements": [
+        "ICV-012",
+        "ICV-023",
+        "ICV-024",
+        "ICV-025"
+      ],
+      "expected": "No-send case passes only with complete evidence; altered payload fails.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-055",
+      "title": "Failed attempt leaves usable artifact",
+      "requirements": [
+        "ICV-014",
+        "ICV-031",
+        "ICV-043"
+      ],
+      "expected": "New candidate may be ACCEPTED; original attempt remains failed.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-056",
+      "title": "Valid same-input cache",
+      "requirements": [
+        "ICV-017",
+        "ICV-018",
+        "ICV-026",
+        "ICV-049"
+      ],
+      "expected": "Reuse accepted without unnecessary execution.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-057",
+      "title": "Expected negative test is not worker failure",
+      "requirements": [
+        "ICV-029",
+        "ICV-014"
+      ],
+      "expected": "Obligation SATISFIED; no accidental override of a real worker exit 42.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-058",
+      "title": "Already fixed without new edits",
+      "requirements": [
+        "ICV-038",
+        "ICV-042",
+        "ICV-029"
+      ],
+      "expected": "Specific issue resolution may be granted; no claim a new repair occurred.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-059",
+      "title": "Independent eligible task after local failure",
+      "requirements": [
+        "ICV-040",
+        "ICV-041",
+        "ICV-049"
+      ],
+      "expected": "B may launch under its own grant; A remains unresolved.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-060",
+      "title": "Valid owner amendment",
+      "requirements": [
+        "ICV-002",
+        "ICV-008",
+        "ICV-043",
+        "ICV-046"
+      ],
+      "expected": "New-version acceptance permitted; prior violation not erased.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-061",
+      "title": "Effect succeeded but receipt persistence failed",
+      "requirements": [
+        "ICV-027",
+        "ICV-034",
+        "ICV-037"
+      ],
+      "expected": "OUTCOME_UNKNOWN locally until reconciliation; continuation blocked.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    },
+    {
+      "id": "AC-062",
+      "title": "Valid invariant enforcement",
+      "requirements": [
+        "ICV-003",
+        "ICV-007",
+        "ICV-036",
+        "ICV-047"
+      ],
+      "expected": "Permitted effect occurs; bypasses denied; invariant claim limited to verified scope.",
+      "status": "SPECIFIED_NOT_EXECUTED"
+    }
+  ]
+}

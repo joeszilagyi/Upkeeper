@@ -1,0 +1,26 @@
+{
+  "status": "PASS_PACKAGE_AND_FINITE_MODEL_ONLY",
+  "contract_version": "1.0.0-rc.1",
+  "requirements": 50,
+  "specified_adversarial_cases": 62,
+  "decision_vectors": 28,
+  "normalized_states_exhaustively_checked": 354294,
+  "accepted_normalized_states": 2,
+  "synthetic_record_examples": 8,
+  "negative_schema_and_parse_cases": 104,
+  "action_boolean_gate_checks": 152,
+  "manifest_files_verified": 10,
+  "python_version": "3.13.5",
+  "jsonschema_version": "4.26.0",
+  "not_established": [
+    "owner adoption",
+    "actual authority isolation",
+    "Upkeeper runtime conformance",
+    "real actuator enforcement",
+    "business correctness",
+    "independent external review"
+  ],
+  "network_calls": 0,
+  "model_calls": 0,
+  "upkeeper_runtime_tests_run": 0
+}

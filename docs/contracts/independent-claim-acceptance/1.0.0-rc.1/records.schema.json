@@ -1,0 +1,863 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:upkeeper:icvaa:records:1.0.0-rc.1",
+  "title": "ICVAA record shapes; never authentication or operational acceptance",
+  "$comment": "Reject duplicate keys and enforce bounds before this schema. Authentication, reference resolution, chronology, mediation and truth are mandatory semantic checks outside structural schema validation.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "upkeeper.icvaa.records.v1"
+        },
+        "record_type": {
+          "const": "adoption"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "issuer_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "bundle_digest": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "contract_version": {
+              "$ref": "#/$defs/string"
+            },
+            "scope_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "reference_checker_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "trust_policy_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "revocation_epoch": {
+              "$ref": "#/$defs/integer"
+            },
+            "effective_at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "expires_at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "authentication_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            }
+          },
+          "required": [
+            "issuer_id",
+            "bundle_digest",
+            "contract_version",
+            "scope_ref",
+            "reference_checker_ref",
+            "trust_policy_ref",
+            "revocation_epoch",
+            "effective_at",
+            "expires_at",
+            "authentication_ref"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "record_type",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "upkeeper.icvaa.records.v1"
+        },
+        "record_type": {
+          "const": "work_authorization"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "issuer_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "request_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "repo_ref": {
+              "$ref": "#/$defs/repo_ref"
+            },
+            "baseline_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "scope_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "obligation_set_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "permitted_actions": {
+              "$ref": "#/$defs/action_array"
+            },
+            "budget_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "revocation_epoch": {
+              "$ref": "#/$defs/integer"
+            },
+            "expires_at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "authentication_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            }
+          },
+          "required": [
+            "issuer_id",
+            "request_id",
+            "repo_ref",
+            "baseline_ref",
+            "scope_ref",
+            "obligation_set_ref",
+            "permitted_actions",
+            "budget_ref",
+            "revocation_epoch",
+            "expires_at",
+            "authentication_ref"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "record_type",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "upkeeper.icvaa.records.v1"
+        },
+        "record_type": {
+          "const": "obligation"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "obligation_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "requirement_ids": {
+              "$ref": "#/$defs/requirement_array"
+            },
+            "version": {
+              "$ref": "#/$defs/string"
+            },
+            "subject_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "predicate_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "applicability_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "evidence_types": {
+              "$ref": "#/$defs/identifier_array"
+            },
+            "checker_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "scope_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "deadline": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "required": {
+              "$ref": "#/$defs/boolean"
+            }
+          },
+          "required": [
+            "obligation_id",
+            "requirement_ids",
+            "version",
+            "subject_ref",
+            "predicate_ref",
+            "applicability_ref",
+            "evidence_types",
+            "checker_ref",
+            "scope_ref",
+            "deadline",
+            "required"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "record_type",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "upkeeper.icvaa.records.v1"
+        },
+        "record_type": {
+          "const": "claim"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "claim_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "request_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "subject_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "obligation_ids": {
+              "$ref": "#/$defs/identifier_array"
+            },
+            "statement": {
+              "$ref": "#/$defs/string"
+            },
+            "assurance_class": {
+              "$ref": "#/$defs/assurance"
+            },
+            "scope_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "assumptions_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            }
+          },
+          "required": [
+            "claim_id",
+            "request_id",
+            "subject_ref",
+            "obligation_ids",
+            "statement",
+            "assurance_class",
+            "scope_ref",
+            "assumptions_ref"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "record_type",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "upkeeper.icvaa.records.v1"
+        },
+        "record_type": {
+          "const": "evidence"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "evidence_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "producer_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "measurement_scope_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "subject_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "request_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "attempt_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "execution_ref": {
+              "$ref": "#/$defs/validation_ref"
+            },
+            "obligation_ids": {
+              "$ref": "#/$defs/identifier_array"
+            },
+            "observation_kind": {
+              "$ref": "#/$defs/observation_kind"
+            },
+            "observed_at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "interval_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "conditions_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "result_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "completeness_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "predecessor_ids": {
+              "$ref": "#/$defs/identifier_array"
+            },
+            "authentication_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "privacy_class": {
+              "$ref": "#/$defs/privacy"
+            }
+          },
+          "required": [
+            "evidence_id",
+            "producer_id",
+            "measurement_scope_ref",
+            "subject_ref",
+            "request_id",
+            "attempt_id",
+            "execution_ref",
+            "obligation_ids",
+            "observation_kind",
+            "observed_at",
+            "interval_ref",
+            "conditions_ref",
+            "result_ref",
+            "completeness_ref",
+            "predecessor_ids",
+            "authentication_ref",
+            "privacy_class"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "record_type",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "upkeeper.icvaa.records.v1"
+        },
+        "record_type": {
+          "const": "decision"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "decision_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "request_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "attempt_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "subject_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "adoption_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "obligation_set_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "facts": {
+              "$ref": "#/$defs/facts"
+            },
+            "disposition": {
+              "$ref": "#/$defs/disposition"
+            },
+            "reason_codes": {
+              "$ref": "#/$defs/reason_array"
+            },
+            "assessment_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "evidence_ids": {
+              "$ref": "#/$defs/identifier_array"
+            },
+            "issued_at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "authentication_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            }
+          },
+          "required": [
+            "decision_id",
+            "request_id",
+            "attempt_id",
+            "subject_ref",
+            "adoption_ref",
+            "obligation_set_ref",
+            "facts",
+            "disposition",
+            "reason_codes",
+            "assessment_ref",
+            "evidence_ids",
+            "issued_at",
+            "authentication_ref"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "record_type",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "upkeeper.icvaa.records.v1"
+        },
+        "record_type": {
+          "const": "grant"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "grant_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "issuer_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "actuator_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "action": {
+              "$ref": "#/$defs/action"
+            },
+            "request_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "decision_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "repo_ref": {
+              "$ref": "#/$defs/repo_ref"
+            },
+            "subject_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "preconditions_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "policy_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/identifier"
+            },
+            "revocation_epoch": {
+              "$ref": "#/$defs/integer"
+            },
+            "expires_at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "authentication_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            }
+          },
+          "required": [
+            "grant_id",
+            "issuer_id",
+            "actuator_id",
+            "action",
+            "request_id",
+            "decision_ref",
+            "repo_ref",
+            "subject_ref",
+            "preconditions_ref",
+            "policy_ref",
+            "idempotency_key",
+            "revocation_epoch",
+            "expires_at",
+            "authentication_ref"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "record_type",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "upkeeper.icvaa.records.v1"
+        },
+        "record_type": {
+          "const": "receipt"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "receipt_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "grant_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "actuator_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "request_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "action": {
+              "$ref": "#/$defs/action"
+            },
+            "outcome": {
+              "$ref": "#/$defs/receipt_outcome"
+            },
+            "resulting_subject_ref": {
+              "$ref": "#/$defs/nullable_artifact_ref"
+            },
+            "evidence_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            "recorded_at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "authentication_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            }
+          },
+          "required": [
+            "receipt_id",
+            "grant_id",
+            "actuator_id",
+            "request_id",
+            "action",
+            "outcome",
+            "resulting_subject_ref",
+            "evidence_ref",
+            "recorded_at",
+            "authentication_ref"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "outcome": {
+                    "const": "CONFIRMED"
+                  }
+                },
+                "required": [
+                  "outcome"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "resulting_subject_ref": {
+                    "type": "string",
+                    "pattern": "^upk:artifact:[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "record_type",
+        "body"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "string": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
+      "maxLength": 256
+    },
+    "artifact_ref": {
+      "type": "string",
+      "pattern": "^upk:artifact:[0-9a-f]{64}$"
+    },
+    "repo_ref": {
+      "type": "string",
+      "pattern": "^upk:repo:[A-Za-z0-9_-]{1,256}$"
+    },
+    "validation_ref": {
+      "type": "string",
+      "pattern": "^upk:validation:[A-Za-z0-9._:-]{1,256}$"
+    },
+    "nullable_artifact_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^upk:artifact:[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "integer": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "boolean": {
+      "type": "boolean"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "assurance": {
+      "enum": [
+        "OBSERVED_EXECUTION",
+        "TESTED_CONTRACT",
+        "ENFORCED_INVARIANT",
+        "FORMALLY_ESTABLISHED_PROPERTY"
+      ]
+    },
+    "facts": {
+      "type": "object",
+      "properties": {
+        "request_active": {
+          "enum": [
+            "TRUE",
+            "FALSE",
+            "UNKNOWN"
+          ]
+        },
+        "adoption_valid": {
+          "enum": [
+            "TRUE",
+            "FALSE",
+            "UNKNOWN"
+          ]
+        },
+        "authority_integrity_valid": {
+          "enum": [
+            "TRUE",
+            "FALSE",
+            "UNKNOWN"
+          ]
+        },
+        "subject_binding_valid": {
+          "enum": [
+            "TRUE",
+            "FALSE",
+            "UNKNOWN"
+          ]
+        },
+        "evidence_authenticity_valid": {
+          "enum": [
+            "TRUE",
+            "FALSE",
+            "UNKNOWN"
+          ]
+        },
+        "inventory_complete": {
+          "enum": [
+            "TRUE",
+            "FALSE",
+            "UNKNOWN"
+          ]
+        },
+        "verified_violation": {
+          "enum": [
+            "TRUE",
+            "FALSE",
+            "UNKNOWN"
+          ]
+        },
+        "observation_complete": {
+          "enum": [
+            "TRUE",
+            "FALSE",
+            "UNKNOWN"
+          ]
+        },
+        "checker_completed": {
+          "enum": [
+            "TRUE",
+            "FALSE",
+            "UNKNOWN"
+          ]
+        },
+        "required_unknown": {
+          "enum": [
+            "TRUE",
+            "FALSE",
+            "UNKNOWN"
+          ]
+        },
+        "human_judgment_resolved": {
+          "enum": [
+            "TRUE",
+            "FALSE",
+            "UNKNOWN"
+          ]
+        },
+        "is_noop": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "request_active",
+        "adoption_valid",
+        "authority_integrity_valid",
+        "subject_binding_valid",
+        "evidence_authenticity_valid",
+        "inventory_complete",
+        "verified_violation",
+        "observation_complete",
+        "checker_completed",
+        "required_unknown",
+        "human_judgment_resolved",
+        "is_noop"
+      ],
+      "additionalProperties": false
+    },
+    "action": {
+      "enum": [
+        "PUBLISH_PROPOSAL",
+        "APPLY_ACCEPTED_PATCH",
+        "MERGE_CANDIDATE",
+        "RESOLVE_ISSUE",
+        "LAUNCH_NEXT_TASK",
+        "EXTERNAL_EFFECT"
+      ]
+    },
+    "disposition": {
+      "enum": [
+        "CANCELLED",
+        "BLOCKED",
+        "REJECTED",
+        "REVIEW_REQUIRED",
+        "NO_CHANGE_VERIFIED",
+        "ACCEPTED"
+      ]
+    },
+    "receipt_outcome": {
+      "enum": [
+        "NOT_STARTED",
+        "IN_FLIGHT",
+        "CONFIRMED",
+        "FAILED",
+        "OUTCOME_UNKNOWN"
+      ]
+    },
+    "privacy": {
+      "enum": [
+        "private-operator",
+        "restricted",
+        "public-safe"
+      ]
+    },
+    "observation_kind": {
+      "enum": [
+        "INPUT_READ",
+        "PREDICATE_EVALUATED",
+        "HANDLER_INVOKED",
+        "PAYLOAD_SENT",
+        "PAYLOAD_RECEIVED",
+        "STATE_COMMITTED",
+        "PROCESS_RESULT",
+        "SCOPE_INSPECTION",
+        "CAPABILITY_DENIAL",
+        "OBSERVATION_HEALTH",
+        "OWNER_DECISION",
+        "REMOTE_READBACK",
+        "CHECK_RESULT",
+        "NOOP_STATE"
+      ]
+    },
+    "identifier_array": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
+        "maxLength": 256
+      },
+      "minItems": 0,
+      "maxItems": 4096,
+      "uniqueItems": true
+    },
+    "requirement_array": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^ICV-[0-9]{3}$"
+      },
+      "minItems": 1,
+      "maxItems": 50,
+      "uniqueItems": true
+    },
+    "reason_array": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+      },
+      "minItems": 1,
+      "maxItems": 256,
+      "uniqueItems": true
+    },
+    "action_array": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "PUBLISH_PROPOSAL",
+          "APPLY_ACCEPTED_PATCH",
+          "MERGE_CANDIDATE",
+          "RESOLVE_ISSUE",
+          "LAUNCH_NEXT_TASK",
+          "EXTERNAL_EFFECT"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 6,
+      "uniqueItems": true
+    }
+  }
+}

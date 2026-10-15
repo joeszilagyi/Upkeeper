@@ -1,0 +1,65 @@
+{
+  "package": "Upkeeper Independent Claim Verification and Acceptance Authority Contract",
+  "version": "1.0.0-rc.1",
+  "created_date": "2026-10-15",
+  "status": "UNADOPTED_OWNER_REVIEW_COPY",
+  "digest_algorithm": "sha256",
+  "files": [
+    {
+      "path": "ADVERSARIAL-MATRIX.md",
+      "bytes": 28062,
+      "sha256": "9ce0ee283550712b5804c5e582d13757c609d3668322ccf1fe1a4f38c8fa51ae"
+    },
+    {
+      "path": "AUTHORITY.md",
+      "bytes": 9487,
+      "sha256": "2f9b30096bf84319f764411c846317ff7eaf63eec839c6c5d62546c9f7d9cf91"
+    },
+    {
+      "path": "CONTRACT.md",
+      "bytes": 44432,
+      "sha256": "685f09667bd6033fc8db7a6fcb607d673617898a98cf7f807afa3bd1faf02876"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3773,
+      "sha256": "922a579cb466fb0bce6464457fae212b15b9e4e042e6e9489f7046662173caf2"
+    },
+    {
+      "path": "adoption-template.json",
+      "bytes": 600,
+      "sha256": "f0735d5cd2896b8cc4aeb1e30df989900b5caada0abfc59da662a5efae304172"
+    },
+    {
+      "path": "check_bundle.py",
+      "bytes": 8440,
+      "sha256": "e40e1a0466c9bb155600b66aa4bac058306e02aa88e1fc91d0ce503a8ab3ad75"
+    },
+    {
+      "path": "examples.json",
+      "bytes": 9196,
+      "sha256": "dc88444479d1bcf512fbab163e529508210f47cd3454ad57a013532a5577169b"
+    },
+    {
+      "path": "records.schema.json",
+      "bytes": 21642,
+      "sha256": "c92ea08871872c408260bb013c4fecdfc59dda7b2097b35c6969eeb6b561cf93"
+    },
+    {
+      "path": "verification-spec.json",
+      "bytes": 53906,
+      "sha256": "ac5476ebd2e5dcbbacad8322e4fbc214b4f71697829b0b4630dae354bf5d9f61"
+    },
+    {
+      "path": "verification-spec.schema.json",
+      "bytes": 21990,
+      "sha256": "b3c58d6732f6191724755c27cda6e678f82fd64257b5ca63f62ad359e09f7597"
+    }
+  ],
+  "excluded_generated_files": [
+    "MANIFEST.json",
+    "PACKAGE-VALIDATION.json",
+    "PUBLICATION.json"
+  ],
+  "meaning": "Digests identify exact authored bytes. They do not authenticate owner adoption or enforce worker permissions. Retain the manifest digest outside worker reach."
+}

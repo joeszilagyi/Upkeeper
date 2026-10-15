@@ -1,0 +1,203 @@
+{
+  "status": "SYNTHETIC_NOT_AUTHENTICATED_NOT_OPERATIONAL",
+  "warning": "Every reference and authentication artifact below is a toy placeholder. Passing structural validation is not approval, truth, conformance or an action grant. Never load these as production evidence.",
+  "records": [
+    {
+      "schema_version": "upkeeper.icvaa.records.v1",
+      "record_type": "adoption",
+      "body": {
+        "issuer_id": "toy-owner",
+        "bundle_digest": "upk:artifact:1111111111111111111111111111111111111111111111111111111111111111",
+        "contract_version": "1.0.0-rc.1",
+        "scope_ref": "upk:artifact:2222222222222222222222222222222222222222222222222222222222222222",
+        "reference_checker_ref": "upk:artifact:3333333333333333333333333333333333333333333333333333333333333333",
+        "trust_policy_ref": "upk:artifact:4444444444444444444444444444444444444444444444444444444444444444",
+        "revocation_epoch": 0,
+        "effective_at": "2026-10-15T00:00:00Z",
+        "expires_at": "2026-10-16T00:00:00Z",
+        "authentication_ref": "upk:artifact:5555555555555555555555555555555555555555555555555555555555555555"
+      }
+    },
+    {
+      "schema_version": "upkeeper.icvaa.records.v1",
+      "record_type": "work_authorization",
+      "body": {
+        "issuer_id": "toy-owner",
+        "request_id": "toy-request",
+        "repo_ref": "upk:repo:toy-repository",
+        "baseline_ref": "upk:artifact:6666666666666666666666666666666666666666666666666666666666666666",
+        "scope_ref": "upk:artifact:2222222222222222222222222222222222222222222222222222222222222222",
+        "obligation_set_ref": "upk:artifact:7777777777777777777777777777777777777777777777777777777777777777",
+        "permitted_actions": [
+          "PUBLISH_PROPOSAL"
+        ],
+        "budget_ref": "upk:artifact:8888888888888888888888888888888888888888888888888888888888888888",
+        "revocation_epoch": 0,
+        "expires_at": "2026-10-16T00:00:00Z",
+        "authentication_ref": "upk:artifact:5555555555555555555555555555555555555555555555555555555555555555"
+      }
+    },
+    {
+      "schema_version": "upkeeper.icvaa.records.v1",
+      "record_type": "obligation",
+      "body": {
+        "obligation_id": "toy-heading",
+        "requirement_ids": [
+          "ICV-009",
+          "ICV-012",
+          "ICV-029"
+        ],
+        "version": "1",
+        "subject_ref": "upk:artifact:9999999999999999999999999999999999999999999999999999999999999999",
+        "predicate_ref": "upk:artifact:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "applicability_ref": "upk:artifact:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "evidence_types": [
+          "CHECK_RESULT"
+        ],
+        "checker_ref": "upk:artifact:3333333333333333333333333333333333333333333333333333333333333333",
+        "scope_ref": "upk:artifact:2222222222222222222222222222222222222222222222222222222222222222",
+        "deadline": "2026-10-15T00:10:00Z",
+        "required": true
+      }
+    },
+    {
+      "schema_version": "upkeeper.icvaa.records.v1",
+      "record_type": "claim",
+      "body": {
+        "claim_id": "toy-claim",
+        "request_id": "toy-request",
+        "subject_ref": "upk:artifact:9999999999999999999999999999999999999999999999999999999999999999",
+        "obligation_ids": [
+          "toy-heading"
+        ],
+        "statement": "The specified rendered heading reads Account and the protected link and unrelated page are unchanged.",
+        "assurance_class": "TESTED_CONTRACT",
+        "scope_ref": "upk:artifact:2222222222222222222222222222222222222222222222222222222222222222",
+        "assumptions_ref": "upk:artifact:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    },
+    {
+      "schema_version": "upkeeper.icvaa.records.v1",
+      "record_type": "evidence",
+      "body": {
+        "evidence_id": "toy-evidence",
+        "producer_id": "toy-reference-browser",
+        "measurement_scope_ref": "upk:artifact:2222222222222222222222222222222222222222222222222222222222222222",
+        "subject_ref": "upk:artifact:9999999999999999999999999999999999999999999999999999999999999999",
+        "request_id": "toy-request",
+        "attempt_id": "toy-attempt",
+        "execution_ref": "upk:validation:toy-execution",
+        "obligation_ids": [
+          "toy-heading"
+        ],
+        "observation_kind": "CHECK_RESULT",
+        "observed_at": "2026-10-15T00:05:00Z",
+        "interval_ref": "upk:artifact:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "conditions_ref": "upk:artifact:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "result_ref": "upk:artifact:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "completeness_ref": "upk:artifact:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "predecessor_ids": [],
+        "authentication_ref": "upk:artifact:5555555555555555555555555555555555555555555555555555555555555555",
+        "privacy_class": "private-operator"
+      }
+    },
+    {
+      "schema_version": "upkeeper.icvaa.records.v1",
+      "record_type": "decision",
+      "body": {
+        "decision_id": "toy-decision",
+        "request_id": "toy-request",
+        "attempt_id": "toy-attempt",
+        "subject_ref": "upk:artifact:9999999999999999999999999999999999999999999999999999999999999999",
+        "adoption_ref": "upk:artifact:1111111111111111111111111111111111111111111111111111111111111111",
+        "obligation_set_ref": "upk:artifact:7777777777777777777777777777777777777777777777777777777777777777",
+        "facts": {
+          "request_active": "TRUE",
+          "adoption_valid": "TRUE",
+          "authority_integrity_valid": "TRUE",
+          "subject_binding_valid": "TRUE",
+          "evidence_authenticity_valid": "TRUE",
+          "inventory_complete": "TRUE",
+          "verified_violation": "FALSE",
+          "observation_complete": "TRUE",
+          "checker_completed": "TRUE",
+          "required_unknown": "FALSE",
+          "human_judgment_resolved": "TRUE",
+          "is_noop": false
+        },
+        "disposition": "ACCEPTED",
+        "reason_codes": [
+          "REQUIRED_SCOPED_OBLIGATIONS_SATISFIED"
+        ],
+        "assessment_ref": "upk:artifact:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "evidence_ids": [
+          "toy-evidence"
+        ],
+        "issued_at": "2026-10-15T00:06:00Z",
+        "authentication_ref": "upk:artifact:5555555555555555555555555555555555555555555555555555555555555555"
+      }
+    },
+    {
+      "schema_version": "upkeeper.icvaa.records.v1",
+      "record_type": "grant",
+      "body": {
+        "grant_id": "toy-grant",
+        "issuer_id": "toy-authority",
+        "actuator_id": "toy-reporter",
+        "action": "PUBLISH_PROPOSAL",
+        "request_id": "toy-request",
+        "decision_ref": "upk:artifact:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "repo_ref": "upk:repo:toy-repository",
+        "subject_ref": "upk:artifact:9999999999999999999999999999999999999999999999999999999999999999",
+        "preconditions_ref": "upk:artifact:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "policy_ref": "upk:artifact:4444444444444444444444444444444444444444444444444444444444444444",
+        "idempotency_key": "toy-write-one",
+        "revocation_epoch": 0,
+        "expires_at": "2026-10-15T00:20:00Z",
+        "authentication_ref": "upk:artifact:5555555555555555555555555555555555555555555555555555555555555555"
+      }
+    },
+    {
+      "schema_version": "upkeeper.icvaa.records.v1",
+      "record_type": "receipt",
+      "body": {
+        "receipt_id": "toy-receipt",
+        "grant_id": "toy-grant",
+        "actuator_id": "toy-reporter",
+        "request_id": "toy-request",
+        "action": "PUBLISH_PROPOSAL",
+        "outcome": "CONFIRMED",
+        "resulting_subject_ref": "upk:artifact:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "evidence_ref": "upk:artifact:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "recorded_at": "2026-10-15T00:07:00Z",
+        "authentication_ref": "upk:artifact:5555555555555555555555555555555555555555555555555555555555555555"
+      }
+    }
+  ],
+  "handoff_obligations": [
+    {
+      "id": "toy-file-read",
+      "requires": "Approved input identity and read observation, not sender prose."
+    },
+    {
+      "id": "toy-xyz-predicate",
+      "requires": "Parsed mode equals xyz under approved rules; merely reading a file is insufficient."
+    },
+    {
+      "id": "toy-handler",
+      "requires": "Approved H identity invoked for the same operation/input."
+    },
+    {
+      "id": "toy-payload-received",
+      "requires": "Receiver-side observation binds exact payload, operation and receiver."
+    },
+    {
+      "id": "toy-state-committed",
+      "requires": "Protected receiver-state readback establishes the required committed effect."
+    },
+    {
+      "id": "toy-no-forbidden-effect",
+      "requires": "Complete bounded observation or enforced boundary, not an empty sampled log."
+    }
+  ]
+}

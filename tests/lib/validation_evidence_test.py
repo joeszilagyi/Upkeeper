@@ -211,6 +211,7 @@ printf executed >>runtime/count
         # The restarted consumer is the unchanged shell entrypoint. No positive
         # JSON is manufactured, and the fault driver is outside candidate input.
         driver = '''import importlib.util, os, pathlib, stat, sys
+sys.dont_write_bytecode = True
 source, root, head, kind, artifact, fault, *args = sys.argv[1:]
 spec = importlib.util.spec_from_file_location('producer', source)
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
@@ -238,11 +239,13 @@ sys.exit(result)
                        str(self.repo/'tools/validation_evidence.py'), str(self.repo),
                        self.git('rev-parse', 'HEAD'), self.kind, str(self.artifact), fault,
                        *self.command[2:]]
-            self.run(expected=77 if fault == 'ack' else 3, args=command,
-                     extra={'UPKEEPER_VALIDATION_NO_REUSE': '1'})
+            output = self.run(expected=77 if fault == 'ack' else 3, args=command,
+                              extra={'UPKEEPER_VALIDATION_NO_REUSE': '1'})
+            assert ' executed ' in output, 'fault did not reach actual execution'
             if fault == 'ack':
                 assert ' reused ' in self.run(), 'complete publication not recovered'
             else:
+                assert 'controlled publisher blocked:' in output
                 assert (self.store/'.proof.json.pending').is_file()
                 result = self.run()
                 assert 'reuse-rejected' in result and ' executed ' in result, result

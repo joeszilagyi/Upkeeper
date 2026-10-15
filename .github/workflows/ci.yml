@@ -16,11 +16,14 @@ concurrency:
 jobs:
   local-validation:
     name: Local validation
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
 
-    # Explicit supported hosted image; never relax host policy when isolation
-    # fails. The bounded preflight records actual image/namespace conditions.
+    # Start with Ubuntu. Add macos-latest only after its portability gate passes.
+    # Temporary supported compatibility target, not an isolation bypass:
+    # 24.04 rejects setup; 26.04 rejects required nested execution. Keep the
+    # same fail-closed preflight and complete suite. Migrate before the first
+    # 22.04 retirement brownout (2027-03-23); see docs/validation-evidence.md.
     steps:
       - name: Checkout
         uses: actions/checkout@v6

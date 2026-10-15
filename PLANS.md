@@ -52,9 +52,15 @@ checkpoint 2, #907/#924 changes or old-GOAL resumption.
 
 Observed checkpoint results: fresh Ubuntu 24.04 run 38785050769 reproduces
 the pre-validation loopback denial. Supported Ubuntu 26.04 run 38785175279
-passes outer setup but fails actual nested evidence tests. The finite platform
-matrix is exhausted; compatibility is not established. Final preflight now
-checks nesting before the broad suite. Separate review found a post-rename
+passes outer setup but fails actual nested evidence tests. Run 38786340999
+confirms that nested denial in the improved early preflight. The reserved
+evidence-driven corrective attempt uses Ubuntu 22.04: GitHub's official
+retirement notice establishes support through 2027-04-17, despite deprecation.
+This deliberately revises the newer-image preference above, not the run budget
+or isolation boundary. Retire this temporary selection before the first
+2027-03-23 brownout; compatibility still requires the actual final CI result.
+No further platform permutations are planned in this checkpoint.
+Final preflight checks nesting before the broad suite. Separate review found a post-rename
 directory-flush error leaving reusable PASS; pending intent and quarantine now
 make that failure ineligible, with real producer/consumer restart regressions.
 Local focused checks pass on an intermediate revision; final-revision broad

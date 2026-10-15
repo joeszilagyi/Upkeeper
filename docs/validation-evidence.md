@@ -166,17 +166,29 @@ It forces fresh outer evidence execution, with passing-test output enabled;
 dedicated positive reuse cases still test reuse. Required check names are unchanged.
 The harmless 30-second preflight requires both outer and nested namespaces.
 
-Compatibility remains blocked on the tested hosted images: Ubuntu 24.04 image
+The newer hosted configurations failed: Ubuntu 24.04 image
 20261012.334.1 / bubblewrap 0.9.0 denied loopback setup in run 38785050769;
 supported Ubuntu 26.04 image 20261012.163.1 / bubblewrap 0.11.1 started the outer
 namespace but denied nested execution in run 38785175279. The latter reached
 real tests and failed three evidence tests; it was not a green compatibility
 result. AppArmor restriction settings were observed, but those observations
-alone do not establish the complete causal policy chain. The workflow selects
-the newer image explicitly and fails early if its required boundary is unavailable.
+alone do not establish the complete causal policy chain. The child security
+label on 26.04 is `bwrap//&unpriv_bwrap (enforce)`; its visible profile denies
+capabilities, consistent with the nested denial, but audit records are not
+available to attribute the complete kernel decision.
+
+The bounded corrective configuration selects `ubuntu-22.04`, which remains
+supported until 2027-04-17 according to GitHub's
+[retirement announcement](https://github.com/actions/runner-images/issues/14254).
+It is already in deprecation, so this is a temporary compatibility target,
+not a long-term platform policy. Migrate before the first 2027-03-23 brownout.
+This selection must pass the same outer/nested preflight, fresh complete suite,
+actual boundary regressions and full validator; an available image or a passing
+preflight alone is not compatibility proof. Exact results belong to the tested
+head/merge revision on the PR. A future image drift fails closed.
 No security-policy change, root candidate execution, namespace removal or
-unconfined fallback is permitted. The next decision requires an authorized
-environment supporting the same boundary, not waived verification.
+unconfined fallback is permitted. If this final bounded attempt fails, another
+environment decision is required, not waived verification.
 
 Platform references: [supported runner images](https://github.com/actions/runner-images),
 [Bubblewrap security model](https://github.com/containers/bubblewrap), and

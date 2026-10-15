@@ -6,8 +6,9 @@
   directory-flush failure, including failed quarantine. Real boundary probes
   cover private canaries, a reachable controlled receiver and child teardown.
   CI now diagnoses outer/nested unprivileged isolation before expensive gates.
-  Both tested hosted configurations remain incompatible with required execution;
-  no host protection or required test is weakened to hide that blocker.
+  Newer hosted configurations failed; a bounded compatibility attempt selects
+  still-supported Ubuntu 22.04 with a documented pre-retirement migration date.
+  No host protection or required test is weakened to hide a platform blocker.
 
 - Reusable unit, phase and validator results bind a committed Git snapshot and
   exact request before execution. Inputs execute from independent read-only

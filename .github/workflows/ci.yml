@@ -96,6 +96,9 @@ jobs:
           UPKEEPER_VALIDATION_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-validation-attestation.json
           UPKEEPER_VALIDATION_DIFF_BASE: ${{ steps.diff_range.outputs.base }}
           UPKEEPER_VALIDATION_DIFF_HEAD: ${{ steps.diff_range.outputs.head }}
+          UPKEEPER_VALIDATION_NO_REUSE: '1'
+          UPKEEPER_VALIDATION_PHASE_SHOW_PASS_OUTPUT: '1'
+          UPKEEPER_TEST_SHOW_PASS_OUTPUT: '1'
         run: tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace
 
       - name: Docs-only fast path
@@ -114,6 +117,7 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
           UPKEEPER_TEST_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-test-attestation.json
+          UPKEEPER_VALIDATION_NO_REUSE: '1'
         run: tools/validate_upkeeper.sh --full --profile
 
       - name: Upload full-validation timings

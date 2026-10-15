@@ -206,6 +206,49 @@ printf executed >>runtime/count
         assert not self.artifact.exists()
         print('actual disk-to-tmpfs identity regression: passed')
 
+    def publication_boundaries(self):
+        # Inject at actual publisher system calls, after real candidate checks.
+        # The restarted consumer is the unchanged shell entrypoint. No positive
+        # JSON is manufactured, and the fault driver is outside candidate input.
+        driver = '''import importlib.util, os, pathlib, stat, sys
+source, root, head, kind, artifact, fault, *args = sys.argv[1:]
+spec = importlib.util.spec_from_file_location('producer', source)
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+original_fsync, original_rename = m.os.fsync, m.os.rename
+def flush(fd):
+    if fault in ('flush', 'flush-and-quarantine') and stat.S_ISDIR(os.fstat(fd).st_mode) and pathlib.Path(artifact).exists():
+        raise OSError('controlled post-rename directory flush failure')
+    return original_fsync(fd)
+def rename(src, dst, **kwargs):
+    if fault == 'flush-and-quarantine' and '.failed-' in dst:
+        raise OSError('controlled quarantine failure')
+    return original_rename(src, dst, **kwargs)
+m.os.fsync, m.os.rename = flush, rename
+sys.argv = ['producer', root, head, kind, artifact, *args]
+try:
+    result = m.main()
+except (m.Blocked, OSError) as exc:
+    print('controlled publisher blocked:', exc, flush=True)
+    sys.exit(3)
+if fault == 'ack': os._exit(77)
+sys.exit(result)
+'''
+        for fault in ('flush', 'flush-and-quarantine', 'ack'):
+            command = ['/usr/bin/python3', '-I', '-c', driver,
+                       str(self.repo/'tools/validation_evidence.py'), str(self.repo),
+                       self.git('rev-parse', 'HEAD'), self.kind, str(self.artifact), fault,
+                       *self.command[2:]]
+            self.run(expected=77 if fault == 'ack' else 3, args=command,
+                     extra={'UPKEEPER_VALIDATION_NO_REUSE': '1'})
+            if fault == 'ack':
+                assert ' reused ' in self.run(), 'complete publication not recovered'
+            else:
+                assert (self.store/'.proof.json.pending').is_file()
+                result = self.run()
+                assert 'reuse-rejected' in result and ' executed ' in result, result
+                assert ' reused ' not in result, 'known failed publication reused'
+        print('actual publication/restart boundaries: passed kind=' + self.kind)
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -273,6 +316,9 @@ printf executed >>runtime/count
     f.corrupt_signed(lambda row: row['result'].update(exit=42))
     f.corrupt_signed(lambda row: row['request']['conditions']['tools'].update(bash='wrong-toolchain'))
     f.corrupt_signed(lambda row: row.update(schema='legacy'))
+    f.corrupt_signed(lambda row: row.update(trusted=True))
+    f.corrupt_signed(lambda row: row['result'].update(exit=False))
+    f.corrupt_signed(lambda row: row.update(finished=float('nan')))
     # Copying an otherwise genuine artifact to another storage boundary cannot
     # carry its producer authority with it.
     other = f.root/'other-store'; other.mkdir(mode=0o700)
@@ -293,6 +339,7 @@ printf executed >>runtime/count
     Fixture(args.source, args.kind).race(interrupt=True)
     Fixture(args.source, args.kind).race(publication_fail=True)
     Fixture(args.source, args.kind).filesystem_change()
+    Fixture(args.source, args.kind).publication_boundaries()
     # Publication's atomic boundary is tested separately from the real-process
     # interruption above. A simulated interrupted rename must leave no partial
     # destination; no PASS record is fabricated for a positive consumer.

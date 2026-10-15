@@ -5,7 +5,7 @@ printf 'validation-isolation: image=%s version=%s\n' "${ImageOS:-unavailable}" "
 uname -srmo
 id
 bwrap --version
-for path in /etc/os-release /proc/self/attr/current /proc/sys/kernel/unprivileged_userns_clone /proc/sys/kernel/apparmor_restrict_unprivileged_userns /proc/sys/user/max_user_namespaces /sys/module/apparmor/parameters/enabled; do
+for path in /etc/os-release /proc/self/attr/current /proc/sys/kernel/unprivileged_userns_clone /proc/sys/kernel/apparmor_restrict_unprivileged_userns /proc/sys/user/max_user_namespaces /sys/module/apparmor/parameters/enabled /etc/apparmor.d/bwrap-userns-restrict; do
   printf 'validation-isolation: %s\n' "$path"
   if [[ -r "$path" ]]; then
     head -c 4096 -- "$path" || printf 'diagnostic unavailable\n'
@@ -31,6 +31,11 @@ timeout --signal=TERM --kill-after=2s 30s bwrap "${args[@]}" --dev /dev --proc /
   [[ "$UID" != 0 ]]
   /usr/bin/awk "/^(Uid|CapEff|NoNewPrivs|Seccomp):/" /proc/self/status
   /usr/bin/cat /proc/net/route
+  /usr/bin/cat /proc/self/attr/current || printf "child security label unavailable\n"
   printf "validation-isolation: setup executed\n"
+  # The full suite tests the executor from inside an authoritative execution.
+  # One successful outer namespace is not enough for that required path.
+  /usr/bin/bwrap --die-with-parent --new-session --unshare-net --unshare-pid --ro-bind / / -- /usr/bin/true
+  printf "validation-isolation: nested setup executed\n"
 '
 # Successful setup is only a preflight, not the executor containment proof.

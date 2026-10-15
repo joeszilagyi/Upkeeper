@@ -13,6 +13,7 @@ import fcntl
 import hashlib
 import hmac
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import platform
@@ -26,7 +27,7 @@ import tempfile
 import time
 
 SCHEMA = 'upkeeper.validation-evidence.v2'
-POLICY = 'git-objects-ro-bind-data-whole-request-v1'
+POLICY = 'git-objects-ro-bind-data-whole-request-v2'
 LIMIT = 1024 * 1024
 MAX_AGE = 900
 COMMANDS = {'tests': 'tools/run_tests.sh', 'phases': 'tools/run_validation_phases.sh',
@@ -220,7 +221,19 @@ def atomic(fd, name, data):
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp, name, src_dir_fd=fd, dst_dir_fd=fd)
-        os.fsync(fd)
+        try:
+            os.fsync(fd)
+        except OSError:
+            # A known failed durability step is not an acknowledged PASS.
+            # Preserve its bytes off the current path while the store lock is
+            # held. If this also fails, report the custody failure explicitly.
+            # Host/store administration remains outside candidate authority.
+            try:
+                os.rename(name, '.' + name + '.failed-' + secrets.token_hex(12),
+                          src_dir_fd=fd, dst_dir_fd=fd)
+            except OSError as exc:
+                raise Blocked('publication and quarantine failed; evidence store requires reconciliation') from exc
+            raise
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(temp, dir_fd=fd)
@@ -241,6 +254,7 @@ class Store:
         if not path.name or path.name.startswith('.'):
             raise Blocked('invalid evidence filename')
         self.name = path.name
+        self.pending_name = '.' + self.name + '.pending'
         self.fd = secure_directory(path.parent)
         self.key_name = '.' + self.name + '.key'
         try:
@@ -301,6 +315,12 @@ class Store:
 
     def load(self, request):
         try:
+            try:
+                read_private(self.fd, self.pending_name)
+            except FileNotFoundError:
+                pass
+            else:
+                return False, 'incomplete_publication'
             envelope = json.loads(read_private(self.fd, self.name), object_pairs_hook=unique_object)
             if not isinstance(envelope, dict) or set(envelope) != {'record', 'mac'}:
                 return False, 'malformed_or_legacy'
@@ -308,26 +328,48 @@ class Store:
             expected = hmac.new(self.key, canonical(row), hashlib.sha256).hexdigest()
             if not isinstance(envelope['mac'], str) or not hmac.compare_digest(expected, envelope['mac']):
                 return False, 'untrusted_record'
-            if (not isinstance(row, dict) or row.get('schema') != SCHEMA
+            if (not isinstance(row, dict) or set(row) != {
+                    'schema', 'request', 'location', 'started', 'finished', 'result'}
+                    or row.get('schema') != SCHEMA
                     or row.get('request') != request or row.get('location') != self.location):
                 return False, 'identity_mismatch'
-            if row.get('result') != {'exit': 0, 'completed_command': request['command']}:
+            if (row.get('result') != {'exit': 0, 'completed_command': request['command']}
+                    or type(row['result']['exit']) is not int):
                 return False, 'incomplete_result'
+            if any(type(row.get(k)) not in (int, float) or not math.isfinite(row[k])
+                   for k in ('started', 'finished')):
+                return False, 'invalid_time'
             age = time.time() - row['finished']
             if not 0 <= age <= MAX_AGE or row['started'] > row['finished']:
                 return False, 'stale_or_invalid_time'
             return True, 'identical_pinned_request'
         except FileNotFoundError:
             return False, 'missing'
-        except (OSError, ValueError, TypeError, KeyError, Blocked):
+        except (OSError, ValueError, TypeError, KeyError, OverflowError, RecursionError, Blocked):
             return False, 'malformed_or_unsafe'
 
     def publish(self, request, started):
+        # Durable intent precedes the passing bytes. If publication AND its
+        # quarantine fail, consumers still cannot reuse the incomplete result.
+        # Retain an earlier interrupted intent rather than overwrite its history.
+        try:
+            read_private(self.fd, self.pending_name)
+        except FileNotFoundError:
+            pass
+        else:
+            os.rename(self.pending_name, self.pending_name + '.previous-' + secrets.token_hex(8),
+                      src_dir_fd=self.fd, dst_dir_fd=self.fd)
+        atomic(self.fd, self.pending_name, canonical({'request_sha256': digest(canonical(request)),
+                                                     'started': started}))
         row = {'schema': SCHEMA, 'request': request, 'location': self.location,
                'started': started, 'finished': time.time(),
                'result': {'exit': 0, 'completed_command': request['command']}}
         atomic(self.fd, self.name, canonical({'record': row,
                'mac': hmac.new(self.key, canonical(row), hashlib.sha256).hexdigest()}))
+        # The evidence file and directory have now been flushed. Removing the
+        # intent makes that completed record eligible. A crash before removal
+        # may conservatively require fresh execution; no partial PASS is used.
+        os.unlink(self.pending_name, dir_fd=self.fd)
 
 
 def sealed(data, name):

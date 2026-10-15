@@ -26,7 +26,7 @@ done
 [[ ! -e /etc/ld.so.cache ]] || args+=(--ro-bind /etc/ld.so.cache /etc/ld.so.cache)
 [[ ! -d /etc/alternatives ]] || args+=(--ro-bind /etc/alternatives /etc/alternatives)
 printf 'validation-isolation: probing actual unprivileged network/PID namespace setup (30s bound)\n'
-timeout --signal=TERM --kill-after=2s 30s bwrap "${args[@]}" --dev /dev --proc /proc --clearenv -- /usr/bin/bash -c '
+timeout --signal=TERM --kill-after=2s 30s bwrap "${args[@]}" --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run --clearenv -- /usr/bin/bash -c '
   set -euo pipefail
   [[ "$UID" != 0 ]]
   /usr/bin/awk "/^(Uid|CapEff|NoNewPrivs|Seccomp):/" /proc/self/status

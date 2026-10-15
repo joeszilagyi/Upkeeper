@@ -16,11 +16,11 @@ concurrency:
 jobs:
   local-validation:
     name: Local validation
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
 
-    # Start with Ubuntu. Add macos-latest after GNU/BSD portability issues are
-    # handled in the wrapper and validation harness.
+    # Explicit supported hosted image; never relax host policy when isolation
+    # fails. The bounded preflight records actual image/namespace conditions.
     steps:
       - name: Checkout
         uses: actions/checkout@v6

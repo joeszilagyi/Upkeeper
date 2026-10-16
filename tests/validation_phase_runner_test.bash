@@ -12,10 +12,12 @@ fail() {
 }
 
 repo="$TEST_ROOT/repo"
-mkdir -p "$repo/tools"
+mkdir -p "$repo/tools" "$repo/tests"
 cp "$ROOT_DIR/tools/run_validation_phases.sh" "$repo/tools/"
 cp "$ROOT_DIR/tools/validation_attestation_lib.bash" "$repo/tools/"
 cp "$ROOT_DIR/tools/git_diff_validation.bash" "$repo/tools/"
+cp "$ROOT_DIR/tools/validation_evidence.py" "$repo/tools/"
+printf '#!/bin/bash\nexit 0\n' >"$repo/tests/example.bash"
 git -C "$repo" init -q -b main
 git -C "$repo" config user.name 'Upkeeper Validation'
 git -C "$repo" config user.email 'validation@example.invalid'
@@ -37,25 +39,26 @@ run_phase() {
 }
 
 first_output="$(run_phase 2>&1)" || fail "initial phase run failed: $first_output"
-grep -Fq 'validation_reuse_rejected' <<<"$first_output" ||
+grep -Fq 'validation_evidence: reuse-rejected' <<<"$first_output" ||
   fail 'initial artifact did not fail closed to a rerun'
-grep -Fq 'validation_attestation: wrote=' <<<"$first_output" ||
+grep -Fq 'validation_evidence: passed' <<<"$first_output" ||
   fail 'initial phase run did not write proof'
 
 second_output="$(run_phase 2>&1)" || fail "same-input phase run failed: $second_output"
-grep -Fq 'validation_reused command=tools/run_validation_phases.sh' <<<"$second_output" ||
+grep -Fq 'validation_evidence: reused' <<<"$second_output" ||
   fail 'same-input phase run did not reuse proof'
-grep -Fq 'PHASE diff_whitespace status=reused rc=0' <<<"$second_output" ||
-  fail 'same-input phase output did not identify reused phase'
+if grep -Fq 'PHASE diff_whitespace status=pass' <<<"$second_output"; then
+  fail 'same-input proof secretly reran the phase'
+fi
 
 changed_command_output="$(
   cd "$repo"
   UPKEEPER_VALIDATION_ATTESTATION_FILE="$artifact" \
     bash tools/run_validation_phases.sh --serial --phases diff_whitespace --diff-base HEAD --diff-head HEAD 2>&1
 )" || fail "changed-command rerun failed: $changed_command_output"
-grep -Fq 'validation_reuse_rejected command=tools/run_validation_phases.sh' <<<"$changed_command_output" ||
+grep -Fq 'validation_evidence: reuse-rejected' <<<"$changed_command_output" ||
   fail 'changed phase command did not reject proof'
-grep -Fq 'reason=command_mismatch' <<<"$changed_command_output" ||
+grep -Fq 'reason=identity_mismatch' <<<"$changed_command_output" ||
   fail 'changed phase command did not report command mismatch'
 
 printf 'validation_phase_runner_test: ok\n'

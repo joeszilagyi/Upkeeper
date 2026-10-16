@@ -3959,16 +3959,9 @@ run_per_bug_validation() {
   phase_spec="$(mktemp "$(dirname -- "$attestation_path")/.per-bug-phase.XXXXXX")" || return $?
   phase_command="$(printf 'orchestration/backlog.sh run_per_bug_validation issue=%q target=%q' "${issue_number:-none}" "${target_hint:-none}")"
   printf 'per_bug_validation\t%s\n' "$phase_command" >"$phase_spec"
-  if upkeeper_validation_attestation_load "$ROOT_DIR" "$attestation_path" "$phase_spec" "orchestration/backlog.sh:per-bug"; then
-    log "validation_reused command=per_bug_validation issue=${issue_number:-none} artifact=$attestation_path reason=$UPKEEPER_VALIDATION_ATTESTATION_REASON"
-    rm -f -- "$phase_spec"
-    return 0
-  fi
-  if [[ -f "$attestation_path" ]]; then
-    log "validation_reuse_rejected command=per_bug_validation issue=${issue_number:-none} artifact=$attestation_path reason=$UPKEEPER_VALIDATION_ATTESTATION_REASON action=rerun"
-  else
-    log "validation_rerun command=per_bug_validation issue=${issue_number:-none} reason=no_attestation"
-  fi
+  # This pre-commit lane inspects dirty/index state and focused shell functions.
+  # It remains diagnostic validation, not reusable committed-snapshot proof.
+  log "validation_reuse_rejected command=per_bug_validation issue=${issue_number:-none} reason=precommit_diagnostic_only action=rerun"
   backlog_update_active_owner_heartbeat "validating" \
     "$(backlog_wait_detail local_validation per_bug_validation "issue=${issue_number:-none}" "target=${target_hint:-none}" "expected=syntax_compile_source_contract_diff_checks")" \
     "" "owner_pid_start_cwd_verified"
@@ -3981,7 +3974,7 @@ run_per_bug_validation() {
   git diff --check || { validation_rc=$?; rm -f -- "$phase_spec"; return "$validation_rc"; }
   duration_ms="$(( (SECONDS - validation_start) * 1000 ))"
   printf 'per_bug_validation\t%s\tpass\t0\t%s\n' "$phase_command" "$duration_ms" >"$phase_spec.result"
-  upkeeper_validation_attestation_write "$ROOT_DIR" "$attestation_path" "$phase_spec.result" "$duration_ms" "orchestration/backlog.sh:per-bug" || { validation_rc=$?; rm -f -- "$phase_spec" "$phase_spec.result"; return "$validation_rc"; }
+  log "per-bug validation: diagnostic only; no reusable evidence published"
   rm -f -- "$phase_spec" "$phase_spec.result"
   log "per-bug validation: complete in $((SECONDS - validation_start))s"
 }

@@ -9,6 +9,119 @@ draft-only #715 repair. Earlier authorization limits below remain historical
 records. This does not resume the prior GOAL or authorize #715 integration,
 other backlog work, client maintenance, or changes to #907.
 
+Integration evidence: #918 reached `8dc8d402316419b8773132dc06b5f3dd2dc1af6d`
+and #919 reached `7886b35da837497b350f58694c8eb3a8f3e7da06` through the ordinary
+protected merge-commit path. Exact-main CI runs 38643931082 and 38648481140
+passed, respectively; fresh syntax/containment/entrypoint checks also pass on
+the latter. #909's issue-local completion evidence is recorded on GitHub.
+#908's remaining authority requirements and the broader safety program stay
+open. #715 is based on that verified main and remains draft-only.
+
+## Issue #715: Pinned Validation Execution and Evidence
+
+Checkpoint 1 (2026-10-15), requirements revision
+`4b3480af7d8dbbf36ddd43e36fa1a135c4fbeb60`: finish the existing draft #922,
+not the broader acceptance roadmap. The requirements are an isolated-development
+target, not installed operational authority. CI 38649614103 failed before
+validation at Bubblewrap network-namespace setup; its cause is not yet proved.
+
+Bounded strategy: retain that log; run a harmless namespace probe on the current
+Ubuntu 24.04 runner, then at most one officially supported newer runner if the
+observed restriction cannot be corrected without changing host policy. Each
+probe has a 30-second bound; at most two diagnostic configurations and one
+final full CI attempt, plus one evidence-driven corrective attempt if needed.
+Never relax networking, host policy, required checks, or unprivileged execution.
+
+Intended files: CI workflow/setup, the existing execution owner and evidence
+regressions, validation documentation and this entry. Preserve Git-object
+acquisition, read-only source, separate scratch/custody, explicit dirty refusal,
+both real producer/consumer paths, disk-versus-tmpfs identity and useful reuse.
+Add actual boundary probes for source operations, test-owned secret/output
+canaries, an otherwise reachable controlled network receiver, descendant
+termination, and complete versus interrupted publication where coverage lacks.
+
+Verification: both attestation scripts, phase runner regression, both actual
+filesystem-condition cases, syntax/containment and changed callers; real serial
+and parallel phases; pinned full unit suite and full validator with
+`UPKEEPER_VALIDATION_NO_REUSE=1`; quick/smoke/docs and explicit-range whitespace;
+fresh exact-revision CI and separate read-only review. Positive reuse remains
+enabled in dedicated cases. Record entrypoints, observers, actual effects and
+limitations against the pinned ICV/ICM requirements. Stop with a tested draft
+or a specific unmet gate; no merge, issue closure, authority installation,
+checkpoint 2, #907/#924 changes or old-GOAL resumption.
+
+Observed checkpoint results: fresh Ubuntu 24.04 run 38785050769 reproduces
+the pre-validation loopback denial. Supported Ubuntu 26.04 run 38785175279
+passes outer setup but fails actual nested evidence tests. Run 38786340999
+confirms that nested denial in the improved early preflight. The reserved
+evidence-driven corrective attempt uses Ubuntu 22.04: GitHub's official
+retirement notice establishes support through 2027-04-17, despite deprecation.
+This deliberately revises the newer-image preference above, not the run budget
+or isolation boundary. Retire this temporary selection before the first
+2027-03-23 brownout; compatibility still requires the actual final CI result.
+No further platform permutations are planned in this checkpoint.
+That corrective run 38786998188 passed all 86 tests but failed full validation:
+missing canonical-path ripgrep and older jq streaming exit semantics require
+narrow setup/assertion compatibility corrections. One final same-image run
+will verify those observed causes; this is not another platform permutation.
+Preserve every original JSON predicate, reject search errors, test actual
+filters/guard and required installation, and retain the failed run.
+Final preflight checks nesting before the broad suite. Separate review found a post-rename
+directory-flush error leaving reusable PASS; pending intent and quarantine now
+make that failure ineligible, with real producer/consumer restart regressions.
+Local focused checks pass on an intermediate revision; final-revision broad
+validation and review are separate gates recorded on #922, never inferred here.
+
+Status (2026-10-14): implementation checkpoint; both old real-producer races
+reproduced on `23b23c9111267bd92efd5c619a69f1677a207850`. A passed test was
+changed and committed while a second test waited; both consumers accepted the
+new failing revision. Direct execution of that revision returned 42.
+
+Contract recorded before production edits:
+
+- Capture a committed Git object identity before execution, not an end-state
+  worktree fingerprint. Preserve history and explicit diff revisions.
+- Execute independent read-only copies of those objects, with separate writable
+  scratch. Refuse reusable certification for dirty/staged/untracked candidates,
+  unsupported objects, unavailable isolation, or failed identity collection.
+  Ordinary non-reusable diagnostic validation remains available.
+- Replace the two end-stamping authorities with one execution owner. Bind whole
+  input, exact command/scope, producer/checker policy, bounded environment and
+  toolchain. Conservative whole-request reuse is preferable to unsafe partial
+  reuse; delegated validator tests must never trust the legacy records.
+- Keep evidence outside the check subprocess, authenticate records within a
+  private producer-owned store, and publish bounded records atomically without
+  following links. Failed/interrupted execution cannot publish PASS.
+- Prove both barrier races, source-only changes, change/revert, dirty states,
+  changed conditions and diff context, malformed/legacy/conflicting/incomplete
+  records, replay, interruption/publication failure, and read-only inputs.
+  Prove actual execution and eligible reuse with counters, including real phase
+  and validator paths. Retain syntax and containment regressions.
+
+Likely files: both attestation libraries, test/phase/validator entrypoints,
+backlog's validation callers, directly necessary CI dependency wiring, focused
+regressions, validation documentation and this plan. No runtime worker authority,
+task-acceptance, recovery, or broader fixture refactor. Linux isolation support
+and trusted producer/storage assumptions will be explicit; a private directory
+alone is not claimed to defeat arbitrary hostile same-account interference.
+
+Fresh acceptance uses `UPKEEPER_VALIDATION_NO_REUSE=1`, focused regressions,
+real phase/validator paths, full deterministic tests, quick/full validators,
+public docs, explicit-range whitespace, exact-head PR CI and separate review.
+Reuse-positive cases run separately. Publish a draft only; do not merge #715,
+resume the old GOAL, or take another backlog issue.
+
+Implementation: one pinned execution owner now replaces both end-stamping
+paths. Permanent real-entrypoint regressions reproduce both old races and test
+valid reuse, invalid evidence, source/command/config/toolchain/storage changes,
+interruption and read-only source. Separate-context review found a missing
+filesystem identity input, now corrected and covered by a real disk-to-tmpfs
+case. Three intentional source-mutation fixtures use independent child copies;
+no production assertion or timeout was weakened. Final revision-specific local
+and CI acceptance must be recorded on the draft PR; this plan is not proof of
+those unfinished gates. Trust and supported-platform limits are documented in
+`docs/validation-evidence.md`.
+
 ## Issue #909: Individually Parse Shell Validation Inputs
 
 Status: bounded candidate in development; no merge or issue closure authorized.

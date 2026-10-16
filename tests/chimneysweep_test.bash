@@ -312,14 +312,25 @@ test_chimneysweep_stops_on_operator_action_required_obligation() {
 }
 
 test_chimneysweep_control_plane_guard_blocks_unknown_root_artifact() {
-  local output rc obligation_dir artifact
+  local output rc obligation_dir artifact fixture_root
 
-  artifact="$ROOT_DIR/chimneysweep-control-plane-guard-fixture.log"
+  # This case intentionally contaminates a source root. Never mutate the
+  # authoritative validation input: import independent, link-rejecting copies.
+  fixture_root="$TEST_TMP_ROOT/control-plane-copy"
+  python3 - "$ROOT_DIR" "$fixture_root" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + '/tests/lib')
+from shell_syntax_fixture import import_tree
+import_tree(sys.argv[1], sys.argv[2])
+PY
+  git -C "$fixture_root" init -q
+  git -C "$fixture_root" add -A
+  artifact="$fixture_root/chimneysweep-control-plane-guard-fixture.log"
   [[ ! -e "$artifact" ]] || fail "guard fixture already exists: $artifact"
   obligation_dir="$TEST_TMP_ROOT/chimneysweep-control-plane-obligations"
   printf 'unexpected local evidence\n' >"$artifact"
   set +e
-  output="$(CHIMNEYSWEEP_TEST_CONTROL_PLANE_GUARD=1 CHIMNEYSWEEP_TEST_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run 2>&1)"
+  output="$(ROOT_DIR="$fixture_root" CHIMNEYSWEEP_TEST_CONTROL_PLANE_GUARD=1 CHIMNEYSWEEP_TEST_OBLIGATION_DIR="$obligation_dir" GH_SCENARIO=security run_chimneysweep --dry-run 2>&1)"
   rc=$?
   set -e
   rm -f -- "$artifact"

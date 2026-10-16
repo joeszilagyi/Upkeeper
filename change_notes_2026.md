@@ -1,5 +1,28 @@
 # 2026 Change Notes
 
+## Pending review: Pinned validation evidence
+
+- Checkpoint 1 retains failed publication intent and rejects reuse after a known
+  directory-flush failure, including failed quarantine. Real boundary probes
+  cover private canaries, a reachable controlled receiver and child teardown.
+  CI now diagnoses outer/nested unprivileged isolation before expensive gates.
+  Newer hosted configurations failed; a bounded compatibility attempt selects
+  still-supported Ubuntu 22.04 with a documented pre-retirement migration date.
+  No host protection or required test is weakened to hide a platform blocker.
+  Canonical-path ripgrep preparation and explicit search-error rejection prevent
+  a missing tool from skipping a validator scan; multi-file JSON assertions
+  retain their predicates while avoiding older jq's input-order exit behavior.
+
+- Reusable unit, phase and validator results bind a committed Git snapshot and
+  exact request before execution. Inputs execute from independent read-only
+  mounts with private writable scratch; old end-stamped records cannot skip
+  checks. Dirty/staged/untracked runs remain available without certification.
+- Whole-request reuse replaces unsafe partial test reuse. Private authenticated
+  records bind command, inventory, conditions and toolchain; failed/interrupted
+  work does not publish PASS. `UPKEEPER_VALIDATION_NO_REUSE=1` forces execution.
+  Linux/bubblewrap support and a trusted reviewed producer are explicit
+  requirements, not independent proof of a candidate's semantic correctness.
+
 ## Pending review: Per-file shell syntax validation
 
 - Shell validation parses each intended input individually, including nested

@@ -42,9 +42,10 @@ failure, and empty-transcript failure.
 
 GitHub Actions runs the no-quota CI path from `.github/workflows/ci.yml` on
 pull requests and on pushes to `main`. That workflow starts on
-`ubuntu-latest`, runs `tools/setup_ci_dependencies.sh` to probe the runner for
+the explicit Ubuntu image documented in [validation evidence](validation-evidence.md),
+runs `tools/setup_ci_dependencies.sh` with the executor's `/usr/bin:/bin` path to probe for
 expected stock commands, fails clearly if runner-provided tools disappear, and
-installs only missing nonstandard tools such as `age`. The helper also prints
+installs only missing tools `age`, `bubblewrap` and `ripgrep`. The helper also prints
 dependency-setup timing so CI latency stays visible. Outside the explicit
 editorial-docs allowlist, the workflow runs full validation:
 
@@ -70,7 +71,7 @@ default.
 ## Supported Platforms And Portability
 
 The supported unattended-run baseline is Linux with a GNU userland, matching the
-`ubuntu-latest` GitHub Actions environment. That is the platform where release
+explicit Ubuntu GitHub Actions environment. That is the platform where release
 validation, full validation, stress corpus checks, and live launcher behavior
 are expected to work.
 
@@ -81,7 +82,7 @@ Windows shells, PowerShell, and `cmd.exe` are not supported launch surfaces.
 macOS is deferred. The current wrapper and validation harness still rely on
 Linux/GNU assumptions around utility behavior, process inspection, filesystem
 metadata, and sandbox-related tooling. The CI workflow documents this by
-starting on `ubuntu-latest` only; add `macos-latest` after the GNU/BSD utility
+starting on an explicit Ubuntu image only; add `macos-latest` after the GNU/BSD utility
 differences are either removed or explicitly guarded.
 
 The validator makes that boundary explicit. `tools/validate_upkeeper.sh --deps`

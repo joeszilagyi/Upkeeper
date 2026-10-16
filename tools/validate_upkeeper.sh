@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 TOOLS_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 ROOT_DIR="$(cd -- "$TOOLS_DIR/.." && pwd)"
+if [[ -n "${UPKEEPER_TEST_ATTESTATION_FILE:-}" ]]; then
+  source "$ROOT_DIR/tools/validation_attestation_lib.bash"
+  upkeeper_validation_evidence_dispatch "$ROOT_DIR" validator "$UPKEEPER_TEST_ATTESTATION_FILE" "$@"
+fi
 UPKEEPER_IMPLEMENTATION_DIR="$ROOT_DIR"
 source "$ROOT_DIR/lib/upkeeper/review_modules.bash"
 source "$ROOT_DIR/tools/validation_timing_lib.bash"
@@ -374,7 +378,7 @@ require_supported_platform() {
 
 require_commands() {
   local command_name
-  for command_name in bash chmod cp date diff find git grep jq ln mkdir mktemp ps python3 rm sed sleep sort touch tr uname wc; do
+  for command_name in bash chmod cp date diff find git grep jq ln mkdir mktemp ps python3 rg rm sed sleep sort touch tr uname wc; do
     require_command "$command_name"
   done
 }
@@ -1202,9 +1206,9 @@ check_validation_attestation_contract() {
   log "checking validation attestation contract"
   [[ -r tools/validation_attestation_lib.bash ]] ||
     fail "validation attestation library is missing"
-  grep -Fq 'upkeeper.validation-attestation.v1' tools/validation_attestation_lib.bash ||
+  grep -Fq 'upkeeper.validation-evidence.v2' tools/validation_evidence.py ||
     fail "validation attestation schema is missing"
-  grep -Fq 'upkeeper_validation_attestation_load' tools/run_validation_phases.sh ||
+  grep -Fq 'upkeeper_validation_evidence_dispatch' tools/run_validation_phases.sh ||
     fail "validation phase runner does not consume attestations"
   grep -Fq 'UPKEEPER_VALIDATION_ATTESTATION_FILE' orchestration/backlog.sh ||
     fail "backlog batch validation does not supply a local attestation path"
@@ -1966,10 +1970,12 @@ LOG
     fail "prior-run anomaly custody opened duplicate local automation obligations"
   [[ "$(jq -s '[.[] | select(.evidence.kind == "previous_run_anomaly_summary")] | length' "$temp_dir"/obligations/open/*.json)" == "1" ]] ||
     fail "prior-run anomaly custody did not collapse repeated previous-run summaries to one owner"
-  jq -e 'select(.kind == "prior_run_anomaly") | select(.issue_number == "") | select(.owner_issue_number == "418") | select(.specific_issue_required == true) | select(.evidence.normalized_excerpt | contains("unexpected.wrapper.failure"))' \
+  # Evaluate one Boolean over the complete set. jq 1.6's streaming -e status
+  # depends on the last input, even if an earlier input matched the predicate.
+  jq -e -s '[.[] | select(.kind == "prior_run_anomaly") | select(.issue_number == "") | select(.owner_issue_number == "418") | select(.specific_issue_required == true) | select(.evidence.normalized_excerpt | contains("unexpected.wrapper.failure"))] | length > 0' \
     "$temp_dir"/obligations/open/*.json >/dev/null ||
     fail "prior-run anomaly custody obligation did not require a specific issue beyond the umbrella"
-  jq -e 'select(.evidence.normalized_excerpt | contains("operator_guide.stale")) | select(.summary | contains("operator_guide.stale warning")) | select(.issue_title == "High priority bug: prior-run operator_guide.stale warning needs repair for Upkeeper") | select(.issue_title_basis == "prior_run_anomaly_signal")' \
+  jq -e -s '[.[] | select(.evidence.normalized_excerpt | contains("operator_guide.stale")) | select(.summary | contains("operator_guide.stale warning")) | select(.issue_title == "High priority bug: prior-run operator_guide.stale warning needs repair for Upkeeper") | select(.issue_title_basis == "prior_run_anomaly_signal")] | length > 0' \
     "$temp_dir"/obligations/open/*.json >/dev/null ||
     fail "prior-run anomaly custody did not create a descriptive operator-guide warning issue title"
 
@@ -4835,7 +4841,7 @@ check_dependency_guidance_contract() {
     fail "dependency docs missing shared CI dependency helper"
   grep -Fq "expected stock commands" docs/dependencies.md ||
     fail "dependency docs missing CI expected-runner command probe description"
-  grep -Fq 'installs only missing nonstandard tools such as `age`' docs/dependencies.md ||
+  grep -Fq 'installs only missing tools `age`, `bubblewrap` and `ripgrep`' docs/dependencies.md ||
     fail "dependency docs missing targeted CI install policy"
 }
 
@@ -5209,12 +5215,16 @@ check_validation_mode_boundary_contract() {
 }
 
 check_wrapper_contract_tests() {
+  local search_status
   log "checking focused wrapper contract tests"
   validation_run_test tests/wrapper_contract_test.bash
   validation_run_test tests/json_fields_test.bash
   if rg -q '_(assignments)\(|eval "\$\((quota_json|status_marker_analysis|session_diagnostics|review_summary|review_pass_coverage)' \
     Upkeeper lib/upkeeper tests/wrapper_contract_test.bash; then
     fail "JSON-to-shell assignment source generation or eval consumer was reintroduced"
+  else
+    search_status=$?
+    [[ "$search_status" -eq 1 ]] || fail "JSON-to-shell source scan failed: rg exit=$search_status"
   fi
   grep -Fq '## Remaining `eval` Boundaries' docs/security.md ||
     fail "security documentation does not account for remaining production eval boundaries"
@@ -6265,11 +6275,24 @@ EOF
   rm -r "$temp_dir"
 }
 
-check_file_manifest_selection() {
+check_file_manifest_selection() (
   local temp_dir manifest_path output rc lattice_db_path unsafe_manifest_path untracked_candidate untracked_name
 
   log "checking file manifest selection"
-  temp_dir="$(mktemp -d /tmp/upkeeper-file-manifest.XXXXXX)"
+  temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/upkeeper-file-manifest.XXXXXX")"
+  # Selection needs a deliberately untracked source file. Keep that mutation
+  # in an independent child checkout, never in the pinned validation input.
+  python3 - "$ROOT_DIR" "$temp_dir/repo" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + '/tests/lib')
+from shell_syntax_fixture import import_tree
+import_tree(sys.argv[1], sys.argv[2])
+PY
+  local ROOT_DIR="$temp_dir/repo"
+  local UPKEEPER_IMPLEMENTATION_DIR="$ROOT_DIR"
+  git -C "$ROOT_DIR" init -q
+  git -C "$ROOT_DIR" add -A
+  cd -- "$ROOT_DIR"
   manifest_path="runtime/upkeeper-file-manifest-validation-${temp_dir##*/}.json"
   unsafe_manifest_path="$temp_dir/unsafe-manifest.json"
   lattice_db_path="runtime/upkeeper-lattice/file-manifest-${temp_dir##*/}.sqlite3"
@@ -6708,8 +6731,9 @@ JSON
   rm -f "$manifest_path" "$manifest_path".tmp
   rm -f "$lattice_db_path" "$lattice_db_path-journal" "$lattice_db_path-wal" "$lattice_db_path-shm"
   rm -f "$untracked_candidate"
+  cd -- "$temp_dir/.."
   rm -r "$temp_dir"
-}
+)
 
 check_tool_failure_queue() {
   local temp_dir transcript addressed_transcript clean_transcript marker_path open_count resolved_count marker_id tool_failure_queue_signing_key

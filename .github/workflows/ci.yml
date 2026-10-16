@@ -16,11 +16,14 @@ concurrency:
 jobs:
   local-validation:
     name: Local validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
 
-    # Start with Ubuntu. Add macos-latest after GNU/BSD portability issues are
-    # handled in the wrapper and validation harness.
+    # Start with Ubuntu. Add macos-latest only after its portability gate passes.
+    # Temporary supported compatibility target, not an isolation bypass:
+    # 24.04 rejects setup; 26.04 rejects required nested execution. Keep the
+    # same fail-closed preflight and complete suite. Migrate before the first
+    # 22.04 retirement brownout (2027-03-23); see docs/validation-evidence.md.
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -29,10 +32,17 @@ jobs:
           # before revision so committed-diff validation never falls back to
           # an empty working-tree comparison.
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Probe CI dependencies
         shell: bash
-        run: tools/setup_ci_dependencies.sh
+        # Match the executor's tool path; host-only tools are not dependencies
+        # available inside its namespace. Package preparation stays outside it.
+        run: env PATH=/usr/bin:/bin tools/setup_ci_dependencies.sh
+
+      - name: Probe unprivileged validation isolation
+        shell: bash
+        run: bash tools/probe_validation_isolation.sh
 
       - name: Determine committed diff range
         id: diff_range
@@ -86,10 +96,14 @@ jobs:
       - name: Parallel local gates
         if: steps.scope.outputs.docs_only != '1'
         env:
+          TMPDIR: ${{ runner.temp }}
           UPKEEPER_TEST_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-test-attestation.json
           UPKEEPER_VALIDATION_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-validation-attestation.json
           UPKEEPER_VALIDATION_DIFF_BASE: ${{ steps.diff_range.outputs.base }}
           UPKEEPER_VALIDATION_DIFF_HEAD: ${{ steps.diff_range.outputs.head }}
+          UPKEEPER_VALIDATION_NO_REUSE: '1'
+          UPKEEPER_VALIDATION_PHASE_SHOW_PASS_OUTPUT: '1'
+          UPKEEPER_TEST_SHOW_PASS_OUTPUT: '1'
         run: tools/run_validation_phases.sh --phases shell_syntax,unit_tests,public_docs,diff_whitespace
 
       - name: Docs-only fast path
@@ -106,8 +120,9 @@ jobs:
       - name: Full validation
         if: steps.scope.outputs.validation_gate == 'full'
         env:
-          UPKEEPER_VALIDATION_TIMING_FILE: ${{ runner.temp }}/upkeeper-validation-timing.jsonl
+          TMPDIR: ${{ runner.temp }}
           UPKEEPER_TEST_ATTESTATION_FILE: ${{ runner.temp }}/upkeeper-test-attestation.json
+          UPKEEPER_VALIDATION_NO_REUSE: '1'
         run: tools/validate_upkeeper.sh --full --profile
 
       - name: Upload full-validation timings
@@ -115,5 +130,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: validation-timing-${{ github.job }}
-          path: ${{ runner.temp }}/upkeeper-validation-timing.jsonl
+          # Only diagnostic timing rows, never private evidence custody keys.
+          path: ${{ runner.temp }}/upkeeper-pinned-validation-*/output/runtime/validation-timing/*.jsonl
           if-no-files-found: ignore
